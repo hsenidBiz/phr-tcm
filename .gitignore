@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / tooling
+.claude/
+.vscode/
+.idea/
+*.egg-info/
+
+# Test case writing assets (input data, not app source)
+Test Case Writing/
+
+# User settings (persisted at runtime, never committed)
+.devops_tc_creator/

@@ -1,0 +1,574 @@
+import os
+from pathlib import Path
+
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView,
+    QMessageBox, QFrame, QSizePolicy, QScrollArea, QComboBox, QLineEdit
+)
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QCursor
+
+from app.utils.import_parser import parse_file, generate_template
+from app.utils.settings import load_settings, save_settings
+
+_DETAIL = "detail"   # Qt.UserRole marker for step-detail rows
+
+
+class TagPickerWidget(QWidget):
+    """Horizontally scrollable row of tag toggle buttons.
+    Selected tags turn blue and show × ; clicking again deselects."""
+
+    _SELECTED = (
+        "QPushButton { background: #0078d4; color: white; border-radius: 3px; "
+        "padding: 3px 9px; font-size: 12px; border: none; }"
+        "QPushButton:hover { background: #106ebe; }"
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._selected = []       # ordered list
+        self._tag_buttons = {}    # name -> QPushButton
+        # Instance-level unselected style (updated by refresh_theme)
+        self._unsel_qss = (
+            "QPushButton { background: #f0f0f0; color: #333; border-radius: 3px; "
+            "padding: 3px 9px; font-size: 12px; border: 1px solid #ccc; }"
+            "QPushButton:hover { background: #ddd; }"
+        )
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._scroll = QScrollArea()
+        self._scroll.setFixedHeight(46)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet("QScrollArea { border: 1px solid #ccc; border-radius: 4px; }")
+
+        self._inner = QWidget()
+        self._inner.setStyleSheet("background: white;")
+        self._inner_layout = QHBoxLayout(self._inner)
+        self._inner_layout.setContentsMargins(6, 5, 6, 5)
+        self._inner_layout.setSpacing(5)
+
+        self._placeholder = QLabel("Loading tags…")
+        self._placeholder.setStyleSheet("color: #888; font-size: 11px;")
+        self._inner_layout.addWidget(self._placeholder)
+        self._inner_layout.addStretch()
+
+        self._scroll.setWidget(self._inner)
+        layout.addWidget(self._scroll)
+
+    def set_available_tags(self, tags: list):
+        self._placeholder.setVisible(False)
+        for btn in self._tag_buttons.values():
+            btn.deleteLater()
+        self._tag_buttons.clear()
+        self._selected.clear()
+        for tag in tags:
+            btn = QPushButton(tag)
+            btn.setStyleSheet(self._unsel_qss)
+            btn.clicked.connect(lambda checked=False, t=tag: self._on_click(t))
+            self._inner_layout.insertWidget(self._inner_layout.count() - 1, btn)
+            self._tag_buttons[tag] = btn
+
+    def _on_click(self, tag: str):
+        btn = self._tag_buttons.get(tag)
+        if btn is None:
+            return
+        if tag in self._selected:
+            self._selected.remove(tag)
+            btn.setText(tag)
+            btn.setStyleSheet(self._unsel_qss)
+        else:
+            self._selected.append(tag)
+            btn.setText(f"{tag}  ×")
+            btn.setStyleSheet(self._SELECTED)
+
+    def refresh_theme(self):
+        from app.utils import theme
+        t = theme.tokens()
+        self._unsel_qss = (
+            f"QPushButton {{ background: {t['tag_unsel_bg']}; color: {t['tag_unsel_text']}; "
+            f"border-radius: 3px; padding: 3px 9px; font-size: 12px; "
+            f"border: 1px solid {t['tag_unsel_border']}; }}"
+            f"QPushButton:hover {{ background: {t['tag_unsel_hover']}; }}"
+        )
+        self._scroll.setStyleSheet(
+            f"QScrollArea {{ border: 1px solid {t['tag_scroll_border']}; border-radius: 4px; }}"
+        )
+        self._inner.setStyleSheet(f"background: {t['tag_inner_bg']};")
+        self._placeholder.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+        for tag, btn in self._tag_buttons.items():
+            if tag not in self._selected:
+                btn.setStyleSheet(self._unsel_qss)
+
+    def get_tags_string(self) -> str:
+        return "; ".join(self._selected)
+
+    def clear_selection(self):
+        for tag in list(self._selected):
+            btn = self._tag_buttons.get(tag)
+            if btn:
+                btn.setText(tag)
+                btn.setStyleSheet(self._unsel_qss)
+        self._selected.clear()
+
+
+class ImportWidget(QWidget):
+    """Tab widget for importing test cases from an Excel or CSV file."""
+
+    test_cases_queued = pyqtSignal(list)  # emits list[TestCase]
+
+    def __init__(self, app_state):
+        super().__init__()
+        self.app_state = app_state
+        self._parsed_cases = []
+        self._tags_loaded = False
+        self._build_ui()
+        self._restore_override_settings()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Template download row
+        self._tmpl_frame = QFrame()
+        self._tmpl_frame.setStyleSheet(
+            "QFrame { background: #e8f4fb; border: 1px solid #b3d9f5; border-radius: 6px; }"
+        )
+        tmpl_layout = QHBoxLayout(self._tmpl_frame)
+        tmpl_layout.setContentsMargins(16, 10, 16, 10)
+        tmpl_label = QLabel(
+            "<b>First time?</b> Download the Excel template, fill it in, then import it here."
+        )
+        tmpl_label.setWordWrap(True)
+        tmpl_layout.addWidget(tmpl_label, 1)
+        tmpl_btn = QPushButton("Download Template (.xlsx)")
+        tmpl_btn.setStyleSheet(
+            "QPushButton { background: #0078d4; color: white; border-radius: 4px; padding: 6px 14px; }"
+            "QPushButton:hover { background: #106ebe; }"
+        )
+        tmpl_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        tmpl_btn.clicked.connect(self._download_template)
+        tmpl_layout.addWidget(tmpl_btn)
+        layout.addWidget(self._tmpl_frame)
+
+        # File picker
+        file_row = QHBoxLayout()
+        self.file_label = QLabel("No file selected")
+        self.file_label.setStyleSheet("color: #666;")
+        file_row.addWidget(self.file_label, 1)
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setStyleSheet(
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
+            "border-radius: 4px; padding: 5px 14px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+        )
+        browse_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        browse_btn.clicked.connect(self._browse_file)
+        file_row.addWidget(browse_btn)
+        layout.addLayout(file_row)
+
+        # Override defaults section
+        self._override_frame = QFrame()
+        self._override_frame.setStyleSheet(
+            "QFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; }"
+        )
+        ov_outer = QVBoxLayout(self._override_frame)
+        ov_outer.setContentsMargins(16, 10, 16, 10)
+        ov_outer.setSpacing(10)
+
+        # Row 1 — Automation Status, Module, Tags
+        ov_row1 = QHBoxLayout()
+        ov_row1.setSpacing(20)
+        ov_row1.addWidget(QLabel("<b>Apply to all imported cases:</b>"))
+
+        auto_col = QVBoxLayout()
+        auto_col.setSpacing(4)
+        auto_col.addWidget(QLabel("Automation Status"))
+        self.automation_combo = QComboBox()
+        self.automation_combo.addItems(["Not Automated", "Planned"])
+        self.automation_combo.setMinimumWidth(150)
+        auto_col.addWidget(self.automation_combo)
+        ov_row1.addLayout(auto_col)
+
+        mod_col = QVBoxLayout()
+        mod_col.setSpacing(4)
+        mod_col.addWidget(QLabel("Module"))
+        self.module_edit = QLineEdit()
+        self.module_edit.setPlaceholderText("e.g. Authentication  (leave blank to use xlsx value)")
+        self.module_edit.setMinimumWidth(220)
+        mod_col.addWidget(self.module_edit)
+        ov_row1.addLayout(mod_col)
+
+        ov_row1.addStretch()
+        ov_outer.addLayout(ov_row1)
+
+        # Tags picker (full width)
+        ov_outer.addWidget(QLabel("Tags"))
+        self.tag_picker = TagPickerWidget()
+        ov_outer.addWidget(self.tag_picker)
+
+        # Row 2 — Preconditions (full width)
+        ov_row2 = QHBoxLayout()
+        ov_row2.setSpacing(12)
+        pre_lbl = QLabel("Preconditions")
+        ov_row2.addWidget(pre_lbl)
+        self.preconditions_edit = QLineEdit()
+        self.preconditions_edit.setPlaceholderText("Leave blank to skip")
+        ov_row2.addWidget(self.preconditions_edit)
+        ov_outer.addLayout(ov_row2)
+
+        layout.addWidget(self._override_frame)
+
+        # Warnings label
+        self.warnings_label = QLabel("")
+        self.warnings_label.setWordWrap(True)
+        self.warnings_label.setStyleSheet(
+            "background: #fffbe6; border: 1px solid #ffe58f; border-radius: 4px; "
+            "padding: 6px; color: #555;"
+        )
+        self.warnings_label.setVisible(False)
+        layout.addWidget(self.warnings_label)
+
+        # Preview table
+        # Col 0: ▶/▼ expand  Col 1: Name  Col 2: Steps  Col 3: Tags  Col 4: Module  Col 5: ✕
+        preview_lbl = QLabel(
+            "Preview — ▶ to expand steps, ✕ to remove before queuing:"
+        )
+        preview_lbl.setStyleSheet("font-weight: bold;")
+        layout.addWidget(preview_lbl)
+
+        self.preview_table = QTableWidget(0, 6)
+        self.preview_table.setHorizontalHeaderLabels(
+            ["", "Test Case Name", "Steps", "Tags", "Module", ""]
+        )
+        hh = self.preview_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.Fixed)
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(5, QHeaderView.Fixed)
+        self.preview_table.setColumnWidth(0, 30)
+        self.preview_table.setColumnWidth(5, 36)
+        self.preview_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.preview_table.setSelectionMode(QTableWidget.NoSelection)
+        self.preview_table.setAlternatingRowColors(True)
+        layout.addWidget(self.preview_table)
+
+        # Bottom row
+        bottom_row = QHBoxLayout()
+        bottom_row.addStretch()
+        self.count_label = QLabel("0 test cases parsed")
+        self.count_label.setStyleSheet("color: #555;")
+        bottom_row.addWidget(self.count_label)
+        bottom_row.addSpacing(16)
+
+        self.queue_btn = QPushButton("Add All to Queue")
+        self.queue_btn.setFixedHeight(34)
+        self.queue_btn.setEnabled(False)
+        self.queue_btn.setStyleSheet(
+            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
+            "font-size: 13px; padding: 0 20px; }"
+            "QPushButton:hover { background: #106ebe; }"
+            "QPushButton:disabled { background: #aaa; }"
+        )
+        self.queue_btn.clicked.connect(self._on_queue)
+        bottom_row.addWidget(self.queue_btn)
+        layout.addLayout(bottom_row)
+
+    def refresh_theme(self):
+        from app.utils import theme
+        t = theme.tokens()
+        self._tmpl_frame.setStyleSheet(
+            f"QFrame {{ background: {t['tmpl_bg']}; border: 1px solid {t['tmpl_border']}; "
+            f"border-radius: 6px; }}"
+        )
+        self.file_label.setStyleSheet(f"color: {t['file_lbl_color']};")
+        self._override_frame.setStyleSheet(
+            f"QFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; "
+            f"border-radius: 6px; }}"
+        )
+        self.warnings_label.setStyleSheet(
+            f"background: {t['warn_bg']}; border: 1px solid {t['warn_border']}; "
+            f"border-radius: 4px; padding: 6px; color: {t['text_dim']};"
+        )
+        self.count_label.setStyleSheet(f"color: {t['count_lbl_color']};")
+        self.tag_picker.refresh_theme()
+
+    def _restore_override_settings(self):
+        s = load_settings()
+        self.preconditions_edit.setText(
+            s.get("preconditions", "User is logged in as an HR Admin and clicked Definition Wizard.")
+        )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._tags_loaded:
+            self._tags_loaded = True
+            self._load_tags()
+
+    def _load_tags(self):
+        try:
+            tags_data = self.app_state.client.get_tags()
+            names = sorted({t["name"] for t in tags_data if t.get("name")})
+            self.tag_picker.set_available_tags(names)
+        except Exception:
+            pass  # tag picker keeps "Loading tags…" placeholder on failure
+
+    # ------------------------------------------------------------------ #
+    #  File handling                                                       #
+    # ------------------------------------------------------------------ #
+
+    def _download_template(self):
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Template",
+            str(Path.home() / "Downloads" / "test_cases_template.xlsx"),
+            "Excel Files (*.xlsx)",
+        )
+        if not save_path:
+            return
+        try:
+            generate_template(save_path)
+            QMessageBox.information(
+                self, "Template Saved",
+                f"Template saved to:\n{save_path}\n\n"
+                "Fill in your test cases and import the file here."
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Save Error", f"Could not save template:\n{exc}")
+
+    def _browse_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Test Cases File",
+            str(Path.home()),
+            "Spreadsheet Files (*.xlsx *.csv);;Excel Files (*.xlsx);;CSV Files (*.csv)",
+        )
+        if not path:
+            return
+        self._load_file(path)
+
+    def _load_file(self, path: str):
+        self.file_label.setText(os.path.basename(path))
+        self.warnings_label.setVisible(False)
+        self.preview_table.setRowCount(0)
+        self._parsed_cases = []
+        self.queue_btn.setEnabled(False)
+
+        try:
+            cases, warnings = parse_file(path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Error", f"Could not parse file:\n\n{exc}")
+            return
+
+        self._parsed_cases = cases
+
+        if warnings:
+            self.warnings_label.setText(
+                "Warnings during import:\n" + "\n".join(f"• {w}" for w in warnings)
+            )
+            self.warnings_label.setVisible(True)
+
+        for tc in cases:
+            self._append_summary_row(tc)
+
+        self._refresh_count()
+
+    # ------------------------------------------------------------------ #
+    #  Row building                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _append_summary_row(self, tc):
+        row = self.preview_table.rowCount()
+        self.preview_table.insertRow(row)
+
+        # Col 0 — expand toggle
+        expand_btn = QPushButton("▶")
+        expand_btn.setFixedSize(24, 22)
+        expand_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        expand_btn.setToolTip("Show / hide steps")
+        expand_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #555; border: none; font-size: 10px; }"
+            "QPushButton:hover { color: #0078d4; }"
+        )
+        expand_btn.clicked.connect(self._toggle_expand)
+        self.preview_table.setCellWidget(row, 0, expand_btn)
+
+        # Cols 1–4 — data (no UserRole = summary row)
+        self.preview_table.setItem(row, 1, QTableWidgetItem(tc.title))
+        self.preview_table.setItem(row, 2, QTableWidgetItem(str(len(tc.steps))))
+        self.preview_table.setItem(row, 3, QTableWidgetItem(tc.tags or "—"))
+        self.preview_table.setItem(row, 4, QTableWidgetItem(tc.module_value or "—"))
+
+        # Col 5 — remove button
+        remove_btn = QPushButton("✕")
+        remove_btn.setFixedSize(26, 22)
+        remove_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        remove_btn.setStyleSheet(
+            "QPushButton { background: #c42b1c; color: white; border-radius: 3px; "
+            "font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #a4261a; }"
+        )
+        remove_btn.clicked.connect(self._remove_case)
+        self.preview_table.setCellWidget(row, 5, remove_btn)
+
+    def _insert_detail_rows(self, summary_row: int, tc):
+        """Insert one step row per step immediately after summary_row."""
+        from app.utils import theme as _theme
+        _t = _theme.tokens()
+        detail_bg = QColor(_t["detail_row_bg"])
+        action_fg = QColor(_t["text"])
+        expected_fg = QColor(_t["text_dim"])
+        insert_at = summary_row + 1
+
+        for i, step in enumerate(tc.steps):
+            r = insert_at + i
+            self.preview_table.insertRow(r)
+            self.preview_table.setRowHeight(r, 22)
+
+            # Col 0 — indent spacer
+            spacer = QTableWidgetItem("")
+            spacer.setBackground(detail_bg)
+            self.preview_table.setItem(r, 0, spacer)
+
+            # Cols 1–2 merged — step action (UserRole marks this as a detail row)
+            action_item = QTableWidgetItem(f"  Step {i + 1}:  {step.action}")
+            action_item.setData(Qt.UserRole, _DETAIL)
+            action_item.setBackground(detail_bg)
+            action_item.setForeground(action_fg)
+            self.preview_table.setItem(r, 1, action_item)
+            self.preview_table.setSpan(r, 1, 1, 2)
+
+            # Cols 3–4 merged — expected result
+            exp_text = step.expected if step.expected else ""
+            exp_item = QTableWidgetItem(exp_text)
+            exp_item.setData(Qt.UserRole, _DETAIL)
+            exp_item.setBackground(detail_bg)
+            exp_item.setForeground(expected_fg)
+            self.preview_table.setItem(r, 3, exp_item)
+            self.preview_table.setSpan(r, 3, 1, 2)
+
+            # Col 5 — spacer
+            end_spacer = QTableWidgetItem("")
+            end_spacer.setBackground(detail_bg)
+            self.preview_table.setItem(r, 5, end_spacer)
+
+    def _remove_detail_rows(self, summary_row: int):
+        """Remove all consecutive detail rows that follow summary_row."""
+        while True:
+            next_row = summary_row + 1
+            if next_row >= self.preview_table.rowCount():
+                break
+            if not self._is_detail_row(next_row):
+                break
+            self.preview_table.removeRow(next_row)
+
+    # ------------------------------------------------------------------ #
+    #  Expand / collapse                                                   #
+    # ------------------------------------------------------------------ #
+
+    def _toggle_expand(self):
+        btn = self.sender()
+        summary_row = -1
+        for r in range(self.preview_table.rowCount()):
+            if self.preview_table.cellWidget(r, 0) is btn:
+                summary_row = r
+                break
+        if summary_row == -1:
+            return
+
+        next_row = summary_row + 1
+        already_expanded = (
+            next_row < self.preview_table.rowCount()
+            and self._is_detail_row(next_row)
+        )
+
+        if already_expanded:
+            self._remove_detail_rows(summary_row)
+            btn.setText("▶")
+        else:
+            tc_idx = self._tc_index_for_row(summary_row)
+            self._insert_detail_rows(summary_row, self._parsed_cases[tc_idx])
+            btn.setText("▼")
+
+    # ------------------------------------------------------------------ #
+    #  Remove case                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _remove_case(self):
+        btn = self.sender()
+        for row in range(self.preview_table.rowCount()):
+            if self.preview_table.cellWidget(row, 5) is btn:
+                # Collapse detail rows first so index arithmetic stays correct
+                self._remove_detail_rows(row)
+                tc_idx = self._tc_index_for_row(row)
+                self.preview_table.removeRow(row)
+                del self._parsed_cases[tc_idx]
+                self._refresh_count()
+                break
+
+    # ------------------------------------------------------------------ #
+    #  Helpers                                                             #
+    # ------------------------------------------------------------------ #
+
+    def _is_detail_row(self, row: int) -> bool:
+        item = self.preview_table.item(row, 1)
+        return item is not None and item.data(Qt.UserRole) == _DETAIL
+
+    def _tc_index_for_row(self, row: int) -> int:
+        """Count how many summary rows appear before this row."""
+        count = 0
+        for r in range(row):
+            if not self._is_detail_row(r):
+                count += 1
+        return count
+
+    def _refresh_count(self):
+        n = len(self._parsed_cases)
+        self.count_label.setText(f"{n} test case{'s' if n != 1 else ''} parsed")
+        self.queue_btn.setEnabled(n > 0)
+
+    # ------------------------------------------------------------------ #
+    #  Queue                                                               #
+    # ------------------------------------------------------------------ #
+
+    def _on_queue(self):
+        if not self._parsed_cases:
+            return
+
+        auto_status = self.automation_combo.currentText()
+        module_val = self.module_edit.text().strip()
+        tags_val = self.tag_picker.get_tags_string()
+        preconditions_val = self.preconditions_edit.text().strip()
+
+        save_settings({"preconditions": preconditions_val})
+
+        for tc in self._parsed_cases:
+            tc.automation_status = auto_status
+            if module_val:
+                tc.module_value = module_val
+            if tags_val:
+                tc.tags = tags_val
+            tc.preconditions = preconditions_val
+
+        self.test_cases_queued.emit(list(self._parsed_cases))
+        self.preview_table.setRowCount(0)
+        self._parsed_cases = []
+        self.file_label.setText("No file selected")
+        self.tag_picker.clear_selection()
+        self._refresh_count()
+        QMessageBox.information(
+            self,
+            "Added to Queue",
+            f"Test cases have been added to the queue.\n"
+            "Switch to the Review & Create tab to continue."
+        )
