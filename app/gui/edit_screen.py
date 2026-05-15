@@ -1,7 +1,8 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QListWidget, QListWidgetItem, QSplitter, QScrollArea, QFrame, QMessageBox
+    QListWidget, QListWidgetItem, QSplitter, QScrollArea, QFrame, QMessageBox,
+    QCheckBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QCursor
@@ -53,6 +54,17 @@ class EditScreen(QWidget):
         self._refresh_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._refresh_btn.clicked.connect(self._load_cases)
         hdr.addWidget(self._refresh_btn)
+        self._rename_btn = QPushButton("✎  Rename…")
+        self._rename_btn.setEnabled(False)
+        self._rename_btn.setStyleSheet(
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
+            "border-radius: 4px; padding: 4px 12px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { color: #aaa; }"
+        )
+        self._rename_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._rename_btn.clicked.connect(self._open_rename_dialog)
+        hdr.addWidget(self._rename_btn)
         layout.addLayout(hdr)
 
         # Splitter: left = list, right = form
@@ -63,18 +75,37 @@ class EditScreen(QWidget):
         left_v = QVBoxLayout(left)
         left_v.setContentsMargins(0, 0, 0, 0)
         left_v.setSpacing(4)
-        left_v.addWidget(QLabel("Test Cases:"))
+
+        list_hdr = QHBoxLayout()
+        list_hdr.setContentsMargins(0, 0, 0, 0)
+        list_hdr.addWidget(QLabel("Test Cases:"))
+        list_hdr.addStretch()
+        from app.utils.settings import load_settings, save_settings
+        self._mine_chk = QCheckBox("My cases only")
+        self._mine_chk.setChecked(bool(load_settings().get("mine_only_filter", False)))
+        self._mine_chk.setToolTip(
+            "When checked, only test cases you created are shown"
+        )
+        self._mine_chk.toggled.connect(self._on_mine_filter_toggled)
+        list_hdr.addWidget(self._mine_chk)
+        left_v.addLayout(list_hdr)
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("Search by ID or title…")
         self._search_edit.setClearButtonEnabled(True)
-        self._search_edit.textChanged.connect(self._filter_list)
+        self._search_edit.textChanged.connect(lambda _: self._apply_filters())
         left_v.addWidget(self._search_edit)
 
         self._list = QListWidget()
         self._list.setAlternatingRowColors(True)
-        self._list.currentRowChanged.connect(self._on_tc_selected)
+        self._list.setSelectionMode(QListWidget.ExtendedSelection)
+        self._list.itemSelectionChanged.connect(self._on_selection_changed)
         left_v.addWidget(self._list)
+
+        self._sel_count_lbl = QLabel("")
+        self._sel_count_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        left_v.addWidget(self._sel_count_lbl)
+
         splitter.addWidget(left)
 
         # -- Right: edit form (scrollable) --------------------------------
@@ -190,11 +221,16 @@ class EditScreen(QWidget):
         from app.utils import theme
         t = theme.tokens()
         self._header_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
-        self._refresh_btn.setStyleSheet(
+        header_btn_style = (
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; padding: 4px 12px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+            f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
         )
+        self._refresh_btn.setStyleSheet(header_btn_style)
+        self._rename_btn.setStyleSheet(header_btn_style)
+        self._sel_count_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+        self._mine_chk.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         self._add_step_btn.setStyleSheet(
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; padding: 3px 10px; }}"
@@ -214,12 +250,15 @@ class EditScreen(QWidget):
             f"PBI #{pbi_id}: {self.app_state.pbi_title}  —  Loading…"
         )
         self._refresh_btn.setEnabled(False)
+        self._rename_btn.setEnabled(False)
         self._search_edit.clear()
         self._list.clear()
         self._cases = []
         self._current_idx = None
         self._form.setVisible(False)
+        self._no_sel_lbl.setText("← Select a test case from the list to edit it.")
         self._no_sel_lbl.setVisible(True)
+        self._sel_count_lbl.setText("")
 
         try:
             extra = [r for r in (self.app_state.module_ref,) if r]
@@ -236,6 +275,7 @@ class EditScreen(QWidget):
                 f"PBI #{pbi_id}: {self.app_state.pbi_title}  —  "
                 f"{n} test case{'s' if n != 1 else ''} found"
             )
+            self._apply_filters()
         except Exception as exc:
             self._header_lbl.setText(
                 f"PBI #{pbi_id}: {self.app_state.pbi_title}  —  Error: {exc}"
@@ -243,20 +283,101 @@ class EditScreen(QWidget):
         finally:
             self._refresh_btn.setEnabled(True)
 
-    def _filter_list(self, query: str):
-        q = query.strip().lower()
+    def _on_mine_filter_toggled(self, checked: bool):
+        from app.utils.settings import save_settings
+        save_settings({"mine_only_filter": checked})
+        self._apply_filters()
+
+    def _apply_filters(self):
+        query = self._search_edit.text().strip().lower()
+        mine_only = self._mine_chk.isChecked()
+        current_upn = self.app_state.token_manager.get_current_upn()
+        if current_upn:
+            current_upn = current_upn.lower()
+
         for row in range(self._list.count()):
             item = self._list.item(row)
-            item.setHidden(bool(q) and q not in item.text().lower())
+            tc = self._cases[row] if row < len(self._cases) else None
+
+            by_search = bool(query) and query not in item.text().lower()
+            by_owner = mine_only and tc is not None and not self._is_mine(tc, current_upn)
+            item.setHidden(by_search or by_owner)
+
+    @staticmethod
+    def _is_mine(tc: dict, current_upn: str | None) -> bool:
+        """Return True when the test case was created by the given UPN."""
+        if not current_upn:
+            return True  # Can't determine ownership — show everything
+        created_by = tc.get("System.CreatedBy", "")
+        if isinstance(created_by, dict):
+            creator = created_by.get("uniqueName", "").lower()
+        else:
+            creator = str(created_by).lower()
+        return creator == current_upn
+
+    def _open_rename_dialog(self):
+        selected_items = self._list.selectedItems()
+        if not selected_items:
+            return
+        # Preserve the order they appear in the list
+        selected_cases = [
+            self._cases[self._list.row(item)] for item in selected_items
+        ]
+        from app.gui.rename_dialog import PowerRenameDialog
+        dlg = PowerRenameDialog(selected_cases, self.app_state.client, parent=self)
+        dlg.exec_()
+        self._refresh_list_from_cache()
+        # Keep the edit form title in sync if a single case is currently in view
+        if self._current_idx is not None and self._form.isVisible():
+            tc = self._cases[self._current_idx]
+            self._title_edit.setText(tc.get("System.Title", ""))
+
+    def _refresh_list_from_cache(self):
+        """Re-populate the list widget text from the in-memory cases cache."""
+        for row in range(self._list.count()):
+            if row < len(self._cases):
+                tc = self._cases[row]
+                tc_id = tc.get("_id", "?")
+                title = tc.get("System.Title", "(no title)")
+                self._list.item(row).setText(f"#{tc_id}  —  {title}")
 
     # ------------------------------------------------------------------ #
     #  TC selection → populate form                                        #
     # ------------------------------------------------------------------ #
 
-    def _on_tc_selected(self, row: int):
+    def _on_selection_changed(self):
+        selected = self._list.selectedItems()
+        n_sel = len(selected)
+        n_total = len(self._cases)
+
+        if n_sel == 0:
+            self._current_idx = None
+            self._form.setVisible(False)
+            self._no_sel_lbl.setText("← Select a test case from the list to edit it.")
+            self._no_sel_lbl.setVisible(True)
+            self._rename_btn.setEnabled(False)
+            self._sel_count_lbl.setText("")
+        elif n_sel == 1:
+            row = self._list.row(selected[0])
+            self._current_idx = row
+            self._populate_form(row)
+            self._form.setVisible(True)
+            self._no_sel_lbl.setVisible(False)
+            self._rename_btn.setEnabled(True)
+            self._sel_count_lbl.setText(f"1 of {n_total} selected")
+        else:
+            self._current_idx = None
+            self._form.setVisible(False)
+            self._no_sel_lbl.setText(
+                f"{n_sel} test cases selected — click  ✎ Rename…  to rename them all at once."
+            )
+            self._no_sel_lbl.setVisible(True)
+            self._rename_btn.setEnabled(True)
+            self._sel_count_lbl.setText(f"{n_sel} of {n_total} selected")
+
+    def _populate_form(self, row: int):
         if row < 0 or row >= len(self._cases):
             return
-        self._current_idx = row
         tc = self._cases[row]
 
         self._tc_id_lbl.setText(f"Work Item  #{tc.get('_id', '?')}")
@@ -277,14 +398,10 @@ class EditScreen(QWidget):
             else "Module field not configured"
         )
 
-        # Populate steps
         self._steps_tbl.setRowCount(0)
         steps = parse_steps_xml(tc.get("Microsoft.VSTS.TCM.Steps", "") or "")
         for i, step in enumerate(steps):
             self._insert_step_row(i + 1, step.action, step.expected)
-
-        self._form.setVisible(True)
-        self._no_sel_lbl.setVisible(False)
 
     # ------------------------------------------------------------------ #
     #  Steps table helpers                                                 #

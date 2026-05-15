@@ -4,7 +4,7 @@ from pathlib import Path
 _SETTINGS_PATH = Path.home() / ".devops_tc_creator" / "settings.json"
 
 # Keys that are safe to persist. The Bearer token is intentionally excluded.
-_ALLOWED_KEYS = {"org_url", "project", "preconditions", "recent_pbis", "dark_mode"}
+_ALLOWED_KEYS = {"org_url", "project", "preconditions", "recent_pbis", "dark_mode", "mine_only_filter"}
 
 
 def load_settings() -> dict:

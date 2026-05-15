@@ -43,6 +43,21 @@ class TokenManager:
             "Accept": "application/json",
         }
 
+    def get_current_upn(self) -> str | None:
+        """Extract the user's email / UPN from the JWT payload without verifying the signature."""
+        if not self._token:
+            return None
+        try:
+            import jwt
+            payload = jwt.decode(
+                self._token,
+                options={"verify_signature": False},
+                algorithms=["RS256", "HS256"],
+            )
+            return payload.get("upn") or payload.get("unique_name") or None
+        except Exception:
+            return None
+
     def get_expiry(self) -> datetime | None:
         """Decode the JWT exp claim without signature verification."""
         if not self._token:

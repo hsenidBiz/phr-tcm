@@ -55,6 +55,13 @@ class MainWindow(QMainWindow):
         if theme.is_dark():
             self._refresh_all_themes()
 
+        # Keep expiry countdown ticking on every page that shows it
+        from PyQt5.QtCore import QTimer
+        self._expiry_tick = QTimer(self)
+        self._expiry_tick.setInterval(1000)
+        self._expiry_tick.timeout.connect(self._tick_expiry)
+        self._expiry_tick.start()
+
         self.stack.setCurrentIndex(PAGE_AUTH)
 
     # ------------------------------------------------------------------ #
@@ -175,13 +182,24 @@ class MainWindow(QMainWindow):
         self._status("Connected. Configure your PBI and module field.")
 
     def _go_main(self):
+        self._refresh_main_expiry()
+        self._update_queue_label()
+        self.stack.setCurrentIndex(PAGE_MAIN)
+
+    def _refresh_main_expiry(self):
         tm = self.app_state.token_manager
         self.main_header_label.setText(
             f"{tm.org_url}/{tm.project}  |  PBI #{self.app_state.pbi_id}: "
             f"{self.app_state.pbi_title}  |  {tm.get_expiry_display()}"
         )
-        self._update_queue_label()
-        self.stack.setCurrentIndex(PAGE_MAIN)
+
+    def _tick_expiry(self):
+        """Called every second to refresh the expiry countdown on the active page."""
+        current = self.stack.currentIndex()
+        if current == PAGE_CONFIG:
+            self.config_screen.refresh_expiry()
+        elif current == PAGE_MAIN:
+            self._refresh_main_expiry()
 
     def _go_review(self):
         if not self.app_state.queue:

@@ -3,10 +3,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-
-# PyInstaller
-build/
+*.egg-info/
 dist/
+build/
 *.spec
 
 # Virtual environments
@@ -14,14 +13,19 @@ dist/
 venv/
 env/
 
-# IDE / tooling
-.claude/
-.vscode/
+# IDE / tool metadata
+.serena/
 .idea/
-*.egg-info/
+.vscode/
+*.swp
 
-# Test case writing assets (input data, not app source)
-Test Case Writing/
+# OS
+Thumbs.db
+.DS_Store
 
-# User settings (persisted at runtime, never committed)
-.devops_tc_creator/
+# App runtime data
+*.log
+
+# Claude Code / MCP tool data
+.claude/
+.playwright-mcp/

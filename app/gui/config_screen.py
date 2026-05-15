@@ -228,13 +228,31 @@ class ConfigScreen(QWidget):
 
     def on_enter(self):
         """Called when this screen becomes active."""
-        tm = self.app_state.token_manager
-        self.connected_label.setText(
-            f"Connected to: {tm.org_url}/{tm.project}  |  {tm.get_expiry_display()}"
-        )
+        self.refresh_expiry()
         self._populate_recent_pbis()
         if not self.field_combo.isEnabled():
             self._load_fields()
+
+    def refresh_expiry(self):
+        """Update the connected label with the current expiry countdown and colour."""
+        tm = self.app_state.token_manager
+        display = tm.get_expiry_display()
+        secs = tm.get_seconds_remaining()
+
+        if "EXPIRED" in display or secs == 0:
+            color = "#c00"
+        elif secs > 0 and secs < 60:
+            color = "#c00"
+        elif secs < 300:
+            color = "#e67e00"
+        else:
+            from app.utils import theme
+            color = theme.tokens()["accent"]
+
+        self.connected_label.setStyleSheet(f"color: {color};")
+        self.connected_label.setText(
+            f"Connected to: {tm.org_url}/{tm.project}  |  {display}"
+        )
 
     def _populate_recent_pbis(self):
         recent = load_settings().get("recent_pbis", [])
