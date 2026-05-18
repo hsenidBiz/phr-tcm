@@ -1,10 +1,10 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QFrame, QSizePolicy
+    QHeaderView, QMessageBox, QFrame, QSizePolicy, QAbstractItemView, QShortcut
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QCursor
+from PyQt5.QtGui import QFont, QCursor, QKeySequence
 
 from app.models.test_case import TestCase, Step
 
@@ -24,12 +24,21 @@ class ManualEntryWidget(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        # Title
+        # Title row (with Templates button)
         title_row = QHBoxLayout()
         title_row.addWidget(QLabel("Title *"))
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("e.g. Login with valid credentials")
         title_row.addWidget(self.title_edit)
+        self._tmpl_btn = QPushButton("📄 Templates…")
+        self._tmpl_btn.setStyleSheet(
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
+            "border-radius: 4px; padding: 5px 10px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+        )
+        self._tmpl_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._tmpl_btn.clicked.connect(self._open_templates)
+        title_row.addWidget(self._tmpl_btn)
         layout.addLayout(title_row)
 
         # Metadata row
@@ -47,10 +56,22 @@ class ManualEntryWidget(QWidget):
         meta_row.addSpacing(20)
 
         meta_row.addWidget(QLabel("Module"))
-        self.module_edit = QLineEdit()
-        self.module_edit.setPlaceholderText("e.g. Authentication")
+        self.module_edit = QComboBox()
+        self.module_edit.setEditable(True)
+        self.module_edit.setInsertPolicy(QComboBox.NoInsert)
+        self.module_edit.lineEdit().setPlaceholderText("e.g. Authentication")
         meta_row.addWidget(self.module_edit)
         layout.addLayout(meta_row)
+
+        # Preconditions row
+        pre_row = QHBoxLayout()
+        pre_row.addWidget(QLabel("Preconditions"))
+        self.preconditions_edit = QLineEdit()
+        self.preconditions_edit.setPlaceholderText(
+            "e.g. User is logged in as HR Admin  (leave blank to skip)"
+        )
+        pre_row.addWidget(self.preconditions_edit)
+        layout.addLayout(pre_row)
 
         # Steps table
         steps_header = QHBoxLayout()
@@ -86,6 +107,12 @@ class ManualEntryWidget(QWidget):
         self.steps_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.steps_table.verticalHeader().setDefaultSectionSize(32)
         self.steps_table.setMinimumHeight(160)
+        # Drag-and-drop row reordering
+        self.steps_table.setDragEnabled(True)
+        self.steps_table.setAcceptDrops(True)
+        self.steps_table.setDragDropMode(QAbstractItemView.InternalMove)
+        self.steps_table.setDefaultDropAction(Qt.MoveAction)
+        self.steps_table.model().rowsMoved.connect(self._renumber_steps_header)
         layout.addWidget(self.steps_table)
 
         # Add first empty row
@@ -116,6 +143,23 @@ class ManualEntryWidget(QWidget):
         bottom_row.addWidget(self.queue_btn)
         layout.addLayout(bottom_row)
 
+        # Keyboard shortcut: Ctrl+Return = Add to Queue
+        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._on_queue)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_module_combo()
+
+    def _refresh_module_combo(self):
+        vals = self.app_state.known_module_values
+        cur = self.module_edit.currentText()
+        self.module_edit.blockSignals(True)
+        self.module_edit.clear()
+        for v in vals:
+            self.module_edit.addItem(v)
+        self.module_edit.setCurrentText(cur)
+        self.module_edit.blockSignals(False)
+
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
@@ -134,18 +178,27 @@ class ManualEntryWidget(QWidget):
             f"border-radius: 4px; padding: 6px 16px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
         )
+        self._tmpl_btn.setStyleSheet(
+            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
+            f"border-radius: 4px; padding: 5px 10px; }}"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+        )
 
     def _add_step(self):
         row = self.steps_table.rowCount()
         self.steps_table.insertRow(row)
         self.steps_table.setItem(row, 0, QTableWidgetItem(""))
         self.steps_table.setItem(row, 1, QTableWidgetItem(""))
-        # Update row header to show step number
         self.steps_table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
 
     def _remove_last_step(self):
         if self.steps_table.rowCount() > 1:
             self.steps_table.removeRow(self.steps_table.rowCount() - 1)
+
+    def _renumber_steps_header(self):
+        """Renumber vertical header labels after drag-drop reorder."""
+        for r in range(self.steps_table.rowCount()):
+            self.steps_table.setVerticalHeaderItem(r, QTableWidgetItem(str(r + 1)))
 
     def _collect_steps(self) -> list:
         steps = []
@@ -177,7 +230,8 @@ class ManualEntryWidget(QWidget):
             steps=steps,
             tags=self.tags_edit.text().strip(),
             automation_status=self.status_combo.currentText(),
-            module_value=self.module_edit.text().strip(),
+            module_value=self.module_edit.currentText().strip(),
+            preconditions=self.preconditions_edit.text().strip(),
         )
         self.test_case_queued.emit(tc)
         self._clear_form()
@@ -185,7 +239,52 @@ class ManualEntryWidget(QWidget):
     def _clear_form(self):
         self.title_edit.clear()
         self.tags_edit.clear()
-        self.module_edit.clear()
+        self.module_edit.setCurrentText("")
+        self.preconditions_edit.clear()
         self.status_combo.setCurrentIndex(0)
         self.steps_table.setRowCount(0)
         self._add_step()
+
+    # ------------------------------------------------------------------ #
+    #  Templates                                                           #
+    # ------------------------------------------------------------------ #
+
+    def _open_templates(self):
+        from app.gui.template_dialog import TemplateDialog
+        state = {
+            "title": self.title_edit.text().strip(),
+            "steps": [
+                {
+                    "action": (self.steps_table.item(r, 0).text().strip()
+                               if self.steps_table.item(r, 0) else ""),
+                    "expected": (self.steps_table.item(r, 1).text().strip()
+                                 if self.steps_table.item(r, 1) else ""),
+                }
+                for r in range(self.steps_table.rowCount())
+            ],
+            "tags": self.tags_edit.text().strip(),
+            "automation_status": self.status_combo.currentText(),
+            "module_value": self.module_edit.currentText().strip(),
+            "preconditions": self.preconditions_edit.text().strip(),
+        }
+        dlg = TemplateDialog(current_form_state=state, parent=self)
+        dlg.applied.connect(self._apply_template)
+        dlg.exec_()
+
+    def _apply_template(self, tmpl: dict):
+        self.title_edit.setText(tmpl.get("title", ""))
+        self.tags_edit.setText(tmpl.get("tags", ""))
+        self.module_edit.setCurrentText(tmpl.get("module_value", ""))
+        self.preconditions_edit.setText(tmpl.get("preconditions", ""))
+        idx = self.status_combo.findText(tmpl.get("automation_status", "Not Automated"))
+        self.status_combo.setCurrentIndex(max(idx, 0))
+
+        self.steps_table.setRowCount(0)
+        for step_data in tmpl.get("steps", []):
+            row = self.steps_table.rowCount()
+            self.steps_table.insertRow(row)
+            self.steps_table.setItem(row, 0, QTableWidgetItem(step_data.get("action", "")))
+            self.steps_table.setItem(row, 1, QTableWidgetItem(step_data.get("expected", "")))
+            self.steps_table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
+        if not self.steps_table.rowCount():
+            self._add_step()

@@ -4,7 +4,8 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QFrame, QSizePolicy, QScrollArea, QComboBox, QLineEdit
+    QMessageBox, QFrame, QSizePolicy, QScrollArea, QComboBox, QLineEdit,
+    QListWidget
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QCursor
@@ -16,107 +17,174 @@ _DETAIL = "detail"   # Qt.UserRole marker for step-detail rows
 
 
 class TagPickerWidget(QWidget):
-    """Horizontally scrollable row of tag toggle buttons.
-    Selected tags turn blue and show × ; clicking again deselects."""
+    """Tag picker with inline search box and dropdown.
+    Typing in the search box filters available tags; clicking a result
+    adds it as a blue chip. Clicking × on a chip removes it."""
 
-    _SELECTED = (
+    _CHIP = (
         "QPushButton { background: #0078d4; color: white; border-radius: 3px; "
-        "padding: 3px 9px; font-size: 12px; border: none; }"
+        "padding: 2px 8px; font-size: 12px; border: none; margin: 1px; }"
         "QPushButton:hover { background: #106ebe; }"
     )
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._selected = []       # ordered list
-        self._tag_buttons = {}    # name -> QPushButton
-        # Instance-level unselected style (updated by refresh_theme)
-        self._unsel_qss = (
-            "QPushButton { background: #f0f0f0; color: #333; border-radius: 3px; "
-            "padding: 3px 9px; font-size: 12px; border: 1px solid #ccc; }"
-            "QPushButton:hover { background: #ddd; }"
+        self._available: list = []
+        self._selected: list = []
+        self._frame_qss = (
+            "#tagInputFrame { border: 1px solid #ccc; border-radius: 4px; background: white; }"
+        )
+        self._search_qss = (
+            "QLineEdit { border: none; background: transparent; font-size: 12px; }"
+        )
+        self._list_qss = (
+            "QListWidget { border: 1px solid #ccc; border-top: none; "
+            "border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; "
+            "background: white; outline: none; }"
+            "QListWidget::item { padding: 5px 8px; }"
+            "QListWidget::item:hover { background: #e8f0fe; }"
+            "QListWidget::item:selected { background: #0078d4; color: white; }"
         )
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        vlay = QVBoxLayout(self)
+        vlay.setContentsMargins(0, 0, 0, 0)
+        vlay.setSpacing(0)
 
-        self._scroll = QScrollArea()
-        self._scroll.setFixedHeight(46)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setStyleSheet("QScrollArea { border: 1px solid #ccc; border-radius: 4px; }")
+        # Input frame: selected-tag chips + search QLineEdit
+        self._input_frame = QFrame()
+        self._input_frame.setObjectName("tagInputFrame")
+        self._input_frame.setStyleSheet(self._frame_qss)
+        self._input_frame.setMinimumHeight(36)
 
-        self._inner = QWidget()
-        self._inner.setStyleSheet("background: white;")
-        self._inner_layout = QHBoxLayout(self._inner)
-        self._inner_layout.setContentsMargins(6, 5, 6, 5)
-        self._inner_layout.setSpacing(5)
+        self._chips_hbox = QHBoxLayout(self._input_frame)
+        self._chips_hbox.setContentsMargins(4, 3, 6, 3)
+        self._chips_hbox.setSpacing(4)
 
-        self._placeholder = QLabel("Loading tags…")
-        self._placeholder.setStyleSheet("color: #888; font-size: 11px;")
-        self._inner_layout.addWidget(self._placeholder)
-        self._inner_layout.addStretch()
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search tags…")
+        self._search.setStyleSheet(self._search_qss)
+        self._search.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._search.textChanged.connect(self._on_text_changed)
+        self._chips_hbox.addWidget(self._search)
 
-        self._scroll.setWidget(self._inner)
-        layout.addWidget(self._scroll)
+        vlay.addWidget(self._input_frame)
+
+        # Dropdown list — shown only when there is filtered text
+        self._dropdown = QListWidget()
+        self._dropdown.setStyleSheet(self._list_qss)
+        self._dropdown.setMaximumHeight(160)
+        self._dropdown.setVisible(False)
+        self._dropdown.setCursor(QCursor(Qt.PointingHandCursor))
+        self._dropdown.itemClicked.connect(self._on_item_clicked)
+        vlay.addWidget(self._dropdown)
 
     def set_available_tags(self, tags: list):
-        self._placeholder.setVisible(False)
-        for btn in self._tag_buttons.values():
-            btn.deleteLater()
-        self._tag_buttons.clear()
+        self._available = list(tags)
         self._selected.clear()
-        for tag in tags:
-            btn = QPushButton(tag)
-            btn.setStyleSheet(self._unsel_qss)
-            btn.clicked.connect(lambda checked=False, t=tag: self._on_click(t))
-            self._inner_layout.insertWidget(self._inner_layout.count() - 1, btn)
-            self._tag_buttons[tag] = btn
+        self._rebuild_chips()
+        self._search.clear()
+        self._dropdown.setVisible(False)
 
-    def _on_click(self, tag: str):
-        btn = self._tag_buttons.get(tag)
-        if btn is None:
+    def _rebuild_chips(self):
+        """Reconstruct chip buttons inside the input frame."""
+        while self._chips_hbox.count():
+            item = self._chips_hbox.takeAt(0)
+            w = item.widget()
+            if w is not None and w is not self._search:
+                w.deleteLater()
+        for tag in self._selected:
+            btn = QPushButton(f"{tag}  ×")
+            btn.setStyleSheet(self._CHIP)
+            btn.setCursor(QCursor(Qt.PointingHandCursor))
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            btn.clicked.connect(lambda checked=False, t=tag: self._remove_tag(t))
+            self._chips_hbox.addWidget(btn)
+        self._chips_hbox.addWidget(self._search)
+
+    def _on_text_changed(self, text: str):
+        # Semicolon-separated batch input: "Automation; Regression; 26R1;"
+        # Everything before the last semicolon is treated as a committed token.
+        if ";" in text:
+            tokens = [tok.strip() for tok in text.split(";")]
+            committed, remainder = tokens[:-1], tokens[-1]
+            avail_lower = {t.lower(): t for t in self._available}
+            changed = False
+            for tok in committed:
+                if tok and tok.lower() in avail_lower:
+                    canonical = avail_lower[tok.lower()]
+                    if canonical not in self._selected:
+                        self._selected.append(canonical)
+                        changed = True
+            if changed:
+                self._rebuild_chips()
+            # Replace the field with just the trailing fragment, without re-triggering this handler
+            self._search.blockSignals(True)
+            self._search.setText(remainder)
+            self._search.blockSignals(False)
+            text = remainder
+
+        if not text.strip():
+            self._dropdown.setVisible(False)
             return
+        ltext = text.lower()
+        matches = [t for t in self._available
+                   if ltext in t.lower() and t not in self._selected]
+        self._dropdown.clear()
+        if matches:
+            for tag in matches:
+                self._dropdown.addItem(tag)
+            self._dropdown.setVisible(True)
+        else:
+            self._dropdown.setVisible(False)
+
+    def _on_item_clicked(self, item):
+        tag = item.text()
+        if tag not in self._selected:
+            self._selected.append(tag)
+            self._rebuild_chips()
+        self._search.clear()
+        self._dropdown.setVisible(False)
+        self._search.setFocus()
+
+    def _remove_tag(self, tag: str):
         if tag in self._selected:
             self._selected.remove(tag)
-            btn.setText(tag)
-            btn.setStyleSheet(self._unsel_qss)
-        else:
-            self._selected.append(tag)
-            btn.setText(f"{tag}  ×")
-            btn.setStyleSheet(self._SELECTED)
+            self._rebuild_chips()
+            self._on_text_changed(self._search.text())
 
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
-        self._unsel_qss = (
-            f"QPushButton {{ background: {t['tag_unsel_bg']}; color: {t['tag_unsel_text']}; "
-            f"border-radius: 3px; padding: 3px 9px; font-size: 12px; "
-            f"border: 1px solid {t['tag_unsel_border']}; }}"
-            f"QPushButton:hover {{ background: {t['tag_unsel_hover']}; }}"
+        self._frame_qss = (
+            f"#tagInputFrame {{ border: 1px solid {t['border']}; border-radius: 4px; "
+            f"background: {t['tag_inner_bg']}; }}"
         )
-        self._scroll.setStyleSheet(
-            f"QScrollArea {{ border: 1px solid {t['tag_scroll_border']}; border-radius: 4px; }}"
+        self._search_qss = (
+            f"QLineEdit {{ border: none; background: transparent; "
+            f"color: {t['text']}; font-size: 12px; }}"
         )
-        self._inner.setStyleSheet(f"background: {t['tag_inner_bg']};")
-        self._placeholder.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
-        for tag, btn in self._tag_buttons.items():
-            if tag not in self._selected:
-                btn.setStyleSheet(self._unsel_qss)
+        self._list_qss = (
+            f"QListWidget {{ border: 1px solid {t['border']}; border-top: none; "
+            f"border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; "
+            f"background: {t['tag_inner_bg']}; outline: none; }}"
+            f"QListWidget::item {{ padding: 5px 8px; color: {t['text']}; }}"
+            f"QListWidget::item:hover {{ background: {t['tag_unsel_hover']}; }}"
+            f"QListWidget::item:selected {{ background: {t['accent']}; color: white; }}"
+        )
+        self._input_frame.setStyleSheet(self._frame_qss)
+        self._search.setStyleSheet(self._search_qss)
+        self._dropdown.setStyleSheet(self._list_qss)
 
     def get_tags_string(self) -> str:
         return "; ".join(self._selected)
 
     def clear_selection(self):
-        for tag in list(self._selected):
-            btn = self._tag_buttons.get(tag)
-            if btn:
-                btn.setText(tag)
-                btn.setStyleSheet(self._unsel_qss)
         self._selected.clear()
+        self._rebuild_chips()
+        self._search.clear()
+        self._dropdown.setVisible(False)
 
 
 class ImportWidget(QWidget):
@@ -139,8 +207,9 @@ class ImportWidget(QWidget):
 
         # Template download row
         self._tmpl_frame = QFrame()
+        self._tmpl_frame.setObjectName("tmplFrame")
         self._tmpl_frame.setStyleSheet(
-            "QFrame { background: #e8f4fb; border: 1px solid #b3d9f5; border-radius: 6px; }"
+            "#tmplFrame { background: #e8f4fb; border: 1px solid #b3d9f5; border-radius: 6px; }"
         )
         tmpl_layout = QHBoxLayout(self._tmpl_frame)
         tmpl_layout.setContentsMargins(16, 10, 16, 10)
@@ -177,8 +246,9 @@ class ImportWidget(QWidget):
 
         # Override defaults section
         self._override_frame = QFrame()
+        self._override_frame.setObjectName("overrideFrame")
         self._override_frame.setStyleSheet(
-            "QFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; }"
+            "#overrideFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 6px; }"
         )
         ov_outer = QVBoxLayout(self._override_frame)
         ov_outer.setContentsMargins(16, 10, 16, 10)
@@ -201,8 +271,10 @@ class ImportWidget(QWidget):
         mod_col = QVBoxLayout()
         mod_col.setSpacing(4)
         mod_col.addWidget(QLabel("Module"))
-        self.module_edit = QLineEdit()
-        self.module_edit.setPlaceholderText("e.g. Authentication  (leave blank to use xlsx value)")
+        self.module_edit = QComboBox()
+        self.module_edit.setEditable(True)
+        self.module_edit.setInsertPolicy(QComboBox.NoInsert)
+        self.module_edit.lineEdit().setPlaceholderText("e.g. Authentication  (leave blank to use xlsx value)")
         self.module_edit.setMinimumWidth(220)
         mod_col.addWidget(self.module_edit)
         ov_row1.addLayout(mod_col)
@@ -284,17 +356,29 @@ class ImportWidget(QWidget):
         bottom_row.addWidget(self.queue_btn)
         layout.addLayout(bottom_row)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_module_combo()
+
+    def _refresh_module_combo(self):
+        vals = self.app_state.known_module_values
+        cur = self.module_edit.currentText()
+        self.module_edit.blockSignals(True)
+        self.module_edit.clear()
+        for v in vals:
+            self.module_edit.addItem(v)
+        self.module_edit.setCurrentText(cur)
+        self.module_edit.blockSignals(False)
+
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
         self._tmpl_frame.setStyleSheet(
-            f"QFrame {{ background: {t['tmpl_bg']}; border: 1px solid {t['tmpl_border']}; "
-            f"border-radius: 6px; }}"
+            f"#tmplFrame {{ background: {t['tmpl_bg']}; border: 1px solid {t['tmpl_border']}; border-radius: 6px; }}"
         )
         self.file_label.setStyleSheet(f"color: {t['file_lbl_color']};")
         self._override_frame.setStyleSheet(
-            f"QFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; "
-            f"border-radius: 6px; }}"
+            f"#overrideFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 6px; }}"
         )
         self.warnings_label.setStyleSheet(
             f"background: {t['warn_bg']}; border: 1px solid {t['warn_border']}; "
@@ -347,15 +431,65 @@ class ImportWidget(QWidget):
             QMessageBox.critical(self, "Save Error", f"Could not save template:\n{exc}")
 
     def _browse_file(self):
-        path, _ = QFileDialog.getOpenFileName(
+        paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Select Test Cases File",
+            "Select Test Cases File(s)",
             str(Path.home()),
             "Spreadsheet Files (*.xlsx *.csv);;Excel Files (*.xlsx);;CSV Files (*.csv)",
         )
-        if not path:
+        if not paths:
             return
-        self._load_file(path)
+        if len(paths) == 1:
+            self._load_file(paths[0])
+        else:
+            self._load_files(paths)
+
+    def _load_files(self, paths: list):
+        self.file_label.setText("Loading…")
+        self.warnings_label.setVisible(False)
+        self.preview_table.setRowCount(0)
+        self._parsed_cases = []
+        self.queue_btn.setEnabled(False)
+
+        all_cases = []
+        all_warnings = []
+        file_names = []
+
+        for path in paths:
+            fname = os.path.basename(path)
+            try:
+                cases, warnings = parse_file(path)
+                file_names.append(fname)
+                existing_titles = {tc.title.lower() for tc in all_cases}
+                for tc in cases:
+                    if tc.title.lower() in existing_titles:
+                        original = tc.title
+                        tc.title = f"{original} ({os.path.splitext(fname)[0]})"
+                        all_warnings.append(
+                            f"Duplicate title renamed: '{original}' → '{tc.title}'"
+                        )
+                    all_cases.append(tc)
+                    existing_titles.add(tc.title.lower())
+                if warnings:
+                    all_warnings.extend(f"[{fname}] {w}" for w in warnings)
+            except Exception as exc:
+                all_warnings.append(f"[{fname}] Error: {exc}")
+
+        self._parsed_cases = all_cases
+        n_files = len(file_names)
+        n_cases = len(all_cases)
+        self.file_label.setText(f"{n_files} file{'s' if n_files != 1 else ''} — {n_cases} test case{'s' if n_cases != 1 else ''}")
+
+        if all_warnings:
+            self.warnings_label.setText(
+                "Warnings during import:\n" + "\n".join(f"• {w}" for w in all_warnings)
+            )
+            self.warnings_label.setVisible(True)
+
+        for tc in all_cases:
+            self._append_summary_row(tc)
+
+        self._refresh_count()
 
     def _load_file(self, path: str):
         self.file_label.setText(os.path.basename(path))
@@ -546,7 +680,7 @@ class ImportWidget(QWidget):
             return
 
         auto_status = self.automation_combo.currentText()
-        module_val = self.module_edit.text().strip()
+        module_val = self.module_edit.currentText().strip()
         tags_val = self.tag_picker.get_tags_string()
         preconditions_val = self.preconditions_edit.text().strip()
 

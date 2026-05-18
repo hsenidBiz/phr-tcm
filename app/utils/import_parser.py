@@ -54,6 +54,15 @@ def _parse_csv(path: Path) -> tuple:
     return _parse_rows(data_rows, list(headers))
 
 
+def _step_sort_key(item):
+    """Sort rows within a test-case group by StepNumber (int), then by file row as tiebreak."""
+    row_num, row = item
+    try:
+        return (int(row.get("StepNumber", 0) or 0), row_num)
+    except (ValueError, TypeError):
+        return (0, row_num)
+
+
 def _parse_rows(rows: list, headers: list) -> tuple:
     warnings = []
 
@@ -79,7 +88,7 @@ def _parse_rows(rows: list, headers: list) -> tuple:
 
     test_cases = []
     for name in order:
-        group = groups[name]
+        group = sorted(groups[name], key=_step_sort_key)
         first_row = group[0][1]
 
         tags = first_row.get("Tags", "").strip()
@@ -117,6 +126,101 @@ def _parse_rows(rows: list, headers: list) -> tuple:
         ))
 
     return test_cases, warnings
+
+
+def export_queue_to_excel(queue: list, path: str):
+    """Export the in-memory test case queue to an Excel file (same 7-column format as template)."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        raise ImportError("openpyxl is required. Run: pip install openpyxl")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Test Cases"
+
+    headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
+               "Tags", "AutomationStatus", "ModuleValue"]
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    for col, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for tc in queue:
+        for i, step in enumerate(tc.steps):
+            ws.append([
+                tc.title if i == 0 else "",
+                i + 1,
+                step.action,
+                step.expected,
+                tc.tags if i == 0 else "",
+                tc.automation_status if i == 0 else "",
+                tc.module_value if i == 0 else "",
+            ])
+
+    col_widths = [30, 12, 45, 45, 20, 18, 20]
+    for col, width in enumerate(col_widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
+    ws.freeze_panes = "A2"
+    wb.save(path)
+
+
+def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
+                          preconditions_ref: str | None):
+    """Export DevOps API test case dicts (from edit screen) to Excel."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        raise ImportError("openpyxl is required. Run: pip install openpyxl")
+
+    from app.utils.xml_builder import parse_steps_xml
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Test Cases"
+
+    headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
+               "Tags", "AutomationStatus", "ModuleValue"]
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    for col, h in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for tc in cases:
+        title = tc.get("System.Title", "")
+        tags = tc.get("System.Tags", "") or ""
+        auto_status = tc.get("Microsoft.VSTS.TCM.AutomationStatus", "Not Automated") or "Not Automated"
+        module_val = tc.get(module_ref, "") if module_ref else ""
+        steps = parse_steps_xml(tc.get("Microsoft.VSTS.TCM.Steps", "") or "")
+
+        if not steps:
+            ws.append([title, 1, "", "", tags, auto_status, module_val or ""])
+            continue
+
+        for i, step in enumerate(steps):
+            ws.append([
+                title if i == 0 else "",
+                i + 1,
+                step.action,
+                step.expected,
+                tags if i == 0 else "",
+                auto_status if i == 0 else "",
+                (module_val or "") if i == 0 else "",
+            ])
+
+    col_widths = [30, 12, 45, 45, 20, 18, 20]
+    for col, width in enumerate(col_widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
+    ws.freeze_panes = "A2"
+    wb.save(path)
 
 
 def generate_template(save_path: str):

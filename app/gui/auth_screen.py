@@ -4,10 +4,11 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QMessageBox, QFrame, QSizePolicy, QApplication
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QThreadPool
 from PyQt5.QtGui import QFont, QCursor
 
 from app.utils.settings import load_settings, save_settings
+from app.utils.worker import Worker
 
 
 class AuthScreen(QWidget):
@@ -47,9 +48,10 @@ class AuthScreen(QWidget):
 
         # Card frame
         self._card = QFrame()
-        self._card.setFrameShape(QFrame.StyledPanel)
+        self._card.setObjectName("authCard")
+        self._card.setFrameShape(QFrame.NoFrame)
         self._card.setStyleSheet(
-            "QFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
+            "#authCard { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
         )
         card_layout = QVBoxLayout(self._card)
         card_layout.setContentsMargins(30, 24, 30, 24)
@@ -207,29 +209,34 @@ class AuthScreen(QWidget):
 
         self.connect_btn.setEnabled(False)
         self.connect_btn.setText("Connecting…")
+        self.app_state.token_manager.set_credentials(token, org, project)
 
-        try:
-            self.app_state.token_manager.set_credentials(token, org, project)
-            project_name = self.app_state.client.validate_project()
-            self.app_state.token_manager.set_credentials(token, org, project_name)
-            save_settings({"org_url": org, "project": project_name})
-            self.connected.emit()
-        except Exception as exc:
-            QMessageBox.critical(
-                self, "Connection Failed",
-                f"Could not connect to Azure DevOps:\n\n{exc}\n\n"
-                "Check that your token is valid and the URL / project name are correct."
-            )
-        finally:
-            self.connect_btn.setEnabled(True)
-            self.connect_btn.setText("Connect")
+        worker = Worker(self.app_state.client.validate_project)
+        worker.signals.result.connect(lambda name: self._on_connected(token, org, name))
+        worker.signals.error.connect(self._on_connect_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_connected(self, token: str, org: str, project_name: str):
+        self.app_state.token_manager.set_credentials(token, org, project_name)
+        save_settings({"org_url": org, "project": project_name})
+        self.connect_btn.setEnabled(True)
+        self.connect_btn.setText("Connect")
+        self.connected.emit()
+
+    def _on_connect_error(self, exc: Exception):
+        QMessageBox.critical(
+            self, "Connection Failed",
+            f"Could not connect to Azure DevOps:\n\n{exc}\n\n"
+            "Check that your token is valid and the URL / project name are correct."
+        )
+        self.connect_btn.setEnabled(True)
+        self.connect_btn.setText("Connect")
 
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
         self._card.setStyleSheet(
-            f"QFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; "
-            f"border-radius: 8px; }}"
+            f"#authCard {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
         )
         self._subtitle.setStyleSheet(f"color: {t['text_dim']};")
         self._help_label.setStyleSheet(

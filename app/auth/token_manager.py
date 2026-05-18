@@ -8,14 +8,17 @@ class TokenManager:
         self._token: str = ""
         self._org_url: str = ""
         self._project: str = ""
+        self._payload_cache: dict | None = None
 
     def set_credentials(self, token: str, org_url: str, project: str):
         self._token = token.strip()
         self._org_url = org_url.rstrip("/")
         self._project = project.strip()
+        self._payload_cache = None
 
     def update_token(self, token: str):
         self._token = token.strip()
+        self._payload_cache = None
 
     @property
     def org_url(self) -> str:
@@ -43,10 +46,12 @@ class TokenManager:
             "Accept": "application/json",
         }
 
-    def get_current_upn(self) -> str | None:
-        """Extract the user's email / UPN from the JWT payload without verifying the signature."""
+    def _get_payload(self) -> dict | None:
+        """Decode JWT payload once and cache until the token changes."""
         if not self._token:
             return None
+        if self._payload_cache is not None:
+            return self._payload_cache
         try:
             import jwt
             payload = jwt.decode(
@@ -54,27 +59,25 @@ class TokenManager:
                 options={"verify_signature": False},
                 algorithms=["RS256", "HS256"],
             )
-            return payload.get("upn") or payload.get("unique_name") or None
+            self._payload_cache = payload
+            return payload
         except Exception:
             return None
 
+    def get_current_upn(self) -> str | None:
+        """Extract the user's email / UPN from the JWT payload without verifying the signature."""
+        payload = self._get_payload()
+        if payload is None:
+            return None
+        return payload.get("upn") or payload.get("unique_name") or None
+
     def get_expiry(self) -> datetime | None:
         """Decode the JWT exp claim without signature verification."""
-        if not self._token:
+        payload = self._get_payload()
+        if payload is None:
             return None
-        try:
-            import jwt
-            payload = jwt.decode(
-                self._token,
-                options={"verify_signature": False},
-                algorithms=["RS256", "HS256"],
-            )
-            exp = payload.get("exp")
-            if exp:
-                return datetime.fromtimestamp(exp)
-        except Exception:
-            pass
-        return None
+        exp = payload.get("exp")
+        return datetime.fromtimestamp(exp) if exp else None
 
     def get_seconds_remaining(self) -> int:
         """Returns seconds until expiry, 0 if expired, -1 if unknown."""

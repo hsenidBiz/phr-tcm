@@ -5,6 +5,7 @@ from PyQt5.QtGui import QFont
 from app.auth.token_manager import TokenManager
 from app.api.devops_client import DevOpsClient
 from app.gui.main_window import MainWindow
+from app.models.test_case import TestCase
 
 
 class AppState:
@@ -25,7 +26,10 @@ class AppState:
         self.iteration_path: str = ""
 
         # Pending test cases waiting to be created
-        self.queue: list = []
+        self.queue: list[TestCase] = []
+
+        # Module values discovered from the loaded PBI (populated by EditScreen)
+        self.known_module_values: list[str] = []
 
 
 def main():

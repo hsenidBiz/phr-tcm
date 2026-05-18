@@ -10,7 +10,7 @@ class Step:
 @dataclass
 class TestCase:
     title: str
-    steps: list = field(default_factory=list)  # list[Step]
+    steps: list[Step] = field(default_factory=list)
     tags: str = ""                              # semicolon-separated
     automation_status: str = "Not Automated"   # "Not Automated" or "Planned"
     module_value: str = ""

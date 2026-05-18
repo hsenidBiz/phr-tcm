@@ -2,10 +2,11 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QMessageBox, QFrame, QSizePolicy
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QThreadPool
 from PyQt5.QtGui import QFont, QCursor
 
 from app.utils.settings import load_settings, save_recent_pbi
+from app.utils.worker import Worker
 
 
 class ConfigScreen(QWidget):
@@ -38,9 +39,10 @@ class ConfigScreen(QWidget):
 
         # PBI section
         self._pbi_frame = QFrame()
-        self._pbi_frame.setFrameShape(QFrame.StyledPanel)
+        self._pbi_frame.setObjectName("pbiFrame")
+        self._pbi_frame.setFrameShape(QFrame.NoFrame)
         self._pbi_frame.setStyleSheet(
-            "QFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
+            "#pbiFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
         )
         pbi_layout = QVBoxLayout(self._pbi_frame)
         pbi_layout.setContentsMargins(24, 18, 24, 18)
@@ -120,9 +122,10 @@ class ConfigScreen(QWidget):
 
         # Module field section
         self._module_frame = QFrame()
-        self._module_frame.setFrameShape(QFrame.StyledPanel)
+        self._module_frame.setObjectName("moduleFrame")
+        self._module_frame.setFrameShape(QFrame.NoFrame)
         self._module_frame.setStyleSheet(
-            "QFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
+            "#moduleFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
         )
         mod_layout = QVBoxLayout(self._module_frame)
         mod_layout.setContentsMargins(24, 18, 24, 18)
@@ -204,12 +207,12 @@ class ConfigScreen(QWidget):
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
-        frame_ss = (
-            f"QFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; "
-            f"border-radius: 8px; }}"
+        self._pbi_frame.setStyleSheet(
+            f"#pbiFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
         )
-        self._pbi_frame.setStyleSheet(frame_ss)
-        self._module_frame.setStyleSheet(frame_ss)
+        self._module_frame.setStyleSheet(
+            f"#moduleFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
+        )
         self.connected_label.setStyleSheet(f"color: {t['accent']};")
         self._pbi_note.setStyleSheet(f"color: {t['text_dim']};")
         self.paths_note.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
@@ -283,85 +286,96 @@ class ConfigScreen(QWidget):
 
         self.validate_btn.setEnabled(False)
         self.validate_btn.setText("Checking…")
-        try:
-            pbi_id = int(text)
-            fields = self.app_state.client.get_work_item(pbi_id)
-            title = fields.get("System.Title", "Unknown")
-            wtype = fields.get("System.WorkItemType", "")
-            area = fields.get("System.AreaPath", "")
-            iteration = fields.get("System.IterationPath", "")
+        pbi_id = int(text)
 
-            self.app_state.pbi_id = pbi_id
-            self.app_state.pbi_title = f"{title} ({wtype})"
-            self.app_state.area_path = area
-            self.app_state.iteration_path = iteration
+        worker = Worker(self.app_state.client.get_work_item, pbi_id)
+        worker.signals.result.connect(lambda fields: self._on_pbi_result(pbi_id, fields))
+        worker.signals.error.connect(lambda exc: self._on_pbi_error(text, exc))
+        QThreadPool.globalInstance().start(worker)
 
-            self.pbi_result_label.setStyleSheet("color: #080;")
-            self.pbi_result_label.setText(f"Found: {title} ({wtype})")
+    def _on_pbi_result(self, pbi_id: int, fields: dict):
+        title = fields.get("System.Title", "Unknown")
+        wtype = fields.get("System.WorkItemType", "")
+        area = fields.get("System.AreaPath", "")
+        iteration = fields.get("System.IterationPath", "")
 
-            save_recent_pbi(pbi_id, title)
-            self._populate_recent_pbis()
+        self.app_state.pbi_id = pbi_id
+        self.app_state.pbi_title = f"{title} ({wtype})"
+        self.app_state.area_path = area
+        self.app_state.iteration_path = iteration
 
-            # Populate and reveal the Area / Iteration fields
-            self.area_edit.setText(area)
-            self.iteration_edit.setText(iteration)
-            self.paths_container.setVisible(True)
-            self.paths_note.setVisible(True)
+        self.pbi_result_label.setStyleSheet("color: #080;")
+        self.pbi_result_label.setText(f"Found: {title} ({wtype})")
 
-            self._check_ready()
-        except LookupError:
+        save_recent_pbi(pbi_id, title)
+        self._populate_recent_pbis()
+
+        self.area_edit.setText(area)
+        self.iteration_edit.setText(iteration)
+        self.paths_container.setVisible(True)
+        self.paths_note.setVisible(True)
+
+        self.validate_btn.setEnabled(True)
+        self.validate_btn.setText("Validate PBI")
+        self._check_ready()
+
+    def _on_pbi_error(self, text: str, exc: Exception):
+        if isinstance(exc, LookupError):
             self.pbi_result_label.setStyleSheet("color: #c00;")
             self.pbi_result_label.setText(
                 f"Work item #{text} not found in project '{self.app_state.token_manager.project}'. "
                 "Double-check the ID."
             )
-            self.paths_container.setVisible(False)
-            self.paths_note.setVisible(False)
-        except Exception as exc:
+        else:
             self.pbi_result_label.setStyleSheet("color: #c00;")
             self.pbi_result_label.setText(f"Error: {exc}")
-            self.paths_container.setVisible(False)
-            self.paths_note.setVisible(False)
-        finally:
-            self.validate_btn.setEnabled(True)
-            self.validate_btn.setText("Validate PBI")
+        self.paths_container.setVisible(False)
+        self.paths_note.setVisible(False)
+        self.validate_btn.setEnabled(True)
+        self.validate_btn.setText("Validate PBI")
 
     def _load_fields(self):
         self.load_fields_btn.setEnabled(False)
         self.load_fields_btn.setText("Loading…")
-        try:
-            self._fields = self.app_state.client.get_test_case_fields()
 
-            for combo in (self.field_combo, self.preconditions_combo):
-                combo.clear()
-                combo.addItem("None — skip this field", None)
-                for f in self._fields:
-                    combo.addItem(f"{f['name']}  ({f['referenceName']})", f["referenceName"])
-                combo.setEnabled(True)
+        worker = Worker(self.app_state.client.get_test_case_fields)
+        worker.signals.result.connect(self._on_fields_result)
+        worker.signals.error.connect(self._on_fields_error)
+        QThreadPool.globalInstance().start(worker)
 
-            # Auto-select Module field
-            for i in range(self.field_combo.count()):
-                if "module" in self.field_combo.itemText(i).lower():
-                    self.field_combo.setCurrentIndex(i)
-                    break
+    def _on_fields_result(self, fields: list):
+        self._fields = fields
 
-            # Auto-select Preconditions field
-            for i in range(self.preconditions_combo.count()):
-                text = self.preconditions_combo.itemText(i).lower()
-                if "prerequisite" in text or "precondition" in text:
-                    self.preconditions_combo.setCurrentIndex(i)
-                    break
+        for combo in (self.field_combo, self.preconditions_combo):
+            combo.clear()
+            combo.addItem("None — skip this field", None)
+            for f in fields:
+                combo.addItem(f"{f['name']}  ({f['referenceName']})", f["referenceName"])
+            combo.setEnabled(True)
 
-            self._check_ready()
-        except Exception as exc:
-            QMessageBox.warning(self, "Field Load Error", f"Could not load Test Case fields:\n\n{exc}")
-            for combo in (self.field_combo, self.preconditions_combo):
-                combo.clear()
-                combo.addItem("None — skip this field", None)
-                combo.setEnabled(True)
-        finally:
-            self.load_fields_btn.setEnabled(True)
-            self.load_fields_btn.setText("Reload Fields")
+        for i in range(self.field_combo.count()):
+            if "module" in self.field_combo.itemText(i).lower():
+                self.field_combo.setCurrentIndex(i)
+                break
+
+        for i in range(self.preconditions_combo.count()):
+            t = self.preconditions_combo.itemText(i).lower()
+            if "prerequisite" in t or "precondition" in t:
+                self.preconditions_combo.setCurrentIndex(i)
+                break
+
+        self.load_fields_btn.setEnabled(True)
+        self.load_fields_btn.setText("Reload Fields")
+        self._check_ready()
+
+    def _on_fields_error(self, exc: Exception):
+        QMessageBox.warning(self, "Field Load Error", f"Could not load Test Case fields:\n\n{exc}")
+        for combo in (self.field_combo, self.preconditions_combo):
+            combo.clear()
+            combo.addItem("None — skip this field", None)
+            combo.setEnabled(True)
+        self.load_fields_btn.setEnabled(True)
+        self.load_fields_btn.setText("Reload Fields")
 
     def _check_ready(self):
         pbi_ok = self.app_state.pbi_id is not None

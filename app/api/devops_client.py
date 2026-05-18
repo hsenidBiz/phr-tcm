@@ -136,10 +136,12 @@ class DevOpsClient:
 
         return sorted(fields, key=lambda x: x["name"])
 
-    def get_test_cases_for_pbi(self, pbi_id: int, extra_fields: list = None) -> list:
+    def get_test_cases_for_pbi(self, pbi_id: int, extra_fields: list = None) -> tuple:
         """
         GET all Test Case work items linked to a PBI via TestedBy relations.
-        Returns list of field dicts (each has '_id' key for the work item ID).
+        Returns (list of field dicts, total_count).
+        List is capped at 200 entries (Azure DevOps API limit).
+        Each field dict has an '_id' key for the work item ID.
         Safe — read only.
         """
         url = (
@@ -157,8 +159,9 @@ class DevOpsClient:
                 except (KeyError, ValueError):
                     pass
 
+        total = len(tc_ids)
         if not tc_ids:
-            return []
+            return [], 0
 
         base_fields = [
             "System.Id", "System.Title", "System.Tags",
@@ -182,7 +185,7 @@ class DevOpsClient:
             fields = item.get("fields", {})
             fields["_id"] = item["id"]
             result.append(fields)
-        return result
+        return result, total
 
     def update_test_case_fields(self, tc_id: int, fields: dict):
         """

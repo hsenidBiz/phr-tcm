@@ -9,6 +9,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread, QObject
 from PyQt5.QtGui import QFont, QColor, QTextCursor, QCursor
 
 from app.api.devops_client import TokenExpiredError, RateLimitError
+from app.utils.anim import Spinner
 
 
 class CreationWorker(QObject):
@@ -98,9 +99,13 @@ class TokenRefreshDialog(QDialog):
         layout.addWidget(btns)
 
     def _on_accept(self):
-        if not self.token_edit.text().strip():
+        token = self.token_edit.text().strip()
+        if not token:
             QMessageBox.warning(self, "Empty Token", "Please paste a token before clicking OK.")
             return
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+            self.token_edit.setText(token)
         self.accept()
 
     def get_token(self) -> str:
@@ -122,20 +127,33 @@ class ProgressScreen(QWidget):
         layout.setContentsMargins(40, 30, 40, 30)
         layout.setSpacing(14)
 
-        title = QLabel("Creating Test Cases…")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(10)
+        self.title_label = QLabel("Creating Test Cases…")
         font = QFont()
         font.setPointSize(16)
         font.setBold(True)
-        title.setFont(font)
-        self.title_label = title
-        layout.addWidget(title)
+        self.title_label.setFont(font)
+        title_row.addWidget(self.title_label)
+        self._spinner = Spinner(size=26)
+        self._spinner.setVisible(False)
+        title_row.addWidget(self._spinner)
+        title_row.addStretch()
+        layout.addLayout(title_row)
 
         self.status_label = QLabel("Initialising…")
         layout.addWidget(self.status_label)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
-        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet(
+            "QProgressBar { border: none; border-radius: 5px; background: #e5e5e5; "
+            "min-height: 10px; max-height: 10px; } "
+            "QProgressBar::chunk { border-radius: 5px; "
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #0078d4, stop:1 #00b0ff); }"
+        )
         layout.addWidget(self.progress_bar)
 
         # Log area
@@ -155,6 +173,21 @@ class ProgressScreen(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setFixedHeight(38)
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setStyleSheet(
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; "
+            "font-size: 13px; padding: 0 16px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { color: #aaa; }"
+        )
+        self.cancel_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.cancel_btn.clicked.connect(self._on_cancel)
+        btn_row.addWidget(self.cancel_btn)
+        btn_row.addSpacing(8)
+
         self.done_btn = QPushButton("Done — Create Another Batch")
         self.done_btn.setFixedHeight(38)
         self.done_btn.setEnabled(False)
@@ -169,7 +202,23 @@ class ProgressScreen(QWidget):
         layout.addLayout(btn_row)
 
     def refresh_theme(self):
-        pass  # terminal log stays dark in both modes; palette handles other elements
+        from app.utils import theme
+        t = theme.tokens()
+        track = "#3a3a3a" if theme.is_dark() else "#e5e5e5"
+        self.progress_bar.setStyleSheet(
+            f"QProgressBar {{ border: none; border-radius: 5px; background: {track}; "
+            f"min-height: 10px; max-height: 10px; }} "
+            f"QProgressBar::chunk {{ border-radius: 5px; "
+            f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            f"stop:0 #0078d4, stop:1 #00b0ff); }}"
+        )
+        self._spinner.set_color(t["accent"])
+        self.cancel_btn.setStyleSheet(
+            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
+            f"border-radius: 4px; font-size: 13px; padding: 0 16px; }}"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+            f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
+        )
 
     def start(self):
         """Begin the creation process. Called when this screen becomes active."""
@@ -183,6 +232,10 @@ class ProgressScreen(QWidget):
         self.result_label.setText("")
         self.done_btn.setEnabled(False)
         self.status_label.setText(f"Creating {n} test case{'s' if n != 1 else ''}…")
+        self._spinner.start()
+
+        self.cancel_btn.setEnabled(True)
+        self.cancel_btn.setText("Cancel")
 
         self._success_count = 0
         self._error_count = 0
@@ -223,6 +276,12 @@ class ProgressScreen(QWidget):
         elif status == "error":
             self._error_count += 1
 
+    def _on_cancel(self):
+        if self._worker:
+            self._worker.abort()
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setText("Cancelling…")
+
     def _on_token_needed(self):
         """Pause the worker and ask user for a fresh token."""
         dlg = TokenRefreshDialog(self)
@@ -240,6 +299,9 @@ class ProgressScreen(QWidget):
         n_err = self._error_count
         n_skip = self._total - n_ok - n_err
 
+        self._spinner.stop()
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setText("Cancel")
         self.title_label.setText("Done")
         self.progress_bar.setValue(self._total)
         self.done_btn.setEnabled(True)
@@ -258,5 +320,7 @@ class ProgressScreen(QWidget):
             f"Check Azure DevOps to verify that the test cases appear under PBI #{self.app_state.pbi_id}. "
             "Open the PBI and look for the 'Tests' / 'Tested By' links section."
         )
-        # Clear queue now that we're done
+        # Clear queue and any saved draft now that creation succeeded
         self.app_state.queue.clear()
+        from app.utils.settings import clear_draft_queue
+        clear_draft_queue()
