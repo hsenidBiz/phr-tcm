@@ -1,0 +1,362 @@
+from pathlib import Path
+
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QTreeWidget, QTreeWidgetItem, QFrame, QMessageBox, QSizePolicy,
+    QFileDialog, QShortcut
+)
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QFont, QColor, QBrush, QCursor, QKeySequence
+
+
+class ReviewScreen(QWidget):
+    confirmed = pyqtSignal()
+    back_requested = pyqtSignal()
+    queue_changed = pyqtSignal()  # emitted after any remove/reorder
+
+    def __init__(self, app_state):
+        super().__init__()
+        self.app_state = app_state
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(40, 30, 40, 30)
+        layout.setSpacing(14)
+
+        title = QLabel("Review & Confirm")
+        font = QFont()
+        font.setPointSize(16)
+        font.setBold(True)
+        title.setFont(font)
+        layout.addWidget(title)
+
+        self.summary_label = QLabel("")
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        # Warning banner
+        self._warn_frame = QFrame()
+        self._warn_frame.setObjectName("warnFrame")
+        self._warn_frame.setStyleSheet(
+            "#warnFrame { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; }"
+        )
+        warn_layout = QHBoxLayout(self._warn_frame)
+        warn_layout.setContentsMargins(14, 10, 14, 10)
+        warn_icon = QLabel("⚠️")
+        warn_icon.setStyleSheet("font-size: 20px; border: none;")
+        warn_layout.addWidget(warn_icon)
+        self.warn_text = QLabel("")
+        self.warn_text.setWordWrap(True)
+        self.warn_text.setStyleSheet(
+            "color: #856404; font-size: 13px; font-weight: bold; border: none;"
+        )
+        warn_layout.addWidget(self.warn_text, 1)
+        layout.addWidget(self._warn_frame)
+
+        # Tree view of all queued test cases
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["Test Case / Step", "Details"])
+        self.tree.setColumnWidth(0, 340)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setEditTriggers(QTreeWidget.NoEditTriggers)
+        self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        layout.addWidget(self.tree)
+
+        # Delete key shortcut on the tree
+        del_sc = QShortcut(QKeySequence(Qt.Key_Delete), self.tree)
+        del_sc.setContext(Qt.WidgetShortcut)
+        del_sc.activated.connect(self._on_remove)
+
+        # Module/config info
+        self.config_label = QLabel("")
+        self.config_label.setStyleSheet("color: #555; font-size: 11px;")
+        layout.addWidget(self.config_label)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+
+        self.back_btn = QPushButton("← Back")
+        self.back_btn.setStyleSheet(
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
+            "border-radius: 4px; padding: 7px 20px; font-size: 13px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+        )
+        self.back_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.back_btn.clicked.connect(self.back_requested)
+        btn_row.addWidget(self.back_btn)
+        btn_row.addSpacing(8)
+
+        # Up / Down / Remove buttons
+        _arrow_style = (
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
+            "border-radius: 4px; padding: 7px 12px; font-size: 13px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { color: #aaa; }"
+        )
+        self.move_up_btn = QPushButton("↑")
+        self.move_up_btn.setEnabled(False)
+        self.move_up_btn.setStyleSheet(_arrow_style)
+        self.move_up_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.move_up_btn.setToolTip("Move selected test case up")
+        self.move_up_btn.clicked.connect(self._on_move_up)
+        btn_row.addWidget(self.move_up_btn)
+
+        self.move_down_btn = QPushButton("↓")
+        self.move_down_btn.setEnabled(False)
+        self.move_down_btn.setStyleSheet(_arrow_style)
+        self.move_down_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.move_down_btn.setToolTip("Move selected test case down")
+        self.move_down_btn.clicked.connect(self._on_move_down)
+        btn_row.addWidget(self.move_down_btn)
+        btn_row.addSpacing(4)
+
+        self.remove_selected_btn = QPushButton("✕ Remove")
+        self.remove_selected_btn.setEnabled(False)
+        self.remove_selected_btn.setStyleSheet(
+            "QPushButton { background: #fde8e8; border: 1px solid #e88b8b; "
+            "border-radius: 4px; padding: 7px 14px; font-size: 13px; }"
+            "QPushButton:hover { background: #f8d0d0; }"
+            "QPushButton:disabled { color: #aaa; background: #f5f5f5; border-color: #ddd; }"
+        )
+        self.remove_selected_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.remove_selected_btn.setToolTip("Remove selected test case from queue (Delete)")
+        self.remove_selected_btn.clicked.connect(self._on_remove)
+        btn_row.addWidget(self.remove_selected_btn)
+
+        btn_row.addStretch()
+
+        self.export_queue_btn = QPushButton("Export Queue (.xlsx)")
+        self.export_queue_btn.setEnabled(False)
+        self.export_queue_btn.setStyleSheet(
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
+            "border-radius: 4px; padding: 7px 14px; font-size: 13px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+            "QPushButton:disabled { color: #aaa; }"
+        )
+        self.export_queue_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.export_queue_btn.clicked.connect(self._on_export_queue)
+        btn_row.addWidget(self.export_queue_btn)
+        btn_row.addSpacing(8)
+
+        self.create_btn = QPushButton("Create All Test Cases")
+        self.create_btn.setFixedHeight(40)
+        self.create_btn.setStyleSheet(
+            "QPushButton { background: #c42b2b; color: white; border-radius: 4px; "
+            "font-size: 14px; font-weight: bold; padding: 0 28px; }"
+            "QPushButton:hover { background: #a82020; }"
+            "QPushButton:disabled { background: #aaa; }"
+        )
+        self.create_btn.clicked.connect(self._on_create)
+        btn_row.addWidget(self.create_btn)
+        layout.addLayout(btn_row)
+
+    def refresh_theme(self):
+        from app.utils import theme
+        t = theme.tokens()
+        self._warn_frame.setStyleSheet(
+            f"#warnFrame {{ background: {t['review_warn_bg']}; "
+            f"border: 1px solid {t['review_warn_border']}; border-radius: 6px; }}"
+        )
+        self.warn_text.setStyleSheet(
+            f"color: {t['review_warn_text']}; font-size: 13px; font-weight: bold; border: none;"
+        )
+        self.config_label.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
+        _btn_style = (
+            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
+            f"border-radius: 4px; padding: 7px 20px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+        )
+        self.back_btn.setStyleSheet(_btn_style)
+        self.move_up_btn.setStyleSheet(
+            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
+            f"border-radius: 4px; padding: 7px 12px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+            f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
+        )
+        self.move_down_btn.setStyleSheet(self.move_up_btn.styleSheet())
+        self.export_queue_btn.setStyleSheet(
+            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
+            f"border-radius: 4px; padding: 7px 14px; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+            f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
+        )
+
+    def on_enter(self):
+        """Refresh display when this screen becomes active."""
+        queue = self.app_state.queue
+        n = len(queue)
+
+        self._update_summary(n)
+        module_info = (
+            f"Module field: {self.app_state.module_ref}"
+            if self.app_state.module_ref
+            else "Module field: not configured (will be skipped)"
+        )
+        self.config_label.setText(
+            f"Organisation: {self.app_state.token_manager.org_url}  |  "
+            f"Project: {self.app_state.token_manager.project}  |  {module_info}"
+        )
+        self._rebuild_tree()
+
+    # ------------------------------------------------------------------ #
+    #  Tree helpers                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _rebuild_tree(self):
+        from app.utils import theme as _theme
+        _t = _theme.tokens()
+        title_color = QColor(_t["tree_title"])
+        meta_color = QColor(_t["tree_meta"])
+
+        self.tree.clear()
+        queue = self.app_state.queue
+        for tc in queue:
+            tc_item = QTreeWidgetItem(self.tree)
+            step_summary = f"{len(tc.steps)} step{'s' if len(tc.steps) != 1 else ''}"
+            tc_item.setText(0, tc.title)
+            tc_item.setText(1, step_summary)
+            tc_item.setForeground(0, QBrush(title_color))
+
+            meta_item = QTreeWidgetItem(tc_item)
+            meta_item.setText(0, "   Metadata")
+            parts = [f"Status: {tc.automation_status}"]
+            if tc.tags:
+                parts.append(f"Tags: {tc.tags}")
+            if tc.module_value:
+                parts.append(f"Module: {tc.module_value}")
+            meta_item.setText(1, "  |  ".join(parts))
+            meta_item.setForeground(0, QBrush(meta_color))
+            meta_item.setForeground(1, QBrush(meta_color))
+
+            for i, step in enumerate(tc.steps):
+                step_item = QTreeWidgetItem(tc_item)
+                step_item.setText(
+                    0,
+                    f"   Step {i + 1}: {step.action[:60]}{'…' if len(step.action) > 60 else ''}"
+                )
+                step_item.setText(1, step.expected[:80] if step.expected else "(no expected result)")
+                step_item.setForeground(1, QBrush(meta_color))
+
+            tc_item.setExpanded(True)
+
+        n = len(queue)
+        self.create_btn.setEnabled(n > 0)
+        self.export_queue_btn.setEnabled(n > 0)
+        self._update_action_btns()
+
+    def _update_summary(self, n: int):
+        self.summary_label.setText(
+            f"You are about to create <b>{n} Test Case{'s' if n != 1 else ''}</b> "
+            f"linked to PBI <b>#{self.app_state.pbi_id}</b>: "
+            f"{self.app_state.pbi_title}"
+        )
+        self.warn_text.setText(
+            f"This will create {n} Test Case work item{'s' if n != 1 else ''} in Azure DevOps. "
+            "This action cannot be undone. Review carefully before clicking Create."
+        )
+
+    # ------------------------------------------------------------------ #
+    #  Selection & action button state                                     #
+    # ------------------------------------------------------------------ #
+
+    def _selected_root_index(self) -> int:
+        """Return the queue index of the selected top-level tree item, or -1."""
+        items = self.tree.selectedItems()
+        if not items:
+            return -1
+        item = items[0]
+        while item.parent():
+            item = item.parent()
+        root = self.tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            if root.child(i) is item:
+                return i
+        return -1
+
+    def _on_tree_selection_changed(self):
+        self._update_action_btns()
+
+    def _update_action_btns(self):
+        idx = self._selected_root_index()
+        n = len(self.app_state.queue)
+        has_sel = idx >= 0
+        self.remove_selected_btn.setEnabled(has_sel)
+        self.move_up_btn.setEnabled(has_sel and idx > 0)
+        self.move_down_btn.setEnabled(has_sel and idx < n - 1)
+
+    # ------------------------------------------------------------------ #
+    #  Remove / reorder                                                    #
+    # ------------------------------------------------------------------ #
+
+    def _on_remove(self):
+        idx = self._selected_root_index()
+        if idx < 0:
+            return
+        self.app_state.queue.pop(idx)
+        n = len(self.app_state.queue)
+        self._update_summary(n)
+        self._rebuild_tree()
+        self.queue_changed.emit()
+
+    def _on_move_up(self):
+        idx = self._selected_root_index()
+        if idx <= 0:
+            return
+        q = self.app_state.queue
+        q[idx - 1], q[idx] = q[idx], q[idx - 1]
+        self._rebuild_tree()
+        root = self.tree.invisibleRootItem()
+        if root.childCount() > idx - 1:
+            self.tree.setCurrentItem(root.child(idx - 1))
+        self.queue_changed.emit()
+
+    def _on_move_down(self):
+        idx = self._selected_root_index()
+        q = self.app_state.queue
+        if idx < 0 or idx >= len(q) - 1:
+            return
+        q[idx], q[idx + 1] = q[idx + 1], q[idx]
+        self._rebuild_tree()
+        root = self.tree.invisibleRootItem()
+        if root.childCount() > idx + 1:
+            self.tree.setCurrentItem(root.child(idx + 1))
+        self.queue_changed.emit()
+
+    # ------------------------------------------------------------------ #
+    #  Export queue                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _on_export_queue(self):
+        if not self.app_state.queue:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Queue",
+            str(Path.home() / "Downloads" / "test_cases_queue.xlsx"),
+            "Excel Files (*.xlsx)",
+        )
+        if not path:
+            return
+        try:
+            from app.utils.import_parser import export_queue_to_excel
+            export_queue_to_excel(self.app_state.queue, path)
+            QMessageBox.information(self, "Exported", f"Queue exported to:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Could not export queue:\n{exc}")
+
+    # ------------------------------------------------------------------ #
+    #  Confirm create                                                      #
+    # ------------------------------------------------------------------ #
+
+    def _on_create(self):
+        n = len(self.app_state.queue)
+        reply = QMessageBox.question(
+            self,
+            "Confirm Creation",
+            f"Create {n} Test Case{'s' if n != 1 else ''} linked to PBI "
+            f"#{self.app_state.pbi_id}?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.confirmed.emit()

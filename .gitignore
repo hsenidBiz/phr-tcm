@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / tool metadata
+.serena/
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# App runtime data
+*.log
+
+# Claude Code / MCP tool data
+.claude/
+.playwright-mcp/
