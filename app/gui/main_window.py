@@ -257,21 +257,42 @@ class MainWindow(QMainWindow):
         )
 
     def _check_duplicate_titles(self, incoming: list) -> bool:
-        """Return True if it's safe to add. Prompt user if duplicates found against loaded Edit cases."""
-        if not self.edit_widget._cases:
+        """Return True if safe to add. Warns if any title duplicates ADO cases or the current queue."""
+        # Titles already on the PBI in Azure DevOps (loaded by Edit tab)
+        ado_titles = {
+            c.get("System.Title", "").lower()
+            for c in self.edit_widget._cases
+        }
+        # Titles already sitting in the queue this session
+        queue_titles = {tc.title.lower() for tc in self.app_state.queue}
+
+        ado_dupes = [tc.title for tc in incoming if tc.title.lower() in ado_titles]
+        queue_dupes = [tc.title for tc in incoming if tc.title.lower() in queue_titles]
+
+        if not ado_dupes and not queue_dupes:
             return True
-        pbi_id = self.app_state.pbi_id
-        existing_titles = {c.get("System.Title", "").lower() for c in self.edit_widget._cases}
-        dupes = [tc.title for tc in incoming if tc.title.lower() in existing_titles]
-        if not dupes:
-            return True
-        dupe_list = "\n".join(f"  • {t}" for t in dupes[:10])
-        if len(dupes) > 10:
-            dupe_list += f"\n  … and {len(dupes) - 10} more"
+
+        def _fmt(titles: list) -> str:
+            lines = "\n".join(f"  • {t}" for t in titles[:10])
+            if len(titles) > 10:
+                lines += f"\n  … and {len(titles) - 10} more"
+            return lines
+
+        parts = []
+        if ado_dupes:
+            parts.append(
+                f"Already exist on PBI #{self.app_state.pbi_id} in Azure DevOps:\n{_fmt(ado_dupes)}"
+            )
+        if queue_dupes:
+            parts.append(
+                f"Already in your current queue:\n{_fmt(queue_dupes)}"
+            )
+
         reply = QMessageBox.question(
             self, "Duplicate Titles",
-            f"The following test case title(s) already exist on PBI #{pbi_id}:\n\n"
-            f"{dupe_list}\n\nAdd to queue anyway?",
+            "The following test case title(s) are duplicates:\n\n"
+            + "\n\n".join(parts)
+            + "\n\nAdd to queue anyway?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )

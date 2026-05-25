@@ -6,7 +6,7 @@ VALID_STATUSES = {"Not Automated", "Planned"}
 
 REQUIRED_COLUMNS = {"TestCaseName", "StepNumber", "StepAction"}
 ALL_COLUMNS = {"TestCaseName", "StepNumber", "StepAction", "StepExpected",
-               "Tags", "AutomationStatus", "ModuleValue"}
+               "Tags", "AutomationStatus", "ModuleValue", "Preconditions"}
 
 
 def parse_file(path: str) -> tuple:
@@ -94,6 +94,7 @@ def _parse_rows(rows: list, headers: list) -> tuple:
         tags = first_row.get("Tags", "").strip()
         automation_status = first_row.get("AutomationStatus", "").strip()
         module_value = first_row.get("ModuleValue", "").strip()
+        preconditions = first_row.get("Preconditions", "").strip()
 
         if not automation_status:
             automation_status = "Not Automated"
@@ -123,6 +124,7 @@ def _parse_rows(rows: list, headers: list) -> tuple:
             tags=tags,
             automation_status=automation_status,
             module_value=module_value,
+            preconditions=preconditions,
         ))
 
     return test_cases, warnings
@@ -141,7 +143,7 @@ def export_queue_to_excel(queue: list, path: str):
     ws.title = "Test Cases"
 
     headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
-               "Tags", "AutomationStatus", "ModuleValue"]
+               "Tags", "AutomationStatus", "ModuleValue", "Preconditions"]
     header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True)
     for col, h in enumerate(headers, start=1):
@@ -160,9 +162,10 @@ def export_queue_to_excel(queue: list, path: str):
                 tc.tags if i == 0 else "",
                 tc.automation_status if i == 0 else "",
                 tc.module_value if i == 0 else "",
+                tc.preconditions if i == 0 else "",
             ])
 
-    col_widths = [30, 12, 45, 45, 20, 18, 20]
+    col_widths = [30, 12, 45, 45, 20, 18, 20, 40]
     for col, width in enumerate(col_widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
     ws.freeze_panes = "A2"
@@ -185,7 +188,7 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
     ws.title = "Test Cases"
 
     headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
-               "Tags", "AutomationStatus", "ModuleValue"]
+               "Tags", "AutomationStatus", "ModuleValue", "Preconditions"]
     header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True)
     for col, h in enumerate(headers, start=1):
@@ -199,10 +202,11 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
         tags = tc.get("System.Tags", "") or ""
         auto_status = tc.get("Microsoft.VSTS.TCM.AutomationStatus", "Not Automated") or "Not Automated"
         module_val = tc.get(module_ref, "") if module_ref else ""
+        preconditions_val = tc.get(preconditions_ref, "") if preconditions_ref else ""
         steps = parse_steps_xml(tc.get("Microsoft.VSTS.TCM.Steps", "") or "")
 
         if not steps:
-            ws.append([title, 1, "", "", tags, auto_status, module_val or ""])
+            ws.append([title, 1, "", "", tags, auto_status, module_val or "", preconditions_val or ""])
             continue
 
         for i, step in enumerate(steps):
@@ -214,9 +218,10 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
                 tags if i == 0 else "",
                 auto_status if i == 0 else "",
                 (module_val or "") if i == 0 else "",
+                (preconditions_val or "") if i == 0 else "",
             ])
 
-    col_widths = [30, 12, 45, 45, 20, 18, 20]
+    col_widths = [30, 12, 45, 45, 20, 18, 20, 40]
     for col, width in enumerate(col_widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
     ws.freeze_panes = "A2"
@@ -236,7 +241,7 @@ def generate_template(save_path: str):
     ws.title = "Test Cases"
 
     headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
-               "Tags", "AutomationStatus", "ModuleValue"]
+               "Tags", "AutomationStatus", "ModuleValue", "Preconditions"]
     header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True)
 
@@ -247,16 +252,16 @@ def generate_template(save_path: str):
         cell.alignment = Alignment(horizontal="center")
 
     example_rows = [
-        ["Login as admin", 1, "Navigate to the login page", "Login page is displayed", "smoke", "Not Automated", "Authentication"],
-        ["Login as admin", 2, "Enter valid username and password", "Fields accept the input", "", "", ""],
-        ["Login as admin", 3, "Click the Login button", "User is redirected to the dashboard", "", "", ""],
-        ["Invalid login attempt", 1, "Navigate to the login page", "Login page is displayed", "regression", "Not Automated", "Authentication"],
-        ["Invalid login attempt", 2, "Enter an invalid password", "Error message is displayed", "", "", ""],
+        ["Login as admin", 1, "Navigate to the login page", "Login page is displayed", "smoke", "Not Automated", "Authentication", "User is logged out"],
+        ["Login as admin", 2, "Enter valid username and password", "Fields accept the input", "", "", "", ""],
+        ["Login as admin", 3, "Click the Login button", "User is redirected to the dashboard", "", "", "", ""],
+        ["Invalid login attempt", 1, "Navigate to the login page", "Login page is displayed", "regression", "Not Automated", "Authentication", "User is logged out"],
+        ["Invalid login attempt", 2, "Enter an invalid password", "Error message is displayed", "", "", "", ""],
     ]
     for row_data in example_rows:
         ws.append(row_data)
 
-    col_widths = [30, 12, 45, 45, 20, 18, 20]
+    col_widths = [30, 12, 45, 45, 20, 18, 20, 40]
     for col, width in enumerate(col_widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
 

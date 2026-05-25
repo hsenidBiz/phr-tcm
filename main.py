@@ -31,6 +31,10 @@ class AppState:
         # Module values discovered from the loaded PBI (populated by EditScreen)
         self.known_module_values: list[str] = []
 
+        # Team members: in-memory cache + shared in-flight fetcher (set by members_cache)
+        self.cached_team_members: list | None = None
+        self._team_members_fetcher = None  # TeamMemberFetcher | None
+
 
 def main():
     app = QApplication(sys.argv)

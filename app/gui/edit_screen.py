@@ -36,8 +36,54 @@ class EditScreen(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._refresh_assigned_to_combo()
         if self.app_state.pbi_id and self.app_state.pbi_id != self._loaded_pbi:
             self._load_cases()
+
+    def _refresh_assigned_to_combo(self):
+        from app.utils.members_cache import load_cached, TeamMemberFetcher
+        tm = self.app_state.client.tm
+
+        if self.app_state.cached_team_members is None:
+            on_disk = load_cached(tm.org_url, tm.project)
+            if on_disk is not None:
+                self.app_state.cached_team_members = on_disk
+
+        self._populate_assigned_to_combo(self.app_state.cached_team_members or [])
+
+        if self.app_state._team_members_fetcher is None:
+            fetcher = TeamMemberFetcher(self.app_state.client)
+            self.app_state._team_members_fetcher = fetcher
+            fetcher.done.connect(self._on_members_fetched)
+            fetcher.start()
+        else:
+            self.app_state._team_members_fetcher.done.connect(
+                self._populate_assigned_to_combo
+            )
+
+    def _on_members_fetched(self, members: list):
+        from app.utils.members_cache import save_to_disk
+        tm = self.app_state.client.tm
+        self.app_state.cached_team_members = members
+        self.app_state._team_members_fetcher = None
+        save_to_disk(tm.org_url, tm.project, members)
+        self._populate_assigned_to_combo(members)
+
+    def _populate_assigned_to_combo(self, members: list):
+        cur_data = self._bulk_assigned_combo.currentData()
+        self._bulk_assigned_combo.blockSignals(True)
+        self._bulk_assigned_combo.clear()
+        self._bulk_assigned_combo.addItem("No change")
+        for user in members:
+            display = user.get("displayName", user.get("uniqueName", ""))
+            unique = user.get("uniqueName", "")
+            if display and unique:
+                self._bulk_assigned_combo.addItem(display, unique)
+        if cur_data:
+            idx = self._bulk_assigned_combo.findData(cur_data)
+            if idx >= 0:
+                self._bulk_assigned_combo.setCurrentIndex(idx)
+        self._bulk_assigned_combo.blockSignals(False)
 
     # ------------------------------------------------------------------ #
     #  UI construction                                                     #
@@ -284,6 +330,13 @@ class EditScreen(QWidget):
         self._bulk_status_combo.addItems(["No change", "Not Automated", "Planned"])
         self._bulk_status_combo.currentIndexChanged.connect(self._update_bulk_save_btn)
         bfv.addWidget(self._bulk_status_combo)
+
+        bfv.addWidget(QLabel("Assigned To"))
+        self._bulk_assigned_combo = QComboBox()
+        self._bulk_assigned_combo.addItem("No change")
+        self._bulk_assigned_combo.setMinimumWidth(200)
+        self._bulk_assigned_combo.currentIndexChanged.connect(self._update_bulk_save_btn)
+        bfv.addWidget(self._bulk_assigned_combo)
 
         self._bulk_save_btn = QPushButton("Save to Cases")
         self._bulk_save_btn.setFixedHeight(36)
@@ -536,6 +589,7 @@ class EditScreen(QWidget):
             self._bulk_save_btn.setText(f"Save to {n_sel} Cases")
             self._bulk_tags_edit.clear()
             self._bulk_status_combo.setCurrentIndex(0)
+            self._bulk_assigned_combo.setCurrentIndex(0)
             self._bulk_progress_lbl.setText("")
             self._update_bulk_save_btn()
             self._rename_btn.setEnabled(True)
@@ -758,6 +812,7 @@ class EditScreen(QWidget):
         has_value = (
             bool(self._bulk_tags_edit.text().strip())
             or self._bulk_status_combo.currentIndex() != 0
+            or self._bulk_assigned_combo.currentIndex() != 0
         )
         self._bulk_save_btn.setEnabled(has_value)
 
@@ -769,6 +824,7 @@ class EditScreen(QWidget):
         tags_text = self._bulk_tags_edit.text().strip()
         tags_mode = self._bulk_tags_mode.currentText()
         new_status = self._bulk_status_combo.currentText()
+        assigned_to = self._bulk_assigned_combo.currentData()  # uniqueName or None
 
         updates = []
         for item in selected:
@@ -788,6 +844,8 @@ class EditScreen(QWidget):
                     fields["System.Tags"] = tags_text
             if new_status != "No change":
                 fields["Microsoft.VSTS.TCM.AutomationStatus"] = new_status
+            if assigned_to:
+                fields["System.AssignedTo"] = assigned_to
             if fields:
                 updates.append((tc_id, idx, fields))
 

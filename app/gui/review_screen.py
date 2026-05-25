@@ -203,6 +203,14 @@ class ReviewScreen(QWidget):
     #  Tree helpers                                                        #
     # ------------------------------------------------------------------ #
 
+    def _display_name_for(self, unique_name: str) -> str:
+        """Return the display name for a uniqueName, falling back to the uniqueName itself."""
+        members = self.app_state.cached_team_members or []
+        for m in members:
+            if m.get("uniqueName", "").lower() == unique_name.lower():
+                return m.get("displayName") or unique_name
+        return unique_name
+
     def _rebuild_tree(self):
         from app.utils import theme as _theme
         _t = _theme.tokens()
@@ -225,6 +233,10 @@ class ReviewScreen(QWidget):
                 parts.append(f"Tags: {tc.tags}")
             if tc.module_value:
                 parts.append(f"Module: {tc.module_value}")
+            if tc.created_by:
+                parts.append(f"Created By: {self._display_name_for(tc.created_by)}")
+            else:
+                parts.append("Created By: (current user)")
             meta_item.setText(1, "  |  ".join(parts))
             meta_item.setForeground(0, QBrush(meta_color))
             meta_item.setForeground(1, QBrush(meta_color))

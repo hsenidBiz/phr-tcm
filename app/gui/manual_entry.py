@@ -171,25 +171,58 @@ class ManualEntryWidget(QWidget):
         self.module_edit.blockSignals(False)
 
     def _refresh_created_by_combo(self):
-        try:
-            users = self.app_state.client.get_team_members()
-            cur = self.created_by_combo.currentText()
+        from app.utils.members_cache import load_cached, TeamMemberFetcher
+        tm = self.app_state.client.tm
+
+        # Populate immediately from in-memory cache, falling back to disk cache
+        if self.app_state.cached_team_members is None:
+            on_disk = load_cached(tm.org_url, tm.project)
+            if on_disk is not None:
+                self.app_state.cached_team_members = on_disk
+
+        if self.app_state.cached_team_members is not None:
+            self._populate_created_by_combo(self.app_state.cached_team_members)
+        else:
             self.created_by_combo.blockSignals(True)
             self.created_by_combo.clear()
-            self.created_by_combo.addItem("(Current User)")
-            for user in users:
-                display = user.get("displayName", user.get("uniqueName", ""))
-                unique = user.get("uniqueName", "")
-                if display and unique:
-                    self.created_by_combo.addItem(display, unique)
-            if cur and cur != "(Current User)":
-                idx = self.created_by_combo.findText(cur)
-                if idx >= 0:
-                    self.created_by_combo.setCurrentIndex(idx)
+            self.created_by_combo.addItem("Loading users…")
             self.created_by_combo.blockSignals(False)
-        except Exception:
-            # If fetching users fails, just keep the current user option
-            pass
+
+        # Background refresh — one in-flight fetch shared across all widgets
+        if self.app_state._team_members_fetcher is None:
+            fetcher = TeamMemberFetcher(self.app_state.client)
+            self.app_state._team_members_fetcher = fetcher
+            fetcher.done.connect(self._on_members_fetched)
+            fetcher.start()
+        else:
+            # Attach to the already-running fetch so we get the result too
+            self.app_state._team_members_fetcher.done.connect(
+                self._populate_created_by_combo
+            )
+
+    def _on_members_fetched(self, members: list):
+        from app.utils.members_cache import save_to_disk
+        tm = self.app_state.client.tm
+        self.app_state.cached_team_members = members
+        self.app_state._team_members_fetcher = None
+        save_to_disk(tm.org_url, tm.project, members)
+        self._populate_created_by_combo(members)
+
+    def _populate_created_by_combo(self, members: list):
+        cur = self.created_by_combo.currentText()
+        self.created_by_combo.blockSignals(True)
+        self.created_by_combo.clear()
+        self.created_by_combo.addItem("(Current User)")
+        for user in members:
+            display = user.get("displayName", user.get("uniqueName", ""))
+            unique = user.get("uniqueName", "")
+            if display and unique:
+                self.created_by_combo.addItem(display, unique)
+        if cur and cur not in ("(Current User)", "Loading users…"):
+            idx = self.created_by_combo.findText(cur)
+            if idx >= 0:
+                self.created_by_combo.setCurrentIndex(idx)
+        self.created_by_combo.blockSignals(False)
 
     def refresh_theme(self):
         from app.utils import theme

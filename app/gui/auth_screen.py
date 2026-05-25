@@ -219,6 +219,9 @@ class AuthScreen(QWidget):
     def _on_connected(self, token: str, org: str, project_name: str):
         self.app_state.token_manager.set_credentials(token, org, project_name)
         save_settings({"org_url": org, "project": project_name})
+        # Clear stale member cache so the new project's users are fetched fresh
+        self.app_state.cached_team_members = None
+        self.app_state._team_members_fetcher = None
         self.connect_btn.setEnabled(True)
         self.connect_btn.setText("Connect")
         self.connected.emit()
