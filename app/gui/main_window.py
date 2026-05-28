@@ -114,8 +114,8 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(
             "QTabWidget::pane { border: none; border-top: 1px solid #ddd; } "
-            "QTabBar::tab { padding: 10px 24px; min-width: 140px; border: none; "
-            "border-bottom: 2px solid transparent; color: #888; font-size: 13px; background: transparent; } "
+            "QTabBar::tab { padding: 8px 18px; min-width: 140px; border: none; "
+            "border-bottom: 2px solid transparent; color: #888; font-size: 17px; background: transparent; } "
             "QTabBar::tab:selected { color: #0078d4; font-weight: bold; border-bottom: 2px solid #0078d4; } "
             "QTabBar::tab:hover:!selected { color: #444; border-bottom: 2px solid #ccc; } "
         )
@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self.import_widget = ImportWidget(self.app_state)
         self.import_widget.test_cases_queued.connect(self._on_test_cases_queued)
         self.tabs.addTab(self.import_widget, "Import File")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.edit_widget = EditScreen(self.app_state)
         self.edit_widget.test_case_queued.connect(self._on_test_case_queued)
@@ -155,7 +156,17 @@ class MainWindow(QMainWindow):
         f_layout.addWidget(self.main_back_btn)
         f_layout.addStretch()
 
-        self.review_btn = QPushButton("Review & Create →")
+        # Import-tab widgets live in the footer so they sit level with Review & Create
+        self._import_count_label = self.import_widget.count_label
+        self._import_queue_btn = self.import_widget.queue_btn
+        f_layout.addWidget(self._import_count_label)
+        f_layout.addSpacing(12)
+        f_layout.addWidget(self._import_queue_btn)
+        f_layout.addSpacing(12)
+        self._import_count_label.setVisible(False)
+        self._import_queue_btn.setVisible(False)
+
+        self.review_btn = QPushButton("Review && Create →")
         self.review_btn.setFixedHeight(36)
         self.review_btn.setEnabled(False)
         self.review_btn.setStyleSheet(
@@ -208,6 +219,11 @@ class MainWindow(QMainWindow):
         self._update_queue_label()
         self._go_to(PAGE_MAIN)
 
+    def _on_tab_changed(self, index: int):
+        on_import = (index == 1)
+        self._import_count_label.setVisible(on_import)
+        self._import_queue_btn.setVisible(on_import)
+
     def _refresh_main_expiry(self):
         tm = self.app_state.token_manager
         self.main_header_label.setText(
@@ -215,14 +231,35 @@ class MainWindow(QMainWindow):
             f"{self.app_state.pbi_title}  |  {tm.get_expiry_display()}"
         )
 
+    def _sync_review_btn(self, n: int | None = None):
+        """Enable/disable the Review && Create button based on queue size and token state."""
+        if n is None:
+            n = len(self.app_state.queue)
+        expired = self.app_state.token_manager.is_expired()
+        self.review_btn.setEnabled(n > 0 and not expired)
+        if expired:
+            self.review_btn.setToolTip("Token has expired — re-enter your token to continue")
+        else:
+            self.review_btn.setToolTip("")
+
     def _tick_expiry(self):
         current = self.stack.currentIndex()
         if current == PAGE_CONFIG:
             self.config_screen.refresh_expiry()
         elif current == PAGE_MAIN:
             self._refresh_main_expiry()
+            self._sync_review_btn()
+        elif current == PAGE_REVIEW:
+            self.review_screen.refresh_expiry_state()
 
     def _go_review(self):
+        if self.app_state.token_manager.is_expired():
+            QMessageBox.warning(
+                self, "Token Expired",
+                "Your Bearer token has expired.\n\n"
+                "Please go back to the authentication screen and re-enter a valid token."
+            )
+            return
         if not self.app_state.queue:
             QMessageBox.information(
                 self, "Empty Queue",
@@ -306,7 +343,7 @@ class MainWindow(QMainWindow):
             f"QLabel {{ background: {color}; color: white; border-radius: 10px; "
             f"padding: 2px 12px; font-weight: bold; font-size: 11px; }}"
         )
-        self.review_btn.setEnabled(n > 0)
+        self._sync_review_btn(n)
 
     def _status(self, msg: str):
         self._status_bar.showMessage(msg, 5000)
@@ -385,9 +422,9 @@ class MainWindow(QMainWindow):
         self.main_header_label.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         self.tabs.setStyleSheet(
             f"QTabWidget::pane {{ border: none; border-top: 1px solid {t['border']}; }} "
-            f"QTabBar::tab {{ padding: 10px 24px; min-width: 140px; border: none; "
+            f"QTabBar::tab {{ padding: 8px 18px; min-width: 140px; border: none; "
             f"border-bottom: 2px solid transparent; color: {t['text_dim2']}; "
-            f"font-size: 13px; background: transparent; }} "
+            f"font-size: 17px; background: transparent; }} "
             f"QTabBar::tab:selected {{ color: {t['accent']}; font-weight: bold; "
             f"border-bottom: 2px solid {t['accent']}; }} "
             f"QTabBar::tab:hover:!selected {{ color: {t['text']}; "
@@ -398,3 +435,4 @@ class MainWindow(QMainWindow):
             f"border-radius: 4px; font-size: 13px; padding: 0 16px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
         )
+        self._import_count_label.setStyleSheet(f"color: {t['count_lbl_color']};")

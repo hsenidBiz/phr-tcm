@@ -1,9 +1,11 @@
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PyQt5.QtCore import QObject, pyqtSignal
+
+_CACHE_TTL = timedelta(hours=24)
 
 _CACHE_PATH = Path.home() / ".devops_tc_creator" / "team_members_cache.json"
 _write_lock = threading.Lock()
@@ -14,11 +16,16 @@ def _cache_key(org_url: str, project: str) -> str:
 
 
 def load_cached(org_url: str, project: str) -> list | None:
-    """Return the persisted member list for this project, or None if not cached."""
+    """Return the persisted member list for this project, or None if absent or stale (>24 h)."""
     try:
         data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
         entry = data.get(_cache_key(org_url, project))
         if entry and isinstance(entry.get("members"), list):
+            updated_at = entry.get("updated_at")
+            if updated_at:
+                age = datetime.now() - datetime.fromisoformat(updated_at)
+                if age > _CACHE_TTL:
+                    return None
             return entry["members"]
     except Exception:
         pass

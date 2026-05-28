@@ -142,7 +142,7 @@ class AuthScreen(QWidget):
 
     def _on_clipboard_changed(self):
         text = QApplication.clipboard().text().strip()
-        if self._is_jwt(text) and text != self.token_edit.text():
+        if self._is_jwt(text) and not self.token_edit.text():
             self.token_edit.setText(text)
             self._clipboard_label.setText("Token auto-filled from clipboard")
             QTimer.singleShot(4000, lambda: self._clipboard_label.setText(""))
@@ -219,7 +219,14 @@ class AuthScreen(QWidget):
     def _on_connected(self, token: str, org: str, project_name: str):
         self.app_state.token_manager.set_credentials(token, org, project_name)
         save_settings({"org_url": org, "project": project_name})
-        # Clear stale member cache so the new project's users are fetched fresh
+        # Clear stale member cache so the new project's users are fetched fresh.
+        # Disconnect any in-flight fetcher first so it won't overwrite the cleared cache.
+        fetcher = self.app_state._team_members_fetcher
+        if fetcher is not None:
+            try:
+                fetcher.done.disconnect()
+            except TypeError:
+                pass
         self.app_state.cached_team_members = None
         self.app_state._team_members_fetcher = None
         self.connect_btn.setEnabled(True)

@@ -181,6 +181,13 @@ class ReviewScreen(QWidget):
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
             f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
         )
+        self.remove_selected_btn.setStyleSheet(
+            f"QPushButton {{ background: {t['red_btn_bg']}; border: 1px solid {t['red_btn_border']}; "
+            f"border-radius: 4px; padding: 7px 14px; font-size: 13px; color: {t['text']}; }}"
+            f"QPushButton:hover {{ background: {t['red_btn_hover']}; }}"
+            f"QPushButton:disabled {{ color: {t['text_dim2']}; background: {t['surface2']}; "
+            f"border-color: {t['border']}; }}"
+        )
 
     def on_enter(self):
         """Refresh display when this screen becomes active."""
@@ -198,6 +205,22 @@ class ReviewScreen(QWidget):
             f"Project: {self.app_state.token_manager.project}  |  {module_info}"
         )
         self._rebuild_tree()
+        self.refresh_expiry_state()
+
+    def refresh_expiry_state(self):
+        """Sync the Create button and warning banner with the current token state."""
+        expired = self.app_state.token_manager.is_expired()
+        n = len(self.app_state.queue)
+        self.create_btn.setEnabled(n > 0 and not expired)
+        if expired:
+            self.warn_text.setText(
+                "Your Bearer token has expired. Go back to re-enter a valid token "
+                "before creating test cases."
+            )
+            self.create_btn.setToolTip("Token has expired — re-enter your token to continue")
+        else:
+            self._update_summary(n)
+            self.create_btn.setToolTip("")
 
     # ------------------------------------------------------------------ #
     #  Tree helpers                                                        #
@@ -253,7 +276,8 @@ class ReviewScreen(QWidget):
             tc_item.setExpanded(True)
 
         n = len(queue)
-        self.create_btn.setEnabled(n > 0)
+        expired = self.app_state.token_manager.is_expired()
+        self.create_btn.setEnabled(n > 0 and not expired)
         self.export_queue_btn.setEnabled(n > 0)
         self._update_action_btns()
 

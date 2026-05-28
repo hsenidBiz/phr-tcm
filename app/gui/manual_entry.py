@@ -195,9 +195,8 @@ class ManualEntryWidget(QWidget):
             fetcher.done.connect(self._on_members_fetched)
             fetcher.start()
         else:
-            # Attach to the already-running fetch so we get the result too
             self.app_state._team_members_fetcher.done.connect(
-                self._populate_created_by_combo
+                self._populate_created_by_combo, Qt.UniqueConnection
             )
 
     def _on_members_fetched(self, members: list):

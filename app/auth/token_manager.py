@@ -105,6 +105,13 @@ class TokenManager:
             countdown = f"{seconds}s"
         return f"Expires in {countdown}  ·  {time_str}"
 
+    def is_expired(self) -> bool:
+        """True only when a token is present and has passed its expiry time."""
+        expiry = self.get_expiry()
+        if expiry is None:
+            return False
+        return datetime.now() >= expiry
+
     def is_likely_expired(self) -> bool:
         expiry = self.get_expiry()
         if expiry is None:

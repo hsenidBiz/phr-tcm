@@ -130,27 +130,39 @@ def _parse_rows(rows: list, headers: list) -> tuple:
     return test_cases, warnings
 
 
+_EXCEL_HEADERS = [
+    "TestCaseName", "StepNumber", "StepAction", "StepExpected",
+    "Tags", "AutomationStatus", "ModuleValue", "Preconditions",
+]
+_EXCEL_COL_WIDTHS = [30, 12, 45, 45, 20, 18, 20, 40]
+
+
+def _write_excel_headers(ws) -> None:
+    """Write the standard styled header row and column widths to a worksheet."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    for col, h in enumerate(_EXCEL_HEADERS, start=1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+    for col, width in enumerate(_EXCEL_COL_WIDTHS, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
+    ws.freeze_panes = "A2"
+
+
 def export_queue_to_excel(queue: list, path: str):
-    """Export the in-memory test case queue to an Excel file (same 7-column format as template)."""
+    """Export the in-memory test case queue to an Excel file (same 8-column format as template)."""
     try:
         import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
     except ImportError:
         raise ImportError("openpyxl is required. Run: pip install openpyxl")
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Test Cases"
-
-    headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
-               "Tags", "AutomationStatus", "ModuleValue", "Preconditions"]
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-    for col, h in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
+    _write_excel_headers(ws)
 
     for tc in queue:
         for i, step in enumerate(tc.steps):
@@ -165,10 +177,6 @@ def export_queue_to_excel(queue: list, path: str):
                 tc.preconditions if i == 0 else "",
             ])
 
-    col_widths = [30, 12, 45, 45, 20, 18, 20, 40]
-    for col, width in enumerate(col_widths, start=1):
-        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
-    ws.freeze_panes = "A2"
     wb.save(path)
 
 
@@ -177,7 +185,6 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
     """Export DevOps API test case dicts (from edit screen) to Excel."""
     try:
         import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
     except ImportError:
         raise ImportError("openpyxl is required. Run: pip install openpyxl")
 
@@ -186,16 +193,7 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Test Cases"
-
-    headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
-               "Tags", "AutomationStatus", "ModuleValue", "Preconditions"]
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-    for col, h in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col, value=h)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
+    _write_excel_headers(ws)
 
     for tc in cases:
         title = tc.get("System.Title", "")
@@ -221,10 +219,6 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
                 (preconditions_val or "") if i == 0 else "",
             ])
 
-    col_widths = [30, 12, 45, 45, 20, 18, 20, 40]
-    for col, width in enumerate(col_widths, start=1):
-        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
-    ws.freeze_panes = "A2"
     wb.save(path)
 
 
@@ -232,24 +226,13 @@ def generate_template(save_path: str):
     """Write a blank Excel template to the given path."""
     try:
         import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
     except ImportError:
         raise ImportError("openpyxl is required. Run: pip install openpyxl")
 
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Test Cases"
-
-    headers = ["TestCaseName", "StepNumber", "StepAction", "StepExpected",
-               "Tags", "AutomationStatus", "ModuleValue", "Preconditions"]
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-
-    for col, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col, value=header)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
+    _write_excel_headers(ws)
 
     example_rows = [
         ["Login as admin", 1, "Navigate to the login page", "Login page is displayed", "smoke", "Not Automated", "Authentication", "User is logged out"],
@@ -261,9 +244,4 @@ def generate_template(save_path: str):
     for row_data in example_rows:
         ws.append(row_data)
 
-    col_widths = [30, 12, 45, 45, 20, 18, 20, 40]
-    for col, width in enumerate(col_widths, start=1):
-        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
-
-    ws.freeze_panes = "A2"
     wb.save(save_path)

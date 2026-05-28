@@ -1,11 +1,12 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QComboBox, QMessageBox, QFrame, QSizePolicy
+    QPushButton, QComboBox, QMenu, QWidgetAction, QDialog, QDialogButtonBox,
+    QMessageBox, QFrame, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThreadPool
 from PyQt5.QtGui import QFont, QCursor
 
-from app.utils.settings import load_settings, save_recent_pbi
+from app.utils.settings import load_settings, save_recent_pbi, remove_recent_pbi
 from app.utils.worker import Worker
 
 
@@ -35,7 +36,7 @@ class ConfigScreen(QWidget):
         self.connected_label = QLabel("")
         self.connected_label.setStyleSheet("color: #0078d4;")
         layout.addWidget(self.connected_label)
-        layout.addSpacing(24)
+        layout.addSpacing(12)
 
         # PBI section
         self._pbi_frame = QFrame()
@@ -58,11 +59,17 @@ class ConfigScreen(QWidget):
         self._pbi_note.setStyleSheet("color: #555;")
         pbi_layout.addWidget(self._pbi_note)
 
-        self.recent_pbi_combo = QComboBox()
-        self.recent_pbi_combo.addItem("No recent PBIs", None)
-        self.recent_pbi_combo.setEnabled(False)
-        self.recent_pbi_combo.activated.connect(self._on_recent_pbi_selected)
-        pbi_layout.addWidget(self.recent_pbi_combo)
+        self.recent_pbi_btn = QPushButton("No recent PBIs")
+        self.recent_pbi_btn.setEnabled(False)
+        self.recent_pbi_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.recent_pbi_btn.setStyleSheet(
+            "QPushButton { text-align: left; padding: 5px 10px; border: 1px solid #ccc; "
+            "border-radius: 4px; background: white; min-height: 28px; }"
+            "QPushButton:hover { background: #f0f0f0; }"
+            "QPushButton:disabled { color: #888; background: #f5f5f5; border-color: #ddd; }"
+        )
+        self.recent_pbi_btn.clicked.connect(self._show_recent_pbi_menu)
+        pbi_layout.addWidget(self.recent_pbi_btn)
 
         id_row = QHBoxLayout()
         self.pbi_edit = QLineEdit()
@@ -93,6 +100,10 @@ class ConfigScreen(QWidget):
         area_col.addWidget(QLabel("Area Path"))
         self.area_edit = QLineEdit()
         self.area_edit.setPlaceholderText("Inherited from PBI…")
+        self.area_edit.setReadOnly(True)
+        self.area_edit.setStyleSheet(
+            "QLineEdit { background: #f0f0f0; color: #555; border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; }"
+        )
         area_col.addWidget(self.area_edit)
         paths_grid.addLayout(area_col)
 
@@ -100,80 +111,42 @@ class ConfigScreen(QWidget):
         iter_col.addWidget(QLabel("Iteration Path"))
         self.iteration_edit = QLineEdit()
         self.iteration_edit.setPlaceholderText("Inherited from PBI…")
+        self.iteration_edit.setReadOnly(True)
+        self.iteration_edit.setStyleSheet(
+            "QLineEdit { background: #f0f0f0; color: #555; border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; }"
+        )
         iter_col.addWidget(self.iteration_edit)
         paths_grid.addLayout(iter_col)
 
         self.paths_container = QWidget()
         self.paths_container.setLayout(paths_grid)
-        self.paths_container.setVisible(False)
         pbi_layout.addWidget(self.paths_container)
 
         paths_note = QLabel(
-            "Area and Iteration are inherited from the PBI. Edit above to override for this batch."
+            "Area and Iteration paths are inherited from the PBI."
         )
         paths_note.setStyleSheet("color: #888; font-size: 11px;")
         paths_note.setWordWrap(True)
         self.paths_note = paths_note
-        self.paths_note.setVisible(False)
         pbi_layout.addWidget(self.paths_note)
 
         layout.addWidget(self._pbi_frame)
-        layout.addSpacing(18)
+        layout.addSpacing(10)
 
-        # Module field section
-        self._module_frame = QFrame()
-        self._module_frame.setObjectName("moduleFrame")
-        self._module_frame.setFrameShape(QFrame.NoFrame)
-        self._module_frame.setStyleSheet(
-            "#moduleFrame { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
-        )
-        mod_layout = QVBoxLayout(self._module_frame)
-        mod_layout.setContentsMargins(24, 18, 24, 18)
-        mod_layout.setSpacing(10)
+        # Custom Fields — built once into a dialog, opened on demand
+        self._build_custom_fields_dialog()
 
-        mod_layout.addWidget(QLabel("<b>Custom Fields</b>"))
-
-        self._mod_note = QLabel(
-            "Select which fields map to 'Module' and 'Preconditions' in your Test Case work item. "
-            "Select 'None — skip this field' for any field your organisation does not use."
-        )
-        self._mod_note.setWordWrap(True)
-        self._mod_note.setStyleSheet("color: #555;")
-        mod_layout.addWidget(self._mod_note)
-
-        fields_grid = QHBoxLayout()
-
-        module_col = QVBoxLayout()
-        module_col.addWidget(QLabel("Module Field"))
-        self.field_combo = QComboBox()
-        self.field_combo.setMinimumWidth(280)
-        self.field_combo.addItem("Loading fields…", None)
-        self.field_combo.setEnabled(False)
-        module_col.addWidget(self.field_combo)
-        fields_grid.addLayout(module_col)
-
-        pre_col = QVBoxLayout()
-        pre_col.addWidget(QLabel("Preconditions Field"))
-        self.preconditions_combo = QComboBox()
-        self.preconditions_combo.setMinimumWidth(280)
-        self.preconditions_combo.addItem("Loading fields…", None)
-        self.preconditions_combo.setEnabled(False)
-        pre_col.addWidget(self.preconditions_combo)
-        fields_grid.addLayout(pre_col)
-
-        fields_grid.addStretch()
-        mod_layout.addLayout(fields_grid)
-
-        self.load_fields_btn = QPushButton("Load Test Case Fields")
-        self.load_fields_btn.setStyleSheet(
+        cf_row = QHBoxLayout()
+        self._edit_fields_btn = QPushButton("Edit Custom Fields…")
+        self._edit_fields_btn.setStyleSheet(
             "QPushButton { background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; padding: 5px 14px; }"
             "QPushButton:hover { background: #e0e0e0; }"
         )
-        self.load_fields_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.load_fields_btn.clicked.connect(self._load_fields)
-        mod_layout.addWidget(self.load_fields_btn)
-
-        layout.addWidget(self._module_frame)
+        self._edit_fields_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._edit_fields_btn.clicked.connect(self._open_custom_fields)
+        cf_row.addWidget(self._edit_fields_btn)
+        cf_row.addStretch()
+        layout.addLayout(cf_row)
         layout.addStretch()
 
         # Button row — Back (left) | Continue (right)
@@ -204,25 +177,95 @@ class ConfigScreen(QWidget):
 
         layout.addLayout(btn_row)
 
+    def _build_custom_fields_dialog(self):
+        self._custom_fields_dlg = QDialog(self)
+        self._custom_fields_dlg.setWindowTitle("Custom Fields")
+        self._custom_fields_dlg.setMinimumWidth(540)
+
+        dlg_layout = QVBoxLayout(self._custom_fields_dlg)
+        dlg_layout.setContentsMargins(24, 20, 24, 20)
+        dlg_layout.setSpacing(12)
+
+        dlg_layout.addWidget(QLabel("<b>Custom Fields</b>"))
+
+        self._dlg_note = QLabel(
+            "Select which fields map to 'Module' and 'Preconditions' in your Test Case "
+            "work item. Select 'None — skip this field' for any field your organisation does not use."
+        )
+        self._dlg_note.setWordWrap(True)
+        self._dlg_note.setStyleSheet("color: #555;")
+        dlg_layout.addWidget(self._dlg_note)
+
+        fields_grid = QHBoxLayout()
+
+        module_col = QVBoxLayout()
+        module_col.addWidget(QLabel("Module Field"))
+        self.field_combo = QComboBox()
+        self.field_combo.setMinimumWidth(200)
+        self.field_combo.addItem("Loading fields…", None)
+        self.field_combo.setEnabled(False)
+        module_col.addWidget(self.field_combo)
+        fields_grid.addLayout(module_col)
+
+        pre_col = QVBoxLayout()
+        pre_col.addWidget(QLabel("Preconditions Field"))
+        self.preconditions_combo = QComboBox()
+        self.preconditions_combo.setMinimumWidth(200)
+        self.preconditions_combo.addItem("Loading fields…", None)
+        self.preconditions_combo.setEnabled(False)
+        pre_col.addWidget(self.preconditions_combo)
+        fields_grid.addLayout(pre_col)
+
+        fields_grid.addStretch()
+        dlg_layout.addLayout(fields_grid)
+
+        self.load_fields_btn = QPushButton("Load Test Case Fields")
+        self.load_fields_btn.setStyleSheet(
+            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; padding: 5px 14px; }"
+            "QPushButton:hover { background: #e0e0e0; }"
+        )
+        self.load_fields_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.load_fields_btn.clicked.connect(self._load_fields)
+        dlg_layout.addWidget(self.load_fields_btn)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Close)
+        btn_box.rejected.connect(self._custom_fields_dlg.close)
+        dlg_layout.addWidget(btn_box)
+
+    def _open_custom_fields(self):
+        self._custom_fields_dlg.exec_()
+
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
         self._pbi_frame.setStyleSheet(
             f"#pbiFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
         )
-        self._module_frame.setStyleSheet(
-            f"#moduleFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
-        )
         self.connected_label.setStyleSheet(f"color: {t['accent']};")
+        self.recent_pbi_btn.setStyleSheet(
+            f"QPushButton {{ text-align: left; padding: 5px 10px; "
+            f"border: 1px solid {t['btn_border']}; border-radius: 4px; "
+            f"background: {t['surface']}; min-height: 28px; color: {t['text']}; }}"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+            f"QPushButton:disabled {{ color: {t['text_dim2']}; background: {t['surface']}; "
+            f"border-color: {t['border']}; }}"
+        )
         self._pbi_note.setStyleSheet(f"color: {t['text_dim']};")
         self.paths_note.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
-        self._mod_note.setStyleSheet(f"color: {t['text_dim']};")
+        _ro_style = (
+            f"QLineEdit {{ background: {t['surface2']}; color: {t['text_dim']}; "
+            f"border: 1px solid {t['border']}; border-radius: 4px; padding: 4px 8px; }}"
+        )
+        self.area_edit.setStyleSheet(_ro_style)
+        self.iteration_edit.setStyleSheet(_ro_style)
+        self._dlg_note.setStyleSheet(f"color: {t['text_dim']};")
         btn_neutral = (
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; padding: 5px 14px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
         )
         self.load_fields_btn.setStyleSheet(btn_neutral)
+        self._edit_fields_btn.setStyleSheet(btn_neutral)
         self._back_btn.setStyleSheet(
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; font-size: 14px; padding: 0 20px; }}"
@@ -256,26 +299,85 @@ class ConfigScreen(QWidget):
         self.connected_label.setText(
             f"Connected to: {tm.org_url}/{tm.project}  |  {display}"
         )
+        self._check_ready()
 
     def _populate_recent_pbis(self):
         recent = load_settings().get("recent_pbis", [])
-        self.recent_pbi_combo.blockSignals(True)
-        self.recent_pbi_combo.clear()
         if recent:
-            self.recent_pbi_combo.addItem("— Select a recent PBI —", None)
-            for r in recent:
-                self.recent_pbi_combo.addItem(f"#{r['id']}  —  {r['title']}", r["id"])
-            self.recent_pbi_combo.setEnabled(True)
+            self.recent_pbi_btn.setText("— Select a recent PBI —  ▾")
+            self.recent_pbi_btn.setEnabled(True)
         else:
-            self.recent_pbi_combo.addItem("No recent PBIs", None)
-            self.recent_pbi_combo.setEnabled(False)
-        self.recent_pbi_combo.blockSignals(False)
+            self.recent_pbi_btn.setText("No recent PBIs")
+            self.recent_pbi_btn.setEnabled(False)
 
     def _on_recent_pbi_selected(self, index):
-        pbi_id = self.recent_pbi_combo.currentData()
-        if pbi_id is not None:
-            self.pbi_edit.setText(str(pbi_id))
-            self._validate_pbi()
+        # kept for backwards compatibility — unused; selection handled by _select_recent_pbi
+        pass
+
+    def _show_recent_pbi_menu(self):
+        recent = load_settings().get("recent_pbis", [])
+        if not recent:
+            return
+
+        self._recent_menu = QMenu(self)
+        self._recent_menu.setMinimumWidth(self.recent_pbi_btn.width())
+
+        for r in recent:
+            pbi_id = r["id"]
+            text = f"#{r['id']}  —  {r['title']}"
+
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(6, 3, 6, 3)
+            row.setSpacing(6)
+
+            select_btn = QPushButton(text)
+            select_btn.setFlat(True)
+            select_btn.setStyleSheet(
+                "QPushButton { text-align: left; border: none; background: transparent; "
+                "padding: 4px 6px; }"
+                "QPushButton:hover { background: #e8f0fb; border-radius: 3px; }"
+            )
+            select_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            select_btn.clicked.connect(
+                lambda checked=False, pid=pbi_id: self._select_recent_pbi(pid)
+            )
+            row.addWidget(select_btn, 1)
+
+            remove_btn = QPushButton("✕")
+            remove_btn.setFixedSize(22, 22)
+            remove_btn.setCursor(QCursor(Qt.PointingHandCursor))
+            remove_btn.setToolTip("Remove from recent")
+            remove_btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; color: #aaa; "
+                "font-size: 11px; font-weight: bold; border-radius: 3px; }"
+                "QPushButton:hover { color: #cc0000; background: #fee0e0; }"
+            )
+            remove_btn.clicked.connect(
+                lambda checked=False, pid=pbi_id: self._remove_recent_pbi(pid)
+            )
+            row.addWidget(remove_btn)
+
+            action = QWidgetAction(self._recent_menu)
+            action.setDefaultWidget(container)
+            self._recent_menu.addAction(action)
+
+        pos = self.recent_pbi_btn.mapToGlobal(
+            self.recent_pbi_btn.rect().bottomLeft()
+        )
+        self._recent_menu.exec_(pos)
+
+    def _select_recent_pbi(self, pbi_id: int):
+        if hasattr(self, "_recent_menu") and self._recent_menu:
+            self._recent_menu.close()
+        self.pbi_edit.setText(str(pbi_id))
+        self._validate_pbi()
+
+    def _remove_recent_pbi(self, pbi_id: int):
+        if hasattr(self, "_recent_menu") and self._recent_menu:
+            self._recent_menu.close()
+        remove_recent_pbi(pbi_id)
+        self._populate_recent_pbis()
 
     def _validate_pbi(self):
         text = self.pbi_edit.text().strip()
@@ -312,9 +414,6 @@ class ConfigScreen(QWidget):
 
         self.area_edit.setText(area)
         self.iteration_edit.setText(iteration)
-        self.paths_container.setVisible(True)
-        self.paths_note.setVisible(True)
-
         self.validate_btn.setEnabled(True)
         self.validate_btn.setText("Validate PBI")
         self._check_ready()
@@ -329,8 +428,8 @@ class ConfigScreen(QWidget):
         else:
             self.pbi_result_label.setStyleSheet("color: #c00;")
             self.pbi_result_label.setText(f"Error: {exc}")
-        self.paths_container.setVisible(False)
-        self.paths_note.setVisible(False)
+        self.area_edit.clear()
+        self.iteration_edit.clear()
         self.validate_btn.setEnabled(True)
         self.validate_btn.setText("Validate PBI")
 
@@ -377,10 +476,17 @@ class ConfigScreen(QWidget):
         self.load_fields_btn.setEnabled(True)
         self.load_fields_btn.setText("Reload Fields")
 
+
     def _check_ready(self):
         pbi_ok = self.app_state.pbi_id is not None
         # field_combo is only enabled after _load_fields succeeds
-        self.continue_btn.setEnabled(pbi_ok and self.field_combo.isEnabled())
+        token_ok = not self.app_state.token_manager.is_expired()
+        enabled = pbi_ok and self.field_combo.isEnabled() and token_ok
+        self.continue_btn.setEnabled(enabled)
+        if not token_ok:
+            self.continue_btn.setToolTip("Token has expired — re-enter your token to continue")
+        else:
+            self.continue_btn.setToolTip("")
 
     def _on_continue(self):
         self.app_state.module_ref = self.field_combo.currentData()

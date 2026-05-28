@@ -336,20 +336,18 @@ class ImportWidget(QWidget):
         hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(5, QHeaderView.Fixed)
-        self.preview_table.setColumnWidth(0, 30)
+        self.preview_table.setColumnWidth(0, 34)
         self.preview_table.setColumnWidth(5, 36)
         self.preview_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.preview_table.setSelectionMode(QTableWidget.NoSelection)
         self.preview_table.setAlternatingRowColors(True)
         layout.addWidget(self.preview_table)
 
-        # Bottom row
-        bottom_row = QHBoxLayout()
-        bottom_row.addStretch()
+        # count_label and queue_btn are created here but placed into the
+        # main window footer row by MainWindow._build_main_page so they sit
+        # level with the "Review & Create" button.
         self.count_label = QLabel("0 test cases parsed")
         self.count_label.setStyleSheet("color: #555;")
-        bottom_row.addWidget(self.count_label)
-        bottom_row.addSpacing(16)
 
         self.queue_btn = QPushButton("Add All to Queue")
         self.queue_btn.setFixedHeight(34)
@@ -361,8 +359,6 @@ class ImportWidget(QWidget):
             "QPushButton:disabled { background: #aaa; }"
         )
         self.queue_btn.clicked.connect(self._on_queue)
-        bottom_row.addWidget(self.queue_btn)
-        layout.addLayout(bottom_row)
 
     def _refresh_module_combo(self):
         vals = self.app_state.known_module_values
@@ -587,11 +583,11 @@ class ImportWidget(QWidget):
 
         # Col 0 — expand toggle
         expand_btn = QPushButton("▶")
-        expand_btn.setFixedSize(24, 22)
+        expand_btn.setFixedSize(26, 24)
         expand_btn.setCursor(QCursor(Qt.PointingHandCursor))
         expand_btn.setToolTip("Show / hide steps")
         expand_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #555; border: none; font-size: 10px; }"
+            "QPushButton { background: transparent; color: #333; border: none; font-size: 14px; font-weight: bold; }"
             "QPushButton:hover { color: #0078d4; }"
         )
         expand_btn.clicked.connect(self._toggle_expand)
@@ -613,7 +609,12 @@ class ImportWidget(QWidget):
             "QPushButton:hover { background: #a4261a; }"
         )
         remove_btn.clicked.connect(self._remove_case)
-        self.preview_table.setCellWidget(row, 5, remove_btn)
+        _rm_wrap = QWidget()
+        _rm_layout = QHBoxLayout(_rm_wrap)
+        _rm_layout.setContentsMargins(0, 0, 0, 0)
+        _rm_layout.setAlignment(Qt.AlignCenter)
+        _rm_layout.addWidget(remove_btn)
+        self.preview_table.setCellWidget(row, 5, _rm_wrap)
 
     def _insert_detail_rows(self, summary_row: int, tc):
         """Insert one step row per step immediately after summary_row."""
@@ -700,8 +701,9 @@ class ImportWidget(QWidget):
 
     def _remove_case(self):
         btn = self.sender()
+        wrapper = btn.parent()
         for row in range(self.preview_table.rowCount()):
-            if self.preview_table.cellWidget(row, 5) is btn:
+            if self.preview_table.cellWidget(row, 5) is wrapper:
                 # Collapse detail rows first so index arithmetic stays correct
                 self._remove_detail_rows(row)
                 tc_idx = self._tc_index_for_row(row)

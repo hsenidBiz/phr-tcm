@@ -58,5 +58,6 @@ def fade_in(widget: QWidget, duration: int = 180):
     anim.setStartValue(0.0)
     anim.setEndValue(1.0)
     anim.setEasingCurve(QEasingCurve.OutCubic)
+    anim.finished.connect(lambda: widget.setGraphicsEffect(None))
     anim.start(QPropertyAnimation.DeleteWhenStopped)
     return anim

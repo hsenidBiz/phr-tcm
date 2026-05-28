@@ -25,6 +25,7 @@ class EditScreen(QWidget):
         self._cases = []
         self._current_idx = None
         self._loaded_pbi = None
+        self._bulk_queue: list = []
         self._bulk_total = 0
         self._bulk_done = 0
         self._bulk_errors = []
@@ -58,7 +59,7 @@ class EditScreen(QWidget):
             fetcher.start()
         else:
             self.app_state._team_members_fetcher.done.connect(
-                self._populate_assigned_to_combo
+                self._populate_assigned_to_combo, Qt.UniqueConnection
             )
 
     def _on_members_fetched(self, members: list):
@@ -141,9 +142,10 @@ class EditScreen(QWidget):
         list_hdr.setContentsMargins(0, 0, 0, 0)
         list_hdr.addWidget(QLabel("Test Cases:"))
         list_hdr.addStretch()
-        from app.utils.settings import load_settings, save_settings
+        from app.utils.settings import load_settings
+        _s = load_settings()
         self._mine_chk = QCheckBox("My cases only")
-        self._mine_chk.setChecked(bool(load_settings().get("mine_only_filter", False)))
+        self._mine_chk.setChecked(bool(_s.get("mine_only_filter", False)))
         self._mine_chk.setToolTip("When checked, only test cases you created are shown")
         self._mine_chk.toggled.connect(self._on_mine_filter_toggled)
         list_hdr.addWidget(self._mine_chk)
@@ -162,17 +164,17 @@ class EditScreen(QWidget):
         self._status_filter = QComboBox()
         self._status_filter.addItems(["All Statuses", "Not Automated", "Planned"])
         self._status_filter.setToolTip("Filter by automation status")
-        saved_status = load_settings().get("status_filter", "All Statuses")
+        saved_status = _s.get("status_filter", "All Statuses")
         idx = self._status_filter.findText(saved_status)
         if idx >= 0:
             self._status_filter.setCurrentIndex(idx)
-        self._status_filter.currentIndexChanged.connect(lambda _: self._apply_filters())
+        self._status_filter.currentIndexChanged.connect(self._on_filter_combo_changed)
         filter_row.addWidget(self._status_filter)
 
         self._module_filter = QComboBox()
         self._module_filter.addItem("All Modules")
         self._module_filter.setToolTip("Filter by module")
-        self._module_filter.currentIndexChanged.connect(lambda _: self._apply_filters())
+        self._module_filter.currentIndexChanged.connect(self._on_filter_combo_changed)
         filter_row.addWidget(self._module_filter)
         left_v.addLayout(filter_row)
 
@@ -405,6 +407,11 @@ class EditScreen(QWidget):
         pbi_id = self.app_state.pbi_id
         if not pbi_id:
             return
+        if self.app_state.token_manager.is_expired():
+            self._header_lbl.setText(
+                "Token has expired — re-enter your token on the authentication screen to load test cases."
+            )
+            return
 
         self._header_lbl.setText(
             f"PBI #{pbi_id}: {self.app_state.pbi_title}  —  Loading…"
@@ -488,8 +495,15 @@ class EditScreen(QWidget):
         save_settings({"mine_only_filter": checked})
         self._apply_filters()
 
-    def _apply_filters(self):
+    def _on_filter_combo_changed(self):
         from app.utils.settings import save_settings
+        save_settings({
+            "status_filter": self._status_filter.currentText(),
+            "module_filter": self._module_filter.currentText(),
+        })
+        self._apply_filters()
+
+    def _apply_filters(self):
         query = self._search_edit.text().strip().lower()
         mine_only = self._mine_chk.isChecked()
         status_filter = self._status_filter.currentText()
@@ -497,8 +511,6 @@ class EditScreen(QWidget):
         current_upn = self.app_state.token_manager.get_current_upn()
         if current_upn:
             current_upn = current_upn.lower()
-
-        save_settings({"status_filter": status_filter, "module_filter": module_filter})
 
         for row in range(self._list.count()):
             item = self._list.item(row)
@@ -627,6 +639,23 @@ class EditScreen(QWidget):
     #  Steps table helpers                                                 #
     # ------------------------------------------------------------------ #
 
+    def _make_rm_wrap(self) -> QWidget:
+        rm_btn = QPushButton("✕")
+        rm_btn.setFixedSize(26, 22)
+        rm_btn.setStyleSheet(
+            "QPushButton { background: #c42b1c; color: white; border-radius: 3px; "
+            "font-size: 11px; font-weight: bold; }"
+            "QPushButton:hover { background: #a4261a; }"
+        )
+        rm_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        rm_btn.clicked.connect(self._remove_step)
+        wrap = QWidget()
+        lay = QHBoxLayout(wrap)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setAlignment(Qt.AlignCenter)
+        lay.addWidget(rm_btn)
+        return wrap
+
     def _insert_step_row(self, num: int, action: str = "", expected: str = ""):
         row = self._steps_tbl.rowCount()
         self._steps_tbl.insertRow(row)
@@ -637,17 +666,7 @@ class EditScreen(QWidget):
         self._steps_tbl.setItem(row, 0, num_item)
         self._steps_tbl.setItem(row, 1, QTableWidgetItem(action))
         self._steps_tbl.setItem(row, 2, QTableWidgetItem(expected))
-
-        rm_btn = QPushButton("✕")
-        rm_btn.setFixedSize(26, 22)
-        rm_btn.setStyleSheet(
-            "QPushButton { background: #c42b1c; color: white; border-radius: 3px; "
-            "font-size: 11px; font-weight: bold; }"
-            "QPushButton:hover { background: #a4261a; }"
-        )
-        rm_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        rm_btn.clicked.connect(self._remove_step)
-        self._steps_tbl.setCellWidget(row, 3, rm_btn)
+        self._steps_tbl.setCellWidget(row, 3, self._make_rm_wrap())
 
     def _add_step(self):
         num = self._steps_tbl.rowCount() + 1
@@ -656,8 +675,9 @@ class EditScreen(QWidget):
 
     def _remove_step(self):
         btn = self.sender()
+        wrapper = btn.parent()
         for r in range(self._steps_tbl.rowCount()):
-            if self._steps_tbl.cellWidget(r, 3) is btn:
+            if self._steps_tbl.cellWidget(r, 3) is wrapper:
                 self._steps_tbl.removeRow(r)
                 self._renumber_steps()
                 break
@@ -669,25 +689,22 @@ class EditScreen(QWidget):
                 item.setText(str(r + 1))
 
     def _on_steps_rows_moved(self):
-        """Renumber and rebuild delete buttons after drag-drop reorder."""
         self._renumber_steps()
         for r in range(self._steps_tbl.rowCount()):
-            rm_btn = QPushButton("✕")
-            rm_btn.setFixedSize(26, 22)
-            rm_btn.setStyleSheet(
-                "QPushButton { background: #c42b1c; color: white; border-radius: 3px; "
-                "font-size: 11px; font-weight: bold; }"
-                "QPushButton:hover { background: #a4261a; }"
-            )
-            rm_btn.setCursor(QCursor(Qt.PointingHandCursor))
-            rm_btn.clicked.connect(self._remove_step)
-            self._steps_tbl.setCellWidget(r, 3, rm_btn)
+            self._steps_tbl.setCellWidget(r, 3, self._make_rm_wrap())
 
     # ------------------------------------------------------------------ #
     #  Save single case                                                    #
     # ------------------------------------------------------------------ #
 
     def _save_changes(self):
+        if self.app_state.token_manager.is_expired():
+            QMessageBox.warning(
+                self, "Token Expired",
+                "Your Bearer token has expired.\n\n"
+                "Please go back to the authentication screen and re-enter a valid token."
+            )
+            return
         if self._current_idx is None:
             return
 
@@ -721,23 +738,35 @@ class EditScreen(QWidget):
 
         self._save_btn.setEnabled(False)
         self._save_btn.setText("Saving…")
-        try:
-            self.app_state.client.update_test_case_fields(tc_id, fields)
-            tc["System.Title"] = title
-            tc["System.Tags"] = fields["System.Tags"]
-            tc["Microsoft.VSTS.TCM.AutomationStatus"] = fields["Microsoft.VSTS.TCM.AutomationStatus"]
-            if self.app_state.module_ref:
-                tc[self.app_state.module_ref] = self._module_edit.currentText().strip()
-            self._list.item(self._current_idx).setText(f"#{tc_id}  —  {title}")
-            QMessageBox.information(self, "Saved", f"Test case #{tc_id} updated successfully.")
-        except Exception as exc:
-            QMessageBox.critical(
-                self, "Save Failed",
-                f"Could not update test case #{tc_id}:\n\n{exc}"
-            )
-        finally:
-            self._save_btn.setEnabled(True)
-            self._save_btn.setText("Save Changes")
+
+        worker = Worker(self.app_state.client.update_test_case_fields, tc_id, fields)
+        worker.signals.result.connect(
+            lambda _, _tc=tc, _id=tc_id, _t=title, _f=dict(fields): self._on_save_done(_tc, _id, _t, _f)
+        )
+        worker.signals.error.connect(lambda exc, _id=tc_id: self._on_save_error(_id, exc))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_save_done(self, tc: dict, tc_id, title: str, fields: dict):
+        tc["System.Title"] = title
+        tc["System.Tags"] = fields["System.Tags"]
+        tc["Microsoft.VSTS.TCM.AutomationStatus"] = fields["Microsoft.VSTS.TCM.AutomationStatus"]
+        if self.app_state.module_ref and self.app_state.module_ref in fields:
+            tc[self.app_state.module_ref] = fields[self.app_state.module_ref]
+        if self._current_idx is not None:
+            item = self._list.item(self._current_idx)
+            if item:
+                item.setText(f"#{tc_id}  —  {title}")
+        self._save_btn.setEnabled(True)
+        self._save_btn.setText("Save Changes")
+        QMessageBox.information(self, "Saved", f"Test case #{tc_id} updated successfully.")
+
+    def _on_save_error(self, tc_id, exc: Exception):
+        self._save_btn.setEnabled(True)
+        self._save_btn.setText("Save Changes")
+        QMessageBox.critical(
+            self, "Save Failed",
+            f"Could not update test case #{tc_id}:\n\n{exc}"
+        )
 
     # ------------------------------------------------------------------ #
     #  Clone to queue                                                      #
@@ -817,6 +846,13 @@ class EditScreen(QWidget):
         self._bulk_save_btn.setEnabled(has_value)
 
     def _on_bulk_save(self):
+        if self.app_state.token_manager.is_expired():
+            QMessageBox.warning(
+                self, "Token Expired",
+                "Your Bearer token has expired.\n\n"
+                "Please go back to the authentication screen and re-enter a valid token."
+            )
+            return
         selected = self._list.selectedItems()
         if not selected:
             return
@@ -852,36 +888,40 @@ class EditScreen(QWidget):
         if not updates:
             return
 
+        self._bulk_queue = list(updates)
         self._bulk_total = len(updates)
         self._bulk_done = 0
         self._bulk_errors = []
         self._bulk_save_btn.setEnabled(False)
         self._bulk_progress_lbl.setText(f"Saving 0 / {self._bulk_total}…")
+        self._process_next_bulk()
 
-        for tc_id, idx, fields in updates:
-            worker = Worker(self.app_state.client.update_test_case_fields, tc_id, fields)
-            worker.signals.result.connect(
-                lambda _, i=idx, f=dict(fields): self._on_bulk_item_done(i, f)
-            )
-            worker.signals.error.connect(
-                lambda exc, i=idx: self._on_bulk_item_error(i, exc)
-            )
-            QThreadPool.globalInstance().start(worker)
+    def _process_next_bulk(self):
+        if not self._bulk_queue:
+            self._on_bulk_complete()
+            return
+        tc_id, idx, fields = self._bulk_queue.pop(0)
+        worker = Worker(self.app_state.client.update_test_case_fields, tc_id, fields)
+        worker.signals.result.connect(
+            lambda _, i=idx, f=dict(fields): self._on_bulk_item_done(i, f)
+        )
+        worker.signals.error.connect(
+            lambda exc, i=idx: self._on_bulk_item_error(i, exc)
+        )
+        QThreadPool.globalInstance().start(worker)
 
     def _on_bulk_item_done(self, idx: int, fields: dict):
         self._bulk_done += 1
         if idx < len(self._cases):
             self._cases[idx].update(fields)
         self._bulk_progress_lbl.setText(f"Saved {self._bulk_done} / {self._bulk_total}…")
-        if self._bulk_done >= self._bulk_total:
-            self._on_bulk_complete()
+        self._process_next_bulk()
 
     def _on_bulk_item_error(self, idx: int, exc: Exception):
         self._bulk_done += 1
         self._bulk_errors.append(str(exc))
         self._bulk_progress_lbl.setText(f"Saved {self._bulk_done} / {self._bulk_total}…")
-        if self._bulk_done >= self._bulk_total:
-            self._on_bulk_complete()
+        self._process_next_bulk()
 
     def _on_bulk_complete(self):
         self._bulk_save_btn.setEnabled(True)

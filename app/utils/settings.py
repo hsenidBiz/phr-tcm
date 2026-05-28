@@ -34,6 +34,13 @@ def save_recent_pbi(pbi_id: int, title: str, max_items: int = 10):
     save_settings({"recent_pbis": recent[:max_items]})
 
 
+def remove_recent_pbi(pbi_id: int):
+    """Remove a PBI entry from the recent list by ID."""
+    existing = load_settings()
+    recent = [r for r in existing.get("recent_pbis", []) if r.get("id") != pbi_id]
+    save_settings({"recent_pbis": recent})
+
+
 # ------------------------------------------------------------------ #
 #  Draft queue persistence                                            #
 # ------------------------------------------------------------------ #
