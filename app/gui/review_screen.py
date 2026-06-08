@@ -123,6 +123,20 @@ class ReviewScreen(QWidget):
         self.remove_selected_btn.setToolTip("Remove selected test case from queue (Delete)")
         self.remove_selected_btn.clicked.connect(self._on_remove)
         btn_row.addWidget(self.remove_selected_btn)
+        btn_row.addSpacing(4)
+
+        self.clear_all_btn = QPushButton("🗑 Clear All")
+        self.clear_all_btn.setEnabled(False)
+        self.clear_all_btn.setStyleSheet(
+            "QPushButton { background: #fde8e8; border: 1px solid #e88b8b; "
+            "border-radius: 4px; padding: 7px 14px; font-size: 13px; }"
+            "QPushButton:hover { background: #f8d0d0; }"
+            "QPushButton:disabled { color: #aaa; background: #f5f5f5; border-color: #ddd; }"
+        )
+        self.clear_all_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.clear_all_btn.setToolTip("Remove all test cases from the queue")
+        self.clear_all_btn.clicked.connect(self._on_clear_all)
+        btn_row.addWidget(self.clear_all_btn)
 
         btn_row.addStretch()
 
@@ -188,6 +202,7 @@ class ReviewScreen(QWidget):
             f"QPushButton:disabled {{ color: {t['text_dim2']}; background: {t['surface2']}; "
             f"border-color: {t['border']}; }}"
         )
+        self.clear_all_btn.setStyleSheet(self.remove_selected_btn.styleSheet())
 
     def on_enter(self):
         """Refresh display when this screen becomes active."""
@@ -281,6 +296,7 @@ class ReviewScreen(QWidget):
         expired = self.app_state.token_manager.is_expired()
         self.create_btn.setEnabled(n > 0 and not expired)
         self.export_queue_btn.setEnabled(n > 0)
+        self.clear_all_btn.setEnabled(n > 0)
         self._update_action_btns()
 
     def _update_summary(self, n: int):
@@ -354,6 +370,24 @@ class ReviewScreen(QWidget):
         self.app_state.queue.pop(idx)
         n = len(self.app_state.queue)
         self._update_summary(n)
+        self._rebuild_tree()
+        self.queue_changed.emit()
+
+    def _on_clear_all(self):
+        n = len(self.app_state.queue)
+        if n == 0:
+            return
+        reply = QMessageBox.question(
+            self, "Clear Queue",
+            f"Remove all {n} test case{'s' if n != 1 else ''} from the queue?\n\n"
+            "This only clears the queue in this app — nothing in Azure DevOps is affected.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.app_state.queue.clear()
+        self._update_summary(0)
         self._rebuild_tree()
         self.queue_changed.emit()
 
