@@ -236,6 +236,35 @@ class DevOpsClient:
         resp = requests.patch(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
         self._handle(resp)
 
+    def update_test_case_from_model(
+        self,
+        tc_id: int,
+        test_case: TestCase,
+        module_ref: str | None,
+        preconditions_ref: str | None = None,
+    ):
+        """
+        PATCH an existing Test Case work item with the values from a TestCase model.
+        Used when an imported case matches an existing work item by title.
+
+        Always overwrites Steps and AutomationStatus. Overwrites Tags / module /
+        Preconditions only when the imported case provides a value, so a blank
+        column in the spreadsheet never wipes existing data. Mirrors the field
+        construction in create_test_case. Never creates, links, or DELETEs.
+        """
+        fields: dict = {
+            "Microsoft.VSTS.TCM.Steps": build_steps_xml(test_case.steps),
+            "Microsoft.VSTS.TCM.AutomationStatus": test_case.automation_status,
+        }
+        if test_case.tags:
+            fields["System.Tags"] = test_case.tags
+        if module_ref and test_case.module_value:
+            fields[module_ref] = test_case.module_value
+        if preconditions_ref and test_case.preconditions:
+            fields[preconditions_ref] = f"<div>{test_case.preconditions}</div>"
+
+        self.update_test_case_fields(tc_id, fields)
+
     # ------------------------------------------------------------------ #
     #  Write calls (POST / PATCH only)                                    #
     # ------------------------------------------------------------------ #

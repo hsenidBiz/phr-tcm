@@ -245,6 +245,8 @@ class ReviewScreen(QWidget):
         for tc in queue:
             tc_item = QTreeWidgetItem(self.tree)
             step_summary = f"{len(tc.steps)} step{'s' if len(tc.steps) != 1 else ''}"
+            if tc.update_id:
+                step_summary += f"  ·  ↻ updates existing #{tc.update_id}"
             tc_item.setText(0, tc.title)
             tc_item.setText(1, step_summary)
             tc_item.setForeground(0, QBrush(title_color))
@@ -282,15 +284,35 @@ class ReviewScreen(QWidget):
         self._update_action_btns()
 
     def _update_summary(self, n: int):
+        n_updates = sum(1 for tc in self.app_state.queue if tc.update_id)
+        n_creates = n - n_updates
+
+        if n_updates and n_creates:
+            action = (
+                f"create <b>{n_creates} Test Case{'s' if n_creates != 1 else ''}</b> "
+                f"and update <b>{n_updates} existing</b>"
+            )
+        elif n_updates:
+            action = f"update <b>{n_updates} existing Test Case{'s' if n_updates != 1 else ''}</b>"
+        else:
+            action = f"create <b>{n_creates} Test Case{'s' if n_creates != 1 else ''}</b>"
+
         self.summary_label.setText(
-            f"You are about to create <b>{n} Test Case{'s' if n != 1 else ''}</b> "
-            f"linked to PBI <b>#{self.app_state.pbi_id}</b>: "
+            f"You are about to {action} for PBI <b>#{self.app_state.pbi_id}</b>: "
             f"{self.app_state.pbi_title}"
         )
-        self.warn_text.setText(
-            f"This will create {n} Test Case work item{'s' if n != 1 else ''} in Azure DevOps. "
-            "This action cannot be undone. Review carefully before clicking Create."
-        )
+
+        if n_updates:
+            self.warn_text.setText(
+                f"This will create {n_creates} and update {n_updates} Test Case work item(s) "
+                "in Azure DevOps. Updates overwrite the existing steps and fields with the "
+                "queued values. This action cannot be undone. Review carefully before clicking Create."
+            )
+        else:
+            self.warn_text.setText(
+                f"This will create {n} Test Case work item{'s' if n != 1 else ''} in Azure DevOps. "
+                "This action cannot be undone. Review carefully before clicking Create."
+            )
 
     # ------------------------------------------------------------------ #
     #  Selection & action button state                                     #
@@ -386,11 +408,20 @@ class ReviewScreen(QWidget):
 
     def _on_create(self):
         n = len(self.app_state.queue)
+        n_updates = sum(1 for tc in self.app_state.queue if tc.update_id)
+        n_creates = n - n_updates
+
+        if n_updates and n_creates:
+            what = f"Create {n_creates} and update {n_updates} Test Case(s)"
+        elif n_updates:
+            what = f"Update {n_updates} existing Test Case{'s' if n_updates != 1 else ''}"
+        else:
+            what = f"Create {n_creates} Test Case{'s' if n_creates != 1 else ''}"
+
         reply = QMessageBox.question(
             self,
             "Confirm Creation",
-            f"Create {n} Test Case{'s' if n != 1 else ''} linked to PBI "
-            f"#{self.app_state.pbi_id}?\n\nThis cannot be undone.",
+            f"{what} for PBI #{self.app_state.pbi_id}?\n\nThis cannot be undone.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )

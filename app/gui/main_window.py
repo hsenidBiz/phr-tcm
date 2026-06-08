@@ -293,17 +293,34 @@ class MainWindow(QMainWindow):
             f"Added {len(cases)} test case(s) from file ({len(self.app_state.queue)} total)."
         )
 
+    def _existing_cases_for_pbi(self) -> list:
+        """Existing ADO Test Cases for the current PBI. Prefers the shared
+        app_state cache (kept fresh by the Import and Edit tabs) and falls back
+        to whatever the Edit tab has loaded."""
+        if (self.app_state.existing_cases
+                and self.app_state.existing_cases_pbi == self.app_state.pbi_id):
+            return self.app_state.existing_cases
+        return self.edit_widget._cases
+
     def _check_duplicate_titles(self, incoming: list) -> bool:
-        """Return True if safe to add. Warns if any title duplicates ADO cases or the current queue."""
-        # Titles already on the PBI in Azure DevOps (loaded by Edit tab)
-        ado_titles = {
-            c.get("System.Title", "").lower()
-            for c in self.edit_widget._cases
-        }
+        """Return True if it is safe to add `incoming` to the queue.
+
+        When an incoming title already exists on the PBI in Azure DevOps, offer to
+        update that work item (matched cases get their update_id set) instead of
+        creating a duplicate. Titles that only collide with the current session
+        queue fall back to a simple add-anyway confirmation."""
+        # Map existing ADO title -> work item id (first match wins on collisions)
+        ado_by_title: dict = {}
+        for c in self._existing_cases_for_pbi():
+            title = (c.get("System.Title", "") or "").lower()
+            wid = c.get("_id")
+            if title and wid and title not in ado_by_title:
+                ado_by_title[title] = wid
+
         # Titles already sitting in the queue this session
         queue_titles = {tc.title.lower() for tc in self.app_state.queue}
 
-        ado_dupes = [tc.title for tc in incoming if tc.title.lower() in ado_titles]
+        ado_dupes = [tc for tc in incoming if tc.title.lower() in ado_by_title]
         queue_dupes = [tc.title for tc in incoming if tc.title.lower() in queue_titles]
 
         if not ado_dupes and not queue_dupes:
@@ -315,20 +332,46 @@ class MainWindow(QMainWindow):
                 lines += f"\n  … and {len(titles) - 10} more"
             return lines
 
-        parts = []
+        # Case 1 — some titles already exist on the PBI: offer Update vs Add-as-new.
         if ado_dupes:
-            parts.append(
-                f"Already exist on PBI #{self.app_state.pbi_id} in Azure DevOps:\n{_fmt(ado_dupes)}"
-            )
-        if queue_dupes:
-            parts.append(
-                f"Already in your current queue:\n{_fmt(queue_dupes)}"
-            )
+            parts = [
+                f"Already exist on PBI #{self.app_state.pbi_id} in Azure DevOps:\n"
+                f"{_fmt([tc.title for tc in ado_dupes])}"
+            ]
+            if queue_dupes:
+                parts.append(f"Already in your current queue:\n{_fmt(queue_dupes)}")
 
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Question)
+            box.setWindowTitle("Duplicate Titles Found")
+            box.setText(
+                "The following test case title(s) already exist:\n\n"
+                + "\n\n".join(parts)
+                + "\n\nUpdate the existing work item(s) with the values from your "
+                "file (steps, tags, preconditions, module, automation status), "
+                "or add them as new copies?"
+            )
+            update_btn = box.addButton(
+                f"Update {len(ado_dupes)} Existing", QMessageBox.AcceptRole
+            )
+            box.addButton("Add as New", QMessageBox.DestructiveRole)
+            cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
+            box.setDefaultButton(update_btn)
+            box.exec_()
+
+            clicked = box.clickedButton()
+            if clicked is cancel_btn:
+                return False
+            if clicked is update_btn:
+                for tc in ado_dupes:
+                    tc.update_id = ado_by_title[tc.title.lower()]
+            return True
+
+        # Case 2 — duplicates only within the current session queue.
         reply = QMessageBox.question(
             self, "Duplicate Titles",
-            "The following test case title(s) are duplicates:\n\n"
-            + "\n\n".join(parts)
+            "The following test case title(s) are already in your current queue:\n\n"
+            + _fmt(queue_dupes)
             + "\n\nAdd to queue anyway?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,

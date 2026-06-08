@@ -451,9 +451,37 @@ class ImportWidget(QWidget):
         super().showEvent(event)
         self._refresh_module_combo()
         self._refresh_created_by_combo()
+        self._load_existing_cases()
         if not self._tags_loaded:
             self._tags_loaded = True
             self._load_tags()
+
+    def _load_existing_cases(self):
+        """Fetch the test cases already on the current PBI in the background so that
+        duplicate titles can be detected and offered for update at queue time.
+        Results are stored on app_state and shared with the Edit tab; nothing is
+        fetched if the Edit tab already loaded them for this PBI."""
+        from PyQt5.QtCore import QThreadPool
+        from app.utils.worker import Worker
+
+        pbi_id = self.app_state.pbi_id
+        if not pbi_id or self.app_state.existing_cases_pbi == pbi_id:
+            return
+        if self.app_state.token_manager.is_expired():
+            return
+
+        extra = [r for r in (self.app_state.module_ref,) if r]
+        worker = Worker(self.app_state.client.get_test_cases_for_pbi, pbi_id, extra)
+        worker.signals.result.connect(
+            lambda r, p=pbi_id: self._on_existing_cases_loaded(p, r)
+        )
+        worker.signals.error.connect(lambda _exc: None)  # silent — duplicate check just degrades
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_existing_cases_loaded(self, pbi_id: int, result: tuple):
+        cases, _total = result
+        self.app_state.existing_cases = cases
+        self.app_state.existing_cases_pbi = pbi_id
 
     def _load_tags(self):
         try:

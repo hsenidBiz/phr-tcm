@@ -31,6 +31,12 @@ class AppState:
         # Module values discovered from the loaded PBI (populated by EditScreen)
         self.known_module_values: list[str] = []
 
+        # Existing Test Cases on the current PBI — shared by the Edit and Import
+        # tabs for duplicate detection and update-on-import. Each entry is a field
+        # dict with an '_id' key. existing_cases_pbi records which PBI they belong to.
+        self.existing_cases: list[dict] = []
+        self.existing_cases_pbi: int | None = None
+
         # Team members: in-memory cache + shared in-flight fetcher (set by members_cache)
         self.cached_team_members: list | None = None
         self._team_members_fetcher = None  # TeamMemberFetcher | None

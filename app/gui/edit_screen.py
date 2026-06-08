@@ -440,6 +440,9 @@ class EditScreen(QWidget):
         cases, total = result
         self._cases = cases
         self._loaded_pbi = pbi_id
+        # Share with the Import tab so it can detect duplicates / offer updates
+        self.app_state.existing_cases = cases
+        self.app_state.existing_cases_pbi = pbi_id
 
         for tc in cases:
             tc_id = tc.get("_id", "?")

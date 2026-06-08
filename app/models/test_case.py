@@ -16,6 +16,7 @@ class TestCase:
     module_value: str = ""
     preconditions: str = ""
     created_by: str = ""                        # user identifier (e.g. "user@domain.com")
+    update_id: int | None = None                # when set, update this existing work item instead of creating a new one
 
     def is_valid(self) -> tuple:
         """Returns (bool, error_message). True if ready to submit."""

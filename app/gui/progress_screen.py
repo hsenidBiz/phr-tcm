@@ -45,12 +45,18 @@ class CreationWorker(QObject):
                 break
             while True:
                 try:
-                    tc_id = self.client.create_and_link(
-                        tc, self.pbi_id, self.module_ref,
-                        self.area_path, self.iteration_path,
-                        self.preconditions_ref,
-                    )
-                    self.progress.emit(i, "success", f"✓ Created #{tc_id}: {tc.title}")
+                    if tc.update_id:
+                        self.client.update_test_case_from_model(
+                            tc.update_id, tc, self.module_ref, self.preconditions_ref,
+                        )
+                        self.progress.emit(i, "success", f"✎ Updated #{tc.update_id}: {tc.title}")
+                    else:
+                        tc_id = self.client.create_and_link(
+                            tc, self.pbi_id, self.module_ref,
+                            self.area_path, self.iteration_path,
+                            self.preconditions_ref,
+                        )
+                        self.progress.emit(i, "success", f"✓ Created #{tc_id}: {tc.title}")
                     break
                 except TokenExpiredError:
                     self.token_needed.emit()
@@ -220,18 +226,32 @@ class ProgressScreen(QWidget):
             f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
         )
 
+    @staticmethod
+    def _progress_phrase(n_creates: int, n_updates: int) -> str:
+        """Human phrasing for an in-progress batch of creates and/or updates."""
+        def _s(k: int) -> str:
+            return "s" if k != 1 else ""
+        if n_updates and n_creates:
+            return f"Creating {n_creates} and updating {n_updates} test case{_s(n_creates + n_updates)}"
+        if n_updates:
+            return f"Updating {n_updates} test case{_s(n_updates)}"
+        return f"Creating {n_creates} test case{_s(n_creates)}"
+
     def start(self):
         """Begin the creation process. Called when this screen becomes active."""
         queue = list(self.app_state.queue)
         n = len(queue)
+        self._n_updates = sum(1 for tc in queue if tc.update_id)
+        self._n_creates = n - self._n_updates
 
-        self.title_label.setText("Creating Test Cases…")
+        verb = "Updating" if self._n_updates and not self._n_creates else "Creating"
+        self.title_label.setText(f"{verb} Test Cases…")
         self.progress_bar.setMaximum(n)
         self.progress_bar.setValue(0)
         self.log.clear()
         self.result_label.setText("")
         self.done_btn.setEnabled(False)
-        self.status_label.setText(f"Creating {n} test case{'s' if n != 1 else ''}…")
+        self.status_label.setText(self._progress_phrase(self._n_creates, self._n_updates) + "…")
         self._spinner.start()
 
         self.cancel_btn.setEnabled(True)
@@ -306,13 +326,22 @@ class ProgressScreen(QWidget):
         self.progress_bar.setValue(self._total)
         self.done_btn.setEnabled(True)
 
+        if self._n_updates and not self._n_creates:
+            done_verb = "updated"
+        elif self._n_updates:
+            done_verb = "processed"
+        else:
+            done_verb = "created"
+
         if n_err == 0:
             self.status_label.setStyleSheet("color: #080;")
-            self.status_label.setText(f"All {n_ok} test case{'s' if n_ok != 1 else ''} created successfully.")
+            self.status_label.setText(
+                f"All {n_ok} test case{'s' if n_ok != 1 else ''} {done_verb} successfully."
+            )
         else:
             self.status_label.setStyleSheet("color: #c00;")
             self.status_label.setText(
-                f"{n_ok} created, {n_err} failed"
+                f"{n_ok} {done_verb}, {n_err} failed"
                 + (f", {n_skip} skipped" if n_skip else "") + "."
             )
 
@@ -324,3 +353,8 @@ class ProgressScreen(QWidget):
         self.app_state.queue.clear()
         from app.utils.settings import clear_draft_queue
         clear_draft_queue()
+        # The existing-case cache is now stale (items were created/updated) —
+        # force a fresh load next time the Import or Edit tab needs it so that
+        # duplicate detection stays accurate across consecutive batches.
+        self.app_state.existing_cases = []
+        self.app_state.existing_cases_pbi = None
