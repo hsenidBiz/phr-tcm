@@ -15,6 +15,11 @@ from app.utils.settings import load_settings, save_settings
 
 _DETAIL = "detail"   # Qt.UserRole marker for step-detail rows
 
+# Legacy builds shipped this as the hardcoded default Preconditions value and
+# auto-saved it to settings on every queue. It is now treated as blank so the
+# field starts empty by default.
+_LEGACY_PRECONDITIONS_DEFAULT = "User is logged in as an HR Admin and clicked Definition Wizard."
+
 
 class TagPickerWidget(QWidget):
     """Tag picker with inline search box and dropdown.
@@ -443,9 +448,11 @@ class ImportWidget(QWidget):
 
     def _restore_override_settings(self):
         s = load_settings()
-        self.preconditions_edit.setText(
-            s.get("preconditions", "User is logged in as an HR Admin and clicked Definition Wizard.")
-        )
+        saved = s.get("preconditions", "")
+        # Migrate the legacy hardcoded default to blank so the field is empty by default.
+        if saved == _LEGACY_PRECONDITIONS_DEFAULT:
+            saved = ""
+        self.preconditions_edit.setText(saved)
 
     def showEvent(self, event):
         super().showEvent(event)
