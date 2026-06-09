@@ -171,11 +171,16 @@ class DevOpsClient:
         
         return sorted(unique_members.values(), key=lambda x: x.get("displayName", ""))
 
+    # Azure DevOps caps the workitems batch-GET (?ids=) endpoint at 200 IDs
+    # per request, so larger PBIs must be fetched in successive batches.
+    WORKITEM_BATCH_SIZE = 200
+
     def get_test_cases_for_pbi(self, pbi_id: int, extra_fields: list = None) -> tuple:
         """
         GET all Test Case work items linked to a PBI via TestedBy relations.
         Returns (list of field dicts, total_count).
-        List is capped at 200 entries (Azure DevOps API limit).
+        Fetches in batches of WORKITEM_BATCH_SIZE so there is no overall cap —
+        all linked Test Cases are returned regardless of count.
         Each field dict has an '_id' key for the work item ID.
         Safe — read only.
         """
@@ -206,20 +211,24 @@ class DevOpsClient:
         ]
         if extra_fields:
             base_fields.extend(f for f in extra_fields if f not in base_fields)
-
-        ids_str = ",".join(str(i) for i in tc_ids[:200])  # API limit
-        url = (
-            f"{self._base()}/wit/workitems"
-            f"?ids={ids_str}&fields={','.join(base_fields)}&api-version={API_VERSION}"
-        )
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=30)
-        data = self._handle(resp)
+        fields_str = ",".join(base_fields)
 
         result = []
-        for item in data.get("value", []):
-            fields = item.get("fields", {})
-            fields["_id"] = item["id"]
-            result.append(fields)
+        for start in range(0, total, self.WORKITEM_BATCH_SIZE):
+            batch = tc_ids[start:start + self.WORKITEM_BATCH_SIZE]
+            ids_str = ",".join(str(i) for i in batch)
+            url = (
+                f"{self._base()}/wit/workitems"
+                f"?ids={ids_str}&fields={fields_str}&api-version={API_VERSION}"
+            )
+            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=30)
+            data = self._handle(resp)
+
+            for item in data.get("value", []):
+                fields = item.get("fields", {})
+                fields["_id"] = item["id"]
+                result.append(fields)
+
         return result, total
 
     def update_test_case_fields(self, tc_id: int, fields: dict):
