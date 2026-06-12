@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QShortcut
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QCursor, QKeySequence
+from PyQt5.QtGui import QCursor, QKeySequence
 
 from app.utils.anim import fade_in
 
@@ -195,6 +195,8 @@ class MainWindow(QMainWindow):
     def _build_progress_page(self):
         self.progress_screen = ProgressScreen(self.app_state)
         self.progress_screen.all_done.connect(self._go_config)
+        # Keep the auth screen's token field in sync after a mid-run refresh
+        self.progress_screen.token_refreshed.connect(self.auth_screen.prefill_token)
         self.stack.addWidget(self.progress_screen)
 
     # ------------------------------------------------------------------ #
@@ -217,6 +219,9 @@ class MainWindow(QMainWindow):
     def _go_main(self):
         self._refresh_main_expiry()
         self._update_queue_label()
+        # Warm-load the PBI's existing cases so module autocomplete and
+        # duplicate-title detection work before the Edit tab is ever opened.
+        self.edit_widget.ensure_loaded()
         self._go_to(PAGE_MAIN)
 
     def _on_tab_changed(self, index: int):
@@ -253,12 +258,8 @@ class MainWindow(QMainWindow):
             self.review_screen.refresh_expiry_state()
 
     def _go_review(self):
-        if self.app_state.token_manager.is_expired():
-            QMessageBox.warning(
-                self, "Token Expired",
-                "Your Bearer token has expired.\n\n"
-                "Please go back to the authentication screen and re-enter a valid token."
-            )
+        from app.gui.helpers import warn_if_token_expired
+        if warn_if_token_expired(self, self.app_state.token_manager):
             return
         if not self.app_state.queue:
             QMessageBox.information(
@@ -283,6 +284,7 @@ class MainWindow(QMainWindow):
         self.app_state.queue.append(tc)
         self._update_queue_label()
         self._status(f"Added '{tc.title}' to queue ({len(self.app_state.queue)} total).")
+        self._notify_queue_accepted()
 
     def _on_test_cases_queued(self, cases):
         if not self._check_duplicate_titles(cases):
@@ -292,6 +294,14 @@ class MainWindow(QMainWindow):
         self._status(
             f"Added {len(cases)} test case(s) from file ({len(self.app_state.queue)} total)."
         )
+        self._notify_queue_accepted()
+
+    def _notify_queue_accepted(self):
+        """Tell the emitting widget its cases were accepted so it can clear its inputs."""
+        sender = self.sender()
+        callback = getattr(sender, "on_queue_accepted", None)
+        if callable(callback):
+            callback()
 
     def _existing_cases_for_pbi(self) -> list:
         """Existing ADO Test Cases for the current PBI. Prefers the shared
@@ -412,6 +422,18 @@ class MainWindow(QMainWindow):
         clear_draft_queue()
 
     def closeEvent(self, event):
+        if self.progress_screen.is_running():
+            reply = QMessageBox.question(
+                self, "Creation In Progress",
+                "Test cases are still being created. Closing now will stop the "
+                "remaining items.\n\nClose anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                event.ignore()
+                return
+            self.progress_screen.shutdown()
         from app.utils.settings import save_draft_queue, clear_draft_queue
         if self.app_state.queue:
             save_draft_queue(self.app_state.queue)

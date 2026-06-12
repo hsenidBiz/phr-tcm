@@ -4,7 +4,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QFrame, QSizePolicy, QScrollArea, QComboBox, QLineEdit,
+    QMessageBox, QFrame, QSizePolicy, QComboBox, QLineEdit,
     QListWidget
 )
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -182,6 +182,9 @@ class TagPickerWidget(QWidget):
         self._search.setStyleSheet(self._search_qss)
         self._dropdown.setStyleSheet(self._list_qss)
 
+    def set_search_placeholder(self, text: str):
+        self._search.setPlaceholderText(text)
+
     def get_tags_string(self) -> str:
         return "; ".join(self._selected)
 
@@ -202,6 +205,7 @@ class ImportWidget(QWidget):
         self.app_state = app_state
         self._parsed_cases = []
         self._tags_loaded = False
+        self._tags_loading = False
         self._build_ui()
         self._restore_override_settings()
 
@@ -366,17 +370,11 @@ class ImportWidget(QWidget):
         self.queue_btn.clicked.connect(self._on_queue)
 
     def _refresh_module_combo(self):
-        vals = self.app_state.known_module_values
-        cur = self.module_edit.currentText()
-        self.module_edit.blockSignals(True)
-        self.module_edit.clear()
-        for v in vals:
-            self.module_edit.addItem(v)
-        self.module_edit.setCurrentText(cur)
-        self.module_edit.blockSignals(False)
+        from app.gui.helpers import refresh_module_combo
+        refresh_module_combo(self.module_edit, self.app_state.known_module_values)
 
     def _refresh_created_by_combo(self):
-        from app.utils.members_cache import load_cached, save_to_disk, TeamMemberFetcher
+        from app.utils.members_cache import load_cached, attach_once, TeamMemberFetcher
         tm = self.app_state.client.tm
 
         # Populate immediately from in-memory cache, falling back to disk cache
@@ -398,20 +396,25 @@ class ImportWidget(QWidget):
             fetcher = TeamMemberFetcher(self.app_state.client)
             self.app_state._team_members_fetcher = fetcher
             fetcher.done.connect(self._on_members_fetched)
+            fetcher.failed.connect(self._on_members_failed)
             fetcher.start()
         else:
             # Attach to the already-running fetch so we get the result too
-            self.app_state._team_members_fetcher.done.connect(
-                self._populate_created_by_combo
-            )
+            attach_once(self.app_state._team_members_fetcher, self._populate_created_by_combo)
 
     def _on_members_fetched(self, members: list):
         from app.utils.members_cache import save_to_disk
         tm = self.app_state.client.tm
         self.app_state.cached_team_members = members
         self.app_state._team_members_fetcher = None
-        save_to_disk(tm.org_url, tm.project, members)
+        if members:
+            save_to_disk(tm.org_url, tm.project, members)
         self._populate_created_by_combo(members)
+
+    def _on_members_failed(self, _msg: str):
+        # Keep previously cached members; clear the fetcher so a later retry can happen.
+        self.app_state._team_members_fetcher = None
+        self._populate_created_by_combo(self.app_state.cached_team_members or [])
 
     def _populate_created_by_combo(self, members: list):
         cur = self.created_by_combo.currentText()
@@ -445,6 +448,22 @@ class ImportWidget(QWidget):
         )
         self.count_label.setStyleSheet(f"color: {t['count_lbl_color']};")
         self.tag_picker.refresh_theme()
+        # Restyle the per-row expand arrows so they stay visible in dark mode
+        expand_style = self._expand_btn_style()
+        for r in range(self.preview_table.rowCount()):
+            w = self.preview_table.cellWidget(r, 0)
+            if w is not None:
+                w.setStyleSheet(expand_style)
+
+    @staticmethod
+    def _expand_btn_style() -> str:
+        from app.utils import theme
+        t = theme.tokens()
+        return (
+            f"QPushButton {{ background: transparent; color: {t['text']}; border: none; "
+            f"font-size: 14px; font-weight: bold; }}"
+            f"QPushButton:hover {{ color: {t['accent']}; }}"
+        )
 
     def _restore_override_settings(self):
         s = load_settings()
@@ -459,8 +478,7 @@ class ImportWidget(QWidget):
         self._refresh_module_combo()
         self._refresh_created_by_combo()
         self._load_existing_cases()
-        if not self._tags_loaded:
-            self._tags_loaded = True
+        if not self._tags_loaded and not self._tags_loading:
             self._load_tags()
 
     def _load_existing_cases(self):
@@ -491,12 +509,27 @@ class ImportWidget(QWidget):
         self.app_state.existing_cases_pbi = pbi_id
 
     def _load_tags(self):
-        try:
-            tags_data = self.app_state.client.get_tags()
-            names = sorted({t["name"] for t in tags_data if t.get("name")})
-            self.tag_picker.set_available_tags(names)
-        except Exception:
-            pass  # tag picker keeps "Loading tags…" placeholder on failure
+        """Fetch project tags in the background; never blocks the GUI thread."""
+        from PyQt5.QtCore import QThreadPool
+        from app.utils.worker import Worker
+        self._tags_loading = True
+        self.tag_picker.set_search_placeholder("Loading tags…")
+        worker = Worker(self.app_state.client.get_tags)
+        worker.signals.result.connect(self._on_tags_loaded)
+        worker.signals.error.connect(self._on_tags_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_tags_loaded(self, tags_data: list):
+        self._tags_loading = False
+        self._tags_loaded = True
+        names = sorted({t["name"] for t in tags_data if t.get("name")})
+        self.tag_picker.set_available_tags(names)
+        self.tag_picker.set_search_placeholder("Search tags…")
+
+    def _on_tags_error(self, _exc: Exception):
+        # Leave _tags_loaded False so the next visit to this tab retries.
+        self._tags_loading = False
+        self.tag_picker.set_search_placeholder("Tags unavailable — will retry")
 
     # ------------------------------------------------------------------ #
     #  File handling                                                       #
@@ -621,10 +654,7 @@ class ImportWidget(QWidget):
         expand_btn.setFixedSize(26, 24)
         expand_btn.setCursor(QCursor(Qt.PointingHandCursor))
         expand_btn.setToolTip("Show / hide steps")
-        expand_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #333; border: none; font-size: 14px; font-weight: bold; }"
-            "QPushButton:hover { color: #0078d4; }"
-        )
+        expand_btn.setStyleSheet(self._expand_btn_style())
         expand_btn.clicked.connect(self._toggle_expand)
         self.preview_table.setCellWidget(row, 0, expand_btn)
 
@@ -798,15 +828,21 @@ class ImportWidget(QWidget):
                 tc.preconditions = preconditions_val
             tc.created_by = created_by
 
+        # MainWindow clears the preview via on_queue_accepted() only if the
+        # cases were actually added (the duplicate-title dialog may reject them).
         self.test_cases_queued.emit(list(self._parsed_cases))
+
+    def on_queue_accepted(self):
+        """Called by MainWindow after the emitted cases were added to the queue."""
+        n = len(self._parsed_cases)
         self.preview_table.setRowCount(0)
         self._parsed_cases = []
         self.file_label.setText("No file selected")
         self.tag_picker.clear_selection()
         self._refresh_count()
-        QMessageBox.information(
+        from app.gui.helpers import status_message
+        status_message(
             self,
-            "Added to Queue",
-            f"Test cases have been added to the queue.\n"
-            "Switch to the Review & Create tab to continue."
+            f"{n} test case{'s' if n != 1 else ''} added to the queue — "
+            "click 'Review && Create' below when ready."
         )

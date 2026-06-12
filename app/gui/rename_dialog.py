@@ -31,6 +31,11 @@ class PowerRenameDialog(QDialog):
         self._cases = cases          # list of field-dicts, each with '_id' and 'System.Title'
         self._client = client
         self._updating_table = False  # guard against recursive itemChanged signals
+        self._rename_queue = []
+        self._rename_total = 0
+        self._rename_done = 0
+        self._rename_errors = []
+        self._rename_running = False
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -338,41 +343,85 @@ class PowerRenameDialog(QDialog):
 
         self._apply_btn.setEnabled(False)
         self._apply_btn.setText("Renaming…")
+        self._cancel_btn.setEnabled(False)
 
-        errors = []
-        renamed = 0
-        for row, tc, new_name in to_rename:
-            tc_id = tc.get("_id")
-            try:
-                self._client.update_test_case_fields(tc_id, {"System.Title": new_name})
-                tc["System.Title"] = new_name
-                # Advance the "Current Name" column so the row looks settled
-                self._updating_table = True
-                self._table.item(row, 2).setText(new_name)
-                self._table.item(row, 3).setBackground(QColor())
-                self._table.item(row, 3).setForeground(QColor())
-                self._updating_table = False
-                renamed += 1
-            except Exception as exc:
-                errors.append(f"#{tc_id}: {exc}")
+        # Renames run serially on the thread pool so the dialog stays responsive
+        # and progress can be reported per item.
+        self._rename_queue = list(to_rename)
+        self._rename_total = n
+        self._rename_done = 0
+        self._rename_errors = []
+        self._rename_running = True
+        self._match_lbl.setText(f"Renaming 0 / {self._rename_total}…")
+        self._process_next_rename()
 
+    def _process_next_rename(self):
+        if not self._rename_queue:
+            self._on_rename_complete()
+            return
+        from PyQt5.QtCore import QThreadPool
+        from app.utils.worker import Worker
+        row, tc, new_name = self._rename_queue.pop(0)
+        tc_id = tc.get("_id")
+        worker = Worker(self._client.update_test_case_fields, tc_id, {"System.Title": new_name})
+        worker.signals.result.connect(
+            lambda _, r=row, t=tc, nm=new_name: self._on_rename_item_done(r, t, nm)
+        )
+        worker.signals.error.connect(
+            lambda exc, _id=tc_id: self._on_rename_item_error(_id, exc)
+        )
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_rename_item_done(self, row: int, tc: dict, new_name: str):
+        tc["System.Title"] = new_name
+        # Advance the "Current Name" column so the row looks settled
+        self._updating_table = True
+        self._table.item(row, 2).setText(new_name)
+        self._table.item(row, 3).setBackground(QColor())
+        self._table.item(row, 3).setForeground(QColor())
+        self._updating_table = False
+        self._rename_done += 1
+        self._on_rename_progress()
+
+    def _on_rename_item_error(self, tc_id, exc: Exception):
+        self._rename_errors.append(f"#{tc_id}: {exc}")
+        self._on_rename_progress()
+
+    def _on_rename_progress(self):
+        processed = self._rename_done + len(self._rename_errors)
+        self._match_lbl.setText(f"Renaming {processed} / {self._rename_total}…")
+        self._process_next_rename()
+
+    def _on_rename_complete(self):
+        self._rename_running = False
         self._apply_btn.setText("Apply Rename")
+        self._cancel_btn.setEnabled(True)
         self._update_apply_btn_state()
 
-        if errors:
+        if self._rename_errors:
             QMessageBox.warning(
                 self,
                 "Partial Rename",
-                f"Renamed {renamed} of {n} test case(s).\n\nErrors:\n"
-                + "\n".join(errors),
+                f"Renamed {self._rename_done} of {self._rename_total} test case(s).\n\nErrors:\n"
+                + "\n".join(self._rename_errors),
+            )
+            self._match_lbl.setText(
+                f"Renamed {self._rename_done} of {self._rename_total} — see errors above."
             )
         else:
             QMessageBox.information(
                 self,
                 "Renamed",
-                f"Successfully renamed {renamed} test case{'s' if renamed != 1 else ''}.",
+                f"Successfully renamed {self._rename_done} test case{'s' if self._rename_done != 1 else ''}.",
             )
             self.accept()
+
+    def reject(self):
+        # Don't allow the dialog to close while renames are in flight —
+        # worker callbacks would touch a destroyed table.
+        if self._rename_running:
+            return
+        super().reject()
 
     # ------------------------------------------------------------------ #
     #  Theme                                                               #

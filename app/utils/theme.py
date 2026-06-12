@@ -47,6 +47,9 @@ _LIGHT: dict = {
     "footer_bg":          "#f9f9f9",
     "file_lbl_color":     "#666666",
     "count_lbl_color":    "#555555",
+    "ok":                 "#008000",
+    "error":              "#cc0000",
+    "warn_fg":            "#e67e00",
 }
 
 _DARK: dict = {
@@ -87,6 +90,9 @@ _DARK: dict = {
     "footer_bg":          "#252526",
     "file_lbl_color":     "#aaaaaa",
     "count_lbl_color":    "#aaaaaa",
+    "ok":                 "#4ec94e",
+    "error":              "#f14c4c",
+    "warn_fg":            "#e5c07b",
 }
 
 
