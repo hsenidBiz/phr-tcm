@@ -3,10 +3,11 @@ from PyQt5.QtWidgets import (
     QHBoxLayout, QLabel, QTabWidget, QStatusBar, QFrame, QPushButton,
     QMessageBox, QShortcut
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QThreadPool
 from PyQt5.QtGui import QCursor, QKeySequence
 
 from app.utils.anim import fade_in
+from app.utils.worker import Worker
 
 from app.gui.auth_screen import AuthScreen
 from app.gui.config_screen import ConfigScreen
@@ -45,6 +46,19 @@ class MainWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
 
+        # Update button (hidden until a newer version is found on GitHub)
+        self._update_btn = QPushButton()
+        self._update_btn.setVisible(False)
+        self._update_btn.setFlat(True)
+        self._update_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._update_btn.setStyleSheet(
+            "QPushButton { border: none; color: #0078d4; padding: 2px 8px; "
+            "background: transparent; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { color: #106ebe; }"
+        )
+        self._update_btn.clicked.connect(self._on_update_clicked)
+        self._status_bar.addPermanentWidget(self._update_btn)
+
         # Theme toggle button (always visible in status bar)
         self._theme_btn = QPushButton()
         self._theme_btn.setFlat(True)
@@ -68,6 +82,9 @@ class MainWindow(QMainWindow):
 
         # Restore draft queue after window is shown
         QTimer.singleShot(300, self._check_draft_restore)
+
+        # Check GitHub for a newer version in the background
+        QTimer.singleShot(1500, self._check_for_update)
 
     # ------------------------------------------------------------------ #
     #  Page builders                                                       #
@@ -443,6 +460,76 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     #  Theme                                                               #
     # ------------------------------------------------------------------ #
+
+    # ------------------------------------------------------------------ #
+    #  Auto-update (git pull from the private GitHub clone)                #
+    # ------------------------------------------------------------------ #
+
+    def _check_for_update(self):
+        from app.utils import updater
+        if not updater.update_supported():
+            return
+        worker = Worker(updater.check_for_update)
+        worker.signals.result.connect(self._on_update_check_result)
+        # Check failures (offline, VPN, …) are silent — the update check
+        # must never disturb normal use.
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_update_check_result(self, info):
+        if not info:
+            return
+        self._update_info = info
+        n = info["commits"]
+        plural = "s" if n != 1 else ""
+        self._update_btn.setText(f"⬆  Update available ({n} commit{plural})")
+        self._update_btn.setVisible(True)
+        reply = QMessageBox.question(
+            self, "Update Available",
+            f"A newer version is available on GitHub "
+            f"({n} new commit{plural}).\n\n"
+            f"Latest change: {info['latest']}\n\n"
+            "Update and restart now? Any queued test cases are saved as a "
+            "draft and restored after the restart.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self._apply_update()
+
+    def _on_update_clicked(self):
+        reply = QMessageBox.question(
+            self, "Update and Restart",
+            "Update to the latest version and restart the app?\n\n"
+            "Any queued test cases are saved as a draft and restored "
+            "after the restart.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self._apply_update()
+
+    def _apply_update(self):
+        from app.utils import updater
+        self._update_btn.setEnabled(False)
+        self._update_btn.setText("Updating…")
+        worker = Worker(updater.apply_update)
+        worker.signals.result.connect(self._on_update_applied)
+        worker.signals.error.connect(self._on_update_failed)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_update_applied(self, _output):
+        from app.utils import updater
+        updater.start_new_instance()
+        self.close()  # closeEvent saves the draft queue on the way out
+
+    def _on_update_failed(self, exc: Exception):
+        n = self._update_info["commits"]
+        plural = "s" if n != 1 else ""
+        self._update_btn.setEnabled(True)
+        self._update_btn.setText(f"⬆  Update available ({n} commit{plural})")
+        QMessageBox.warning(
+            self, "Update Failed",
+            f"The update could not be applied:\n\n{exc}\n\n"
+            "You can keep using this version and try again later."
+        )
 
     def _toggle_theme(self):
         theme.apply(not theme.is_dark())
