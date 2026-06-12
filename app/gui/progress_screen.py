@@ -2,14 +2,14 @@ import threading
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QProgressBar, QTextEdit, QDialog, QLineEdit, QDialogButtonBox,
-    QMessageBox
+    QProgressBar, QTextEdit, QMessageBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QObject
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QObject, QThreadPool
 from PyQt5.QtGui import QFont, QTextCursor, QCursor
 
 from app.api.devops_client import TokenExpiredError, RateLimitError
 from app.utils.anim import Spinner
+from app.utils.worker import Worker
 
 
 class CreationWorker(QObject):
@@ -36,7 +36,7 @@ class CreationWorker(QObject):
         return self._abort_event.is_set()
 
     def provide_token(self):
-        """Called from the main thread after a new token is pasted."""
+        """Called from the main thread after the user re-signs in."""
         self._token_event.set()
 
     def abort(self):
@@ -97,48 +97,8 @@ class CreationWorker(QObject):
         self.finished.emit()
 
 
-class TokenRefreshDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Token Expired")
-        self.setModal(True)
-        self.setMinimumWidth(500)
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-
-        layout.addWidget(QLabel(
-            "<b>Your Bearer token has expired.</b><br><br>"
-            "Go to Azure DevOps in your browser, press <b>F12</b>, open the Network tab, "
-            "click any request, and copy the value after <code>Bearer </code> in the "
-            "Authorization header. Paste it below to continue."
-        ))
-        self.token_edit = QLineEdit()
-        self.token_edit.setPlaceholderText("Paste new Bearer token here…")
-        self.token_edit.setEchoMode(QLineEdit.Password)
-        layout.addWidget(self.token_edit)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self._on_accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
-
-    def _on_accept(self):
-        token = self.token_edit.text().strip()
-        if not token:
-            QMessageBox.warning(self, "Empty Token", "Please paste a token before clicking OK.")
-            return
-        if token.lower().startswith("bearer "):
-            token = token[7:].strip()
-            self.token_edit.setText(token)
-        self.accept()
-
-    def get_token(self) -> str:
-        return self.token_edit.text().strip()
-
-
 class ProgressScreen(QWidget):
     all_done = pyqtSignal()          # emitted when creation is finished
-    token_refreshed = pyqtSignal(str)  # emitted after a mid-run token refresh
 
     def __init__(self, app_state):
         super().__init__()
@@ -351,17 +311,35 @@ class ProgressScreen(QWidget):
         self.cancel_btn.setText("Cancelling…")
 
     def _on_token_needed(self):
-        """Pause the worker and ask user for a fresh token."""
-        dlg = TokenRefreshDialog(self)
-        if dlg.exec_() == TokenRefreshDialog.Accepted:
-            new_token = dlg.get_token()
-            self.app_state.token_manager.update_token(new_token)
-            self.token_refreshed.emit(new_token)
-            self._worker.provide_token()
-        else:
-            # User cancelled — abort remaining items
+        """Pause the worker and re-authenticate through Microsoft sign-in."""
+        msal = self.app_state.token_manager.msal_authenticator
+        reply = QMessageBox.question(
+            self, "Session Expired",
+            "Your Azure DevOps session has expired.\n\n"
+            "Sign in again with Microsoft to continue creating the remaining test cases?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes or msal is None:
             self._worker.abort()
-            self.log.append('<span style="color:#f14c4c;">⚠ Creation aborted by user (token refresh cancelled).</span>')
+            self.log.append('<span style="color:#f14c4c;">⚠ Creation aborted (sign-in declined).</span>')
+            return
+        self.log.append('<span style="color:#e5c07b;">⏳ Waiting for browser sign-in…</span>')
+        worker = Worker(msal.sign_in_interactive)
+        worker.signals.result.connect(self._on_reauth_token)
+        worker.signals.error.connect(self._on_reauth_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_reauth_token(self, token: str):
+        self.app_state.token_manager.update_token(token)
+        self.log.append('<span style="color:#3fb950;">✓ Signed in — resuming…</span>')
+        self._worker.provide_token()
+
+    def _on_reauth_error(self, exc: Exception):
+        self._worker.abort()
+        self.log.append(
+            f'<span style="color:#f14c4c;">⚠ Sign-in failed ({exc}) — creation aborted. '
+            f'Unprocessed cases stay in the queue.</span>'
+        )
 
     def _on_finished(self):
         n_ok = self._success_count

@@ -27,9 +27,10 @@ class TokenManager:
         """Enable silent token refresh through a signed-in MsalAuthenticator."""
         self._msal = authenticator
 
-    def detach_msal(self):
-        """Drop back to manual-paste mode (e.g. when the user types a token)."""
-        self._msal = None
+    @property
+    def msal_authenticator(self):
+        """The attached MsalAuthenticator (for interactive re-sign-in), or None."""
+        return self._msal
 
     def auto_refresh_active(self) -> bool:
         return self._msal is not None and self._msal.has_account()
@@ -40,7 +41,7 @@ class TokenManager:
         Called from the header getters, which run on API worker threads —
         never blocks the GUI thread. On refresh failure the stale token is
         kept; the resulting 401 surfaces through the existing
-        TokenExpiredError fallback (manual paste).
+        TokenExpiredError path (interactive re-sign-in).
         """
         if self._msal is None or not self.is_likely_expired():
             return

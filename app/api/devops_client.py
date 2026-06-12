@@ -32,7 +32,7 @@ class DevOpsClient:
 
     def _handle(self, response: requests.Response) -> dict:
         if response.status_code == 401:
-            raise TokenExpiredError("Token expired or invalid (401). Please paste a fresh token.")
+            raise TokenExpiredError("Token expired or invalid (401). Please sign in again.")
         if response.status_code == 403:
             raise PermissionError(
                 f"Access denied (403). Your account may not have permission to create Test Cases "

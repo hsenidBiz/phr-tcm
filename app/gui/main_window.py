@@ -195,8 +195,6 @@ class MainWindow(QMainWindow):
     def _build_progress_page(self):
         self.progress_screen = ProgressScreen(self.app_state)
         self.progress_screen.all_done.connect(self._go_config)
-        # Keep the auth screen's token field in sync after a mid-run refresh
-        self.progress_screen.token_refreshed.connect(self.auth_screen.prefill_token)
         self.stack.addWidget(self.progress_screen)
 
     # ------------------------------------------------------------------ #
@@ -231,9 +229,12 @@ class MainWindow(QMainWindow):
 
     def _refresh_main_expiry(self):
         tm = self.app_state.token_manager
+        session = (
+            "Signed in" if tm.auto_refresh_active() else tm.get_expiry_display()
+        )
         self.main_header_label.setText(
             f"{tm.org_url}/{tm.project}  |  PBI #{self.app_state.pbi_id}: "
-            f"{self.app_state.pbi_title}  |  {tm.get_expiry_display()}"
+            f"{self.app_state.pbi_title}  |  {session}"
         )
 
     def _sync_review_btn(self, n: int | None = None):
@@ -243,7 +244,7 @@ class MainWindow(QMainWindow):
         expired = self.app_state.token_manager.is_expired()
         self.review_btn.setEnabled(n > 0 and not expired)
         if expired:
-            self.review_btn.setToolTip("Token has expired — re-enter your token to continue")
+            self.review_btn.setToolTip("Session has expired — sign in again to continue")
         else:
             self.review_btn.setToolTip("")
 

@@ -490,7 +490,7 @@ class ConfigScreen(QWidget):
         enabled = pbi_ok and self.field_combo.isEnabled() and token_ok
         self.continue_btn.setEnabled(enabled)
         if not token_ok:
-            self.continue_btn.setToolTip("Token has expired — re-enter your token to continue")
+            self.continue_btn.setToolTip("Session has expired — sign in again to continue")
         else:
             self.continue_btn.setToolTip("")
 

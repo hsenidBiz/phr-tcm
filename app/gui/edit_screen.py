@@ -423,7 +423,7 @@ class EditScreen(QWidget):
             return
         if self.app_state.token_manager.is_expired():
             self._header_lbl.setText(
-                "Token has expired — re-enter your token on the authentication screen to load test cases."
+                "Session has expired — sign in again on the authentication screen to load test cases."
             )
             return
 

@@ -82,7 +82,8 @@ class MsalAuthenticator:
         """Return a fresh access token from the cache / refresh token.
 
         Returns None when no account is signed in or the refresh fails
-        (e.g. revoked session) — callers fall back to the manual-paste flow.
+        (e.g. revoked session) — the next 401 then triggers an interactive
+        re-sign-in.
         """
         with self._lock:
             account = self._account

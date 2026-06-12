@@ -5,15 +5,15 @@ from PyQt5.QtWidgets import QMessageBox
 
 def warn_if_token_expired(parent, token_manager) -> bool:
     """
-    If the Bearer token has expired, show the standard warning and return True.
+    If the session has expired, show the standard warning and return True.
     Returns False when the token is still valid.
     """
     if not token_manager.is_expired():
         return False
     QMessageBox.warning(
-        parent, "Token Expired",
-        "Your Bearer token has expired.\n\n"
-        "Please go back to the authentication screen and re-enter a valid token."
+        parent, "Session Expired",
+        "Your Azure DevOps session has expired.\n\n"
+        "Please go back to the authentication screen and sign in again."
     )
     return True
 

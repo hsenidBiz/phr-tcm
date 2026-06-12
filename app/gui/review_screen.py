@@ -231,10 +231,10 @@ class ReviewScreen(QWidget):
         self.create_btn.setEnabled(n > 0 and not expired)
         if expired:
             self.warn_text.setText(
-                "Your Bearer token has expired. Go back to re-enter a valid token "
+                "Your Azure DevOps session has expired. Go back and sign in again "
                 "before creating test cases."
             )
-            self.create_btn.setToolTip("Token has expired — re-enter your token to continue")
+            self.create_btn.setToolTip("Session has expired — sign in again to continue")
         else:
             self._update_summary(n)
             self.create_btn.setToolTip("")
