@@ -2,7 +2,7 @@ import re
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QMessageBox, QFrame, QSizePolicy, QApplication
+    QPushButton, QMessageBox, QFrame, QApplication
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QThreadPool
 from PyQt5.QtGui import QFont, QCursor
@@ -76,6 +76,7 @@ class AuthScreen(QWidget):
         self.token_edit.setPlaceholderText("Paste your Bearer token here…")
         self.token_edit.setEchoMode(QLineEdit.Password)
         self.token_edit.textChanged.connect(self._on_token_changed)
+        self.token_edit.returnPressed.connect(self._on_connect)
         card_layout.addWidget(self.token_edit)
 
         self.expiry_label = QLabel("")
@@ -101,12 +102,14 @@ class AuthScreen(QWidget):
         card_layout.addWidget(QLabel("Organisation URL *"))
         self.org_edit = QLineEdit()
         self.org_edit.setPlaceholderText("https://dev.azure.com/yourorganisation")
+        self.org_edit.returnPressed.connect(self._on_connect)
         card_layout.addWidget(self.org_edit)
 
         # Project name
         card_layout.addWidget(QLabel("Project Name *"))
         self.project_edit = QLineEdit()
         self.project_edit.setPlaceholderText("My Project")
+        self.project_edit.returnPressed.connect(self._on_connect)
         card_layout.addWidget(self.project_edit)
 
         # Connect button
@@ -117,6 +120,7 @@ class AuthScreen(QWidget):
             "QPushButton:hover { background: #106ebe; }"
             "QPushButton:disabled { background: #aaa; }"
         )
+        self.connect_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.connect_btn.clicked.connect(self._on_connect)
         card_layout.addSpacing(4)
         card_layout.addWidget(self.connect_btn)
@@ -141,11 +145,7 @@ class AuthScreen(QWidget):
             QTimer.singleShot(4000, lambda: self._clipboard_label.setText(""))
 
     def _on_clipboard_changed(self):
-        text = QApplication.clipboard().text().strip()
-        if self._is_jwt(text) and not self.token_edit.text():
-            self.token_edit.setText(text)
-            self._clipboard_label.setText("Token auto-filled from clipboard")
-            QTimer.singleShot(4000, lambda: self._clipboard_label.setText(""))
+        self._check_clipboard()
 
     def _restore_settings(self):
         s = load_settings()
@@ -163,19 +163,21 @@ class AuthScreen(QWidget):
             self._expiry_timer.stop()
 
     def _refresh_expiry_display(self):
+        from app.utils import theme
+        t = theme.tokens()
         display = self.app_state.token_manager.get_expiry_display()
         secs = self.app_state.token_manager.get_seconds_remaining()
         if "EXPIRED" in display:
-            self.expiry_label.setStyleSheet("color: #c00; font-size: 11px;")
+            self.expiry_label.setStyleSheet(f"color: {t['error']}; font-size: 11px;")
             self._expiry_timer.stop()
         elif secs < 0:
-            self.expiry_label.setStyleSheet("color: #888; font-size: 11px;")
+            self.expiry_label.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         elif secs < 60:
-            self.expiry_label.setStyleSheet("color: #c00; font-size: 11px;")
+            self.expiry_label.setStyleSheet(f"color: {t['error']}; font-size: 11px;")
         elif secs < 300:
-            self.expiry_label.setStyleSheet("color: #e67e00; font-size: 11px;")
+            self.expiry_label.setStyleSheet(f"color: {t['warn_fg']}; font-size: 11px;")
         else:
-            self.expiry_label.setStyleSheet("color: #080; font-size: 11px;")
+            self.expiry_label.setStyleSheet(f"color: {t['ok']}; font-size: 11px;")
         self.expiry_label.setText(display)
 
     def _toggle_visibility(self, checked):
@@ -256,7 +258,9 @@ class AuthScreen(QWidget):
         self.show_btn.setStyleSheet(
             f"border: none; color: {t['accent']}; background: transparent;"
         )
+        self._clipboard_label.setStyleSheet(f"color: {t['ok']}; font-size: 11px;")
+        self._refresh_expiry_display()
 
     def prefill_token(self, token: str):
-        """Called from progress screen when user supplies a refreshed token."""
+        """Keep this screen's token field in sync after a mid-run token refresh."""
         self.token_edit.setText(token)

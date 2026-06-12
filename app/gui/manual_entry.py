@@ -1,10 +1,10 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QFrame, QSizePolicy, QAbstractItemView, QShortcut
+    QHeaderView, QMessageBox, QAbstractItemView, QShortcut
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QCursor, QKeySequence
+from PyQt5.QtGui import QCursor, QKeySequence
 
 from app.models.test_case import TestCase, Step
 
@@ -137,6 +137,7 @@ class ManualEntryWidget(QWidget):
             "border-radius: 4px; padding: 6px 16px; }"
             "QPushButton:hover { background: #e0e0e0; }"
         )
+        self.clear_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.clear_btn.clicked.connect(self._clear_form)
         bottom_row.addWidget(self.clear_btn)
         bottom_row.addSpacing(10)
@@ -148,12 +149,15 @@ class ManualEntryWidget(QWidget):
             "font-size: 13px; padding: 0 20px; }"
             "QPushButton:hover { background: #106ebe; }"
         )
+        self.queue_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.queue_btn.clicked.connect(self._on_queue)
         bottom_row.addWidget(self.queue_btn)
         layout.addLayout(bottom_row)
 
-        # Keyboard shortcut: Ctrl+Return = Add to Queue
-        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._on_queue)
+        # Keyboard shortcut: Ctrl+Return = Add to Queue (only while this tab is visible)
+        queue_sc = QShortcut(QKeySequence("Ctrl+Return"), self)
+        queue_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        queue_sc.activated.connect(self._on_queue)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -161,14 +165,8 @@ class ManualEntryWidget(QWidget):
         self._refresh_created_by_combo()
 
     def _refresh_module_combo(self):
-        vals = self.app_state.known_module_values
-        cur = self.module_edit.currentText()
-        self.module_edit.blockSignals(True)
-        self.module_edit.clear()
-        for v in vals:
-            self.module_edit.addItem(v)
-        self.module_edit.setCurrentText(cur)
-        self.module_edit.blockSignals(False)
+        from app.gui.helpers import refresh_module_combo
+        refresh_module_combo(self.module_edit, self.app_state.known_module_values)
 
     def _refresh_created_by_combo(self):
         from app.utils.members_cache import load_cached, TeamMemberFetcher
@@ -193,19 +191,25 @@ class ManualEntryWidget(QWidget):
             fetcher = TeamMemberFetcher(self.app_state.client)
             self.app_state._team_members_fetcher = fetcher
             fetcher.done.connect(self._on_members_fetched)
+            fetcher.failed.connect(self._on_members_failed)
             fetcher.start()
         else:
-            self.app_state._team_members_fetcher.done.connect(
-                self._populate_created_by_combo, Qt.UniqueConnection
-            )
+            from app.utils.members_cache import attach_once
+            attach_once(self.app_state._team_members_fetcher, self._populate_created_by_combo)
 
     def _on_members_fetched(self, members: list):
         from app.utils.members_cache import save_to_disk
         tm = self.app_state.client.tm
         self.app_state.cached_team_members = members
         self.app_state._team_members_fetcher = None
-        save_to_disk(tm.org_url, tm.project, members)
+        if members:
+            save_to_disk(tm.org_url, tm.project, members)
         self._populate_created_by_combo(members)
+
+    def _on_members_failed(self, _msg: str):
+        # Keep previously cached members; clear the fetcher so a later retry can happen.
+        self.app_state._team_members_fetcher = None
+        self._populate_created_by_combo(self.app_state.cached_team_members or [])
 
     def _populate_created_by_combo(self, members: list):
         cur = self.created_by_combo.currentText()
@@ -302,7 +306,12 @@ class ManualEntryWidget(QWidget):
             preconditions=self.preconditions_edit.text().strip(),
             created_by=created_by,
         )
+        # MainWindow clears the form via on_queue_accepted() only if the case
+        # was actually added (the duplicate-title dialog may reject it).
         self.test_case_queued.emit(tc)
+
+    def on_queue_accepted(self):
+        """Called by MainWindow after the emitted case was added to the queue."""
         self._clear_form()
 
     def _clear_form(self):

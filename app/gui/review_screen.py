@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTreeWidget, QTreeWidgetItem, QFrame, QMessageBox, QSizePolicy,
+    QTreeWidget, QTreeWidgetItem, QFrame, QMessageBox,
     QFileDialog, QShortcut
 )
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -60,6 +60,7 @@ class ReviewScreen(QWidget):
         self.tree.setColumnWidth(0, 340)
         self.tree.setAlternatingRowColors(True)
         self.tree.setEditTriggers(QTreeWidget.NoEditTriggers)
+        self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
         layout.addWidget(self.tree)
 
@@ -120,7 +121,7 @@ class ReviewScreen(QWidget):
             "QPushButton:disabled { color: #aaa; background: #f5f5f5; border-color: #ddd; }"
         )
         self.remove_selected_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.remove_selected_btn.setToolTip("Remove selected test case from queue (Delete)")
+        self.remove_selected_btn.setToolTip("Remove selected test case(s) from queue (Delete)")
         self.remove_selected_btn.clicked.connect(self._on_remove)
         btn_row.addWidget(self.remove_selected_btn)
 
@@ -147,6 +148,7 @@ class ReviewScreen(QWidget):
             "QPushButton:hover { background: #a82020; }"
             "QPushButton:disabled { background: #aaa; }"
         )
+        self.create_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.create_btn.clicked.connect(self._on_create)
         btn_row.addWidget(self.create_btn)
         layout.addLayout(btn_row)
@@ -296,40 +298,47 @@ class ReviewScreen(QWidget):
     #  Selection & action button state                                     #
     # ------------------------------------------------------------------ #
 
-    def _selected_root_index(self) -> int:
-        """Return the queue index of the selected top-level tree item, or -1."""
-        items = self.tree.selectedItems()
-        if not items:
-            return -1
-        item = items[0]
-        while item.parent():
-            item = item.parent()
+    def _selected_root_indices(self) -> list:
+        """Queue indices of all selected top-level items (selecting a step
+        or metadata row counts as selecting its parent test case)."""
         root = self.tree.invisibleRootItem()
-        for i in range(root.childCount()):
-            if root.child(i) is item:
-                return i
-        return -1
+        indices = set()
+        for item in self.tree.selectedItems():
+            while item.parent():
+                item = item.parent()
+            for i in range(root.childCount()):
+                if root.child(i) is item:
+                    indices.add(i)
+                    break
+        return sorted(indices)
+
+    def _selected_root_index(self) -> int:
+        """Queue index when exactly one test case is selected, else -1."""
+        indices = self._selected_root_indices()
+        return indices[0] if len(indices) == 1 else -1
 
     def _on_tree_selection_changed(self):
         self._update_action_btns()
 
     def _update_action_btns(self):
+        indices = self._selected_root_indices()
         idx = self._selected_root_index()
         n = len(self.app_state.queue)
-        has_sel = idx >= 0
-        self.remove_selected_btn.setEnabled(has_sel)
-        self.move_up_btn.setEnabled(has_sel and idx > 0)
-        self.move_down_btn.setEnabled(has_sel and idx < n - 1)
+        self.remove_selected_btn.setEnabled(bool(indices))
+        # Reordering only applies to a single selected case
+        self.move_up_btn.setEnabled(idx > 0)
+        self.move_down_btn.setEnabled(0 <= idx < n - 1)
 
     # ------------------------------------------------------------------ #
     #  Remove / reorder                                                    #
     # ------------------------------------------------------------------ #
 
     def _on_remove(self):
-        idx = self._selected_root_index()
-        if idx < 0:
+        indices = self._selected_root_indices()
+        if not indices:
             return
-        self.app_state.queue.pop(idx)
+        for idx in reversed(indices):
+            self.app_state.queue.pop(idx)
         n = len(self.app_state.queue)
         self._update_summary(n)
         self._rebuild_tree()

@@ -53,11 +53,13 @@ def save_to_disk(org_url: str, project: str, members: list):
 class TeamMemberFetcher(QObject):
     """
     Fetches team members in a daemon background thread.
-    Emits done(members) on the Qt main thread when complete (queued connection).
+    Emits done(members) on success or failed(message) on error, both delivered
+    on the Qt main thread (queued connection).
     Shared via AppState._team_members_fetcher so multiple widgets attach to the
     same in-flight request rather than issuing duplicate API calls.
     """
     done = pyqtSignal(list)
+    failed = pyqtSignal(str)
 
     def __init__(self, client):
         super().__init__()
@@ -69,6 +71,20 @@ class TeamMemberFetcher(QObject):
     def _run(self):
         try:
             members = self._client.get_team_members()
-        except Exception:
-            members = []
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
         self.done.emit(members)
+
+
+def attach_once(fetcher, slot) -> None:
+    """
+    Connect ``slot`` to ``fetcher.done`` exactly once.
+    PyQt5 raises TypeError ("connection is not unique") when a
+    Qt.UniqueConnection connect is repeated, so swallow that case.
+    """
+    from PyQt5.QtCore import Qt
+    try:
+        fetcher.done.connect(slot, Qt.UniqueConnection)
+    except TypeError:
+        pass

@@ -3,10 +3,10 @@ import threading
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QTextEdit, QDialog, QLineEdit, QDialogButtonBox,
-    QMessageBox, QFrame
+    QMessageBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QObject
-from PyQt5.QtGui import QFont, QColor, QTextCursor, QCursor
+from PyQt5.QtGui import QFont, QTextCursor, QCursor
 
 from app.api.devops_client import TokenExpiredError, RateLimitError
 from app.utils.anim import Spinner
@@ -29,45 +29,63 @@ class CreationWorker(QObject):
         self.iteration_path = iteration_path
         self.preconditions_ref = preconditions_ref
         self._token_event = threading.Event()
-        self._abort = False
+        self._abort_event = threading.Event()
+
+    @property
+    def _abort(self) -> bool:
+        return self._abort_event.is_set()
 
     def provide_token(self):
         """Called from the main thread after a new token is pasted."""
         self._token_event.set()
 
     def abort(self):
-        self._abort = True
+        self._abort_event.set()
         self._token_event.set()
 
     def run(self):
         for i, tc in enumerate(self.queue):
             if self._abort:
                 break
+            # tc_id is set once creation succeeds, so token/rate-limit retries
+            # only repeat the link step — never a second (duplicate) create.
+            tc_id = None
             while True:
+                if self._abort:
+                    break
                 try:
-                    tc_id = self.client.create_and_link(
-                        tc, self.pbi_id, self.module_ref,
-                        self.area_path, self.iteration_path,
-                        self.preconditions_ref,
-                    )
+                    if tc_id is None:
+                        tc_id = self.client.create_test_case(
+                            tc, self.module_ref,
+                            self.area_path, self.iteration_path,
+                            self.preconditions_ref,
+                        )
+                        self._abort_event.wait(0.5)  # pacing between create and link
+                    self.client.link_to_pbi(tc_id, self.pbi_id)
                     self.progress.emit(i, "success", f"✓ Created #{tc_id}: {tc.title}")
                     break
                 except TokenExpiredError:
                     self.token_needed.emit()
                     self._token_event.wait()
                     self._token_event.clear()
-                    if self._abort:
-                        break
                     # Retry with the new token (client uses token_manager which was updated)
                 except RateLimitError as exc:
-                    import time
                     self.progress.emit(
                         i, "warning",
                         f"⏳ Rate limited — waiting {exc.retry_after}s before retrying '{tc.title}'…"
                     )
-                    time.sleep(exc.retry_after)
+                    self._abort_event.wait(exc.retry_after)
                 except Exception as exc:
-                    self.progress.emit(i, "error", f"✗ Failed '{tc.title}': {exc}")
+                    if tc_id is not None:
+                        # "partial": the work item exists in DevOps, so this case
+                        # must NOT be retried from the queue (it would duplicate).
+                        self.progress.emit(
+                            i, "partial",
+                            f"✗ Created #{tc_id} but failed to link '{tc.title}' to the PBI: {exc}. "
+                            f"Link it manually in Azure DevOps."
+                        )
+                    else:
+                        self.progress.emit(i, "error", f"✗ Failed '{tc.title}': {exc}")
                     break
 
         self.finished.emit()
@@ -113,7 +131,8 @@ class TokenRefreshDialog(QDialog):
 
 
 class ProgressScreen(QWidget):
-    all_done = pyqtSignal()  # emitted when creation is finished
+    all_done = pyqtSignal()          # emitted when creation is finished
+    token_refreshed = pyqtSignal(str)  # emitted after a mid-run token refresh
 
     def __init__(self, app_state):
         super().__init__()
@@ -240,6 +259,9 @@ class ProgressScreen(QWidget):
         self._success_count = 0
         self._error_count = 0
         self._total = n
+        # Indices that must NOT stay in the queue afterwards: fully created,
+        # or created-but-unlinked (retrying those would duplicate the work item).
+        self._consumed_indices = set()
 
         self._worker = CreationWorker(
             self.app_state.client,
@@ -257,13 +279,35 @@ class ProgressScreen(QWidget):
         self._worker.token_needed.connect(self._on_token_needed)
         self._worker.finished.connect(self._on_finished)
         self._worker.finished.connect(self._thread.quit)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._clear_thread_refs)
+        self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
+
+    def _clear_thread_refs(self):
+        self._worker = None
+        self._thread = None
+
+    def is_running(self) -> bool:
+        """True while a creation batch is still in progress."""
+        try:
+            return self._thread is not None and self._thread.isRunning()
+        except RuntimeError:  # C++ object already deleted via deleteLater
+            return False
+
+    def shutdown(self):
+        """Abort any running batch and wait for the thread (called on app close)."""
+        if self.is_running():
+            if self._worker:
+                self._worker.abort()
+            self._thread.quit()
+            self._thread.wait(5000)
 
     def _on_progress(self, index: int, status: str, message: str):
         self.progress_bar.setValue(index + 1)
         self.status_label.setText(f"Processing {index + 1} / {self._total}…")
 
-        colors = {"success": "#4ec94e", "error": "#f14c4c", "warning": "#e5c07b"}
+        colors = {"success": "#4ec94e", "error": "#f14c4c", "partial": "#f14c4c", "warning": "#e5c07b"}
         color = colors.get(status, "#d4d4d4")
 
         cursor = self.log.textCursor()
@@ -273,6 +317,10 @@ class ProgressScreen(QWidget):
 
         if status == "success":
             self._success_count += 1
+            self._consumed_indices.add(index)
+        elif status == "partial":
+            self._error_count += 1
+            self._consumed_indices.add(index)
         elif status == "error":
             self._error_count += 1
 
@@ -288,6 +336,7 @@ class ProgressScreen(QWidget):
         if dlg.exec_() == TokenRefreshDialog.Accepted:
             new_token = dlg.get_token()
             self.app_state.token_manager.update_token(new_token)
+            self.token_refreshed.emit(new_token)
             self._worker.provide_token()
         else:
             # User cancelled — abort remaining items
@@ -306,21 +355,40 @@ class ProgressScreen(QWidget):
         self.progress_bar.setValue(self._total)
         self.done_btn.setEnabled(True)
 
-        if n_err == 0:
-            self.status_label.setStyleSheet("color: #080;")
+        from app.utils import theme
+        t = theme.tokens()
+        if n_err == 0 and n_skip == 0:
+            self.status_label.setStyleSheet(f"color: {t['ok']};")
             self.status_label.setText(f"All {n_ok} test case{'s' if n_ok != 1 else ''} created successfully.")
         else:
-            self.status_label.setStyleSheet("color: #c00;")
+            self.status_label.setStyleSheet(f"color: {t['error']};")
             self.status_label.setText(
                 f"{n_ok} created, {n_err} failed"
                 + (f", {n_skip} skipped" if n_skip else "") + "."
             )
 
-        self.result_label.setText(
-            f"Check Azure DevOps to verify that the test cases appear under PBI #{self.app_state.pbi_id}. "
-            "Open the PBI and look for the 'Tests' / 'Tested By' links section."
-        )
-        # Clear queue and any saved draft now that creation succeeded
-        self.app_state.queue.clear()
-        from app.utils.settings import clear_draft_queue
-        clear_draft_queue()
+        # Keep failed/skipped cases in the queue so they can be fixed and retried.
+        # Successful and created-but-unlinked items are removed (re-running them
+        # would create duplicates in Azure DevOps).
+        remaining = [
+            tc for i, tc in enumerate(self.app_state.queue)
+            if i not in self._consumed_indices
+        ]
+        self.app_state.queue[:] = remaining
+
+        from app.utils.settings import clear_draft_queue, save_draft_queue
+        if remaining:
+            save_draft_queue(remaining)
+            self.done_btn.setText(f"Done — {len(remaining)} unprocessed case{'s' if len(remaining) != 1 else ''} kept in queue")
+            self.result_label.setText(
+                f"{len(remaining)} case{'s were' if len(remaining) != 1 else ' was'} not created and "
+                "remain in the queue — review them and run Create again to retry. "
+                f"Verify created test cases under PBI #{self.app_state.pbi_id} in Azure DevOps."
+            )
+        else:
+            clear_draft_queue()
+            self.done_btn.setText("Done — Create Another Batch")
+            self.result_label.setText(
+                f"Check Azure DevOps to verify that the test cases appear under PBI #{self.app_state.pbi_id}. "
+                "Open the PBI and look for the 'Tests' / 'Tested By' links section."
+            )

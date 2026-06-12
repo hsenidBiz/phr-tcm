@@ -281,19 +281,20 @@ class ConfigScreen(QWidget):
 
     def refresh_expiry(self):
         """Update the connected label with the current expiry countdown and colour."""
+        from app.utils import theme
+        t = theme.tokens()
         tm = self.app_state.token_manager
         display = tm.get_expiry_display()
         secs = tm.get_seconds_remaining()
 
         if "EXPIRED" in display or secs == 0:
-            color = "#c00"
+            color = t["error"]
         elif secs > 0 and secs < 60:
-            color = "#c00"
+            color = t["error"]
         elif secs < 300:
-            color = "#e67e00"
+            color = t["warn_fg"]
         else:
-            from app.utils import theme
-            color = theme.tokens()["accent"]
+            color = t["accent"]
 
         self.connected_label.setStyleSheet(f"color: {color};")
         self.connected_label.setText(
@@ -309,10 +310,6 @@ class ConfigScreen(QWidget):
         else:
             self.recent_pbi_btn.setText("No recent PBIs")
             self.recent_pbi_btn.setEnabled(False)
-
-    def _on_recent_pbi_selected(self, index):
-        # kept for backwards compatibility — unused; selection handled by _select_recent_pbi
-        pass
 
     def _show_recent_pbi_menu(self):
         recent = load_settings().get("recent_pbis", [])
@@ -380,9 +377,10 @@ class ConfigScreen(QWidget):
         self._populate_recent_pbis()
 
     def _validate_pbi(self):
+        from app.utils import theme
         text = self.pbi_edit.text().strip()
         if not text.isdigit():
-            self.pbi_result_label.setStyleSheet("color: #c00;")
+            self.pbi_result_label.setStyleSheet(f"color: {theme.tokens()['error']};")
             self.pbi_result_label.setText("Please enter a numeric work item ID.")
             return
 
@@ -406,7 +404,8 @@ class ConfigScreen(QWidget):
         self.app_state.area_path = area
         self.app_state.iteration_path = iteration
 
-        self.pbi_result_label.setStyleSheet("color: #080;")
+        from app.utils import theme
+        self.pbi_result_label.setStyleSheet(f"color: {theme.tokens()['ok']};")
         self.pbi_result_label.setText(f"Found: {title} ({wtype})")
 
         save_recent_pbi(pbi_id, title)
@@ -419,14 +418,14 @@ class ConfigScreen(QWidget):
         self._check_ready()
 
     def _on_pbi_error(self, text: str, exc: Exception):
+        from app.utils import theme
+        self.pbi_result_label.setStyleSheet(f"color: {theme.tokens()['error']};")
         if isinstance(exc, LookupError):
-            self.pbi_result_label.setStyleSheet("color: #c00;")
             self.pbi_result_label.setText(
                 f"Work item #{text} not found in project '{self.app_state.token_manager.project}'. "
                 "Double-check the ID."
             )
         else:
-            self.pbi_result_label.setStyleSheet("color: #c00;")
             self.pbi_result_label.setText(f"Error: {exc}")
         self.area_edit.clear()
         self.iteration_edit.clear()

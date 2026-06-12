@@ -38,11 +38,23 @@ class EditScreen(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_assigned_to_combo()
+        self.ensure_loaded()
+
+    def ensure_loaded(self):
+        """Load cases for the configured PBI if not already loaded (also warms
+        known_module_values and duplicate-title detection for other tabs)."""
         if self.app_state.pbi_id and self.app_state.pbi_id != self._loaded_pbi:
             self._load_cases()
 
+    def loaded_titles(self) -> set:
+        """Lower-cased titles of the test cases currently loaded from the PBI."""
+        return {
+            c.get("System.Title", "").lower()
+            for c in self._cases
+        }
+
     def _refresh_assigned_to_combo(self):
-        from app.utils.members_cache import load_cached, TeamMemberFetcher
+        from app.utils.members_cache import load_cached, attach_once, TeamMemberFetcher
         tm = self.app_state.client.tm
 
         if self.app_state.cached_team_members is None:
@@ -56,19 +68,23 @@ class EditScreen(QWidget):
             fetcher = TeamMemberFetcher(self.app_state.client)
             self.app_state._team_members_fetcher = fetcher
             fetcher.done.connect(self._on_members_fetched)
+            fetcher.failed.connect(self._on_members_failed)
             fetcher.start()
         else:
-            self.app_state._team_members_fetcher.done.connect(
-                self._populate_assigned_to_combo, Qt.UniqueConnection
-            )
+            attach_once(self.app_state._team_members_fetcher, self._populate_assigned_to_combo)
 
     def _on_members_fetched(self, members: list):
         from app.utils.members_cache import save_to_disk
         tm = self.app_state.client.tm
         self.app_state.cached_team_members = members
         self.app_state._team_members_fetcher = None
-        save_to_disk(tm.org_url, tm.project, members)
+        if members:
+            save_to_disk(tm.org_url, tm.project, members)
         self._populate_assigned_to_combo(members)
+
+    def _on_members_failed(self, _msg: str):
+        # Keep any previously cached members; just allow a later retry.
+        self.app_state._team_members_fetcher = None
 
     def _populate_assigned_to_combo(self, members: list):
         cur_data = self._bulk_assigned_combo.currentData()
@@ -366,8 +382,10 @@ class EditScreen(QWidget):
         splitter.setSizes([280, 600])
         layout.addWidget(splitter, 1)
 
-        # Keyboard shortcut: Ctrl+S = Save Changes
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._save_changes)
+        # Keyboard shortcut: Ctrl+S = Save Changes (only while this tab is visible)
+        save_sc = QShortcut(QKeySequence("Ctrl+S"), self)
+        save_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        save_sc.activated.connect(self._save_changes)
 
     # ------------------------------------------------------------------ #
     #  Theme                                                               #
@@ -388,6 +406,9 @@ class EditScreen(QWidget):
         self._export_btn.setStyleSheet(header_btn_style)
         self._sel_count_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self._mine_chk.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
+        self._no_sel_lbl.setStyleSheet(f"color: {t['text_dim2']};")
+        self._tc_id_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
+        self._bulk_progress_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
         self._add_step_btn.setStyleSheet(
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; padding: 3px 10px; }}"
@@ -471,13 +492,8 @@ class EditScreen(QWidget):
                 self._module_filter.setCurrentIndex(idx)
             # Share module values with other screens and refresh the edit combo
             self.app_state.known_module_values = module_vals
-            cur = self._module_edit.currentText()
-            self._module_edit.blockSignals(True)
-            self._module_edit.clear()
-            for mv in module_vals:
-                self._module_edit.addItem(mv)
-            self._module_edit.setCurrentText(cur)
-            self._module_edit.blockSignals(False)
+            from app.gui.helpers import refresh_module_combo
+            refresh_module_combo(self._module_edit, module_vals)
         self._module_filter.blockSignals(False)
 
         self._apply_filters()
@@ -532,6 +548,24 @@ class EditScreen(QWidget):
             )
             item.setHidden(by_search or by_owner or by_status or by_module)
 
+        if not self._list.selectedItems():
+            self._update_filter_count()
+
+    def _update_filter_count(self):
+        """Show 'Showing X of Y' feedback while nothing is selected."""
+        total = self._list.count()
+        visible = sum(
+            not self._list.item(r).isHidden() for r in range(total)
+        )
+        if total == 0:
+            self._sel_count_lbl.setText("")
+        elif visible == 0:
+            self._sel_count_lbl.setText(f"No matches — adjust search or filters ({total} hidden)")
+        elif visible < total:
+            self._sel_count_lbl.setText(f"Showing {visible} of {total}")
+        else:
+            self._sel_count_lbl.setText(f"{total} test case{'s' if total != 1 else ''}")
+
     @staticmethod
     def _is_mine(tc: dict, current_upn: str | None) -> bool:
         if not current_upn:
@@ -582,7 +616,7 @@ class EditScreen(QWidget):
             self._no_sel_lbl.setText("← Select a test case from the list to edit it.")
             self._no_sel_lbl.setVisible(True)
             self._rename_btn.setEnabled(False)
-            self._sel_count_lbl.setText("")
+            self._update_filter_count()
         elif n_sel == 1:
             row = self._list.row(selected[0])
             self._current_idx = row
@@ -697,13 +731,21 @@ class EditScreen(QWidget):
     #  Save single case                                                    #
     # ------------------------------------------------------------------ #
 
+    def _collect_steps(self) -> list:
+        """Read non-empty steps out of the steps table."""
+        steps = []
+        for r in range(self._steps_tbl.rowCount()):
+            a_item = self._steps_tbl.item(r, 1)
+            e_item = self._steps_tbl.item(r, 2)
+            action = a_item.text().strip() if a_item else ""
+            expected = e_item.text().strip() if e_item else ""
+            if action:
+                steps.append(Step(action=action, expected=expected))
+        return steps
+
     def _save_changes(self):
-        if self.app_state.token_manager.is_expired():
-            QMessageBox.warning(
-                self, "Token Expired",
-                "Your Bearer token has expired.\n\n"
-                "Please go back to the authentication screen and re-enter a valid token."
-            )
+        from app.gui.helpers import warn_if_token_expired
+        if warn_if_token_expired(self, self.app_state.token_manager):
             return
         if self._current_idx is None:
             return
@@ -718,14 +760,7 @@ class EditScreen(QWidget):
             QMessageBox.warning(self, "Validation", "Title cannot be empty.")
             return
 
-        steps = []
-        for r in range(self._steps_tbl.rowCount()):
-            a_item = self._steps_tbl.item(r, 1)
-            e_item = self._steps_tbl.item(r, 2)
-            action = a_item.text().strip() if a_item else ""
-            expected = e_item.text().strip() if e_item else ""
-            if action:
-                steps.append(Step(action=action, expected=expected))
+        steps = self._collect_steps()
 
         fields = {
             "System.Title": title,
@@ -758,7 +793,8 @@ class EditScreen(QWidget):
                 item.setText(f"#{tc_id}  —  {title}")
         self._save_btn.setEnabled(True)
         self._save_btn.setText("Save Changes")
-        QMessageBox.information(self, "Saved", f"Test case #{tc_id} updated successfully.")
+        from app.gui.helpers import status_message
+        status_message(self, f"Test case #{tc_id} updated successfully.")
 
     def _on_save_error(self, tc_id, exc: Exception):
         self._save_btn.setEnabled(True)
@@ -776,23 +812,15 @@ class EditScreen(QWidget):
         if self._current_idx is None:
             return
         title = self._title_edit.text().strip() + " (Copy)"
-        steps = []
-        for r in range(self._steps_tbl.rowCount()):
-            a_item = self._steps_tbl.item(r, 1)
-            e_item = self._steps_tbl.item(r, 2)
-            action = a_item.text().strip() if a_item else ""
-            expected = e_item.text().strip() if e_item else ""
-            if action:
-                steps.append(Step(action=action, expected=expected))
         tc = TestCase(
             title=title,
-            steps=steps,
+            steps=self._collect_steps(),
             tags=self._tags_edit.text().strip(),
             automation_status=self._auto_combo.currentText(),
             module_value=self._module_edit.currentText().strip(),
         )
+        # MainWindow shows a status-bar confirmation when the case is queued.
         self.test_case_queued.emit(tc)
-        QMessageBox.information(self, "Cloned", f"'{title}' added to the queue.")
 
     # ------------------------------------------------------------------ #
     #  Export cases to Excel                                               #
@@ -846,12 +874,8 @@ class EditScreen(QWidget):
         self._bulk_save_btn.setEnabled(has_value)
 
     def _on_bulk_save(self):
-        if self.app_state.token_manager.is_expired():
-            QMessageBox.warning(
-                self, "Token Expired",
-                "Your Bearer token has expired.\n\n"
-                "Please go back to the authentication screen and re-enter a valid token."
-            )
+        from app.gui.helpers import warn_if_token_expired
+        if warn_if_token_expired(self, self.app_state.token_manager):
             return
         selected = self._list.selectedItems()
         if not selected:
