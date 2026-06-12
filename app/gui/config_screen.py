@@ -284,6 +284,13 @@ class ConfigScreen(QWidget):
         from app.utils import theme
         t = theme.tokens()
         tm = self.app_state.token_manager
+        if tm.auto_refresh_active():
+            self.connected_label.setStyleSheet(f"color: {t['accent']};")
+            self.connected_label.setText(
+                f"Connected to: {tm.org_url}/{tm.project}  |  Signed in — token refreshes automatically"
+            )
+            self._check_ready()
+            return
         display = tm.get_expiry_display()
         secs = tm.get_seconds_remaining()
 

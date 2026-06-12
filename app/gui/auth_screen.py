@@ -17,6 +17,8 @@ class AuthScreen(QWidget):
     def __init__(self, app_state):
         super().__init__()
         self.app_state = app_state
+        self._msal_auth = None
+        self._setting_token_programmatically = False
         self._build_ui()
         self._restore_settings()
         self._expiry_timer = QTimer(self)
@@ -56,6 +58,31 @@ class AuthScreen(QWidget):
         card_layout = QVBoxLayout(self._card)
         card_layout.setContentsMargins(30, 24, 30, 24)
         card_layout.setSpacing(14)
+
+        # Microsoft sign-in (primary path — no token copying)
+        self.signin_btn = QPushButton("Sign in with Microsoft")
+        self.signin_btn.setFixedHeight(38)
+        self.signin_btn.setStyleSheet(
+            "QPushButton { background: #0078d4; color: white; border-radius: 4px; font-size: 14px; }"
+            "QPushButton:hover { background: #106ebe; }"
+            "QPushButton:disabled { background: #aaa; }"
+        )
+        self.signin_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.signin_btn.clicked.connect(self._on_msal_sign_in)
+        card_layout.addWidget(self.signin_btn)
+
+        self._signin_hint = QLabel(
+            "Opens your browser to sign in — the token is fetched and refreshed "
+            "automatically. Fill in the Organisation URL and Project Name below first."
+        )
+        self._signin_hint.setWordWrap(True)
+        self._signin_hint.setStyleSheet("color: #888; font-size: 11px;")
+        card_layout.addWidget(self._signin_hint)
+
+        self._divider_label = QLabel("— or paste a token manually —")
+        self._divider_label.setAlignment(Qt.AlignCenter)
+        self._divider_label.setStyleSheet("color: #888; font-size: 11px;")
+        card_layout.addWidget(self._divider_label)
 
         # How to get the token
         self._help_label = QLabel(
@@ -155,6 +182,10 @@ class AuthScreen(QWidget):
             self.project_edit.setText(s["project"])
 
     def _on_token_changed(self, text):
+        if not self._setting_token_programmatically:
+            # The user is taking manual control — stop MSAL auto-refresh so the
+            # pasted token is what actually gets sent.
+            self.app_state.token_manager.detach_msal()
         self.app_state.token_manager.update_token(text)
         self._refresh_expiry_display()
         if text.strip():
@@ -165,8 +196,15 @@ class AuthScreen(QWidget):
     def _refresh_expiry_display(self):
         from app.utils import theme
         t = theme.tokens()
-        display = self.app_state.token_manager.get_expiry_display()
-        secs = self.app_state.token_manager.get_seconds_remaining()
+        tm = self.app_state.token_manager
+        if tm.auto_refresh_active():
+            upn = tm.get_current_upn()
+            who = f" as {upn}" if upn else ""
+            self.expiry_label.setStyleSheet(f"color: {t['ok']}; font-size: 11px;")
+            self.expiry_label.setText(f"Signed in{who} — token refreshes automatically")
+            return
+        display = tm.get_expiry_display()
+        secs = tm.get_seconds_remaining()
         if "EXPIRED" in display:
             self.expiry_label.setStyleSheet(f"color: {t['error']}; font-size: 11px;")
             self._expiry_timer.stop()
@@ -184,21 +222,16 @@ class AuthScreen(QWidget):
         self.token_edit.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
         self.show_btn.setText("Hide token" if checked else "Show token")
 
-    def _on_connect(self):
-        token = self.token_edit.text().strip()
+    def _org_and_project(self) -> tuple[str, str] | None:
+        """Validate and return (org, project) from the form, or None if invalid."""
         org = self.org_edit.text().strip()
         project = self.project_edit.text().strip()
-
-        if not token:
-            QMessageBox.warning(self, "Missing Field", "Please paste your Bearer token.")
-            return
         if not org:
             QMessageBox.warning(self, "Missing Field", "Please enter the Organisation URL.")
-            return
+            return None
         if not project:
             QMessageBox.warning(self, "Missing Field", "Please enter the Project Name.")
-            return
-
+            return None
         if not org.startswith("https://dev.azure.com/"):
             reply = QMessageBox.question(
                 self, "URL Format",
@@ -207,16 +240,81 @@ class AuthScreen(QWidget):
                 QMessageBox.Yes | QMessageBox.No,
             )
             if reply == QMessageBox.No:
-                return
+                return None
+        return org, project
 
-        self.connect_btn.setEnabled(False)
-        self.connect_btn.setText("Connecting…")
+    def _set_buttons_busy(self, busy: bool, connect_text="Connect", signin_text="Sign in with Microsoft"):
+        self.connect_btn.setEnabled(not busy)
+        self.connect_btn.setText(connect_text)
+        self.signin_btn.setEnabled(not busy)
+        self.signin_btn.setText(signin_text)
+
+    def _start_validation(self, token: str, org: str, project: str):
+        """Verify project access with the given token, then emit connected."""
         self.app_state.token_manager.set_credentials(token, org, project)
-
         worker = Worker(self.app_state.client.validate_project)
         worker.signals.result.connect(lambda name: self._on_connected(token, org, name))
         worker.signals.error.connect(self._on_connect_error)
         QThreadPool.globalInstance().start(worker)
+
+    def _on_connect(self):
+        token = self.token_edit.text().strip()
+        if not token:
+            QMessageBox.warning(self, "Missing Field", "Please paste your Bearer token.")
+            return
+        org_project = self._org_and_project()
+        if org_project is None:
+            return
+        self._set_buttons_busy(True, connect_text="Connecting…")
+        self._start_validation(token, *org_project)
+
+    # ------------------------------------------------------------------ #
+    #  Microsoft (MSAL) sign-in                                            #
+    # ------------------------------------------------------------------ #
+
+    def _on_msal_sign_in(self):
+        org_project = self._org_and_project()
+        if org_project is None:
+            return
+        try:
+            from app.auth.msal_auth import MsalAuthenticator
+        except ImportError:
+            QMessageBox.critical(
+                self, "MSAL Not Available",
+                "The 'msal' package is not installed.\n\n"
+                "Run:  pip install msal\n\n"
+                "Until then, use the manual token paste below."
+            )
+            return
+        if self._msal_auth is None:
+            self._msal_auth = MsalAuthenticator()
+
+        self._set_buttons_busy(True, signin_text="Waiting for browser sign-in…")
+        org, project = org_project
+        worker = Worker(self._msal_auth.sign_in_interactive)
+        worker.signals.result.connect(lambda token: self._on_msal_token(token, org, project))
+        worker.signals.error.connect(self._on_msal_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_msal_token(self, token: str, org: str, project: str):
+        self.app_state.token_manager.attach_msal(self._msal_auth)
+        # Sync the field without detaching auto-refresh (it drives the
+        # expiry timer and keeps update_token in the loop).
+        self._setting_token_programmatically = True
+        try:
+            self.token_edit.setText(token)
+        finally:
+            self._setting_token_programmatically = False
+        self.signin_btn.setText("Validating project access…")
+        self._start_validation(token, org, project)
+
+    def _on_msal_error(self, exc: Exception):
+        self._set_buttons_busy(False)
+        QMessageBox.critical(
+            self, "Sign-In Failed",
+            f"Microsoft sign-in did not complete:\n\n{exc}\n\n"
+            "You can still connect by pasting a Bearer token manually below."
+        )
 
     def _on_connected(self, token: str, org: str, project_name: str):
         self.app_state.token_manager.set_credentials(token, org, project_name)
@@ -231,8 +329,8 @@ class AuthScreen(QWidget):
                 pass
         self.app_state.cached_team_members = None
         self.app_state._team_members_fetcher = None
-        self.connect_btn.setEnabled(True)
-        self.connect_btn.setText("Connect")
+        self._set_buttons_busy(False)
+        self._refresh_expiry_display()
         self.connected.emit()
 
     def _on_connect_error(self, exc: Exception):
@@ -241,8 +339,7 @@ class AuthScreen(QWidget):
             f"Could not connect to Azure DevOps:\n\n{exc}\n\n"
             "Check that your token is valid and the URL / project name are correct."
         )
-        self.connect_btn.setEnabled(True)
-        self.connect_btn.setText("Connect")
+        self._set_buttons_busy(False)
 
     def refresh_theme(self):
         from app.utils import theme
@@ -259,6 +356,8 @@ class AuthScreen(QWidget):
             f"border: none; color: {t['accent']}; background: transparent;"
         )
         self._clipboard_label.setStyleSheet(f"color: {t['ok']}; font-size: 11px;")
+        self._signin_hint.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+        self._divider_label.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self._refresh_expiry_display()
 
     def prefill_token(self, token: str):

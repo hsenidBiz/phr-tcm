@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime
 
 
@@ -9,6 +10,8 @@ class TokenManager:
         self._org_url: str = ""
         self._project: str = ""
         self._payload_cache: dict | None = None
+        self._msal = None  # MsalAuthenticator when signed in via Microsoft
+        self._refresh_lock = threading.Lock()
 
     def set_credentials(self, token: str, org_url: str, project: str):
         self._token = token.strip()
@@ -19,6 +22,34 @@ class TokenManager:
     def update_token(self, token: str):
         self._token = token.strip()
         self._payload_cache = None
+
+    def attach_msal(self, authenticator):
+        """Enable silent token refresh through a signed-in MsalAuthenticator."""
+        self._msal = authenticator
+
+    def detach_msal(self):
+        """Drop back to manual-paste mode (e.g. when the user types a token)."""
+        self._msal = None
+
+    def auto_refresh_active(self) -> bool:
+        return self._msal is not None and self._msal.has_account()
+
+    def _ensure_fresh(self):
+        """Silently refresh the token via MSAL when it is about to expire.
+
+        Called from the header getters, which run on API worker threads —
+        never blocks the GUI thread. On refresh failure the stale token is
+        kept; the resulting 401 surfaces through the existing
+        TokenExpiredError fallback (manual paste).
+        """
+        if self._msal is None or not self.is_likely_expired():
+            return
+        with self._refresh_lock:
+            if not self.is_likely_expired():  # another thread already refreshed
+                return
+            fresh = self._msal.acquire_token_silent()
+            if fresh:
+                self.update_token(fresh)
 
     @property
     def org_url(self) -> str:
@@ -33,6 +64,7 @@ class TokenManager:
 
     def get_patch_headers(self) -> dict:
         """Headers for POST/PATCH with JSON Patch body."""
+        self._ensure_fresh()
         return {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json-patch+json",
@@ -41,6 +73,7 @@ class TokenManager:
 
     def get_json_headers(self) -> dict:
         """Headers for GET requests."""
+        self._ensure_fresh()
         return {
             "Authorization": f"Bearer {self._token}",
             "Accept": "application/json",
@@ -106,7 +139,14 @@ class TokenManager:
         return f"Expires in {countdown}  ·  {time_str}"
 
     def is_expired(self) -> bool:
-        """True only when a token is present and has passed its expiry time."""
+        """True only when a token is present and has passed its expiry time.
+
+        With MSAL auto-refresh active the credentials never count as expired:
+        the next API call refreshes the token silently before sending. This is
+        a pure check (no network) so it is safe on the GUI thread.
+        """
+        if self.auto_refresh_active():
+            return False
         expiry = self.get_expiry()
         if expiry is None:
             return False
