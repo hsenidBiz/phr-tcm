@@ -173,14 +173,12 @@ class ProgressScreen(QWidget):
         btn_row.addWidget(self.cancel_btn)
         btn_row.addSpacing(8)
 
+        from app.utils import theme
         self.done_btn = QPushButton("Done — Create Another Batch")
         self.done_btn.setFixedHeight(38)
         self.done_btn.setEnabled(False)
         self.done_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
-            "font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #106ebe; }"
-            "QPushButton:disabled { background: #aaa; }"
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self.done_btn.clicked.connect(self.all_done)
         btn_row.addWidget(self.done_btn)
@@ -203,6 +201,9 @@ class ProgressScreen(QWidget):
             f"border-radius: 4px; font-size: 13px; padding: 0 16px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
             f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
+        )
+        self.done_btn.setStyleSheet(
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
 
     @staticmethod

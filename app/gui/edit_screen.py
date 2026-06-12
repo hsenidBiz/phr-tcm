@@ -288,13 +288,11 @@ class EditScreen(QWidget):
         self._steps_tbl.model().rowsMoved.connect(self._on_steps_rows_moved)
         fv.addWidget(self._steps_tbl, 1)
 
+        from app.utils import theme
         self._save_btn = QPushButton("Save Changes")
         self._save_btn.setFixedHeight(36)
         self._save_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
-            "font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #106ebe; }"
-            "QPushButton:disabled { background: #aaa; }"
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self._save_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._save_btn.clicked.connect(self._save_changes)
@@ -349,14 +347,12 @@ class EditScreen(QWidget):
         self._bulk_assigned_combo.currentIndexChanged.connect(self._update_bulk_save_btn)
         bfv.addWidget(self._bulk_assigned_combo)
 
+        from app.utils import theme
         self._bulk_save_btn = QPushButton("Save to Cases")
         self._bulk_save_btn.setFixedHeight(36)
         self._bulk_save_btn.setEnabled(False)
         self._bulk_save_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
-            "font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #106ebe; }"
-            "QPushButton:disabled { background: #aaa; }"
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self._bulk_save_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._bulk_save_btn.clicked.connect(self._on_bulk_save)
@@ -412,6 +408,9 @@ class EditScreen(QWidget):
             f"border-radius: 4px; font-size: 13px; padding: 0 20px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
         )
+        primary = theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
+        self._save_btn.setStyleSheet(primary)
+        self._bulk_save_btn.setStyleSheet(primary)
 
     # ------------------------------------------------------------------ #
     #  Loading                                                             #
@@ -670,12 +669,11 @@ class EditScreen(QWidget):
     # ------------------------------------------------------------------ #
 
     def _make_rm_wrap(self) -> QWidget:
+        from app.utils import theme
         rm_btn = QPushButton("✕")
         rm_btn.setFixedSize(26, 22)
         rm_btn.setStyleSheet(
-            "QPushButton { background: #c42b1c; color: white; border-radius: 3px; "
-            "font-size: 11px; font-weight: bold; }"
-            "QPushButton:hover { background: #a4261a; }"
+            theme.btn_danger_qss("border-radius: 3px; font-size: 11px; font-weight: bold;")
         )
         rm_btn.setCursor(QCursor(Qt.PointingHandCursor))
         rm_btn.clicked.connect(self._remove_step)

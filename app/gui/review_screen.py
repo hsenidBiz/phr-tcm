@@ -154,13 +154,13 @@ class ReviewScreen(QWidget):
         btn_row.addWidget(self.export_queue_btn)
         btn_row.addSpacing(8)
 
+        from app.utils import theme
         self.create_btn = QPushButton("Create All Test Cases")
         self.create_btn.setFixedHeight(40)
         self.create_btn.setStyleSheet(
-            "QPushButton { background: #c42b2b; color: white; border-radius: 4px; "
-            "font-size: 14px; font-weight: bold; padding: 0 28px; }"
-            "QPushButton:hover { background: #a82020; }"
-            "QPushButton:disabled { background: #aaa; }"
+            theme.btn_danger_qss(
+                "border-radius: 4px; font-size: 14px; font-weight: bold; padding: 0 28px;"
+            )
         )
         self.create_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.create_btn.clicked.connect(self._on_create)
@@ -205,6 +205,11 @@ class ReviewScreen(QWidget):
             f"border-color: {t['border']}; }}"
         )
         self.clear_all_btn.setStyleSheet(self.remove_selected_btn.styleSheet())
+        self.create_btn.setStyleSheet(
+            theme.btn_danger_qss(
+                "border-radius: 4px; font-size: 14px; font-weight: bold; padding: 0 28px;"
+            )
+        )
 
     def on_enter(self):
         """Refresh display when this screen becomes active."""

@@ -188,11 +188,9 @@ class PowerRenameDialog(QDialog):
 
         layout.addLayout(foot)
 
-        self._apply_btn_style_normal = (
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
-            "font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #106ebe; }"
-            "QPushButton:disabled { background: #aaa; }"
+        from app.utils import theme
+        self._apply_btn_style_normal = theme.btn_primary_qss(
+            "border-radius: 4px; font-size: 13px; padding: 0 20px;"
         )
         self._apply_btn.setStyleSheet(self._apply_btn_style_normal)
         self._refresh_footer_styles()

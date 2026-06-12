@@ -142,12 +142,11 @@ class ManualEntryWidget(QWidget):
         bottom_row.addWidget(self.clear_btn)
         bottom_row.addSpacing(10)
 
+        from app.utils import theme
         self.queue_btn = QPushButton("Add to Queue")
         self.queue_btn.setFixedHeight(34)
         self.queue_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
-            "font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #106ebe; }"
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self.queue_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.queue_btn.clicked.connect(self._on_queue)
@@ -249,6 +248,9 @@ class ManualEntryWidget(QWidget):
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; padding: 5px 10px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+        )
+        self.queue_btn.setStyleSheet(
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
 
     def _add_step(self):

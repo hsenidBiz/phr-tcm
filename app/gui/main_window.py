@@ -166,14 +166,12 @@ class MainWindow(QMainWindow):
         self._import_count_label.setVisible(False)
         self._import_queue_btn.setVisible(False)
 
+        from app.utils import theme
         self.review_btn = QPushButton("Review && Create →")
         self.review_btn.setFixedHeight(36)
         self.review_btn.setEnabled(False)
         self.review_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
-            "font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #106ebe; }"
-            "QPushButton:disabled { background: #aaa; }"
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self.review_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.review_btn.clicked.connect(self._go_review)
@@ -500,5 +498,8 @@ class MainWindow(QMainWindow):
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; font-size: 13px; padding: 0 16px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+        )
+        self.review_btn.setStyleSheet(
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self._import_count_label.setStyleSheet(f"color: {t['count_lbl_color']};")

@@ -50,6 +50,8 @@ _LIGHT: dict = {
     "ok":                 "#008000",
     "error":              "#cc0000",
     "warn_fg":            "#e67e00",
+    "btn_disabled_bg":    "#aaaaaa",
+    "btn_disabled_fg":    "#eeeeee",
 }
 
 _DARK: dict = {
@@ -93,6 +95,8 @@ _DARK: dict = {
     "ok":                 "#4ec94e",
     "error":              "#f14c4c",
     "warn_fg":            "#e5c07b",
+    "btn_disabled_bg":    "#3a3a3a",
+    "btn_disabled_fg":    "#777777",
 }
 
 
@@ -119,6 +123,43 @@ def load_saved() -> None:
     global _dark
     _dark = bool(load_settings().get("dark_mode", False))
     _set_palette(_dark)
+
+
+# ------------------------------------------------------------------ #
+#  Shared button style builders                                        #
+# ------------------------------------------------------------------ #
+# Use these for any solid-colour QPushButton so the static style and the
+# screen's refresh_theme() can never drift apart. `extra` is appended to
+# the base rule for per-site padding / font-size / border-radius tweaks.
+
+def btn_primary_qss(extra: str = "border-radius: 4px;") -> str:
+    """Solid accent-blue action button with theme-aware disabled state."""
+    t = tokens()
+    return (
+        f"QPushButton {{ background: {t['accent']}; color: white; {extra} }}"
+        f"QPushButton:hover {{ background: #106ebe; }}"
+        f"QPushButton:disabled {{ background: {t['btn_disabled_bg']}; color: {t['btn_disabled_fg']}; }}"
+    )
+
+
+def btn_danger_qss(extra: str = "border-radius: 4px;") -> str:
+    """Solid red destructive-action button with theme-aware disabled state."""
+    t = tokens()
+    return (
+        f"QPushButton {{ background: #c42b1c; color: white; {extra} }}"
+        f"QPushButton:hover {{ background: #a4261a; }}"
+        f"QPushButton:disabled {{ background: {t['btn_disabled_bg']}; color: {t['btn_disabled_fg']}; }}"
+    )
+
+
+def btn_neutral_qss(extra: str = "border-radius: 4px; padding: 5px 14px;") -> str:
+    """Standard neutral button (theme surface colours)."""
+    t = tokens()
+    return (
+        f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
+        f"color: {t['text']}; {extra} }}"
+        f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
+    )
 
 
 # ------------------------------------------------------------------ #

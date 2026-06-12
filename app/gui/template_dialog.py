@@ -61,10 +61,9 @@ class TemplateDialog(QDialog):
         self._apply_btn.setEnabled(False)
         self._apply_btn.setFixedHeight(34)
         self._apply_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        from app.utils import theme
         self._apply_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; padding: 0 16px; }"
-            "QPushButton:hover { background: #106ebe; }"
-            "QPushButton:disabled { background: #aaa; }"
+            theme.btn_primary_qss("border-radius: 4px; padding: 0 16px;")
         )
         self._apply_btn.clicked.connect(self._on_apply)
         btn_row.addWidget(self._apply_btn)

@@ -26,12 +26,21 @@ def save_settings(data: dict):
     _SETTINGS_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
-def save_recent_pbi(pbi_id: int, title: str, max_items: int = 10):
-    """Prepend a PBI entry to the recent list, deduplicating by ID."""
+def save_recent_pbi(pbi_id: int, title: str, project: str = "", max_items: int = 10):
+    """Prepend a PBI entry to the recent list, deduplicating by ID.
+    `project` scopes the entry so recents from other projects are not
+    auto-selected after a project switch."""
     existing = load_settings()
     recent = [r for r in existing.get("recent_pbis", []) if r.get("id") != pbi_id]
-    recent.insert(0, {"id": pbi_id, "title": title})
+    recent.insert(0, {"id": pbi_id, "title": title, "project": project})
     save_settings({"recent_pbis": recent[:max_items]})
+
+
+def recent_pbis_for_project(project: str) -> list:
+    """Recent PBI entries for the given project (legacy entries without a
+    project key are included for backwards compatibility)."""
+    recent = load_settings().get("recent_pbis", [])
+    return [r for r in recent if r.get("project", project) == project]
 
 
 def remove_recent_pbi(pbi_id: int):

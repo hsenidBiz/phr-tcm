@@ -61,15 +61,92 @@ class DevOpsClient:
     #  Safe read-only calls                                               #
     # ------------------------------------------------------------------ #
 
-    def validate_project(self) -> str:
+    def get_organizations(self) -> list:
         """
-        GET the project to confirm the token and URL are valid.
-        Returns the project display name. Safe — read only.
+        Discover the Azure DevOps organisations the signed-in user belongs to.
+        Returns list of {"name": str, "url": str}. Safe — read only.
         """
-        url = f"{self.tm.org_url}/_apis/projects/{self.tm.project}?api-version={API_VERSION}"
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        vssps = "https://app.vssps.visualstudio.com/_apis"
+        resp = requests.get(
+            f"{vssps}/profile/profiles/me?api-version=6.0",
+            headers=self.tm.get_json_headers(), timeout=15,
+        )
+        member_id = self._handle(resp)["id"]
+        resp = requests.get(
+            f"{vssps}/accounts?memberId={member_id}&api-version=6.0",
+            headers=self.tm.get_json_headers(), timeout=15,
+        )
         data = self._handle(resp)
-        return data.get("name", self.tm.project)
+        return [
+            {"name": a["accountName"], "url": f"https://dev.azure.com/{a['accountName']}"}
+            for a in data.get("value", [])
+            if a.get("accountName")
+        ]
+
+    def get_projects(self, org_url: str) -> list:
+        """
+        All project names in the organisation (paginated). Safe — read only.
+        """
+        names = []
+        continuation = None
+        while True:
+            url = f"{org_url}/_apis/projects?$top=200&api-version={API_VERSION}"
+            if continuation:
+                url += f"&continuationToken={continuation}"
+            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+            data = self._handle(resp)
+            names.extend(p["name"] for p in data.get("value", []))
+            continuation = resp.headers.get("x-ms-continuationtoken")
+            if not continuation:
+                break
+        return sorted(names, key=str.lower)
+
+    def search_work_items(self, text: str, top: int = 20) -> list:
+        """
+        Search work items in the current project by title substring (and by
+        exact ID when the text is numeric) via a WIQL query. The POST here is
+        query-only — it creates and modifies nothing. Test artifacts and tasks
+        are excluded. Returns list of {"id", "title", "type"}, most recently
+        changed first. Safe — read only.
+        """
+        safe = text.strip().replace("'", "''")
+        clause = f"[System.Title] CONTAINS '{safe}'"
+        if text.strip().isdigit():
+            clause = f"([System.Id] = {int(text)} OR {clause})"
+        wiql = (
+            "SELECT [System.Id] FROM workitems "
+            f"WHERE [System.TeamProject] = @project AND {clause} "
+            "AND [System.WorkItemType] NOT IN "
+            "('Test Case', 'Test Suite', 'Test Plan', 'Shared Steps', 'Task') "
+            "ORDER BY [System.ChangedDate] DESC"
+        )
+        url = f"{self._base()}/wit/wiql?$top={top}&api-version={API_VERSION}"
+        resp = requests.post(
+            url, json={"query": wiql},
+            headers=self.tm.get_json_headers(), timeout=15,
+        )
+        ids = [w["id"] for w in self._handle(resp).get("workItems", [])]
+        if not ids:
+            return []
+
+        ids_csv = ",".join(str(i) for i in ids)
+        url = (
+            f"{self._base()}/wit/workitems?ids={ids_csv}"
+            f"&fields=System.Title,System.WorkItemType&api-version={API_VERSION}"
+        )
+        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        by_id = {
+            w["id"]: w.get("fields", {})
+            for w in self._handle(resp).get("value", [])
+        }
+        return [
+            {
+                "id": i,
+                "title": by_id[i].get("System.Title", ""),
+                "type": by_id[i].get("System.WorkItemType", ""),
+            }
+            for i in ids if i in by_id
+        ]
 
     def get_work_item(self, work_item_id: int) -> dict:
         """

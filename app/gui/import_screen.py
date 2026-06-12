@@ -227,14 +227,14 @@ class ImportWidget(QWidget):
         )
         tmpl_label.setWordWrap(True)
         tmpl_layout.addWidget(tmpl_label, 1)
-        tmpl_btn = QPushButton("Download Template (.xlsx)")
-        tmpl_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; padding: 6px 14px; }"
-            "QPushButton:hover { background: #106ebe; }"
+        from app.utils import theme
+        self._tmpl_btn = QPushButton("Download Template (.xlsx)")
+        self._tmpl_btn.setStyleSheet(
+            theme.btn_primary_qss("border-radius: 4px; padding: 6px 14px;")
         )
-        tmpl_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        tmpl_btn.clicked.connect(self._download_template)
-        tmpl_layout.addWidget(tmpl_btn)
+        self._tmpl_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._tmpl_btn.clicked.connect(self._download_template)
+        tmpl_layout.addWidget(self._tmpl_btn)
         layout.addWidget(self._tmpl_frame)
 
         # File picker
@@ -242,15 +242,11 @@ class ImportWidget(QWidget):
         self.file_label = QLabel("No file selected")
         self.file_label.setStyleSheet("color: #666;")
         file_row.addWidget(self.file_label, 1)
-        browse_btn = QPushButton("Browse…")
-        browse_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; padding: 5px 14px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
-        browse_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        browse_btn.clicked.connect(self._browse_file)
-        file_row.addWidget(browse_btn)
+        self._browse_btn = QPushButton("Browse…")
+        self._browse_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._browse_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._browse_btn.clicked.connect(self._browse_file)
+        file_row.addWidget(self._browse_btn)
         layout.addLayout(file_row)
 
         # Override defaults section
@@ -358,14 +354,12 @@ class ImportWidget(QWidget):
         self.count_label = QLabel("0 test cases parsed")
         self.count_label.setStyleSheet("color: #555;")
 
+        from app.utils import theme
         self.queue_btn = QPushButton("Add All to Queue")
         self.queue_btn.setFixedHeight(34)
         self.queue_btn.setEnabled(False)
         self.queue_btn.setStyleSheet(
-            "QPushButton { background: #0078d4; color: white; border-radius: 4px; "
-            "font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #106ebe; }"
-            "QPushButton:disabled { background: #aaa; }"
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self.queue_btn.clicked.connect(self._on_queue)
 
@@ -447,6 +441,13 @@ class ImportWidget(QWidget):
             f"border-radius: 4px; padding: 6px; color: {t['text_dim']};"
         )
         self.count_label.setStyleSheet(f"color: {t['count_lbl_color']};")
+        self._tmpl_btn.setStyleSheet(
+            theme.btn_primary_qss("border-radius: 4px; padding: 6px 14px;")
+        )
+        self._browse_btn.setStyleSheet(theme.btn_neutral_qss())
+        self.queue_btn.setStyleSheet(
+            theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
+        )
         self.tag_picker.refresh_theme()
         # Restyle the per-row expand arrows so they stay visible in dark mode
         expand_style = self._expand_btn_style()
@@ -668,10 +669,9 @@ class ImportWidget(QWidget):
         remove_btn = QPushButton("✕")
         remove_btn.setFixedSize(26, 22)
         remove_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        from app.utils import theme
         remove_btn.setStyleSheet(
-            "QPushButton { background: #c42b1c; color: white; border-radius: 3px; "
-            "font-size: 11px; font-weight: bold; }"
-            "QPushButton:hover { background: #a4261a; }"
+            theme.btn_danger_qss("border-radius: 3px; font-size: 11px; font-weight: bold;")
         )
         remove_btn.clicked.connect(self._remove_case)
         _rm_wrap = QWidget()

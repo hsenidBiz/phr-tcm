@@ -13,11 +13,10 @@ class TokenManager:
         self._msal = None  # MsalAuthenticator when signed in via Microsoft
         self._refresh_lock = threading.Lock()
 
-    def set_credentials(self, token: str, org_url: str, project: str):
-        self._token = token.strip()
+    def set_org_project(self, org_url: str, project: str):
+        """Set the discovered organisation / selected project (token unchanged)."""
         self._org_url = org_url.rstrip("/")
         self._project = project.strip()
-        self._payload_cache = None
 
     def update_token(self, token: str):
         self._token = token.strip()
@@ -59,9 +58,6 @@ class TokenManager:
     @property
     def project(self) -> str:
         return self._project
-
-    def has_credentials(self) -> bool:
-        return bool(self._token and self._org_url and self._project)
 
     def get_patch_headers(self) -> dict:
         """Headers for POST/PATCH with JSON Patch body."""
