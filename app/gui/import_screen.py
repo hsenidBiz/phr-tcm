@@ -223,7 +223,10 @@ class ImportWidget(QWidget):
         tmpl_layout = QHBoxLayout(self._tmpl_frame)
         tmpl_layout.setContentsMargins(16, 10, 16, 10)
         tmpl_label = QLabel(
-            "<b>First time?</b> Download the Excel template, fill it in, then import it here."
+            "<b>First time?</b> Download the Excel template, fill it in, then import it here.<br>"
+            "<b>Bulk update:</b> export existing cases from the <b>Edit Test Cases</b> tab, change "
+            "the values, and re-import — rows that keep their <b>TestCaseID</b> update the existing "
+            "case instead of creating a new one."
         )
         tmpl_label.setWordWrap(True)
         tmpl_layout.addWidget(tmpl_label, 1)
@@ -660,7 +663,13 @@ class ImportWidget(QWidget):
         self.preview_table.setCellWidget(row, 0, expand_btn)
 
         # Cols 1–4 — data (no UserRole = summary row)
-        self.preview_table.setItem(row, 1, QTableWidgetItem(tc.title))
+        name_item = QTableWidgetItem(tc.title)
+        if getattr(tc, "update_id", None):
+            name_item.setText(f"↻  {tc.title}")
+            name_item.setToolTip(
+                f"Will UPDATE existing work item #{tc.update_id} — no duplicate is created."
+            )
+        self.preview_table.setItem(row, 1, name_item)
         self.preview_table.setItem(row, 2, QTableWidgetItem(str(len(tc.steps))))
         self.preview_table.setItem(row, 3, QTableWidgetItem(tc.tags or "—"))
         self.preview_table.setItem(row, 4, QTableWidgetItem(tc.module_value or "—"))
@@ -795,7 +804,14 @@ class ImportWidget(QWidget):
 
     def _refresh_count(self):
         n = len(self._parsed_cases)
-        self.count_label.setText(f"{n} test case{'s' if n != 1 else ''} parsed")
+        n_upd = sum(1 for tc in self._parsed_cases if getattr(tc, "update_id", None))
+        if n_upd:
+            n_new = n - n_upd
+            self.count_label.setText(
+                f"{n} parsed  —  ↻ {n_upd} update, + {n_new} new"
+            )
+        else:
+            self.count_label.setText(f"{n} test case{'s' if n != 1 else ''} parsed")
         self.queue_btn.setEnabled(n > 0)
 
     # ------------------------------------------------------------------ #
@@ -819,6 +835,10 @@ class ImportWidget(QWidget):
         save_settings({"preconditions": preconditions_val})
 
         for tc in self._parsed_cases:
+            # Re-imported update rows carry their own per-case values from the
+            # spreadsheet — applying the blanket overrides here would clobber them.
+            if getattr(tc, "update_id", None):
+                continue
             tc.automation_status = auto_status
             if module_val:
                 tc.module_value = module_val

@@ -5,7 +5,7 @@ from app.models.test_case import TestCase, Step
 VALID_STATUSES = {"Not Automated", "Planned"}
 
 REQUIRED_COLUMNS = {"TestCaseName", "StepNumber", "StepAction"}
-ALL_COLUMNS = {"TestCaseName", "StepNumber", "StepAction", "StepExpected",
+ALL_COLUMNS = {"TestCaseID", "TestCaseName", "StepNumber", "StepAction", "StepExpected",
                "Tags", "AutomationStatus", "ModuleValue", "Preconditions"}
 
 
@@ -63,6 +63,20 @@ def _step_sort_key(item):
         return (0, row_num)
 
 
+def _block_value(block_rows: list, col: str) -> str:
+    """First non-empty value of `col` across a block's rows.
+
+    Exported files put the title / ID / metadata only on each case's first step
+    row (continuation rows are blank), so per-case fields are read from whichever
+    row carries them rather than assuming row 1.
+    """
+    for _row_num, row in block_rows:
+        val = row.get(col, "").strip()
+        if val:
+            return val
+    return ""
+
+
 def _parse_rows(rows: list, headers: list) -> tuple:
     warnings = []
 
@@ -73,28 +87,57 @@ def _parse_rows(rows: list, headers: list) -> tuple:
             f"Expected columns: {', '.join(sorted(ALL_COLUMNS))}"
         )
 
-    # Group rows by TestCaseName
-    groups: dict[str, list] = {}
-    order: list[str] = []
+    # Group rows into test-case blocks. A row starts a new block when it carries
+    # a TestCaseID (keyed by that ID) or a TestCaseName different from the current
+    # block; rows blank in both columns are continuation steps of the open block.
+    # This lets a file exported from the Edit tab — where the name, ID and
+    # metadata appear only on each case's first step row — round-trip back into
+    # multi-step cases, and lets a kept TestCaseID flag the case as an update.
+    blocks: list[dict] = []
+    current = None
     for row_num, row in enumerate(rows, start=2):
+        raw_id = row.get("TestCaseID", "").strip()
         name = row.get("TestCaseName", "").strip()
-        if not name:
-            warnings.append(f"Row {row_num}: skipped — TestCaseName is empty.")
+
+        if raw_id:
+            if current is None or current["raw_id"] != raw_id:
+                current = {"raw_id": raw_id, "name": name, "rows": []}
+                blocks.append(current)
+        elif name:
+            if current is None or name != current["name"]:
+                current = {"raw_id": "", "name": name, "rows": []}
+                blocks.append(current)
+        elif current is None:
+            warnings.append(
+                f"Row {row_num}: skipped — no TestCaseName/TestCaseID and no open test case."
+            )
             continue
-        if name not in groups:
-            groups[name] = []
-            order.append(name)
-        groups[name].append((row_num, row))
+        current["rows"].append((row_num, row))
 
     test_cases = []
-    for name in order:
-        group = sorted(groups[name], key=_step_sort_key)
-        first_row = group[0][1]
+    for block in blocks:
+        group = sorted(block["rows"], key=_step_sort_key)
+        name = block["name"] or _block_value(group, "TestCaseName")
+        if not name:
+            warnings.append("A group of rows was skipped — no TestCaseName found.")
+            continue
 
-        tags = first_row.get("Tags", "").strip()
-        automation_status = first_row.get("AutomationStatus", "").strip()
-        module_value = first_row.get("ModuleValue", "").strip()
-        preconditions = first_row.get("Preconditions", "").strip()
+        update_id = None
+        raw_id = block["raw_id"] or _block_value(group, "TestCaseID")
+        if raw_id:
+            try:
+                # Excel numeric cells may render as "123.0"; tolerate that.
+                update_id = int(float(raw_id))
+            except (ValueError, TypeError):
+                warnings.append(
+                    f"Test case '{name}': TestCaseID '{raw_id}' is not a valid work item ID — "
+                    "this row will be created as a new test case instead of updating."
+                )
+
+        tags = _block_value(group, "Tags")
+        automation_status = _block_value(group, "AutomationStatus")
+        module_value = _block_value(group, "ModuleValue")
+        preconditions = _block_value(group, "Preconditions")
 
         if not automation_status:
             automation_status = "Not Automated"
@@ -110,7 +153,6 @@ def _parse_rows(rows: list, headers: list) -> tuple:
             action = row.get("StepAction", "").strip()
             expected = row.get("StepExpected", "").strip()
             if not action:
-                warnings.append(f"Row {row_num} ('{name}'): StepAction is empty — step skipped.")
                 continue
             steps.append(Step(action=action, expected=expected))
 
@@ -125,21 +167,29 @@ def _parse_rows(rows: list, headers: list) -> tuple:
             automation_status=automation_status,
             module_value=module_value,
             preconditions=preconditions,
+            update_id=update_id,
         ))
 
     return test_cases, warnings
 
 
 _EXCEL_HEADERS = [
-    "TestCaseName", "StepNumber", "StepAction", "StepExpected",
+    "TestCaseID", "TestCaseName", "StepNumber", "StepAction", "StepExpected",
     "Tags", "AutomationStatus", "ModuleValue", "Preconditions",
 ]
-_EXCEL_COL_WIDTHS = [30, 12, 45, 45, 20, 18, 20, 40]
+_EXCEL_COL_WIDTHS = [12, 30, 12, 45, 45, 20, 18, 20, 40]
+
+_ID_COLUMN_HELP = (
+    "Work item ID. Leave blank to create a NEW test case. "
+    "When you re-import a file exported from the Edit Test Cases tab, keep this "
+    "value to UPDATE that existing test case instead of creating a duplicate."
+)
 
 
 def _write_excel_headers(ws) -> None:
     """Write the standard styled header row and column widths to a worksheet."""
     from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.comments import Comment
     header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True)
     for col, h in enumerate(_EXCEL_HEADERS, start=1):
@@ -147,6 +197,8 @@ def _write_excel_headers(ws) -> None:
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
+    # Explain the round-trip behaviour of the TestCaseID column.
+    ws.cell(row=1, column=1).comment = Comment(_ID_COLUMN_HELP, "Test Case Creator")
     for col, width in enumerate(_EXCEL_COL_WIDTHS, start=1):
         ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
     ws.freeze_panes = "A2"
@@ -165,8 +217,11 @@ def export_queue_to_excel(queue: list, path: str):
     _write_excel_headers(ws)
 
     for tc in queue:
+        # Preserve update_id so a queued update still round-trips as an update.
+        wid = tc.update_id or ""
         for i, step in enumerate(tc.steps):
             ws.append([
+                wid if i == 0 else "",
                 tc.title if i == 0 else "",
                 i + 1,
                 step.action,
@@ -196,6 +251,7 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
     _write_excel_headers(ws)
 
     for tc in cases:
+        wid = tc.get("_id", "")
         title = tc.get("System.Title", "")
         tags = tc.get("System.Tags", "") or ""
         auto_status = tc.get("Microsoft.VSTS.TCM.AutomationStatus", "Not Automated") or "Not Automated"
@@ -204,11 +260,12 @@ def export_cases_to_excel(cases: list, path: str, module_ref: str | None,
         steps = parse_steps_xml(tc.get("Microsoft.VSTS.TCM.Steps", "") or "")
 
         if not steps:
-            ws.append([title, 1, "", "", tags, auto_status, module_val or "", preconditions_val or ""])
+            ws.append([wid, title, 1, "", "", tags, auto_status, module_val or "", preconditions_val or ""])
             continue
 
         for i, step in enumerate(steps):
             ws.append([
+                wid if i == 0 else "",
                 title if i == 0 else "",
                 i + 1,
                 step.action,
@@ -234,12 +291,13 @@ def generate_template(save_path: str):
     ws.title = "Test Cases"
     _write_excel_headers(ws)
 
+    # TestCaseID (first column) is left blank in the template — these are new cases.
     example_rows = [
-        ["Login as admin", 1, "Navigate to the login page", "Login page is displayed", "smoke", "Not Automated", "Authentication", "User is logged out"],
-        ["Login as admin", 2, "Enter valid username and password", "Fields accept the input", "", "", "", ""],
-        ["Login as admin", 3, "Click the Login button", "User is redirected to the dashboard", "", "", "", ""],
-        ["Invalid login attempt", 1, "Navigate to the login page", "Login page is displayed", "regression", "Not Automated", "Authentication", "User is logged out"],
-        ["Invalid login attempt", 2, "Enter an invalid password", "Error message is displayed", "", "", "", ""],
+        ["", "Login as admin", 1, "Navigate to the login page", "Login page is displayed", "smoke", "Not Automated", "Authentication", "User is logged out"],
+        ["", "Login as admin", 2, "Enter valid username and password", "Fields accept the input", "", "", "", ""],
+        ["", "Login as admin", 3, "Click the Login button", "User is redirected to the dashboard", "", "", "", ""],
+        ["", "Invalid login attempt", 1, "Navigate to the login page", "Login page is displayed", "regression", "Not Automated", "Authentication", "User is logged out"],
+        ["", "Invalid login attempt", 2, "Enter an invalid password", "Error message is displayed", "", "", "", ""],
     ]
     for row_data in example_rows:
         ws.append(row_data)

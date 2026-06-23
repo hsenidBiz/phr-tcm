@@ -335,6 +335,13 @@ class MainWindow(QMainWindow):
         update that work item (matched cases get their update_id set) instead of
         creating a duplicate. Titles that only collide with the current session
         queue fall back to a simple add-anyway confirmation."""
+        # Cases that already carry an explicit work-item ID (e.g. re-imported from
+        # a spreadsheet exported for bulk update) are deliberate updates — never
+        # treat them as duplicates or re-match them by title.
+        incoming = [tc for tc in incoming if not getattr(tc, "update_id", None)]
+        if not incoming:
+            return True
+
         # Map existing ADO title -> work item id (first match wins on collisions)
         ado_by_title: dict = {}
         for c in self._existing_cases_for_pbi():
