@@ -494,6 +494,7 @@ class EditScreen(QWidget):
         self._apply_filters()
         self._refresh_btn.setEnabled(True)
         self._export_btn.setEnabled(bool(cases))
+        self._update_export_btn_text()
 
     def _on_cases_error(self, pbi_id: int, exc: Exception):
         self._header_lbl.setText(
@@ -603,6 +604,7 @@ class EditScreen(QWidget):
         selected = self._list.selectedItems()
         n_sel = len(selected)
         n_total = len(self._cases)
+        self._update_export_btn_text()
 
         if n_sel == 0:
             self._current_idx = None
@@ -820,20 +822,42 @@ class EditScreen(QWidget):
     #  Export cases to Excel                                               #
     # ------------------------------------------------------------------ #
 
+    def _selected_cases(self) -> list:
+        """Case dicts for the highlighted rows, in list order. Empty when nothing
+        is selected. List rows map 1:1 to self._cases by index (filters only hide
+        rows, never reorder them)."""
+        rows = sorted(self._list.row(it) for it in self._list.selectedItems())
+        return [self._cases[r] for r in rows if 0 <= r < len(self._cases)]
+
+    def _update_export_btn_text(self):
+        """Label the export button so it's clear whether it exports the selection
+        or everything loaded."""
+        n_sel = len(self._list.selectedItems())
+        if n_sel:
+            self._export_btn.setText(f"⬇ Export {n_sel} Selected (.xlsx)")
+            self._export_btn.setToolTip("Export only the highlighted test cases")
+        else:
+            self._export_btn.setText("⬇ Export All (.xlsx)")
+            self._export_btn.setToolTip("Nothing selected — exports all loaded test cases")
+
     def _on_export_cases(self):
         if not self._cases:
             return
+        selected = self._selected_cases()
+        cases = selected if selected else self._cases
+        default_name = "test_cases_selected.xlsx" if selected else "test_cases_export.xlsx"
         path, _ = QFileDialog.getSaveFileName(
             self, "Export Test Cases",
-            str(Path.home() / "Downloads" / "test_cases_export.xlsx"),
+            str(Path.home() / "Downloads" / default_name),
             "Excel Files (*.xlsx)",
         )
         if not path:
             return
+        self._export_count = len(cases)
         self._export_btn.setEnabled(False)
         self._export_btn.setText("Exporting…")
         worker = Worker(
-            self._do_export_cases, self._cases, path,
+            self._do_export_cases, cases, path,
             self.app_state.module_ref, self.app_state.preconditions_ref,
         )
         worker.signals.result.connect(lambda _: self._on_export_done(path))
@@ -847,12 +871,16 @@ class EditScreen(QWidget):
 
     def _on_export_done(self, path: str):
         self._export_btn.setEnabled(True)
-        self._export_btn.setText("⬇ Export (.xlsx)")
-        QMessageBox.information(self, "Exported", f"Test cases exported to:\n{path}")
+        self._update_export_btn_text()
+        n = getattr(self, "_export_count", len(self._cases))
+        QMessageBox.information(
+            self, "Exported",
+            f"{n} test case{'s' if n != 1 else ''} exported to:\n{path}"
+        )
 
     def _on_export_error(self, exc: Exception):
         self._export_btn.setEnabled(True)
-        self._export_btn.setText("⬇ Export (.xlsx)")
+        self._update_export_btn_text()
         QMessageBox.critical(self, "Export Error", f"Could not export:\n{exc}")
 
     # ------------------------------------------------------------------ #
