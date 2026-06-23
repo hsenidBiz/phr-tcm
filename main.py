@@ -1,6 +1,7 @@
 import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt
 
 from app.auth.token_manager import TokenManager
 from app.api.devops_client import DevOpsClient
@@ -42,7 +43,32 @@ class AppState:
         self._team_members_fetcher = None  # TeamMemberFetcher | None
 
 
+def _enable_high_dpi():
+    """Enable Qt high-DPI scaling. Must run BEFORE the QApplication is created.
+
+    Qt 5 does not scale the UI by monitor DPI by default, so on 4K / display-
+    scaled monitors — and when the window moves between monitors with different
+    scale factors — text and widgets render at the wrong physical size. These
+    attributes make Qt scale the whole UI (including px-based stylesheet font
+    sizes and fixed widget sizes) by each screen's scale factor.
+    """
+    if hasattr(Qt, "AA_EnableHighDpiScaling"):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, "AA_UseHighDpiPixmaps"):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    # Qt 5.14+: keep fractional scale factors (e.g. 125%, 150%) instead of
+    # rounding them to whole numbers, so per-monitor scaling stays accurate.
+    try:
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except (AttributeError, TypeError):
+        pass
+
+
 def main():
+    _enable_high_dpi()
+
     app = QApplication(sys.argv)
     app.setApplicationName("Azure DevOps Test Case Creator")
     app.setOrganizationName("Internal Tool")
