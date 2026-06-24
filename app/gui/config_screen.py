@@ -713,19 +713,19 @@ class ConfigScreen(QWidget):
             self.test_plan_label.setStyleSheet(f"color: {t['ok']}; font-size: 12px;")
             self.test_plan_label.setText(
                 f"🧪 Test Plan: <b>{name}</b> — a test suite already exists for this "
-                "PBI; new test cases are added to it and show on the board."
+                "PBI; new test cases are added to it."
             )
         elif name:
             self.test_plan_label.setStyleSheet(f"color: {t['warn_fg']}; font-size: 12px;")
             self.test_plan_label.setText(
                 f"🧪 Test Plan: <b>{name}</b> — no test suite exists for this PBI yet. "
-                "One is created automatically when you add test cases, so they show on the board."
+                "One is created automatically when you add test cases."
             )
         else:
             self.test_plan_label.setStyleSheet(f"color: {t['warn_fg']}; font-size: 12px;")
             self.test_plan_label.setText(
                 "🧪 No test plan exists for this PBI's area yet. A test plan and suite are "
-                "created automatically when you add test cases, so they show on the board."
+                "created automatically when you add test cases."
             )
 
     def _on_test_plan_error(self, seq: int, exc: Exception):

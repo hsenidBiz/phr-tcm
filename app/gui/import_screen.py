@@ -327,11 +327,24 @@ class ImportWidget(QWidget):
 
         # Preview table
         # Col 0: ▶/▼ expand  Col 1: Name  Col 2: Steps  Col 3: Tags  Col 4: Module  Col 5: ✕
+        preview_row = QHBoxLayout()
         preview_lbl = QLabel(
             "Preview — ▶ to expand steps, ✕ to remove before queuing:"
         )
         preview_lbl.setStyleSheet("font-weight: bold;")
-        layout.addWidget(preview_lbl)
+        preview_row.addWidget(preview_lbl)
+        preview_row.addStretch()
+        from app.utils import theme
+        self._clear_all_btn = QPushButton("🗑  Remove All")
+        self._clear_all_btn.setEnabled(False)
+        self._clear_all_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._clear_all_btn.setToolTip("Remove all parsed test cases from the preview")
+        self._clear_all_btn.setStyleSheet(
+            theme.btn_danger_qss("border-radius: 4px; padding: 5px 12px; font-size: 12px;")
+        )
+        self._clear_all_btn.clicked.connect(self._on_remove_all)
+        preview_row.addWidget(self._clear_all_btn)
+        layout.addLayout(preview_row)
 
         self.preview_table = QTableWidget(0, 6)
         self.preview_table.setHorizontalHeaderLabels(
@@ -450,6 +463,9 @@ class ImportWidget(QWidget):
         self._browse_btn.setStyleSheet(theme.btn_neutral_qss())
         self.queue_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
+        )
+        self._clear_all_btn.setStyleSheet(
+            theme.btn_danger_qss("border-radius: 4px; padding: 5px 12px; font-size: 12px;")
         )
         self.tag_picker.refresh_theme()
         # Restyle the per-row expand arrows so they stay visible in dark mode
@@ -786,6 +802,25 @@ class ImportWidget(QWidget):
                 self._refresh_count()
                 break
 
+    def _on_remove_all(self):
+        n = len(self._parsed_cases)
+        if n == 0:
+            return
+        reply = QMessageBox.question(
+            self, "Remove All",
+            f"Remove all {n} test case{'s' if n != 1 else ''} from the preview?\n\n"
+            "This only clears the import preview — nothing in Azure DevOps is affected.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.preview_table.setRowCount(0)
+        self._parsed_cases = []
+        self.file_label.setText("No file selected")
+        self.warnings_label.setVisible(False)
+        self._refresh_count()
+
     # ------------------------------------------------------------------ #
     #  Helpers                                                             #
     # ------------------------------------------------------------------ #
@@ -813,6 +848,7 @@ class ImportWidget(QWidget):
         else:
             self.count_label.setText(f"{n} test case{'s' if n != 1 else ''} parsed")
         self.queue_btn.setEnabled(n > 0)
+        self._clear_all_btn.setEnabled(n > 0)
 
     # ------------------------------------------------------------------ #
     #  Queue                                                               #

@@ -242,6 +242,26 @@ class ReviewScreen(QWidget):
             return f"  |  Test Plan: {name} ({suffix})"
         return "  |  Test Plan / suite created automatically so tests show on the board"
 
+    def _plan_creation_note(self) -> str:
+        """A sentence for the Create confirmation describing the test plan/suite
+        the new cases will use or that will be created. Empty when the batch has
+        no new cases (pure updates need no new suite)."""
+        if not any(not tc.update_id for tc in self.app_state.queue):
+            return ""
+        resolved = getattr(self.app_state, "test_plan_pbi", None) == self.app_state.pbi_id
+        name = getattr(self.app_state, "test_plan_name", "")
+        if resolved and self.app_state.suite_id:
+            return (f"The new test cases will be added to the existing test suite in "
+                    f"plan '{name}' so they show on the board.")
+        if resolved and name:
+            return (f"This PBI has no test suite yet — one will be created automatically "
+                    f"in plan '{name}' so the test cases show on the board.")
+        if resolved:
+            return ("This PBI has no test plan yet — a test plan and suite will be created "
+                    "automatically so the test cases show on the board.")
+        return ("A test plan and suite will be created automatically if needed so the "
+                "test cases show on the board.")
+
     def refresh_expiry_state(self):
         """Sync the Create button and warning banner with the current token state."""
         expired = self.app_state.token_manager.is_expired()
@@ -479,10 +499,16 @@ class ReviewScreen(QWidget):
         else:
             what = f"Create {n_creates} Test Case{'s' if n_creates != 1 else ''}"
 
+        parts = [f"{what} for PBI #{self.app_state.pbi_id}?"]
+        note = self._plan_creation_note()
+        if note:
+            parts.append(note)
+        parts.append("This cannot be undone.")
+
         reply = QMessageBox.question(
             self,
             "Confirm Creation",
-            f"{what} for PBI #{self.app_state.pbi_id}?\n\nThis cannot be undone.",
+            "\n\n".join(parts),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
