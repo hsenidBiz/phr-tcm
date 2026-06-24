@@ -26,6 +26,11 @@ class DevOpsClient:
 
     def __init__(self, token_manager: TokenManager):
         self.tm = token_manager
+        # Session cache of the project's test plans (they rarely change mid-
+        # session). Keyed by (org_url, project); invalidated when a plan is
+        # created so a freshly-created plan is never missed.
+        self._plans_cache = None
+        self._plans_cache_key = None
 
     def _base(self) -> str:
         return f"{self.tm.org_url}/{self.tm.project}/_apis"
@@ -464,3 +469,194 @@ class DevOpsClient:
         time.sleep(0.5)
         self.link_to_pbi(tc_id, pbi_id)
         return tc_id
+
+    # ------------------------------------------------------------------ #
+    #  Test Plans & Suites (board visibility)                            #
+    #                                                                     #
+    #  A requirement-based test suite bound to a PBI automatically        #
+    #  includes every Test Case linked to that PBI via "Tested By" — the  #
+    #  link this client already creates. Ensuring such a suite exists is  #
+    #  what makes the created tests show on the board's test count, the   #
+    #  same way the manual "Add test" flow does. These calls only ever    #
+    #  GET (read) or POST (create plans/suites). No DELETE anywhere.      #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _area_matches(plan_area: str, pbi_area: str) -> bool:
+        """True if the plan's area path equals or is an ancestor of the PBI's
+        area path. ADO area paths use backslashes; tolerate slashes too."""
+        if not plan_area or not pbi_area:
+            return False
+        pa = plan_area.strip().lower().replace("/", "\\")
+        ba = pbi_area.strip().lower().replace("/", "\\")
+        return ba == pa or ba.startswith(pa + "\\")
+
+    @staticmethod
+    def _default_plan_name(area_path: str) -> str:
+        leaf = ""
+        if area_path:
+            leaf = area_path.replace("/", "\\").split("\\")[-1].strip()
+        return f"{leaf} - Test Plan" if leaf else "Test Plan"
+
+    def get_test_plans(self, use_cache: bool = False) -> list:
+        """All test plans in the project (paginated). Returns list of
+        {id, name, areaPath}. With use_cache=True, returns a session-cached list
+        for the current org/project so repeated PBI selections don't re-list
+        every plan. Safe — read only."""
+        key = (self.tm.org_url, self.tm.project)
+        if use_cache and self._plans_cache is not None and self._plans_cache_key == key:
+            return self._plans_cache
+        plans = []
+        continuation = None
+        while True:
+            url = f"{self._base()}/testplan/plans?api-version={API_VERSION}"
+            if continuation:
+                url += f"&continuationToken={continuation}"
+            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            data = self._handle(resp)
+            for p in data.get("value", []):
+                plans.append({
+                    "id": p.get("id"),
+                    "name": p.get("name", ""),
+                    "areaPath": p.get("areaPath", "") or "",
+                })
+            continuation = resp.headers.get("x-ms-continuationtoken")
+            if not continuation:
+                break
+        self._plans_cache = plans
+        self._plans_cache_key = key
+        return plans
+
+    def get_test_plan(self, plan_id: int) -> dict:
+        """A single test plan including its root suite id. Safe — read only."""
+        url = f"{self._base()}/testplan/plans/{plan_id}?api-version={API_VERSION}"
+        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        data = self._handle(resp)
+        return {
+            "id": data.get("id"),
+            "name": data.get("name", ""),
+            "areaPath": data.get("areaPath", "") or "",
+            "rootSuiteId": (data.get("rootSuite") or {}).get("id"),
+        }
+
+    def find_requirement_suite(self, plan_id: int, pbi_id: int) -> dict | None:
+        """The requirement-based suite bound to `pbi_id` within `plan_id`, or
+        None. Pages through the plan's suites and returns as soon as it matches,
+        so a plan with many suites doesn't pay to fetch every page once the suite
+        is found. Safe — read only."""
+        continuation = None
+        while True:
+            url = f"{self._base()}/testplan/Plans/{plan_id}/suites?api-version={API_VERSION}"
+            if continuation:
+                url += f"&continuationToken={continuation}"
+            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            data = self._handle(resp)
+            for s in data.get("value", []):
+                if (s.get("requirementId") == pbi_id
+                        and s.get("suiteType") == "requirementTestSuite"):
+                    return {
+                        "id": s.get("id"),
+                        "name": s.get("name", ""),
+                        "suiteType": s.get("suiteType", ""),
+                        "requirementId": s.get("requirementId"),
+                    }
+            continuation = resp.headers.get("x-ms-continuationtoken")
+            if not continuation:
+                return None
+
+    def find_existing_suite_for_pbi(self, pbi_id: int, area_path: str = "",
+                                    plans: list | None = None) -> tuple:
+        """Scan the project's test plans for a requirement-based suite bound to
+        this PBI. The PBI's area-matched plan is checked first (manual default
+        plans are area-scoped), so the common case returns after one or two
+        calls. A plan whose suites can't be listed (e.g. a permission-restricted
+        plan, or a transient error) is skipped rather than aborting the whole
+        search. Pass `plans` to reuse an already-fetched plan list and avoid a
+        second round-trip. Returns (plan_dict, suite_dict) or (None, None).
+        Safe — read only."""
+        if plans is None:
+            plans = self.get_test_plans()
+        ordered = sorted(
+            plans, key=lambda p: 0 if self._area_matches(p.get("areaPath", ""), area_path) else 1
+        )
+        for plan in ordered:
+            try:
+                suite = self.find_requirement_suite(plan["id"], pbi_id)
+            except (PermissionError, LookupError, RuntimeError):
+                # Can't read this plan's suites — keep searching the others.
+                # Token/rate-limit errors are deliberately NOT caught here so the
+                # caller can handle re-auth / back-off.
+                continue
+            if suite:
+                return plan, suite
+        return None, None
+
+    def find_plan_for_pbi_area(self, area_path: str, plans: list | None = None) -> dict | None:
+        """An existing plan whose area path equals or is an ancestor of the PBI's
+        area path (the natural home for this PBI's suite). Pass `plans` to reuse
+        an already-fetched list. Returns the plan dict with rootSuiteId resolved,
+        or None. Safe — read only."""
+        if plans is None:
+            plans = self.get_test_plans()
+        best = None
+        for p in plans:
+            if self._area_matches(p.get("areaPath", ""), area_path):
+                # Prefer the most specific (longest) matching area path.
+                if best is None or len(p.get("areaPath", "")) > len(best.get("areaPath", "")):
+                    best = p
+        if best and not best.get("rootSuiteId"):
+            best = self.get_test_plan(best["id"])
+        return best
+
+    def create_test_plan(self, name: str, area_path: str = "", iteration: str = "") -> dict:
+        """POST a new test plan. Returns {id, name, areaPath, rootSuiteId}.
+        Creating a plan also creates its root suite (returned as rootSuite)."""
+        body = {"name": name}
+        if area_path:
+            body["areaPath"] = area_path
+        if iteration:
+            body["iteration"] = iteration
+        url = f"{self._base()}/testplan/plans?api-version={API_VERSION}"
+        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        data = self._handle(resp)
+        self._plans_cache = None  # a new plan now exists — drop the cached list
+        return {
+            "id": data.get("id"),
+            "name": data.get("name", name),
+            "areaPath": data.get("areaPath", area_path) or "",
+            "rootSuiteId": (data.get("rootSuite") or {}).get("id"),
+        }
+
+    def create_requirement_suite(self, plan_id: int, root_suite_id: int, pbi_id: int) -> int:
+        """POST a requirement-based test suite bound to the PBI, under the plan's
+        root suite. ADO names it after the requirement and auto-populates it from
+        the PBI's 'Tested By'-linked test cases. Returns the new suite id."""
+        body = {
+            "suiteType": "requirementTestSuite",
+            "requirementId": pbi_id,
+            "parentSuite": {"id": root_suite_id},
+        }
+        url = f"{self._base()}/testplan/Plans/{plan_id}/suites?api-version={API_VERSION}"
+        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        data = self._handle(resp)
+        return data.get("id")
+
+    def ensure_requirement_suite(self, pbi_id: int, area_path: str = "",
+                                 iteration: str = "") -> tuple:
+        """Find-or-create the shared test plan for the PBI's area and the
+        requirement-based suite bound to the PBI. Reuses any existing suite
+        (created here or by the manual 'Add test' flow) so nothing is duplicated.
+        Returns (plan_id, plan_name, suite_id). May POST (create plan / suite);
+        never DELETEs."""
+        plans = self.get_test_plans()
+        plan, suite = self.find_existing_suite_for_pbi(pbi_id, area_path, plans=plans)
+        if suite:
+            return plan["id"], plan.get("name", ""), suite["id"]
+
+        plan = self.find_plan_for_pbi_area(area_path, plans=plans)
+        if plan is None:
+            plan = self.create_test_plan(
+                self._default_plan_name(area_path), area_path, iteration
+            )
+        suite_id = self.create_requirement_suite(plan["id"], plan["rootSuiteId"], pbi_id)
+        return plan["id"], plan.get("name", ""), suite_id

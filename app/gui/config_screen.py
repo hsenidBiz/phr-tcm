@@ -199,6 +199,15 @@ class ConfigScreen(QWidget):
         self.paths_note = paths_note
         pbi_layout.addWidget(self.paths_note)
 
+        # Test plan / suite status for the selected PBI. Test cases are added to a
+        # requirement-based suite under this plan so they show on the board.
+        self.test_plan_label = QLabel("")
+        self.test_plan_label.setWordWrap(True)
+        self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
+        self.test_plan_label.setVisible(False)
+        self._tp_seq = 0
+        pbi_layout.addWidget(self.test_plan_label)
+
         layout.addWidget(self._pbi_frame)
         layout.addSpacing(10)
 
@@ -420,6 +429,7 @@ class ConfigScreen(QWidget):
             self.pbi_result_label.setText("")
             self.area_edit.clear()
             self.iteration_edit.clear()
+            self._reset_test_plan_state()
             self._refresh_selected_pbi_label()
             # PBI-scoped caches shared with the editing tabs
             self.app_state.existing_cases = []
@@ -615,6 +625,7 @@ class ConfigScreen(QWidget):
 
         self.area_edit.setText(area)
         self.iteration_edit.setText(iteration)
+        self._detect_test_plan(pbi_id, area)
         self._check_ready()
 
     def _on_pbi_error(self, pbi_id: int, exc: Exception):
@@ -629,7 +640,106 @@ class ConfigScreen(QWidget):
             self.pbi_result_label.setText(f"Error: {exc}")
         self.area_edit.clear()
         self.iteration_edit.clear()
+        self._reset_test_plan_state()
         self._refresh_selected_pbi_label()
+
+    # ------------------------------------------------------------------ #
+    #  Test plan / suite detection (board visibility)                      #
+    # ------------------------------------------------------------------ #
+
+    def _reset_test_plan_state(self):
+        self._tp_seq += 1  # invalidates any in-flight detection
+        self.app_state.test_plan_id = None
+        self.app_state.test_plan_name = ""
+        self.app_state.suite_id = None
+        self.app_state.test_plan_pbi = None
+        self.test_plan_label.setVisible(False)
+        self.test_plan_label.setText("")
+
+    def _detect_test_plan(self, pbi_id: int, area_path: str):
+        """Find (read-only) the test plan/suite for this PBI so the user can see
+        whether one exists. Nothing is created here — that happens at creation
+        time. Runs in the background; results are discarded if the PBI changes."""
+        # Already resolved for this PBI this session — re-render, don't refetch.
+        if self.app_state.test_plan_pbi == pbi_id:
+            self.test_plan_label.setVisible(True)
+            self._apply_test_plan_label()
+            return
+        self._reset_test_plan_state()
+        self.test_plan_label.setVisible(True)
+        self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
+        self.test_plan_label.setText("🧪 Checking for a test plan for this PBI…")
+        self._tp_seq += 1
+        seq = self._tp_seq
+        worker = Worker(self._do_detect_test_plan, pbi_id, area_path)
+        worker.signals.result.connect(
+            lambda res, s=seq, p=pbi_id: self._on_test_plan_detected(s, p, res)
+        )
+        worker.signals.error.connect(lambda exc, s=seq: self._on_test_plan_error(s, exc))
+        QThreadPool.globalInstance().start(worker)
+
+    def _do_detect_test_plan(self, pbi_id: int, area_path: str) -> dict:
+        client = self.app_state.client
+        # Session-cached plan list; reused across PBI selections (and for both
+        # lookups below) so we don't re-list every plan each time.
+        plans = client.get_test_plans(use_cache=True)
+        plan, suite = client.find_existing_suite_for_pbi(pbi_id, area_path, plans=plans)
+        if suite:
+            return {"plan": plan, "suite": suite}
+        # No suite yet — report the plan it would land in (if one exists).
+        return {"plan": client.find_plan_for_pbi_area(area_path, plans=plans), "suite": None}
+
+    def _on_test_plan_detected(self, seq: int, pbi_id: int, res: dict):
+        if seq != self._tp_seq or pbi_id != self.app_state.pbi_id:
+            return  # stale — PBI changed after this detection started
+        plan = res.get("plan")
+        suite = res.get("suite")
+
+        self.app_state.test_plan_id = plan["id"] if plan else None
+        self.app_state.test_plan_name = plan["name"] if plan else ""
+        self.app_state.suite_id = suite["id"] if suite else None
+        self.app_state.test_plan_pbi = pbi_id
+
+        self.test_plan_label.setVisible(True)
+        self._apply_test_plan_label()
+
+    def _apply_test_plan_label(self):
+        """Render the test-plan status label from the resolved app_state fields.
+        Shared by fresh detection and the same-PBI re-render path."""
+        from app.utils import theme
+        t = theme.tokens()
+        name = self.app_state.test_plan_name
+        if self.app_state.suite_id is not None:
+            self.test_plan_label.setStyleSheet(f"color: {t['ok']}; font-size: 12px;")
+            self.test_plan_label.setText(
+                f"🧪 Test Plan: <b>{name}</b> — a test suite already exists for this "
+                "PBI; new test cases are added to it and show on the board."
+            )
+        elif name:
+            self.test_plan_label.setStyleSheet(f"color: {t['warn_fg']}; font-size: 12px;")
+            self.test_plan_label.setText(
+                f"🧪 Test Plan: <b>{name}</b> — no test suite exists for this PBI yet. "
+                "One is created automatically when you add test cases, so they show on the board."
+            )
+        else:
+            self.test_plan_label.setStyleSheet(f"color: {t['warn_fg']}; font-size: 12px;")
+            self.test_plan_label.setText(
+                "🧪 No test plan exists for this PBI's area yet. A test plan and suite are "
+                "created automatically when you add test cases, so they show on the board."
+            )
+
+    def _on_test_plan_error(self, seq: int, exc: Exception):
+        if seq != self._tp_seq:
+            return
+        self.test_plan_label.setVisible(True)
+        self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
+        msg = str(exc).strip()
+        if len(msg) > 180:
+            msg = msg[:180] + "…"
+        self.test_plan_label.setText(
+            f"🧪 Could not check the test plan status: {msg}  "
+            "(A suite is still created automatically when you add test cases.)"
+        )
 
     def _load_fields(self):
         self._fields_loading = True

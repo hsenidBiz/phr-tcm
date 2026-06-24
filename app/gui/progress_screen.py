@@ -17,6 +17,7 @@ class CreationWorker(QObject):
 
     progress = pyqtSignal(int, str, str)   # (index, "success"/"error", message)
     token_needed = pyqtSignal()            # emitted when 401 is received
+    suite_ready = pyqtSignal(int, str, int)  # (plan_id, plan_name, suite_id)
     finished = pyqtSignal()
 
     def __init__(self, client, queue, pbi_id, module_ref, area_path="", iteration_path="", preconditions_ref=None):
@@ -43,7 +44,50 @@ class CreationWorker(QObject):
         self._abort_event.set()
         self._token_event.set()
 
+    def _ensure_suite(self):
+        """Best-effort: find-or-create the requirement-based test suite for the
+        PBI so created cases show on the board. A failure here (permissions,
+        offline, …) only logs a warning — it never blocks creation, which still
+        creates and links every test case as before."""
+        while True:
+            if self._abort:
+                return
+            try:
+                plan_id, plan_name, suite_id = self.client.ensure_requirement_suite(
+                    self.pbi_id, self.area_path, self.iteration_path
+                )
+                self.suite_ready.emit(plan_id or 0, plan_name or "", suite_id or 0)
+                self.progress.emit(
+                    -1, "info",
+                    f"🧪 Test plan ready: {plan_name or '(plan)'} — created tests will appear "
+                    "on the board's test count."
+                )
+                return
+            except TokenExpiredError:
+                self.token_needed.emit()
+                self._token_event.wait()
+                self._token_event.clear()
+            except RateLimitError as exc:
+                self.progress.emit(
+                    -1, "warning",
+                    f"⏳ Rate limited preparing the test plan — waiting {exc.retry_after}s…"
+                )
+                self._abort_event.wait(exc.retry_after)
+            except Exception as exc:
+                self.progress.emit(
+                    -1, "warning",
+                    f"⚠ Could not prepare the test plan/suite ({exc}). Test cases are still "
+                    "created and linked, but may not show on the board's test count."
+                )
+                return
+
     def run(self):
+        # Ensure a requirement-based suite exists for the PBI before creating, so
+        # the new cases' "Tested By" links surface on the board. Only when there
+        # are new cases to add (pure update batches need no new suite).
+        if any(not tc.update_id for tc in self.queue):
+            self._ensure_suite()
+
         for i, tc in enumerate(self.queue):
             if self._abort:
                 break
@@ -258,6 +302,7 @@ class ProgressScreen(QWidget):
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_progress)
         self._worker.token_needed.connect(self._on_token_needed)
+        self._worker.suite_ready.connect(self._on_suite_ready)
         self._worker.finished.connect(self._on_finished)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
@@ -285,16 +330,21 @@ class ProgressScreen(QWidget):
             self._thread.wait(5000)
 
     def _on_progress(self, index: int, status: str, message: str):
-        self.progress_bar.setValue(index + 1)
-        self.status_label.setText(f"Processing {index + 1} / {self._total}…")
+        if index >= 0:
+            self.progress_bar.setValue(index + 1)
+            self.status_label.setText(f"Processing {index + 1} / {self._total}…")
 
-        colors = {"success": "#4ec94e", "error": "#f14c4c", "partial": "#f14c4c", "warning": "#e5c07b"}
+        colors = {"success": "#4ec94e", "error": "#f14c4c", "partial": "#f14c4c",
+                  "warning": "#e5c07b", "info": "#4aa3ff"}
         color = colors.get(status, "#d4d4d4")
 
         cursor = self.log.textCursor()
         cursor.movePosition(QTextCursor.End)
         self.log.setTextCursor(cursor)
         self.log.append(f'<span style="color:{color};">{message}</span>')
+
+        if index < 0:
+            return  # log-only note (e.g. test-plan preparation), not a queue item
 
         if status == "success":
             self._success_count += 1
@@ -304,6 +354,13 @@ class ProgressScreen(QWidget):
             self._consumed_indices.add(index)
         elif status == "error":
             self._error_count += 1
+
+    def _on_suite_ready(self, plan_id: int, plan_name: str, suite_id: int):
+        """Record the resolved plan/suite so the Config and Review screens reflect it."""
+        self.app_state.test_plan_id = plan_id or None
+        self.app_state.test_plan_name = plan_name or ""
+        self.app_state.suite_id = suite_id or None
+        self.app_state.test_plan_pbi = self.app_state.pbi_id
 
     def _on_cancel(self):
         if self._worker:

@@ -26,6 +26,15 @@ class AppState:
         self.area_path: str = ""
         self.iteration_path: str = ""
 
+        # Test plan / requirement-based suite for the selected PBI. Resolved for
+        # display on the Config/Review screens and (re)created by the progress
+        # worker so created test cases show on the board. test_plan_pbi records
+        # which PBI these were resolved for.
+        self.test_plan_id: int | None = None
+        self.test_plan_name: str = ""
+        self.suite_id: int | None = None
+        self.test_plan_pbi: int | None = None
+
         # Pending test cases waiting to be created
         self.queue: list[TestCase] = []
 

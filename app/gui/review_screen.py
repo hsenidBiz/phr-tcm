@@ -225,9 +225,22 @@ class ReviewScreen(QWidget):
         self.config_label.setText(
             f"Organisation: {self.app_state.token_manager.org_url}  |  "
             f"Project: {self.app_state.token_manager.project}  |  {module_info}"
+            + self._plan_info_text()
         )
         self._rebuild_tree()
         self.refresh_expiry_state()
+
+    def _plan_info_text(self) -> str:
+        """Describe the test plan/suite the new cases will be added to. Empty when
+        the batch has no new cases (pure updates need no new suite)."""
+        if not any(not tc.update_id for tc in self.app_state.queue):
+            return ""
+        name = getattr(self.app_state, "test_plan_name", "")
+        resolved_for_pbi = getattr(self.app_state, "test_plan_pbi", None) == self.app_state.pbi_id
+        if name and resolved_for_pbi:
+            suffix = "suite exists" if self.app_state.suite_id else "suite will be created"
+            return f"  |  Test Plan: {name} ({suffix})"
+        return "  |  Test Plan / suite created automatically so tests show on the board"
 
     def refresh_expiry_state(self):
         """Sync the Create button and warning banner with the current token state."""
