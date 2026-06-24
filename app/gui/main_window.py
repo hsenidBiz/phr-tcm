@@ -295,7 +295,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _on_test_case_queued(self, tc):
-        if not self._check_duplicate_titles([tc]):
+        proceed, _prompted = self._check_duplicate_titles([tc])
+        if not proceed:
             return
         self.app_state.queue.append(tc)
         self._update_queue_label()
@@ -303,14 +304,47 @@ class MainWindow(QMainWindow):
         self._notify_queue_accepted()
 
     def _on_test_cases_queued(self, cases):
-        if not self._check_duplicate_titles(cases):
+        proceed, prompted = self._check_duplicate_titles(cases)
+        if not proceed:
             return
+        # If some cases are updates (e.g. matched by TestCaseID on re-import) and
+        # the duplicate check didn't already prompt, confirm the create/update
+        # breakdown before queuing so updates are never added silently.
+        if not prompted and any(tc.update_id for tc in cases):
+            if not self._confirm_import_summary(cases):
+                return
         self.app_state.queue.extend(cases)
         self._update_queue_label()
         self._status(
             f"Added {len(cases)} test case(s) from file ({len(self.app_state.queue)} total)."
         )
         self._notify_queue_accepted()
+
+    def _confirm_import_summary(self, cases: list) -> bool:
+        """Summarise how many imported cases will be created vs update existing
+        ones, and ask the user to Continue or Cancel before queuing."""
+        n_updates = sum(1 for tc in cases if tc.update_id)
+        n_creates = len(cases) - n_updates
+        lines = []
+        if n_creates:
+            lines.append(f"• {n_creates} new test case{'s' if n_creates != 1 else ''} will be created")
+        if n_updates:
+            lines.append(f"• {n_updates} existing test case{'s' if n_updates != 1 else ''} will be updated")
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Confirm Import")
+        box.setText(
+            "Some imported test cases match existing ones:\n\n"
+            + "\n".join(lines)
+            + "\n\nUpdates overwrite the matching test case's steps and fields. "
+            "Add these to the queue?"
+        )
+        continue_btn = box.addButton("Continue", QMessageBox.AcceptRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(continue_btn)
+        box.exec_()
+        return box.clickedButton() is continue_btn
 
     def _notify_queue_accepted(self):
         """Tell the emitting widget its cases were accepted so it can clear its inputs."""
@@ -328,36 +362,38 @@ class MainWindow(QMainWindow):
             return self.app_state.existing_cases
         return self.edit_widget._cases
 
-    def _check_duplicate_titles(self, incoming: list) -> bool:
-        """Return True if it is safe to add `incoming` to the queue.
+    def _check_duplicate_titles(self, incoming: list) -> tuple:
+        """Returns (proceed, prompted). `proceed` is True if it is safe to add
+        `incoming` to the queue; `prompted` is True if a dialog was shown (so the
+        caller can avoid stacking a second confirmation on top).
 
-        When an incoming title already exists on the PBI in Azure DevOps, offer to
-        update that work item (matched cases get their update_id set) instead of
-        creating a duplicate. Titles that only collide with the current session
-        queue fall back to a simple add-anyway confirmation."""
+        Cases with a TestCaseID are deliberate, reliable updates and pass straight
+        through. For the rest, if a title already exists on the PBI we warn that
+        importing will create duplicates — we never update by title (only the
+        TestCaseID can target the exact work item). Titles that only collide with
+        the current session queue get a simple add-anyway confirmation."""
         # Cases that already carry an explicit work-item ID (e.g. re-imported from
         # a spreadsheet exported for bulk update) are deliberate updates — never
         # treat them as duplicates or re-match them by title.
         incoming = [tc for tc in incoming if not getattr(tc, "update_id", None)]
         if not incoming:
-            return True
+            return True, False
 
-        # Map existing ADO title -> work item id (first match wins on collisions)
-        ado_by_title: dict = {}
-        for c in self._existing_cases_for_pbi():
-            title = (c.get("System.Title", "") or "").lower()
-            wid = c.get("_id")
-            if title and wid and title not in ado_by_title:
-                ado_by_title[title] = wid
+        # Titles that already exist on the PBI in Azure DevOps.
+        ado_titles = {
+            (c.get("System.Title", "") or "").lower()
+            for c in self._existing_cases_for_pbi()
+            if c.get("System.Title")
+        }
 
         # Titles already sitting in the queue this session
         queue_titles = {tc.title.lower() for tc in self.app_state.queue}
 
-        ado_dupes = [tc for tc in incoming if tc.title.lower() in ado_by_title]
+        ado_dupes = [tc for tc in incoming if tc.title.lower() in ado_titles]
         queue_dupes = [tc.title for tc in incoming if tc.title.lower() in queue_titles]
 
         if not ado_dupes and not queue_dupes:
-            return True
+            return True, False
 
         def _fmt(titles: list) -> str:
             lines = "\n".join(f"  • {t}" for t in titles[:10])
@@ -365,7 +401,9 @@ class MainWindow(QMainWindow):
                 lines += f"\n  … and {len(titles) - 10} more"
             return lines
 
-        # Case 1 — some titles already exist on the PBI: offer Update vs Add-as-new.
+        # Case 1 — some titles already exist on the PBI. Without a TestCaseID we
+        # can't tell which work item is meant, so we never update by title — we
+        # only warn that importing will create duplicates.
         if ado_dupes:
             parts = [
                 f"Already exist on PBI #{self.app_state.pbi_id} in Azure DevOps:\n"
@@ -375,30 +413,21 @@ class MainWindow(QMainWindow):
                 parts.append(f"Already in your current queue:\n{_fmt(queue_dupes)}")
 
             box = QMessageBox(self)
-            box.setIcon(QMessageBox.Question)
+            box.setIcon(QMessageBox.Warning)
             box.setWindowTitle("Duplicate Titles Found")
             box.setText(
                 "The following test case title(s) already exist:\n\n"
                 + "\n\n".join(parts)
-                + "\n\nUpdate the existing work item(s) with the values from your "
-                "file (steps, tags, preconditions, module, automation status), "
-                "or add them as new copies?"
+                + "\n\nThese will be added as NEW test cases, creating duplicates. "
+                "To update an existing test case instead, export it from the "
+                "Edit Test Cases tab, change it, and re-import — its TestCaseID "
+                "targets the exact work item.\n\nContinue?"
             )
-            update_btn = box.addButton(
-                f"Update {len(ado_dupes)} Existing", QMessageBox.AcceptRole
-            )
-            box.addButton("Add as New", QMessageBox.DestructiveRole)
-            cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
-            box.setDefaultButton(update_btn)
+            continue_btn = box.addButton("Continue", QMessageBox.AcceptRole)
+            box.addButton("Cancel", QMessageBox.RejectRole)
+            box.setDefaultButton(continue_btn)
             box.exec_()
-
-            clicked = box.clickedButton()
-            if clicked is cancel_btn:
-                return False
-            if clicked is update_btn:
-                for tc in ado_dupes:
-                    tc.update_id = ado_by_title[tc.title.lower()]
-            return True
+            return (box.clickedButton() is continue_btn), True
 
         # Case 2 — duplicates only within the current session queue.
         reply = QMessageBox.question(
@@ -409,7 +438,7 @@ class MainWindow(QMainWindow):
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
-        return reply == QMessageBox.Yes
+        return reply == QMessageBox.Yes, True
 
     def _update_queue_label(self):
         n = len(self.app_state.queue)

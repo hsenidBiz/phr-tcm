@@ -95,6 +95,55 @@ class EditScreen(QWidget):
                 self._bulk_assigned_combo.setCurrentIndex(idx)
         self._bulk_assigned_combo.blockSignals(False)
 
+        # The single-case edit form shares the same team-member list.
+        self._populate_single_assigned_combo(members)
+        if self._current_idx is not None and 0 <= self._current_idx < len(self._cases):
+            self._apply_assigned_from_tc(self._cases[self._current_idx])
+
+    def _populate_single_assigned_combo(self, members: list):
+        cur = self._assigned_combo.currentData()
+        self._assigned_combo.blockSignals(True)
+        self._assigned_combo.clear()
+        self._assigned_combo.addItem("Unassigned", "")
+        for user in members:
+            display = user.get("displayName", user.get("uniqueName", ""))
+            unique = user.get("uniqueName", "")
+            if display and unique:
+                self._assigned_combo.addItem(display, unique)
+        if cur:
+            idx = self._assigned_combo.findData(cur)
+            if idx >= 0:
+                self._assigned_combo.setCurrentIndex(idx)
+        self._assigned_combo.blockSignals(False)
+
+    @staticmethod
+    def _assignee_identity(tc: dict) -> tuple:
+        """(uniqueName, displayName) for a TC's System.AssignedTo; ('', '') if none."""
+        assigned = tc.get("System.AssignedTo", "")
+        if isinstance(assigned, dict):
+            unique = assigned.get("uniqueName", "") or ""
+            return unique, (assigned.get("displayName", "") or unique)
+        unique = str(assigned) if assigned else ""
+        return unique, unique
+
+    def _apply_assigned_from_tc(self, tc: dict):
+        """Select the TC's current assignee in the single-case combo. If that
+        person isn't in the (possibly still-loading) member list, add them so the
+        real assignee is shown and preserved on save."""
+        unique, display = self._assignee_identity(tc)
+        combo = self._assigned_combo
+        combo.blockSignals(True)
+        if not unique:
+            empty = combo.findData("")
+            combo.setCurrentIndex(empty if empty >= 0 else 0)
+        else:
+            idx = combo.findData(unique)
+            if idx < 0:
+                combo.addItem(display or unique, unique)
+                idx = combo.findData(unique)
+            combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
     # ------------------------------------------------------------------ #
     #  UI construction                                                     #
     # ------------------------------------------------------------------ #
@@ -254,6 +303,12 @@ class EditScreen(QWidget):
         self._module_edit.setInsertPolicy(QComboBox.NoInsert)
         self._module_edit.lineEdit().setPlaceholderText("e.g. Authentication")
         fv.addWidget(self._module_edit)
+
+        fv.addWidget(QLabel("Assigned To"))
+        self._assigned_combo = QComboBox()
+        self._assigned_combo.setMinimumWidth(200)
+        self._assigned_combo.addItem("Unassigned", "")
+        fv.addWidget(self._assigned_combo)
 
         steps_hdr = QHBoxLayout()
         steps_hdr.addWidget(QLabel("Steps"))
@@ -426,9 +481,7 @@ class EditScreen(QWidget):
             )
             return
 
-        self._header_lbl.setText(
-            f"PBI #{pbi_id}: {self.app_state.pbi_title}  —  Loading…"
-        )
+        self._header_lbl.setText("Loading test cases…")
         self._refresh_btn.setEnabled(False)
         self._rename_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
@@ -450,7 +503,7 @@ class EditScreen(QWidget):
 
     def _on_cases_loaded(self, pbi_id: int, result: tuple):
         from app.utils.settings import load_settings
-        cases, total = result
+        cases, _total = result  # all linked cases are fetched in batches — no cap
         self._cases = cases
         self._loaded_pbi = pbi_id
         # Share with the Import tab so it can detect duplicates / offer updates
@@ -462,12 +515,9 @@ class EditScreen(QWidget):
             title = tc.get("System.Title", "(no title)")
             self._list.addItem(QListWidgetItem(f"#{tc_id}  —  {title}"))
 
-        n = len(cases)
-        if total > 200:
-            summary = f"Showing 200 of {total} (API limit)"
-        else:
-            summary = f"{n} test case{'s' if n != 1 else ''} found"
-        self._header_lbl.setText(f"PBI #{pbi_id}: {self.app_state.pbi_title}  —  {summary}")
+        # No summary line here — the PBI is shown in the main window header and
+        # the case count appears at the bottom-left of the list.
+        self._header_lbl.setText("")
 
         # Populate module filter from loaded cases
         self._module_filter.blockSignals(True)
@@ -497,9 +547,7 @@ class EditScreen(QWidget):
         self._update_export_btn_text()
 
     def _on_cases_error(self, pbi_id: int, exc: Exception):
-        self._header_lbl.setText(
-            f"PBI #{pbi_id}: {self.app_state.pbi_title}  —  Error: {exc}"
-        )
+        self._header_lbl.setText(f"Could not load test cases: {exc}")
         self._refresh_btn.setEnabled(True)
 
     def _on_mine_filter_toggled(self, checked: bool):
@@ -661,6 +709,8 @@ class EditScreen(QWidget):
             else "Module field not configured"
         )
 
+        self._apply_assigned_from_tc(tc)
+
         self._steps_tbl.setRowCount(0)
         steps = parse_steps_xml(tc.get("Microsoft.VSTS.TCM.Steps", "") or "")
         for i, step in enumerate(steps):
@@ -763,6 +813,10 @@ class EditScreen(QWidget):
             "System.Tags": self._tags_edit.text().strip(),
             "Microsoft.VSTS.TCM.AutomationStatus": self._auto_combo.currentText(),
             "Microsoft.VSTS.TCM.Steps": build_steps_xml(steps),
+            # uniqueName string (ADO resolves it); "" unassigns. Same format the
+            # bulk editor uses. Pre-selected to the current assignee, so an
+            # untouched save is a no-op for this field.
+            "System.AssignedTo": self._assigned_combo.currentData() or "",
         }
         if self.app_state.module_ref:
             fields[self.app_state.module_ref] = self._module_edit.currentText().strip()
@@ -783,6 +837,14 @@ class EditScreen(QWidget):
         tc["Microsoft.VSTS.TCM.AutomationStatus"] = fields["Microsoft.VSTS.TCM.AutomationStatus"]
         if self.app_state.module_ref and self.app_state.module_ref in fields:
             tc[self.app_state.module_ref] = fields[self.app_state.module_ref]
+        if "System.AssignedTo" in fields:
+            unique = fields["System.AssignedTo"]
+            if unique:
+                idx = self._assigned_combo.findData(unique)
+                disp = self._assigned_combo.itemText(idx) if idx >= 0 else unique
+                tc["System.AssignedTo"] = {"uniqueName": unique, "displayName": disp}
+            else:
+                tc["System.AssignedTo"] = ""
         if self._current_idx is not None:
             item = self._list.item(self._current_idx)
             if item:

@@ -289,7 +289,7 @@ class DevOpsClient:
             "System.Id", "System.Title", "System.Tags",
             "Microsoft.VSTS.TCM.AutomationStatus",
             "Microsoft.VSTS.TCM.Steps",
-            "System.CreatedBy",
+            "System.CreatedBy", "System.AssignedTo",
         ]
         if extra_fields:
             base_fields.extend(f for f in extra_fields if f not in base_fields)
