@@ -5,4 +5,4 @@ read by build.ps1 to set the Velopack package version. Bump this before each
 release, then build and publish.
 """
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"

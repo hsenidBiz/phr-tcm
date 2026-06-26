@@ -124,9 +124,12 @@ class ConfigScreen(QWidget):
         self.pbi_search.textChanged.connect(self._on_pbi_search_text)
         pbi_layout.addWidget(self.pbi_search)
 
-        self.pbi_dropdown = QListWidget()
+        # Floating overlay: a raised child of this screen (NOT in the layout) so it
+        # appears ON TOP of the controls below the search box instead of pushing
+        # them down or rendering behind them. It doesn't grab keyboard focus, so
+        # live search-as-you-type keeps working while it's shown.
+        self.pbi_dropdown = QListWidget(self)
         self.pbi_dropdown.setVisible(False)
-        self.pbi_dropdown.setMinimumHeight(220)
         self.pbi_dropdown.setMaximumHeight(380)
         self.pbi_dropdown.setStyleSheet(
             "QListWidget { border: 1px solid #ccc; border-radius: 4px; "
@@ -137,7 +140,7 @@ class ConfigScreen(QWidget):
         )
         self.pbi_dropdown.setCursor(QCursor(Qt.PointingHandCursor))
         self.pbi_dropdown.itemClicked.connect(self._on_pbi_dropdown_clicked)
-        pbi_layout.addWidget(self.pbi_dropdown)
+        # Not added to pbi_layout — shown/positioned via _reveal_pbi_dropdown().
 
         # Install filters only after BOTH widgets exist — eventFilter()
         # references each of them and Qt delivers events during construction.
@@ -493,6 +496,10 @@ class ConfigScreen(QWidget):
         if obj is self.pbi_search and event.type() == QEvent.FocusIn:
             if not self.pbi_search.text().strip():
                 self._show_recent_dropdown()
+        elif obj is self.pbi_search and event.type() == QEvent.FocusOut:
+            # Hide the floating dropdown once focus leaves the box — deferred so a
+            # click on a dropdown item is processed first.
+            QTimer.singleShot(150, self._maybe_hide_pbi_dropdown)
         elif obj is self.pbi_dropdown and event.type() == QEvent.KeyPress:
             if event.key() == Qt.Key_Delete and self._pbi_dropdown_mode == "recent":
                 item = self.pbi_dropdown.currentItem()
@@ -502,6 +509,31 @@ class ConfigScreen(QWidget):
                     self._show_recent_dropdown()
                 return True
         return super().eventFilter(obj, event)
+
+    def _reveal_pbi_dropdown(self):
+        """Position the floating dropdown just below the search box, size it to its
+        content (capped at the max height), raise it above the controls, show it."""
+        sb = self.pbi_search
+        top_left = sb.mapTo(self, sb.rect().bottomLeft())
+        rows = self.pbi_dropdown.count()
+        row_h = self.pbi_dropdown.sizeHintForRow(0) if rows else 30
+        if row_h <= 0:
+            row_h = 30
+        frame = 2 * self.pbi_dropdown.frameWidth() + 6
+        height = max(min(rows * row_h + frame, 380), 40)
+        self.pbi_dropdown.setGeometry(top_left.x(), top_left.y() + 2, sb.width(), height)
+        self.pbi_dropdown.show()
+        self.pbi_dropdown.raise_()
+
+    def _maybe_hide_pbi_dropdown(self):
+        """Hide the floating dropdown once focus has left both the search box and
+        the dropdown itself (e.g. the user clicked another control)."""
+        from PyQt5.QtWidgets import QApplication
+        fw = QApplication.focusWidget()
+        dd = self.pbi_dropdown
+        if fw is self.pbi_search or fw is dd or (fw is not None and dd.isAncestorOf(fw)):
+            return
+        dd.setVisible(False)
 
     def _show_recent_dropdown(self):
         self._pbi_dropdown_mode = "recent"
@@ -515,7 +547,7 @@ class ConfigScreen(QWidget):
             item.setData(Qt.UserRole, r["id"])
             item.setToolTip("Click to select — press Delete to remove from recents")
             self.pbi_dropdown.addItem(item)
-        self.pbi_dropdown.setVisible(True)
+        self._reveal_pbi_dropdown()
 
     def _on_pbi_search_text(self, text: str):
         text = text.strip()
@@ -538,7 +570,7 @@ class ConfigScreen(QWidget):
         searching = QListWidgetItem("Searching…")
         searching.setFlags(Qt.NoItemFlags)
         self.pbi_dropdown.addItem(searching)
-        self.pbi_dropdown.setVisible(True)
+        self._reveal_pbi_dropdown()
 
         seq = self._pbi_search_seq
         worker = Worker(self.app_state.client.search_work_items, text)
@@ -554,13 +586,13 @@ class ConfigScreen(QWidget):
             empty = QListWidgetItem("No matching work items")
             empty.setFlags(Qt.NoItemFlags)
             self.pbi_dropdown.addItem(empty)
-            self.pbi_dropdown.setVisible(True)
+            self._reveal_pbi_dropdown()
             return
         for r in results:
             item = QListWidgetItem(f"#{r['id']}  —  {r['title']}    [{r['type']}]")
             item.setData(Qt.UserRole, r["id"])
             self.pbi_dropdown.addItem(item)
-        self.pbi_dropdown.setVisible(True)
+        self._reveal_pbi_dropdown()
 
     def _on_pbi_search_error(self, seq: int, exc: Exception):
         if seq != self._pbi_search_seq:
@@ -569,7 +601,7 @@ class ConfigScreen(QWidget):
         err = QListWidgetItem(f"Search failed: {exc}")
         err.setFlags(Qt.NoItemFlags)
         self.pbi_dropdown.addItem(err)
-        self.pbi_dropdown.setVisible(True)
+        self._reveal_pbi_dropdown()
 
     def _on_pbi_dropdown_clicked(self, item):
         pid = item.data(Qt.UserRole)
