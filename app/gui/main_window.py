@@ -30,7 +30,8 @@ class MainWindow(QMainWindow):
     def __init__(self, app_state):
         super().__init__()
         self.app_state = app_state
-        self.setWindowTitle("Azure DevOps Test Case Creator")
+        from app.version import VERSION
+        self.setWindowTitle(f"Azure DevOps Test Case Creator  v{VERSION}")
         self.setMinimumSize(860, 640)
         self.resize(980, 720)
 
@@ -498,7 +499,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     # ------------------------------------------------------------------ #
-    #  Auto-update (git pull from the private GitHub clone)                #
+    #  Auto-update (Velopack + public GitHub Releases repo)                #
     # ------------------------------------------------------------------ #
 
     def _check_for_update(self):
@@ -515,16 +516,16 @@ class MainWindow(QMainWindow):
         if not info:
             return
         self._update_info = info
-        n = info["commits"]
-        plural = "s" if n != 1 else ""
-        self._update_btn.setText(f"⬆  Update available ({n} commit{plural})")
+        version = info["version"]
+        self._update_btn.setText(f"⬆  Update available (v{version})")
         self._update_btn.setVisible(True)
+        notes = (info.get("notes") or "").strip()
+        notes_block = f"\n\nWhat's new:\n{notes}" if notes else ""
         reply = QMessageBox.question(
             self, "Update Available",
-            f"A newer version is available on GitHub "
-            f"({n} new commit{plural}).\n\n"
-            f"Latest change: {info['latest']}\n\n"
-            "Update and restart now? Any queued test cases are saved as a "
+            f"A newer version (v{version}) is available."
+            + notes_block
+            + "\n\nDownload and restart now? Any queued test cases are saved as a "
             "draft and restored after the restart.",
             QMessageBox.Yes | QMessageBox.No,
         )
@@ -544,26 +545,29 @@ class MainWindow(QMainWindow):
 
     def _apply_update(self):
         from app.utils import updater
+        from app.utils.settings import save_draft_queue, clear_draft_queue
         self._update_btn.setEnabled(False)
         self._update_btn.setText("Updating…")
-        worker = Worker(updater.apply_update)
-        worker.signals.result.connect(self._on_update_applied)
+        self._status("Downloading update…")
+        # Velopack replaces the app files and restarts the process, which can
+        # bypass closeEvent — persist the queue now so it's restored afterwards.
+        if self.app_state.queue:
+            save_draft_queue(self.app_state.queue)
+        else:
+            clear_draft_queue()
+        # download_and_apply restarts into the new version on success (this
+        # process is terminated by Velopack), so only the failure path returns.
+        worker = Worker(updater.download_and_apply, self._update_info)
         worker.signals.error.connect(self._on_update_failed)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_update_applied(self, _output):
-        from app.utils import updater
-        updater.start_new_instance()
-        self.close()  # closeEvent saves the draft queue on the way out
-
     def _on_update_failed(self, exc: Exception):
-        n = self._update_info["commits"]
-        plural = "s" if n != 1 else ""
+        version = self._update_info.get("version", "")
         self._update_btn.setEnabled(True)
-        self._update_btn.setText(f"⬆  Update available ({n} commit{plural})")
+        self._update_btn.setText(f"⬆  Update available (v{version})")
         QMessageBox.warning(
             self, "Update Failed",
-            f"The update could not be applied:\n\n{exc}\n\n"
+            f"The update could not be downloaded or applied:\n\n{exc}\n\n"
             "You can keep using this version and try again later."
         )
 

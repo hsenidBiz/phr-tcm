@@ -75,7 +75,24 @@ def _enable_high_dpi():
         pass
 
 
+def _run_velopack_startup():
+    """Velopack lifecycle hook — handles install / update / uninstall events for
+    the packaged build. Must run before any GUI work (it may relaunch or exit the
+    process during those events). Only the frozen (installed) build participates;
+    running from source returns immediately to avoid the native 'not installed'
+    noise.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        import velopack
+        velopack.App().run()
+    except Exception:
+        pass
+
+
 def main():
+    _run_velopack_startup()
     _enable_high_dpi()
 
     app = QApplication(sys.argv)

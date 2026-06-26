@@ -1,83 +1,69 @@
-"""Git-based auto-update.
+"""Auto-update via Velopack + a public GitHub Releases repo.
 
-The app is distributed as a clone of the private GitHub repo on each
-machine, so updates arrive via the machine's existing git credentials —
-no tokens are stored or embedded. Everything here is read-only except
-the fast-forward merge the user explicitly confirms.
+Only the installed (packaged) build auto-updates — running from source is a
+no-op. Velopack downloads full or delta updates from the public releases repo
+and applies them with a restart. There is no git and no embedded token: the
+releases repo is public, so unauthenticated reads are enough.
+
+The startup lifecycle hook (``velopack.App().run()``) lives in ``main.py`` and
+must run before the GUI — this module only handles the in-app "is there a newer
+version?" check and the download/apply.
 """
 
-import os
-import subprocess
 import sys
-from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_NO_WINDOW = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
-
-
-class UpdateError(Exception):
-    pass
-
-
-def _git(*args: str, timeout: int = 30) -> str:
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=_REPO_ROOT, capture_output=True, text=True,
-            timeout=timeout, creationflags=_NO_WINDOW,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise UpdateError(str(exc)) from exc
-    if result.returncode != 0:
-        raise UpdateError((result.stderr or result.stdout).strip())
-    return result.stdout.strip()
+# Public, releases-only repo holding the Velopack installer + update packages.
+# No source code lives here. Created separately from the private source repo.
+RELEASES_REPO = "https://github.com/AvinAlwis/azure-devops-test-case-creator-releases"
 
 
 def update_supported() -> bool:
-    """True when running from source inside a git checkout with git available."""
-    if getattr(sys, "frozen", False):  # PyInstaller build — no clone to pull
-        return False
-    if not (_REPO_ROOT / ".git").exists():
-        return False
-    try:
-        _git("--version", timeout=10)
-        return True
-    except UpdateError:
-        return False
+    """True only for the installed Velopack build (a frozen PyInstaller exe).
+    Source runs (``python main.py``) never auto-update."""
+    return getattr(sys, "frozen", False)
+
+
+def _update_manager():
+    import velopack
+    # access_token=None → unauthenticated (public repo); prerelease=False → stable only.
+    return velopack.UpdateManager(velopack.GithubSource(RELEASES_REPO, None, False))
 
 
 def check_for_update() -> dict | None:
-    """Fetch the remote and report how far behind this clone is.
+    """Return update details when a newer release exists, else None.
 
-    Returns {"commits": int, "latest": str, "branch": str} when an update
-    is available, None when up to date. Raises UpdateError on git or
-    network failure.
+    The returned dict carries the live Velopack manager + info so that a later
+    ``download_and_apply`` reuses them:
+        {"version": str, "notes": str, "_manager": UpdateManager, "_info": UpdateInfo}
+
+    Silent (returns None) on any failure — including the "not installed"
+    RuntimeError when run from source — so the update check never disturbs use.
     """
-    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
-    _git("fetch", "origin", branch, timeout=60)
-    behind = int(_git("rev-list", "--count", f"HEAD..origin/{branch}"))
-    if behind == 0:
+    if not update_supported():
         return None
-    latest = _git("log", "-1", "--format=%s", f"origin/{branch}")
-    return {"commits": behind, "latest": latest, "branch": branch}
+    try:
+        manager = _update_manager()
+        info = manager.check_for_updates()
+        if info is None:
+            return None
+        target = info.TargetFullRelease
+        return {
+            "version": target.Version,
+            "notes": target.NotesMarkdown or "",
+            "_manager": manager,
+            "_info": info,
+        }
+    except Exception:
+        return None
 
 
-def apply_update() -> str:
-    """Fast-forward this clone to the already-fetched remote branch.
+def download_and_apply(update: dict):
+    """Download the pending update and restart into the new version.
 
-    Refuses to touch a clone with local modifications or diverged history
-    (--ff-only) so an update can never destroy local work.
-    """
-    if _git("status", "--porcelain"):
-        raise UpdateError(
-            "This copy has local file changes, so the update was skipped to "
-            "avoid disturbing them. Commit, stash, or discard the changes "
-            "and try again."
-        )
-    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
-    return _git("merge", "--ff-only", f"origin/{branch}", timeout=60)
-
-
-def start_new_instance():
-    """Launch a fresh copy of the app; the caller then closes this one."""
-    subprocess.Popen([sys.executable, *sys.argv], cwd=os.getcwd())
+    Velopack replaces the app files and relaunches the app, terminating this
+    process as part of the restart — so callers must persist any state first.
+    Raises on a download/apply failure (the current version keeps running)."""
+    manager = update["_manager"]
+    info = update["_info"]
+    manager.download_updates(info)
+    manager.apply_updates_and_restart(info)

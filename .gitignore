@@ -6,7 +6,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+Releases/
 *.spec
+!devops_test_case_creator.spec
 
 # Virtual environments
 .venv/
