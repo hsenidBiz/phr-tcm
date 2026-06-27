@@ -55,8 +55,21 @@ class AuthScreen(QWidget):
             theme.btn_primary_qss("border-radius: 4px; font-size: 14px;")
         )
         self.signin_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.signin_btn.clicked.connect(self._on_msal_sign_in)
+        self.signin_btn.clicked.connect(self._on_primary_clicked)
         card_layout.addWidget(self.signin_btn)
+
+        # Shown only when already signed in: lets the user re-authenticate as
+        # someone else instead of just continuing.
+        self._switch_btn = QPushButton("Sign in with a different account")
+        self._switch_btn.setFlat(True)
+        self._switch_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._switch_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; color: #0078d4; "
+            "font-size: 12px; } QPushButton:hover { text-decoration: underline; }"
+        )
+        self._switch_btn.clicked.connect(self._on_msal_sign_in)
+        self._switch_btn.setVisible(False)
+        card_layout.addWidget(self._switch_btn)
 
         self._signin_hint = QLabel(
             "Opens your browser to sign in — your organisation and projects "
@@ -73,6 +86,38 @@ class AuthScreen(QWidget):
         outer.addWidget(self._card)
         outer.addStretch()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._update_for_auth_state()
+
+    def _on_primary_clicked(self):
+        # Already signed in this session → continue without re-authenticating;
+        # otherwise start the interactive Microsoft sign-in.
+        if self.app_state.token_manager.auto_refresh_active():
+            self.connected.emit()
+        else:
+            self._on_msal_sign_in()
+
+    def _update_for_auth_state(self):
+        """Reflect whether the user is already signed in: offer a one-click
+        Continue (no browser re-auth) instead of forcing another sign-in."""
+        tm = self.app_state.token_manager
+        if tm.auto_refresh_active():
+            upn = tm.get_current_upn()
+            who = f" as {upn}" if upn else ""
+            self._subtitle.setText(f"You're already signed in{who}.")
+            self.signin_btn.setText("Continue →")
+            self._signin_hint.setVisible(False)
+            self._switch_btn.setVisible(True)
+        else:
+            self._subtitle.setText(
+                "Sign in with your Microsoft account to get started.")
+            self.signin_btn.setText("Sign in with Microsoft")
+            self._signin_hint.setVisible(True)
+            self._switch_btn.setVisible(False)
+        self.signin_btn.setEnabled(True)
+        self._refresh_signin_display()
+
     def _refresh_signin_display(self):
         from app.utils import theme
         t = theme.tokens()
@@ -88,6 +133,7 @@ class AuthScreen(QWidget):
     def _set_busy(self, busy: bool, text="Sign in with Microsoft"):
         self.signin_btn.setEnabled(not busy)
         self.signin_btn.setText(text)
+        self._switch_btn.setEnabled(not busy)
 
     def _on_msal_sign_in(self):
         try:
@@ -117,6 +163,7 @@ class AuthScreen(QWidget):
 
     def _on_msal_error(self, exc: Exception):
         self._set_busy(False)
+        self._update_for_auth_state()
         QMessageBox.critical(
             self, "Sign-In Failed",
             f"Microsoft sign-in did not complete:\n\n{exc}\n\n"
@@ -133,5 +180,10 @@ class AuthScreen(QWidget):
         self._signin_hint.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self.signin_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 14px;")
+        )
+        self._switch_btn.setStyleSheet(
+            f"QPushButton {{ border: none; background: transparent; "
+            f"color: {t['accent']}; font-size: 12px; }} "
+            f"QPushButton:hover {{ text-decoration: underline; }}"
         )
         self._refresh_signin_display()

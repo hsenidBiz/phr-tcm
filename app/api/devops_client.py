@@ -660,3 +660,135 @@ class DevOpsClient:
             )
         suite_id = self.create_requirement_suite(plan["id"], plan["rootSuiteId"], pbi_id)
         return plan["id"], plan.get("name", ""), suite_id
+
+    # ------------------------------------------------------------------ #
+    #  Test execution — runs, results, outcomes, attachments             #
+    #                                                                     #
+    #  Records manual test outcomes against the test points in the PBI's  #
+    #  requirement-based suite. Only GET / POST / PATCH — no DELETE. The   #
+    #  GUI gates the actual submission behind an explicit confirm.        #
+    # ------------------------------------------------------------------ #
+
+    def get_test_points(self, plan_id: int, suite_id: int,
+                        test_case_ids: list | None = None) -> list:
+        """All test points in a plan+suite (paginated). Returns a list of
+        {point_id, test_case_id, config_id, config_name, last_outcome}. The
+        `test_case_id` (work item id) maps a test case to its point. Safe — read
+        only."""
+        tc_filter = ""
+        if test_case_ids:
+            tc_filter = "&testCaseId=" + ",".join(str(i) for i in test_case_ids)
+        points = []
+        continuation = None
+        while True:
+            url = (
+                f"{self._base()}/testplan/Plans/{plan_id}/Suites/{suite_id}/TestPoint"
+                f"?api-version={API_VERSION}{tc_filter}"
+            )
+            if continuation:
+                url += f"&continuationToken={continuation}"
+            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            data = self._handle(resp)
+            for p in data.get("value", []):
+                tcref = p.get("testCaseReference") or {}
+                cfg = p.get("configuration") or {}
+                results = p.get("results") or {}
+                points.append({
+                    "point_id": p.get("id"),
+                    "test_case_id": tcref.get("id"),
+                    "config_id": cfg.get("id"),
+                    "config_name": cfg.get("name", ""),
+                    "last_outcome": results.get("outcome", "") or "",
+                    "last_run_id": results.get("lastTestRunId"),
+                    "last_result_id": results.get("lastResultId"),
+                })
+            continuation = resp.headers.get("x-ms-continuationtoken")
+            if not continuation:
+                break
+        return points
+
+    def get_result(self, run_id: int, result_id: int) -> dict:
+        """A single test result's outcome + comment (used to pre-load the runner
+        with the last recorded values). Safe — read only."""
+        url = (f"{self._base()}/test/Runs/{run_id}/Results/{result_id}"
+               f"?api-version={API_VERSION}")
+        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        data = self._handle(resp)
+        return {"outcome": data.get("outcome", "") or "",
+                "comment": data.get("comment", "") or ""}
+
+    def create_test_run(self, plan_id: int, name: str, point_ids: list) -> dict:
+        """POST a manual test run seeded from the given test point ids. Azure
+        DevOps creates one result per point and the run starts InProgress.
+        Returns {run_id, web_url}."""
+        body = {
+            "name": name,
+            "plan": {"id": str(plan_id)},
+            "pointIds": [int(p) for p in point_ids],
+            "automated": False,
+        }
+        url = f"{self._base()}/test/runs?api-version={API_VERSION}"
+        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        data = self._handle(resp)
+        return {"run_id": data.get("id"), "web_url": data.get("webAccessUrl", "")}
+
+    def get_run_results(self, run_id: int) -> list:
+        """The results auto-created for a run. Returns a list of
+        {result_id, test_case_id, point_id} so the caller can map each result
+        back to the test case it belongs to. Safe — read only."""
+        url = f"{self._base()}/test/Runs/{run_id}/results?api-version={API_VERSION}"
+        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=30)
+        data = self._handle(resp)
+        out = []
+        for r in data.get("value", []):
+            tc = r.get("testCase") or {}
+            tp = r.get("testPoint") or {}
+            out.append({
+                "result_id": r.get("id"),
+                "test_case_id": int(tc["id"]) if tc.get("id") else None,
+                "point_id": int(tp["id"]) if tp.get("id") else None,
+            })
+        return out
+
+    def update_run_results(self, run_id: int, results: list):
+        """PATCH outcomes onto a run's results. Each item: {id, outcome, comment,
+        duration_ms}. `outcome` must be an ADO value (Passed/Failed/Blocked/
+        NotApplicable). Marks each result Completed. Plain-JSON PATCH (not
+        json-patch)."""
+        body = []
+        for r in results:
+            item = {"id": r["id"], "outcome": r["outcome"], "state": "Completed"}
+            if r.get("comment"):
+                item["comment"] = r["comment"][:1000]
+            if r.get("duration_ms"):
+                item["durationInMs"] = r["duration_ms"]
+            body.append(item)
+        url = f"{self._base()}/test/Runs/{run_id}/results?api-version={API_VERSION}"
+        resp = requests.patch(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        self._handle(resp)
+
+    def add_result_attachment(self, run_id: int, result_id: int, b64: str,
+                            file_name: str, comment: str = ""):
+        """POST a base64-encoded attachment (e.g. a screenshot) to a test result."""
+        body = {
+            "stream": b64,
+            "fileName": file_name,
+            "attachmentType": "GeneralAttachment",
+        }
+        if comment:
+            body["comment"] = comment[:1000]
+        url = (
+            f"{self._base()}/test/Runs/{run_id}/Results/{result_id}/attachments"
+            f"?api-version={API_VERSION}"
+        )
+        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=60)
+        self._handle(resp)
+
+    def complete_test_run(self, run_id: int):
+        """PATCH the run to the Completed state (plain-JSON PATCH)."""
+        url = f"{self._base()}/test/runs/{run_id}?api-version={API_VERSION}"
+        resp = requests.patch(
+            url, json={"state": "Completed"},
+            headers=self.tm.get_json_headers(), timeout=30,
+        )
+        self._handle(resp)

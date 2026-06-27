@@ -31,3 +31,6 @@ Thumbs.db
 # Claude Code / MCP tool data
 .claude/
 .playwright-mcp/
+
+# Local test-authoring scratch (not app source)
+/Test Case Writing/

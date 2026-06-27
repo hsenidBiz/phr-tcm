@@ -14,6 +14,7 @@ from app.gui.config_screen import ConfigScreen
 from app.gui.manual_entry import ManualEntryWidget
 from app.gui.import_screen import ImportWidget
 from app.gui.edit_screen import EditScreen
+from app.gui.run_screen import RunScreen
 from app.gui.review_screen import ReviewScreen
 from app.gui.progress_screen import ProgressScreen
 from app.utils import theme
@@ -150,6 +151,9 @@ class MainWindow(QMainWindow):
         self.edit_widget = EditScreen(self.app_state)
         self.edit_widget.test_case_queued.connect(self._on_test_case_queued)
         self.tabs.addTab(self.edit_widget, "Edit Test Cases")
+
+        self.run_widget = RunScreen(self.app_state)
+        self.tabs.addTab(self.run_widget, "Run Tests")
 
         v.addWidget(self.tabs, 1)
 
@@ -599,6 +603,7 @@ class MainWindow(QMainWindow):
         self.manual_widget.refresh_theme()
         self.import_widget.refresh_theme()
         self.edit_widget.refresh_theme()
+        self.run_widget.refresh_theme()
         self.review_screen.refresh_theme()
         self.progress_screen.refresh_theme()
 

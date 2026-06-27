@@ -8,6 +8,7 @@ _DRAFT_PATH = Path.home() / ".devops_tc_creator" / "draft_queue.json"
 _ALLOWED_KEYS = {
     "org_url", "project", "preconditions", "recent_pbis", "dark_mode",
     "mine_only_filter", "status_filter", "module_filter", "templates",
+    "execution_notes",
 }
 
 
@@ -24,6 +25,31 @@ def save_settings(data: dict):
     existing.update({k: v for k, v in data.items() if k in _ALLOWED_KEYS})
     _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     _SETTINGS_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+
+# ------------------------------------------------------------------ #
+#  Per-test-case local notes (kept on disk, never sent to ADO)        #
+# ------------------------------------------------------------------ #
+
+def load_execution_notes() -> dict:
+    """Map of {str(test_case_id): notes_text} for the test runner."""
+    notes = load_settings().get("execution_notes", {})
+    return notes if isinstance(notes, dict) else {}
+
+
+def get_execution_note(tc_id) -> str:
+    return load_execution_notes().get(str(tc_id), "")
+
+
+def save_execution_note(tc_id, text: str):
+    """Store (or clear, when blank) the local note for a test case."""
+    notes = load_execution_notes()
+    key = str(tc_id)
+    if text.strip():
+        notes[key] = text
+    else:
+        notes.pop(key, None)
+    save_settings({"execution_notes": notes})
 
 
 def save_recent_pbi(pbi_id: int, title: str, project: str = "", max_items: int = 10):
