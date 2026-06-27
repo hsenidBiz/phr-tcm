@@ -57,6 +57,10 @@ $packArgs = @(
 if (Test-Path "resources\icon.ico") { $packArgs += @("--icon", "resources\icon.ico") }
 vpk @packArgs
 
+# 5b. Drop the portable .zip so the GitHub release carries only the installer +
+#     the update packages the auto-updater needs (Setup.exe, .nupkg, manifests).
+Remove-Item "Releases\*-Portable.zip" -ErrorAction SilentlyContinue
+
 # 6. Optionally publish a GitHub Release on the public releases repo
 if ($Upload) {
     if (-not $Token) { throw "Set -Token or `$env:GITHUB_TOKEN to upload (needs write access to the releases repo)." }
