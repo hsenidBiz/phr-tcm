@@ -85,6 +85,9 @@ class MainWindow(QMainWindow):
         # Restore draft queue after window is shown
         QTimer.singleShot(300, self._check_draft_restore)
 
+        # Offer to resume an interrupted test run
+        QTimer.singleShot(600, self._check_run_restore)
+
         # Check GitHub for a newer version in the background
         QTimer.singleShot(1500, self._check_for_update)
 
@@ -477,6 +480,31 @@ class MainWindow(QMainWindow):
             self.app_state.queue.extend(draft)
             self._update_queue_label()
         clear_draft_queue()
+
+    def _check_run_restore(self):
+        from app.utils.settings import load_run_session, clear_run_session
+        saved = load_run_session()
+        if not saved or not saved.get("cases"):
+            return
+        cases = saved.get("cases", [])
+        n = len(cases)
+        marked = sum(1 for s in saved.get("state", []) if s.get("outcome"))
+        reply = QMessageBox.question(
+            self, "Resume Test Run",
+            f"Resume your last test run?\n\n{n} test case{'s' if n != 1 else ''}, "
+            f"{marked} already marked.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            clear_run_session()
+            return
+        from app.gui.test_runner import TestRunner
+        runner = TestRunner(self.app_state, cases, restore=saved)
+        self.run_widget._open_runners.append(runner)
+        runner.show()
+        runner.raise_()
+        runner.activateWindow()
 
     def closeEvent(self, event):
         if self.progress_screen.is_running():

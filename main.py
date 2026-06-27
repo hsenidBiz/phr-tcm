@@ -34,6 +34,11 @@ class AppState:
         self.test_plan_name: str = ""
         self.suite_id: int | None = None
         self.test_plan_pbi: int | None = None
+        # True while the (cold) test plan/suite discovery is running for the
+        # current PBI; test_plan_progress is (current, total) plan-scan progress
+        # so screens can show a loading indicator while it resolves.
+        self.test_plan_detecting: bool = False
+        self.test_plan_progress: tuple | None = None
 
         # Pending test cases waiting to be created
         self.queue: list[TestCase] = []
@@ -46,6 +51,12 @@ class AppState:
         # dict with an '_id' key. existing_cases_pbi records which PBI they belong to.
         self.existing_cases: list[dict] = []
         self.existing_cases_pbi: int | None = None
+
+        # Session cache of a suite's test points (last outcome + result ids),
+        # keyed by (test_plan_id, suite_id). Pre-fetched by the Run Tests tab so
+        # the runner can show previous outcomes instantly; invalidated after a
+        # run is submitted so re-opening reflects the just-recorded results.
+        self.test_points_by_suite: dict = {}
 
         # Team members: in-memory cache + shared in-flight fetcher (set by members_cache)
         self.cached_team_members: list | None = None

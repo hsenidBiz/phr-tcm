@@ -361,6 +361,11 @@ class ProgressScreen(QWidget):
         self.app_state.test_plan_name = plan_name or ""
         self.app_state.suite_id = suite_id or None
         self.app_state.test_plan_pbi = self.app_state.pbi_id
+        # Persist the resolution the moment the suite is created/found, so the
+        # next launch uses it directly instead of rediscovering it.
+        if plan_id and suite_id:
+            from app.utils.settings import save_cached_test_plan
+            save_cached_test_plan(self.app_state.pbi_id, plan_id, plan_name, suite_id)
 
     def _on_cancel(self):
         if self._worker:

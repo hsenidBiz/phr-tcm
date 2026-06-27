@@ -8,7 +8,8 @@ from PyQt5.QtGui import QFont, QCursor
 
 from app.utils.settings import (
     load_settings, save_settings, save_recent_pbi, remove_recent_pbi,
-    recent_pbis_for_project,
+    recent_pbis_for_project, get_cached_test_plan, save_cached_test_plan,
+    clear_cached_test_plan,
 )
 from app.utils.worker import Worker
 
@@ -699,8 +700,25 @@ class ConfigScreen(QWidget):
             return
         self._reset_test_plan_state()
         self.test_plan_label.setVisible(True)
-        self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
-        self.test_plan_label.setText("🧪 Checking for a test plan for this PBI…")
+        # Fast path: a previously-resolved suite for this PBI (persisted to disk)
+        # is applied immediately so the runner's result fetch isn't gated on the
+        # slow plan/suite discovery after a re-launch. We still revalidate it in
+        # the background worker below and correct the cache if it changed.
+        cached = get_cached_test_plan(pbi_id)
+        if cached:
+            self.app_state.test_plan_id = cached.get("plan_id")
+            self.app_state.test_plan_name = cached.get("plan_name", "")
+            self.app_state.suite_id = cached.get("suite_id")
+            self.app_state.test_plan_pbi = pbi_id
+            self.app_state.test_plan_detecting = False   # resolved from cache
+            self._apply_test_plan_label()
+        else:
+            # No cached resolution — the (slow) discovery runs; flag it so other
+            # screens (e.g. Run Tests) can show a loading state until it resolves.
+            self.app_state.test_plan_detecting = True
+            self.app_state.test_plan_progress = None
+            self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
+            self.test_plan_label.setText("🧪 Checking for a test plan for this PBI…")
         self._tp_seq += 1
         seq = self._tp_seq
         worker = Worker(self._do_detect_test_plan, pbi_id, area_path)
@@ -712,10 +730,28 @@ class ConfigScreen(QWidget):
 
     def _do_detect_test_plan(self, pbi_id: int, area_path: str) -> dict:
         client = self.app_state.client
+        # Cheap path: confirm a previously-cached suite with one direct GET
+        # instead of scanning every plan's suites. Fall back to the full
+        # discovery only if it's gone (404) or points at the wrong requirement.
+        cached = get_cached_test_plan(pbi_id)
+        if cached and cached.get("plan_id") and cached.get("suite_id"):
+            try:
+                suite = client.get_suite_by_id(cached["plan_id"], cached["suite_id"])
+            except LookupError:
+                suite = None  # 404 — the suite was removed; rediscover below
+            if suite and suite.get("requirementId") == pbi_id:
+                return {"plan": {"id": cached["plan_id"],
+                                 "name": cached.get("plan_name", "")},
+                        "suite": suite}
         # Session-cached plan list; reused across PBI selections (and for both
         # lookups below) so we don't re-list every plan each time.
         plans = client.get_test_plans(use_cache=True)
-        plan, suite = client.find_existing_suite_for_pbi(pbi_id, area_path, plans=plans)
+
+        def _progress(cur, total):
+            self.app_state.test_plan_progress = (cur, total)
+
+        plan, suite = client.find_existing_suite_for_pbi(
+            pbi_id, area_path, plans=plans, progress_cb=_progress)
         if suite:
             return {"plan": plan, "suite": suite}
         # No suite yet — report the plan it would land in (if one exists).
@@ -731,6 +767,15 @@ class ConfigScreen(QWidget):
         self.app_state.test_plan_name = plan["name"] if plan else ""
         self.app_state.suite_id = suite["id"] if suite else None
         self.app_state.test_plan_pbi = pbi_id
+        self.app_state.test_plan_detecting = False
+        self.app_state.test_plan_progress = None
+
+        # Persist the (revalidated) resolution so the next launch skips discovery.
+        # A missing suite clears any stale entry so it self-heals next time.
+        if plan and suite:
+            save_cached_test_plan(pbi_id, plan["id"], plan.get("name", ""), suite["id"])
+        else:
+            clear_cached_test_plan(pbi_id)
 
         self.test_plan_label.setVisible(True)
         self._apply_test_plan_label()
@@ -763,6 +808,8 @@ class ConfigScreen(QWidget):
     def _on_test_plan_error(self, seq: int, exc: Exception):
         if seq != self._tp_seq:
             return
+        self.app_state.test_plan_detecting = False
+        self.app_state.test_plan_progress = None
         self.test_plan_label.setVisible(True)
         self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
         msg = str(exc).strip()

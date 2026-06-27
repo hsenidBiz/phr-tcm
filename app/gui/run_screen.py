@@ -6,14 +6,43 @@ multi-select them, accumulate a session, and open the always-on-top runner.
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
-    QListWidgetItem, QLineEdit, QSplitter, QFrame, QMessageBox,
+    QListWidgetItem, QLineEdit, QSplitter, QFrame, QMessageBox, QProgressBar,
+    QStyledItemDelegate, QStyle,
 )
-from PyQt5.QtCore import Qt, QThreadPool
-from PyQt5.QtGui import QCursor
+from PyQt5.QtCore import Qt, QThreadPool, QTimer
+from PyQt5.QtGui import QCursor, QColor, QBrush
 
 from app.utils.worker import Worker
 from app.utils import theme
 from app.gui.test_runner import TestRunner
+
+
+class _StatusColorDelegate(QStyledItemDelegate):
+    """Paints each row's status tint (a translucent BackgroundRole colour) over
+    the list background, keeping the theme's normal text colour. Done in a
+    delegate because the list lives under a styled QTabWidget, and
+    QStyleSheetStyle otherwise ignores item background brushes set via
+    setBackground()."""
+
+    def paint(self, painter, option, index):
+        brush = index.data(Qt.BackgroundRole)
+        color = brush.color() if isinstance(brush, QBrush) else None
+        if (color is not None and color.alpha() > 0
+                and not (option.state & QStyle.State_Selected)):
+            painter.save()
+            # Opaque base first, so every row of a given status is the exact same
+            # shade (no alternating-row tint, no alpha stacking on repaint).
+            painter.fillRect(option.rect, option.palette.base().color())
+            painter.fillRect(option.rect, color)   # translucent status tint
+            painter.setPen(option.palette.text().color())
+            rect = option.rect.adjusted(6, 0, -6, 0)
+            text = str(index.data(Qt.DisplayRole) or "")
+            painter.drawText(
+                rect, Qt.AlignVCenter | Qt.AlignLeft,
+                option.fontMetrics.elidedText(text, Qt.ElideRight, rect.width()))
+            painter.restore()
+        else:
+            super().paint(painter, option, index)
 
 
 class RunScreen(QWidget):
@@ -26,6 +55,8 @@ class RunScreen(QWidget):
         self._session = []         # case dicts queued for the run
         self._loaded_pbi = None
         self._open_runners = []    # keep references so windows aren't GC'd
+        self._plan_poll = None     # QTimer that waits for test-plan detection
+        self._plan_poll_ticks = 0
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -38,13 +69,70 @@ class RunScreen(QWidget):
 
     def ensure_loaded(self):
         pbi = self.app_state.pbi_id
-        if pbi and pbi != self._loaded_pbi:
+        if not pbi:
+            return
+        # The case list + outcome colours depend on the test plan/suite. If that's
+        # still being resolved, show a loading panel and wait for it to finish.
+        if getattr(self.app_state, "test_plan_detecting", False) and pbi != self._loaded_pbi:
+            self._show_plan_loading()
+            return
+        if pbi != self._loaded_pbi:
             # PBI changed (or first load) — a session built for the previous PBI
             # is no longer valid (those test cases aren't linked to this PBI), so
             # clear it before loading this PBI's cases.
             if self._session:
                 self._clear_session()
             self._load_cases()
+        else:
+            # Same PBI revisited — refresh the status colours (the points cache
+            # may have been invalidated by a submitted run).
+            self._prefetch_points()
+
+    def _show_plan_loading(self):
+        self._splitter.hide()
+        self._loading_panel.show()
+        self._plan_poll_ticks = 0
+        self._update_plan_loading()
+        if self._plan_poll is None:
+            self._plan_poll = QTimer(self)
+            self._plan_poll.setInterval(150)
+            self._plan_poll.timeout.connect(self._poll_plan)
+        self._plan_poll.start()
+
+    def _hide_plan_loading(self):
+        if self._plan_poll is not None:
+            self._plan_poll.stop()
+        self._loading_panel.hide()
+        self._splitter.show()
+
+    def _poll_plan(self):
+        self._plan_poll_ticks += 1
+        # Resolved (or errored) → stop waiting and load. Also give up after ~30s
+        # so a stuck detection never traps the page on the loading screen.
+        if (not getattr(self.app_state, "test_plan_detecting", False)
+                or self._plan_poll_ticks > 200):
+            self._hide_plan_loading()
+            pbi = self.app_state.pbi_id
+            if pbi and pbi != self._loaded_pbi:
+                if self._session:
+                    self._clear_session()
+                self._load_cases()
+            elif pbi:
+                self._prefetch_points()
+            return
+        self._update_plan_loading()
+
+    def _update_plan_loading(self):
+        prog = getattr(self.app_state, "test_plan_progress", None)
+        if prog and prog[1]:
+            cur, total = prog
+            self._loading_bar.setRange(0, total)
+            self._loading_bar.setValue(cur)
+            self._loading_lbl.setText(
+                f"Checking if a test plan exists for this PBI…  (plan {cur} of {total})")
+        else:
+            self._loading_bar.setRange(0, 0)   # indeterminate
+            self._loading_lbl.setText("Checking if a test plan exists for this PBI…")
 
     def _load_cases(self):
         pbi_id = self.app_state.pbi_id
@@ -70,10 +158,81 @@ class RunScreen(QWidget):
         self._rebuild_available()
         self._header_lbl.setText("")
         self._refresh_btn.setEnabled(True)
+        self._prefetch_points()
 
     def _on_cases_error(self, exc):
         self._header_lbl.setText(f"Could not load test cases: {exc}")
         self._refresh_btn.setEnabled(True)
+
+    def _prefetch_points(self):
+        """Warm app_state's test-points cache in the background so the runner can
+        show previous outcomes instantly when it opens. Read-only; silent on
+        failure. Caches the whole suite (all loaded cases) so any session subset
+        is covered."""
+        plan, suite = self.app_state.test_plan_id, self.app_state.suite_id
+        if not (plan and suite):
+            return
+        key = (plan, suite)
+        if key in self.app_state.test_points_by_suite:
+            self._color_lists()   # already cached -> colour now
+            return
+        tc_ids = [c.get("_id") for c in self._cases if c.get("_id")]
+        if not tc_ids:
+            return
+        worker = Worker(self.app_state.client.get_test_points, plan, suite, tc_ids)
+        worker.signals.result.connect(lambda pts, k=key: self._on_points_prefetched(k, pts))
+        worker.signals.error.connect(lambda _exc: None)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_points_prefetched(self, key, pts):
+        self.app_state.test_points_by_suite[key] = pts
+        self._color_lists()
+
+    # Status colours, applied as a translucent tint over the list background so
+    # they read as dim hints rather than bold blocks. _OUTCOME_ALPHA (0–255) is
+    # the one knob: lower = dimmer/more transparent.
+    _OUTCOME_BG = {
+        "passed": "#1E5E1E",          # dark green
+        "failed": "#7A2222",          # dark red
+        "blocked": "#6E5A12",         # dark amber / yellow
+        "notapplicable": "#4A4A4A",   # dark neutral grey
+    }
+    _OUTCOME_ACTIVE_BG = "#1E3F6E"    # dark blue — not yet run (Active)
+    _OUTCOME_ALPHA = 150             # darker, richer tint (still slightly translucent)
+
+    @classmethod
+    def _outcome_label(cls, oc):
+        return {"passed": "Passed", "failed": "Failed", "blocked": "Blocked",
+                "notapplicable": "Not Applicable"}.get(oc, "Active (not run)")
+
+    def _color_list(self, list_widget):
+        """Tint each row of `list_widget` by its case's last recorded outcome so
+        the status is readable at a glance. Uses the prefetched points cache;
+        rows with no data yet are left at the default colour."""
+        key = (self.app_state.test_plan_id, self.app_state.suite_id)
+        points = self.app_state.test_points_by_suite.get(key)
+        if not points:
+            return
+        by_tc = {}
+        for p in points:
+            tc = p.get("test_case_id")
+            if tc and tc not in by_tc:
+                by_tc[tc] = (p.get("last_outcome") or "").lower()
+        for row in range(list_widget.count()):
+            item = list_widget.item(row)
+            case = item.data(Qt.UserRole) or {}
+            oc = by_tc.get(case.get("_id"))
+            if oc is None:
+                continue
+            col = QColor(self._OUTCOME_BG.get(oc, self._OUTCOME_ACTIVE_BG))
+            col.setAlpha(self._OUTCOME_ALPHA)
+            item.setBackground(QBrush(col))
+            item.setToolTip(f"Last result: {self._outcome_label(oc)}")
+
+    def _color_lists(self):
+        """Re-tint both the PBI list and the session list from the points cache."""
+        self._color_list(self._available)
+        self._color_list(self._session_list)
 
     # ------------------------------------------------------------------ #
     #  UI                                                                 #
@@ -117,7 +276,10 @@ class RunScreen(QWidget):
         self._search.textChanged.connect(lambda _: self._apply_search())
         lv.addWidget(self._search)
         self._available = QListWidget()
-        self._available.setAlternatingRowColors(True)
+        # No alternating row colours here — they'd show through the translucent
+        # status tint as two shades per outcome and look like a jumble.
+        self._available.setAlternatingRowColors(False)
+        self._available.setItemDelegate(_StatusColorDelegate(self._available))
         self._available.setSelectionMode(QListWidget.ExtendedSelection)
         self._available.itemDoubleClicked.connect(lambda _it: self._add_to_session())
         lv.addWidget(self._available, 1)
@@ -157,7 +319,8 @@ class RunScreen(QWidget):
         self._session_lbl = QLabel("<b>Session (0)</b>")
         rv.addWidget(self._session_lbl)
         self._session_list = QListWidget()
-        self._session_list.setAlternatingRowColors(True)
+        self._session_list.setAlternatingRowColors(False)
+        self._session_list.setItemDelegate(_StatusColorDelegate(self._session_list))
         self._session_list.setSelectionMode(QListWidget.ExtendedSelection)
         self._session_list.itemDoubleClicked.connect(lambda _it: self._remove_from_session())
         rv.addWidget(self._session_list, 1)
@@ -175,7 +338,33 @@ class RunScreen(QWidget):
         splitter.setStretchFactor(2, 1)
         splitter.setCollapsible(1, False)
         splitter.setSizes([460, 116, 380])
+        self._splitter = splitter
         layout.addWidget(splitter, 1)
+
+        # Loading panel shown while the test plan/suite is being resolved (the
+        # case list + outcome colours can't load until that's known).
+        self._loading_panel = QWidget()
+        lp = QVBoxLayout(self._loading_panel)
+        lp.addStretch()
+        spin = QLabel("⏳")
+        spin.setAlignment(Qt.AlignCenter)
+        spin.setStyleSheet("font-size: 34px;")
+        lp.addWidget(spin)
+        self._loading_lbl = QLabel("Checking if a test plan exists for this PBI…")
+        self._loading_lbl.setAlignment(Qt.AlignCenter)
+        self._loading_lbl.setStyleSheet("font-size: 14px; color: #888;")
+        lp.addWidget(self._loading_lbl)
+        bar_row = QHBoxLayout()
+        bar_row.addStretch()
+        self._loading_bar = QProgressBar()
+        self._loading_bar.setRange(0, 0)   # indeterminate until the count is known
+        self._loading_bar.setFixedWidth(360)
+        bar_row.addWidget(self._loading_bar)
+        bar_row.addStretch()
+        lp.addLayout(bar_row)
+        lp.addStretch()
+        self._loading_panel.hide()
+        layout.addWidget(self._loading_panel, 1)
 
     # ------------------------------------------------------------------ #
     #  Search / session management                                        #
@@ -197,6 +386,7 @@ class RunScreen(QWidget):
             item.setData(Qt.UserRole, tc)
             self._available.addItem(item)
         self._apply_search()
+        self._color_list(self._available)
 
     def _apply_search(self):
         query = self._search.text().strip().lower()
@@ -231,6 +421,7 @@ class RunScreen(QWidget):
         n = len(self._session)
         self._session_lbl.setText(f"<b>Session ({n})</b>")
         self._start_btn.setEnabled(n > 0)
+        self._color_list(self._session_list)
 
     def _remove_from_session(self):
         remove_ids = {c.get("_id") for c in self._selected_session()}

@@ -26,6 +26,11 @@ class DevOpsClient:
 
     def __init__(self, token_manager: TokenManager):
         self.tm = token_manager
+        # One pooled HTTPS connection (keep-alive), reused for every call, so the
+        # many sequential round-trips (plan/suite discovery, batched work-item
+        # fetches, result paging) don't each pay a fresh TCP + TLS handshake.
+        # The Bearer header is still passed per-call (it can refresh mid-session).
+        self._session = requests.Session()
         # Session cache of the project's test plans (they rarely change mid-
         # session). Keyed by (org_url, project); invalidated when a plan is
         # created so a freshly-created plan is never missed.
@@ -72,12 +77,12 @@ class DevOpsClient:
         Returns list of {"name": str, "url": str}. Safe — read only.
         """
         vssps = "https://app.vssps.visualstudio.com/_apis"
-        resp = requests.get(
+        resp = self._session.get(
             f"{vssps}/profile/profiles/me?api-version=6.0",
             headers=self.tm.get_json_headers(), timeout=15,
         )
         member_id = self._handle(resp)["id"]
-        resp = requests.get(
+        resp = self._session.get(
             f"{vssps}/accounts?memberId={member_id}&api-version=6.0",
             headers=self.tm.get_json_headers(), timeout=15,
         )
@@ -98,7 +103,7 @@ class DevOpsClient:
             url = f"{org_url}/_apis/projects?$top=200&api-version={API_VERSION}"
             if continuation:
                 url += f"&continuationToken={continuation}"
-            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+            resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
             data = self._handle(resp)
             names.extend(p["name"] for p in data.get("value", []))
             continuation = resp.headers.get("x-ms-continuationtoken")
@@ -126,7 +131,7 @@ class DevOpsClient:
             "ORDER BY [System.ChangedDate] DESC"
         )
         url = f"{self._base()}/wit/wiql?$top={top}&api-version={API_VERSION}"
-        resp = requests.post(
+        resp = self._session.post(
             url, json={"query": wiql},
             headers=self.tm.get_json_headers(), timeout=15,
         )
@@ -139,7 +144,7 @@ class DevOpsClient:
             f"{self._base()}/wit/workitems?ids={ids_csv}"
             f"&fields=System.Title,System.WorkItemType&api-version={API_VERSION}"
         )
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
         by_id = {
             w["id"]: w.get("fields", {})
             for w in self._handle(resp).get("value", [])
@@ -166,7 +171,7 @@ class DevOpsClient:
             f"{self._base()}/wit/workitems/{work_item_id}"
             f"?api-version={API_VERSION}&$select={select}"
         )
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
         data = self._handle(resp)
         return data.get("fields", {})
 
@@ -184,7 +189,7 @@ class DevOpsClient:
         Safe — read only.
         """
         url = f"{self._base()}/wit/tags?api-version={API_VERSION}"
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
         data = self._handle(resp)
         return data.get("value", [])
 
@@ -199,7 +204,7 @@ class DevOpsClient:
             f"{self._base()}/wit/workitemtypes/Test%20Case/fields"
             f"?api-version={API_VERSION}"
         )
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
         data = self._handle(resp)
 
         fields = []
@@ -225,7 +230,7 @@ class DevOpsClient:
         Safe — read only.
         """
         url = f"{self.tm.org_url}/_apis/projects/{self.tm.project}/teams?api-version={API_VERSION}"
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
         data = self._handle(resp)
         
         members = []
@@ -233,7 +238,7 @@ class DevOpsClient:
             team_id = team.get("id")
             # Get members of each team
             members_url = f"{self.tm.org_url}/_apis/projects/{self.tm.project}/teams/{team_id}/members?api-version={API_VERSION}"
-            members_resp = requests.get(members_url, headers=self.tm.get_json_headers(), timeout=15)
+            members_resp = self._session.get(members_url, headers=self.tm.get_json_headers(), timeout=15)
             members_data = self._handle(members_resp)
             
             for member in members_data.get("value", []):
@@ -270,7 +275,7 @@ class DevOpsClient:
             f"{self._base()}/wit/workitems/{pbi_id}"
             f"?$expand=relations&api-version={API_VERSION}"
         )
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=15)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
         data = self._handle(resp)
 
         tc_ids = []
@@ -303,7 +308,7 @@ class DevOpsClient:
                 f"{self._base()}/wit/workitems"
                 f"?ids={ids_str}&fields={fields_str}&api-version={API_VERSION}"
             )
-            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=30)
+            resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=30)
             data = self._handle(resp)
 
             for item in data.get("value", []):
@@ -324,7 +329,7 @@ class DevOpsClient:
             for ref, value in fields.items()
         ]
         url = f"{self._base()}/wit/workitems/{tc_id}?api-version={API_VERSION}"
-        resp = requests.patch(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
+        resp = self._session.patch(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
         self._handle(resp)
 
     def update_test_case_from_model(
@@ -420,7 +425,7 @@ class DevOpsClient:
             )
 
         url = f"{self._base()}/wit/workitems/$Test%20Case?api-version={API_VERSION}"
-        resp = requests.post(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
+        resp = self._session.post(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
         data = self._handle(resp)
         return data["id"]
 
@@ -448,8 +453,63 @@ class DevOpsClient:
         ]
 
         url = f"{self._base()}/wit/workitems/{test_case_id}?api-version={API_VERSION}"
-        resp = requests.patch(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
+        resp = self._session.patch(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
         self._handle(resp)
+
+    def work_item_url(self, wi_id: int) -> str:
+        """The REST URL of a work item, for use as a relation target."""
+        return f"{self._base()}/wit/workitems/{wi_id}"
+
+    def detect_bug_type(self) -> dict:
+        """Resolve which work item type to file bugs as on this project's process,
+        and which field holds the repro/description. Prefers 'Bug' (Agile/Scrum/
+        CMMI → ReproSteps); falls back to 'Issue' (Basic → System.Description).
+        Cached per session. Safe — read only."""
+        if getattr(self, "_bug_type_cache", None):
+            return self._bug_type_cache
+        names = set()
+        try:
+            url = f"{self._base()}/wit/workitemtypes?api-version={API_VERSION}"
+            resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            names = {wt.get("name", "") for wt in self._handle(resp).get("value", [])}
+        except Exception:
+            pass
+        if "Bug" in names or not names:
+            info = {"type": "Bug", "repro_field": "Microsoft.VSTS.TCM.ReproSteps",
+                    "has_severity": True}
+        elif "Issue" in names:
+            info = {"type": "Issue", "repro_field": "System.Description",
+                    "has_severity": False}
+        else:
+            info = {"type": "Bug", "repro_field": "Microsoft.VSTS.TCM.ReproSteps",
+                    "has_severity": True}
+        self._bug_type_cache = info
+        return info
+
+    def create_work_item(self, wi_type: str, fields: dict, relations: list = None) -> dict:
+        """POST a new work item of `wi_type` with fields and optional relations.
+        Returns {id, url(web)}. Only POST — never DELETEs."""
+        from urllib.parse import quote
+        patch = [{"op": "add", "path": f"/fields/{ref}", "value": val}
+                 for ref, val in fields.items()]
+        for rel in (relations or []):
+            patch.append({"op": "add", "path": "/relations/-", "value": rel})
+        url = f"{self._base()}/wit/workitems/${quote(wi_type)}?api-version={API_VERSION}"
+        resp = self._session.post(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
+        data = self._handle(resp)
+        return {"id": data.get("id"),
+                "url": ((data.get("_links") or {}).get("html") or {}).get("href", "")}
+
+    def add_workitem_attachment(self, content: bytes, file_name: str) -> str:
+        """Upload binary content as a work-item attachment; returns its URL (added
+        afterwards as an AttachedFile relation). Creates an attachment, no DELETE."""
+        from urllib.parse import quote
+        headers = dict(self.tm.get_json_headers())
+        headers["Content-Type"] = "application/octet-stream"
+        url = (f"{self._base()}/wit/attachments"
+               f"?fileName={quote(file_name)}&api-version={API_VERSION}")
+        resp = self._session.post(url, data=content, headers=headers, timeout=60)
+        return self._handle(resp).get("url", "")
 
     def create_and_link(
         self,
@@ -512,7 +572,7 @@ class DevOpsClient:
             url = f"{self._base()}/testplan/plans?api-version={API_VERSION}"
             if continuation:
                 url += f"&continuationToken={continuation}"
-            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
             data = self._handle(resp)
             for p in data.get("value", []):
                 plans.append({
@@ -530,7 +590,7 @@ class DevOpsClient:
     def get_test_plan(self, plan_id: int) -> dict:
         """A single test plan including its root suite id. Safe — read only."""
         url = f"{self._base()}/testplan/plans/{plan_id}?api-version={API_VERSION}"
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
         data = self._handle(resp)
         return {
             "id": data.get("id"),
@@ -549,7 +609,7 @@ class DevOpsClient:
             url = f"{self._base()}/testplan/Plans/{plan_id}/suites?api-version={API_VERSION}"
             if continuation:
                 url += f"&continuationToken={continuation}"
-            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
             data = self._handle(resp)
             for s in data.get("value", []):
                 if (s.get("requirementId") == pbi_id
@@ -565,7 +625,7 @@ class DevOpsClient:
                 return None
 
     def find_existing_suite_for_pbi(self, pbi_id: int, area_path: str = "",
-                                    plans: list | None = None) -> tuple:
+                                    plans: list | None = None, progress_cb=None) -> tuple:
         """Scan the project's test plans for a requirement-based suite bound to
         this PBI. The PBI's area-matched plan is checked first (manual default
         plans are area-scoped), so the common case returns after one or two
@@ -579,7 +639,13 @@ class DevOpsClient:
         ordered = sorted(
             plans, key=lambda p: 0 if self._area_matches(p.get("areaPath", ""), area_path) else 1
         )
-        for plan in ordered:
+        total = len(ordered)
+        for i, plan in enumerate(ordered):
+            if progress_cb:
+                try:
+                    progress_cb(i + 1, total)
+                except Exception:
+                    pass
             try:
                 suite = self.find_requirement_suite(plan["id"], pbi_id)
             except (PermissionError, LookupError, RuntimeError):
@@ -608,6 +674,21 @@ class DevOpsClient:
             best = self.get_test_plan(best["id"])
         return best
 
+    def get_suite_by_id(self, plan_id: int, suite_id: int) -> dict:
+        """A single test suite by id — a direct GET used to cheaply confirm a
+        cached requirement suite still exists, avoiding a scan of every suite in
+        the plan. Raises LookupError (404) if it no longer exists. Read only."""
+        url = (f"{self._base()}/testplan/Plans/{plan_id}/suites/{suite_id}"
+               f"?api-version={API_VERSION}")
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        data = self._handle(resp)
+        return {
+            "id": data.get("id"),
+            "name": data.get("name", ""),
+            "suiteType": data.get("suiteType", ""),
+            "requirementId": data.get("requirementId"),
+        }
+
     def create_test_plan(self, name: str, area_path: str = "", iteration: str = "") -> dict:
         """POST a new test plan. Returns {id, name, areaPath, rootSuiteId}.
         Creating a plan also creates its root suite (returned as rootSuite)."""
@@ -617,7 +698,7 @@ class DevOpsClient:
         if iteration:
             body["iteration"] = iteration
         url = f"{self._base()}/testplan/plans?api-version={API_VERSION}"
-        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        resp = self._session.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
         data = self._handle(resp)
         self._plans_cache = None  # a new plan now exists — drop the cached list
         return {
@@ -637,7 +718,7 @@ class DevOpsClient:
             "parentSuite": {"id": root_suite_id},
         }
         url = f"{self._base()}/testplan/Plans/{plan_id}/suites?api-version={API_VERSION}"
-        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        resp = self._session.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
         data = self._handle(resp)
         return data.get("id")
 
@@ -687,7 +768,7 @@ class DevOpsClient:
             )
             if continuation:
                 url += f"&continuationToken={continuation}"
-            resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
             data = self._handle(resp)
             for p in data.get("value", []):
                 tcref = p.get("testCaseReference") or {}
@@ -712,7 +793,7 @@ class DevOpsClient:
         with the last recorded values). Safe — read only."""
         url = (f"{self._base()}/test/Runs/{run_id}/Results/{result_id}"
                f"?api-version={API_VERSION}")
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
         data = self._handle(resp)
         return {"outcome": data.get("outcome", "") or "",
                 "comment": data.get("comment", "") or ""}
@@ -728,7 +809,7 @@ class DevOpsClient:
             "automated": False,
         }
         url = f"{self._base()}/test/runs?api-version={API_VERSION}"
-        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        resp = self._session.post(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
         data = self._handle(resp)
         return {"run_id": data.get("id"), "web_url": data.get("webAccessUrl", "")}
 
@@ -737,7 +818,7 @@ class DevOpsClient:
         {result_id, test_case_id, point_id} so the caller can map each result
         back to the test case it belongs to. Safe — read only."""
         url = f"{self._base()}/test/Runs/{run_id}/results?api-version={API_VERSION}"
-        resp = requests.get(url, headers=self.tm.get_json_headers(), timeout=30)
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=30)
         data = self._handle(resp)
         out = []
         for r in data.get("value", []):
@@ -762,9 +843,21 @@ class DevOpsClient:
                 item["comment"] = r["comment"][:1000]
             if r.get("duration_ms"):
                 item["durationInMs"] = r["duration_ms"]
+            if r.get("bug_ids"):
+                item["associatedBugs"] = [{"id": b} for b in r["bug_ids"]]
             body.append(item)
         url = f"{self._base()}/test/Runs/{run_id}/results?api-version={API_VERSION}"
-        resp = requests.patch(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        resp = self._session.patch(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
+        self._handle(resp)
+
+    def update_result_steps(self, run_id: int, result_id: int, iteration_details: list):
+        """Attach per-step (iteration) results to a single test result so the ADO
+        step-by-step view reflects which steps passed/failed. Additive and
+        best-effort — the overall outcome is recorded by update_run_results.
+        Plain-JSON PATCH, no DELETE."""
+        body = [{"id": result_id, "iterationDetails": iteration_details}]
+        url = f"{self._base()}/test/Runs/{run_id}/results?api-version={API_VERSION}"
+        resp = self._session.patch(url, json=body, headers=self.tm.get_json_headers(), timeout=30)
         self._handle(resp)
 
     def add_result_attachment(self, run_id: int, result_id: int, b64: str,
@@ -781,13 +874,13 @@ class DevOpsClient:
             f"{self._base()}/test/Runs/{run_id}/Results/{result_id}/attachments"
             f"?api-version={API_VERSION}"
         )
-        resp = requests.post(url, json=body, headers=self.tm.get_json_headers(), timeout=60)
+        resp = self._session.post(url, json=body, headers=self.tm.get_json_headers(), timeout=60)
         self._handle(resp)
 
     def complete_test_run(self, run_id: int):
         """PATCH the run to the Completed state (plain-JSON PATCH)."""
         url = f"{self._base()}/test/runs/{run_id}?api-version={API_VERSION}"
-        resp = requests.patch(
+        resp = self._session.patch(
             url, json={"state": "Completed"},
             headers=self.tm.get_json_headers(), timeout=30,
         )
