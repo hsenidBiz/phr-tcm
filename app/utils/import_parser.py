@@ -198,7 +198,7 @@ def _write_excel_headers(ws) -> None:
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center")
     # Explain the round-trip behaviour of the TestCaseID column.
-    ws.cell(row=1, column=1).comment = Comment(_ID_COLUMN_HELP, "Test Case Creator")
+    ws.cell(row=1, column=1).comment = Comment(_ID_COLUMN_HELP, "Test Case Manager")
     for col, width in enumerate(_EXCEL_COL_WIDTHS, start=1):
         ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
     ws.freeze_panes = "A2"

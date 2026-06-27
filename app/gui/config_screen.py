@@ -208,13 +208,24 @@ class ConfigScreen(QWidget):
         pbi_layout.addWidget(self.paths_container)
 
         # Test plan / suite status for the selected PBI. Test cases are added to a
-        # requirement-based suite under this plan so they show on the board.
+        # requirement-based suite under this plan so they show on the board. A
+        # spinner sits beside the label while discovery runs.
+        from app.utils.anim import Spinner
+        tp_row = QHBoxLayout()
+        tp_row.setContentsMargins(0, 0, 0, 0)
+        tp_row.setSpacing(8)
+        self.test_plan_spinner = Spinner(size=14, line_width=2)
+        self.test_plan_spinner.setVisible(False)
+        tp_row.addWidget(self.test_plan_spinner, 0, Qt.AlignTop)
         self.test_plan_label = QLabel("")
         self.test_plan_label.setWordWrap(True)
         self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
-        self.test_plan_label.setVisible(False)
+        tp_row.addWidget(self.test_plan_label, 1)
+        self.test_plan_container = QWidget()
+        self.test_plan_container.setLayout(tp_row)
+        self.test_plan_container.setVisible(False)
         self._tp_seq = 0
-        pbi_layout.addWidget(self.test_plan_label)
+        pbi_layout.addWidget(self.test_plan_container)
 
         layout.addWidget(self._pbi_frame)
         layout.addSpacing(10)
@@ -736,8 +747,7 @@ class ConfigScreen(QWidget):
         self.app_state.test_plan_name = ""
         self.app_state.suite_id = None
         self.app_state.test_plan_pbi = None
-        self.test_plan_label.setVisible(False)
-        self.test_plan_label.setText("")
+        self._hide_test_plan()
 
     def _detect_test_plan(self, pbi_id: int, area_path: str):
         """Find (read-only) the test plan/suite for this PBI so the user can see
@@ -745,11 +755,9 @@ class ConfigScreen(QWidget):
         time. Runs in the background; results are discarded if the PBI changes."""
         # Already resolved for this PBI this session — re-render, don't refetch.
         if self.app_state.test_plan_pbi == pbi_id:
-            self.test_plan_label.setVisible(True)
             self._apply_test_plan_label()
             return
         self._reset_test_plan_state()
-        self.test_plan_label.setVisible(True)
         # Fast path: a previously-resolved suite for this PBI (persisted to disk)
         # is applied immediately so the runner's result fetch isn't gated on the
         # slow plan/suite discovery after a re-launch. We still revalidate it in
@@ -767,8 +775,7 @@ class ConfigScreen(QWidget):
             # screens (e.g. Run Tests) can show a loading state until it resolves.
             self.app_state.test_plan_detecting = True
             self.app_state.test_plan_progress = None
-            self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
-            self.test_plan_label.setText("Checking for a test plan for this PBI…")
+            self._set_test_plan_searching()
         self._tp_seq += 1
         seq = self._tp_seq
         worker = Worker(self._do_detect_test_plan, pbi_id, area_path)
@@ -827,44 +834,66 @@ class ConfigScreen(QWidget):
         else:
             clear_cached_test_plan(pbi_id)
 
-        self.test_plan_label.setVisible(True)
         self._apply_test_plan_label()
 
+    def _set_test_plan_searching(self):
+        """Show the spinner + 'searching' text while plan/suite discovery runs."""
+        from app.utils import theme
+        self.test_plan_container.setVisible(True)
+        self.test_plan_label.setToolTip("")
+        self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
+        self.test_plan_label.setText("Searching for an existing Test Plan…")
+        self.test_plan_spinner.set_color(theme.tokens()["accent"])
+        self.test_plan_spinner.start()
+
+    def _hide_test_plan(self):
+        self.test_plan_spinner.stop()
+        self.test_plan_container.setVisible(False)
+        self.test_plan_label.setText("")
+        self.test_plan_label.setToolTip("")
+
     def _apply_test_plan_label(self):
-        """Render the test-plan status label from the resolved app_state fields.
-        Shared by fresh detection and the same-PBI re-render path."""
+        """Render the resolved test-plan status. Shared by fresh detection and
+        the same-PBI re-render path. Stops the searching spinner."""
         from app.utils import theme
         t = theme.tokens()
+        self.test_plan_spinner.stop()
+        self.test_plan_container.setVisible(True)
         self.test_plan_label.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         name = self.app_state.test_plan_name
         if self.app_state.suite_id is not None:
-            self.test_plan_label.setText(
-                f"{theme.status_dot_html('ok')} Test plan: <b>{name}</b> — a suite already "
-                "exists for this PBI; new test cases are added to it."
+            # Suite exists → just the green dot + plan name (detail in tooltip).
+            self.test_plan_label.setText(f"{theme.status_dot_html('ok')} <b>{name}</b>")
+            self.test_plan_label.setToolTip(
+                "A test suite already exists for this PBI; new test cases are added to it."
             )
         elif name:
             self.test_plan_label.setText(
                 f"{theme.status_dot_html('warn')} Test plan: <b>{name}</b> — no suite yet; "
                 "one is created when you add test cases."
             )
+            self.test_plan_label.setToolTip("")
         else:
             self.test_plan_label.setText(
                 f"{theme.status_dot_html('warn')} No test plan yet — a plan and suite are "
                 "created when you add test cases."
             )
+            self.test_plan_label.setToolTip("")
 
     def _on_test_plan_error(self, seq: int, exc: Exception):
         if seq != self._tp_seq:
             return
         self.app_state.test_plan_detecting = False
         self.app_state.test_plan_progress = None
-        self.test_plan_label.setVisible(True)
+        self.test_plan_spinner.stop()
+        self.test_plan_container.setVisible(True)
+        self.test_plan_label.setToolTip("")
         self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
         msg = str(exc).strip()
         if len(msg) > 180:
             msg = msg[:180] + "…"
         self.test_plan_label.setText(
-            f"🧪 Could not check the test plan status: {msg}  "
+            f"Could not check the test plan status: {msg}  "
             "(A suite is still created automatically when you add test cases.)"
         )
 

@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.app_state = app_state
         from app.version import VERSION
-        self.setWindowTitle(f"Azure DevOps Test Case Creator  v{VERSION}")
+        self.setWindowTitle(f"Azure DevOps Test Case Manager  v{VERSION}")
         self.setMinimumSize(860, 640)
         self.resize(980, 720)
 

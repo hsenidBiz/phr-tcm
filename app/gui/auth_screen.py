@@ -22,7 +22,7 @@ class AuthScreen(QWidget):
         outer.setSpacing(0)
 
         # Title
-        title = QLabel("Azure DevOps\nTest Case Creator")
+        title = QLabel("Azure DevOps\nTest Case Manager")
         title.setAlignment(Qt.AlignCenter)
         title_font = QFont()
         title_font.setPointSize(20)

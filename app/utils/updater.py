@@ -14,7 +14,9 @@ import sys
 
 # Public, releases-only repo holding the Velopack installer + update packages.
 # No source code lives here. Created separately from the private source repo.
-RELEASES_REPO = "https://github.com/AvinAlwis/azure-devops-test-case-creator-releases"
+# (Renamed from ...-creator-releases at v2.0.1; GitHub redirects the old URL so
+# pre-2.0.1 installs still find this for their one update hop.)
+RELEASES_REPO = "https://github.com/AvinAlwis/azure-devops-test-case-manager-releases"
 
 
 def update_supported() -> bool:

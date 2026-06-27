@@ -107,7 +107,7 @@ def main():
     _enable_high_dpi()
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Azure DevOps Test Case Creator")
+    app.setApplicationName("Azure DevOps Test Case Manager")
     app.setOrganizationName("Internal Tool")
 
     # Set a clean default font

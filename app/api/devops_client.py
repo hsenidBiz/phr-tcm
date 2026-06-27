@@ -447,7 +447,7 @@ class DevOpsClient:
                 "value": {
                     "rel": "Microsoft.VSTS.Common.TestedBy-Reverse",
                     "url": pbi_url,
-                    "attributes": {"comment": "Linked by DevOps Test Case Creator"},
+                    "attributes": {"comment": "Linked by DevOps Test Case Manager"},
                 },
             }
         ]

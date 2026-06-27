@@ -4,7 +4,7 @@
 #   - Python deps:  pip install -r requirements.txt
 #   - .NET SDK + Velopack CLI:  dotnet tool install -g vpk
 #   - To publish (-Upload): a GitHub token with write access to the PUBLIC
-#     releases repo (azure-devops-test-case-creator-releases), via -Token or
+#     releases repo (azure-devops-test-case-manager-releases), via -Token or
 #     the GITHUB_TOKEN env var.
 #
 # Usage:
@@ -21,10 +21,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-creator-releases"
+$RepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-releases"
 $PackId  = "AzureDevOpsTestCaseCreator"
 $MainExe = "AzureDevOpsTestCaseCreator.exe"
-$Title   = "Azure DevOps Test Case Creator"
+$Title   = "Azure DevOps Test Case Manager"
 
 # 1. Version — single source of truth in app\version.py
 $Version = (Select-String -Path "app\version.py" -Pattern 'VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
