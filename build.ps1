@@ -46,6 +46,11 @@ if (-not (Test-Path "dist\$PackId\$MainExe")) { throw "PyInstaller output missin
 
 # 5. Velopack pack -> .\Releases (Setup.exe + full/delta .nupkg packages).
 #    A delta is generated automatically when a previous release is in .\Releases.
+#    VPK_NO_PORTABLE skips building the portable .zip so the GitHub release
+#    carries only the installer + the update packages the auto-updater needs.
+#    (Deleting the zip *after* packing breaks `vpk upload`, which still expects
+#    it to be present, so we never build it in the first place.)
+$env:VPK_NO_PORTABLE = "true"
 $packArgs = @(
     "pack",
     "--packId",      $PackId,
@@ -56,10 +61,6 @@ $packArgs = @(
 )
 if (Test-Path "resources\icon.ico") { $packArgs += @("--icon", "resources\icon.ico") }
 vpk @packArgs
-
-# 5b. Drop the portable .zip so the GitHub release carries only the installer +
-#     the update packages the auto-updater needs (Setup.exe, .nupkg, manifests).
-Remove-Item "Releases\*-Portable.zip" -ErrorAction SilentlyContinue
 
 # 6. Optionally publish a GitHub Release on the public releases repo
 if ($Upload) {
