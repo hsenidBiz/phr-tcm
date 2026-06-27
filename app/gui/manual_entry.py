@@ -20,6 +20,7 @@ class ManualEntryWidget(QWidget):
         self._build_ui()
 
     def _build_ui(self):
+        from app.utils import theme, icons
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
@@ -30,12 +31,9 @@ class ManualEntryWidget(QWidget):
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("e.g. Login with valid credentials")
         title_row.addWidget(self.title_edit)
-        self._tmpl_btn = QPushButton("📄 Templates…")
-        self._tmpl_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; padding: 5px 10px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
+        self._tmpl_btn = QPushButton("Templates")
+        self._tmpl_btn.setIcon(icons.icon("file-text", size=16))
+        self._tmpl_btn.setStyleSheet(theme.btn_neutral_qss("padding: 5px 12px;"))
         self._tmpl_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._tmpl_btn.clicked.connect(self._open_templates)
         title_row.addWidget(self._tmpl_btn)
@@ -89,22 +87,16 @@ class ManualEntryWidget(QWidget):
         steps_header.addWidget(steps_label)
         steps_header.addStretch()
 
-        self._add_step_btn = QPushButton("+ Add Step")
-        self._add_step_btn.setStyleSheet(
-            "QPushButton { background: #e8f4e8; border: 1px solid #8bc48b; "
-            "border-radius: 3px; padding: 3px 10px; }"
-            "QPushButton:hover { background: #d0ebd0; }"
-        )
+        self._add_step_btn = QPushButton("Add step")
+        self._add_step_btn.setIcon(icons.icon("plus", size=15))
+        self._add_step_btn.setStyleSheet(theme.btn_neutral_qss("padding: 4px 10px;"))
         self._add_step_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._add_step_btn.clicked.connect(self._add_step)
         steps_header.addWidget(self._add_step_btn)
 
-        self._remove_step_btn = QPushButton("- Remove Last")
-        self._remove_step_btn.setStyleSheet(
-            "QPushButton { background: #fde8e8; border: 1px solid #e88b8b; "
-            "border-radius: 3px; padding: 3px 10px; }"
-            "QPushButton:hover { background: #f8d0d0; }"
-        )
+        self._remove_step_btn = QPushButton("Remove last")
+        self._remove_step_btn.setIcon(icons.icon("minus", size=15))
+        self._remove_step_btn.setStyleSheet(theme.btn_ghost_qss("padding: 4px 10px;"))
         self._remove_step_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._remove_step_btn.clicked.connect(self._remove_last_step)
         steps_header.addWidget(self._remove_step_btn)
@@ -131,19 +123,15 @@ class ManualEntryWidget(QWidget):
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
 
-        self.clear_btn = QPushButton("Clear Form")
-        self.clear_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; padding: 6px 16px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
+        self.clear_btn = QPushButton("Clear form")
+        self.clear_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 16px;"))
         self.clear_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.clear_btn.clicked.connect(self._clear_form)
         bottom_row.addWidget(self.clear_btn)
         bottom_row.addSpacing(10)
 
-        from app.utils import theme
-        self.queue_btn = QPushButton("Add to Queue")
+        self.queue_btn = QPushButton("Add to queue")
+        self.queue_btn.setIcon(icons.icon("plus", color="white", size=15))
         self.queue_btn.setFixedHeight(34)
         self.queue_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
@@ -227,31 +215,18 @@ class ManualEntryWidget(QWidget):
         self.created_by_combo.blockSignals(False)
 
     def refresh_theme(self):
-        from app.utils import theme
-        t = theme.tokens()
-        self._add_step_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['green_btn_bg']}; border: 1px solid {t['green_btn_border']}; "
-            f"border-radius: 3px; padding: 3px 10px; }}"
-            f"QPushButton:hover {{ background: {t['green_btn_hover']}; }}"
-        )
-        self._remove_step_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['red_btn_bg']}; border: 1px solid {t['red_btn_border']}; "
-            f"border-radius: 3px; padding: 3px 10px; }}"
-            f"QPushButton:hover {{ background: {t['red_btn_hover']}; }}"
-        )
-        self.clear_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-            f"border-radius: 4px; padding: 6px 16px; }}"
-            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
-        )
-        self._tmpl_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-            f"border-radius: 4px; padding: 5px 10px; }}"
-            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
-        )
+        from app.utils import theme, icons
+        self._add_step_btn.setStyleSheet(theme.btn_neutral_qss("padding: 4px 10px;"))
+        self._add_step_btn.setIcon(icons.icon("plus", size=15))
+        self._remove_step_btn.setStyleSheet(theme.btn_ghost_qss("padding: 4px 10px;"))
+        self._remove_step_btn.setIcon(icons.icon("minus", size=15))
+        self.clear_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 16px;"))
+        self._tmpl_btn.setStyleSheet(theme.btn_neutral_qss("padding: 5px 12px;"))
+        self._tmpl_btn.setIcon(icons.icon("file-text", size=16))
         self.queue_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
+        self.queue_btn.setIcon(icons.icon("plus", color="white", size=15))
 
     def _add_step(self):
         row = self.steps_table.rowCount()

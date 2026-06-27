@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QRect, QSize, QByteArray, QBuffer, QThreadPool
 from PyQt5.QtGui import QImage, QPixmap, QCursor
 
-from app.utils.xml_builder import parse_steps_xml
+from app.utils.xml_builder import parse_steps_xml, html_to_text
 from app.utils.worker import Worker
 from app.utils import settings as settings_mod
 from app.utils import theme
@@ -29,6 +29,10 @@ from app.utils import theme
 # UI label -> Azure DevOps outcome value
 _OUTCOMES = [("Pass", "Passed"), ("Fail", "Failed"),
              ("Blocked", "Blocked"), ("N/A", "NotApplicable")]
+
+# Max height for a single step row, so a very long Expected Result doesn't
+# dominate the runner (full text stays available via the cell tooltip).
+_STEP_ROW_MAX_H = 96
 
 
 def _image_to_b64(img: QImage) -> str:
@@ -297,9 +301,10 @@ class TestRunner(QWidget):
             self.state = [self._blank_state() for _ in cases]
             self.idx = 0
         self._enter_monotonic = None
-        # A resumed runner starts un-pinned so it doesn't cover the sign-in window
-        # at startup; a fresh runner stays pinned on top of the app under test.
-        self._pinned = not restore
+        # "Always on top" persists across sessions until the user changes it
+        # (defaults ON for a brand-new install).
+        from app.utils.settings import load_settings
+        self._pinned = bool(load_settings().get("always_on_top", True))
         self._overlay = None
 
         self.setWindowTitle("Test Runner")
@@ -415,8 +420,8 @@ class TestRunner(QWidget):
     def _build_ui(self):
         t = theme.tokens()
         root = QVBoxLayout(self)
-        root.setContentsMargins(14, 12, 14, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(6)
 
         # Header: progress + pin
         hdr = QHBoxLayout()
@@ -424,7 +429,9 @@ class TestRunner(QWidget):
         self._progress_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
         hdr.addWidget(self._progress_lbl)
         hdr.addStretch()
+        from app.utils import icons as _icons
         self._pin_btn = QPushButton()
+        self._pin_btn.setIcon(_icons.icon("pin", size=14))
         self._pin_btn.setCheckable(True)
         self._pin_btn.setChecked(self._pinned)
         self._pin_btn.setCursor(QCursor(Qt.PointingHandCursor))
@@ -445,12 +452,12 @@ class TestRunner(QWidget):
         body = QWidget()
         bl = QVBoxLayout(body)
         bl.setContentsMargins(0, 0, 0, 0)
-        bl.setSpacing(8)
+        bl.setSpacing(6)
 
         bl.addWidget(self._section_label("Preconditions"))
         self._pre_lbl = QLabel("")
         self._pre_lbl.setWordWrap(True)
-        self._pre_lbl.setTextFormat(Qt.RichText)
+        self._pre_lbl.setTextFormat(Qt.PlainText)
         self._pre_lbl.setStyleSheet(
             f"background: {t['surface']}; border: 1px solid {t['border']}; "
             f"border-radius: 4px; padding: 8px; color: {t['text']};"
@@ -476,7 +483,7 @@ class TestRunner(QWidget):
         self._steps_tbl.verticalHeader().setVisible(False)
         self._steps_tbl.setEditTriggers(QTableWidget.NoEditTriggers)
         self._steps_tbl.setWordWrap(True)
-        self._steps_tbl.setMinimumHeight(160)
+        self._steps_tbl.setMinimumHeight(120)
         bl.addWidget(self._steps_tbl)
 
         bl.addWidget(self._section_label("Notes (local only — not sent to DevOps)"))
@@ -496,10 +503,11 @@ class TestRunner(QWidget):
         sshot_hdr = QHBoxLayout()
         sshot_hdr.addWidget(self._section_label("Screenshots"))
         sshot_hdr.addStretch()
-        for label, slot in (("📋 Paste", self._paste_shot),
-                            ("📁 File", self._file_shot),
-                            ("📷 Capture", self._capture_shot)):
+        for label, ic, slot in (("Paste", "clipboard", self._paste_shot),
+                                ("File", "folder", self._file_shot),
+                                ("Capture", "camera", self._capture_shot)):
             b = QPushButton(label)
+            b.setIcon(_icons.icon(ic, size=15))
             b.setCursor(QCursor(Qt.PointingHandCursor))
             b.setStyleSheet(theme.btn_neutral_qss())
             b.clicked.connect(slot)
@@ -536,7 +544,9 @@ class TestRunner(QWidget):
         # Create-bug row (enabled only when the case is marked Failed)
         bug_row = QHBoxLayout()
         bug_row.addStretch()
-        self._bug_btn = QPushButton("🐞 Create Bug")
+        from app.utils import icons
+        self._bug_btn = QPushButton("Create bug")
+        self._bug_btn.setIcon(icons.icon("bug", size=15))
         self._bug_btn.setEnabled(False)
         self._bug_btn.setToolTip("File a linked Azure DevOps bug from this failed test")
         self._bug_btn.setStyleSheet(theme.btn_neutral_qss())
@@ -547,15 +557,19 @@ class TestRunner(QWidget):
 
         # Nav row: Prev (left corner)  ·  Submit (centre)  ·  Next (right corner)
         nav = QHBoxLayout()
-        self._prev_btn = QPushButton("◀ Prev")
+        self._prev_btn = QPushButton("Prev")
+        self._prev_btn.setIcon(icons.icon("arrow-left", size=15))
         self._prev_btn.setStyleSheet(theme.btn_neutral_qss())
         self._prev_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._prev_btn.clicked.connect(lambda: self._go(self.idx - 1))
-        self._next_btn = QPushButton("Next ▶")
+        self._next_btn = QPushButton("Next")
+        self._next_btn.setIcon(icons.icon("arrow-right", size=15))
+        self._next_btn.setLayoutDirection(Qt.RightToLeft)
         self._next_btn.setStyleSheet(theme.btn_neutral_qss())
         self._next_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._next_btn.clicked.connect(lambda: self._go(self.idx + 1))
-        self._submit_btn = QPushButton("✔ Submit Results")
+        self._submit_btn = QPushButton("Submit results")
+        self._submit_btn.setIcon(icons.icon("check", color="white", size=15))
         self._submit_btn.setFixedHeight(34)
         self._submit_btn.setStyleSheet(theme.btn_primary_qss("padding: 0 18px;"))
         self._submit_btn.setCursor(QCursor(Qt.PointingHandCursor))
@@ -612,8 +626,8 @@ class TestRunner(QWidget):
         self._title_lbl.setText(f"#{tc_id}  —  {case.get('System.Title', '(no title)')}")
 
         pre_ref = self._preconditions_ref
-        pre = (case.get(pre_ref, "") if pre_ref else "") or ""
-        self._pre_lbl.setText(pre if pre.strip() else "<i>(none)</i>")
+        pre = html_to_text(case.get(pre_ref, "") if pre_ref else "")
+        self._pre_lbl.setText(pre if pre else "(none)")
 
         self._steps_tbl.setRowCount(0)
         steps = parse_steps_xml(case.get("Microsoft.VSTS.TCM.Steps", "") or "")
@@ -621,12 +635,20 @@ class TestRunner(QWidget):
             r = self._steps_tbl.rowCount()
             self._steps_tbl.insertRow(r)
             num = QTableWidgetItem(str(i + 1))
-            num.setTextAlignment(Qt.AlignCenter)
+            num.setTextAlignment(Qt.AlignCenter | Qt.AlignTop)
             self._steps_tbl.setItem(r, 0, num)
-            self._steps_tbl.setItem(r, 1, QTableWidgetItem(step.action))
-            self._steps_tbl.setItem(r, 2, QTableWidgetItem(step.expected))
+            for col, txt in ((1, step.action), (2, step.expected)):
+                item = QTableWidgetItem(txt)
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+                item.setToolTip(txt)  # full text on hover when a long row is capped
+                self._steps_tbl.setItem(r, col, item)
             self._steps_tbl.setCellWidget(r, 3, self._make_step_result_cell(i))
         self._steps_tbl.resizeRowsToContents()
+        # Stop one long Expected Result from ballooning the row — cap it; the
+        # full text remains readable via the cell tooltip.
+        for r in range(self._steps_tbl.rowCount()):
+            if self._steps_tbl.rowHeight(r) > _STEP_ROW_MAX_H:
+                self._steps_tbl.setRowHeight(r, _STEP_ROW_MAX_H)
 
         st = self.state[idx]
         self._suspend_dirty = True
@@ -866,10 +888,12 @@ class TestRunner(QWidget):
         self.setWindowFlags(flags)
         self.show()  # required after changing window flags
         self._update_pin_btn()
+        from app.utils.settings import save_settings
+        save_settings({"always_on_top": self._pinned})
 
     def _update_pin_btn(self):
-        self._pin_btn.setText("📌 Always on top: ON" if self._pinned
-                              else "📌 Always on top: OFF")
+        self._pin_btn.setText("Always on top: ON" if self._pinned
+                              else "Always on top: OFF")
 
     # ------------------------------------------------------------------ #
     #  Screenshots                                                        #
@@ -1012,7 +1036,7 @@ class TestRunner(QWidget):
         QThreadPool.globalInstance().start(worker)
 
     def _show_bug_dialog(self, type_info: dict):
-        self._bug_btn.setText("🐞 Create Bug")
+        self._bug_btn.setText("Create bug")
         idx = self.idx
         st = self.state[idx]
         case = self.cases[idx]
@@ -1043,7 +1067,7 @@ class TestRunner(QWidget):
         QThreadPool.globalInstance().start(worker)
 
     def _on_bug_created(self, idx: int, res: dict, link: bool):
-        self._bug_btn.setText("🐞 Create Bug")
+        self._bug_btn.setText("Create bug")
         self._bug_btn.setEnabled(self.state[self.idx]["outcome"] == "Failed")
         bug_id = res.get("id")
         if bug_id and link:
@@ -1058,7 +1082,7 @@ class TestRunner(QWidget):
             + (" and this test result." if link else ".") + extra)
 
     def _on_bug_error(self, exc: Exception):
-        self._bug_btn.setText("🐞 Create Bug")
+        self._bug_btn.setText("Create bug")
         self._bug_btn.setEnabled(self.state[self.idx]["outcome"] == "Failed")
         QMessageBox.critical(self, "Bug Not Created",
                              f"Could not create the bug:\n\n{exc}")
@@ -1115,7 +1139,7 @@ class TestRunner(QWidget):
 
     def _on_submit_done(self, summary: dict):
         self._submit_btn.setEnabled(True)
-        self._submit_btn.setText("✔ Submit Results")
+        self._submit_btn.setText("Submit results")
         # The just-recorded outcomes make the cached points stale — drop them so
         # the next runner for this suite reflects the submitted results.
         self.app_state.test_points_by_suite.pop((self._plan_id, self._suite_id), None)
@@ -1135,7 +1159,7 @@ class TestRunner(QWidget):
 
     def _on_submit_error(self, exc: Exception):
         self._submit_btn.setEnabled(True)
-        self._submit_btn.setText("✔ Submit Results")
+        self._submit_btn.setText("Submit results")
         self._status_lbl.setText("Submit failed.")
         QMessageBox.critical(self, "Submit Failed",
                              f"Could not record the results:\n\n{exc}")

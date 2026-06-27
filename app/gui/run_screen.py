@@ -245,13 +245,14 @@ class RunScreen(QWidget):
 
         hdr = QHBoxLayout()
         intro = QLabel(
-            "Search and select test cases, add them to a session, then start the "
-            "always-on-top runner to execute them and record outcomes."
+            "Add test cases to a session, then start the runner to record outcomes."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #555;")
         hdr.addWidget(intro, 1)
-        self._refresh_btn = QPushButton("↺  Refresh")
+        from app.utils import icons
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._refresh_btn.clicked.connect(self._load_cases)
@@ -292,14 +293,17 @@ class RunScreen(QWidget):
         mv.setContentsMargins(6, 0, 6, 0)
         mv.setSpacing(10)
         mv.addStretch()
-        self._add_btn = QPushButton("Add  →")
+        self._add_btn = QPushButton("Add")
+        self._add_btn.setIcon(icons.icon("arrow-right", size=15))
+        self._add_btn.setLayoutDirection(Qt.RightToLeft)
         self._add_btn.setFixedWidth(96)
         self._add_btn.setToolTip("Add the selected test case(s) to the session")
-        self._add_btn.setStyleSheet(theme.btn_primary_qss("padding: 6px 10px;"))
+        self._add_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 10px;"))
         self._add_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._add_btn.clicked.connect(self._add_to_session)
         mv.addWidget(self._add_btn)
-        self._remove_btn = QPushButton("←  Remove")
+        self._remove_btn = QPushButton("Remove")
+        self._remove_btn.setIcon(icons.icon("arrow-left", size=15))
         self._remove_btn.setFixedWidth(96)
         self._remove_btn.setToolTip(
             "Remove the selected test case(s) from the session "
@@ -324,7 +328,8 @@ class RunScreen(QWidget):
         self._session_list.setSelectionMode(QListWidget.ExtendedSelection)
         self._session_list.itemDoubleClicked.connect(lambda _it: self._remove_from_session())
         rv.addWidget(self._session_list, 1)
-        self._start_btn = QPushButton("▶  Start Run")
+        self._start_btn = QPushButton("Start run")
+        self._start_btn.setIcon(icons.icon("play", color="white", size=15))
         self._start_btn.setFixedHeight(36)
         self._start_btn.setEnabled(False)
         self._start_btn.setStyleSheet(theme.btn_primary_qss("font-size: 13px; padding: 0 20px;"))
@@ -346,9 +351,9 @@ class RunScreen(QWidget):
         self._loading_panel = QWidget()
         lp = QVBoxLayout(self._loading_panel)
         lp.addStretch()
-        spin = QLabel("⏳")
+        spin = QLabel()
+        spin.setPixmap(icons.pixmap("flask", color=theme.tokens()["text_dim2"], size=40))
         spin.setAlignment(Qt.AlignCenter)
-        spin.setStyleSheet("font-size: 34px;")
         lp.addWidget(spin)
         self._loading_lbl = QLabel("Checking if a test plan exists for this PBI…")
         self._loading_lbl.setAlignment(Qt.AlignCenter)
@@ -453,9 +458,14 @@ class RunScreen(QWidget):
     # ------------------------------------------------------------------ #
 
     def refresh_theme(self):
+        from app.utils import icons
         t = theme.tokens()
         self._header_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
-        self._add_btn.setStyleSheet(theme.btn_primary_qss("padding: 6px 10px;"))
+        self._refresh_btn.setIcon(icons.icon("refresh", size=15))
+        self._add_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 10px;"))
+        self._add_btn.setIcon(icons.icon("arrow-right", size=15))
         self._remove_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._remove_btn.setIcon(icons.icon("arrow-left", size=15))
         self._start_btn.setStyleSheet(theme.btn_primary_qss("font-size: 13px; padding: 0 20px;"))
+        self._start_btn.setIcon(icons.icon("play", color="white", size=15))

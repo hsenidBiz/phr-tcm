@@ -37,19 +37,23 @@ class TemplateDialog(QDialog):
 
         btn_row = QHBoxLayout()
 
-        self._save_btn = QPushButton("💾  Save Current Form")
+        from app.utils import icons
+        self._save_btn = QPushButton("Save current form")
+        self._save_btn.setIcon(icons.icon("file-text", size=15))
         self._save_btn.setEnabled(self._current_form_state is not None)
         self._save_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._save_btn.clicked.connect(self._on_save_current)
         btn_row.addWidget(self._save_btn)
 
-        self._rename_btn = QPushButton("✎  Rename")
+        self._rename_btn = QPushButton("Rename")
+        self._rename_btn.setIcon(icons.icon("edit", size=15))
         self._rename_btn.setEnabled(False)
         self._rename_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._rename_btn.clicked.connect(self._on_rename)
         btn_row.addWidget(self._rename_btn)
 
-        self._delete_btn = QPushButton("✕  Delete")
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.setIcon(icons.icon("trash", size=15))
         self._delete_btn.setEnabled(False)
         self._delete_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._delete_btn.clicked.connect(self._on_delete)
@@ -57,7 +61,9 @@ class TemplateDialog(QDialog):
 
         btn_row.addStretch()
 
-        self._apply_btn = QPushButton("Apply →")
+        self._apply_btn = QPushButton("Apply")
+        self._apply_btn.setIcon(icons.icon("arrow-right", color="white", size=15))
+        self._apply_btn.setLayoutDirection(Qt.RightToLeft)
         self._apply_btn.setEnabled(False)
         self._apply_btn.setFixedHeight(34)
         self._apply_btn.setCursor(QCursor(Qt.PointingHandCursor))

@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
 
     def _build_config_page(self):
         self.config_screen = ConfigScreen(self.app_state)
-        self.config_screen.configured.connect(self._go_main)
+        self.config_screen.configured.connect(lambda: self._go_main(land_on_import=True))
         self.config_screen.back_requested.connect(self._go_auth)
         self.stack.addWidget(self.config_screen)
 
@@ -142,21 +142,23 @@ class MainWindow(QMainWindow):
             "QTabBar::tab:hover:!selected { color: #444; border-bottom: 2px solid #ccc; } "
         )
 
-        self.manual_widget = ManualEntryWidget(self.app_state)
-        self.manual_widget.test_case_queued.connect(self._on_test_case_queued)
-        self.tabs.addTab(self.manual_widget, "Manual Entry")
-
+        # Tab order: Import → Edit → Manual → Run (land on Import first).
         self.import_widget = ImportWidget(self.app_state)
         self.import_widget.test_cases_queued.connect(self._on_test_cases_queued)
         self.tabs.addTab(self.import_widget, "Import File")
-        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.edit_widget = EditScreen(self.app_state)
         self.edit_widget.test_case_queued.connect(self._on_test_case_queued)
         self.tabs.addTab(self.edit_widget, "Edit Test Cases")
 
+        self.manual_widget = ManualEntryWidget(self.app_state)
+        self.manual_widget.test_case_queued.connect(self._on_test_case_queued)
+        self.tabs.addTab(self.manual_widget, "Manual Entry")
+
         self.run_widget = RunScreen(self.app_state)
         self.tabs.addTab(self.run_widget, "Run Tests")
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         v.addWidget(self.tabs, 1)
 
@@ -169,13 +171,11 @@ class MainWindow(QMainWindow):
         f_layout = QHBoxLayout(self._footer_frame)
         f_layout.setContentsMargins(20, 10, 20, 10)
 
-        self.main_back_btn = QPushButton("← Back to Config")
+        from app.utils import theme as _theme, icons as _icons
+        self.main_back_btn = QPushButton("Back to config")
+        self.main_back_btn.setIcon(_icons.icon("arrow-left", size=15))
         self.main_back_btn.setFixedHeight(36)
-        self.main_back_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; font-size: 13px; padding: 0 16px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
+        self.main_back_btn.setStyleSheet(_theme.btn_neutral_qss("font-size: 13px; padding: 0 16px;"))
         self.main_back_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.main_back_btn.clicked.connect(self._go_config)
         f_layout.addWidget(self.main_back_btn)
@@ -191,8 +191,10 @@ class MainWindow(QMainWindow):
         self._import_count_label.setVisible(False)
         self._import_queue_btn.setVisible(False)
 
-        from app.utils import theme
-        self.review_btn = QPushButton("Review && Create →")
+        from app.utils import theme, icons
+        self.review_btn = QPushButton("Review && create")
+        self.review_btn.setIcon(icons.icon("arrow-right", color="white", size=15))
+        self.review_btn.setLayoutDirection(Qt.RightToLeft)
         self.review_btn.setFixedHeight(36)
         self.review_btn.setEnabled(False)
         self.review_btn.setStyleSheet(
@@ -211,7 +213,7 @@ class MainWindow(QMainWindow):
     def _build_review_page(self):
         self.review_screen = ReviewScreen(self.app_state)
         self.review_screen.confirmed.connect(self._go_progress)
-        self.review_screen.back_requested.connect(self._go_main)
+        self.review_screen.back_requested.connect(lambda: self._go_main(land_on_import=False))
         self.review_screen.queue_changed.connect(self._update_queue_label)
         self.stack.addWidget(self.review_screen)
 
@@ -237,16 +239,25 @@ class MainWindow(QMainWindow):
         self._go_to(PAGE_CONFIG)
         self._status("Connected. Configure your PBI and module field.")
 
-    def _go_main(self):
+    def _go_main(self, land_on_import: bool = True):
         self._refresh_main_expiry()
         self._update_queue_label()
         # Warm-load the PBI's existing cases so module autocomplete and
         # duplicate-title detection work before the Edit tab is ever opened.
         self.edit_widget.ensure_loaded()
+        # Fresh arrival from Config lands on Import File; returning via "Back"
+        # from Review keeps whatever tab the user last had open.
+        if land_on_import:
+            self.tabs.setCurrentWidget(self.import_widget)
+        # Sync the import-only footer widgets to whichever tab is current
+        # (setCurrentWidget fires no signal when the tab is already current).
+        self._on_tab_changed(self.tabs.currentIndex())
         self._go_to(PAGE_MAIN)
 
     def _on_tab_changed(self, index: int):
-        on_import = (index == 1)
+        # Identity check (not a fixed index) so the import-only footer widgets
+        # stay correct if the tab order ever changes.
+        on_import = (self.tabs.widget(index) is self.import_widget)
         self._import_count_label.setVisible(on_import)
         self._import_queue_btn.setVisible(on_import)
 
@@ -255,9 +266,16 @@ class MainWindow(QMainWindow):
         session = (
             "Signed in" if tm.auto_refresh_active() else tm.get_expiry_display()
         )
+        t = theme.tokens()
+        title = self.app_state.pbi_title or ""
+        if len(title) > 80:
+            title = title[:79] + "…"
+        # PBI leads (prominent); project + session sit quietly behind it.
         self.main_header_label.setText(
-            f"{tm.org_url}/{tm.project}  |  PBI #{self.app_state.pbi_id}: "
-            f"{self.app_state.pbi_title}  |  {session}"
+            f"<span style='color:{t['text']}; font-weight:600;'>PBI #{self.app_state.pbi_id}</span>"
+            f"<span style='color:{t['text_dim']};'>&nbsp;&nbsp;{title}</span>"
+            f"<span style='color:{t['text_dim2']};'>"
+            f"&nbsp;&nbsp;·&nbsp;&nbsp;{tm.project}&nbsp;&nbsp;·&nbsp;&nbsp;{session}</span>"
         )
 
     def _sync_review_btn(self, n: int | None = None):
@@ -549,7 +567,9 @@ class MainWindow(QMainWindow):
             return
         self._update_info = info
         version = info["version"]
-        self._update_btn.setText(f"⬆  Update available (v{version})")
+        from app.utils import icons
+        self._update_btn.setIcon(icons.icon("arrow-up", color=theme.tokens()["accent"], size=15))
+        self._update_btn.setText(f"Update available (v{version})")
         self._update_btn.setVisible(True)
         notes = (info.get("notes") or "").strip()
         notes_block = f"\n\nWhat's new:\n{notes}" if notes else ""
@@ -596,7 +616,7 @@ class MainWindow(QMainWindow):
     def _on_update_failed(self, exc: Exception):
         version = self._update_info.get("version", "")
         self._update_btn.setEnabled(True)
-        self._update_btn.setText(f"⬆  Update available (v{version})")
+        self._update_btn.setText(f"Update available (v{version})")
         QMessageBox.warning(
             self, "Update Failed",
             f"The update could not be downloaded or applied:\n\n{exc}\n\n"
@@ -609,20 +629,15 @@ class MainWindow(QMainWindow):
         self._refresh_all_themes()
 
     def _update_theme_btn(self):
-        if theme.is_dark():
-            self._theme_btn.setText("☀  Light")
-            self._theme_btn.setStyleSheet(
-                "QPushButton { border: none; color: #aaa; padding: 2px 8px; "
-                "background: transparent; font-size: 12px; }"
-                "QPushButton:hover { color: #ddd; }"
-            )
-        else:
-            self._theme_btn.setText("🌙  Dark")
-            self._theme_btn.setStyleSheet(
-                "QPushButton { border: none; color: #666; padding: 2px 8px; "
-                "background: transparent; font-size: 12px; }"
-                "QPushButton:hover { color: #333; }"
-            )
+        from app.utils import icons
+        dark = theme.is_dark()
+        self._theme_btn.setText("")
+        self._theme_btn.setIcon(icons.icon("sun" if dark else "moon", size=18))
+        self._theme_btn.setToolTip("Switch to light theme" if dark else "Switch to dark theme")
+        self._theme_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; padding: 3px 6px; }"
+            f"QPushButton:hover {{ background: {theme.tokens()['btn_hover']}; border-radius: 4px; }}"
+        )
 
     def _refresh_all_themes(self):
         self._refresh_self_theme()
@@ -654,11 +669,9 @@ class MainWindow(QMainWindow):
             f"QTabBar::tab:hover:!selected {{ color: {t['text']}; "
             f"border-bottom: 2px solid {t['border']}; }} "
         )
-        self.main_back_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-            f"border-radius: 4px; font-size: 13px; padding: 0 16px; }}"
-            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
-        )
+        from app.utils import icons as _icons
+        self.main_back_btn.setStyleSheet(theme.btn_neutral_qss("font-size: 13px; padding: 0 16px;"))
+        self.main_back_btn.setIcon(_icons.icon("arrow-left", size=15))
         self.review_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )

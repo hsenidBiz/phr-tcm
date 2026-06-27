@@ -165,20 +165,24 @@ class EditScreen(QWidget):
             "QPushButton:hover { background: #e0e0e0; }"
             "QPushButton:disabled { color: #aaa; }"
         )
-        self._refresh_btn = QPushButton("↺  Refresh")
+        from app.utils import icons
+        self._refresh_btn = QPushButton("  Refresh")
+        self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._refresh_btn.setStyleSheet(_hdr_btn_style)
         self._refresh_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._refresh_btn.clicked.connect(self._load_cases)
         hdr.addWidget(self._refresh_btn)
 
-        self._rename_btn = QPushButton("✎  Rename…")
+        self._rename_btn = QPushButton("  Rename")
+        self._rename_btn.setIcon(icons.icon("edit", size=15))
         self._rename_btn.setEnabled(False)
         self._rename_btn.setStyleSheet(_hdr_btn_style)
         self._rename_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._rename_btn.clicked.connect(self._open_rename_dialog)
         hdr.addWidget(self._rename_btn)
 
-        self._export_btn = QPushButton("⬇ Export (.xlsx)")
+        self._export_btn = QPushButton("  Export")
+        self._export_btn.setIcon(icons.icon("download", size=15))
         self._export_btn.setEnabled(False)
         self._export_btn.setStyleSheet(_hdr_btn_style)
         self._export_btn.setCursor(QCursor(Qt.PointingHandCursor))
@@ -258,9 +262,10 @@ class EditScreen(QWidget):
         form_v.setContentsMargins(12, 0, 0, 0)
         form_v.setSpacing(10)
 
-        self._no_sel_lbl = QLabel("← Select a test case from the list to edit it.")
+        self._no_sel_lbl = QLabel("Select a test case to edit it")
+        self._no_sel_lbl.setAlignment(Qt.AlignCenter)
         self._no_sel_lbl.setStyleSheet("color: #888;")
-        form_v.addWidget(self._no_sel_lbl)
+        form_v.addWidget(self._no_sel_lbl, 1, Qt.AlignCenter)
 
         # Single-case edit form
         self._form = QWidget()
@@ -313,12 +318,10 @@ class EditScreen(QWidget):
         steps_hdr = QHBoxLayout()
         steps_hdr.addWidget(QLabel("Steps"))
         steps_hdr.addStretch()
-        self._add_step_btn = QPushButton("+ Add Step")
-        self._add_step_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; padding: 3px 10px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
+        from app.utils import theme, icons
+        self._add_step_btn = QPushButton("Add step")
+        self._add_step_btn.setIcon(icons.icon("plus", size=15))
+        self._add_step_btn.setStyleSheet(theme.btn_neutral_qss("padding: 4px 10px;"))
         self._add_step_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._add_step_btn.clicked.connect(self._add_step)
         steps_hdr.addWidget(self._add_step_btn)
@@ -343,8 +346,7 @@ class EditScreen(QWidget):
         self._steps_tbl.model().rowsMoved.connect(self._on_steps_rows_moved)
         fv.addWidget(self._steps_tbl, 1)
 
-        from app.utils import theme
-        self._save_btn = QPushButton("Save Changes")
+        self._save_btn = QPushButton("Save changes")
         self._save_btn.setFixedHeight(36)
         self._save_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
@@ -353,13 +355,10 @@ class EditScreen(QWidget):
         self._save_btn.clicked.connect(self._save_changes)
         fv.addWidget(self._save_btn)
 
-        self._clone_btn = QPushButton("📋 Clone to Queue")
+        self._clone_btn = QPushButton("Clone to queue")
+        self._clone_btn.setIcon(icons.icon("clipboard", size=15))
         self._clone_btn.setFixedHeight(36)
-        self._clone_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; font-size: 13px; padding: 0 20px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
+        self._clone_btn.setStyleSheet(theme.btn_neutral_qss("font-size: 13px; padding: 0 20px;"))
         self._clone_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._clone_btn.clicked.connect(self._on_clone_to_queue)
         fv.addWidget(self._clone_btn)
@@ -403,7 +402,7 @@ class EditScreen(QWidget):
         bfv.addWidget(self._bulk_assigned_combo)
 
         from app.utils import theme
-        self._bulk_save_btn = QPushButton("Save to Cases")
+        self._bulk_save_btn = QPushButton("Save to cases")
         self._bulk_save_btn.setFixedHeight(36)
         self._bulk_save_btn.setEnabled(False)
         self._bulk_save_btn.setStyleSheet(
@@ -448,21 +447,19 @@ class EditScreen(QWidget):
         self._refresh_btn.setStyleSheet(header_btn_style)
         self._rename_btn.setStyleSheet(header_btn_style)
         self._export_btn.setStyleSheet(header_btn_style)
+        from app.utils import icons
+        self._refresh_btn.setIcon(icons.icon("refresh", size=15))
+        self._rename_btn.setIcon(icons.icon("edit", size=15))
+        self._export_btn.setIcon(icons.icon("download", size=15))
         self._sel_count_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self._mine_chk.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         self._no_sel_lbl.setStyleSheet(f"color: {t['text_dim2']};")
         self._tc_id_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
         self._bulk_progress_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
-        self._add_step_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-            f"border-radius: 4px; padding: 3px 10px; }}"
-            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
-        )
-        self._clone_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-            f"border-radius: 4px; font-size: 13px; padding: 0 20px; }}"
-            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
-        )
+        self._add_step_btn.setStyleSheet(theme.btn_neutral_qss("padding: 4px 10px;"))
+        self._add_step_btn.setIcon(icons.icon("plus", size=15))
+        self._clone_btn.setStyleSheet(theme.btn_neutral_qss("font-size: 13px; padding: 0 20px;"))
+        self._clone_btn.setIcon(icons.icon("clipboard", size=15))
         primary = theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         self._save_btn.setStyleSheet(primary)
         self._bulk_save_btn.setStyleSheet(primary)
@@ -491,7 +488,7 @@ class EditScreen(QWidget):
         self._current_idx = None
         self._form.setVisible(False)
         self._bulk_frame.setVisible(False)
-        self._no_sel_lbl.setText("← Select a test case from the list to edit it.")
+        self._no_sel_lbl.setText("Select a test case to edit it")
         self._no_sel_lbl.setVisible(True)
         self._sel_count_lbl.setText("")
 
@@ -658,7 +655,7 @@ class EditScreen(QWidget):
             self._current_idx = None
             self._form.setVisible(False)
             self._bulk_frame.setVisible(False)
-            self._no_sel_lbl.setText("← Select a test case from the list to edit it.")
+            self._no_sel_lbl.setText("Select a test case to edit it")
             self._no_sel_lbl.setVisible(True)
             self._rename_btn.setEnabled(False)
             self._update_filter_count()
@@ -677,7 +674,7 @@ class EditScreen(QWidget):
             self._bulk_frame.setVisible(True)
             self._no_sel_lbl.setVisible(False)
             self._bulk_count_lbl.setText(f"Editing {n_sel} test cases")
-            self._bulk_save_btn.setText(f"Save to {n_sel} Cases")
+            self._bulk_save_btn.setText(f"Save to {n_sel} cases")
             self._bulk_tags_edit.clear()
             self._bulk_status_combo.setCurrentIndex(0)
             self._bulk_assigned_combo.setCurrentIndex(0)
@@ -721,12 +718,12 @@ class EditScreen(QWidget):
     # ------------------------------------------------------------------ #
 
     def _make_rm_wrap(self) -> QWidget:
-        from app.utils import theme
-        rm_btn = QPushButton("✕")
+        from app.utils import theme, icons
+        rm_btn = QPushButton()
+        rm_btn.setIcon(icons.icon("x", size=13))
         rm_btn.setFixedSize(26, 22)
-        rm_btn.setStyleSheet(
-            theme.btn_danger_qss("border-radius: 3px; font-size: 11px; font-weight: bold;")
-        )
+        rm_btn.setToolTip("Remove step")
+        rm_btn.setStyleSheet(theme.btn_ghost_qss("border-radius: 3px;"))
         rm_btn.setCursor(QCursor(Qt.PointingHandCursor))
         rm_btn.clicked.connect(self._remove_step)
         wrap = QWidget()
@@ -850,13 +847,13 @@ class EditScreen(QWidget):
             if item:
                 item.setText(f"#{tc_id}  —  {title}")
         self._save_btn.setEnabled(True)
-        self._save_btn.setText("Save Changes")
+        self._save_btn.setText("Save changes")
         from app.gui.helpers import status_message
         status_message(self, f"Test case #{tc_id} updated successfully.")
 
     def _on_save_error(self, tc_id, exc: Exception):
         self._save_btn.setEnabled(True)
-        self._save_btn.setText("Save Changes")
+        self._save_btn.setText("Save changes")
         QMessageBox.critical(
             self, "Save Failed",
             f"Could not update test case #{tc_id}:\n\n{exc}"
@@ -896,10 +893,10 @@ class EditScreen(QWidget):
         or everything loaded."""
         n_sel = len(self._list.selectedItems())
         if n_sel:
-            self._export_btn.setText(f"⬇ Export {n_sel} Selected (.xlsx)")
+            self._export_btn.setText(f"  Export {n_sel} selected")
             self._export_btn.setToolTip("Export only the highlighted test cases")
         else:
-            self._export_btn.setText("⬇ Export All (.xlsx)")
+            self._export_btn.setText("  Export all")
             self._export_btn.setToolTip("Nothing selected — exports all loaded test cases")
 
     def _on_export_cases(self):

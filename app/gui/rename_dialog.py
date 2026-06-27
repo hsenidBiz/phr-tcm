@@ -179,7 +179,7 @@ class PowerRenameDialog(QDialog):
         self._cancel_btn.clicked.connect(self.reject)
         foot.addWidget(self._cancel_btn)
 
-        self._apply_btn = QPushButton("Apply Rename")
+        self._apply_btn = QPushButton("Apply rename")
         self._apply_btn.setFixedHeight(36)
         self._apply_btn.setEnabled(False)
         self._apply_btn.setCursor(QCursor(Qt.PointingHandCursor))
@@ -392,7 +392,7 @@ class PowerRenameDialog(QDialog):
 
     def _on_rename_complete(self):
         self._rename_running = False
-        self._apply_btn.setText("Apply Rename")
+        self._apply_btn.setText("Apply rename")
         self._cancel_btn.setEnabled(True)
         self._update_apply_btn_state()
 

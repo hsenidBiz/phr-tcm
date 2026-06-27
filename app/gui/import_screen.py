@@ -223,18 +223,15 @@ class ImportWidget(QWidget):
         tmpl_layout = QHBoxLayout(self._tmpl_frame)
         tmpl_layout.setContentsMargins(16, 10, 16, 10)
         tmpl_label = QLabel(
-            "<b>First time?</b> Download the Excel template, fill it in, then import it here.<br>"
-            "<b>Bulk update:</b> export existing cases from the <b>Edit Test Cases</b> tab, change "
-            "the values, and re-import — rows that keep their <b>TestCaseID</b> update the existing "
-            "case instead of creating a new one."
+            "Fill in the Excel template and import it. Re-importing an exported "
+            "file updates cases that keep their TestCaseID."
         )
         tmpl_label.setWordWrap(True)
         tmpl_layout.addWidget(tmpl_label, 1)
-        from app.utils import theme
-        self._tmpl_btn = QPushButton("Download Template (.xlsx)")
-        self._tmpl_btn.setStyleSheet(
-            theme.btn_primary_qss("border-radius: 4px; padding: 6px 14px;")
-        )
+        from app.utils import theme, icons
+        self._tmpl_btn = QPushButton("Download template")
+        self._tmpl_btn.setIcon(icons.icon("download", size=16))
+        self._tmpl_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 14px;"))
         self._tmpl_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._tmpl_btn.clicked.connect(self._download_template)
         tmpl_layout.addWidget(self._tmpl_btn)
@@ -245,7 +242,8 @@ class ImportWidget(QWidget):
         self.file_label = QLabel("No file selected")
         self.file_label.setStyleSheet("color: #666;")
         file_row.addWidget(self.file_label, 1)
-        self._browse_btn = QPushButton("Browse…")
+        self._browse_btn = QPushButton("Browse")
+        self._browse_btn.setIcon(icons.icon("folder", size=16))
         self._browse_btn.setStyleSheet(theme.btn_neutral_qss())
         self._browse_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._browse_btn.clicked.connect(self._browse_file)
@@ -328,20 +326,17 @@ class ImportWidget(QWidget):
         # Preview table
         # Col 0: ▶/▼ expand  Col 1: Name  Col 2: Steps  Col 3: Tags  Col 4: Module  Col 5: ✕
         preview_row = QHBoxLayout()
-        preview_lbl = QLabel(
-            "Preview — ▶ to expand steps, ✕ to remove before queuing:"
-        )
+        preview_lbl = QLabel("Preview")
         preview_lbl.setStyleSheet("font-weight: bold;")
         preview_row.addWidget(preview_lbl)
         preview_row.addStretch()
-        from app.utils import theme
-        self._clear_all_btn = QPushButton("🗑  Remove All")
+        from app.utils import theme, icons
+        self._clear_all_btn = QPushButton("Remove all")
+        self._clear_all_btn.setIcon(icons.icon("trash", size=15))
         self._clear_all_btn.setEnabled(False)
         self._clear_all_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._clear_all_btn.setToolTip("Remove all parsed test cases from the preview")
-        self._clear_all_btn.setStyleSheet(
-            theme.btn_danger_qss("border-radius: 4px; padding: 5px 12px; font-size: 12px;")
-        )
+        self._clear_all_btn.setStyleSheet(theme.btn_ghost_qss("padding: 5px 12px; font-size: 12px;"))
         self._clear_all_btn.clicked.connect(self._on_remove_all)
         preview_row.addWidget(self._clear_all_btn)
         layout.addLayout(preview_row)
@@ -370,8 +365,9 @@ class ImportWidget(QWidget):
         self.count_label = QLabel("0 test cases parsed")
         self.count_label.setStyleSheet("color: #555;")
 
-        from app.utils import theme
-        self.queue_btn = QPushButton("Add All to Queue")
+        from app.utils import theme, icons
+        self.queue_btn = QPushButton("Add all to queue")
+        self.queue_btn.setIcon(icons.icon("plus", color="white", size=15))
         self.queue_btn.setFixedHeight(34)
         self.queue_btn.setEnabled(False)
         self.queue_btn.setStyleSheet(
@@ -457,16 +453,17 @@ class ImportWidget(QWidget):
             f"border-radius: 4px; padding: 6px; color: {t['text_dim']};"
         )
         self.count_label.setStyleSheet(f"color: {t['count_lbl_color']};")
-        self._tmpl_btn.setStyleSheet(
-            theme.btn_primary_qss("border-radius: 4px; padding: 6px 14px;")
-        )
+        from app.utils import icons
+        self._tmpl_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 14px;"))
+        self._tmpl_btn.setIcon(icons.icon("download", size=16))
         self._browse_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._browse_btn.setIcon(icons.icon("folder", size=16))
         self.queue_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
-        self._clear_all_btn.setStyleSheet(
-            theme.btn_danger_qss("border-radius: 4px; padding: 5px 12px; font-size: 12px;")
-        )
+        self.queue_btn.setIcon(icons.icon("plus", color="white", size=15))
+        self._clear_all_btn.setStyleSheet(theme.btn_ghost_qss("padding: 5px 12px; font-size: 12px;"))
+        self._clear_all_btn.setIcon(icons.icon("trash", size=15))
         self.tag_picker.refresh_theme()
         # Restyle the per-row expand arrows so they stay visible in dark mode
         expand_style = self._expand_btn_style()
@@ -691,13 +688,13 @@ class ImportWidget(QWidget):
         self.preview_table.setItem(row, 4, QTableWidgetItem(tc.module_value or "—"))
 
         # Col 5 — remove button
-        remove_btn = QPushButton("✕")
+        from app.utils import theme, icons
+        remove_btn = QPushButton()
+        remove_btn.setIcon(icons.icon("x", size=13))
         remove_btn.setFixedSize(26, 22)
         remove_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        from app.utils import theme
-        remove_btn.setStyleSheet(
-            theme.btn_danger_qss("border-radius: 3px; font-size: 11px; font-weight: bold;")
-        )
+        remove_btn.setToolTip("Remove from preview")
+        remove_btn.setStyleSheet(theme.btn_ghost_qss("border-radius: 3px;"))
         remove_btn.clicked.connect(self._remove_case)
         _rm_wrap = QWidget()
         _rm_layout = QHBoxLayout(_rm_wrap)

@@ -77,12 +77,10 @@ class ReviewScreen(QWidget):
         # Buttons
         btn_row = QHBoxLayout()
 
-        self.back_btn = QPushButton("← Back")
-        self.back_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; padding: 7px 20px; font-size: 13px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-        )
+        from app.utils import theme, icons
+        self.back_btn = QPushButton("Back")
+        self.back_btn.setIcon(icons.icon("arrow-left", size=15))
+        self.back_btn.setStyleSheet(theme.btn_neutral_qss("padding: 7px 20px; font-size: 13px;"))
         self.back_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.back_btn.clicked.connect(self.back_requested)
         btn_row.addWidget(self.back_btn)
@@ -95,7 +93,8 @@ class ReviewScreen(QWidget):
             "QPushButton:hover { background: #e0e0e0; }"
             "QPushButton:disabled { color: #aaa; }"
         )
-        self.move_up_btn = QPushButton("↑")
+        self.move_up_btn = QPushButton()
+        self.move_up_btn.setIcon(icons.icon("arrow-up", size=15))
         self.move_up_btn.setEnabled(False)
         self.move_up_btn.setStyleSheet(_arrow_style)
         self.move_up_btn.setCursor(QCursor(Qt.PointingHandCursor))
@@ -103,7 +102,8 @@ class ReviewScreen(QWidget):
         self.move_up_btn.clicked.connect(self._on_move_up)
         btn_row.addWidget(self.move_up_btn)
 
-        self.move_down_btn = QPushButton("↓")
+        self.move_down_btn = QPushButton()
+        self.move_down_btn.setIcon(icons.icon("arrow-down", size=15))
         self.move_down_btn.setEnabled(False)
         self.move_down_btn.setStyleSheet(_arrow_style)
         self.move_down_btn.setCursor(QCursor(Qt.PointingHandCursor))
@@ -112,28 +112,20 @@ class ReviewScreen(QWidget):
         btn_row.addWidget(self.move_down_btn)
         btn_row.addSpacing(4)
 
-        self.remove_selected_btn = QPushButton("✕ Remove")
+        self.remove_selected_btn = QPushButton("Remove")
+        self.remove_selected_btn.setIcon(icons.icon("x", size=14))
         self.remove_selected_btn.setEnabled(False)
-        self.remove_selected_btn.setStyleSheet(
-            "QPushButton { background: #fde8e8; border: 1px solid #e88b8b; "
-            "border-radius: 4px; padding: 7px 14px; font-size: 13px; }"
-            "QPushButton:hover { background: #f8d0d0; }"
-            "QPushButton:disabled { color: #aaa; background: #f5f5f5; border-color: #ddd; }"
-        )
+        self.remove_selected_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 13px;"))
         self.remove_selected_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.remove_selected_btn.setToolTip("Remove selected test case(s) from queue (Delete)")
         self.remove_selected_btn.clicked.connect(self._on_remove)
         btn_row.addWidget(self.remove_selected_btn)
         btn_row.addSpacing(4)
 
-        self.clear_all_btn = QPushButton("🗑 Clear All")
+        self.clear_all_btn = QPushButton("Clear all")
+        self.clear_all_btn.setIcon(icons.icon("trash", size=15))
         self.clear_all_btn.setEnabled(False)
-        self.clear_all_btn.setStyleSheet(
-            "QPushButton { background: #fde8e8; border: 1px solid #e88b8b; "
-            "border-radius: 4px; padding: 7px 14px; font-size: 13px; }"
-            "QPushButton:hover { background: #f8d0d0; }"
-            "QPushButton:disabled { color: #aaa; background: #f5f5f5; border-color: #ddd; }"
-        )
+        self.clear_all_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 13px;"))
         self.clear_all_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.clear_all_btn.setToolTip("Remove all test cases from the queue")
         self.clear_all_btn.clicked.connect(self._on_clear_all)
@@ -141,24 +133,20 @@ class ReviewScreen(QWidget):
 
         btn_row.addStretch()
 
-        self.export_queue_btn = QPushButton("Export Queue (.xlsx)")
+        self.export_queue_btn = QPushButton("Export queue")
+        self.export_queue_btn.setIcon(icons.icon("download", size=15))
         self.export_queue_btn.setEnabled(False)
-        self.export_queue_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
-            "border-radius: 4px; padding: 7px 14px; font-size: 13px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-            "QPushButton:disabled { color: #aaa; }"
-        )
+        self.export_queue_btn.setStyleSheet(theme.btn_neutral_qss("padding: 7px 14px; font-size: 13px;"))
         self.export_queue_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.export_queue_btn.clicked.connect(self._on_export_queue)
         btn_row.addWidget(self.export_queue_btn)
         btn_row.addSpacing(8)
 
-        from app.utils import theme
-        self.create_btn = QPushButton("Create All Test Cases")
+        self.create_btn = QPushButton("Create all test cases")
+        self.create_btn.setIcon(icons.icon("check", color="white", size=16))
         self.create_btn.setFixedHeight(40)
         self.create_btn.setStyleSheet(
-            theme.btn_danger_qss(
+            theme.btn_primary_qss(
                 "border-radius: 4px; font-size: 14px; font-weight: bold; padding: 0 28px;"
             )
         )
@@ -183,33 +171,30 @@ class ReviewScreen(QWidget):
             f"border-radius: 4px; padding: 7px 20px; font-size: 13px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
         )
+        from app.utils import icons
         self.back_btn.setStyleSheet(_btn_style)
+        self.back_btn.setIcon(icons.icon("arrow-left", size=15))
         self.move_up_btn.setStyleSheet(
             f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
             f"border-radius: 4px; padding: 7px 12px; font-size: 13px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
             f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
         )
+        self.move_up_btn.setIcon(icons.icon("arrow-up", size=15))
         self.move_down_btn.setStyleSheet(self.move_up_btn.styleSheet())
-        self.export_queue_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-            f"border-radius: 4px; padding: 7px 14px; font-size: 13px; }}"
-            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
-            f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
-        )
-        self.remove_selected_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['red_btn_bg']}; border: 1px solid {t['red_btn_border']}; "
-            f"border-radius: 4px; padding: 7px 14px; font-size: 13px; color: {t['text']}; }}"
-            f"QPushButton:hover {{ background: {t['red_btn_hover']}; }}"
-            f"QPushButton:disabled {{ color: {t['text_dim2']}; background: {t['surface2']}; "
-            f"border-color: {t['border']}; }}"
-        )
-        self.clear_all_btn.setStyleSheet(self.remove_selected_btn.styleSheet())
+        self.move_down_btn.setIcon(icons.icon("arrow-down", size=15))
+        self.export_queue_btn.setStyleSheet(theme.btn_neutral_qss("padding: 7px 14px; font-size: 13px;"))
+        self.export_queue_btn.setIcon(icons.icon("download", size=15))
+        self.remove_selected_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 13px;"))
+        self.remove_selected_btn.setIcon(icons.icon("x", size=14))
+        self.clear_all_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 13px;"))
+        self.clear_all_btn.setIcon(icons.icon("trash", size=15))
         self.create_btn.setStyleSheet(
-            theme.btn_danger_qss(
+            theme.btn_primary_qss(
                 "border-radius: 4px; font-size: 14px; font-weight: bold; padding: 0 28px;"
             )
         )
+        self.create_btn.setIcon(icons.icon("check", color="white", size=16))
 
     def on_enter(self):
         """Refresh display when this screen becomes active."""

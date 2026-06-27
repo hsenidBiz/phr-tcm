@@ -72,8 +72,8 @@ class AuthScreen(QWidget):
         card_layout.addWidget(self._switch_btn)
 
         self._signin_hint = QLabel(
-            "Opens your browser to sign in — your organisation and projects "
-            "are discovered automatically, and the access token refreshes itself."
+            "Opens your browser to sign in. Your organisation and projects are "
+            "detected automatically."
         )
         self._signin_hint.setWordWrap(True)
         self._signin_hint.setStyleSheet("color: #888; font-size: 11px;")
@@ -106,7 +106,7 @@ class AuthScreen(QWidget):
             upn = tm.get_current_upn()
             who = f" as {upn}" if upn else ""
             self._subtitle.setText(f"You're already signed in{who}.")
-            self.signin_btn.setText("Continue →")
+            self.signin_btn.setText("Continue")
             self._signin_hint.setVisible(False)
             self._switch_btn.setVisible(True)
         else:

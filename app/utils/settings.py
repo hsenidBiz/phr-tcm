@@ -1,5 +1,17 @@
 import json
+import os
 from pathlib import Path
+
+
+def _write_json_atomic(path: Path, obj) -> None:
+    """Write JSON via a temp file + atomic os.replace so an interrupted or
+    concurrent write can never leave a truncated/corrupt file — a corrupt file
+    makes load_settings() fall back to {} and silently drop saved prefs (theme,
+    recent PBIs, filters)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 _SETTINGS_PATH = Path.home() / ".devops_tc_creator" / "settings.json"
 _DRAFT_PATH = Path.home() / ".devops_tc_creator" / "draft_queue.json"
@@ -10,7 +22,7 @@ _RUN_SHOTS_DIR = Path.home() / ".devops_tc_creator" / "run_session_shots"
 _ALLOWED_KEYS = {
     "org_url", "project", "preconditions", "recent_pbis", "dark_mode",
     "mine_only_filter", "status_filter", "module_filter", "templates",
-    "execution_notes", "test_plan_cache",
+    "execution_notes", "test_plan_cache", "always_on_top",
 }
 
 
@@ -25,8 +37,7 @@ def load_settings() -> dict:
 def save_settings(data: dict):
     existing = load_settings()
     existing.update({k: v for k, v in data.items() if k in _ALLOWED_KEYS})
-    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _SETTINGS_PATH.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    _write_json_atomic(_SETTINGS_PATH, existing)
 
 
 # ------------------------------------------------------------------ #
@@ -122,8 +133,7 @@ def save_draft_queue(queue: list):
     """Persist the queue to disk; each TestCase serialized via dataclasses.asdict."""
     import dataclasses
     data = [dataclasses.asdict(tc) for tc in queue]
-    _DRAFT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _DRAFT_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_json_atomic(_DRAFT_PATH, data)
 
 
 def load_draft_queue() -> list:
@@ -155,8 +165,7 @@ def clear_draft_queue():
 def save_run_session(data: dict):
     """Persist the active test-runner session (cases + per-case outcomes/comments/
     step results + screenshot filenames + PBI context) so it can be resumed."""
-    _RUN_SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _RUN_SESSION_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _write_json_atomic(_RUN_SESSION_PATH, data)
 
 
 def load_run_session() -> dict | None:

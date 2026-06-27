@@ -9,11 +9,14 @@ from PyInstaller.utils.hooks import collect_submodules
 # complete the browser sign-in. jwt/openpyxl/velopack are safe to name explicitly.
 hiddenimports = (
     collect_submodules("msal")
-    + ["jwt", "openpyxl", "velopack"]
+    + ["jwt", "openpyxl", "velopack", "PyQt5.QtSvg"]
 )
 
 _icon = "resources/icon.ico" if os.path.exists("resources/icon.ico") else None
 _datas = [("resources/icon.ico", "resources")] if _icon else []
+# Bundle the themed SVG icon set (rendered at runtime via QtSvg).
+if os.path.isdir("resources/icons"):
+    _datas += [("resources/icons", "resources/icons")]
 
 a = Analysis(
     ["main.py"],

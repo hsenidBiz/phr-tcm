@@ -1,7 +1,8 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QListWidget, QListWidgetItem,
-    QMessageBox, QFrame
+    QMessageBox, QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
+    QAbstractItemView,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThreadPool, QTimer, QEvent
 from PyQt5.QtGui import QFont, QCursor
@@ -57,14 +58,6 @@ class ConfigScreen(QWidget):
         proj_layout.setSpacing(10)
         proj_layout.addWidget(QLabel("<b>Organisation &amp; Project</b>"))
 
-        self._proj_note = QLabel(
-            "Discovered from your signed-in account — no manual entry needed. "
-            "The selected project is remembered until you change it."
-        )
-        self._proj_note.setWordWrap(True)
-        self._proj_note.setStyleSheet("color: #555;")
-        proj_layout.addWidget(self._proj_note)
-
         op_row = QHBoxLayout()
         org_col = QVBoxLayout()
         org_col.addWidget(QLabel("Organisation"))
@@ -108,19 +101,11 @@ class ConfigScreen(QWidget):
 
         pbi_layout.addWidget(QLabel("<b>Product Backlog Item (PBI)</b>"))
 
-        self._pbi_note = QLabel(
-            "Search for the PBI you want to link test cases to — by title or "
-            "work item ID. Click the field to pick from your recent PBIs."
-        )
-        self._pbi_note.setWordWrap(True)
-        self._pbi_note.setStyleSheet("color: #555;")
-        pbi_layout.addWidget(self._pbi_note)
-
-        # Searchable PBI picker: shows recent PBIs on focus and live-searches
-        # Azure DevOps work items as you type (debounced).
+        # Live-searches Azure DevOps work items as you type (debounced). Recently
+        # used PBIs live in the table below, not in this dropdown.
         self.pbi_search = QLineEdit()
         self.pbi_search.setPlaceholderText(
-            "Search work items by title or ID — click to see recent PBIs…"
+            "Search work items by title or ID…"
         )
         self.pbi_search.textChanged.connect(self._on_pbi_search_text)
         pbi_layout.addWidget(self.pbi_search)
@@ -143,17 +128,21 @@ class ConfigScreen(QWidget):
         self.pbi_dropdown.itemClicked.connect(self._on_pbi_dropdown_clicked)
         # Not added to pbi_layout — shown/positioned via _reveal_pbi_dropdown().
 
-        # Install filters only after BOTH widgets exist — eventFilter()
-        # references each of them and Qt delivers events during construction.
-        self.pbi_search.installEventFilter(self)
-        self.pbi_dropdown.installEventFilter(self)
-
         self._pbi_search_timer = QTimer(self)
         self._pbi_search_timer.setSingleShot(True)
         self._pbi_search_timer.setInterval(450)
         self._pbi_search_timer.timeout.connect(self._run_pbi_search)
         self._pbi_search_seq = 0
-        self._pbi_dropdown_mode = "recent"
+
+        # One application-level filter (installed last — after every widget and
+        # the search timer it references exist): a mouse press anywhere outside
+        # the search dropdown dismisses it. It isn't a real popup window, so it
+        # gets no automatic click-away handling otherwise. Removed on shutdown so
+        # QApplication teardown can't route events to a half-destroyed screen.
+        from PyQt5.QtWidgets import QApplication
+        _app = QApplication.instance()
+        _app.installEventFilter(self)
+        _app.aboutToQuit.connect(lambda: _app.removeEventFilter(self))
 
         # Currently selected PBI — prominent, always visible
         self.selected_pbi_label = QLabel("No PBI selected — search above to choose one")
@@ -165,6 +154,29 @@ class ConfigScreen(QWidget):
         self.pbi_result_label = QLabel("")
         self.pbi_result_label.setWordWrap(True)
         pbi_layout.addWidget(self.pbi_result_label)
+
+        # Recently used PBIs — quick re-select, each row removable. Replaces the
+        # old recents-in-the-dropdown behaviour.
+        from app.utils import theme as _theme
+        self.recent_label = QLabel("Recently used")
+        self.recent_label.setStyleSheet(_theme.section_label_qss())
+        self.recent_label.setVisible(False)
+        pbi_layout.addWidget(self.recent_label)
+        self.recent_table = QTableWidget(0, 2)
+        self.recent_table.horizontalHeader().setVisible(False)
+        self.recent_table.verticalHeader().setVisible(False)
+        self.recent_table.setShowGrid(False)
+        self.recent_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.recent_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.recent_table.setFocusPolicy(Qt.NoFocus)
+        rh = self.recent_table.horizontalHeader()
+        rh.setSectionResizeMode(0, QHeaderView.Stretch)
+        rh.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.recent_table.setColumnWidth(1, 36)
+        self.recent_table.setMaximumHeight(150)
+        self.recent_table.setVisible(False)
+        self.recent_table.cellClicked.connect(self._on_recent_cell_clicked)
+        pbi_layout.addWidget(self.recent_table)
 
         # Area / Iteration path fields — populated after PBI is validated
         paths_grid = QHBoxLayout()
@@ -195,14 +207,6 @@ class ConfigScreen(QWidget):
         self.paths_container.setLayout(paths_grid)
         pbi_layout.addWidget(self.paths_container)
 
-        paths_note = QLabel(
-            "Area and Iteration paths are inherited from the PBI."
-        )
-        paths_note.setStyleSheet("color: #888; font-size: 11px;")
-        paths_note.setWordWrap(True)
-        self.paths_note = paths_note
-        pbi_layout.addWidget(self.paths_note)
-
         # Test plan / suite status for the selected PBI. Test cases are added to a
         # requirement-based suite under this plan so they show on the board.
         self.test_plan_label = QLabel("")
@@ -223,7 +227,9 @@ class ConfigScreen(QWidget):
         # Button row — Back (left) | Continue (right)
         btn_row = QHBoxLayout()
 
-        self._back_btn = QPushButton("← Back")
+        from app.utils import icons
+        self._back_btn = QPushButton("  Back")
+        self._back_btn.setIcon(icons.icon("arrow-left", size=16))
         self._back_btn.setFixedHeight(38)
         self._back_btn.setStyleSheet(
             "QPushButton { background: #f0f0f0; border: 1px solid #ccc; "
@@ -236,7 +242,9 @@ class ConfigScreen(QWidget):
         btn_row.addStretch()
 
         from app.utils import theme
-        self.continue_btn = QPushButton("Continue →")
+        self.continue_btn = QPushButton("Continue")
+        self.continue_btn.setIcon(icons.icon("arrow-right", color="white", size=16))
+        self.continue_btn.setLayoutDirection(Qt.RightToLeft)
         self.continue_btn.setFixedHeight(38)
         self.continue_btn.setEnabled(False)
         self.continue_btn.setStyleSheet(
@@ -268,7 +276,6 @@ class ConfigScreen(QWidget):
         self._proj_frame.setStyleSheet(
             f"#projFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
         )
-        self._proj_note.setStyleSheet(f"color: {t['text_dim']};")
         self.connected_label.setStyleSheet(f"color: {t['accent']};")
         self.pbi_dropdown.setStyleSheet(
             f"QListWidget {{ border: 1px solid {t['border']}; border-radius: 4px; "
@@ -277,8 +284,8 @@ class ConfigScreen(QWidget):
             f"QListWidget::item:hover {{ background: {t['tag_unsel_hover']}; }}"
             f"QListWidget::item:selected {{ background: {t['accent']}; color: white; }}"
         )
-        self._pbi_note.setStyleSheet(f"color: {t['text_dim']};")
-        self.paths_note.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+        self.recent_label.setStyleSheet(theme.section_label_qss())
+        self._refresh_recent_table()  # re-tint the per-row remove icons
         _ro_style = (
             f"QLineEdit {{ background: {t['surface2']}; color: {t['text_dim']}; "
             f"border: 1px solid {t['border']}; border-radius: 4px; padding: 4px 8px; }}"
@@ -290,6 +297,8 @@ class ConfigScreen(QWidget):
             f"border-radius: 4px; font-size: 14px; padding: 0 20px; }}"
             f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
         )
+        from app.utils import icons
+        self._back_btn.setIcon(icons.icon("arrow-left", size=16))
         self.continue_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 14px; padding: 0 20px;")
         )
@@ -446,6 +455,7 @@ class ConfigScreen(QWidget):
             self._load_fields()
         self.refresh_expiry()
         self._check_ready()
+        self._refresh_recent_table()
 
         # Restore the most recently used PBI for this project (covers app
         # restart and project switches alike).
@@ -493,22 +503,22 @@ class ConfigScreen(QWidget):
     #  PBI search / recents dropdown                                       #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _point_in_widget(global_pos, widget) -> bool:
+        return widget.isVisible() and widget.rect().contains(widget.mapFromGlobal(global_pos))
+
     def eventFilter(self, obj, event):
-        if obj is self.pbi_search and event.type() == QEvent.FocusIn:
-            if not self.pbi_search.text().strip():
-                self._show_recent_dropdown()
+        # Click-away: a mouse press anywhere outside the search dropdown + box
+        # dismisses the floating dropdown (the click itself is not consumed).
+        if event.type() == QEvent.MouseButtonPress and self.pbi_dropdown.isVisible():
+            gp = event.globalPos()
+            if not (self._point_in_widget(gp, self.pbi_dropdown)
+                    or self._point_in_widget(gp, self.pbi_search)):
+                self._dismiss_pbi_dropdown()
         elif obj is self.pbi_search and event.type() == QEvent.FocusOut:
-            # Hide the floating dropdown once focus leaves the box — deferred so a
-            # click on a dropdown item is processed first.
+            # Hide once focus leaves the box — deferred so a click on a result is
+            # processed first.
             QTimer.singleShot(150, self._maybe_hide_pbi_dropdown)
-        elif obj is self.pbi_dropdown and event.type() == QEvent.KeyPress:
-            if event.key() == Qt.Key_Delete and self._pbi_dropdown_mode == "recent":
-                item = self.pbi_dropdown.currentItem()
-                pid = item.data(Qt.UserRole) if item else None
-                if pid:
-                    remove_recent_pbi(pid)
-                    self._show_recent_dropdown()
-                return True
         return super().eventFilter(obj, event)
 
     def _reveal_pbi_dropdown(self):
@@ -536,28 +546,69 @@ class ConfigScreen(QWidget):
             return
         dd.setVisible(False)
 
-    def _show_recent_dropdown(self):
-        self._pbi_dropdown_mode = "recent"
+    def _dismiss_pbi_dropdown(self):
+        """Hide the floating dropdown and cancel any pending/in-flight search so a
+        late result can't pop it back open."""
+        self._pbi_search_seq += 1      # in-flight search results become stale
+        self._pbi_search_timer.stop()  # cancel a pending debounced search
+        self.pbi_dropdown.setVisible(False)
+
+    # ------------------------------------------------------------------ #
+    #  Recently used PBIs (table)                                          #
+    # ------------------------------------------------------------------ #
+
+    def _refresh_recent_table(self):
+        """Rebuild the recently-used PBI table for the current project. Hidden
+        entirely when there are no recents."""
+        from app.utils import theme, icons
         recent = recent_pbis_for_project(self.app_state.token_manager.project)
-        self.pbi_dropdown.clear()
-        if not recent:
-            self.pbi_dropdown.setVisible(False)
-            return
+        self.recent_table.setRowCount(0)
+        has = bool(recent)
+        self.recent_label.setVisible(has)
+        self.recent_table.setVisible(has)
         for r in recent:
-            item = QListWidgetItem(f"#{r['id']}  —  {r['title']}")
-            item.setData(Qt.UserRole, r["id"])
-            item.setToolTip("Click to select — press Delete to remove from recents")
-            self.pbi_dropdown.addItem(item)
-        self._reveal_pbi_dropdown()
+            row = self.recent_table.rowCount()
+            self.recent_table.insertRow(row)
+            cell = QTableWidgetItem(f"#{r['id']}  —  {r['title']}")
+            cell.setData(Qt.UserRole, r["id"])
+            cell.setToolTip("Click to select this PBI")
+            self.recent_table.setItem(row, 0, cell)
+
+            btn = QPushButton()
+            btn.setIcon(icons.icon("x", size=13))
+            btn.setFixedSize(26, 22)
+            btn.setCursor(QCursor(Qt.PointingHandCursor))
+            btn.setToolTip("Remove from recently used")
+            btn.setStyleSheet(theme.btn_ghost_qss("border-radius: 3px;"))
+            btn.clicked.connect(lambda _c, pid=r["id"]: self._remove_recent(pid))
+            wrap = QWidget()
+            wl = QHBoxLayout(wrap)
+            wl.setContentsMargins(0, 0, 0, 0)
+            wl.setAlignment(Qt.AlignCenter)
+            wl.addWidget(btn)
+            self.recent_table.setCellWidget(row, 1, wrap)
+
+    def _on_recent_cell_clicked(self, row: int, col: int):
+        if col != 0:
+            return  # the remove column has its own button
+        item = self.recent_table.item(row, 0)
+        pid = item.data(Qt.UserRole) if item else None
+        if pid:
+            self._select_pbi(pid)
+
+    def _remove_recent(self, pid: int):
+        remove_recent_pbi(pid)
+        self._refresh_recent_table()
+
+    # ------------------------------------------------------------------ #
+    #  PBI search dropdown                                                 #
+    # ------------------------------------------------------------------ #
 
     def _on_pbi_search_text(self, text: str):
         text = text.strip()
         self._pbi_search_seq += 1  # invalidates any in-flight search results
         self._pbi_search_timer.stop()
-        if not text:
-            self._show_recent_dropdown()
-            return
-        if len(text) < 3 and not text.isdigit():
+        if not text or (len(text) < 3 and not text.isdigit()):
             self.pbi_dropdown.setVisible(False)
             return
         self._pbi_search_timer.start()
@@ -566,7 +617,6 @@ class ConfigScreen(QWidget):
         text = self.pbi_search.text().strip()
         if not text or not self.app_state.token_manager.project:
             return
-        self._pbi_dropdown_mode = "search"
         self.pbi_dropdown.clear()
         searching = QListWidgetItem("Searching…")
         searching.setFlags(Qt.NoItemFlags)
@@ -608,7 +658,7 @@ class ConfigScreen(QWidget):
         pid = item.data(Qt.UserRole)
         if not pid:
             return
-        self.pbi_dropdown.setVisible(False)
+        self._dismiss_pbi_dropdown()
         self.pbi_search.blockSignals(True)
         self.pbi_search.clear()
         self.pbi_search.blockSignals(False)
@@ -631,11 +681,10 @@ class ConfigScreen(QWidget):
         t = theme.tokens()
         if self.app_state.pbi_id:
             self.selected_pbi_label.setText(
-                f"Selected:  #{self.app_state.pbi_id} — {self.app_state.pbi_title}"
+                f"<span style='color:{t['accent']}; font-weight:600;'>#{self.app_state.pbi_id}</span>"
+                f"<span style='color:{t['text']};'>&nbsp;&nbsp;{self.app_state.pbi_title}</span>"
             )
-            self.selected_pbi_label.setStyleSheet(
-                f"color: {t['ok']}; font-size: 13px; font-weight: bold;"
-            )
+            self.selected_pbi_label.setStyleSheet("font-size: 13px;")
         else:
             self.selected_pbi_label.setText("No PBI selected — search above to choose one")
             self.selected_pbi_label.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
@@ -655,6 +704,7 @@ class ConfigScreen(QWidget):
         self._refresh_selected_pbi_label()
 
         save_recent_pbi(pbi_id, title, self.app_state.token_manager.project)
+        self._refresh_recent_table()
 
         self.area_edit.setText(area)
         self.iteration_edit.setText(iteration)
@@ -718,7 +768,7 @@ class ConfigScreen(QWidget):
             self.app_state.test_plan_detecting = True
             self.app_state.test_plan_progress = None
             self.test_plan_label.setStyleSheet("color: #888; font-size: 12px;")
-            self.test_plan_label.setText("🧪 Checking for a test plan for this PBI…")
+            self.test_plan_label.setText("Checking for a test plan for this PBI…")
         self._tp_seq += 1
         seq = self._tp_seq
         worker = Worker(self._do_detect_test_plan, pbi_id, area_path)
@@ -785,24 +835,22 @@ class ConfigScreen(QWidget):
         Shared by fresh detection and the same-PBI re-render path."""
         from app.utils import theme
         t = theme.tokens()
+        self.test_plan_label.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         name = self.app_state.test_plan_name
         if self.app_state.suite_id is not None:
-            self.test_plan_label.setStyleSheet(f"color: {t['ok']}; font-size: 12px;")
             self.test_plan_label.setText(
-                f"🧪 Test Plan: <b>{name}</b> — a test suite already exists for this "
-                "PBI; new test cases are added to it."
+                f"{theme.status_dot_html('ok')} Test plan: <b>{name}</b> — a suite already "
+                "exists for this PBI; new test cases are added to it."
             )
         elif name:
-            self.test_plan_label.setStyleSheet(f"color: {t['warn_fg']}; font-size: 12px;")
             self.test_plan_label.setText(
-                f"🧪 Test Plan: <b>{name}</b> — no test suite exists for this PBI yet. "
-                "One is created automatically when you add test cases."
+                f"{theme.status_dot_html('warn')} Test plan: <b>{name}</b> — no suite yet; "
+                "one is created when you add test cases."
             )
         else:
-            self.test_plan_label.setStyleSheet(f"color: {t['warn_fg']}; font-size: 12px;")
             self.test_plan_label.setText(
-                "🧪 No test plan exists for this PBI's area yet. A test plan and suite are "
-                "created automatically when you add test cases."
+                f"{theme.status_dot_html('warn')} No test plan yet — a plan and suite are "
+                "created when you add test cases."
             )
 
     def _on_test_plan_error(self, seq: int, exc: Exception):

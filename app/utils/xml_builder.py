@@ -5,6 +5,34 @@ import xml.etree.ElementTree as ET
 from app.models.test_case import Step
 
 
+def html_to_text(html: str) -> str:
+    """Flatten an Azure DevOps rich-text/HTML field to clean plain text.
+
+    ADO stores fields like Preconditions as HTML, often with inline colours or
+    highlight spans that clash with the app's theme when rendered raw. This
+    keeps block structure (block ends and list items become line breaks /
+    bullets), strips all tags + styling, and unescapes entities. Returns '' for
+    empty / whitespace-only input.
+    """
+    if not html or not html.strip():
+        return ""
+    s = html
+    s = _re.sub(r"(?i)<\s*li[^>]*>", "\n• ", s)
+    s = _re.sub(r"(?i)<\s*(br|/p|/div|/h[1-6]|/tr)\s*/?>", "\n", s)
+    s = _re.sub(r"<[^>]+>", "", s)            # strip any remaining tags
+    s = _html.unescape(s).replace("\xa0", " ")
+    lines, blank = [], False
+    for ln in s.split("\n"):
+        ln = ln.strip()
+        if ln:
+            lines.append(ln)
+            blank = False
+        elif lines and not blank:
+            lines.append("")
+            blank = True
+    return "\n".join(lines).strip()
+
+
 def parse_steps_xml(xml_str: str) -> list:
     """
     Parse the Microsoft.VSTS.TCM.Steps XML into a list of Step objects.

@@ -203,22 +203,18 @@ class ProgressScreen(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
+        from app.utils import theme, icons
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setFixedHeight(38)
         self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setStyleSheet(
-            "QPushButton { background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; "
-            "font-size: 13px; padding: 0 16px; }"
-            "QPushButton:hover { background: #e0e0e0; }"
-            "QPushButton:disabled { color: #aaa; }"
-        )
+        self.cancel_btn.setStyleSheet(theme.btn_neutral_qss("font-size: 13px; padding: 0 16px;"))
         self.cancel_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.cancel_btn.clicked.connect(self._on_cancel)
         btn_row.addWidget(self.cancel_btn)
         btn_row.addSpacing(8)
 
-        from app.utils import theme
-        self.done_btn = QPushButton("Done — Create Another Batch")
+        self.done_btn = QPushButton("Create another batch")
+        self.done_btn.setIcon(icons.icon("plus", color="white", size=15))
         self.done_btn.setFixedHeight(38)
         self.done_btn.setEnabled(False)
         self.done_btn.setStyleSheet(
@@ -240,15 +236,12 @@ class ProgressScreen(QWidget):
             f"stop:0 #0078d4, stop:1 #00b0ff); }}"
         )
         self._spinner.set_color(t["accent"])
-        self.cancel_btn.setStyleSheet(
-            f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-            f"border-radius: 4px; font-size: 13px; padding: 0 16px; }}"
-            f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
-            f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
-        )
+        from app.utils import icons
+        self.cancel_btn.setStyleSheet(theme.btn_neutral_qss("font-size: 13px; padding: 0 16px;"))
         self.done_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
+        self.done_btn.setIcon(icons.icon("plus", color="white", size=15))
 
     @staticmethod
     def _progress_phrase(n_creates: int, n_updates: int) -> str:
@@ -457,7 +450,7 @@ class ProgressScreen(QWidget):
             )
         else:
             clear_draft_queue()
-            self.done_btn.setText("Done — Create Another Batch")
+            self.done_btn.setText("Create another batch")
             self.result_label.setText(
                 f"Check Azure DevOps to verify that the test cases appear under PBI #{self.app_state.pbi_id}. "
                 "Open the PBI and look for the 'Tests' / 'Tested By' links section."

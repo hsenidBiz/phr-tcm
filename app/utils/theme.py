@@ -117,6 +117,11 @@ def apply(dark: bool) -> None:
     _dark = dark
     save_settings({"dark_mode": dark})
     _set_palette(dark)
+    try:
+        from app.utils import icons
+        icons.clear_cache()   # re-tint icons for the new theme
+    except Exception:
+        pass
 
 
 def load_saved() -> None:
@@ -132,34 +137,97 @@ def load_saved() -> None:
 # screen's refresh_theme() can never drift apart. `extra` is appended to
 # the base rule for per-site padding / font-size / border-radius tweaks.
 
-def btn_primary_qss(extra: str = "border-radius: 4px;") -> str:
+_RADIUS = "border-radius: 4px;"  # baked into every builder so a custom `extra`
+                                 # (padding/font-size) can never drop the rounding.
+
+
+def btn_primary_qss(extra: str = "") -> str:
     """Solid accent-blue action button with theme-aware disabled state."""
     t = tokens()
     return (
-        f"QPushButton {{ background: {t['accent']}; color: white; {extra} }}"
+        f"QPushButton {{ background: {t['accent']}; color: white; {_RADIUS} {extra} }}"
         f"QPushButton:hover {{ background: #106ebe; }}"
         f"QPushButton:disabled {{ background: {t['btn_disabled_bg']}; color: {t['btn_disabled_fg']}; }}"
     )
 
 
-def btn_danger_qss(extra: str = "border-radius: 4px;") -> str:
+def btn_danger_qss(extra: str = "") -> str:
     """Solid red destructive-action button with theme-aware disabled state."""
     t = tokens()
     return (
-        f"QPushButton {{ background: #c42b1c; color: white; {extra} }}"
+        f"QPushButton {{ background: #c42b1c; color: white; {_RADIUS} {extra} }}"
         f"QPushButton:hover {{ background: #a4261a; }}"
         f"QPushButton:disabled {{ background: {t['btn_disabled_bg']}; color: {t['btn_disabled_fg']}; }}"
     )
 
 
-def btn_neutral_qss(extra: str = "border-radius: 4px; padding: 5px 14px;") -> str:
+def btn_neutral_qss(extra: str = "padding: 5px 14px;") -> str:
     """Standard neutral button (theme surface colours)."""
     t = tokens()
     return (
         f"QPushButton {{ background: {t['btn_bg']}; border: 1px solid {t['btn_border']}; "
-        f"color: {t['text']}; {extra} }}"
+        f"color: {t['text']}; {_RADIUS} {extra} }}"
         f"QPushButton:hover {{ background: {t['btn_hover']}; }}"
     )
+
+
+def btn_ghost_qss(extra: str = "padding: 5px 12px;") -> str:
+    """Quiet borderless button — for toolbar / low-emphasis actions."""
+    t = tokens()
+    return (
+        f"QPushButton {{ background: transparent; border: none; color: {t['text_dim']}; "
+        f"{_RADIUS} {extra} }}"
+        f"QPushButton:hover {{ background: {t['btn_hover']}; color: {t['text']}; }}"
+        f"QPushButton:disabled {{ color: {t['text_dim2']}; }}"
+    )
+
+
+# ------------------------------------------------------------------ #
+#  Design-system helpers — spacing, type, surfaces                     #
+# ------------------------------------------------------------------ #
+# Palette-based. Do NOT install a global QApplication stylesheet: it would
+# switch item views to QStyleSheetStyle and silently drop item background/
+# foreground roles (see run_screen's status-colour delegate).
+
+SPACE_XS, SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL = 4, 8, 16, 24, 32
+
+
+def page_title_qss() -> str:
+    return f"color: {tokens()['text']}; font-size: 20px; font-weight: 600;"
+
+
+def section_label_qss() -> str:
+    """Small muted section label that sits above a group of controls."""
+    return f"color: {tokens()['text_dim']}; font-size: 11px; font-weight: 600;"
+
+
+def caption_qss() -> str:
+    return f"color: {tokens()['text_dim2']}; font-size: 11px;"
+
+
+def card_qss(extra: str = "") -> str:
+    """Subtle surface card style (apply to an objectName-scoped QFrame)."""
+    t = tokens()
+    return (f"background: {t['surface']}; border: 1px solid {t['border']}; "
+            f"border-radius: 8px; {extra}")
+
+
+def input_qss(extra: str = "") -> str:
+    """Consistent text-input / combo styling."""
+    t = tokens()
+    return (
+        f"QLineEdit, QPlainTextEdit, QComboBox {{ background: {t['surface2']}; "
+        f"border: 1px solid {t['border']}; border-radius: 6px; padding: 6px 8px; "
+        f"color: {t['text']}; {extra} }}"
+        f"QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{ border: 1px solid {t['accent']}; }}"
+    )
+
+
+def status_dot_html(state: str) -> str:
+    """A small coloured bullet for inline status text (ok / warn / error)."""
+    t = tokens()
+    col = {"ok": t["ok"], "warn": t["warn_fg"], "error": t["error"]}.get(state, t["text_dim2"])
+    return f"<span style='color: {col};'>●</span>"
 
 
 # ------------------------------------------------------------------ #
