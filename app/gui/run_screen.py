@@ -176,10 +176,14 @@ class RunScreen(QWidget):
         if key in self.app_state.test_points_by_suite:
             self._color_lists()   # already cached -> colour now
             return
-        tc_ids = [c.get("_id") for c in self._cases if c.get("_id")]
-        if not tc_ids:
+        if not any(c.get("_id") for c in self._cases):
             return
-        worker = Worker(self.app_state.client.get_test_points, plan, suite, tc_ids)
+        # Fetch the WHOLE suite's points (no testCaseId filter). One read covers
+        # every loaded case AND sidesteps a long comma-separated testCaseId list,
+        # which silently fails for a big PBI (~50 cases) — that left every row
+        # uncoloured even though the data existed (the runner, fetching only its
+        # small session subset, still got outcomes).
+        worker = Worker(self.app_state.client.get_test_points, plan, suite)
         worker.signals.result.connect(lambda pts, k=key: self._on_points_prefetched(k, pts))
         worker.signals.error.connect(lambda _exc: None)
         QThreadPool.globalInstance().start(worker)
@@ -234,6 +238,52 @@ class RunScreen(QWidget):
         self._color_list(self._available)
         self._color_list(self._session_list)
 
+    # Legend explaining the row tints. ("_active" = has a test point but no
+    # recorded result yet → the dark-blue _OUTCOME_ACTIVE_BG tint.)
+    _LEGEND_ITEMS = [
+        ("Passed", "passed"), ("Failed", "failed"), ("Blocked", "blocked"),
+        ("N/A", "notapplicable"), ("Not run", "_active"),
+    ]
+
+    def _build_legend(self):
+        """A small row of colour swatches + labels matching the list row tints."""
+        row = QHBoxLayout()
+        row.setContentsMargins(2, 0, 2, 0)
+        row.setSpacing(6)
+        self._legend_caption = QLabel("Last result:")
+        row.addWidget(self._legend_caption)
+        self._legend_swatches = []   # (swatch_label, outcome_key)
+        self._legend_labels = [self._legend_caption]
+        for text, oc in self._LEGEND_ITEMS:
+            row.addSpacing(6)
+            sw = QLabel()
+            sw.setFixedSize(13, 13)
+            self._legend_swatches.append((sw, oc))
+            row.addWidget(sw)
+            lbl = QLabel(text)
+            self._legend_labels.append(lbl)
+            row.addWidget(lbl)
+        row.addStretch()
+        self._color_legend()
+        return row
+
+    def _color_legend(self):
+        """Fill each swatch with the SAME colour a row gets — the status tint
+        composited over the list's base — and theme the labels."""
+        t = theme.tokens()
+        base = self._available.palette().base().color()
+        a = self._OUTCOME_ALPHA / 255.0
+        for sw, oc in self._legend_swatches:
+            hexcol = self._OUTCOME_ACTIVE_BG if oc == "_active" else self._OUTCOME_BG[oc]
+            tint = QColor(hexcol)
+            r = round(base.red() * (1 - a) + tint.red() * a)
+            g = round(base.green() * (1 - a) + tint.green() * a)
+            b = round(base.blue() * (1 - a) + tint.blue() * a)
+            sw.setStyleSheet(
+                f"background: rgb({r},{g},{b}); border: 1px solid {t['border']}; border-radius: 3px;")
+        for lbl in self._legend_labels:
+            lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+
     # ------------------------------------------------------------------ #
     #  UI                                                                 #
     # ------------------------------------------------------------------ #
@@ -263,7 +313,8 @@ class RunScreen(QWidget):
         self._header_lbl.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(self._header_lbl)
 
-        splitter = QSplitter(Qt.Horizontal)
+        from app.gui.grip_splitter import GripSplitter
+        splitter = GripSplitter(Qt.Horizontal)
 
         # -- Left: available cases ----------------------------------------
         left = QWidget()
@@ -345,6 +396,7 @@ class RunScreen(QWidget):
         splitter.setSizes([460, 116, 380])
         self._splitter = splitter
         layout.addWidget(splitter, 1)
+        layout.addLayout(self._build_legend())
 
         # Loading panel shown while the test plan/suite is being resolved (the
         # case list + outcome colours can't load until that's known).
@@ -469,3 +521,4 @@ class RunScreen(QWidget):
         self._remove_btn.setIcon(icons.icon("arrow-left", size=15))
         self._start_btn.setStyleSheet(theme.btn_primary_qss("font-size: 13px; padding: 0 20px;"))
         self._start_btn.setIcon(icons.icon("play", color="white", size=15))
+        self._color_legend()   # re-composite swatches over the new theme base

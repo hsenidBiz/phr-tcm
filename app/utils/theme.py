@@ -52,6 +52,8 @@ _LIGHT: dict = {
     "warn_fg":            "#e67e00",
     "btn_disabled_bg":    "#aaaaaa",
     "btn_disabled_fg":    "#eeeeee",
+    "scroll_handle":      "#c4c4c4",
+    "scroll_handle_hover":"#a6a6a6",
 }
 
 _DARK: dict = {
@@ -97,6 +99,8 @@ _DARK: dict = {
     "warn_fg":            "#e5c07b",
     "btn_disabled_bg":    "#3a3a3a",
     "btn_disabled_fg":    "#777777",
+    "scroll_handle":      "#4a4a4a",
+    "scroll_handle_hover":"#5e5e5e",
 }
 
 
@@ -223,11 +227,86 @@ def input_qss(extra: str = "") -> str:
     )
 
 
+def header_qss() -> str:
+    """Modern flat table/tree header. Apply to the *header view* — a child of the
+    item view, e.g. ``table.horizontalHeader()`` / ``tree.header()``. Styling the
+    header child never switches the item view itself to QStyleSheetStyle, so item
+    setBackground / setForeground / alternating rows are all preserved."""
+    t = tokens()
+    return (
+        "QHeaderView { border: none; background: transparent; }"
+        f"QHeaderView::section {{ background: {t['header_bg']}; color: {t['text_dim']}; "
+        f"padding: 7px 12px; border: none; border-bottom: 1px solid {t['border']}; "
+        "font-weight: 600; }"
+        f"QHeaderView::section:hover {{ color: {t['text']}; }}"
+        "QHeaderView::section:vertical { border-bottom: none; }"
+    )
+
+
+def style_item_view(view) -> None:
+    """Apply the modern flat look (flat header, no gridlines, no sunken frame) to
+    a QTableWidget / QTreeWidget. Only the header *child* is stylesheet-styled and
+    the grid/frame are toggled via methods — item rendering stays native, so every
+    setBackground / setForeground / alternating-row colour is preserved. Safe to
+    call again on theme toggle to re-tint the header."""
+    view.setFrameShape(view.NoFrame)
+    qss = header_qss()
+    for getter in ("horizontalHeader", "verticalHeader", "header"):
+        fn = getattr(view, getter, None)
+        hdr = fn() if callable(fn) else None
+        if hdr is not None:
+            hdr.setStyleSheet(qss)
+            hdr.setHighlightSections(False)
+    if hasattr(view, "setShowGrid"):
+        view.setShowGrid(False)
+
+
 def status_dot_html(state: str) -> str:
     """A small coloured bullet for inline status text (ok / warn / error)."""
     t = tokens()
     col = {"ok": t["ok"], "warn": t["warn_fg"], "error": t["error"]}.get(state, t["text_dim2"])
     return f"<span style='color: {col};'>●</span>"
+
+
+def scrollbar_qss() -> str:
+    """Modern thin scrollbar — no arrow buttons, transparent track, rounded
+    handle that darkens on hover.
+
+    Apply ONLY to the QScrollBar widgets themselves (via `style_scrollbars()` /
+    `verticalScrollBar().setStyleSheet()`), NEVER to a container or globally:
+    a stylesheet on an item view (or its ancestor) switches it to
+    QStyleSheetStyle, which drops model item backgrounds/foregrounds and
+    alternating-row colours (import detail rows, rename diff, review tree, the
+    run-screen status tints). Styling the scrollbar child is downward-safe."""
+    t = tokens()
+    h, hh = t["scroll_handle"], t["scroll_handle_hover"]
+    return (
+        "QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }"
+        f"QScrollBar::handle:vertical {{ background: {h}; min-height: 28px; border-radius: 5px; }}"
+        f"QScrollBar::handle:vertical:hover {{ background: {hh}; }}"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; border: none; background: none; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+        "QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }"
+        f"QScrollBar::handle:horizontal {{ background: {h}; min-width: 28px; border-radius: 5px; }}"
+        f"QScrollBar::handle:horizontal:hover {{ background: {hh}; }}"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; border: none; background: none; }"
+        "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }"
+    )
+
+
+def style_scrollbars(root) -> None:
+    """Give every scroll area under `root` (and `root` itself if it is one) the
+    modern scrollbar look, by styling each scrollbar widget directly so item
+    views are never switched to QStyleSheetStyle. Call after a window's UI is
+    built and again on theme toggle (handle colours are theme-aware)."""
+    from PyQt5.QtWidgets import QAbstractScrollArea
+    qss = scrollbar_qss()
+    areas = list(root.findChildren(QAbstractScrollArea))
+    if isinstance(root, QAbstractScrollArea):
+        areas.append(root)
+    for area in areas:
+        area.verticalScrollBar().setStyleSheet(qss)
+        area.horizontalScrollBar().setStyleSheet(qss)
 
 
 # ------------------------------------------------------------------ #

@@ -798,6 +798,48 @@ class DevOpsClient:
         return {"outcome": data.get("outcome", "") or "",
                 "comment": data.get("comment", "") or ""}
 
+    def get_result_attachments(self, run_id: int, result_id: int) -> list:
+        """List a test result's attachments. Returns a list of
+        {id, file_name, comment}. Safe — read only."""
+        url = (f"{self._base()}/test/Runs/{run_id}/Results/{result_id}/attachments"
+               f"?api-version={API_VERSION}")
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        data = self._handle(resp)
+        return [{"id": a.get("id"),
+                 "file_name": a.get("fileName", "") or "",
+                 "comment": a.get("comment", "") or ""}
+                for a in data.get("value", [])]
+
+    def download_result_attachment(self, run_id: int, result_id: int,
+                                   attachment_id: int) -> bytes:
+        """Download one test-result attachment's raw bytes. Safe — read only."""
+        url = (f"{self._base()}/test/Runs/{run_id}/Results/{result_id}"
+               f"/attachments/{attachment_id}?api-version={API_VERSION}")
+        headers = dict(self.tm.get_json_headers())
+        headers["Accept"] = "application/octet-stream"
+        resp = self._session.get(url, headers=headers, timeout=60)
+        if resp.status_code == 401:
+            raise TokenExpiredError("Token expired or invalid (401). Please sign in again.")
+        resp.raise_for_status()
+        return resp.content
+
+    def get_result_screenshots(self, run_id: int, result_id: int) -> list:
+        """List + download a result's *image* attachments in one (worker-thread)
+        call. Returns a list of {file_name, data: bytes}, skipping non-images and
+        any download that fails. Safe — read only."""
+        image_exts = (".png", ".jpg", ".jpeg", ".bmp", ".gif")
+        out = []
+        for att in self.get_result_attachments(run_id, result_id):
+            if not (att.get("file_name") or "").lower().endswith(image_exts):
+                continue
+            try:
+                data = self.download_result_attachment(run_id, result_id, att["id"])
+            except Exception:
+                continue
+            if data:
+                out.append({"file_name": att.get("file_name", ""), "data": data})
+        return out
+
     def create_test_run(self, plan_id: int, name: str, point_ids: list) -> dict:
         """POST a manual test run seeded from the given test point ids. Azure
         DevOps creates one result per point and the run starts InProgress.

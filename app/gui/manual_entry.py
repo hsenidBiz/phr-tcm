@@ -107,6 +107,8 @@ class ManualEntryWidget(QWidget):
         self.steps_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.steps_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.steps_table.verticalHeader().setDefaultSectionSize(32)
+        self.steps_table.setAlternatingRowColors(True)
+        theme.style_item_view(self.steps_table)   # modern flat header, no grid/frame
         self.steps_table.setMinimumHeight(160)
         # Drag-and-drop row reordering
         self.steps_table.setDragEnabled(True)
@@ -216,6 +218,7 @@ class ManualEntryWidget(QWidget):
 
     def refresh_theme(self):
         from app.utils import theme, icons
+        theme.style_item_view(self.steps_table)   # re-tint the flat header
         self._add_step_btn.setStyleSheet(theme.btn_neutral_qss("padding: 4px 10px;"))
         self._add_step_btn.setIcon(icons.icon("plus", size=15))
         self._remove_step_btn.setStyleSheet(theme.btn_ghost_qss("padding: 4px 10px;"))

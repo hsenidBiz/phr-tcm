@@ -1,6 +1,7 @@
+import os
 import sys
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtCore import Qt
 
 from app.auth.token_manager import TokenManager
@@ -102,6 +103,12 @@ def _run_velopack_startup():
         pass
 
 
+def _resource_path(rel: str) -> str:
+    """Resolve a bundled resource path for both source runs and the frozen build."""
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, rel)
+
+
 def main():
     _run_velopack_startup()
     _enable_high_dpi()
@@ -110,8 +117,17 @@ def main():
     app.setApplicationName("Azure DevOps Test Case Manager")
     app.setOrganizationName("Internal Tool")
 
-    # Set a clean default font
-    font = QFont("Segoe UI", 10)
+    # App icon for the taskbar / alt-tab / windows. The frozen .exe + installer
+    # icon come from the same resources/icon.ico (spec icon= / build.ps1 --icon).
+    _icon = _resource_path(os.path.join("resources", "icon.ico"))
+    if os.path.exists(_icon):
+        app.setWindowIcon(QIcon(_icon))
+
+    # Native, highly-readable Windows UI font. 11pt (up from 10) gives more
+    # comfortable body/table/form text; chrome with explicit pixel sizes (tabs,
+    # captions, the title bar) is unaffected.
+    font = QFont("Segoe UI", 11)
+    font.setStyleStrategy(QFont.PreferAntialias)
     app.setFont(font)
 
     # Light style polish

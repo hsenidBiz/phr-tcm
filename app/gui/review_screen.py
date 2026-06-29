@@ -62,6 +62,8 @@ class ReviewScreen(QWidget):
         self.tree.setEditTriggers(QTreeWidget.NoEditTriggers)
         self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        from app.utils import theme as _theme
+        _theme.style_item_view(self.tree)   # modern flat header, no frame (keeps item colours)
         layout.addWidget(self.tree)
 
         # Delete key shortcut on the tree
@@ -158,6 +160,7 @@ class ReviewScreen(QWidget):
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
+        theme.style_item_view(self.tree)   # re-tint the flat header
         self._warn_frame.setStyleSheet(
             f"#warnFrame {{ background: {t['review_warn_bg']}; "
             f"border: 1px solid {t['review_warn_border']}; border-radius: 6px; }}"

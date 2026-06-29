@@ -702,12 +702,11 @@ class ConfigScreen(QWidget):
 
     def _on_pbi_result(self, pbi_id: int, fields: dict):
         title = fields.get("System.Title", "Unknown")
-        wtype = fields.get("System.WorkItemType", "")
         area = fields.get("System.AreaPath", "")
         iteration = fields.get("System.IterationPath", "")
 
         self.app_state.pbi_id = pbi_id
-        self.app_state.pbi_title = f"{title} ({wtype})"
+        self.app_state.pbi_title = title
         self.app_state.area_path = area
         self.app_state.iteration_path = iteration
 
@@ -862,15 +861,17 @@ class ConfigScreen(QWidget):
         self.test_plan_label.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         name = self.app_state.test_plan_name
         if self.app_state.suite_id is not None:
-            # Suite exists → just the green dot + plan name (detail in tooltip).
-            self.test_plan_label.setText(f"{theme.status_dot_html('ok')} <b>{name}</b>")
+            # Suite exists → green dot + plan name (detail in tooltip).
+            self.test_plan_label.setText(
+                f"{theme.status_dot_html('ok')} Current Test Plan: <b>{name}</b>"
+            )
             self.test_plan_label.setToolTip(
                 "A test suite already exists for this PBI; new test cases are added to it."
             )
         elif name:
             self.test_plan_label.setText(
-                f"{theme.status_dot_html('warn')} Test plan: <b>{name}</b> — no suite yet; "
-                "one is created when you add test cases."
+                f"{theme.status_dot_html('warn')} Current Test Plan: <b>{name}</b> — no suite "
+                "yet; one is created when you add test cases."
             )
             self.test_plan_label.setToolTip("")
         else:

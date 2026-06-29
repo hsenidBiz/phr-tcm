@@ -7,9 +7,10 @@ from PyQt5.QtGui import QCursor
 from PyQt5.QtCore import Qt
 
 from app.utils.settings import load_settings, save_settings
+from app.gui import frameless
 
 
-class TemplateDialog(QDialog):
+class TemplateDialog(frameless.FramelessMixin, QDialog):
     """Dialog for saving, applying, renaming, and deleting test case templates."""
 
     applied = pyqtSignal(dict)  # emits template dict when user clicks Apply
@@ -21,6 +22,10 @@ class TemplateDialog(QDialog):
         self.setMinimumWidth(440)
         self.setMinimumHeight(340)
         self._build_ui()
+        self.init_frameless("Test Case Templates", resizable=True,
+                            show_min=False, show_max=False)
+        from app.utils import theme
+        theme.style_scrollbars(self)
         self._load_templates()
 
     def _build_ui(self):

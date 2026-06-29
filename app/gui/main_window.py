@@ -17,6 +17,7 @@ from app.gui.edit_screen import EditScreen
 from app.gui.run_screen import RunScreen
 from app.gui.review_screen import ReviewScreen
 from app.gui.progress_screen import ProgressScreen
+from app.gui import frameless
 from app.utils import theme
 
 # Page indices in the QStackedWidget
@@ -27,7 +28,7 @@ PAGE_REVIEW = 3
 PAGE_PROGRESS = 4
 
 
-class MainWindow(QMainWindow):
+class MainWindow(frameless.FramelessMixin, QMainWindow):
     def __init__(self, app_state):
         super().__init__()
         self.app_state = app_state
@@ -44,6 +45,10 @@ class MainWindow(QMainWindow):
         self._build_main_page()
         self._build_review_page()
         self._build_progress_page()
+
+        # Custom dark title bar + 1px border in place of the native OS chrome.
+        self._title_bar = self.init_frameless(
+            f"Azure DevOps Test Case Manager  v{VERSION}")
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -81,6 +86,9 @@ class MainWindow(QMainWindow):
         self._expiry_tick.start()
 
         self.stack.setCurrentIndex(PAGE_AUTH)
+
+        # Modern scrollbars across every screen (re-applied on theme toggle).
+        theme.style_scrollbars(self)
 
         # Restore draft queue after window is shown
         QTimer.singleShot(300, self._check_draft_restore)
@@ -125,9 +133,11 @@ class MainWindow(QMainWindow):
         h_layout.addWidget(self.main_header_label)
         h_layout.addStretch()
         self.queue_count_label = QLabel("0 queued")
+        self.queue_count_label.setAlignment(Qt.AlignCenter)
+        self.queue_count_label.setFixedHeight(22)   # radius = half height -> true pill
         self.queue_count_label.setStyleSheet(
-            "QLabel { background: #aaa; color: white; border-radius: 10px; "
-            "padding: 2px 12px; font-weight: bold; font-size: 11px; }"
+            "QLabel { background: #aaa; color: white; border-radius: 11px; "
+            "padding: 0px 14px; font-weight: bold; font-size: 11px; }"
         )
         h_layout.addWidget(self.queue_count_label)
         v.addWidget(self._header_frame)
@@ -136,11 +146,19 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(
             "QTabWidget::pane { border: none; border-top: 1px solid #ddd; } "
-            "QTabBar::tab { padding: 8px 18px; min-width: 140px; border: none; "
+            "QTabBar::tab { padding: 8px 18px 14px; min-width: 140px; border: none; "
             "border-bottom: 2px solid transparent; color: #888; font-size: 17px; background: transparent; } "
             "QTabBar::tab:selected { color: #0078d4; font-weight: bold; border-bottom: 2px solid #0078d4; } "
             "QTabBar::tab:hover:!selected { color: #444; border-bottom: 2px solid #ccc; } "
         )
+        # Match the tab bar's real font to the QSS font-size (17px). The QSS only
+        # changes the *rendered* size; QTabBar still measures each tab with the
+        # widget font, so without this it reserves too little height and clips
+        # descenders (p, y). Bold is the widest state (selected) — size for it.
+        from PyQt5.QtGui import QFont
+        _tab_font = QFont("Segoe UI")
+        _tab_font.setPixelSize(17)
+        self.tabs.tabBar().setFont(_tab_font)
 
         # Tab order: Import → Edit → Manual → Run (land on Import first).
         self.import_widget = ImportWidget(self.app_state)
@@ -471,8 +489,8 @@ class MainWindow(QMainWindow):
         self.queue_count_label.setText(f"{n} queued")
         color = "#0078d4" if n > 0 else "#aaa"
         self.queue_count_label.setStyleSheet(
-            f"QLabel {{ background: {color}; color: white; border-radius: 10px; "
-            f"padding: 2px 12px; font-weight: bold; font-size: 11px; }}"
+            f"QLabel {{ background: {color}; color: white; border-radius: 11px; "
+            f"padding: 0px 14px; font-weight: bold; font-size: 11px; }}"
         )
         self._sync_review_btn(n)
 
@@ -631,16 +649,21 @@ class MainWindow(QMainWindow):
     def _update_theme_btn(self):
         from app.utils import icons
         dark = theme.is_dark()
-        self._theme_btn.setText("")
-        self._theme_btn.setIcon(icons.icon("sun" if dark else "moon", size=18))
-        self._theme_btn.setToolTip("Switch to light theme" if dark else "Switch to dark theme")
+        t = theme.tokens()
+        # Icon + label both reflect the CURRENT mode; clicking anywhere on the
+        # button (icon or text) toggles via the _toggle_theme connection.
+        self._theme_btn.setText("Dark Mode" if dark else "Light Mode")
+        self._theme_btn.setIcon(icons.icon("moon" if dark else "sun", color=t["text_dim"], size=16))
+        self._theme_btn.setToolTip("Switch to light mode" if dark else "Switch to dark mode")
         self._theme_btn.setStyleSheet(
-            "QPushButton { border: none; background: transparent; padding: 3px 6px; }"
-            f"QPushButton:hover {{ background: {theme.tokens()['btn_hover']}; border-radius: 4px; }}"
+            f"QPushButton {{ border: none; background: transparent; padding: 3px 8px; "
+            f"color: {t['text_dim']}; font-size: 12px; }}"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; border-radius: 4px; color: {t['text']}; }}"
         )
 
     def _refresh_all_themes(self):
         self._refresh_self_theme()
+        self.refresh_frameless_theme()     # title bar + repaint the border
         self.auth_screen.refresh_theme()
         self.config_screen.refresh_theme()
         self.manual_widget.refresh_theme()
@@ -649,6 +672,7 @@ class MainWindow(QMainWindow):
         self.run_widget.refresh_theme()
         self.review_screen.refresh_theme()
         self.progress_screen.refresh_theme()
+        theme.style_scrollbars(self)  # re-tint scrollbar handles for the theme
 
     def _refresh_self_theme(self):
         t = theme.tokens()
@@ -661,7 +685,7 @@ class MainWindow(QMainWindow):
         self.main_header_label.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         self.tabs.setStyleSheet(
             f"QTabWidget::pane {{ border: none; border-top: 1px solid {t['border']}; }} "
-            f"QTabBar::tab {{ padding: 8px 18px; min-width: 140px; border: none; "
+            f"QTabBar::tab {{ padding: 8px 18px 14px; min-width: 140px; border: none;"
             f"border-bottom: 2px solid transparent; color: {t['text_dim2']}; "
             f"font-size: 17px; background: transparent; }} "
             f"QTabBar::tab:selected {{ color: {t['accent']}; font-weight: bold; "

@@ -17,8 +17,10 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.gui import frameless
 
-class PowerRenameDialog(QDialog):
+
+class PowerRenameDialog(frameless.FramelessMixin, QDialog):
     """PowerRename-style batch rename for test case titles.
 
     Shows a live Before/After preview table with per-row checkboxes.
@@ -45,6 +47,10 @@ class PowerRenameDialog(QDialog):
         self.setMinimumSize(860, 520)
         self.resize(960, 640)
         self._build_ui()
+        self.init_frameless("Rename Test Cases", resizable=True,
+                            show_min=False, show_max=False)
+        from app.utils import theme
+        theme.style_scrollbars(self)
         self._update_preview()
 
     # ------------------------------------------------------------------ #

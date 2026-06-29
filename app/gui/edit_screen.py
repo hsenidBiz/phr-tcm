@@ -192,7 +192,8 @@ class EditScreen(QWidget):
         layout.addLayout(hdr)
 
         # Splitter: left = list, right = form
-        splitter = QSplitter(Qt.Horizontal)
+        from app.gui.grip_splitter import GripSplitter
+        splitter = GripSplitter(Qt.Horizontal)
 
         # -- Left: test case list -----------------------------------------
         left = QWidget()

@@ -311,6 +311,27 @@ class ImportWidget(QWidget):
         ov_row2.addWidget(self.preconditions_edit)
         ov_outer.addLayout(ov_row2)
 
+        # Opt-in toggle: the override section is hidden until switched on. Both
+        # the switch and its label toggle it.
+        from app.gui.toggle_switch import ToggleSwitch
+        ov_toggle_row = QHBoxLayout()
+        ov_toggle_row.setSpacing(8)
+        self._override_toggle = ToggleSwitch()
+        ov_toggle_row.addWidget(self._override_toggle)
+        self._override_toggle_btn = QPushButton("Override values for all imported cases")
+        self._override_toggle_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._override_toggle_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; color: #555; "
+            "font-size: 13px; padding: 2px 4px; } QPushButton:hover { color: #222; }"
+        )
+        self._override_toggle_btn.clicked.connect(self._override_toggle.toggle)
+        ov_toggle_row.addWidget(self._override_toggle_btn)
+        ov_toggle_row.addStretch()
+        layout.addLayout(ov_toggle_row)
+
+        # Hidden by default; the toggle reveals it.
+        self._override_frame.setVisible(False)
+        self._override_toggle.toggled.connect(self._override_frame.setVisible)
         layout.addWidget(self._override_frame)
 
         # Warnings label
@@ -357,6 +378,7 @@ class ImportWidget(QWidget):
         self.preview_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.preview_table.setSelectionMode(QTableWidget.NoSelection)
         self.preview_table.setAlternatingRowColors(True)
+        theme.style_item_view(self.preview_table)   # modern flat header, no grid/frame
         layout.addWidget(self.preview_table)
 
         # count_label and queue_btn are created here but placed into the
@@ -441,12 +463,18 @@ class ImportWidget(QWidget):
     def refresh_theme(self):
         from app.utils import theme
         t = theme.tokens()
+        theme.style_item_view(self.preview_table)   # re-tint the flat header
         self._tmpl_frame.setStyleSheet(
             f"#tmplFrame {{ background: {t['tmpl_bg']}; border: 1px solid {t['tmpl_border']}; border-radius: 6px; }}"
         )
         self.file_label.setStyleSheet(f"color: {t['file_lbl_color']};")
         self._override_frame.setStyleSheet(
             f"#overrideFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 6px; }}"
+        )
+        self._override_toggle.set_colors(t['accent'], t['scroll_handle'], '#ffffff')
+        self._override_toggle_btn.setStyleSheet(
+            f"QPushButton {{ border: none; background: transparent; color: {t['text_dim']}; "
+            f"font-size: 13px; padding: 2px 4px; }} QPushButton:hover {{ color: {t['text']}; }}"
         )
         self.warnings_label.setStyleSheet(
             f"background: {t['warn_bg']}; border: 1px solid {t['warn_border']}; "
@@ -855,31 +883,36 @@ class ImportWidget(QWidget):
         if not self._parsed_cases:
             return
 
-        auto_status = self.automation_combo.currentText()
-        module_val = self.module_edit.currentText().strip()
-        tags_val = self.tag_picker.get_tags_string()
-        preconditions_val = self.preconditions_edit.text().strip()
+        # Blanket overrides only apply when the override toggle is on; otherwise
+        # each case keeps the values parsed from the file (the parser already
+        # defaults AutomationStatus to "Not Automated" and Created By to the
+        # current user).
+        if self._override_toggle.isChecked():
+            auto_status = self.automation_combo.currentText()
+            module_val = self.module_edit.currentText().strip()
+            tags_val = self.tag_picker.get_tags_string()
+            preconditions_val = self.preconditions_edit.text().strip()
 
-        created_by = ""
-        cur_text = self.created_by_combo.currentText()
-        if cur_text != "(Current User)":
-            created_by = self.created_by_combo.currentData()
+            created_by = ""
+            cur_text = self.created_by_combo.currentText()
+            if cur_text != "(Current User)":
+                created_by = self.created_by_combo.currentData()
 
-        save_settings({"preconditions": preconditions_val})
+            save_settings({"preconditions": preconditions_val})
 
-        for tc in self._parsed_cases:
-            # Re-imported update rows carry their own per-case values from the
-            # spreadsheet — applying the blanket overrides here would clobber them.
-            if getattr(tc, "update_id", None):
-                continue
-            tc.automation_status = auto_status
-            if module_val:
-                tc.module_value = module_val
-            if tags_val:
-                tc.tags = tags_val
-            if preconditions_val:
-                tc.preconditions = preconditions_val
-            tc.created_by = created_by
+            for tc in self._parsed_cases:
+                # Re-imported update rows carry their own per-case values from the
+                # spreadsheet — applying the blanket overrides here would clobber them.
+                if getattr(tc, "update_id", None):
+                    continue
+                tc.automation_status = auto_status
+                if module_val:
+                    tc.module_value = module_val
+                if tags_val:
+                    tc.tags = tags_val
+                if preconditions_val:
+                    tc.preconditions = preconditions_val
+                tc.created_by = created_by
 
         # MainWindow clears the preview via on_queue_accepted() only if the
         # cases were actually added (the duplicate-title dialog may reject them).

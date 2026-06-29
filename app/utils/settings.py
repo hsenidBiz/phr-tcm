@@ -1,17 +1,41 @@
 import json
 import os
+import time
 from pathlib import Path
 
 
 def _write_json_atomic(path: Path, obj) -> None:
     """Write JSON via a temp file + atomic os.replace so an interrupted or
-    concurrent write can never leave a truncated/corrupt file — a corrupt file
-    makes load_settings() fall back to {} and silently drop saved prefs (theme,
-    recent PBIs, filters)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    concurrent write can never leave a truncated/corrupt file (a corrupt file
+    makes load_settings() fall back to {} and silently drop saved prefs).
+
+    On Windows os.replace can fail with PermissionError/[WinError 5] when the
+    target is briefly locked — antivirus scanning the freshly-written .tmp, the
+    search indexer, or a second running instance. So: retry a few times, then
+    fall back to an in-place write, and NEVER raise — a settings/state save must
+    not crash the app."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(obj, indent=2)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(data, encoding="utf-8")
+        for delay in (0, 0.05, 0.1, 0.2):
+            if delay:
+                time.sleep(delay)
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                continue  # target momentarily locked — retry
+        # Replace kept failing: write in place so the value still persists,
+        # then drop the temp file.
+        path.write_text(data, encoding="utf-8")
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+    except Exception:
+        pass  # best-effort: a failed settings write must never crash the app
 
 _SETTINGS_PATH = Path.home() / ".devops_tc_creator" / "settings.json"
 _DRAFT_PATH = Path.home() / ".devops_tc_creator" / "draft_queue.json"

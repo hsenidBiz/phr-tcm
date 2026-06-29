@@ -9,6 +9,7 @@ behind an explicit confirm.
 """
 
 import base64
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -25,6 +26,7 @@ from app.utils.xml_builder import parse_steps_xml, html_to_text
 from app.utils.worker import Worker
 from app.utils import settings as settings_mod
 from app.utils import theme
+from app.gui import frameless
 
 # UI label -> Azure DevOps outcome value
 _OUTCOMES = [("Pass", "Passed"), ("Fail", "Failed"),
@@ -43,6 +45,30 @@ def _image_to_b64(img: QImage) -> str:
     img.save(buf, "PNG")
     buf.close()
     return base64.b64encode(bytes(ba)).decode("ascii")
+
+
+def _clipboard_image() -> QImage:
+    """Return the clipboard image at the highest fidelity available.
+
+    ``QClipboard.image()`` retrieves the image via Windows' DIB conversion.
+    Some source apps (browsers, design tools, several screenshot utilities)
+    populate that DIB slot with a downscaled or alpha-flattened bitmap even
+    when they *also* place a pristine, full-resolution PNG on the clipboard —
+    so the DIB path can hand back a visibly lower-quality screenshot. Prefer
+    the lossless encoded formats and only fall back to the DIB image.
+    """
+    cb = QApplication.clipboard()
+    md = cb.mimeData()
+    if md is not None:
+        for fmt in ("image/png", "PNG", "image/x-png",
+                    "image/tiff", "image/bmp"):
+            if md.hasFormat(fmt):
+                data = md.data(fmt)
+                if data and not data.isEmpty():
+                    img = QImage.fromData(data)
+                    if not img.isNull():
+                        return img
+    return cb.image()
 
 
 def _parse_step_ids(xml_str: str) -> list:
@@ -159,6 +185,123 @@ def create_bug(client, type_info, title, repro, severity, tc_id, pbi_id,
     return client.create_work_item(type_info["type"], fields, relations)
 
 
+def _win_physical_monitor_rect(device_name):
+    """The (left, top, width, height) PHYSICAL-pixel rect of the monitor whose
+    GDI device name matches *device_name* (e.g. r'\\\\.\\DISPLAY1'), or None."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+
+    class _RECT(ctypes.Structure):
+        _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
+                    ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+
+    class _MIEX(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", _RECT),
+                    ("rcWork", _RECT), ("dwFlags", wintypes.DWORD),
+                    ("szDevice", wintypes.WCHAR * 32)]
+
+    found = {}
+    _ENUM = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC,
+                               ctypes.POINTER(_RECT), wintypes.LPARAM)
+
+    def _cb(hmon, hdc, lprc, lparam):
+        mi = _MIEX()
+        mi.cbSize = ctypes.sizeof(_MIEX)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            rc = mi.rcMonitor
+            found[mi.szDevice] = (rc.left, rc.top,
+                                  rc.right - rc.left, rc.bottom - rc.top)
+        return True
+
+    user32.EnumDisplayMonitors(0, 0, _ENUM(_cb), 0)
+    return found.get(device_name)
+
+
+def _win_grab_global(gtl, w, h):
+    """Capture a w*h logical-pixel region at global point *gtl* straight from the
+    Windows virtual-desktop DC in true physical pixels. Correctly handles
+    secondary monitors at a negative origin and per-monitor DPI (where Qt's
+    grabWindow grabs the wrong region). Returns a QImage, or None on failure."""
+    import ctypes
+    from ctypes import wintypes
+    screen = QApplication.screenAt(gtl) or QApplication.primaryScreen()
+    if screen is None:
+        return None
+    phys = _win_physical_monitor_rect(screen.name())
+    if phys is None:
+        return None
+    dpr = screen.devicePixelRatio() or 1.0
+    sgeo = screen.geometry()
+    px = int(phys[0] + round((gtl.x() - sgeo.x()) * dpr))
+    py = int(phys[1] + round((gtl.y() - sgeo.y()) * dpr))
+    pw = max(1, int(round(w * dpr)))
+    ph = max(1, int(round(h * dpr)))
+
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    # 64-bit handles must not be truncated to int.
+    user32.GetDC.restype = wintypes.HDC
+    user32.GetDC.argtypes = [wintypes.HWND]
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+    gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.BitBlt.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int,
+                             ctypes.c_int, ctypes.c_int, wintypes.HDC,
+                             ctypes.c_int, ctypes.c_int, wintypes.DWORD]
+    gdi32.BitBlt.restype = wintypes.BOOL
+    gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT,
+                                wintypes.UINT, ctypes.c_void_p, ctypes.c_void_p,
+                                wintypes.UINT]
+    gdi32.GetDIBits.restype = ctypes.c_int
+
+    hdesktop = user32.GetDC(None)
+    if not hdesktop:
+        return None
+    hcdc = gdi32.CreateCompatibleDC(hdesktop)
+    hbmp = gdi32.CreateCompatibleBitmap(hdesktop, pw, ph)
+    old = gdi32.SelectObject(hcdc, hbmp)
+    try:
+        SRCCOPY = 0x00CC0020
+        if not gdi32.BitBlt(hcdc, 0, 0, pw, ph, hdesktop, px, py, SRCCOPY):
+            return None
+
+        class _BMIH(ctypes.Structure):
+            _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                        ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                        ("biBitCount", wintypes.WORD),
+                        ("biCompression", wintypes.DWORD),
+                        ("biSizeImage", wintypes.DWORD),
+                        ("biXPelsPerMeter", wintypes.LONG),
+                        ("biYPelsPerMeter", wintypes.LONG),
+                        ("biClrUsed", wintypes.DWORD),
+                        ("biClrImportant", wintypes.DWORD)]
+        bmi = _BMIH()
+        bmi.biSize = ctypes.sizeof(_BMIH)
+        bmi.biWidth = pw
+        bmi.biHeight = -ph          # negative -> top-down rows
+        bmi.biPlanes = 1
+        bmi.biBitCount = 32
+        bmi.biCompression = 0       # BI_RGB
+        buf = ctypes.create_string_buffer(pw * ph * 4)
+        if not gdi32.GetDIBits(hcdc, hbmp, 0, ph, ctypes.addressof(buf),
+                               ctypes.addressof(bmi), 0):
+            return None
+        img = QImage(bytes(buf), pw, ph, QImage.Format_RGB32)
+        return img.copy()           # detach from the temporary buffer
+    finally:
+        gdi32.SelectObject(hcdc, old)
+        gdi32.DeleteObject(hbmp)
+        gdi32.DeleteDC(hcdc)
+        user32.ReleaseDC(None, hdesktop)
+
+
 class _CaptureOverlay(QWidget):
     """Full-virtual-desktop dimming overlay for drag-to-select screen capture."""
     captured = pyqtSignal(object)  # QImage or None
@@ -193,11 +336,49 @@ class _CaptureOverlay(QWidget):
             self.captured.emit(None)
         else:
             gtl = self.mapToGlobal(rect.topLeft())
-            pix = QApplication.primaryScreen().grabWindow(
-                0, gtl.x(), gtl.y(), rect.width(), rect.height()
-            )
-            self.captured.emit(pix.toImage() if not pix.isNull() else None)
+            self.captured.emit(self._grab_global(gtl, rect.width(), rect.height()))
         self.close()
+
+    @staticmethod
+    def _grab_global(gtl, w, h):
+        """Grab a w*h logical-pixel region at global point *gtl*.
+
+        Qt's ``QScreen.grabWindow(0)`` blits from the desktop DC using the
+        screen's *logical* geometry offset, so on a multi-monitor desktop where a
+        secondary screen sits at a negative origin or a different resolution/DPI
+        than the primary, it grabs the wrong physical pixels (black or another
+        monitor's content). On Windows we capture straight from the virtual
+        desktop in true physical pixels instead; other platforms keep the Qt
+        path."""
+        if sys.platform.startswith("win"):
+            try:
+                img = _win_grab_global(gtl, w, h)
+                if img is not None and not img.isNull():
+                    return img
+            except Exception:
+                pass               # fall through to the Qt path
+        return _CaptureOverlay._grab_qt(gtl, w, h)
+
+    @staticmethod
+    def _grab_qt(gtl, w, h):
+        """Cross-platform fallback: pick the QScreen the selection is on and crop
+        in its own pixel space (scale derived from the grab itself)."""
+        screen = QApplication.screenAt(gtl) or QApplication.primaryScreen()
+        if screen is None:
+            return None
+        full = screen.grabWindow(0)
+        if full.isNull():
+            return None
+        sgeo = screen.geometry()
+        sx = full.width() / sgeo.width() if sgeo.width() else 1.0
+        sy = full.height() / sgeo.height() if sgeo.height() else 1.0
+        x = round((gtl.x() - sgeo.x()) * sx)
+        y = round((gtl.y() - sgeo.y()) * sy)
+        cropped = full.copy(x, y, round(w * sx), round(h * sy))
+        if cropped.isNull():
+            return None
+        cropped.setDevicePixelRatio(1.0)
+        return cropped.toImage()
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
@@ -206,7 +387,7 @@ class _CaptureOverlay(QWidget):
             self.close()
 
 
-class _CreateBugDialog(QDialog):
+class _CreateBugDialog(frameless.FramelessMixin, QDialog):
     """Prefilled dialog for filing a bug/issue from a failed test."""
 
     _SEVERITIES = ["1 - Critical", "2 - High", "3 - Medium", "4 - Low"]
@@ -252,6 +433,9 @@ class _CreateBugDialog(QDialog):
         create.clicked.connect(self.accept)
         btn_row.addWidget(create)
         lay.addLayout(btn_row)
+        theme.style_scrollbars(self)
+        self.init_frameless("Create Bug", resizable=True, show_min=False,
+                            show_max=False)
 
     def values(self) -> dict:
         return {
@@ -263,7 +447,7 @@ class _CreateBugDialog(QDialog):
         }
 
 
-class TestRunner(QWidget):
+class TestRunner(frameless.FramelessMixin, QWidget):
     """Top-level always-on-top window that runs a session of test cases."""
 
     def __init__(self, app_state, cases: list, restore: dict = None):
@@ -315,6 +499,11 @@ class TestRunner(QWidget):
             flags |= Qt.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self._build_ui()
+        # Custom dark title bar + border (preserves the Qt.Window / stays-on-top
+        # flags set above; _toggle_pin keeps FramelessWindowHint since it only
+        # toggles the stays-on-top bit).
+        self.init_frameless("Test Runner", resizable=True, show_min=True, show_max=True)
+        theme.style_scrollbars(self)  # modern scrollbars in the runner window
         self._load_case(self.idx)
         self._ready = True
         if not restore:
@@ -328,7 +517,8 @@ class TestRunner(QWidget):
     def _blank_state() -> dict:
         return {"outcome": "", "comment": "", "screenshots": [], "shot_files": [],
                 "elapsed_ms": 0, "step_outcomes": {}, "last_outcome": "", "bug_ids": [],
-                "_last_run_id": None, "_last_result_id": None, "_comment_fetched": False}
+                "_last_run_id": None, "_last_result_id": None, "_comment_fetched": False,
+                "_uploaded": [], "_uploaded_fetched": False, "_uploaded_loading": False}
 
     def _rehydrate_state(self, restore: dict, n: int) -> list:
         from app.utils.settings import run_shots_dir
@@ -519,6 +709,21 @@ class TestRunner(QWidget):
         _shots_wrap.setLayout(self._shots_row)
         bl.addWidget(_shots_wrap)
 
+        # Previously uploaded screenshots — lazily fetched per case from its last
+        # ADO test result and cached; view-only. Hidden until a case has some.
+        self._uploaded_wrap = QWidget()
+        _uwrap_l = QVBoxLayout(self._uploaded_wrap)
+        _uwrap_l.setContentsMargins(0, 6, 0, 0)
+        _uwrap_l.setSpacing(4)
+        _uwrap_l.addWidget(self._section_label("Uploaded to Azure DevOps"))
+        self._uploaded_row = QHBoxLayout()
+        self._uploaded_row.setAlignment(Qt.AlignLeft)
+        _urow_w = QWidget()
+        _urow_w.setLayout(self._uploaded_row)
+        _uwrap_l.addWidget(_urow_w)
+        self._uploaded_wrap.setVisible(False)
+        bl.addWidget(self._uploaded_wrap)
+
         bl.addStretch()
         scroll.setWidget(body)
         root.addWidget(scroll, 1)
@@ -658,11 +863,13 @@ class TestRunner(QWidget):
         self._refresh_outcome_buttons(st["outcome"])
         self._last_lbl.setText(self._format_last(st.get("last_outcome", "")))
         self._refresh_shots()
+        self._refresh_uploaded()
         self._prev_btn.setEnabled(idx > 0)
         self._next_btn.setEnabled(idx < len(self.cases) - 1)
         self._enter_monotonic = time.monotonic()
         self._update_outcome_summary()
-        self._maybe_fetch_comment(idx)   # lazy: only the case you actually view
+        self._maybe_fetch_comment(idx)    # lazy: only the case you actually view
+        self._maybe_fetch_uploaded(idx)   # lazy: fetch+cache this case's uploads
 
     # ------------------------------------------------------------------ #
     #  Outcome + pin                                                      #
@@ -839,6 +1046,7 @@ class TestRunner(QWidget):
         self._last_lbl.setText(self._format_last(st.get("last_outcome", "")))
         self._update_outcome_summary()
         self._maybe_fetch_comment(self.idx)          # visible case's comment first
+        self._maybe_fetch_uploaded(self.idx)         # and its uploaded screenshots
 
     def _maybe_fetch_comment(self, idx: int):
         """Fetch one case's last comment in the background, at most once, on demand."""
@@ -871,6 +1079,68 @@ class TestRunner(QWidget):
             self._suspend_dirty = False
         else:
             st["comment"] = comment
+
+    def _maybe_fetch_uploaded(self, idx: int):
+        """Lazily fetch a case's already-uploaded screenshots from its last ADO
+        result — once, on demand — and cache them on the per-case state."""
+        st = self.state[idx]
+        if st.get("_uploaded_fetched"):
+            return
+        rid, run = st.get("_last_result_id"), st.get("_last_run_id")
+        if not (rid and run):
+            return                       # points not loaded yet, or never run
+        st["_uploaded_fetched"] = True   # fetch at most once per case
+        st["_uploaded_loading"] = True
+        if idx == self.idx:
+            self._refresh_uploaded()
+        worker = Worker(self.app_state.client.get_result_screenshots, run, rid)
+        worker.signals.result.connect(lambda items, i=idx: self._on_uploaded(i, items))
+        worker.signals.error.connect(lambda _exc, i=idx: self._on_uploaded(i, []))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_uploaded(self, idx: int, items: list):
+        st = self.state[idx]
+        st["_uploaded_loading"] = False
+        imgs = []
+        for it in items or []:
+            img = QImage.fromData(it.get("data", b""))
+            if not img.isNull():
+                imgs.append(img)
+        st["_uploaded"] = imgs
+        if idx == self.idx:
+            self._refresh_uploaded()
+
+    def _refresh_uploaded(self):
+        while self._uploaded_row.count():
+            item = self._uploaded_row.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        st = self.state[self.idx]
+        imgs = st.get("_uploaded", [])
+        loading = st.get("_uploaded_loading", False)
+        if not imgs and not loading:
+            self._uploaded_wrap.setVisible(False)
+            return
+        self._uploaded_wrap.setVisible(True)
+        if loading and not imgs:
+            lbl = QLabel("Loading…")
+            lbl.setStyleSheet("color: #888; font-size: 11px;")
+            self._uploaded_row.addWidget(lbl)
+            return
+        accent = theme.tokens().get("accent", "#3d7eff")
+        for i, img in enumerate(imgs):
+            thumb = QLabel()
+            thumb.setPixmap(QPixmap.fromImage(img).scaled(
+                64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            thumb.setToolTip("Uploaded to Azure DevOps · left-click to view")
+            thumb.setCursor(QCursor(Qt.PointingHandCursor))
+            thumb.setStyleSheet(f"border: 1px solid {accent};")
+            thumb.mousePressEvent = (
+                lambda e, im=img, n=i:
+                self._view_image(QPixmap.fromImage(im), f"Uploaded screenshot {n + 1}")
+                if e.button() == Qt.LeftButton else None)
+            self._uploaded_row.addWidget(thumb)
 
     @staticmethod
     def _format_last(last: str) -> str:
@@ -910,7 +1180,7 @@ class TestRunner(QWidget):
         self._save_session()
 
     def _paste_shot(self):
-        img = QApplication.clipboard().image()
+        img = _clipboard_image()
         if img is None or img.isNull():
             self._status_lbl.setText("No image on the clipboard to paste.")
             return
@@ -980,24 +1250,24 @@ class TestRunner(QWidget):
             self._view_shot(i)
 
     def _view_shot(self, i: int):
-        """Open the screenshot at a viewable size (scaled to fit the screen)."""
         shots = self.state[self.idx]["screenshots"]
         if not (0 <= i < len(shots)):
             return
-        pix = QPixmap.fromImage(shots[i])
+        self._view_image(QPixmap.fromImage(shots[i]), f"Screenshot {i + 1}")
+
+    def _view_image(self, pix: QPixmap, title: str):
+        """Open a pixmap at a viewable size (scaled to fit the screen)."""
         avail = QApplication.primaryScreen().availableGeometry()
         max_w, max_h = int(avail.width() * 0.85), int(avail.height() * 0.85)
         if pix.width() > max_w or pix.height() > max_h:
             pix = pix.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"Screenshot {i + 1}")
+        dlg = frameless.FramelessDialog(self, title, resizable=True)
         # Stay above the runner even while it's pinned on top.
         dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowStaysOnTopHint)
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(8, 8, 8, 8)
         lbl = QLabel()
         lbl.setPixmap(pix)
-        lay.addWidget(lbl)
+        dlg.content_layout.addWidget(lbl)
+        dlg.finalize_frameless()
         dlg.exec_()
 
     # ------------------------------------------------------------------ #
@@ -1105,9 +1375,10 @@ class TestRunner(QWidget):
         n = len(marked)
         reply = QMessageBox.question(
             self, "Submit Results",
-            f"Record outcomes for {n} test case{'s' if n != 1 else ''} as a Test Run "
+            f"Record outcomes for {n} test case{'s' if n != 1 else ''} "
             f"on PBI #{self._pbi_id} in Azure DevOps?\n\n"
-            "This creates a test run and cannot be undone.",
+            "This saves the results as a new test run under the existing "
+            "test plan, and cannot be undone.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
