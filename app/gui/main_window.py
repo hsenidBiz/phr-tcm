@@ -91,6 +91,9 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         theme.style_scrollbars(self)
         theme.style_combos(self)
 
+        # Minimum window size = enough to show the whole Configuration screen.
+        self._apply_min_size_for_config()
+
         # Restore draft queue after window is shown
         QTimer.singleShot(300, self._check_draft_restore)
 
@@ -99,6 +102,32 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
         # Check GitHub for a newer version in the background
         QTimer.singleShot(1500, self._check_for_update)
+
+    def _apply_min_size_for_config(self):
+        """Make the window's minimum size large enough to show the whole
+        Configuration screen (its tallest state) without scrolling — capped to
+        the available screen so the window stays placeable on small displays
+        (the config's scroll area covers that rare case)."""
+        from PyQt5.QtWidgets import QApplication
+        try:
+            content_w, content_h = self.config_screen.required_min_size()
+        except Exception:
+            return
+        chrome = 8  # 1px border ring + a little slack
+        if getattr(self, "_title_bar", None) is not None:
+            chrome += self._title_bar.sizeHint().height()
+        if getattr(self, "_status_bar", None) is not None:
+            chrome += self._status_bar.sizeHint().height()
+        min_w = max(860, int(content_w))
+        min_h = int(content_h) + chrome
+        scr = QApplication.primaryScreen()
+        if scr is not None:
+            avail = scr.availableGeometry()
+            min_w = min(min_w, avail.width() - 40)
+            min_h = min(min_h, avail.height() - 60)
+        self.setMinimumSize(min_w, min_h)
+        # Open at least at the new minimum (with a little breathing room).
+        self.resize(max(self.width(), min_w), max(self.height(), min_h))
 
     # ------------------------------------------------------------------ #
     #  Page builders                                                       #

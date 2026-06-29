@@ -287,7 +287,7 @@ class FramelessMixin:
         if (getattr(self, "_frameless_resizable", True)
                 and sys.platform.startswith("win")
                 and eventType == "windows_generic_MSG"
-                and handle_getminmaxinfo(message)):
+                and handle_getminmaxinfo(message, self)):
             return True, 0
         return super().nativeEvent(eventType, message)
 
@@ -334,10 +334,29 @@ def _enable_rounded_corners(win):
         pass
 
 
-def handle_getminmaxinfo(message) -> bool:
+def _set_min_track_size(mmi, win):
+    """Set ``ptMinTrackSize`` (physical px) from the window's logical minimum
+    size, so a native frameless resize can't shrink below it. Our handler
+    replaces Qt's own WM_GETMINMAXINFO handling, so we must set this ourselves —
+    otherwise Windows lets the window shrink to a tiny default."""
+    if win is None:
+        return
+    try:
+        dpr = float(win.devicePixelRatioF())
+    except Exception:
+        dpr = 1.0
+    min_w, min_h = win.minimumWidth(), win.minimumHeight()
+    if min_w > 0:
+        mmi.ptMinTrackSize.x = int(round(min_w * dpr))
+    if min_h > 0:
+        mmi.ptMinTrackSize.y = int(round(min_h * dpr))
+
+
+def handle_getminmaxinfo(message, win=None) -> bool:
     """From a window's ``nativeEvent``: clamp a maximised frameless window to the
-    monitor work area so it doesn't cover the taskbar. Returns True if it handled
-    a WM_GETMINMAXINFO message (caller should then return (True, 0))."""
+    monitor work area so it doesn't cover the taskbar, and enforce ``win``'s
+    minimum size during a native (frameless) drag-resize. Returns True if it
+    handled a WM_GETMINMAXINFO message (caller should then return (True, 0))."""
     if not sys.platform.startswith("win"):
         return False
     try:
@@ -382,6 +401,7 @@ def handle_getminmaxinfo(message) -> bool:
         mmi.ptMaxSize.y = work.bottom - work.top
         mmi.ptMaxTrackSize.x = work.right - work.left
         mmi.ptMaxTrackSize.y = work.bottom - work.top
+        _set_min_track_size(mmi, win)
         return True
     except Exception:
         return False

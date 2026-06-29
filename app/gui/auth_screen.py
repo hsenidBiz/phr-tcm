@@ -171,8 +171,16 @@ class AuthScreen(QWidget):
         if self._msal_auth is None:
             self._msal_auth = MsalAuthenticator()
 
-        self._set_busy(True, "Waiting for browser sign-in…")
-        worker = Worker(self._msal_auth.sign_in_interactive)
+        self._set_busy(True, "Signing in…")
+        # Pass the window handle so MSAL can use the Windows broker (one-click,
+        # shared Microsoft session); it falls back to the system browser on its
+        # own if the broker is unavailable.
+        try:
+            hwnd = int(self.window().winId())
+        except Exception:
+            hwnd = None
+        worker = Worker(self._msal_auth.sign_in_interactive,
+                        parent_window_handle=hwnd)
         worker.signals.result.connect(self._on_msal_token)
         worker.signals.error.connect(self._on_msal_error)
         QThreadPool.globalInstance().start(worker)

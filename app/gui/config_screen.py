@@ -30,8 +30,29 @@ class ConfigScreen(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(60, 40, 60, 40)
+        from PyQt5.QtWidgets import QScrollArea
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Scrollable form: when the window is too short the content keeps its
+        # readable size and a scrollbar appears, instead of squishing fields
+        # (e.g. Area / Iteration Path) until they overlap and clip.
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Fill with the window palette colour (matches the page background and
+        # avoids smearing on scroll) — via the palette, NOT a stylesheet, so the
+        # inner tables are never switched to QStyleSheetStyle.
+        from PyQt5.QtGui import QPalette
+        self._scroll.viewport().setBackgroundRole(QPalette.Window)
+        self._scroll.viewport().setAutoFillBackground(True)
+        self._content = QWidget()
+        self._content.setBackgroundRole(QPalette.Window)
+        self._content.setAutoFillBackground(True)
+        layout = QVBoxLayout(self._content)
+        layout.setContentsMargins(60, 40, 60, 20)
         layout.setSpacing(0)
 
         title = QLabel("Configuration")
@@ -266,7 +287,15 @@ class ConfigScreen(QWidget):
         self.continue_btn.clicked.connect(self._on_continue)
         btn_row.addWidget(self.continue_btn)
 
-        layout.addLayout(btn_row)
+        self._scroll.setWidget(self._content)
+        outer.addWidget(self._scroll, 1)
+
+        # Action bar pinned to the bottom — always reachable, never scrolls.
+        self._btn_bar = QWidget()
+        _btn_bar_layout = QVBoxLayout(self._btn_bar)
+        _btn_bar_layout.setContentsMargins(60, 14, 60, 36)
+        _btn_bar_layout.addLayout(btn_row)
+        outer.addWidget(self._btn_bar)
 
     def _build_field_combos(self):
         """Hidden data holders for the discovered Module / Preconditions field
@@ -596,6 +625,48 @@ class ConfigScreen(QWidget):
             wl.setAlignment(Qt.AlignCenter)
             wl.addWidget(btn)
             self.recent_table.setCellWidget(row, 1, wrap)
+        self._fit_recent_table()
+
+    def _recent_row_height(self) -> int:
+        if self.recent_table.rowCount() > 0:
+            h = self.recent_table.rowHeight(0) or self.recent_table.sizeHintForRow(0)
+        else:
+            h = self.recent_table.verticalHeader().defaultSectionSize()
+        return h or 30
+
+    def _fit_recent_table(self):
+        """Show up to 5 recent PBIs, then scroll (and shrink to fit when fewer)."""
+        n = self.recent_table.rowCount()
+        if n == 0:
+            return
+        h = min(n, 5) * self._recent_row_height() + 2 * self.recent_table.frameWidth()
+        self.recent_table.setMinimumHeight(h)
+        self.recent_table.setMaximumHeight(h)
+
+    def required_min_size(self):
+        """Logical (width, height) needed to show the WHOLE config form without
+        scrolling — the worst case: every optional control visible + 5 recent
+        rows. Used to size the window minimum so nothing is squished."""
+        optional = [self.recent_label, self.recent_table,
+                    self.paths_container, self.test_plan_container]
+        prev_vis = [w.isVisible() for w in optional]
+        prev_min = self.recent_table.minimumHeight()
+        prev_max = self.recent_table.maximumHeight()
+        try:
+            for w in optional:
+                w.setVisible(True)
+            five = 5 * self._recent_row_height() + 2 * self.recent_table.frameWidth()
+            self.recent_table.setMinimumHeight(five)
+            self.recent_table.setMaximumHeight(five)
+            self._content.layout().activate()
+            sz = self._content.sizeHint()
+            return sz.width(), sz.height() + self._btn_bar.sizeHint().height()
+        finally:
+            self.recent_table.setMinimumHeight(prev_min)
+            self.recent_table.setMaximumHeight(prev_max)
+            for w, v in zip(optional, prev_vis):
+                w.setVisible(v)
+            self._content.layout().activate()
 
     def _on_recent_cell_clicked(self, row: int, col: int):
         if col != 0:

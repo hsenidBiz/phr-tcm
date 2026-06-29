@@ -341,6 +341,11 @@ class EditScreen(QWidget):
         self._steps_tbl.setColumnWidth(3, 36)
         self._steps_tbl.setMinimumHeight(160)
         self._steps_tbl.verticalHeader().setVisible(False)
+        # Word-wrap long Action / Expected Result text and grow each row to fit,
+        # instead of eliding it with an ellipsis.
+        self._steps_tbl.setWordWrap(True)
+        self._steps_tbl.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents)
         # Drag-and-drop row reordering
         self._steps_tbl.setDragEnabled(True)
         self._steps_tbl.setAcceptDrops(True)
@@ -731,8 +736,8 @@ class EditScreen(QWidget):
         rm_btn.clicked.connect(self._remove_step)
         wrap = QWidget()
         lay = QHBoxLayout(wrap)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setAlignment(Qt.AlignCenter)
+        lay.setContentsMargins(0, 5, 0, 0)
+        lay.setAlignment(Qt.AlignHCenter | Qt.AlignTop)   # sit at the row top
         lay.addWidget(rm_btn)
         return wrap
 
@@ -742,10 +747,15 @@ class EditScreen(QWidget):
 
         num_item = QTableWidgetItem(str(num))
         num_item.setFlags(num_item.flags() & ~Qt.ItemIsEditable)
-        num_item.setTextAlignment(Qt.AlignCenter)
+        num_item.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
         self._steps_tbl.setItem(row, 0, num_item)
-        self._steps_tbl.setItem(row, 1, QTableWidgetItem(action))
-        self._steps_tbl.setItem(row, 2, QTableWidgetItem(expected))
+        # Top-align Action / Expected so wrapped multi-line rows read from the top.
+        action_item = QTableWidgetItem(action)
+        action_item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._steps_tbl.setItem(row, 1, action_item)
+        expected_item = QTableWidgetItem(expected)
+        expected_item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._steps_tbl.setItem(row, 2, expected_item)
         self._steps_tbl.setCellWidget(row, 3, self._make_rm_wrap())
 
     def _add_step(self):
