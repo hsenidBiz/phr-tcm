@@ -53,6 +53,22 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
 
+        # Bottom-left "Checking for updates" indicator — shown only while a
+        # background update check is running, removed as soon as it finishes.
+        from app.utils.anim import Spinner
+        self._update_check_box = QWidget()
+        _uc = QHBoxLayout(self._update_check_box)
+        _uc.setContentsMargins(6, 0, 0, 0)
+        _uc.setSpacing(6)
+        self._update_spinner = Spinner(size=14, line_width=2)
+        self._update_spinner.setVisible(False)
+        _uc.addWidget(self._update_spinner)
+        self._update_check_label = QLabel("Checking for updates")
+        self._update_check_label.setStyleSheet("font-size: 11px;")
+        _uc.addWidget(self._update_check_label)
+        self._status_bar.addWidget(self._update_check_box)
+        self._update_check_box.setVisible(False)
+
         # Update button (hidden until a newer version is found on GitHub)
         self._update_btn = QPushButton()
         self._update_btn.setVisible(False)
@@ -604,13 +620,31 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         from app.utils import updater
         if not updater.update_supported():
             return
+        self._show_update_check(True)
         worker = Worker(updater.check_for_update)
         worker.signals.result.connect(self._on_update_check_result)
-        # Check failures (offline, VPN, …) are silent — the update check
-        # must never disturb normal use.
+        # Check failures (offline, VPN, …) are silent — just drop the indicator.
+        worker.signals.error.connect(self._on_update_check_error)
         QThreadPool.globalInstance().start(worker)
 
+    def _show_update_check(self, on: bool):
+        """Show/hide the bottom-left 'Checking for updates' spinner + label."""
+        if on:
+            t = theme.tokens()
+            self._update_spinner.set_color(t["accent"])
+            self._update_check_label.setStyleSheet(
+                f"color: {t['text_dim']}; font-size: 11px;")
+            self._update_check_box.setVisible(True)
+            self._update_spinner.start()
+        else:
+            self._update_spinner.stop()
+            self._update_check_box.setVisible(False)
+
+    def _on_update_check_error(self, _exc):
+        self._show_update_check(False)
+
     def _on_update_check_result(self, info):
+        self._show_update_check(False)
         if not info:
             return
         self._update_info = info

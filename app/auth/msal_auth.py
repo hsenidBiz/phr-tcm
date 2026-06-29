@@ -1,12 +1,12 @@
 """Microsoft Entra ID sign-in for Azure DevOps via MSAL.
 
 Signs in through the well-known Azure CLI public client, so no app
-registration is required in the tenant. On Windows it prefers the WAM broker
-(the native account picker that reuses the device's Microsoft session — a
-one-click sign-in), and falls back to the system browser when the broker is
-unavailable. The MSAL token cache is in-memory only (matching TokenManager's
-never-persist-to-disk policy); the broker keeps the account at the OS level,
-so access tokens refresh silently within a session.
+registration is required in the tenant. Sign-in uses the system browser.
+(On Windows it can also use the WAM broker — a native one-click account
+picker — but that's currently disabled via ``_BROKER_ENABLED`` because it
+needs device registration that some orgs block.) The MSAL token cache is
+in-memory only (matching TokenManager's never-persist-to-disk policy), so
+sign-in is needed once per launch, after which access tokens refresh silently.
 """
 
 import threading
@@ -19,6 +19,11 @@ _AZURE_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 _ADO_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
 
 _AUTHORITY = "https://login.microsoftonline.com/organizations"
+
+# TEMPORARILY DISABLED: the WAM broker needs device registration, which some
+# orgs block — so sign-in defaults to the system browser. Flip to True to
+# re-enable the native one-click broker picker.
+_BROKER_ENABLED = False
 
 
 # Branded pages MSAL serves in the browser after the redirect (system-browser
@@ -121,8 +126,9 @@ class MsalAuthenticator:
         flow completes (run on a worker thread). Raises MsalSignInError on
         failure or cancellation.
         """
-        # 1) WAM broker: one-click, shared Windows session.
-        if parent_window_handle is not None:
+        # 1) WAM broker: one-click, shared Windows session. (Currently gated off
+        #    via _BROKER_ENABLED — see the constant near the top of this module.)
+        if _BROKER_ENABLED and parent_window_handle is not None:
             try:
                 app = self._broker()
                 result = app.acquire_token_interactive(
