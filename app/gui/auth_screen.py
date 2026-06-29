@@ -17,9 +17,39 @@ class AuthScreen(QWidget):
         self._build_ui()
 
     def _build_ui(self):
+        import os
+        from PyQt5.QtCore import QSize
+        from PyQt5.QtGui import QIcon
+        from app.utils import icons
+
+        from app.utils import theme
+
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(60, 40, 60, 40)
+        outer.setContentsMargins(60, 36, 60, 36)
         outer.setSpacing(0)
+
+        # ONE card for the whole page — logo, title, subtitle and sign-in all
+        # live inside it.
+        self._card = QFrame()
+        self._card.setObjectName("authCard")
+        self._card.setFrameShape(QFrame.NoFrame)
+        self._card.setStyleSheet(
+            "#authCard { background: #f9f9f9; border: 1px solid #ddd; border-radius: 10px; }"
+        )
+        self._card.setMinimumWidth(440)
+        self._card.setMaximumWidth(520)   # a centred card, not full page width
+        card_layout = QVBoxLayout(self._card)
+        card_layout.setContentsMargins(48, 44, 48, 36)
+        card_layout.setSpacing(0)
+
+        # App logo
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+        _logo_path = icons.resource_path(os.path.join("resources", "icon.ico"))
+        if os.path.exists(_logo_path):
+            logo.setPixmap(QIcon(_logo_path).pixmap(QSize(84, 84)))
+        card_layout.addWidget(logo)
+        card_layout.addSpacing(16)
 
         # Title
         title = QLabel("Azure DevOps\nTest Case Manager")
@@ -28,27 +58,15 @@ class AuthScreen(QWidget):
         title_font.setPointSize(20)
         title_font.setBold(True)
         title.setFont(title_font)
-        outer.addWidget(title)
-        outer.addSpacing(8)
+        card_layout.addWidget(title)
+        card_layout.addSpacing(8)
 
         self._subtitle = QLabel("Sign in with your Microsoft account to get started.")
         self._subtitle.setAlignment(Qt.AlignCenter)
         self._subtitle.setStyleSheet("color: #666;")
-        outer.addWidget(self._subtitle)
-        outer.addSpacing(28)
+        card_layout.addWidget(self._subtitle)
+        card_layout.addSpacing(28)
 
-        # Card frame
-        self._card = QFrame()
-        self._card.setObjectName("authCard")
-        self._card.setFrameShape(QFrame.NoFrame)
-        self._card.setStyleSheet(
-            "#authCard { background: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; }"
-        )
-        card_layout = QVBoxLayout(self._card)
-        card_layout.setContentsMargins(30, 24, 30, 24)
-        card_layout.setSpacing(14)
-
-        from app.utils import theme
         self.signin_btn = QPushButton("Sign in with Microsoft")
         self.signin_btn.setFixedHeight(38)
         self.signin_btn.setStyleSheet(
@@ -57,6 +75,7 @@ class AuthScreen(QWidget):
         self.signin_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self.signin_btn.clicked.connect(self._on_primary_clicked)
         card_layout.addWidget(self.signin_btn)
+        card_layout.addSpacing(12)
 
         # Shown only when already signed in: lets the user re-authenticate as
         # someone else instead of just continuing.
@@ -70,20 +89,25 @@ class AuthScreen(QWidget):
         self._switch_btn.clicked.connect(self._on_msal_sign_in)
         self._switch_btn.setVisible(False)
         card_layout.addWidget(self._switch_btn)
+        card_layout.addSpacing(8)
 
         self._signin_hint = QLabel(
             "Opens your browser to sign in. Your organisation and projects are "
             "detected automatically."
         )
         self._signin_hint.setWordWrap(True)
+        self._signin_hint.setAlignment(Qt.AlignCenter)
         self._signin_hint.setStyleSheet("color: #888; font-size: 11px;")
         card_layout.addWidget(self._signin_hint)
 
         self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setStyleSheet("color: #888; font-size: 11px;")
         card_layout.addWidget(self.status_label)
 
-        outer.addWidget(self._card)
+        # Centre the single card on the page.
+        outer.addStretch()
+        outer.addWidget(self._card, alignment=Qt.AlignHCenter)
         outer.addStretch()
 
     def showEvent(self, event):

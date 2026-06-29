@@ -87,8 +87,9 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
         self.stack.setCurrentIndex(PAGE_AUTH)
 
-        # Modern scrollbars across every screen (re-applied on theme toggle).
+        # Modern scrollbars + dropdowns across every screen (re-applied on toggle).
         theme.style_scrollbars(self)
+        theme.style_combos(self)
 
         # Restore draft queue after window is shown
         QTimer.singleShot(300, self._check_draft_restore)
@@ -673,6 +674,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.review_screen.refresh_theme()
         self.progress_screen.refresh_theme()
         theme.style_scrollbars(self)  # re-tint scrollbar handles for the theme
+        theme.style_combos(self)      # re-tint dropdowns for the theme
 
     def _refresh_self_theme(self):
         t = theme.tokens()

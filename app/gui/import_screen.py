@@ -12,6 +12,7 @@ from PyQt5.QtGui import QColor, QCursor
 
 from app.utils.import_parser import parse_file, generate_template
 from app.utils.settings import load_settings, save_settings
+from app.gui import delegates
 
 _DETAIL = "detail"   # Qt.UserRole marker for step-detail rows
 
@@ -379,6 +380,7 @@ class ImportWidget(QWidget):
         self.preview_table.setSelectionMode(QTableWidget.NoSelection)
         self.preview_table.setAlternatingRowColors(True)
         theme.style_item_view(self.preview_table)   # modern flat header, no grid/frame
+        delegates.apply_hover(self.preview_table)   # subtle row hover highlight
         layout.addWidget(self.preview_table)
 
         # count_label and queue_btn are created here but placed into the

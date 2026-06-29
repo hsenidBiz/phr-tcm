@@ -13,6 +13,7 @@ from app.utils.settings import (
     clear_cached_test_plan,
 )
 from app.utils.worker import Worker
+from app.gui import delegates
 
 
 class ConfigScreen(QWidget):
@@ -117,13 +118,8 @@ class ConfigScreen(QWidget):
         self.pbi_dropdown = QListWidget(self)
         self.pbi_dropdown.setVisible(False)
         self.pbi_dropdown.setMaximumHeight(380)
-        self.pbi_dropdown.setStyleSheet(
-            "QListWidget { border: 1px solid #ccc; border-radius: 4px; "
-            "background: white; outline: none; font-size: 13px; }"
-            "QListWidget::item { padding: 8px 10px; }"
-            "QListWidget::item:hover { background: #e8f0fe; }"
-            "QListWidget::item:selected { background: #0078d4; color: white; }"
-        )
+        from app.utils import theme as _theme
+        self.pbi_dropdown.setStyleSheet(_theme.list_qss("font-size: 13px;"))
         self.pbi_dropdown.setCursor(QCursor(Qt.PointingHandCursor))
         self.pbi_dropdown.itemClicked.connect(self._on_pbi_dropdown_clicked)
         # Not added to pbi_layout — shown/positioned via _reveal_pbi_dropdown().
@@ -174,8 +170,10 @@ class ConfigScreen(QWidget):
         rh.setSectionResizeMode(1, QHeaderView.Fixed)
         self.recent_table.setColumnWidth(1, 36)
         self.recent_table.setMaximumHeight(150)
+        delegates.apply_hover(self.recent_table)   # subtle row hover highlight
         self.recent_table.setVisible(False)
         self.recent_table.cellClicked.connect(self._on_recent_cell_clicked)
+        _theme.style_item_view(self.recent_table)   # flat, no sunken frame
         pbi_layout.addWidget(self.recent_table)
 
         # Area / Iteration path fields — populated after PBI is validated
@@ -202,6 +200,10 @@ class ConfigScreen(QWidget):
         )
         iter_col.addWidget(self.iteration_edit)
         paths_grid.addLayout(iter_col)
+        # The fields display only the leaf segment (after the last / or \); the
+        # FULL paths are kept here because the API needs them.
+        self._area_full = ""
+        self._iteration_full = ""
 
         self.paths_container = QWidget()
         self.paths_container.setLayout(paths_grid)
@@ -288,14 +290,9 @@ class ConfigScreen(QWidget):
             f"#projFrame {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; }}"
         )
         self.connected_label.setStyleSheet(f"color: {t['accent']};")
-        self.pbi_dropdown.setStyleSheet(
-            f"QListWidget {{ border: 1px solid {t['border']}; border-radius: 4px; "
-            f"background: {t['tag_inner_bg']}; outline: none; font-size: 13px; }}"
-            f"QListWidget::item {{ padding: 8px 10px; color: {t['text']}; }}"
-            f"QListWidget::item:hover {{ background: {t['tag_unsel_hover']}; }}"
-            f"QListWidget::item:selected {{ background: {t['accent']}; color: white; }}"
-        )
+        self.pbi_dropdown.setStyleSheet(theme.list_qss("font-size: 13px;"))
         self.recent_label.setStyleSheet(theme.section_label_qss())
+        theme.style_item_view(self.recent_table)   # re-flatten on theme toggle
         self._refresh_recent_table()  # re-tint the per-row remove icons
         _ro_style = (
             f"QLineEdit {{ background: {t['surface2']}; color: {t['text_dim']}; "
@@ -450,6 +447,7 @@ class ConfigScreen(QWidget):
             self.app_state.pbi_title = ""
             self.app_state.area_path = ""
             self.app_state.iteration_path = ""
+            self._area_full = self._iteration_full = ""
             self.pbi_result_label.setText("")
             self.area_edit.clear()
             self.iteration_edit.clear()
@@ -716,8 +714,11 @@ class ConfigScreen(QWidget):
         save_recent_pbi(pbi_id, title, self.app_state.token_manager.project)
         self._refresh_recent_table()
 
-        self.area_edit.setText(area)
-        self.iteration_edit.setText(iteration)
+        self._area_full, self._iteration_full = area, iteration
+        self.area_edit.setText(self._leaf(area))
+        self.area_edit.setToolTip(area)            # full path on hover
+        self.iteration_edit.setText(self._leaf(iteration))
+        self.iteration_edit.setToolTip(iteration)
         self._detect_test_plan(pbi_id, area)
         self._check_ready()
 
@@ -731,6 +732,7 @@ class ConfigScreen(QWidget):
             )
         else:
             self.pbi_result_label.setText(f"Error: {exc}")
+        self._area_full = self._iteration_full = ""
         self.area_edit.clear()
         self.iteration_edit.clear()
         self._reset_test_plan_state()
@@ -959,9 +961,16 @@ class ConfigScreen(QWidget):
         else:
             self.continue_btn.setToolTip("")
 
+    @staticmethod
+    def _leaf(path: str) -> str:
+        r"""Last segment of an ADO area/iteration path (after the final / or \)."""
+        import re
+        return re.split(r"[\\/]", (path or "").strip())[-1].strip()
+
     def _on_continue(self):
         self.app_state.module_ref = self.field_combo.currentData()
         self.app_state.preconditions_ref = self.preconditions_combo.currentData()
-        self.app_state.area_path = self.area_edit.text().strip()
-        self.app_state.iteration_path = self.iteration_edit.text().strip()
+        # The fields show only the leaf; submit the stored FULL paths to the API.
+        self.app_state.area_path = self._area_full
+        self.app_state.iteration_path = self._iteration_full
         self.configured.emit()

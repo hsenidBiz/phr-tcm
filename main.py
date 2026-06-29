@@ -113,6 +113,15 @@ def main():
     _run_velopack_startup()
     _enable_high_dpi()
 
+    # Silence the benign Qt clipboard-contention warnings ("qt.qpa.mime: Retrying
+    # to obtain clipboard" / "Unable to obtain clipboard"). Qt's clipboard monitor
+    # races another process (e.g. Windows Clipboard History / a clipboard manager)
+    # for the Windows clipboard lock; it retries and the app works fine — it's
+    # just console noise. (The old token clipboard auto-detect was removed when
+    # MSAL sign-in became the only auth, so this is not from our code.)
+    _rules = os.environ.get("QT_LOGGING_RULES", "")
+    os.environ["QT_LOGGING_RULES"] = (_rules + ";" if _rules else "") + "qt.qpa.mime=false"
+
     app = QApplication(sys.argv)
     app.setApplicationName("Azure DevOps Test Case Manager")
     app.setOrganizationName("Internal Tool")

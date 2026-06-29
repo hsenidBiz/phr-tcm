@@ -4,6 +4,7 @@ from PyQt5.QtCore import QRunnable, QObject, pyqtSignal
 class WorkerSignals(QObject):
     result = pyqtSignal(object)
     error = pyqtSignal(Exception)
+    progress = pyqtSignal(int, int, str)   # (done, total, label) — opt-in
 
 
 class Worker(QRunnable):

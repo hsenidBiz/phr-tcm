@@ -15,14 +15,27 @@ from PyQt5.QtGui import QCursor, QColor, QBrush
 from app.utils.worker import Worker
 from app.utils import theme
 from app.gui.test_runner import TestRunner
+from app.gui.delegates import HoverTrackerMixin
 
 
-class _StatusColorDelegate(QStyledItemDelegate):
+class _StatusColorDelegate(HoverTrackerMixin, QStyledItemDelegate):
     """Paints each row's status tint (a translucent BackgroundRole colour) over
     the list background, keeping the theme's normal text colour. Done in a
     delegate because the list lives under a styled QTabWidget, and
     QStyleSheetStyle otherwise ignores item background brushes set via
-    setBackground()."""
+    setBackground(). Also overlays a subtle hover tint on the row under the
+    mouse (see app.gui.delegates)."""
+
+    def __init__(self, view):
+        super().__init__(view)
+        self._init_hover(view)
+
+    def initStyleOption(self, option, index):
+        # Plain (non-status) rows are painted by super().paint() below; tint
+        # their background here so the hover never recolours the text.
+        super().initStyleOption(option, index)
+        if self._is_hovered(option, index):
+            self._apply_hover_bg(option)
 
     def paint(self, painter, option, index):
         brush = index.data(Qt.BackgroundRole)
@@ -34,6 +47,9 @@ class _StatusColorDelegate(QStyledItemDelegate):
             # shade (no alternating-row tint, no alpha stacking on repaint).
             painter.fillRect(option.rect, option.palette.base().color())
             painter.fillRect(option.rect, color)   # translucent status tint
+            if self._is_hovered(option, index):
+                # Tint the background *before* the text, so text colour is kept.
+                painter.fillRect(option.rect, self._hover_overlay_color())
             painter.setPen(option.palette.text().color())
             rect = option.rect.adjusted(6, 0, -6, 0)
             text = str(index.data(Qt.DisplayRole) or "")

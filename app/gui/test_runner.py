@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QPlainTextEdit, QFileDialog, QFrame,
     QMessageBox, QRubberBand, QApplication, QScrollArea, QSizePolicy, QDialog,
-    QLineEdit, QComboBox, QCheckBox,
+    QLineEdit, QComboBox, QCheckBox, QProgressBar,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QRect, QSize, QByteArray, QBuffer, QThreadPool
 from PyQt5.QtGui import QImage, QPixmap, QCursor
@@ -83,10 +83,14 @@ def _parse_step_ids(xml_str: str) -> list:
     return [s.get("id", "") for s in root.findall("step")]
 
 
-def submit_session(client, pbi_id, pbi_title, plan_id, suite_id, area, iteration, per_case):
+def submit_session(client, pbi_id, pbi_title, plan_id, suite_id, area, iteration,
+                   per_case, progress_cb=None):
     """Push a session's outcomes to Azure DevOps as one Test Run. Runs on a
     worker thread. `per_case` items: {tc_id, outcome, comment, duration_ms,
-    screenshots:[b64]}. Returns a summary dict. Raises on failure."""
+    screenshots:[b64]}. `progress_cb(done, total, label)` (optional) reports
+    progress for the submit overlay. Returns a summary dict. Raises on failure."""
+    cb = progress_cb or (lambda *a: None)
+    cb(0, 0, "Preparing test run…")          # indeterminate until totals are known
     if not (plan_id and suite_id):
         plan_id, _name, suite_id = client.ensure_requirement_suite(pbi_id, area, iteration)
 
@@ -105,14 +109,20 @@ def submit_session(client, pbi_id, pbi_title, plan_id, suite_id, area, iteration
             "test suite, so no outcomes could be recorded."
         )
 
+    total_shots = sum(len(c.get("screenshots", [])) for c in runnable)
+    n_step_cases = sum(1 for c in runnable if c.get("step_results"))
+    total = total_shots + n_step_cases + 3       # create + outcomes + complete + the rest
+    done = 0
+
     point_ids = [point_by_tc[c["tc_id"]] for c in runnable]
     run = client.create_test_run(plan_id, f"Manual run — PBI #{pbi_id}: {pbi_title}", point_ids)
     run_id = run["run_id"]
-
     result_by_tc = {
         r["test_case_id"]: r["result_id"]
         for r in client.get_run_results(run_id) if r["test_case_id"]
     }
+    done = 1
+    cb(done, total, "Created test run, recording outcomes…")
 
     updates = []
     for c in runnable:
@@ -125,13 +135,19 @@ def submit_session(client, pbi_id, pbi_title, plan_id, suite_id, area, iteration
             })
     if updates:
         client.update_run_results(run_id, updates)
+    done = 2
+    cb(done, total, "Recorded outcomes.")
 
+    shot_n = 0
     for c in runnable:
         rid = result_by_tc.get(c["tc_id"])
         if rid is None:
             continue
         for i, b64 in enumerate(c.get("screenshots", []), 1):
             client.add_result_attachment(run_id, rid, b64, f"tc{c['tc_id']}_shot{i}.png")
+            shot_n += 1
+            done += 1
+            cb(done, total, f"Uploading screenshots… ({shot_n} of {total_shots})")
             time.sleep(0.5)  # pacing, consistent with the create flow
 
     # Per-step (iteration) results — additive and best-effort, so a problem here
@@ -144,8 +160,12 @@ def submit_session(client, pbi_id, pbi_title, plan_id, suite_id, area, iteration
             client.update_result_steps(run_id, rid, c["step_results"])
         except Exception:
             pass
+        done += 1
+        cb(done, total, "Recording step results…")
 
+    cb(max(done, total - 1), total, "Finalizing run…")
     client.complete_test_run(run_id)
+    cb(total, total, "Done.")
     return {"run_id": run_id, "web_url": run.get("web_url", ""),
             "submitted": len(runnable), "skipped": skipped}
 
@@ -436,6 +456,7 @@ class _CreateBugDialog(frameless.FramelessMixin, QDialog):
         theme.style_scrollbars(self)
         self.init_frameless("Create Bug", resizable=True, show_min=False,
                             show_max=False)
+        theme.style_combos(self)            # modern severity dropdown
 
     def values(self) -> dict:
         return {
@@ -445,6 +466,62 @@ class _CreateBugDialog(frameless.FramelessMixin, QDialog):
             "attach": self._attach_cb.isChecked(),
             "link": self._link_cb.isChecked(),
         }
+
+
+class _SubmitOverlay(QWidget):
+    """Full-area blocking overlay with a progress bar, shown over the whole runner
+    while a test run is being submitted so nothing can be touched mid-submit."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName("submitOverlay")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setVisible(False)
+        lay = QVBoxLayout(self)
+        lay.setAlignment(Qt.AlignCenter)
+        self._card = QFrame()
+        self._card.setObjectName("submitCard")
+        cl = QVBoxLayout(self._card)
+        cl.setContentsMargins(30, 26, 30, 26)
+        cl.setSpacing(16)
+        self._lbl = QLabel("Submitting results…")
+        self._lbl.setAlignment(Qt.AlignCenter)
+        cl.addWidget(self._lbl)
+        self._bar = QProgressBar()
+        self._bar.setFixedWidth(320)
+        self._bar.setTextVisible(False)
+        self._bar.setRange(0, 0)
+        cl.addWidget(self._bar)
+        lay.addWidget(self._card)
+        self.refresh_theme()
+
+    def start(self):
+        self._lbl.setText("Submitting results…")
+        self._bar.setRange(0, 0)        # indeterminate until the first update
+        self.refresh_theme()
+        self.setVisible(True)
+        self.raise_()
+
+    def set_progress(self, done, total, label):
+        if total > 0:
+            self._bar.setRange(0, total)
+            self._bar.setValue(done)
+        else:
+            self._bar.setRange(0, 0)    # indeterminate (busy)
+        if label:
+            self._lbl.setText(label)
+
+    def refresh_theme(self):
+        t = theme.tokens()
+        self.setStyleSheet(
+            "#submitOverlay { background: rgba(15, 15, 16, 0.72); }"
+            f"#submitCard {{ background: {t['surface']}; border: 1px solid {t['border']}; "
+            "border-radius: 10px; }"
+            f"#submitCard QLabel {{ color: {t['text']}; font-size: 14px; background: transparent; }}"
+            f"QProgressBar {{ border: 1px solid {t['border']}; border-radius: 5px; "
+            f"background: {t['surface2']}; min-height: 10px; }}"
+            f"QProgressBar::chunk {{ background: {t['accent']}; border-radius: 4px; }}"
+        )
 
 
 class TestRunner(frameless.FramelessMixin, QWidget):
@@ -504,6 +581,8 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         # toggles the stays-on-top bit).
         self.init_frameless("Test Runner", resizable=True, show_min=True, show_max=True)
         theme.style_scrollbars(self)  # modern scrollbars in the runner window
+        # Blocking overlay shown over the whole runner while submitting results.
+        self._submit_overlay = _SubmitOverlay(self)
         self._load_case(self.idx)
         self._ready = True
         if not restore:
@@ -518,6 +597,7 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         return {"outcome": "", "comment": "", "screenshots": [], "shot_files": [],
                 "elapsed_ms": 0, "step_outcomes": {}, "last_outcome": "", "bug_ids": [],
                 "_last_run_id": None, "_last_result_id": None, "_comment_fetched": False,
+                "_orig_comment": "",  # the previous ADO comment, for change detection
                 "_uploaded": [], "_uploaded_fetched": False, "_uploaded_loading": False}
 
     def _rehydrate_state(self, restore: dict, n: int) -> list:
@@ -1069,6 +1149,7 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         st = self.state[idx]
         if st["comment"]:                            # already set (e.g. user typed)
             return
+        st["_orig_comment"] = comment                # baseline for change detection
         if idx == self.idx:
             # Visible case: fill only if the user hasn't started typing.
             if self._comment_edit.toPlainText().strip():
@@ -1361,6 +1442,34 @@ class TestRunner(frameless.FramelessMixin, QWidget):
     #  Submit                                                             #
     # ------------------------------------------------------------------ #
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        ov = getattr(self, "_submit_overlay", None)
+        if ov is not None and ov.isVisible():
+            ov.setGeometry(self.rect())
+
+    def _show_submit_overlay(self):
+        self._submit_overlay.setGeometry(self.rect())
+        self._submit_overlay.start()
+
+    def _hide_submit_overlay(self):
+        self._submit_overlay.setVisible(False)
+
+    def _on_submit_progress(self, done, total, label):
+        self._submit_overlay.set_progress(done, total, label)
+
+    def _case_changed(self, st) -> bool:
+        """True if this case's data differs from what's already recorded in ADO,
+        so an unchanged re-run can be skipped instead of recording a duplicate
+        identical result. New screenshots / bugs / per-step marks always count;
+        otherwise compare the outcome and comment against the last ADO values."""
+        if st.get("screenshots") or st.get("bug_ids") or st.get("step_outcomes"):
+            return True
+        prev_outcome = self._NORMALIZE.get((st.get("last_outcome") or "").lower(), "")
+        if (st.get("outcome") or "") != prev_outcome:
+            return True
+        return (st.get("comment") or "") != (st.get("_orig_comment") or "")
+
     def _on_submit(self):
         from app.gui.helpers import warn_if_token_expired
         if warn_if_token_expired(self, self.app_state.token_manager):
@@ -1372,11 +1481,24 @@ class TestRunner(frameless.FramelessMixin, QWidget):
                                    "Mark at least one test case with an outcome first.")
             return
 
-        n = len(marked)
+        # Only submit cases whose data actually changed since the last ADO result;
+        # unchanged ones are skipped so we never record duplicate identical runs.
+        changed = [(c, s) for c, s in marked if self._case_changed(s)]
+        if not changed:
+            QMessageBox.information(
+                self, "Nothing changed",
+                "All marked test cases already match their last recorded result in "
+                "Azure DevOps, so there's nothing new to submit.")
+            return
+
+        n = len(changed)
+        skipped = len(marked) - n
+        skip_note = (f"\n\n{skipped} unchanged case{'s' if skipped != 1 else ''} "
+                     "skipped (data matches the last result).") if skipped else ""
         reply = QMessageBox.question(
             self, "Submit Results",
             f"Record outcomes for {n} test case{'s' if n != 1 else ''} "
-            f"on PBI #{self._pbi_id} in Azure DevOps?\n\n"
+            f"on PBI #{self._pbi_id} in Azure DevOps?" + skip_note + "\n\n"
             "This saves the results as a new test run under the existing "
             "test plan, and cannot be undone.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
@@ -1385,7 +1507,7 @@ class TestRunner(frameless.FramelessMixin, QWidget):
             return
 
         per_case = []
-        for c, s in marked:
+        for c, s in changed:
             per_case.append({
                 "tc_id": c.get("_id"),
                 "outcome": s["outcome"],
@@ -1399,16 +1521,20 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         self._submit_btn.setEnabled(False)
         self._submit_btn.setText("Submitting…")
         self._status_lbl.setText("Submitting results to Azure DevOps…")
+        self._show_submit_overlay()
         worker = Worker(
             submit_session, self.app_state.client, self._pbi_id,
             self._pbi_title, self._plan_id, self._suite_id, self._area,
             self._iteration, per_case,
         )
+        worker.kwargs["progress_cb"] = worker.signals.progress.emit
+        worker.signals.progress.connect(self._on_submit_progress)
         worker.signals.result.connect(self._on_submit_done)
         worker.signals.error.connect(self._on_submit_error)
         QThreadPool.globalInstance().start(worker)
 
     def _on_submit_done(self, summary: dict):
+        self._hide_submit_overlay()
         self._submit_btn.setEnabled(True)
         self._submit_btn.setText("Submit results")
         # The just-recorded outcomes make the cached points stale — drop them so
@@ -1429,6 +1555,7 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         QMessageBox.information(self, "Results Submitted", msg)
 
     def _on_submit_error(self, exc: Exception):
+        self._hide_submit_overlay()
         self._submit_btn.setEnabled(True)
         self._submit_btn.setText("Submit results")
         self._status_lbl.setText("Submit failed.")

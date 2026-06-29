@@ -261,6 +261,80 @@ def style_item_view(view) -> None:
         view.setShowGrid(False)
 
 
+_chevron_paths = {}
+
+
+def _down_arrow_url(color: str) -> str:
+    """Render chevron-down tinted to *color* to a cached PNG and return a
+    forward-slashed path for QComboBox::down-arrow's `image: url(...)`. (Qt's
+    QSS does NOT support the CSS border-triangle trick for ::down-arrow — it
+    draws a box — so a real image is the reliable way to get an arrow.)"""
+    cached = _chevron_paths.get(color)
+    import os
+    if cached and os.path.exists(cached):
+        return cached.replace("\\", "/")
+    try:
+        import tempfile
+        from app.utils import icons
+        pm = icons.pixmap("chevron-down", color=color, size=18)
+        d = os.path.join(tempfile.gettempdir(), "adotcm_chevrons")
+        os.makedirs(d, exist_ok=True)
+        fp = os.path.join(d, "chevron-%s.png" % color.lstrip("#"))
+        pm.save(fp, "PNG")
+        _chevron_paths[color] = fp
+        return fp.replace("\\", "/")
+    except Exception:
+        return ""
+
+
+def combo_qss(extra: str = "") -> str:
+    """Modern QComboBox: flat rounded field, a real chevron-down arrow image, and
+    a rounded themed popup list with padded items + accent selection."""
+    t = tokens()
+    arrow = _down_arrow_url(t["text_dim"])
+    arrow_rule = (
+        f'QComboBox::down-arrow {{ image: url("{arrow}"); width: 12px; '
+        "height: 12px; margin-right: 9px; }" if arrow else "")
+    rules = [
+        f"QComboBox {{ background: {t['surface2']}; border: 1px solid {t['border']}; "
+        f"border-radius: 6px; padding: 5px 10px; color: {t['text']}; {extra} }}",
+        f"QComboBox:hover {{ border-color: {t['scroll_handle_hover']}; }}",
+        f"QComboBox:focus, QComboBox:on {{ border-color: {t['accent']}; }}",
+        f"QComboBox:disabled {{ color: {t['text_dim2']}; background: {t['surface']}; }}",
+        "QComboBox::drop-down { border: none; width: 26px; }",
+        arrow_rule,
+        f"QComboBox QAbstractItemView {{ background: {t['surface2']}; "
+        f"border: 1px solid {t['border']}; border-radius: 6px; outline: none; padding: 4px; "
+        f"selection-background-color: {t['accent']}; selection-color: #ffffff; }}",
+        f"QComboBox QAbstractItemView::item {{ min-height: 22px; padding: 4px 8px; "
+        f"border-radius: 4px; color: {t['text']}; }}",
+        "QComboBox QAbstractItemView::item:hover { background: rgba(128, 128, 128, 0.18); }",
+    ]
+    return "".join(rules)
+
+
+def list_qss(extra: str = "") -> str:
+    """Modern QListWidget (search dropdowns / pickers): rounded themed surface,
+    padded rounded items, subtle hover, accent selection."""
+    t = tokens()
+    return (
+        f"QListWidget {{ background: {t['surface2']}; border: 1px solid {t['border']}; "
+        f"border-radius: 8px; outline: none; padding: 4px; color: {t['text']}; {extra} }}"
+        "QListWidget::item { padding: 8px 10px; border-radius: 6px; }"
+        "QListWidget::item:hover { background: rgba(128, 128, 128, 0.16); }"
+        f"QListWidget::item:selected {{ background: {t['accent']}; color: #ffffff; }}"
+    )
+
+
+def style_combos(root) -> None:
+    """Apply combo_qss to every QComboBox under *root* (downward-only — never
+    touches sibling tables/trees). Re-call on theme toggle to re-tint."""
+    from PyQt5.QtWidgets import QComboBox
+    qss = combo_qss()
+    for c in root.findChildren(QComboBox):
+        c.setStyleSheet(qss)
+
+
 def status_dot_html(state: str) -> str:
     """A small coloured bullet for inline status text (ok / warn / error)."""
     t = tokens()

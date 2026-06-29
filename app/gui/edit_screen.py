@@ -12,6 +12,7 @@ from PyQt5.QtGui import QCursor, QKeySequence
 from app.utils.xml_builder import parse_steps_xml, build_steps_xml
 from app.utils.worker import Worker
 from app.models.test_case import Step, TestCase
+from app.gui import delegates
 
 
 class EditScreen(QWidget):
@@ -245,6 +246,7 @@ class EditScreen(QWidget):
         self._list.setAlternatingRowColors(True)
         self._list.setSelectionMode(QListWidget.ExtendedSelection)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)
+        delegates.apply_hover(self._list)   # subtle hover highlight
         left_v.addWidget(self._list)
 
         self._sel_count_lbl = QLabel("")

@@ -27,14 +27,20 @@ def _target_dpr() -> float:
     return 2.0
 
 
-def _icons_dir() -> str:
-    """resources/icons, resolved for both source runs and the frozen build."""
+def resource_path(rel: str) -> str:
+    """Resolve a bundled resource path (relative to the project root, e.g.
+    'resources/icon.ico') for both source runs and the frozen build."""
     base = getattr(sys, "_MEIPASS", None)
     if base:
-        return os.path.join(base, "resources", "icons")
-    # app/utils/icons.py -> repo root is two levels up.
+        return os.path.join(base, rel)
+    # app/utils/icons.py -> repo root is three levels up.
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(root, "resources", "icons")
+    return os.path.join(root, rel)
+
+
+def _icons_dir() -> str:
+    """resources/icons, resolved for both source runs and the frozen build."""
+    return resource_path(os.path.join("resources", "icons"))
 
 
 _pix_cache: dict = {}
