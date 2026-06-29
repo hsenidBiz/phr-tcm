@@ -5,7 +5,7 @@ DevOps test cases against a Product Backlog Item (PBI) — without leaving a sin
 window. Built with PyQt5; signs in with your own Microsoft account; ships and
 updates itself via Velopack.
 
-> Internal tool. Current version: **2.0.3**.
+> Internal tool. Current version: **2.0.4**.
 
 ---
 
