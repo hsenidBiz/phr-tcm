@@ -206,7 +206,7 @@ class ConfigScreen(QWidget):
         self.area_edit.setPlaceholderText("Inherited from PBI…")
         self.area_edit.setReadOnly(True)
         self.area_edit.setStyleSheet(
-            "QLineEdit { background: #f0f0f0; color: #555; border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; }"
+            "QLineEdit { background: #f0f0f0; color: #555; border: 1px solid #ddd; border-radius: 6px; padding: 4px 8px; }"
         )
         area_col.addWidget(self.area_edit)
         paths_grid.addLayout(area_col)
@@ -217,7 +217,7 @@ class ConfigScreen(QWidget):
         self.iteration_edit.setPlaceholderText("Inherited from PBI…")
         self.iteration_edit.setReadOnly(True)
         self.iteration_edit.setStyleSheet(
-            "QLineEdit { background: #f0f0f0; color: #555; border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; }"
+            "QLineEdit { background: #f0f0f0; color: #555; border: 1px solid #ddd; border-radius: 6px; padding: 4px 8px; }"
         )
         iter_col.addWidget(self.iteration_edit)
         paths_grid.addLayout(iter_col)
@@ -325,7 +325,7 @@ class ConfigScreen(QWidget):
         self._refresh_recent_table()  # re-tint the per-row remove icons
         _ro_style = (
             f"QLineEdit {{ background: {t['surface2']}; color: {t['text_dim']}; "
-            f"border: 1px solid {t['border']}; border-radius: 4px; padding: 4px 8px; }}"
+            f"border: 1px solid {t['border']}; border-radius: 6px; padding: 4px 8px; }}"
         )
         self.area_edit.setStyleSheet(_ro_style)
         self.iteration_edit.setStyleSheet(_ro_style)

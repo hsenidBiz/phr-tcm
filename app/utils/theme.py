@@ -217,14 +217,32 @@ def card_qss(extra: str = "") -> str:
 
 
 def input_qss(extra: str = "") -> str:
-    """Consistent text-input / combo styling."""
+    """Modern rounded text-input styling (QLineEdit / QPlainTextEdit / QTextEdit).
+    Combos have their own builder (combo_qss)."""
     t = tokens()
     return (
-        f"QLineEdit, QPlainTextEdit, QComboBox {{ background: {t['surface2']}; "
+        f"QLineEdit, QPlainTextEdit, QTextEdit {{ background: {t['surface2']}; "
         f"border: 1px solid {t['border']}; border-radius: 6px; padding: 6px 8px; "
         f"color: {t['text']}; {extra} }}"
-        f"QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{ border: 1px solid {t['accent']}; }}"
+        f"QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {{ border: 1px solid {t['accent']}; }}"
+        f"QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled {{ color: {t['text_dim']}; }}"
     )
+
+
+def style_inputs(root) -> None:
+    """Give every PLAIN text input under `root` (QLineEdit / QPlainTextEdit /
+    QTextEdit) the modern rounded `input_qss` look. Inputs that already carry a
+    bespoke stylesheet — borderless search boxes, read-only fields, etc. — are
+    left untouched. Inputs we style are tagged (`_autoInput`) so they re-theme on
+    a theme toggle instead of being skipped (a styled widget is no longer
+    "plain"). Per-widget (not a global app stylesheet), so item views are never
+    switched to QStyleSheetStyle. Call on init and on every theme refresh."""
+    from PyQt5.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit
+    qss = input_qss()
+    for w in root.findChildren((QLineEdit, QPlainTextEdit, QTextEdit)):
+        if w.property("_autoInput") or not w.styleSheet():
+            w.setProperty("_autoInput", True)
+            w.setStyleSheet(qss)
 
 
 def header_qss() -> str:

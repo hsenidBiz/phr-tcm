@@ -106,6 +106,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         # Modern scrollbars + dropdowns across every screen (re-applied on toggle).
         theme.style_scrollbars(self)
         theme.style_combos(self)
+        theme.style_inputs(self)   # modern rounded textboxes
 
         # Minimum window size = enough to show the whole Configuration screen.
         self._apply_min_size_for_config()
@@ -738,6 +739,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.progress_screen.refresh_theme()
         theme.style_scrollbars(self)  # re-tint scrollbar handles for the theme
         theme.style_combos(self)      # re-tint dropdowns for the theme
+        theme.style_inputs(self)      # re-theme the rounded textboxes
 
     def _refresh_self_theme(self):
         t = theme.tokens()

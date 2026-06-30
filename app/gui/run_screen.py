@@ -7,7 +7,7 @@ multi-select them, accumulate a session, and open the always-on-top runner.
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
     QListWidgetItem, QLineEdit, QSplitter, QFrame, QMessageBox, QProgressBar,
-    QStyledItemDelegate, QStyle,
+    QStyledItemDelegate, QStyle, QComboBox,
 )
 from PyQt5.QtCore import Qt, QThreadPool, QTimer
 from PyQt5.QtGui import QCursor, QColor, QBrush
@@ -207,6 +207,9 @@ class RunScreen(QWidget):
     def _on_points_prefetched(self, key, pts):
         self.app_state.test_points_by_suite[key] = pts
         self._color_lists()
+        # Outcomes just became known — re-run a result filter if one is active.
+        if self._result_combo.currentData():
+            self._apply_filters()
 
     # Status colours, applied as a translucent tint over the list background so
     # they read as dim hints rather than bold blocks. _OUTCOME_ALPHA (0–255) is
@@ -337,12 +340,14 @@ class RunScreen(QWidget):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(4)
-        lv.addWidget(QLabel("<b>Test cases on this PBI</b>"))
+        self._avail_lbl = QLabel("<b>Test cases on this PBI</b>")
+        lv.addWidget(self._avail_lbl)
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search by ID or title…")
         self._search.setClearButtonEnabled(True)
-        self._search.textChanged.connect(lambda _: self._apply_search())
+        self._search.textChanged.connect(lambda _: self._on_filter_changed())
         lv.addWidget(self._search)
+        lv.addLayout(self._build_filter_row())
         self._available = QListWidget()
         # No alternating row colours here — they'd show through the translucent
         # status tint as two shades per outcome and look like a jumble.
@@ -452,20 +457,189 @@ class RunScreen(QWidget):
         exactly one list at a time, so adding/removing moves it between them)."""
         self._available.clear()
         session_ids = {c.get("_id") for c in self._session}
-        for tc in self._cases:
+        for tc in self._sorted_cases():
             if tc.get("_id") in session_ids:
                 continue
             item = QListWidgetItem(self._label_for(tc))
             item.setData(Qt.UserRole, tc)
             self._available.addItem(item)
-        self._apply_search()
+        self._apply_filters()
         self._color_list(self._available)
 
-    def _apply_search(self):
+    # ------------------------------------------------------------------ #
+    #  Filtering (left "Test cases on this PBI" list)                     #
+    # ------------------------------------------------------------------ #
+
+    def _build_filter_row(self):
+        """A compact bar under the search box: filter by last result and created
+        date, sort by date/title, plus a clear-all button shown only when a
+        filter is active. Combos are themed by the window's style_combos() pass."""
+        from app.utils import icons
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        self._filter_icon = QLabel()
+        self._filter_icon.setPixmap(
+            icons.pixmap("filter", color=theme.tokens()["text_dim2"], size=15))
+        self._filter_icon.setToolTip("Filter and sort the list of test cases")
+        row.addWidget(self._filter_icon)
+
+        self._result_combo = QComboBox()
+        self._result_combo.setToolTip("Filter by the last recorded result")
+        for label, data in (
+            ("All results", None), ("Passed", "passed"), ("Failed", "failed"),
+            ("Blocked", "blocked"), ("Not applicable", "notapplicable"),
+            ("Not run", "notrun"),
+        ):
+            self._result_combo.addItem(label, data)
+
+        self._date_combo = QComboBox()
+        self._date_combo.setToolTip("Filter by when the test case was created")
+        for label, data in (
+            ("Any time", None), ("Last 7 days", 7), ("Last 30 days", 30),
+            ("Last 90 days", 90), ("Last 12 months", 365),
+        ):
+            self._date_combo.addItem(label, data)
+
+        self._sort_combo = QComboBox()
+        self._sort_combo.setToolTip("Sort the list of test cases")
+        for label, data in (
+            ("Default order", None), ("Newest first", "newest"),
+            ("Oldest first", "oldest"), ("Title A–Z", "az"), ("Title Z–A", "za"),
+        ):
+            self._sort_combo.addItem(label, data)
+
+        for cb in (self._result_combo, self._date_combo):
+            cb.currentIndexChanged.connect(lambda _i: self._on_filter_changed())
+        self._sort_combo.currentIndexChanged.connect(lambda _i: self._on_sort_changed())
+        for cb in (self._result_combo, self._date_combo, self._sort_combo):
+            cb.setMinimumWidth(92)
+            cb.setCursor(QCursor(Qt.PointingHandCursor))
+            row.addWidget(cb, 1)
+
+        self._clear_filters_btn = QPushButton()
+        self._clear_filters_btn.setIcon(icons.icon("x", size=13))
+        self._clear_filters_btn.setToolTip("Clear all filters")
+        self._clear_filters_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._clear_filters_btn.setFixedSize(28, 28)
+        self._clear_filters_btn.setStyleSheet(theme.btn_ghost_qss("padding: 4px;"))
+        self._clear_filters_btn.clicked.connect(self._clear_filters)
+        self._clear_filters_btn.setVisible(False)
+        row.addWidget(self._clear_filters_btn)
+        return row
+
+    def _filters_active(self):
+        # Sort order is not a filter, so it never affects the clear button/count.
+        return bool(
+            self._search.text().strip()
+            or self._result_combo.currentData()
+            or self._date_combo.currentData())
+
+    def _on_filter_changed(self):
+        self._apply_filters()
+        self._clear_filters_btn.setVisible(self._filters_active())
+
+    def _on_sort_changed(self):
+        # Re-order needs a rebuild (filters/colours re-apply inside).
+        self._rebuild_available()
+
+    def _clear_filters(self):
+        """Reset the search + filter combos (sort order is left as chosen)."""
+        for w in (self._search, self._result_combo, self._date_combo):
+            w.blockSignals(True)
+        self._search.clear()
+        for cb in (self._result_combo, self._date_combo):
+            cb.setCurrentIndex(0)
+        for w in (self._search, self._result_combo, self._date_combo):
+            w.blockSignals(False)
+        self._on_filter_changed()
+
+    def _outcomes_by_case(self):
+        """Map {test_case_id: outcome} (lower-case) from the prefetched points
+        cache. Cases with a point but no recorded result — or no point at all —
+        are absent, and treated as 'not run' by the filter."""
+        key = (self.app_state.test_plan_id, self.app_state.suite_id)
+        points = self.app_state.test_points_by_suite.get(key) or []
+        by_tc = {}
+        for p in points:
+            tc = p.get("test_case_id")
+            oc = (p.get("last_outcome") or "").lower()
+            if tc and oc and tc not in by_tc:
+                by_tc[tc] = oc
+        return by_tc
+
+    @staticmethod
+    def _created_dt(case):
+        """Parse a case's System.CreatedDate to a UTC datetime, or None. Reads
+        only the date+time prefix so varied fractional-second formats from ADO
+        never break parsing."""
+        raw = case.get("System.CreatedDate")
+        if not raw:
+            return None
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.strptime(str(raw)[:19], "%Y-%m-%dT%H:%M:%S")
+            return dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    def _sorted_cases(self):
+        """`self._cases` ordered for the current sort combo (default = as loaded).
+        Cases missing a created date sort to the bottom of either date order."""
+        mode = self._sort_combo.currentData()
+        cases = list(self._cases)
+        if mode in ("newest", "oldest"):
+            from datetime import datetime, timezone
+            lo = datetime.min.replace(tzinfo=timezone.utc)
+            hi = datetime.max.replace(tzinfo=timezone.utc)
+            if mode == "newest":   # newest→oldest, undated last
+                cases.sort(key=lambda c: self._created_dt(c) or lo, reverse=True)
+            else:                  # oldest→newest, undated last
+                cases.sort(key=lambda c: self._created_dt(c) or hi)
+        elif mode in ("az", "za"):
+            cases.sort(key=lambda c: str(c.get("System.Title", "")).lower(),
+                       reverse=(mode == "za"))
+        return cases
+
+    def _apply_filters(self):
+        """Hide every available case that doesn't match the search text and the
+        result / created-date filters, then update the count."""
         query = self._search.text().strip().lower()
+        result = self._result_combo.currentData()
+        days = self._date_combo.currentData()
+
+        outcomes = self._outcomes_by_case() if result else {}
+        cutoff = None
+        if days:
+            from datetime import datetime, timedelta, timezone
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        visible = 0
         for row in range(self._available.count()):
             item = self._available.item(row)
-            item.setHidden(bool(query) and query not in item.text().lower())
+            case = item.data(Qt.UserRole) or {}
+            hidden = bool(query) and query not in item.text().lower()
+            if not hidden and result:
+                oc = outcomes.get(case.get("_id")) or "notrun"
+                hidden = oc != result
+            if not hidden and cutoff is not None:
+                cd = self._created_dt(case)
+                hidden = cd is None or cd < cutoff
+            item.setHidden(hidden)
+            if not hidden:
+                visible += 1
+        self._update_filter_count(visible)
+
+    def _update_filter_count(self, visible):
+        total = self._available.count()
+        if total and self._filters_active():
+            self._avail_lbl.setText(
+                "<b>Test cases on this PBI</b>  "
+                f"<span style='color:{theme.tokens()['text_dim2']}'>"
+                f"{visible} of {total}</span>")
+        else:
+            self._avail_lbl.setText("<b>Test cases on this PBI</b>")
 
     def _selected_available(self):
         return [it.data(Qt.UserRole) for it in self._available.selectedItems()]
@@ -537,4 +711,10 @@ class RunScreen(QWidget):
         self._remove_btn.setIcon(icons.icon("arrow-left", size=15))
         self._start_btn.setStyleSheet(theme.btn_primary_qss("font-size: 13px; padding: 0 20px;"))
         self._start_btn.setIcon(icons.icon("play", color="white", size=15))
+        self._filter_icon.setPixmap(icons.pixmap("filter", color=t["text_dim2"], size=15))
+        self._clear_filters_btn.setIcon(icons.icon("x", size=13))
+        self._clear_filters_btn.setStyleSheet(theme.btn_ghost_qss("padding: 4px;"))
+        self._update_filter_count(  # refresh the count's dim colour for the theme
+            sum(0 if self._available.item(r).isHidden() else 1
+                for r in range(self._available.count())))
         self._color_legend()   # re-composite swatches over the new theme base

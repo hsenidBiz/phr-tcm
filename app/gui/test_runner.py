@@ -457,6 +457,7 @@ class _CreateBugDialog(frameless.FramelessMixin, QDialog):
         self.init_frameless("Create Bug", resizable=True, show_min=False,
                             show_max=False)
         theme.style_combos(self)            # modern severity dropdown
+        theme.style_inputs(self)            # rounded title / repro textboxes
 
     def values(self) -> dict:
         return {
@@ -522,6 +523,7 @@ class _SubmitOverlay(QWidget):
             f"background: {t['surface2']}; min-height: 10px; }}"
             f"QProgressBar::chunk {{ background: {t['accent']}; border-radius: 4px; }}"
         )
+        theme.style_inputs(self)   # keep the rounded textboxes themed on toggle
 
 
 class TestRunner(frameless.FramelessMixin, QWidget):
@@ -581,6 +583,7 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         # toggles the stays-on-top bit).
         self.init_frameless("Test Runner", resizable=True, show_min=True, show_max=True)
         theme.style_scrollbars(self)  # modern scrollbars in the runner window
+        theme.style_inputs(self)      # rounded comment / notes textboxes
         # Blocking overlay shown over the whole runner while submitting results.
         self._submit_overlay = _SubmitOverlay(self)
         self._load_case(self.idx)
