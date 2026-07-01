@@ -285,7 +285,16 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
     def _build_progress_page(self):
         self.progress_screen = ProgressScreen(self.app_state)
         self.progress_screen.all_done.connect(self._go_config)
+        self.progress_screen.back_requested.connect(self._back_from_progress)
         self.stack.addWidget(self.progress_screen)
+
+    def _back_from_progress(self):
+        """Return to the working tabs after a finished batch. The shared cache was
+        already updated locally on finish, so rebuild the Edit/Run lists from it
+        (no network) and the created/updated cases show immediately."""
+        self.edit_widget.adopt_shared_cache()
+        self.run_widget.adopt_shared_cache()
+        self._go_main(land_on_import=False)
 
     # ------------------------------------------------------------------ #
     #  Navigation                                                          #
@@ -584,7 +593,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
             return
         from app.gui.test_runner import TestRunner
         runner = TestRunner(self.app_state, cases, restore=saved)
-        self.run_widget._open_runners.append(runner)
+        self.run_widget.register_runner(runner)
         runner.show()
         runner.raise_()
         runner.activateWindow()

@@ -47,6 +47,30 @@ class EditScreen(QWidget):
         if self.app_state.pbi_id and self.app_state.pbi_id != self._loaded_pbi:
             self._load_cases()
 
+    def _reset_list_ui(self):
+        """Clear the list + detail/bulk panes back to the empty state (shared by
+        a fresh network load and the local-cache adopt path)."""
+        self._search_edit.clear()
+        self._list.clear()
+        self._cases = []
+        self._current_idx = None
+        self._form.setVisible(False)
+        self._bulk_frame.setVisible(False)
+        self._no_sel_lbl.setText("Select a test case to edit it")
+        self._no_sel_lbl.setVisible(True)
+        self._sel_count_lbl.setText("")
+
+    def adopt_shared_cache(self):
+        """Rebuild the list from the shared existing-cases cache (updated in place
+        right after a create/update on this PBI) — no network re-fetch. No-op if
+        the cache isn't the authoritative list for the current PBI."""
+        pbi = self.app_state.pbi_id
+        cache = self.app_state.existing_cases
+        if not pbi or cache is None or self.app_state.existing_cases_pbi != pbi:
+            return
+        self._reset_list_ui()
+        self._on_cases_loaded(pbi, (cache, len(cache)))
+
     def _refresh_assigned_to_combo(self):
         from app.utils.members_cache import load_cached, attach_once, TeamMemberFetcher
         tm = self.app_state.client.tm
@@ -490,15 +514,7 @@ class EditScreen(QWidget):
         self._refresh_btn.setEnabled(False)
         self._rename_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
-        self._search_edit.clear()
-        self._list.clear()
-        self._cases = []
-        self._current_idx = None
-        self._form.setVisible(False)
-        self._bulk_frame.setVisible(False)
-        self._no_sel_lbl.setText("Select a test case to edit it")
-        self._no_sel_lbl.setVisible(True)
-        self._sel_count_lbl.setText("")
+        self._reset_list_ui()
 
         extra = [r for r in (self.app_state.module_ref,) if r]
         worker = Worker(self.app_state.client.get_test_cases_for_pbi, pbi_id, extra)

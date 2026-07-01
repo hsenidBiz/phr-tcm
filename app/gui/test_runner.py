@@ -29,8 +29,8 @@ from app.utils import theme
 from app.gui import frameless
 
 # UI label -> Azure DevOps outcome value
-_OUTCOMES = [("Pass", "Passed"), ("Fail", "Failed"),
-             ("Blocked", "Blocked"), ("N/A", "NotApplicable")]
+_OUTCOMES = [("Pass", "Passed"), ("Fail", "Failed"), ("Blocked", "Blocked"),
+             ("Paused", "Paused"), ("N/A", "NotApplicable")]
 
 # Max height for a single step row, so a very long Expected Result doesn't
 # dominate the runner (full text stays available via the cell tooltip).
@@ -529,6 +529,11 @@ class _SubmitOverlay(QWidget):
 class TestRunner(frameless.FramelessMixin, QWidget):
     """Top-level always-on-top window that runs a session of test cases."""
 
+    # Emitted after a submit succeeds and the shared test-points cache has been
+    # updated in place with the just-recorded outcomes, so the Run Tests lists
+    # can recolour immediately without a re-fetch.
+    results_submitted = pyqtSignal()
+
     def __init__(self, app_state, cases: list, restore: dict = None):
         super().__init__()
         self.app_state = app_state
@@ -970,8 +975,8 @@ class TestRunner(frameless.FramelessMixin, QWidget):
             self._mark_dirty()
 
     def _refresh_outcome_buttons(self, selected: str):
-        colors = {"Passed": "#4caf50", "Failed": "#e53935",
-                  "Blocked": "#fb8c00", "NotApplicable": "#9e9e9e"}
+        colors = {"Passed": "#4caf50", "Failed": "#e53935", "Blocked": "#fb8c00",
+                  "Paused": "#7e57c2", "NotApplicable": "#9e9e9e"}
         for ado, btn in self._outcome_btns.items():
             on = (ado == selected)
             btn.setChecked(on)
@@ -1079,8 +1084,8 @@ class TestRunner(frameless.FramelessMixin, QWidget):
     #  Pre-load existing results                                          #
     # ------------------------------------------------------------------ #
 
-    _NORMALIZE = {"passed": "Passed", "failed": "Failed",
-                  "blocked": "Blocked", "notapplicable": "NotApplicable"}
+    _NORMALIZE = {"passed": "Passed", "failed": "Failed", "blocked": "Blocked",
+                  "paused": "Paused", "notapplicable": "NotApplicable"}
 
     def _start_preload(self):
         """Fetch the suite's test points once (one round-trip) to pre-fill every
@@ -1229,7 +1234,7 @@ class TestRunner(frameless.FramelessMixin, QWidget):
     @staticmethod
     def _format_last(last: str) -> str:
         v = {"passed": "Passed", "failed": "Failed", "blocked": "Blocked",
-             "notapplicable": "Not Applicable"}.get((last or "").lower())
+             "paused": "Paused", "notapplicable": "Not Applicable"}.get((last or "").lower())
         return f"Previous result: {v}" if v else "Previous result: —"
 
     def _toggle_pin(self):
@@ -1521,6 +1526,10 @@ class TestRunner(frameless.FramelessMixin, QWidget):
                 "bug_ids": list(s.get("bug_ids", [])),
             })
 
+        # Remember what we're recording so the shared points cache (and thus the
+        # Run Tests row tints) can be updated locally the moment the submit lands.
+        self._submitted_outcomes = {item["tc_id"]: item["outcome"] for item in per_case}
+
         self._submit_btn.setEnabled(False)
         self._submit_btn.setText("Submitting…")
         self._status_lbl.setText("Submitting results to Azure DevOps…")
@@ -1540,9 +1549,26 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         self._hide_submit_overlay()
         self._submit_btn.setEnabled(True)
         self._submit_btn.setText("Submit results")
-        # The just-recorded outcomes make the cached points stale — drop them so
-        # the next runner for this suite reflects the submitted results.
-        self.app_state.test_points_by_suite.pop((self._plan_id, self._suite_id), None)
+        # We know exactly what we just recorded, so update the shared points cache
+        # IN PLACE (last outcome + run id) rather than dropping it. That keeps the
+        # cache accurate without a re-fetch and lets the Run Tests lists recolour
+        # immediately (via results_submitted below).
+        key = (self._plan_id, self._suite_id)
+        points = self.app_state.test_points_by_suite.get(key)
+        outcomes = getattr(self, "_submitted_outcomes", None)
+        if points and outcomes:
+            run_id = summary.get("run_id")
+            for p in points:
+                oc = outcomes.get(p.get("test_case_id"))
+                if oc:
+                    p["last_outcome"] = oc
+                    if run_id:
+                        p["last_run_id"] = run_id
+        elif outcomes:
+            # No cache yet (Run Tests never prefetched) — nothing to recolour now;
+            # the next visit fetches fresh from the server, which has our results.
+            self.app_state.test_points_by_suite.pop(key, None)
+        self.results_submitted.emit()
         # The run is recorded — the resumable session is complete; drop it.
         from app.utils.settings import clear_run_session
         clear_run_session()

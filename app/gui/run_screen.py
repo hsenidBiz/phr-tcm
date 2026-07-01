@@ -16,6 +16,7 @@ from app.utils.worker import Worker
 from app.utils import theme
 from app.gui.test_runner import TestRunner
 from app.gui.delegates import HoverTrackerMixin
+from app.gui.checkable_combo import CheckableComboBox
 
 
 class _StatusColorDelegate(HoverTrackerMixin, QStyledItemDelegate):
@@ -176,6 +177,17 @@ class RunScreen(QWidget):
         self._refresh_btn.setEnabled(True)
         self._prefetch_points()
 
+    def adopt_shared_cache(self):
+        """Rebuild the PBI case list from the shared existing-cases cache (updated
+        in place right after a create/update on this PBI) — no network re-fetch of
+        the case list. No-op unless the cache is authoritative for the current PBI.
+        Session (right-hand) selections are preserved."""
+        pbi = self.app_state.pbi_id
+        cache = self.app_state.existing_cases
+        if not pbi or cache is None or self.app_state.existing_cases_pbi != pbi:
+            return
+        self._on_cases_loaded(pbi, (cache, len(cache)))
+
     def _on_cases_error(self, exc):
         self._header_lbl.setText(f"Could not load test cases: {exc}")
         self._refresh_btn.setEnabled(True)
@@ -208,7 +220,7 @@ class RunScreen(QWidget):
         self.app_state.test_points_by_suite[key] = pts
         self._color_lists()
         # Outcomes just became known — re-run a result filter if one is active.
-        if self._result_combo.currentData():
+        if self._result_combo.checked_data():
             self._apply_filters()
 
     # Status colours, applied as a translucent tint over the list background so
@@ -218,6 +230,7 @@ class RunScreen(QWidget):
         "passed": "#1E5E1E",          # dark green
         "failed": "#7A2222",          # dark red
         "blocked": "#6E5A12",         # dark amber / yellow
+        "paused": "#4A2A6E",          # dark purple
         "notapplicable": "#4A4A4A",   # dark neutral grey
     }
     _OUTCOME_ACTIVE_BG = "#1E3F6E"    # dark blue — not yet run (Active)
@@ -226,6 +239,7 @@ class RunScreen(QWidget):
     @classmethod
     def _outcome_label(cls, oc):
         return {"passed": "Passed", "failed": "Failed", "blocked": "Blocked",
+                "paused": "Paused",
                 "notapplicable": "Not Applicable"}.get(oc, "Active (not run)")
 
     def _color_list(self, list_widget):
@@ -261,7 +275,7 @@ class RunScreen(QWidget):
     # recorded result yet → the dark-blue _OUTCOME_ACTIVE_BG tint.)
     _LEGEND_ITEMS = [
         ("Passed", "passed"), ("Failed", "failed"), ("Blocked", "blocked"),
-        ("N/A", "notapplicable"), ("Not run", "_active"),
+        ("Paused", "paused"), ("N/A", "notapplicable"), ("Not run", "_active"),
     ]
 
     def _build_legend(self):
@@ -485,22 +499,15 @@ class RunScreen(QWidget):
         self._filter_icon.setToolTip("Filter and sort the list of test cases")
         row.addWidget(self._filter_icon)
 
-        self._result_combo = QComboBox()
-        self._result_combo.setToolTip("Filter by the last recorded result")
+        self._result_combo = CheckableComboBox(all_text="All results")
+        self._result_combo.setToolTip(
+            "Filter by the last recorded result — tick one or more")
         for label, data in (
-            ("All results", None), ("Passed", "passed"), ("Failed", "failed"),
-            ("Blocked", "blocked"), ("Not applicable", "notapplicable"),
+            ("Passed", "passed"), ("Failed", "failed"), ("Blocked", "blocked"),
+            ("Paused", "paused"), ("Not applicable", "notapplicable"),
             ("Not run", "notrun"),
         ):
-            self._result_combo.addItem(label, data)
-
-        self._date_combo = QComboBox()
-        self._date_combo.setToolTip("Filter by when the test case was created")
-        for label, data in (
-            ("Any time", None), ("Last 7 days", 7), ("Last 30 days", 30),
-            ("Last 90 days", 90), ("Last 12 months", 365),
-        ):
-            self._date_combo.addItem(label, data)
+            self._result_combo.addCheckItem(label, data)
 
         self._sort_combo = QComboBox()
         self._sort_combo.setToolTip("Sort the list of test cases")
@@ -510,10 +517,9 @@ class RunScreen(QWidget):
         ):
             self._sort_combo.addItem(label, data)
 
-        for cb in (self._result_combo, self._date_combo):
-            cb.currentIndexChanged.connect(lambda _i: self._on_filter_changed())
+        self._result_combo.changed.connect(self._on_filter_changed)
         self._sort_combo.currentIndexChanged.connect(lambda _i: self._on_sort_changed())
-        for cb in (self._result_combo, self._date_combo, self._sort_combo):
+        for cb in (self._result_combo, self._sort_combo):
             cb.setMinimumWidth(92)
             cb.setCursor(QCursor(Qt.PointingHandCursor))
             row.addWidget(cb, 1)
@@ -533,8 +539,7 @@ class RunScreen(QWidget):
         # Sort order is not a filter, so it never affects the clear button/count.
         return bool(
             self._search.text().strip()
-            or self._result_combo.currentData()
-            or self._date_combo.currentData())
+            or self._result_combo.checked_data())
 
     def _on_filter_changed(self):
         self._apply_filters()
@@ -545,14 +550,13 @@ class RunScreen(QWidget):
         self._rebuild_available()
 
     def _clear_filters(self):
-        """Reset the search + filter combos (sort order is left as chosen)."""
-        for w in (self._search, self._result_combo, self._date_combo):
-            w.blockSignals(True)
+        """Reset the search + result filter (sort order is left as chosen).
+        clear_checks emits nothing, so a single _on_filter_changed does the one
+        refresh."""
+        self._search.blockSignals(True)
         self._search.clear()
-        for cb in (self._result_combo, self._date_combo):
-            cb.setCurrentIndex(0)
-        for w in (self._search, self._result_combo, self._date_combo):
-            w.blockSignals(False)
+        self._result_combo.clear_checks()
+        self._search.blockSignals(False)
         self._on_filter_changed()
 
     def _outcomes_by_case(self):
@@ -604,28 +608,21 @@ class RunScreen(QWidget):
 
     def _apply_filters(self):
         """Hide every available case that doesn't match the search text and the
-        result / created-date filters, then update the count."""
+        result filter, then update the count. The result filter is multi-select:
+        a case matches if its outcome is any of the ticked results (no ticks =
+        show all)."""
         query = self._search.text().strip().lower()
-        result = self._result_combo.currentData()
-        days = self._date_combo.currentData()
-
-        outcomes = self._outcomes_by_case() if result else {}
-        cutoff = None
-        if days:
-            from datetime import datetime, timedelta, timezone
-            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        results = set(self._result_combo.checked_data())
+        outcomes = self._outcomes_by_case() if results else {}
 
         visible = 0
         for row in range(self._available.count()):
             item = self._available.item(row)
             case = item.data(Qt.UserRole) or {}
             hidden = bool(query) and query not in item.text().lower()
-            if not hidden and result:
+            if not hidden and results:
                 oc = outcomes.get(case.get("_id")) or "notrun"
-                hidden = oc != result
-            if not hidden and cutoff is not None:
-                cd = self._created_dt(case)
-                hidden = cd is None or cd < cutoff
+                hidden = oc not in results
             item.setHidden(hidden)
             if not hidden:
                 visible += 1
@@ -690,10 +687,27 @@ class RunScreen(QWidget):
         if not self._session:
             return
         runner = TestRunner(self.app_state, list(self._session))
-        self._open_runners.append(runner)
+        self.register_runner(runner)
         runner.show()
         runner.raise_()
         runner.activateWindow()
+
+    def register_runner(self, runner):
+        """Track an open runner and recolour our lists live when it submits
+        results. Also used by the main window's resume-run path."""
+        self._open_runners.append(runner)
+        try:
+            runner.results_submitted.connect(self._on_results_submitted)
+        except Exception:
+            pass
+
+    def _on_results_submitted(self):
+        """A runner just recorded outcomes and updated the shared points cache —
+        recolour both lists immediately (and re-apply an active result filter,
+        since a row's outcome may have changed what it should match)."""
+        self._color_lists()
+        if self._result_combo.checked_data():
+            self._apply_filters()
 
     # ------------------------------------------------------------------ #
     #  Theme                                                              #

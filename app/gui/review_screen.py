@@ -3,10 +3,38 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTreeWidget, QTreeWidgetItem, QFrame, QMessageBox,
-    QFileDialog, QShortcut
+    QFileDialog, QShortcut, QHeaderView, QStyledItemDelegate
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QBrush, QCursor, QKeySequence
+
+
+class _WrapDelegate(QStyledItemDelegate):
+    """Sizes each row to fit its word-wrapped text, so long step / expected
+    values are shown in full across several lines instead of being elided.
+    Painting stays native (the view has word-wrap enabled); only the height
+    hint — which the default QTreeView delegate doesn't derive from wrapping —
+    is supplied here, per column width."""
+
+    def sizeHint(self, option, index):
+        tree = self.parent()
+        col = index.column()
+        total = tree.columnWidth(col)
+        avail = total
+        if col == 0:
+            # Column 0 text is inset by the branch/indentation of its depth.
+            depth = 1
+            p = index.parent()
+            while p.isValid():
+                depth += 1
+                p = p.parent()
+            avail -= depth * tree.indentation()
+        avail = max(avail - 10, 24)
+        text = str(index.data(Qt.DisplayRole) or "")
+        rect = option.fontMetrics.boundingRect(
+            0, 0, avail, 100000, int(Qt.TextWordWrap | Qt.AlignLeft), text)
+        base = super().sizeHint(option, index).height()
+        return QSize(total, max(rect.height() + 8, base))
 
 
 class ReviewScreen(QWidget):
@@ -57,7 +85,17 @@ class ReviewScreen(QWidget):
         # Tree view of all queued test cases
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Test Case / Step", "Details"])
-        self.tree.setColumnWidth(0, 340)
+        # Wrap long step/expected text onto multiple lines (rows grow to fit)
+        # instead of eliding with "…". Both columns Stretch so each has a defined
+        # width to wrap within and there's never a horizontal scrollbar.
+        self.tree.setWordWrap(True)
+        self.tree.setItemDelegate(_WrapDelegate(self.tree))
+        hdr = self.tree.header()
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        # Column widths change as the window (and thus the stretched columns)
+        # resizes — recompute wrapped row heights when they do.
+        hdr.sectionResized.connect(lambda *_: self.tree.scheduleDelayedItemsLayout())
         self.tree.setAlternatingRowColors(True)
         self.tree.setEditTriggers(QTreeWidget.NoEditTriggers)
         self.tree.setSelectionMode(QTreeWidget.ExtendedSelection)
@@ -291,6 +329,7 @@ class ReviewScreen(QWidget):
             if tc.update_id:
                 step_summary += f"  ·  ↻ updates existing #{tc.update_id}"
             tc_item.setText(0, tc.title)
+            tc_item.setToolTip(0, tc.title)
             tc_item.setText(1, step_summary)
             tc_item.setForeground(0, QBrush(title_color))
 
@@ -306,16 +345,18 @@ class ReviewScreen(QWidget):
             else:
                 parts.append("Created By: (current user)")
             meta_item.setText(1, "  |  ".join(parts))
+            meta_item.setToolTip(1, "  |  ".join(parts))
             meta_item.setForeground(0, QBrush(meta_color))
             meta_item.setForeground(1, QBrush(meta_color))
 
             for i, step in enumerate(tc.steps):
                 step_item = QTreeWidgetItem(tc_item)
-                step_item.setText(
-                    0,
-                    f"   Step {i + 1}: {step.action[:60]}{'…' if len(step.action) > 60 else ''}"
-                )
-                step_item.setText(1, step.expected[:80] if step.expected else "(no expected result)")
+                action = step.action or ""
+                step_item.setText(0, f"   Step {i + 1}: {action}")
+                step_item.setToolTip(0, action)
+                expected = step.expected if step.expected else "(no expected result)"
+                step_item.setText(1, expected)
+                step_item.setToolTip(1, expected)
                 step_item.setForeground(1, QBrush(meta_color))
 
             tc_item.setExpanded(True)
@@ -476,6 +517,21 @@ class ReviewScreen(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_create(self):
+        # Block while the test plan/suite for this PBI is still being determined:
+        # creating now would race the detection and force a blind re-lookup. Only
+        # matters when there are NEW cases (pure-update batches need no suite).
+        has_new = any(not tc.update_id for tc in self.app_state.queue)
+        still_detecting = (getattr(self.app_state, "test_plan_detecting", False)
+                           and self.app_state.test_plan_pbi != self.app_state.pbi_id)
+        if has_new and still_detecting:
+            QMessageBox.information(
+                self, "Preparing test plan",
+                f"Still determining the test plan for PBI #{self.app_state.pbi_id}.\n\n"
+                "Please wait a few seconds and click Create again — the test cases "
+                "will then upload straight away."
+            )
+            return
+
         n = len(self.app_state.queue)
         n_updates = sum(1 for tc in self.app_state.queue if tc.update_id)
         n_creates = n - n_updates
