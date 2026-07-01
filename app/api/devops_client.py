@@ -298,39 +298,105 @@ class DevOpsClient:
         ]
         if extra_fields:
             base_fields.extend(f for f in extra_fields if f not in base_fields)
-        fields_str = ",".join(base_fields)
 
+        return self.get_work_items(tc_ids, base_fields), total
+
+    def get_work_items(self, ids: list, fields: list) -> list:
+        """Batch-GET work items by id, returning field dicts each with an '_id'
+        key. Fetches in WORKITEM_BATCH_SIZE chunks (ADO caps ?ids= at 200), so any
+        number of ids is safe. Read only."""
+        fields_str = ",".join(fields)
         result = []
-        for start in range(0, total, self.WORKITEM_BATCH_SIZE):
-            batch = tc_ids[start:start + self.WORKITEM_BATCH_SIZE]
+        for start in range(0, len(ids), self.WORKITEM_BATCH_SIZE):
+            batch = ids[start:start + self.WORKITEM_BATCH_SIZE]
             ids_str = ",".join(str(i) for i in batch)
             url = (
                 f"{self._base()}/wit/workitems"
                 f"?ids={ids_str}&fields={fields_str}&api-version={API_VERSION}"
             )
             resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=30)
-            data = self._handle(resp)
+            for item in self._handle(resp).get("value", []):
+                f = item.get("fields", {})
+                f["_id"] = item["id"]
+                result.append(f)
+        return result
 
-            for item in data.get("value", []):
-                fields = item.get("fields", {})
-                fields["_id"] = item["id"]
-                result.append(fields)
+    def query_work_items(self, wiql: str, top: int = 500) -> list:
+        """Run a WIQL query and return the matching work-item ids (query only —
+        creates/changes nothing). Read only."""
+        url = f"{self._base()}/wit/wiql?$top={int(top)}&api-version={API_VERSION}"
+        resp = self._session.post(
+            url, json={"query": wiql},
+            headers=self.tm.get_json_headers(), timeout=20,
+        )
+        return [w["id"] for w in self._handle(resp).get("workItems", [])]
 
-        return result, total
+    def get_work_item_states(self, wi_type: str) -> list:
+        """GET the states defined for a work-item type on this project's process,
+        each {name, color, category}. `category` (Proposed/InProgress/Resolved/
+        Completed/Removed) drives board columns and legal-state lists. Cached per
+        type. Read only."""
+        cache = getattr(self, "_states_cache", None)
+        if cache is None:
+            cache = self._states_cache = {}
+        if wi_type in cache:
+            return cache[wi_type]
+        from urllib.parse import quote
+        url = (f"{self._base()}/wit/workitemtypes/{quote(wi_type)}/states"
+               f"?api-version={API_VERSION}")
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        states = [
+            {"name": s.get("name", ""), "color": s.get("color", ""),
+             "category": s.get("category", "")}
+            for s in self._handle(resp).get("value", [])
+        ]
+        cache[wi_type] = states
+        return states
 
-    def update_test_case_fields(self, tc_id: int, fields: dict):
-        """
-        PATCH a Test Case work item to update the specified fields.
-        fields: {reference_name: value}
-        Uses 'add' op which creates-or-replaces. No DELETE operations.
-        """
+    def update_work_item_fields(self, wi_id: int, fields: dict) -> dict:
+        """PATCH a work item's fields ({reference_name: value}); the 'add' op
+        creates-or-replaces. Works for ANY work item and ANY field (System.State,
+        System.AssignedTo, scheduling, …). Returns the updated work item. No
+        DELETE. Raises on ADO 4xx (invalid transition / required field / 403) so
+        callers can surface the message + offer open-in-browser."""
         patch = [
             {"op": "add", "path": f"/fields/{ref}", "value": value}
             for ref, value in fields.items()
         ]
-        url = f"{self._base()}/wit/workitems/{tc_id}?api-version={API_VERSION}"
+        url = f"{self._base()}/wit/workitems/{wi_id}?api-version={API_VERSION}"
         resp = self._session.patch(url, json=patch, headers=self.tm.get_patch_headers(), timeout=30)
-        self._handle(resp)
+        return self._handle(resp)
+
+    def update_test_case_fields(self, tc_id: int, fields: dict):
+        """Back-compat alias for the Test Case callers — see
+        update_work_item_fields (a Test Case is just a work item)."""
+        self.update_work_item_fields(tc_id, fields)
+
+    _COMMENTS_API = "7.1-preview.4"
+
+    def add_work_item_comment(self, wi_id: int, text: str) -> dict:
+        """POST a comment on a work item; returns the created comment. No DELETE."""
+        url = (f"{self._base()}/wit/workItems/{wi_id}/comments"
+               f"?api-version={self._COMMENTS_API}")
+        resp = self._session.post(
+            url, json={"text": text}, headers=self.tm.get_json_headers(), timeout=20)
+        return self._handle(resp)
+
+    def get_work_item_comments(self, wi_id: int) -> list:
+        """GET a work item's comments, newest first, each {id, text, created_by,
+        created_date}. Read only."""
+        url = (f"{self._base()}/wit/workItems/{wi_id}/comments"
+               f"?order=desc&api-version={self._COMMENTS_API}")
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        out = []
+        for c in self._handle(resp).get("comments", []):
+            out.append({
+                "id": c.get("id"),
+                "text": c.get("text", ""),
+                "created_by": (c.get("createdBy") or {}).get("displayName", ""),
+                "created_date": c.get("createdDate", ""),
+            })
+        return out
 
     def update_test_case_from_model(
         self,
