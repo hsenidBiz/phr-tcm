@@ -26,6 +26,7 @@ PAGE_CONFIG = 1
 PAGE_MAIN = 2
 PAGE_REVIEW = 3
 PAGE_PROGRESS = 4
+PAGE_MYWORK = 5
 
 
 class MainWindow(frameless.FramelessMixin, QMainWindow):
@@ -46,6 +47,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._build_main_page()
         self._build_review_page()
         self._build_progress_page()
+        self._build_mywork_page()
 
         # Custom dark title bar + 1px border in place of the native OS chrome.
         self._title_bar = self.init_frameless(
@@ -353,6 +355,29 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.edit_widget.adopt_shared_cache()
         self.run_widget.adopt_shared_cache()
         self._go_main(land_on_import=False)
+
+    def _build_mywork_page(self):
+        """The "My Work" work-item board — a separate MODE, not a tab: toggled
+        from anywhere with Ctrl+Shift+M and toggled back to wherever you were."""
+        from app.gui.mywork_screen import MyWorkScreen
+        self.mywork_screen = MyWorkScreen(self.app_state)
+        self.stack.addWidget(self.mywork_screen)
+        self._mywork_return_page = PAGE_MAIN
+        QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(self._toggle_mywork)
+
+    def _toggle_mywork(self):
+        """Ctrl+Shift+M — switch between the normal mode and My Work. Needs a
+        connected org/project (it is PBI-independent, so no PBI is required)."""
+        if self.stack.currentIndex() == PAGE_MYWORK:
+            self._go_to(self._mywork_return_page)
+            return
+        tm = self.app_state.token_manager
+        if not (tm.org_url and tm.project):
+            self._status("My Work needs a connected organisation and project — sign in first.")
+            return
+        self._mywork_return_page = self.stack.currentIndex()
+        self.mywork_screen.on_enter()
+        self._go_to(PAGE_MYWORK)
 
     # ------------------------------------------------------------------ #
     #  Navigation                                                          #
@@ -810,6 +835,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.run_widget.refresh_theme()
         self.review_screen.refresh_theme()
         self.progress_screen.refresh_theme()
+        self.mywork_screen.refresh_theme()
         theme.style_scrollbars(self)  # re-tint scrollbar handles for the theme
         theme.style_combos(self)      # re-tint dropdowns for the theme
         theme.style_inputs(self)      # re-theme the rounded textboxes
