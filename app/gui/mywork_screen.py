@@ -1,10 +1,15 @@
-"""My Work — a fast board of the work items assigned to you.
+"""My Work — a fast board + inline editor for the work items assigned to you.
 
-POC Phase 1: a read-only board. One WIQL round-trip (assigned to me, most
+POC Phase 1: read-only board — one WIQL round-trip (assigned to me, most
 recently changed first) + one batched field GET, grouped into To Do / Doing /
-Done columns by each state's process *category*. Search / type filter / sort
-mirror the Run Tests bar. Double-click opens the item in the browser.
-Editing, comments and the focus timer arrive in later phases.
+Done columns by each state's process *category*.
+
+POC Phase 2: full inline editing. Selecting a card opens it in a right-hand
+editor (title, state, assignee, priority, iteration/area, tags, description,
+remaining/completed work). Saves send ONLY the changed fields and merge the
+server's response back locally — no refetch. Changing State applies instantly
+(the one-click transition ADO's web UI makes you work for). Comments load
+lazily per card; a minimal quick-create files a Bug/Task with just a title.
 
 Toggled from anywhere with Ctrl+Shift+M (see MainWindow._toggle_mywork).
 """
@@ -13,18 +18,20 @@ import webbrowser
 from urllib.parse import quote
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
-    QListWidgetItem, QLineEdit, QComboBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+    QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit,
+    QMessageBox, QScrollArea, QFrame,
 )
 from PyQt5.QtCore import Qt, QThreadPool
-from PyQt5.QtGui import QCursor, QColor, QBrush
+from PyQt5.QtGui import QCursor, QColor, QBrush, QPalette
 
 from app.utils.worker import Worker
 from app.utils import theme
 from app.utils.anim import Spinner
+from app.utils.xml_builder import html_to_text
 from app.models.work_item import WorkItem, WORK_ITEM_FIELDS, COLUMNS
 from app.gui.checkable_combo import CheckableComboBox
-from app.gui import delegates
+from app.gui import delegates, frameless
 
 # Test artifacts are managed in the app's normal mode — keep the board about
 # actual work (stories, bugs, tasks, …).
@@ -32,6 +39,10 @@ _EXCLUDED_TYPES = ("Test Case", "Test Suite", "Test Plan",
                    "Shared Steps", "Shared Parameter")
 
 _MAX_ITEMS = 500   # WIQL $top cap — personal boards stay far below this
+
+# Rich-text fields are heavy, so the board fetch skips them; the editor fetches
+# them lazily for the selected card only.
+_DESC_FIELDS = ["System.Description", "Microsoft.VSTS.TCM.ReproSteps"]
 
 
 def _fetch_my_work(client) -> dict:
@@ -59,9 +70,98 @@ def _fetch_my_work(client) -> dict:
     return {"fields": fields, "states": states}
 
 
+def _quick_create(client, kind: str, title: str, description: str, assign_to: str) -> dict:
+    """Worker-thread create: resolve the real type (Bug adapts to the process
+    via detect_bug_type), POST it, and return what the board needs for a local
+    insert (id + type + the process's initial state)."""
+    if kind == "Bug":
+        info = client.detect_bug_type()
+        wtype, desc_field = info["type"], info["repro_field"]
+    else:
+        wtype, desc_field = "Task", "System.Description"
+    fields = {"System.Title": title}
+    if description:
+        fields[desc_field] = description
+    if assign_to:
+        fields["System.AssignedTo"] = assign_to
+    res = client.create_work_item(wtype, fields)
+    initial, states = "New", {}
+    try:
+        raw = client.get_work_item_states(wtype)
+        states = {s["name"]: (s["category"], s["color"]) for s in raw}
+        initial = next((s["name"] for s in raw if s["category"] == "Proposed"),
+                       raw[0]["name"] if raw else "New")
+    except Exception:
+        pass
+    return {"id": res.get("id"), "type": wtype, "state": initial,
+            "title": title, "assign_to": assign_to, "states": states,
+            "description": description, "desc_field": desc_field}
+
+
+class _NewItemDialog(frameless.FramelessDialog):
+    """Minimal quick-create: kind + title (+ optional description). No forms of
+    forms — the fields ADO's dialog makes mandatory are defaulted server-side."""
+
+    def __init__(self, parent):
+        super().__init__(parent, "New work item", resizable=False)
+        lay = self.content_layout
+        lay.setSpacing(8)
+        lay.setContentsMargins(16, 12, 16, 14)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Type"))
+        self.kind_combo = QComboBox()
+        self.kind_combo.addItem("Bug", "Bug")
+        self.kind_combo.addItem("Task", "Task")
+        self.kind_combo.setCursor(QCursor(Qt.PointingHandCursor))
+        row.addWidget(self.kind_combo, 1)
+        lay.addLayout(row)
+
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("Title (required)")
+        lay.addWidget(self.title_edit)
+
+        self.desc_edit = QPlainTextEdit()
+        self.desc_edit.setPlaceholderText("Description / repro steps (optional)")
+        self.desc_edit.setFixedHeight(96)
+        lay.addWidget(self.desc_edit)
+
+        btns = QHBoxLayout()
+        btns.addStretch()
+        cancel = QPushButton("Cancel")
+        cancel.setStyleSheet(theme.btn_neutral_qss())
+        cancel.setCursor(QCursor(Qt.PointingHandCursor))
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(cancel)
+        create = QPushButton("Create")
+        create.setStyleSheet(theme.btn_primary_qss("padding: 6px 18px;"))
+        create.setCursor(QCursor(Qt.PointingHandCursor))
+        create.clicked.connect(self._on_create)
+        btns.addWidget(create)
+        lay.addLayout(btns)
+
+        theme.style_combos(self)
+        theme.style_inputs(self)
+        self.setMinimumWidth(420)
+        self.finalize_frameless()
+        self.title_edit.setFocus()
+
+    def _on_create(self):
+        if not self.title_edit.text().strip():
+            QMessageBox.information(self, "Title required",
+                                    "Give the work item a title first.")
+            return
+        self.accept()
+
+    def values(self) -> tuple:
+        return (self.kind_combo.currentData(),
+                self.title_edit.text().strip(),
+                self.desc_edit.toPlainText().strip())
+
+
 class MyWorkScreen(QWidget):
-    """Read-only Kanban-style view of the work items assigned to the signed-in
-    user in the current project."""
+    """Kanban-style view + inline editor for the work items assigned to the
+    signed-in user in the current project."""
 
     def __init__(self, app_state):
         super().__init__()
@@ -70,6 +170,14 @@ class MyWorkScreen(QWidget):
         self._states_by_type: dict = {}     # {type: {state: (category, color)}}
         self._loaded_key = None             # (org_url, project) the items belong to
         self._loading = False
+        self._current: WorkItem | None = None
+        self._dirty = False
+        self._suspend = False               # True while programmatically filling
+        self._selecting = False             # True while syncing list selections
+        self._saving = False
+        self._desc_field = "System.Description"   # field the shown text came from
+        self._desc_original = ""
+        self._comments_cache: dict = {}     # {work_item_id: [comment dicts]}
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -83,6 +191,7 @@ class MyWorkScreen(QWidget):
         key = (tm.org_url, tm.project)
         if key != self._loaded_key and not self._loading:
             self.refresh()
+        self._refresh_members()
 
     def refresh(self):
         if self._loading:
@@ -106,6 +215,8 @@ class MyWorkScreen(QWidget):
         self._loaded_key = key
         self._items = [WorkItem(f) for f in result.get("fields", [])]
         self._states_by_type = result.get("states", {})
+        self._comments_cache.clear()
+        self._show_placeholder()
         self._repopulate_type_filter()
         self._rebuild()
 
@@ -125,7 +236,7 @@ class MyWorkScreen(QWidget):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(8)
 
-        # Header: title · count · spinner · refresh · return hint
+        # Header: title · count · spinner · hint · new · refresh
         hdr = QHBoxLayout()
         self._title_lbl = QLabel("<b>My Work</b>")
         self._title_lbl.setStyleSheet("font-size: 16px;")
@@ -140,6 +251,12 @@ class MyWorkScreen(QWidget):
         self._hint_lbl = QLabel("Ctrl+Shift+M to return")
         hdr.addWidget(self._hint_lbl)
         hdr.addSpacing(8)
+        self._new_btn = QPushButton("New item")
+        self._new_btn.setIcon(icons.icon("plus", size=15))
+        self._new_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._new_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._new_btn.clicked.connect(self._on_new_item)
+        hdr.addWidget(self._new_btn)
         self._refresh_btn = QPushButton("Refresh")
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
@@ -186,8 +303,13 @@ class MyWorkScreen(QWidget):
             cb.setCursor(QCursor(Qt.PointingHandCursor))
         layout.addLayout(bar)
 
-        # Board: three columns, each a header label + card list
-        board = QHBoxLayout()
+        # Board (left) | detail editor (right)
+        from app.gui.grip_splitter import GripSplitter
+        split = GripSplitter(Qt.Horizontal)
+
+        board_widget = QWidget()
+        board = QHBoxLayout(board_widget)
+        board.setContentsMargins(0, 0, 0, 0)
         board.setSpacing(10)
         self._col_labels = {}
         self._col_lists = {}
@@ -202,11 +324,20 @@ class MyWorkScreen(QWidget):
             lst.setWordWrap(True)
             lst.setSelectionMode(QListWidget.SingleSelection)
             lst.itemDoubleClicked.connect(self._open_in_browser)
+            lst.itemSelectionChanged.connect(
+                lambda l=None, s=lst: self._on_card_selected(s))
             delegates.apply_hover(lst)
             self._col_lists[col] = lst
             col_v.addWidget(lst, 1)
             board.addLayout(col_v, 1)
-        layout.addLayout(board, 1)
+        split.addWidget(board_widget)
+
+        split.addWidget(self._build_detail_panel())
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
+        split.setSizes([620, 360])
+        self._splitter = split
+        layout.addWidget(split, 1)
 
         self._empty_lbl = QLabel("")
         self._empty_lbl.setAlignment(Qt.AlignCenter)
@@ -214,6 +345,157 @@ class MyWorkScreen(QWidget):
         layout.addWidget(self._empty_lbl)
 
         self.refresh_theme()
+
+    def _build_detail_panel(self) -> QWidget:
+        """The right-hand editor: a scrollable form + comments, hidden behind a
+        placeholder until a card is selected."""
+        from app.utils import icons
+        panel = QWidget()
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._no_sel_lbl = QLabel("Select a card to view and edit it")
+        self._no_sel_lbl.setAlignment(Qt.AlignCenter)
+        outer.addWidget(self._no_sel_lbl, 1)
+
+        self._detail_scroll = QScrollArea()
+        self._detail_scroll.setWidgetResizable(True)
+        self._detail_scroll.setFrameShape(QFrame.NoFrame)
+        self._detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        form_host = QWidget()
+        # Palette-based background (never a stylesheet on an ancestor of the
+        # comment list — the QStyleSheetStyle gotcha).
+        for w in (self._detail_scroll.viewport(), form_host):
+            w.setBackgroundRole(QPalette.Window)
+            w.setAutoFillBackground(True)
+        v = QVBoxLayout(form_host)
+        v.setContentsMargins(10, 2, 4, 8)
+        v.setSpacing(6)
+
+        # Header: "#123 · Bug" + open in browser
+        head = QHBoxLayout()
+        self._detail_id_lbl = QLabel("")
+        head.addWidget(self._detail_id_lbl)
+        head.addStretch()
+        self._open_btn = QPushButton("Open in browser")
+        self._open_btn.setIcon(icons.icon("external-link", size=14))
+        self._open_btn.setStyleSheet(theme.btn_ghost_qss())
+        self._open_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._open_btn.clicked.connect(self._open_current_in_browser)
+        head.addWidget(self._open_btn)
+        v.addLayout(head)
+
+        self._title_edit = QLineEdit()
+        self._title_edit.setPlaceholderText("Title")
+        self._title_edit.textChanged.connect(self._on_edit)
+        v.addWidget(self._title_edit)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        self._form_labels = []
+
+        def _lbl(text):
+            lab = QLabel(text)
+            self._form_labels.append(lab)
+            return lab
+
+        # State applies INSTANTLY on change (see _on_state_changed);
+        # everything else batches into Save.
+        grid.addWidget(_lbl("State"), 0, 0)
+        self._state_combo = QComboBox()
+        self._state_combo.setToolTip("Changing the state saves immediately")
+        self._state_combo.currentIndexChanged.connect(self._on_state_changed)
+        grid.addWidget(self._state_combo, 0, 1)
+        grid.addWidget(_lbl("Priority"), 0, 2)
+        self._priority_combo = QComboBox()
+        self._priority_combo.addItem("—", None)
+        for p in (1, 2, 3, 4):
+            self._priority_combo.addItem(str(p), p)
+        self._priority_combo.currentIndexChanged.connect(self._on_edit)
+        grid.addWidget(self._priority_combo, 0, 3)
+
+        grid.addWidget(_lbl("Assigned to"), 1, 0)
+        self._assigned_combo = QComboBox()
+        self._assigned_combo.addItem("Unassigned", "")
+        self._assigned_combo.currentIndexChanged.connect(self._on_edit)
+        grid.addWidget(self._assigned_combo, 1, 1, 1, 3)
+
+        grid.addWidget(_lbl("Iteration"), 2, 0)
+        self._iteration_edit = QLineEdit()
+        self._iteration_edit.textChanged.connect(self._on_edit)
+        grid.addWidget(self._iteration_edit, 2, 1, 1, 3)
+
+        grid.addWidget(_lbl("Area"), 3, 0)
+        self._area_edit = QLineEdit()
+        self._area_edit.textChanged.connect(self._on_edit)
+        grid.addWidget(self._area_edit, 3, 1, 1, 3)
+
+        grid.addWidget(_lbl("Tags"), 4, 0)
+        self._tags_edit = QLineEdit()
+        self._tags_edit.setPlaceholderText("tag1; tag2")
+        self._tags_edit.textChanged.connect(self._on_edit)
+        grid.addWidget(self._tags_edit, 4, 1, 1, 3)
+
+        grid.addWidget(_lbl("Remaining"), 5, 0)
+        self._remaining_edit = QLineEdit()
+        self._remaining_edit.setPlaceholderText("hours")
+        self._remaining_edit.textChanged.connect(self._on_edit)
+        grid.addWidget(self._remaining_edit, 5, 1)
+        grid.addWidget(_lbl("Completed"), 5, 2)
+        self._completed_edit = QLineEdit()
+        self._completed_edit.setPlaceholderText("hours")
+        self._completed_edit.textChanged.connect(self._on_edit)
+        grid.addWidget(self._completed_edit, 5, 3)
+        v.addLayout(grid)
+
+        self._desc_lbl = _lbl("Description")
+        v.addWidget(self._desc_lbl)
+        self._desc_edit = QPlainTextEdit()
+        self._desc_edit.setFixedHeight(104)
+        self._desc_edit.textChanged.connect(self._on_edit)
+        v.addWidget(self._desc_edit)
+
+        save_row = QHBoxLayout()
+        self._save_status = QLabel("")
+        self._save_status.setWordWrap(True)
+        save_row.addWidget(self._save_status, 1)
+        self._save_btn = QPushButton("Save")
+        self._save_btn.setIcon(icons.icon("check", color="white", size=14))
+        self._save_btn.setEnabled(False)
+        self._save_btn.setStyleSheet(theme.btn_primary_qss("padding: 6px 20px;"))
+        self._save_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._save_btn.clicked.connect(self._on_save)
+        save_row.addWidget(self._save_btn)
+        v.addLayout(save_row)
+
+        self._comments_lbl = _lbl("Comments")
+        v.addWidget(self._comments_lbl)
+        self._comments_list = QListWidget()
+        self._comments_list.setWordWrap(True)
+        self._comments_list.setSelectionMode(QListWidget.NoSelection)
+        self._comments_list.setMinimumHeight(110)
+        self._comments_list.setMaximumHeight(190)
+        v.addWidget(self._comments_list)
+        self._comment_box = QPlainTextEdit()
+        self._comment_box.setPlaceholderText("Write a comment…")
+        self._comment_box.setFixedHeight(54)
+        v.addWidget(self._comment_box)
+        comment_row = QHBoxLayout()
+        comment_row.addStretch()
+        self._comment_btn = QPushButton("Add comment")
+        self._comment_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._comment_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._comment_btn.clicked.connect(self._on_add_comment)
+        comment_row.addWidget(self._comment_btn)
+        v.addLayout(comment_row)
+        v.addStretch()
+
+        self._detail_scroll.setWidget(form_host)
+        self._detail_scroll.setVisible(False)
+        outer.addWidget(self._detail_scroll, 1)
+        return panel
 
     # ------------------------------------------------------------------ #
     #  Filters / board build                                              #
@@ -267,56 +549,533 @@ class MyWorkScreen(QWidget):
                 return col
         return None
 
+    def _cat_map(self) -> dict:
+        """{type: {state: category}} for WorkItem.column (strip the colours)."""
+        return {t: {s: v[0] for s, v in m.items()}
+                for t, m in self._states_by_type.items()}
+
     def _rebuild(self):
+        self._selecting = True   # clear() fires selectionChanged — don't react
+        try:
+            for lst in self._col_lists.values():
+                lst.clear()
+            counts = {col: 0 for col in COLUMNS}
+            cat_map = self._cat_map()
+            shown = 0
+            for wi in self._filtered_sorted():
+                col = wi.column(cat_map)
+                if col is None:   # Removed — hidden
+                    continue
+                item = QListWidgetItem(f"#{wi.id}  ·  {wi.type}\n{wi.title}")
+                item.setData(Qt.UserRole, wi)
+                tip = f"State: {wi.state}"
+                if wi.priority is not None:
+                    tip += f"\nPriority: {wi.priority}"
+                if wi.iteration_path:
+                    tip += f"\nIteration: {wi.iteration_path}"
+                tip += "\n\nClick to edit here · double-click to open in Azure DevOps"
+                item.setToolTip(tip)
+                color = self._state_color(wi)
+                if color is not None:
+                    item.setBackground(QBrush(color))
+                self._col_lists[col].addItem(item)
+                counts[col] += 1
+                shown += 1
+            for col, lbl in self._col_labels.items():
+                lbl.setText(f"<b>{col}</b>  <span style='color:{theme.tokens()['text_dim2']}'>"
+                            f"{counts[col]}</span>")
+            total = len(self._items)
+            if self._filters_active() and total:
+                self._count_lbl.setText(f"{shown} of {total} items")
+            else:
+                self._count_lbl.setText(f"{total} item{'s' if total != 1 else ''}"
+                                        if self._loaded_key else "")
+            self._empty_lbl.setVisible(self._loaded_key is not None and total == 0)
+            self._empty_lbl.setText(
+                "No work items are assigned to you in this project." if total == 0 else "")
+            # Keep the edited card highlighted after a rebuild.
+            if self._current is not None:
+                self._select_card(self._current.id)
+        finally:
+            self._selecting = False
+
+    def _select_card(self, wid):
+        """Silently select the card for a work-item id (if visible)."""
         for lst in self._col_lists.values():
-            lst.clear()
-        counts = {col: 0 for col in COLUMNS}
-        # WorkItem.column wants {type: {state: category}} — strip the colors.
-        cat_map = {t: {s: v[0] for s, v in m.items()}
-                   for t, m in self._states_by_type.items()}
-        shown = 0
-        for wi in self._filtered_sorted():
-            col = wi.column(cat_map)
-            if col is None:   # Removed — hidden
-                continue
-            item = QListWidgetItem(f"#{wi.id}  ·  {wi.type}\n{wi.title}")
-            item.setData(Qt.UserRole, wi)
-            tip = f"State: {wi.state}"
-            if wi.priority is not None:
-                tip += f"\nPriority: {wi.priority}"
-            if wi.iteration_path:
-                tip += f"\nIteration: {wi.iteration_path}"
-            tip += "\n\nDouble-click to open in Azure DevOps"
-            item.setToolTip(tip)
-            color = self._state_color(wi)
-            if color is not None:
-                item.setBackground(QBrush(color))
-            self._col_lists[col].addItem(item)
-            counts[col] += 1
-            shown += 1
-        for col, lbl in self._col_labels.items():
-            lbl.setText(f"<b>{col}</b>  <span style='color:{theme.tokens()['text_dim2']}'>"
-                        f"{counts[col]}</span>")
-        total = len(self._items)
-        if self._filters_active() and total:
-            self._count_lbl.setText(f"{shown} of {total} items")
+            for r in range(lst.count()):
+                it = lst.item(r)
+                w = it.data(Qt.UserRole)
+                if w is not None and w.id == wid:
+                    lst.setCurrentItem(it)
+                    return
+
+    # ------------------------------------------------------------------ #
+    #  Selection → detail editor                                          #
+    # ------------------------------------------------------------------ #
+
+    def _on_card_selected(self, src_list):
+        if self._selecting:
+            return
+        items = src_list.selectedItems()
+        if not items:
+            return
+        wi = items[0].data(Qt.UserRole)
+        if wi is None:
+            return
+        if (self._dirty and self._current is not None
+                and wi.id != self._current.id):
+            reply = QMessageBox.question(
+                self, "Discard changes?",
+                f"#{self._current.id} has unsaved changes. Discard them?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                self._selecting = True
+                try:
+                    src_list.clearSelection()
+                    self._select_card(self._current.id)
+                finally:
+                    self._selecting = False
+                return
+        self._selecting = True
+        try:
+            for lst in self._col_lists.values():
+                if lst is not src_list:
+                    lst.clearSelection()
+        finally:
+            self._selecting = False
+        self._load_detail(wi)
+
+    def _show_placeholder(self):
+        self._current = None
+        self._dirty = False
+        self._detail_scroll.setVisible(False)
+        self._no_sel_lbl.setVisible(True)
+
+    def _load_detail(self, wi: WorkItem):
+        self._current = wi
+        self._suspend = True
+        try:
+            self._detail_id_lbl.setText(
+                f"<b>#{wi.id}</b>  <span style='color:{theme.tokens()['text_dim']}'>"
+                f"{wi.type}</span>")
+            self._title_edit.setText(wi.title)
+
+            # Legal states for this item's type (fall back to just its own state).
+            self._state_combo.clear()
+            names = list((self._states_by_type.get(wi.type) or {}).keys()) or [wi.state]
+            if wi.state and wi.state not in names:
+                names.insert(0, wi.state)
+            for n in names:
+                self._state_combo.addItem(n)
+            self._state_combo.setCurrentText(wi.state)
+
+            self._apply_assignee(wi)
+
+            idx = self._priority_combo.findData(wi.priority)
+            self._priority_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self._iteration_edit.setText(wi.iteration_path)
+            self._area_edit.setText(wi.area_path)
+            self._tags_edit.setText(wi.tags)
+            self._remaining_edit.setText(
+                "" if wi.remaining_work is None else str(wi.remaining_work))
+            self._completed_edit.setText(
+                "" if wi.completed_work is None else str(wi.completed_work))
+
+            self._load_description(wi)
+            self._save_status.setText("")
+            self._no_sel_lbl.setVisible(False)
+            self._detail_scroll.setVisible(True)
+        finally:
+            self._suspend = False
+        self._set_dirty(False)
+        self._load_comments(wi.id)
+
+    def _apply_assignee(self, wi: WorkItem):
+        """Fill the assignee combo from the shared members cache and select the
+        item's assignee (adding them if the cache doesn't know them yet)."""
+        members = self.app_state.cached_team_members or []
+        combo = self._assigned_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Unassigned", "")
+        for user in members:
+            display = user.get("displayName", user.get("uniqueName", ""))
+            unique = user.get("uniqueName", "")
+            if display and unique:
+                combo.addItem(display, unique)
+        unique = wi.assigned_to_unique
+        if unique:
+            idx = combo.findData(unique)
+            if idx < 0:
+                combo.addItem(wi.assigned_to or unique, unique)
+                idx = combo.findData(unique)
+            combo.setCurrentIndex(idx)
         else:
-            self._count_lbl.setText(f"{total} item{'s' if total != 1 else ''}"
-                                    if self._loaded_key else "")
-        self._empty_lbl.setVisible(self._loaded_key is not None and total == 0)
-        self._empty_lbl.setText(
-            "No work items are assigned to you in this project." if total == 0 else "")
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def _refresh_members(self):
+        """Warm the shared team-members cache (used by the assignee combo)."""
+        from app.gui.helpers import refresh_team_members
+        refresh_team_members(self.app_state, self._on_members,
+                             self._on_members_fetched, self._on_members_failed)
+
+    def _on_members(self, members):
+        if self._current is not None and not self._dirty:
+            self._suspend = True
+            try:
+                self._apply_assignee(self._current)
+            finally:
+                self._suspend = False
+
+    def _on_members_fetched(self, members):
+        from app.gui.helpers import store_fetched_members
+        store_fetched_members(self.app_state, members)
+        self._on_members(members)
+
+    def _on_members_failed(self, _msg):
+        self.app_state._team_members_fetcher = None
+
+    # -- description (lazy: rich-text fields are skipped by the board fetch) --
+
+    def _load_description(self, wi: WorkItem):
+        primary = ("Microsoft.VSTS.TCM.ReproSteps" if wi.type == "Bug"
+                   else "System.Description")
+        fallback = ("System.Description" if primary != "System.Description"
+                    else "Microsoft.VSTS.TCM.ReproSteps")
+        if wi.fields.get("_desc_fetched"):
+            self._show_description(wi, primary, fallback)
+            return
+        self._desc_edit.setPlainText("")
+        self._desc_edit.setEnabled(False)
+        self._desc_edit.setPlaceholderText("Loading description…")
+        worker = Worker(self.app_state.client.get_work_items, [wi.id], _DESC_FIELDS)
+        worker.signals.result.connect(lambda res, w=wi: self._on_description(w, res))
+        worker.signals.error.connect(lambda _exc: self._desc_edit.setEnabled(True))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_description(self, wi: WorkItem, result: list):
+        fetched = result[0] if result else {}
+        for ref in _DESC_FIELDS:
+            wi.fields[ref] = fetched.get(ref, "")
+        wi.fields["_desc_fetched"] = True
+        if self._current is not None and self._current.id == wi.id:
+            primary = ("Microsoft.VSTS.TCM.ReproSteps" if wi.type == "Bug"
+                       else "System.Description")
+            fallback = ("System.Description" if primary != "System.Description"
+                        else "Microsoft.VSTS.TCM.ReproSteps")
+            self._show_description(wi, primary, fallback)
+
+    def _show_description(self, wi: WorkItem, primary: str, fallback: str):
+        """Show the primary rich-text field as plain text; fall back to the other
+        when the primary is empty. Edits write back to whichever was shown."""
+        raw_primary = wi.fields.get(primary, "") or ""
+        raw_fallback = wi.fields.get(fallback, "") or ""
+        self._desc_field = primary if (raw_primary or not raw_fallback) else fallback
+        text = html_to_text(raw_primary or raw_fallback)
+        self._suspend = True
+        try:
+            self._desc_edit.setEnabled(True)
+            self._desc_edit.setPlaceholderText("Description")
+            self._desc_edit.setPlainText(text)
+        finally:
+            self._suspend = False
+        self._desc_original = text
+
+    # ------------------------------------------------------------------ #
+    #  Editing / saving                                                   #
+    # ------------------------------------------------------------------ #
+
+    def _on_edit(self, *_a):
+        if not self._suspend:
+            self._set_dirty(True)
+
+    def _set_dirty(self, dirty: bool):
+        self._dirty = dirty
+        self._save_btn.setEnabled(dirty and not self._saving)
+
+    @staticmethod
+    def _parse_hours(text: str):
+        """float or None for a Remaining/Completed box; raises ValueError."""
+        text = text.strip()
+        if not text:
+            return None
+        return float(text)
+
+    def _collect_changes(self) -> dict:
+        """Diff the form against the current item — only what changed is sent
+        (so untouched fields can never be clobbered, and processes without a
+        given field never see it). State is EXCLUDED: it saves instantly."""
+        wi = self._current
+        changes = {}
+        title = self._title_edit.text().strip()
+        if title and title != wi.title:
+            changes["System.Title"] = title
+        unique = self._assigned_combo.currentData()
+        if unique is not None and unique != wi.assigned_to_unique:
+            changes["System.AssignedTo"] = unique   # "" unassigns
+        prio = self._priority_combo.currentData()
+        if prio is not None and prio != wi.priority:
+            changes["Microsoft.VSTS.Common.Priority"] = prio
+        iteration = self._iteration_edit.text().strip()
+        if iteration and iteration != wi.iteration_path:
+            changes["System.IterationPath"] = iteration
+        area = self._area_edit.text().strip()
+        if area and area != wi.area_path:
+            changes["System.AreaPath"] = area
+        tags = self._tags_edit.text().strip()
+        if tags != wi.tags:
+            changes["System.Tags"] = tags
+        desc = self._desc_edit.toPlainText()
+        if self._desc_edit.isEnabled() and desc != self._desc_original:
+            changes[self._desc_field] = desc
+        remaining = self._parse_hours(self._remaining_edit.text())
+        if remaining is not None and remaining != wi.remaining_work:
+            changes["Microsoft.VSTS.Scheduling.RemainingWork"] = remaining
+        completed = self._parse_hours(self._completed_edit.text())
+        if completed is not None and completed != wi.completed_work:
+            changes["Microsoft.VSTS.Scheduling.CompletedWork"] = completed
+        return changes
+
+    def _on_save(self):
+        if self._current is None or self._saving:
+            return
+        try:
+            changes = self._collect_changes()
+        except ValueError:
+            self._set_save_status("Remaining / Completed must be numbers (hours).",
+                                  error=True)
+            return
+        if not changes:
+            self._set_save_status("No changes to save.")
+            self._set_dirty(False)
+            return
+        self._saving = True
+        self._save_btn.setEnabled(False)
+        self._save_btn.setText("Saving…")
+        self._set_save_status("")
+        wid = self._current.id
+        worker = Worker(self.app_state.client.update_work_item_fields, wid, changes)
+        worker.signals.result.connect(
+            lambda data, w=wid, ch=changes: self._on_saved(w, ch, data))
+        worker.signals.error.connect(self._on_save_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_saved(self, wid, changes: dict, data: dict):
+        self._saving = False
+        self._save_btn.setText("Save")
+        wi = next((w for w in self._items if w.id == wid), None)
+        if wi is not None:
+            # Optimistic local merge: server response is the source of truth
+            # (rules may have adjusted fields); fall back to our own changes.
+            fresh = (data or {}).get("fields") or {}
+            wi.fields.update(fresh or changes)
+            wi.fields["_id"] = wid
+            if self._desc_field in changes:
+                self._desc_original = self._desc_edit.toPlainText()
+        self._set_dirty(False)
+        self._set_save_status("Saved ✓", ok=True)
+        self._rebuild()   # title/priority on the card may have changed
+
+    def _on_save_error(self, exc):
+        self._saving = False
+        self._save_btn.setText("Save")
+        self._set_dirty(True)   # nothing was lost — keep Save armed
+        self._set_save_status(
+            f"Could not save: {exc}  —  use 'Open in browser' for fields with "
+            "process rules.", error=True)
+
+    # -- instant state transition ---------------------------------------- #
+
+    def _on_state_changed(self, _idx):
+        """The State combo saves immediately — the quickest, most common action.
+        Other pending form edits stay pending (only System.State is sent)."""
+        if self._suspend or self._current is None:
+            return
+        new_state = self._state_combo.currentText()
+        if not new_state or new_state == self._current.state:
+            return
+        wid = self._current.id
+        self._state_combo.setEnabled(False)
+        self._set_save_status(f"Moving to {new_state}…")
+        worker = Worker(self.app_state.client.update_work_item_fields,
+                        wid, {"System.State": new_state})
+        worker.signals.result.connect(
+            lambda data, w=wid, s=new_state: self._on_state_saved(w, s, data))
+        worker.signals.error.connect(lambda exc, w=wid: self._on_state_error(w, exc))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_state_saved(self, wid, new_state, data):
+        self._state_combo.setEnabled(True)
+        wi = next((w for w in self._items if w.id == wid), None)
+        if wi is not None:
+            fresh = (data or {}).get("fields") or {}
+            wi.fields.update(fresh or {"System.State": new_state})
+            wi.fields["_id"] = wid
+        self._set_save_status(f"State → {new_state} ✓", ok=True)
+        self._rebuild()   # the card moves column / retints
+
+    def _on_state_error(self, wid, exc):
+        self._state_combo.setEnabled(True)
+        wi = next((w for w in self._items if w.id == wid), None)
+        if wi is not None and self._current is not None and self._current.id == wid:
+            self._suspend = True
+            try:
+                self._state_combo.setCurrentText(wi.state)   # revert
+            finally:
+                self._suspend = False
+        self._set_save_status(
+            f"Could not change state: {exc}  —  ADO may require extra fields "
+            "for this transition; use 'Open in browser'.", error=True)
+
+    def _set_save_status(self, text: str, ok: bool = False, error: bool = False):
+        t = theme.tokens()
+        color = t["ok"] if ok else (t["error"] if error else t["text_dim"])
+        self._save_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._save_status.setText(text)
+
+    # ------------------------------------------------------------------ #
+    #  Comments                                                           #
+    # ------------------------------------------------------------------ #
+
+    def _load_comments(self, wid):
+        cached = self._comments_cache.get(wid)
+        if cached is not None:
+            self._render_comments(cached)
+            return
+        self._comments_list.clear()
+        self._comments_list.addItem("Loading comments…")
+        worker = Worker(self.app_state.client.get_work_item_comments, wid)
+        worker.signals.result.connect(lambda res, w=wid: self._on_comments(w, res))
+        worker.signals.error.connect(
+            lambda _exc, w=wid: self._on_comments(w, []))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_comments(self, wid, comments: list):
+        self._comments_cache[wid] = comments
+        if self._current is not None and self._current.id == wid:
+            self._render_comments(comments)
+
+    def _render_comments(self, comments: list):
+        self._comments_list.clear()
+        if not comments:
+            it = QListWidgetItem("No comments yet.")
+            it.setFlags(Qt.NoItemFlags)
+            self._comments_list.addItem(it)
+            return
+        for c in comments:
+            date = (c.get("created_date") or "")[:10]
+            text = html_to_text(c.get("text", ""))
+            it = QListWidgetItem(f"{c.get('created_by', '')} · {date}\n{text}")
+            it.setToolTip(text)
+            it.setFlags(Qt.ItemIsEnabled)
+            self._comments_list.addItem(it)
+
+    def _on_add_comment(self):
+        if self._current is None:
+            return
+        text = self._comment_box.toPlainText().strip()
+        if not text:
+            return
+        wid = self._current.id
+        self._comment_btn.setEnabled(False)
+        self._comment_btn.setText("Adding…")
+        worker = Worker(self.app_state.client.add_work_item_comment, wid, text)
+        worker.signals.result.connect(lambda res, w=wid: self._on_comment_added(w, res))
+        worker.signals.error.connect(self._on_comment_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_comment_added(self, wid, res: dict):
+        self._comment_btn.setEnabled(True)
+        self._comment_btn.setText("Add comment")
+        self._comment_box.clear()
+        from datetime import datetime, timezone
+        entry = {
+            "id": (res or {}).get("id"),
+            "text": (res or {}).get("text", ""),
+            "created_by": "You",
+            "created_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        self._comments_cache.setdefault(wid, []).insert(0, entry)
+        if self._current is not None and self._current.id == wid:
+            self._render_comments(self._comments_cache[wid])
+
+    def _on_comment_error(self, exc):
+        self._comment_btn.setEnabled(True)
+        self._comment_btn.setText("Add comment")
+        self._set_save_status(f"Could not add comment: {exc}", error=True)
+
+    # ------------------------------------------------------------------ #
+    #  Quick create                                                       #
+    # ------------------------------------------------------------------ #
+
+    def _on_new_item(self):
+        dlg = _NewItemDialog(self)
+        if not dlg.exec_():
+            return
+        kind, title, desc = dlg.values()
+        assign_to = ""
+        try:
+            assign_to = self.app_state.token_manager.get_current_upn() or ""
+        except Exception:
+            pass
+        self._new_btn.setEnabled(False)
+        self._status_lbl.setText(f"Creating {kind.lower()}…")
+        worker = Worker(_quick_create, self.app_state.client,
+                        kind, title, desc, assign_to)
+        worker.signals.result.connect(self._on_created)
+        worker.signals.error.connect(self._on_create_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_created(self, res: dict):
+        self._new_btn.setEnabled(True)
+        self._status_lbl.setText("")
+        who = res.get("assign_to", "")
+        fields = {
+            "_id": res.get("id"),
+            "System.Title": res.get("title", ""),
+            "System.WorkItemType": res.get("type", ""),
+            "System.State": res.get("state", "New"),
+            "_desc_fetched": True,
+        }
+        if res.get("description"):
+            fields[res.get("desc_field", "System.Description")] = res["description"]
+        if who:
+            fields["System.AssignedTo"] = {"uniqueName": who, "displayName": who}
+        # New local item at the top (WIQL order is recently-changed-first) +
+        # make sure its type's states are known for column/tint/state-combo.
+        if res.get("states") and res.get("type") not in self._states_by_type:
+            self._states_by_type[res["type"]] = res["states"]
+        wi = WorkItem(fields)
+        self._items.insert(0, wi)
+        self._current = wi          # _rebuild re-selects the current card silently
+        self._repopulate_type_filter()
+        self._rebuild()
+        self._load_detail(wi)
+        self._set_save_status(f"Created #{wi.id} ✓", ok=True)
+
+    def _on_create_error(self, exc):
+        self._new_btn.setEnabled(True)
+        self._status_lbl.setText("")
+        QMessageBox.critical(self, "Could not create",
+                             f"The work item was not created:\n\n{exc}")
 
     # ------------------------------------------------------------------ #
     #  Actions                                                            #
     # ------------------------------------------------------------------ #
 
+    def _web_url(self, wid) -> str:
+        tm = self.app_state.token_manager
+        return f"{tm.org_url}/{quote(tm.project)}/_workitems/edit/{wid}"
+
     def _open_in_browser(self, item):
         wi = item.data(Qt.UserRole)
-        if wi is None or wi.id is None:
-            return
-        tm = self.app_state.token_manager
-        webbrowser.open(f"{tm.org_url}/{quote(tm.project)}/_workitems/edit/{wi.id}")
+        if wi is not None and wi.id is not None:
+            webbrowser.open(self._web_url(wi.id))
+
+    def _open_current_in_browser(self):
+        if self._current is not None and self._current.id is not None:
+            webbrowser.open(self._web_url(self._current.id))
 
     # ------------------------------------------------------------------ #
     #  Theme                                                              #
@@ -329,10 +1088,24 @@ class MyWorkScreen(QWidget):
         self._hint_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self._status_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
         self._empty_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
+        self._no_sel_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
         self._spinner.set_color(t["accent"])
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
+        self._new_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._new_btn.setIcon(icons.icon("plus", size=15))
         self._clear_btn.setStyleSheet(theme.btn_ghost_qss("padding: 4px;"))
         self._clear_btn.setIcon(icons.icon("x", size=13))
+        self._open_btn.setStyleSheet(theme.btn_ghost_qss())
+        self._open_btn.setIcon(icons.icon("external-link", size=14))
+        self._save_btn.setStyleSheet(theme.btn_primary_qss("padding: 6px 20px;"))
+        self._save_btn.setIcon(icons.icon("check", color="white", size=14))
+        self._comment_btn.setStyleSheet(theme.btn_neutral_qss())
+        for lab in self._form_labels:
+            lab.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
         if self._items:
             self._rebuild()   # column headers embed a theme colour
+        if self._current is not None:
+            self._detail_id_lbl.setText(
+                f"<b>#{self._current.id}</b>  <span style='color:{t['text_dim']}'>"
+                f"{self._current.type}</span>")
