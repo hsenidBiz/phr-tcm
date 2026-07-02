@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Errors + pyflakes + warnings, tuned to the existing style:
+#   E501 — GUI QSS f-strings routinely exceed the line limit
+#   E731 — small lambdas are idiomatic for Qt signal wiring here
+select = ["E", "F", "W"]
+ignore = ["E501", "E731"]

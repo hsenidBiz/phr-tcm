@@ -11,6 +11,10 @@ sign-in is needed once per launch, after which access tokens refresh silently.
 
 import threading
 
+from app.utils.logger import get_logger
+
+log = get_logger(__name__)
+
 # Well-known public client id for Azure CLI — pre-consented for the
 # Azure DevOps resource in Entra ID tenants, so no app registration is needed.
 _AZURE_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
@@ -140,7 +144,9 @@ class MsalAuthenticator:
                 if "access_token" in result:
                     return self._remember(app, result)
             except Exception:
-                pass  # broker missing/failed -> fall through to the browser
+                # broker missing/failed -> fall through to the browser
+                log.warning("WAM broker sign-in failed — falling back to browser",
+                            exc_info=True)
 
         # 2) System browser fallback.
         app = self._browser()
@@ -194,6 +200,7 @@ class MsalAuthenticator:
                 scopes=[_ADO_SCOPE], account=account,
             )
         except Exception:
+            log.warning("Silent token refresh failed", exc_info=True)
             return None
         if result and "access_token" in result:
             return result["access_token"]
@@ -205,5 +212,6 @@ class MsalAuthenticator:
                 try:
                     self._app.remove_account(self._account)
                 except Exception:
-                    pass
+                    log.warning("Could not remove the MSAL account on sign-out",
+                                exc_info=True)
             self._account = None

@@ -38,9 +38,12 @@ def _parse_excel(path: Path) -> tuple:
         raise ValueError("The Excel file is empty.")
 
     headers = [str(c).strip() if c is not None else "" for c in rows[0]]
+    # Keep each row's true sheet row number (header = row 1) so warnings can
+    # point at the exact row even when blank rows are skipped mid-file.
     data_rows = [
-        {headers[i]: (str(cell).strip() if cell is not None else "") for i, cell in enumerate(row)}
-        for row in rows[1:]
+        (row_num,
+         {headers[i]: (str(cell).strip() if cell is not None else "") for i, cell in enumerate(row)})
+        for row_num, row in enumerate(rows[1:], start=2)
         if any(cell is not None and str(cell).strip() for cell in row)
     ]
     return _parse_rows(data_rows, headers)
@@ -50,7 +53,14 @@ def _parse_csv(path: Path) -> tuple:
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         headers = reader.fieldnames or []
-        data_rows = [{k: (v.strip() if v else "") for k, v in row.items()} for row in reader]
+        data_rows = []
+        for row in reader:
+            # reader.line_num is the physical line just consumed, so blank
+            # lines and quoted multi-line fields never drift the row numbers
+            # reported in warnings.
+            data_rows.append(
+                (reader.line_num, {k: (v.strip() if v else "") for k, v in row.items()})
+            )
     return _parse_rows(data_rows, list(headers))
 
 
@@ -78,6 +88,8 @@ def _block_value(block_rows: list, col: str) -> str:
 
 
 def _parse_rows(rows: list, headers: list) -> tuple:
+    """Parse a list of ``(sheet_row_number, row_dict)`` pairs into test cases.
+    Warnings reference the original sheet row so users can jump straight to it."""
     warnings = []
 
     missing = REQUIRED_COLUMNS - set(headers)
@@ -95,17 +107,17 @@ def _parse_rows(rows: list, headers: list) -> tuple:
     # multi-step cases, and lets a kept TestCaseID flag the case as an update.
     blocks: list[dict] = []
     current = None
-    for row_num, row in enumerate(rows, start=2):
+    for row_num, row in rows:
         raw_id = row.get("TestCaseID", "").strip()
         name = row.get("TestCaseName", "").strip()
 
         if raw_id:
             if current is None or current["raw_id"] != raw_id:
-                current = {"raw_id": raw_id, "name": name, "rows": []}
+                current = {"raw_id": raw_id, "name": name, "row": row_num, "rows": []}
                 blocks.append(current)
         elif name:
             if current is None or name != current["name"]:
-                current = {"raw_id": "", "name": name, "rows": []}
+                current = {"raw_id": "", "name": name, "row": row_num, "rows": []}
                 blocks.append(current)
         elif current is None:
             warnings.append(
@@ -117,10 +129,17 @@ def _parse_rows(rows: list, headers: list) -> tuple:
     test_cases = []
     for block in blocks:
         group = sorted(block["rows"], key=_step_sort_key)
+        first_row = block["row"]
         name = block["name"] or _block_value(group, "TestCaseName")
         if not name:
-            warnings.append("A group of rows was skipped — no TestCaseName found.")
+            warnings.append(f"Row {first_row}: group of rows skipped — no TestCaseName found.")
             continue
+
+        if len(name) > TestCase.MAX_TITLE_LEN:
+            warnings.append(
+                f"Row {first_row}: test case '{name[:60]}…' has a title longer than "
+                f"{TestCase.MAX_TITLE_LEN} characters — Azure DevOps will reject it."
+            )
 
         update_id = None
         raw_id = block["raw_id"] or _block_value(group, "TestCaseID")
@@ -130,11 +149,16 @@ def _parse_rows(rows: list, headers: list) -> tuple:
                 update_id = int(float(raw_id))
             except (ValueError, TypeError):
                 warnings.append(
-                    f"Test case '{name}': TestCaseID '{raw_id}' is not a valid work item ID — "
-                    "this row will be created as a new test case instead of updating."
+                    f"Row {first_row}: test case '{name}' — TestCaseID '{raw_id}' is not a "
+                    "valid work item ID; it will be created as a new test case instead of updating."
                 )
 
         tags = _block_value(group, "Tags")
+        if "," in tags:
+            warnings.append(
+                f"Row {first_row}: test case '{name}' — Tags contain a comma; separate tags "
+                "with semicolons (Azure DevOps does not allow commas in tag names)."
+            )
         automation_status = _block_value(group, "AutomationStatus")
         module_value = _block_value(group, "ModuleValue")
         preconditions = _block_value(group, "Preconditions")
@@ -143,8 +167,9 @@ def _parse_rows(rows: list, headers: list) -> tuple:
             automation_status = "Not Automated"
         elif automation_status not in VALID_STATUSES:
             warnings.append(
-                f"Test case '{name}': AutomationStatus '{automation_status}' is invalid. "
-                f"Defaulting to 'Not Automated'. Valid values: {', '.join(sorted(VALID_STATUSES))}"
+                f"Row {first_row}: test case '{name}' — AutomationStatus '{automation_status}' "
+                f"is invalid. Defaulting to 'Not Automated'. "
+                f"Valid values: {', '.join(sorted(VALID_STATUSES))}"
             )
             automation_status = "Not Automated"
 
@@ -153,11 +178,18 @@ def _parse_rows(rows: list, headers: list) -> tuple:
             action = row.get("StepAction", "").strip()
             expected = row.get("StepExpected", "").strip()
             if not action:
+                if expected:
+                    warnings.append(
+                        f"Row {row_num}: StepExpected is filled but StepAction is empty — "
+                        "step skipped."
+                    )
                 continue
             steps.append(Step(action=action, expected=expected))
 
         if not steps:
-            warnings.append(f"Test case '{name}': no valid steps found — skipped.")
+            warnings.append(
+                f"Row {first_row}: test case '{name}' has no rows with a StepAction — skipped."
+            )
             continue
 
         test_cases.append(TestCase(

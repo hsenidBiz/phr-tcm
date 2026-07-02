@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QPlainTextEdit, QFileDialog, QFrame,
-    QMessageBox, QRubberBand, QApplication, QScrollArea, QSizePolicy, QDialog,
+    QMessageBox, QRubberBand, QApplication, QScrollArea, QDialog,
     QLineEdit, QComboBox, QCheckBox, QProgressBar,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QRect, QSize, QByteArray, QBuffer, QThreadPool

@@ -1,3 +1,4 @@
+import random
 import threading
 
 from PyQt5.QtWidgets import (
@@ -40,6 +41,9 @@ class CreationWorker(QObject):
         self.processed = []
         self._token_event = threading.Event()
         self._abort_event = threading.Event()
+        # Create→link pacing. Starts low for fast batches; a 429 raises it for
+        # the rest of the run so we stop provoking the rate limiter.
+        self._pace = 0.15
 
     @property
     def _abort(self) -> bool:
@@ -131,8 +135,8 @@ class CreationWorker(QObject):
                                 self.area_path, self.iteration_path,
                                 self.preconditions_ref,
                             )
-                            self._abort_event.wait(0.5)  # pacing between create and link
-                        self.client.link_to_pbi(tc_id, self.pbi_id)
+                            self._abort_event.wait(self._pace)  # pacing between create and link
+                        self._link_with_retry(tc_id)
                         self.processed.append((i, tc_id, "created"))
                         self.progress.emit(i, "success", f"✓ Created #{tc_id}: {tc.title}")
                     break
@@ -142,25 +146,48 @@ class CreationWorker(QObject):
                     self._token_event.clear()
                     # Retry with the new token (client uses token_manager which was updated)
                 except RateLimitError as exc:
+                    # Slow the whole batch down for the rest of the run, and add
+                    # jitter to the wait so parallel clients don't retry in step.
+                    self._pace = min(1.0, max(self._pace * 2, 0.5))
+                    wait = exc.retry_after + random.uniform(0.5, 2.0)
                     self.progress.emit(
                         i, "warning",
-                        f"⏳ Rate limited — waiting {exc.retry_after}s before retrying '{tc.title}'…"
+                        f"⏳ Rate limited — waiting {int(wait)}s before retrying '{tc.title}'…"
                     )
-                    self._abort_event.wait(exc.retry_after)
+                    self._abort_event.wait(wait)
                 except Exception as exc:
                     if tc_id is not None:
                         # "partial": the work item exists in DevOps, so this case
                         # must NOT be retried from the queue (it would duplicate).
                         self.progress.emit(
                             i, "partial",
-                            f"✗ Created #{tc_id} but failed to link '{tc.title}' to the PBI: {exc}. "
-                            f"Link it manually in Azure DevOps."
+                            f"✗ Created #{tc_id} but failed to link '{tc.title}' to the PBI "
+                            f"after several attempts: {exc}. Link it manually in Azure DevOps."
                         )
                     else:
                         self.progress.emit(i, "error", f"✗ Failed '{tc.title}': {exc}")
                     break
 
         self.finished.emit()
+
+    def _link_with_retry(self, tc_id: int, attempts: int = 3):
+        """link_to_pbi with two quick retries for transient failures (network
+        blips, 5xx). Token and rate-limit errors pass straight through so the
+        outer loop's re-auth / back-off handling deals with them. A "relation
+        already exists" error counts as success — it means an earlier attempt
+        did link the case but its response was lost."""
+        for attempt in range(1, attempts + 1):
+            try:
+                self.client.link_to_pbi(tc_id, self.pbi_id)
+                return
+            except (TokenExpiredError, RateLimitError):
+                raise
+            except Exception as exc:
+                if "already exists" in str(exc).lower():
+                    return
+                if attempt == attempts or self._abort:
+                    raise
+                self._abort_event.wait(attempt)  # 1 s, then 2 s
 
 
 class ProgressScreen(QWidget):
@@ -199,13 +226,7 @@ class ProgressScreen(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet(
-            "QProgressBar { border: none; border-radius: 5px; background: #e5e5e5; "
-            "min-height: 10px; max-height: 10px; } "
-            "QProgressBar::chunk { border-radius: 5px; "
-            "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
-            "stop:0 #0078d4, stop:1 #00b0ff); }"
-        )
+        self.progress_bar.setStyleSheet(self._progress_bar_qss())
         layout.addWidget(self.progress_bar)
 
         # Log area
@@ -224,9 +245,29 @@ class ProgressScreen(QWidget):
         layout.addWidget(self.result_label)
 
         btn_row = QHBoxLayout()
-        btn_row.addStretch()
 
         from app.utils import theme, icons
+        # Post-run utilities (hidden while a batch is in flight)
+        self.export_log_btn = QPushButton("Export log")
+        self.export_log_btn.setIcon(icons.icon("download", size=15))
+        self.export_log_btn.setVisible(False)
+        self.export_log_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 12px;"))
+        self.export_log_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.export_log_btn.setToolTip("Save this run's log to a text file")
+        self.export_log_btn.clicked.connect(self._on_export_log)
+        btn_row.addWidget(self.export_log_btn)
+
+        self.copy_failed_btn = QPushButton("Copy failed titles")
+        self.copy_failed_btn.setIcon(icons.icon("x", size=14))
+        self.copy_failed_btn.setVisible(False)
+        self.copy_failed_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 12px;"))
+        self.copy_failed_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.copy_failed_btn.setToolTip("Copy the titles of failed test cases to the clipboard")
+        self.copy_failed_btn.clicked.connect(self._on_copy_failed)
+        btn_row.addWidget(self.copy_failed_btn)
+
+        btn_row.addStretch()
+
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setFixedHeight(38)
         self.cancel_btn.setEnabled(False)
@@ -247,18 +288,57 @@ class ProgressScreen(QWidget):
         btn_row.addWidget(self.done_btn)
         layout.addLayout(btn_row)
 
-    def refresh_theme(self):
+    @staticmethod
+    def _progress_bar_qss() -> str:
+        """Single source for the progress bar style (built at init and on
+        every theme toggle, so the two can never drift)."""
         from app.utils import theme
         t = theme.tokens()
         track = "#3a3a3a" if theme.is_dark() else "#e5e5e5"
-        self.progress_bar.setStyleSheet(
+        return (
             f"QProgressBar {{ border: none; border-radius: 5px; background: {track}; "
             f"min-height: 10px; max-height: 10px; }} "
             f"QProgressBar::chunk {{ border-radius: 5px; "
             f"background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
-            f"stop:0 #0078d4, stop:1 #00b0ff); }}"
+            f"stop:0 {t['accent']}, stop:1 #00b0ff); }}"
         )
+
+    def _on_export_log(self):
+        """Save the run's plain-text log so results can be shared or archived."""
+        from pathlib import Path
+        from PyQt5.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Run Log",
+            str(Path.home() / "Downloads" / "test_case_run_log.txt"),
+            "Text Files (*.txt)",
+        )
+        if not path:
+            return
+        try:
+            lines = [msg for _i, _s, msg in getattr(self, "_log_entries", [])]
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            QMessageBox.information(self, "Exported", f"Run log saved to:\n{path}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Could not save the log:\n{exc}")
+
+    def _on_copy_failed(self):
+        """Copy failed/partial case titles so they're easy to chase up."""
+        titles = getattr(self, "_failed_titles", [])
+        if not titles:
+            return
+        from PyQt5.QtWidgets import QApplication
+        QApplication.clipboard().setText("\n".join(titles))
+        self.copy_failed_btn.setText(f"Copied {len(titles)} title{'s' if len(titles) != 1 else ''}")
+
+    def refresh_theme(self):
+        from app.utils import theme, icons
+        t = theme.tokens()
+        self.progress_bar.setStyleSheet(self._progress_bar_qss())
         self._spinner.set_color(t["accent"])
+        self.export_log_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 12px;"))
+        self.export_log_btn.setIcon(icons.icon("download", size=15))
+        self.copy_failed_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 12px;"))
+        self.copy_failed_btn.setIcon(icons.icon("x", size=14))
         from app.utils import icons
         self.cancel_btn.setStyleSheet(theme.btn_neutral_qss("font-size: 13px; padding: 0 16px;"))
         self.done_btn.setStyleSheet(
@@ -279,7 +359,11 @@ class ProgressScreen(QWidget):
 
     def start(self):
         """Begin the creation process. Called when this screen becomes active."""
+        # Snapshot the queue for the worker: the worker thread only ever touches
+        # this list, and _on_finished maps _consumed_indices back onto it, so a
+        # queue that somehow changes mid-run can never corrupt the result.
         queue = list(self.app_state.queue)
+        self._batch = queue
         n = len(queue)
         self._n_updates = sum(1 for tc in queue if tc.update_id)
         self._n_creates = n - self._n_updates
@@ -299,6 +383,12 @@ class ProgressScreen(QWidget):
         self._success_count = 0
         self._error_count = 0
         self._total = n
+        # Every log line + the titles of failed cases, for post-run export/copy.
+        self._log_entries = []
+        self._failed_titles = []
+        self.export_log_btn.setVisible(False)
+        self.copy_failed_btn.setVisible(False)
+        self.copy_failed_btn.setText("Copy failed titles")
         # Indices that must NOT stay in the queue afterwards: fully created,
         # or created-but-unlinked (retrying those would duplicate the work item).
         self._consumed_indices = set()
@@ -367,6 +457,7 @@ class ProgressScreen(QWidget):
         cursor.movePosition(QTextCursor.End)
         self.log.setTextCursor(cursor)
         self.log.append(f'<span style="color:{color};">{message}</span>')
+        self._log_entries.append((index, status, message))
 
         if index < 0:
             return  # log-only note (e.g. test-plan preparation), not a queue item
@@ -379,6 +470,9 @@ class ProgressScreen(QWidget):
             self._consumed_indices.add(index)
         elif status == "error":
             self._error_count += 1
+
+        if status in ("partial", "error") and 0 <= index < len(self._batch):
+            self._failed_titles.append(self._batch[index].title)
 
     def _on_suite_ready(self, plan_id: int, plan_name: str, suite_id: int):
         """Record the resolved plan/suite so the Config and Review screens reflect it."""
@@ -471,6 +565,8 @@ class ProgressScreen(QWidget):
         self.title_label.setText("Done")
         self.progress_bar.setValue(self._total)
         self.done_btn.setEnabled(True)
+        self.export_log_btn.setVisible(True)
+        self.copy_failed_btn.setVisible(bool(self._failed_titles))
 
         if self._n_updates and not self._n_creates:
             done_verb = "updated"
@@ -495,11 +591,15 @@ class ProgressScreen(QWidget):
 
         # Keep failed/skipped cases in the queue so they can be fixed and retried.
         # Successful and created-but-unlinked items are removed (re-running them
-        # would create duplicates in Azure DevOps).
+        # would create duplicates in Azure DevOps). Computed from the batch
+        # snapshot (what the worker actually processed), then any items queued
+        # after the snapshot are preserved — all on the GUI thread.
         remaining = [
-            tc for i, tc in enumerate(self.app_state.queue)
+            tc for i, tc in enumerate(self._batch)
             if i not in self._consumed_indices
         ]
+        batch_ids = {id(tc) for tc in self._batch}
+        remaining += [tc for tc in self.app_state.queue if id(tc) not in batch_ids]
         self.app_state.queue[:] = remaining
 
         from app.utils.settings import clear_draft_queue, save_draft_queue
