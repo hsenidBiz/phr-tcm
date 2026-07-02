@@ -36,6 +36,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.setWindowTitle(f"Azure DevOps Test Case Manager  v{VERSION}")
         self.setMinimumSize(860, 640)
         self.resize(980, 720)
+        self._restore_window_geometry()
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
@@ -74,10 +75,11 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._update_btn.setVisible(False)
         self._update_btn.setFlat(True)
         self._update_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        _t = theme.tokens()
         self._update_btn.setStyleSheet(
-            "QPushButton { border: none; color: #0078d4; padding: 2px 8px; "
-            "background: transparent; font-size: 12px; font-weight: bold; }"
-            "QPushButton:hover { color: #106ebe; }"
+            f"QPushButton {{ border: none; color: {_t['accent']}; padding: 2px 8px; "
+            f"background: transparent; font-size: 12px; font-weight: bold; }}"
+            f"QPushButton:hover {{ color: {_t['accent_hover']}; }}"
         )
         self._update_btn.clicked.connect(self._on_update_clicked)
         self._status_bar.addPermanentWidget(self._update_btn)
@@ -89,11 +91,12 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._theme_btn.clicked.connect(self._toggle_theme)
         self._status_bar.addPermanentWidget(self._theme_btn)
 
-        # Apply saved theme; refresh if dark (screens were built in light mode)
+        # Apply the saved theme, then run a full refresh regardless of mode so
+        # every screen's styling comes from the token-based refresh_theme()
+        # path — construction-time styles can never drift from the tokens.
         theme.load_saved()
         self._update_theme_btn()
-        if theme.is_dark():
-            self._refresh_all_themes()
+        self._refresh_all_themes()
 
         # Keep expiry countdown ticking on every page that shows it
         self._expiry_tick = QTimer(self)
@@ -119,6 +122,19 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
         # Check GitHub for a newer version in the background
         QTimer.singleShot(1500, self._check_for_update)
+
+    def _restore_window_geometry(self):
+        """Re-open at the last session's size/position (best-effort — a bad or
+        missing value just keeps the defaults set above)."""
+        from app.utils.settings import load_settings
+        geo = load_settings().get("window_geometry")
+        if not geo:
+            return
+        try:
+            from PyQt5.QtCore import QByteArray
+            self.restoreGeometry(QByteArray.fromBase64(str(geo).encode("ascii")))
+        except Exception:
+            pass
 
     def _apply_min_size_for_config(self):
         """Make the window's minimum size large enough to show the whole
@@ -274,6 +290,48 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
         # Keyboard shortcut: Ctrl+Shift+R = Review & Create
         QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(self._go_review)
+
+        # Ctrl+1..4 switch main tabs · Ctrl+F focus the active search/filter box
+        # F5 reload the Edit list · Ctrl+E export from the Edit tab
+        for i in range(4):
+            sc = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
+            sc.activated.connect(lambda idx=i: self._switch_main_tab(idx))
+        QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self._focus_current_search)
+        QShortcut(QKeySequence("F5"), self).activated.connect(self._refresh_edit_list)
+        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self._export_from_edit)
+
+    def _switch_main_tab(self, idx: int):
+        """Ctrl+1..4 — jump between the main tabs (only on the main page)."""
+        if self.stack.currentIndex() == PAGE_MAIN and 0 <= idx < self.tabs.count():
+            self.tabs.setCurrentIndex(idx)
+
+    def _focus_current_search(self):
+        """Ctrl+F — focus the current tab's search box (or the Review filter)."""
+        if self.stack.currentIndex() == PAGE_REVIEW:
+            self.review_screen.filter_edit.setFocus()
+            self.review_screen.filter_edit.selectAll()
+            return
+        if self.stack.currentIndex() != PAGE_MAIN:
+            return
+        w = self.tabs.currentWidget()
+        for attr in ("_search_edit", "_search"):  # Edit tab / Run tab
+            box = getattr(w, attr, None)
+            if box is not None:
+                box.setFocus()
+                box.selectAll()
+                return
+
+    def _refresh_edit_list(self):
+        """F5 — reload the Edit tab's case list from Azure DevOps."""
+        if (self.stack.currentIndex() == PAGE_MAIN
+                and self.tabs.currentWidget() is self.edit_widget):
+            self.edit_widget._load_cases()
+
+    def _export_from_edit(self):
+        """Ctrl+E — export selected/all cases while the Edit tab is active."""
+        if (self.stack.currentIndex() == PAGE_MAIN
+                and self.tabs.currentWidget() is self.edit_widget):
+            self.edit_widget._on_export_cases()
 
     def _build_review_page(self):
         self.review_screen = ReviewScreen(self.app_state)
@@ -543,7 +601,8 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
     def _update_queue_label(self):
         n = len(self.app_state.queue)
         self.queue_count_label.setText(f"{n} queued")
-        color = "#0078d4" if n > 0 else "#aaa"
+        t = theme.tokens()
+        color = t["accent"] if n > 0 else t["btn_disabled_bg"]
         self.queue_count_label.setStyleSheet(
             f"QLabel {{ background: {color}; color: white; border-radius: 11px; "
             f"padding: 0px 14px; font-weight: bold; font-size: 11px; }}"
@@ -611,11 +670,16 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
                 event.ignore()
                 return
             self.progress_screen.shutdown()
-        from app.utils.settings import save_draft_queue, clear_draft_queue
+        from app.utils.settings import save_draft_queue, clear_draft_queue, save_settings
         if self.app_state.queue:
             save_draft_queue(self.app_state.queue)
         else:
             clear_draft_queue()
+        # Remember the window size/position and Edit-tab splitter for next launch.
+        save_settings({
+            "window_geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
+            "edit_splitter_sizes": self.edit_widget.splitter_sizes(),
+        })
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
@@ -776,3 +840,4 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
         self._import_count_label.setStyleSheet(f"color: {t['count_lbl_color']};")
+        self._update_queue_label()  # re-tint the queue badge for the theme

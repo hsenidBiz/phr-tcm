@@ -2,8 +2,8 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTreeWidget, QTreeWidgetItem, QFrame, QMessageBox,
-    QFileDialog, QShortcut, QHeaderView, QStyledItemDelegate
+    QTreeWidget, QTreeWidgetItem, QFrame, QMessageBox, QLineEdit,
+    QFileDialog, QShortcut, QHeaderView, QStyledItemDelegate, QAbstractItemView
 )
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QBrush, QCursor, QKeySequence
@@ -35,6 +35,56 @@ class _WrapDelegate(QStyledItemDelegate):
             0, 0, avail, 100000, int(Qt.TextWordWrap | Qt.AlignLeft), text)
         base = super().sizeHint(option, index).height()
         return QSize(total, max(rect.height() + 8, base))
+
+
+class _QueueTree(QTreeWidget):
+    """Review tree with drag-to-reorder for whole test cases.
+
+    Qt's default InternalMove would let rows nest inside other items and
+    silently desync the tree from the queue, so the drop is intercepted: the
+    (from, to) top-level move is emitted as a signal, the screen reorders
+    ``app_state.queue`` and rebuilds, and tree order == queue order stays an
+    invariant (the Up/Down buttons rely on it too)."""
+
+    case_moved = pyqtSignal(int, int)   # (from_index, insert_at)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+
+    @staticmethod
+    def _top_level(item):
+        while item is not None and item.parent() is not None:
+            item = item.parent()
+        return item
+
+    def dropEvent(self, event):
+        src = self._top_level(self.currentItem())
+        if src is None:
+            event.ignore()
+            return
+        root = self.invisibleRootItem()
+        from_idx = root.indexOfChild(src)
+
+        target = self.itemAt(event.pos())
+        if target is None:
+            to_idx = root.childCount()          # dropped past the end
+        else:
+            top = self._top_level(target)
+            to_idx = root.indexOfChild(top)
+            pos = self.dropIndicatorPosition()
+            # Dropping below a case, or anywhere inside its children, lands
+            # the dragged case AFTER it; above lands before it.
+            if (target is not top) or pos == QAbstractItemView.BelowItem:
+                to_idx += 1
+        # Never let Qt perform the move itself — the screen mutates the queue
+        # and rebuilds, which keeps items un-nested and in sync.
+        event.ignore()
+        if from_idx >= 0 and to_idx not in (from_idx, from_idx + 1):
+            self.case_moved.emit(from_idx, to_idx)
 
 
 class ReviewScreen(QWidget):
@@ -82,8 +132,16 @@ class ReviewScreen(QWidget):
         warn_layout.addWidget(self.warn_text, 1)
         layout.addWidget(self._warn_frame)
 
-        # Tree view of all queued test cases
-        self.tree = QTreeWidget()
+        # Filter box — hides non-matching cases without touching queue order
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Filter queued cases by title or tags…")
+        self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.textChanged.connect(self._apply_filter)
+        layout.addWidget(self.filter_edit)
+
+        # Tree view of all queued test cases (drag a case to reorder it)
+        self.tree = _QueueTree()
+        self.tree.case_moved.connect(self._on_case_moved)
         self.tree.setHeaderLabels(["Test Case / Step", "Details"])
         # Wrap long step/expected text onto multiple lines (rows grow to fit)
         # instead of eliding with "…". Both columns Stretch so each has a defined
@@ -167,7 +225,9 @@ class ReviewScreen(QWidget):
         self.clear_all_btn.setEnabled(False)
         self.clear_all_btn.setStyleSheet(theme.btn_ghost_qss("padding: 7px 14px; font-size: 13px;"))
         self.clear_all_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.clear_all_btn.setToolTip("Remove all test cases from the queue")
+        self.clear_all_btn.setToolTip(
+            "Remove all test cases from the queue (undo from the toast that appears)"
+        )
         self.clear_all_btn.clicked.connect(self._on_clear_all)
         btn_row.addWidget(self.clear_all_btn)
 
@@ -194,6 +254,11 @@ class ReviewScreen(QWidget):
         self.create_btn.clicked.connect(self._on_create)
         btn_row.addWidget(self.create_btn)
         layout.addLayout(btn_row)
+
+        # Transient "Removed N cases — Undo" toast for destructive queue ops
+        from app.gui.helpers import UndoToast
+        self._toast = UndoToast(self)
+        self._toast.undo_clicked.connect(self._on_undo)
 
     def refresh_theme(self):
         from app.utils import theme
@@ -236,6 +301,7 @@ class ReviewScreen(QWidget):
             )
         )
         self.create_btn.setIcon(icons.icon("check", color="white", size=16))
+        self._toast.refresh_theme()
 
     def on_enter(self):
         """Refresh display when this screen becomes active."""
@@ -367,6 +433,21 @@ class ReviewScreen(QWidget):
         self.export_queue_btn.setEnabled(n > 0)
         self.clear_all_btn.setEnabled(n > 0)
         self._update_action_btns()
+        self._apply_filter()
+
+    def _apply_filter(self):
+        """Hide top-level cases that don't match the filter text (title/tags).
+        Hiding never changes tree indices, so queue-index mapping still holds."""
+        text = self.filter_edit.text().strip().lower()
+        root = self.tree.invisibleRootItem()
+        queue = self.app_state.queue
+        for i in range(root.childCount()):
+            item = root.child(i)
+            if not text or i >= len(queue):
+                item.setHidden(False)
+                continue
+            tc = queue[i]
+            item.setHidden(text not in f"{tc.title} {tc.tags}".lower())
 
     def _update_summary(self, n: int):
         n_updates = sum(1 for tc in self.app_state.queue if tc.update_id)
@@ -438,33 +519,63 @@ class ReviewScreen(QWidget):
     #  Remove / reorder                                                    #
     # ------------------------------------------------------------------ #
 
+    def _push_undo(self):
+        """Snapshot the queue (in memory only) so the last destructive action
+        can be reverted from the toast. Capped so long sessions can't grow it."""
+        stack = self.app_state.queue_undo
+        stack.append(list(self.app_state.queue))
+        del stack[:-10]
+
+    def _on_undo(self):
+        stack = self.app_state.queue_undo
+        if not stack:
+            return
+        self.app_state.queue[:] = stack.pop()
+        self._update_summary(len(self.app_state.queue))
+        self._rebuild_tree()
+        self.queue_changed.emit()
+        self._toast.hide()
+
     def _on_remove(self):
         indices = self._selected_root_indices()
         if not indices:
             return
+        self._push_undo()
         for idx in reversed(indices):
             self.app_state.queue.pop(idx)
         n = len(self.app_state.queue)
         self._update_summary(n)
         self._rebuild_tree()
         self.queue_changed.emit()
+        self._toast.show_message(
+            f"Removed {len(indices)} case{'s' if len(indices) != 1 else ''}"
+        )
 
     def _on_clear_all(self):
         n = len(self.app_state.queue)
         if n == 0:
             return
-        reply = QMessageBox.question(
-            self, "Clear Queue",
-            f"Remove all {n} test case{'s' if n != 1 else ''} from the queue?\n\n"
-            "This only clears the queue in this app — nothing in Azure DevOps is affected.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
-            return
+        self._push_undo()
         self.app_state.queue.clear()
         self._update_summary(0)
         self._rebuild_tree()
+        self.queue_changed.emit()
+        self._toast.show_message(f"Cleared {n} case{'s' if n != 1 else ''} from the queue")
+
+    def _on_case_moved(self, from_idx: int, to_idx: int):
+        """A case was dragged to a new position — reorder the queue to match."""
+        q = self.app_state.queue
+        if not (0 <= from_idx < len(q)):
+            return
+        tc = q.pop(from_idx)
+        if to_idx > from_idx:
+            to_idx -= 1
+        to_idx = max(0, min(to_idx, len(q)))
+        q.insert(to_idx, tc)
+        self._rebuild_tree()
+        root = self.tree.invisibleRootItem()
+        if 0 <= to_idx < root.childCount():
+            self.tree.setCurrentItem(root.child(to_idx))
         self.queue_changed.emit()
 
     def _on_move_up(self):

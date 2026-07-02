@@ -27,31 +27,14 @@ class TagPickerWidget(QWidget):
     Typing in the search box filters available tags; clicking a result
     adds it as a blue chip. Clicking × on a chip removes it."""
 
-    _CHIP = (
-        "QPushButton { background: #0078d4; color: white; border-radius: 3px; "
-        "padding: 2px 8px; font-size: 12px; border: none; margin: 1px; }"
-        "QPushButton:hover { background: #106ebe; }"
-    )
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._available: list = []
         self._selected: list = []
-        self._frame_qss = (
-            "#tagInputFrame { border: 1px solid #ccc; border-radius: 4px; background: white; }"
-        )
-        self._search_qss = (
-            "QLineEdit { border: none; background: transparent; font-size: 12px; }"
-        )
-        self._list_qss = (
-            "QListWidget { border: 1px solid #ccc; border-top: none; "
-            "border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; "
-            "background: white; outline: none; }"
-            "QListWidget::item { padding: 5px 8px; }"
-            "QListWidget::item:hover { background: #e8f0fe; }"
-            "QListWidget::item:selected { background: #0078d4; color: white; }"
-        )
         self._build_ui()
+        # Single source of styling — sets frame/search/list/chip QSS from the
+        # current theme tokens (and again on every toggle via ImportWidget).
+        self.refresh_theme()
 
     def _build_ui(self):
         vlay = QVBoxLayout(self)
@@ -61,7 +44,6 @@ class TagPickerWidget(QWidget):
         # Input frame: selected-tag chips + search QLineEdit
         self._input_frame = QFrame()
         self._input_frame.setObjectName("tagInputFrame")
-        self._input_frame.setStyleSheet(self._frame_qss)
         self._input_frame.setMinimumHeight(36)
 
         self._chips_hbox = QHBoxLayout(self._input_frame)
@@ -70,7 +52,6 @@ class TagPickerWidget(QWidget):
 
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search tags…")
-        self._search.setStyleSheet(self._search_qss)
         self._search.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._search.textChanged.connect(self._on_text_changed)
         self._chips_hbox.addWidget(self._search)
@@ -79,7 +60,6 @@ class TagPickerWidget(QWidget):
 
         # Dropdown list — shown only when there is filtered text
         self._dropdown = QListWidget()
-        self._dropdown.setStyleSheet(self._list_qss)
         self._dropdown.setMaximumHeight(160)
         self._dropdown.setVisible(False)
         self._dropdown.setCursor(QCursor(Qt.PointingHandCursor))
@@ -102,7 +82,7 @@ class TagPickerWidget(QWidget):
                 w.deleteLater()
         for tag in self._selected:
             btn = QPushButton(f"{tag}  ×")
-            btn.setStyleSheet(self._CHIP)
+            btn.setStyleSheet(self._chip_qss)
             btn.setCursor(QCursor(Qt.PointingHandCursor))
             btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             btn.clicked.connect(lambda checked=False, t=tag: self._remove_tag(t))
@@ -179,9 +159,17 @@ class TagPickerWidget(QWidget):
             f"QListWidget::item:hover {{ background: {t['tag_unsel_hover']}; }}"
             f"QListWidget::item:selected {{ background: {t['accent']}; color: white; }}"
         )
+        self._chip_qss = (
+            f"QPushButton {{ background: {t['accent']}; color: white; border-radius: 3px; "
+            f"padding: 2px 8px; font-size: 12px; border: none; margin: 1px; }}"
+            f"QPushButton:hover {{ background: {t['accent_hover']}; }}"
+        )
         self._input_frame.setStyleSheet(self._frame_qss)
         self._search.setStyleSheet(self._search_qss)
         self._dropdown.setStyleSheet(self._list_qss)
+        # Re-tint any chips already showing
+        for btn in self._input_frame.findChildren(QPushButton):
+            btn.setStyleSheet(self._chip_qss)
 
     def set_search_placeholder(self, text: str):
         self._search.setPlaceholderText(text)
@@ -278,10 +266,8 @@ class ImportWidget(QWidget):
         mod_col = QVBoxLayout()
         mod_col.setSpacing(4)
         mod_col.addWidget(QLabel("Module"))
-        self.module_edit = QComboBox()
-        self.module_edit.setEditable(True)
-        self.module_edit.setInsertPolicy(QComboBox.NoInsert)
-        self.module_edit.lineEdit().setPlaceholderText("e.g. Authentication  (leave blank to use xlsx value)")
+        from app.gui.helpers import make_module_combo
+        self.module_edit = make_module_combo("e.g. Authentication  (leave blank to use xlsx value)")
         self.module_edit.setMinimumWidth(220)
         mod_col.addWidget(self.module_edit)
         ov_row1.addLayout(mod_col)
@@ -404,41 +390,18 @@ class ImportWidget(QWidget):
         refresh_module_combo(self.module_edit, self.app_state.known_module_values)
 
     def _refresh_created_by_combo(self):
-        from app.utils.members_cache import load_cached, attach_once, TeamMemberFetcher
-        tm = self.app_state.client.tm
-
-        # Populate immediately from in-memory cache, falling back to disk cache
-        if self.app_state.cached_team_members is None:
-            on_disk = load_cached(tm.org_url, tm.project)
-            if on_disk is not None:
-                self.app_state.cached_team_members = on_disk
-
-        if self.app_state.cached_team_members is not None:
-            self._populate_created_by_combo(self.app_state.cached_team_members)
-        else:
+        from app.gui.helpers import refresh_team_members
+        if not refresh_team_members(self.app_state, self._populate_created_by_combo,
+                                    self._on_members_fetched, self._on_members_failed):
+            # No cached members yet — show a placeholder until the fetch lands.
             self.created_by_combo.blockSignals(True)
             self.created_by_combo.clear()
             self.created_by_combo.addItem("Loading users…")
             self.created_by_combo.blockSignals(False)
 
-        # Background refresh — one in-flight fetch shared across all widgets
-        if self.app_state._team_members_fetcher is None:
-            fetcher = TeamMemberFetcher(self.app_state.client)
-            self.app_state._team_members_fetcher = fetcher
-            fetcher.done.connect(self._on_members_fetched)
-            fetcher.failed.connect(self._on_members_failed)
-            fetcher.start()
-        else:
-            # Attach to the already-running fetch so we get the result too
-            attach_once(self.app_state._team_members_fetcher, self._populate_created_by_combo)
-
     def _on_members_fetched(self, members: list):
-        from app.utils.members_cache import save_to_disk
-        tm = self.app_state.client.tm
-        self.app_state.cached_team_members = members
-        self.app_state._team_members_fetcher = None
-        if members:
-            save_to_disk(tm.org_url, tm.project, members)
+        from app.gui.helpers import store_fetched_members
+        store_fetched_members(self.app_state, members)
         self._populate_created_by_combo(members)
 
     def _on_members_failed(self, _msg: str):

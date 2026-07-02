@@ -70,14 +70,13 @@ class PowerRenameDialog(frameless.FramelessMixin, QDialog):
         title_lbl.setFont(f)
         layout.addWidget(title_lbl)
 
-        hint_lbl = QLabel(
+        self._hint_lbl = QLabel(
             "Enter a search pattern and a replacement. "
             "The preview table updates in real time. "
             "Check the rows you want to rename, then click Apply."
         )
-        hint_lbl.setWordWrap(True)
-        hint_lbl.setStyleSheet("color: #666; font-size: 12px;")
-        layout.addWidget(hint_lbl)
+        self._hint_lbl.setWordWrap(True)
+        layout.addWidget(self._hint_lbl)
 
         # ── Pattern / replace inputs ──────────────────────────────────────
         inputs = QVBoxLayout()
@@ -117,9 +116,8 @@ class PowerRenameDialog(frameless.FramelessMixin, QDialog):
 
         layout.addLayout(inputs)
 
-        # Error / status row
+        # Error / status row (styled in _refresh_footer_styles)
         self._error_lbl = QLabel("")
-        self._error_lbl.setStyleSheet("color: #c42b2b; font-size: 11px; padding: 0 2px;")
         layout.addWidget(self._error_lbl)
 
         # ── Preview table ─────────────────────────────────────────────────
@@ -447,3 +445,5 @@ class PowerRenameDialog(frameless.FramelessMixin, QDialog):
         self._desel_all_btn.setStyleSheet(btn_style)
         self._cancel_btn.setStyleSheet(btn_style)
         self._match_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
+        self._hint_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
+        self._error_lbl.setStyleSheet(f"color: {t['error']}; font-size: 11px; padding: 0 2px;")

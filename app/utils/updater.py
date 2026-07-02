@@ -12,6 +12,10 @@ version?" check and the download/apply.
 
 import sys
 
+from app.utils.logger import get_logger
+
+log = get_logger(__name__)
+
 # Public, releases-only repo holding the Velopack installer + update packages.
 # No source code lives here. Created separately from the private source repo.
 # (Renamed from ...-creator-releases at v2.0.1; GitHub redirects the old URL so
@@ -56,6 +60,7 @@ def check_for_update() -> dict | None:
             "_info": info,
         }
     except Exception:
+        log.warning("Update check failed", exc_info=True)
         return None
 
 

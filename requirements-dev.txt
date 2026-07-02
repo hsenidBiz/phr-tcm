@@ -1,0 +1,5 @@
+# Test/lint dependencies (CI installs only this file — the pure-logic test
+# targets never import PyQt5, so the heavy GUI deps stay out of CI).
+pytest>=8.0
+ruff>=0.6
+openpyxl>=3.0.0

@@ -17,6 +17,7 @@ _LIGHT: dict = {
     "text_dim":           "#555555",
     "text_dim2":          "#888888",
     "accent":             "#0078d4",
+    "accent_hover":       "#106ebe",
     "btn_bg":             "#f0f0f0",
     "btn_border":         "#cccccc",
     "btn_hover":          "#e0e0e0",
@@ -64,6 +65,7 @@ _DARK: dict = {
     "text_dim":           "#999999",
     "text_dim2":          "#777777",
     "accent":             "#0078d4",
+    "accent_hover":       "#106ebe",
     "btn_bg":             "#3a3a3a",
     "btn_border":         "#555555",
     "btn_hover":          "#4a4a4a",
@@ -150,7 +152,7 @@ def btn_primary_qss(extra: str = "") -> str:
     t = tokens()
     return (
         f"QPushButton {{ background: {t['accent']}; color: white; {_RADIUS} {extra} }}"
-        f"QPushButton:hover {{ background: #106ebe; }}"
+        f"QPushButton:hover {{ background: {t['accent_hover']}; }}"
         f"QPushButton:disabled {{ background: {t['btn_disabled_bg']}; color: {t['btn_disabled_fg']}; }}"
     )
 

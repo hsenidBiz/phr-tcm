@@ -5,6 +5,10 @@ from pathlib import Path
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
+from app.utils.logger import get_logger
+
+log = get_logger(__name__)
+
 _CACHE_TTL = timedelta(hours=24)
 
 _CACHE_PATH = Path.home() / ".devops_tc_creator" / "team_members_cache.json"
@@ -27,8 +31,10 @@ def load_cached(org_url: str, project: str) -> list | None:
                 if age > _CACHE_TTL:
                     return None
             return entry["members"]
+    except FileNotFoundError:
+        pass  # no cache yet
     except Exception:
-        pass
+        log.warning("Could not read the team-members cache", exc_info=True)
     return None
 
 
@@ -39,7 +45,7 @@ def save_to_disk(org_url: str, project: str, members: list):
             try:
                 data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
             except Exception:
-                data = {}
+                data = {}  # absent or corrupt — rebuilt right below
             data[_cache_key(org_url, project)] = {
                 "members": members,
                 "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -47,7 +53,7 @@ def save_to_disk(org_url: str, project: str, members: list):
             _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
             _CACHE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception:
-            pass
+            log.warning("Could not save the team-members cache", exc_info=True)
 
 
 class TeamMemberFetcher(QObject):

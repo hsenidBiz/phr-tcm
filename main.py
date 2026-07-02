@@ -8,6 +8,10 @@ from app.auth.token_manager import TokenManager
 from app.api.devops_client import DevOpsClient
 from app.gui.main_window import MainWindow
 from app.models.test_case import TestCase
+from app.utils.logger import get_logger
+from app.version import VERSION
+
+log = get_logger(__name__)
 
 
 class AppState:
@@ -43,6 +47,9 @@ class AppState:
 
         # Pending test cases waiting to be created
         self.queue: list[TestCase] = []
+        # Snapshots of the queue taken before destructive Review-screen actions
+        # (remove / clear all) so the last few can be undone via the toast.
+        self.queue_undo: list[list] = []
 
         # Module values discovered from the loaded PBI (populated by EditScreen)
         self.known_module_values: list[str] = []
@@ -100,7 +107,7 @@ def _run_velopack_startup():
         import velopack
         velopack.App().run()
     except Exception:
-        pass
+        log.warning("Velopack startup hook failed", exc_info=True)
 
 
 def _resource_path(rel: str) -> str:
@@ -110,6 +117,7 @@ def _resource_path(rel: str) -> str:
 
 
 def main():
+    log.info("Starting v%s (frozen=%s)", VERSION, getattr(sys, "frozen", False))
     _run_velopack_startup()
     _enable_high_dpi()
 

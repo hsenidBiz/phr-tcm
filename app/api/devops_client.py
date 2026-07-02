@@ -2,7 +2,10 @@ import time
 import requests
 from app.auth.token_manager import TokenManager
 from app.models.test_case import TestCase
+from app.utils.logger import get_logger
 from app.utils.xml_builder import build_steps_xml
+
+log = get_logger(__name__)
 
 API_VERSION = "7.1"
 
@@ -41,6 +44,14 @@ class DevOpsClient:
         return f"{self.tm.org_url}/{self.tm.project}/_apis"
 
     def _handle(self, response: requests.Response) -> dict:
+        # Status + URL only — Bearer tokens travel in headers, never logged.
+        # 403/404 are routinely provoked and handled by the find-or-create
+        # discovery flows (stale suite-cache probes, permission-restricted
+        # plans), so they log at debug to keep the file useful for real faults.
+        if response.status_code in (403, 404):
+            log.debug("HTTP %s from %s", response.status_code, response.url)
+        elif response.status_code >= 400:
+            log.warning("HTTP %s from %s", response.status_code, response.url)
         if response.status_code == 401:
             raise TokenExpiredError("Token expired or invalid (401). Please sign in again.")
         if response.status_code == 403:
@@ -223,39 +234,60 @@ class DevOpsClient:
 
         return sorted(fields, key=lambda x: x["name"])
 
+    _TEAM_PAGE_SIZE = 200
+
     def get_team_members(self) -> list[dict]:
         """
         GET all team members in the project.
         Returns list of {\"id\": str, \"displayName\": str, \"uniqueName\": str}.
-        Safe — read only.
+        The team list and each team's member list are paged ($top/$skip) so
+        large orgs aren't truncated, and the per-team member fetches run on a
+        small thread pool instead of one-by-one (requests.Session is safe for
+        concurrent use; the Bearer header is fetched per call and TokenManager's
+        refresh is lock-protected). Safe — read only.
         """
-        url = f"{self.tm.org_url}/_apis/projects/{self.tm.project}/teams?api-version={API_VERSION}"
-        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
-        data = self._handle(resp)
-        
+        page = self._TEAM_PAGE_SIZE
+
+        def _paged(url_base: str) -> list:
+            out, skip = [], 0
+            while True:
+                url = f"{url_base}?$top={page}&$skip={skip}&api-version={API_VERSION}"
+                resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=15)
+                batch = self._handle(resp).get("value", [])
+                out.extend(batch)
+                if len(batch) < page:
+                    return out
+                skip += page
+
+        teams = _paged(f"{self.tm.org_url}/_apis/projects/{self.tm.project}/teams")
+        team_ids = [t.get("id") for t in teams if t.get("id")]
+
         members = []
-        for team in data.get("value", []):
-            team_id = team.get("id")
-            # Get members of each team
-            members_url = f"{self.tm.org_url}/_apis/projects/{self.tm.project}/teams/{team_id}/members?api-version={API_VERSION}"
-            members_resp = self._session.get(members_url, headers=self.tm.get_json_headers(), timeout=15)
-            members_data = self._handle(members_resp)
-            
-            for member in members_data.get("value", []):
-                identity = member.get("identity", {})
-                members.append({
-                    "id": identity.get("id"),
-                    "displayName": identity.get("displayName"),
-                    "uniqueName": identity.get("uniqueName"),
-                })
-        
+        if team_ids:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(4, len(team_ids))) as pool:
+                per_team = pool.map(
+                    lambda tid: _paged(
+                        f"{self.tm.org_url}/_apis/projects/{self.tm.project}/teams/{tid}/members"
+                    ),
+                    team_ids,
+                )
+                for team_members in per_team:
+                    for member in team_members:
+                        identity = member.get("identity", {})
+                        members.append({
+                            "id": identity.get("id"),
+                            "displayName": identity.get("displayName"),
+                            "uniqueName": identity.get("uniqueName"),
+                        })
+
         # Remove duplicates and sort by displayName
         unique_members = {}
         for m in members:
             key = m.get("uniqueName", m.get("id"))
             if key:
                 unique_members[key] = m
-        
+
         return sorted(unique_members.values(), key=lambda x: x.get("displayName", ""))
 
     # Azure DevOps caps the workitems batch-GET (?ids=) endpoint at 200 IDs
@@ -539,7 +571,8 @@ class DevOpsClient:
             resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
             names = {wt.get("name", "") for wt in self._handle(resp).get("value", [])}
         except Exception:
-            pass
+            log.warning("Could not enumerate work item types — assuming 'Bug'",
+                        exc_info=True)
         if "Bug" in names or not names:
             info = {"type": "Bug", "repro_field": "Microsoft.VSTS.TCM.ReproSteps",
                     "has_severity": True}
@@ -718,6 +751,8 @@ class DevOpsClient:
                 # Can't read this plan's suites — keep searching the others.
                 # Token/rate-limit errors are deliberately NOT caught here so the
                 # caller can handle re-auth / back-off.
+                log.info("Skipping unreadable test plan %s during suite search",
+                         plan.get("id"))
                 continue
             if suite:
                 return plan, suite

@@ -3,7 +3,7 @@ from pathlib import Path
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QListWidget, QListWidgetItem, QSplitter, QScrollArea, QFrame, QMessageBox,
+    QListWidget, QListWidgetItem, QScrollArea, QFrame, QMessageBox,
     QCheckBox, QFileDialog, QAbstractItemView, QShortcut
 )
 from PyQt5.QtCore import Qt, QThreadPool, pyqtSignal
@@ -72,32 +72,14 @@ class EditScreen(QWidget):
         self._on_cases_loaded(pbi, (cache, len(cache)))
 
     def _refresh_assigned_to_combo(self):
-        from app.utils.members_cache import load_cached, attach_once, TeamMemberFetcher
-        tm = self.app_state.client.tm
-
-        if self.app_state.cached_team_members is None:
-            on_disk = load_cached(tm.org_url, tm.project)
-            if on_disk is not None:
-                self.app_state.cached_team_members = on_disk
-
-        self._populate_assigned_to_combo(self.app_state.cached_team_members or [])
-
-        if self.app_state._team_members_fetcher is None:
-            fetcher = TeamMemberFetcher(self.app_state.client)
-            self.app_state._team_members_fetcher = fetcher
-            fetcher.done.connect(self._on_members_fetched)
-            fetcher.failed.connect(self._on_members_failed)
-            fetcher.start()
-        else:
-            attach_once(self.app_state._team_members_fetcher, self._populate_assigned_to_combo)
+        from app.gui.helpers import refresh_team_members
+        if not refresh_team_members(self.app_state, self._populate_assigned_to_combo,
+                                    self._on_members_fetched, self._on_members_failed):
+            self._populate_assigned_to_combo([])
 
     def _on_members_fetched(self, members: list):
-        from app.utils.members_cache import save_to_disk
-        tm = self.app_state.client.tm
-        self.app_state.cached_team_members = members
-        self.app_state._team_members_fetcher = None
-        if members:
-            save_to_disk(tm.org_url, tm.project, members)
+        from app.gui.helpers import store_fetched_members
+        store_fetched_members(self.app_state, members)
         self._populate_assigned_to_combo(members)
 
     def _on_members_failed(self, _msg: str):
@@ -330,10 +312,8 @@ class EditScreen(QWidget):
         fv.addLayout(row2)
 
         fv.addWidget(QLabel("Module"))
-        self._module_edit = QComboBox()
-        self._module_edit.setEditable(True)
-        self._module_edit.setInsertPolicy(QComboBox.NoInsert)
-        self._module_edit.lineEdit().setPlaceholderText("e.g. Authentication")
+        from app.gui.helpers import make_module_combo
+        self._module_edit = make_module_combo()
         fv.addWidget(self._module_edit)
 
         fv.addWidget(QLabel("Assigned To"))
@@ -454,13 +434,30 @@ class EditScreen(QWidget):
         right_scroll.setWidget(form_root)
         splitter.addWidget(right_scroll)
 
-        splitter.setSizes([280, 600])
+        # Restore the last session's splitter position (falling back to the
+        # default split when nothing valid was saved).
+        self._splitter = splitter
+        sizes = [280, 600]
+        from app.utils.settings import load_settings
+        raw = load_settings().get("edit_splitter_sizes")
+        if isinstance(raw, list) and len(raw) == 2:
+            try:
+                saved = [int(x) for x in raw]
+                if all(s > 0 for s in saved):
+                    sizes = saved
+            except (TypeError, ValueError):
+                pass
+        splitter.setSizes(sizes)
         layout.addWidget(splitter, 1)
 
         # Keyboard shortcut: Ctrl+S = Save Changes (only while this tab is visible)
         save_sc = QShortcut(QKeySequence("Ctrl+S"), self)
         save_sc.setContext(Qt.WidgetWithChildrenShortcut)
         save_sc.activated.connect(self._save_changes)
+
+    def splitter_sizes(self) -> list:
+        """Current left/right pane sizes — persisted by MainWindow on close."""
+        return list(self._splitter.sizes())
 
     # ------------------------------------------------------------------ #
     #  Theme                                                               #
@@ -923,10 +920,10 @@ class EditScreen(QWidget):
         n_sel = len(self._list.selectedItems())
         if n_sel:
             self._export_btn.setText(f"  Export {n_sel} selected")
-            self._export_btn.setToolTip("Export only the highlighted test cases")
+            self._export_btn.setToolTip("Export only the highlighted test cases (Ctrl+E)")
         else:
             self._export_btn.setText("  Export all")
-            self._export_btn.setToolTip("Nothing selected — exports all loaded test cases")
+            self._export_btn.setToolTip("Nothing selected — exports all loaded test cases (Ctrl+E)")
 
     def _on_export_cases(self):
         if not self._cases:

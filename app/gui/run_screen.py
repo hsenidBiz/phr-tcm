@@ -6,7 +6,7 @@ multi-select them, accumulate a session, and open the always-on-top runner.
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
-    QListWidgetItem, QLineEdit, QSplitter, QFrame, QMessageBox, QProgressBar,
+    QListWidgetItem, QLineEdit, QProgressBar,
     QStyledItemDelegate, QStyle, QComboBox,
 )
 from PyQt5.QtCore import Qt, QThreadPool, QTimer

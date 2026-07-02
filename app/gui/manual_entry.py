@@ -56,10 +56,8 @@ class ManualEntryWidget(QWidget):
         # Metadata row 2 (Module and Created By)
         meta_row2 = QHBoxLayout()
         meta_row2.addWidget(QLabel("Module"))
-        self.module_edit = QComboBox()
-        self.module_edit.setEditable(True)
-        self.module_edit.setInsertPolicy(QComboBox.NoInsert)
-        self.module_edit.lineEdit().setPlaceholderText("e.g. Authentication")
+        from app.gui.helpers import make_module_combo
+        self.module_edit = make_module_combo()
         meta_row2.addWidget(self.module_edit)
         meta_row2.addSpacing(20)
 
@@ -158,41 +156,18 @@ class ManualEntryWidget(QWidget):
         refresh_module_combo(self.module_edit, self.app_state.known_module_values)
 
     def _refresh_created_by_combo(self):
-        from app.utils.members_cache import load_cached, TeamMemberFetcher
-        tm = self.app_state.client.tm
-
-        # Populate immediately from in-memory cache, falling back to disk cache
-        if self.app_state.cached_team_members is None:
-            on_disk = load_cached(tm.org_url, tm.project)
-            if on_disk is not None:
-                self.app_state.cached_team_members = on_disk
-
-        if self.app_state.cached_team_members is not None:
-            self._populate_created_by_combo(self.app_state.cached_team_members)
-        else:
+        from app.gui.helpers import refresh_team_members
+        if not refresh_team_members(self.app_state, self._populate_created_by_combo,
+                                    self._on_members_fetched, self._on_members_failed):
+            # No cached members yet — show a placeholder until the fetch lands.
             self.created_by_combo.blockSignals(True)
             self.created_by_combo.clear()
             self.created_by_combo.addItem("Loading users…")
             self.created_by_combo.blockSignals(False)
 
-        # Background refresh — one in-flight fetch shared across all widgets
-        if self.app_state._team_members_fetcher is None:
-            fetcher = TeamMemberFetcher(self.app_state.client)
-            self.app_state._team_members_fetcher = fetcher
-            fetcher.done.connect(self._on_members_fetched)
-            fetcher.failed.connect(self._on_members_failed)
-            fetcher.start()
-        else:
-            from app.utils.members_cache import attach_once
-            attach_once(self.app_state._team_members_fetcher, self._populate_created_by_combo)
-
     def _on_members_fetched(self, members: list):
-        from app.utils.members_cache import save_to_disk
-        tm = self.app_state.client.tm
-        self.app_state.cached_team_members = members
-        self.app_state._team_members_fetcher = None
-        if members:
-            save_to_disk(tm.org_url, tm.project, members)
+        from app.gui.helpers import store_fetched_members
+        store_fetched_members(self.app_state, members)
         self._populate_created_by_combo(members)
 
     def _on_members_failed(self, _msg: str):
@@ -286,6 +261,10 @@ class ManualEntryWidget(QWidget):
             preconditions=self.preconditions_edit.text().strip(),
             created_by=created_by,
         )
+        ok, err = tc.is_valid()
+        if not ok:
+            QMessageBox.warning(self, "Invalid Test Case", err)
+            return
         # MainWindow clears the form via on_queue_accepted() only if the case
         # was actually added (the duplicate-title dialog may reject it).
         self.test_case_queued.emit(tc)

@@ -3,6 +3,10 @@ import os
 import time
 from pathlib import Path
 
+from app.utils.logger import get_logger
+
+log = get_logger(__name__)
+
 
 def _write_json_atomic(path: Path, obj) -> None:
     """Write JSON via a temp file + atomic os.replace so an interrupted or
@@ -35,7 +39,8 @@ def _write_json_atomic(path: Path, obj) -> None:
         except OSError:
             pass
     except Exception:
-        pass  # best-effort: a failed settings write must never crash the app
+        # best-effort: a failed settings write must never crash the app
+        log.warning("Failed to write %s", path.name, exc_info=True)
 
 _SETTINGS_PATH = Path.home() / ".devops_tc_creator" / "settings.json"
 _DRAFT_PATH = Path.home() / ".devops_tc_creator" / "draft_queue.json"
@@ -47,6 +52,7 @@ _ALLOWED_KEYS = {
     "org_url", "project", "preconditions", "recent_pbis", "dark_mode",
     "mine_only_filter", "status_filter", "module_filter", "templates",
     "execution_notes", "test_plan_cache", "always_on_top",
+    "window_geometry", "edit_splitter_sizes",
 }
 
 
@@ -54,7 +60,10 @@ def load_settings() -> dict:
     try:
         data = json.loads(_SETTINGS_PATH.read_text(encoding="utf-8"))
         return {k: v for k, v in data.items() if k in _ALLOWED_KEYS}
+    except FileNotFoundError:
+        return {}  # first run — nothing saved yet
     except Exception:
+        log.warning("Could not read settings.json — using defaults", exc_info=True)
         return {}
 
 
@@ -170,7 +179,10 @@ def load_draft_queue() -> list:
             d["steps"] = [Step(**s) for s in d.get("steps", [])]
             result.append(TestCase(**d))
         return result
+    except FileNotFoundError:
+        return []  # no draft saved
     except Exception:
+        log.warning("Could not load the draft queue — starting empty", exc_info=True)
         return []
 
 
@@ -196,7 +208,10 @@ def load_run_session() -> dict | None:
     """The saved test-runner session, or None if absent/invalid."""
     try:
         return json.loads(_RUN_SESSION_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None  # no interrupted run
     except Exception:
+        log.warning("Could not load the saved run session", exc_info=True)
         return None
 
 
