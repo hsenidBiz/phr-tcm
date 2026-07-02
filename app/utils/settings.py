@@ -232,3 +232,36 @@ def clear_run_session():
         shutil.rmtree(_RUN_SHOTS_DIR, ignore_errors=True)
     except Exception:
         pass
+
+
+# ------------------------------------------------------------------ #
+#  My Work focus timer (resumable across restarts)                    #
+# ------------------------------------------------------------------ #
+
+_FOCUS_TIMER_PATH = Path.home() / ".devops_tc_creator" / "focus_timer.json"
+
+
+def save_focus_timer(data: dict):
+    """Persist the My Work focus timer ({id, title, accum seconds, …}) so a
+    running timer survives an app restart (restored paused — offline time is
+    never counted)."""
+    _write_json_atomic(_FOCUS_TIMER_PATH, data)
+
+
+def load_focus_timer() -> dict | None:
+    """The saved focus timer, or None if absent/invalid."""
+    try:
+        return json.loads(_FOCUS_TIMER_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except Exception:
+        log.warning("Could not load the saved focus timer", exc_info=True)
+        return None
+
+
+def clear_focus_timer():
+    """Delete the saved focus timer (logged or discarded)."""
+    try:
+        _FOCUS_TIMER_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass

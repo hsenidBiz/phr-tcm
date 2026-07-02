@@ -14,6 +14,7 @@ lazily per card; a minimal quick-create files a Bug/Task with just a title.
 Toggled from anywhere with Ctrl+Shift+M (see MainWindow._toggle_mywork).
 """
 
+import time
 import webbrowser
 from urllib.parse import quote
 
@@ -22,7 +23,7 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit,
     QMessageBox, QScrollArea, QFrame,
 )
-from PyQt5.QtCore import Qt, QThreadPool
+from PyQt5.QtCore import Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt5.QtGui import QCursor, QColor, QBrush, QPalette
 
 from app.utils.worker import Worker
@@ -43,6 +44,85 @@ _MAX_ITEMS = 500   # WIQL $top cap — personal boards stay far below this
 # Rich-text fields are heavy, so the board fetch skips them; the editor fetches
 # them lazily for the selected card only.
 _DESC_FIELDS = ["System.Description", "Microsoft.VSTS.TCM.ReproSteps"]
+
+_COMPLETED = "Microsoft.VSTS.Scheduling.CompletedWork"
+_REMAINING = "Microsoft.VSTS.Scheduling.RemainingWork"
+
+# Dropping a card on a column moves the item to the FIRST state of these
+# categories (in order) defined for its type — process-discovered, never
+# hardcoded state names.
+_COLUMN_CATEGORIES = {
+    "To Do": ("Proposed",),
+    "Doing": ("InProgress", "Resolved"),
+    "Done": ("Completed",),
+}
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    sec = int(seconds)
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _log_focus_time(client, wid: int, hours: float) -> dict:
+    """Worker-thread: add a focus session to Completed Work (and take it off
+    Remaining Work when the item tracks one). Fresh read-modify-write so a value
+    changed elsewhere is never clobbered with a stale local copy."""
+    cur = client.get_work_items([wid], [_COMPLETED, _REMAINING])
+    f = cur[0] if cur else {}
+    fields = {_COMPLETED: round(float(f.get(_COMPLETED) or 0.0) + hours, 2)}
+    rem = f.get(_REMAINING)
+    if rem is not None:
+        fields[_REMAINING] = max(0.0, round(float(rem) - hours, 2))
+    client.update_work_item_fields(wid, fields)
+    return {"fields": fields}
+
+
+class _ColumnList(QListWidget):
+    """A board column: draggable cards, accepts drops from OTHER columns.
+
+    The drop is never performed by Qt — it is reported as Copy (so the source
+    list doesn't delete the dragged row) and the screen transitions the item's
+    State instead, then rebuilds both columns. Same philosophy as the Review
+    tree's reorder: the widgets never mutate themselves out of sync."""
+
+    drag_started = pyqtSignal(object)   # the WorkItem being dragged
+    card_dropped = pyqtSignal()         # something was dropped onto this column
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(False)
+
+    def startDrag(self, actions):
+        it = self.currentItem()
+        if it is not None:
+            self.drag_started.emit(it.data(Qt.UserRole))
+        super().startDrag(actions)
+
+    def _from_other_column(self, e) -> bool:
+        return isinstance(e.source(), _ColumnList) and e.source() is not self
+
+    def dragEnterEvent(self, e):
+        if self._from_other_column(e):
+            e.acceptProposedAction()
+        else:
+            e.ignore()   # no reordering inside a column — order comes from Sort
+
+    def dragMoveEvent(self, e):
+        if self._from_other_column(e):
+            e.acceptProposedAction()
+        else:
+            e.ignore()
+
+    def dropEvent(self, e):
+        # Report the drop as a COPY so the source never removes the dragged row;
+        # the screen PATCHes System.State and rebuilds the board itself.
+        e.setDropAction(Qt.CopyAction)
+        e.accept()
+        self.card_dropped.emit()
 
 
 def _fetch_my_work(client) -> dict:
@@ -178,6 +258,15 @@ class MyWorkScreen(QWidget):
         self._desc_field = "System.Description"   # field the shown text came from
         self._desc_original = ""
         self._comments_cache: dict = {}     # {work_item_id: [comment dicts]}
+        self._drag_wi = None                # WorkItem mid-drag between columns
+        # Focus timer: {"id", "title", "accum" (sec), "run_started" (monotonic
+        # while running, None while paused)}. Persisted so it survives restarts.
+        self._focus: dict | None = None
+        self._focus_ticks = 0
+        self._focus_restored = False
+        self._focus_tick = QTimer(self)
+        self._focus_tick.setInterval(1000)
+        self._focus_tick.timeout.connect(self._on_focus_tick)
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -192,6 +281,23 @@ class MyWorkScreen(QWidget):
         if key != self._loaded_key and not self._loading:
             self.refresh()
         self._refresh_members()
+        # A focus timer left running when the app closed comes back PAUSED with
+        # its recorded time (offline hours are never counted) — resume or stop.
+        if not self._focus_restored:
+            self._focus_restored = True
+            from app.utils.settings import load_focus_timer
+            saved = load_focus_timer()
+            if saved and saved.get("id") and self._focus is None:
+                self._focus = {"id": saved["id"], "title": saved.get("title", ""),
+                               "accum": float(saved.get("accum", 0.0)),
+                               "run_started": None}
+                self._update_focus_ui()
+                # _on_loaded clears the status when the (async) board load
+                # finishes — keep the restore note alive across it.
+                self._focus_note = (
+                    f"Focus timer on #{saved['id']} restored (paused) — resume it "
+                    "or stop it to log the time.")
+                self._status_lbl.setText(self._focus_note)
 
     def refresh(self):
         if self._loading:
@@ -211,7 +317,9 @@ class MyWorkScreen(QWidget):
         self._loading = False
         self._spinner.stop()
         self._refresh_btn.setEnabled(True)
-        self._status_lbl.setText("")
+        # Preserve a just-restored focus-timer note; otherwise clear "Loading…".
+        self._status_lbl.setText(getattr(self, "_focus_note", None) or "")
+        self._focus_note = None
         self._loaded_key = key
         self._items = [WorkItem(f) for f in result.get("fields", [])]
         self._states_by_type = result.get("states", {})
@@ -247,6 +355,29 @@ class MyWorkScreen(QWidget):
         self._spinner = Spinner(size=16, line_width=2)
         self._spinner.stop()   # hidden until a load starts
         hdr.addWidget(self._spinner)
+        hdr.addSpacing(12)
+        # Focus timer pill: "Now: #123 · 12:34" + pause/resume + stop-and-log
+        self._focus_frame = QFrame()
+        self._focus_frame.setObjectName("focusFrame")
+        ff = QHBoxLayout(self._focus_frame)
+        ff.setContentsMargins(10, 3, 4, 3)
+        ff.setSpacing(6)
+        self._focus_lbl = QLabel("")
+        ff.addWidget(self._focus_lbl)
+        self._focus_pause_btn = QPushButton()
+        self._focus_pause_btn.setFixedSize(24, 24)
+        self._focus_pause_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._focus_pause_btn.clicked.connect(self._toggle_focus_pause)
+        ff.addWidget(self._focus_pause_btn)
+        self._focus_stop_btn = QPushButton()
+        self._focus_stop_btn.setFixedSize(24, 24)
+        self._focus_stop_btn.setToolTip(
+            "Stop the focus timer and log the time to Completed Work")
+        self._focus_stop_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._focus_stop_btn.clicked.connect(lambda: self._stop_focus(log=True))
+        ff.addWidget(self._focus_stop_btn)
+        self._focus_frame.setVisible(False)
+        hdr.addWidget(self._focus_frame)
         hdr.addStretch()
         self._hint_lbl = QLabel("Ctrl+Shift+M to return")
         hdr.addWidget(self._hint_lbl)
@@ -319,13 +450,15 @@ class MyWorkScreen(QWidget):
             lbl = QLabel(f"<b>{col}</b>")
             self._col_labels[col] = lbl
             col_v.addWidget(lbl)
-            lst = QListWidget()
+            lst = _ColumnList()
             lst.setAlternatingRowColors(False)
             lst.setWordWrap(True)
             lst.setSelectionMode(QListWidget.SingleSelection)
             lst.itemDoubleClicked.connect(self._open_in_browser)
             lst.itemSelectionChanged.connect(
                 lambda l=None, s=lst: self._on_card_selected(s))
+            lst.drag_started.connect(self._on_drag_started)
+            lst.card_dropped.connect(lambda c=col: self._on_card_dropped(c))
             delegates.apply_hover(lst)
             self._col_lists[col] = lst
             col_v.addWidget(lst, 1)
@@ -378,6 +511,15 @@ class MyWorkScreen(QWidget):
         self._detail_id_lbl = QLabel("")
         head.addWidget(self._detail_id_lbl)
         head.addStretch()
+        self._focus_btn = QPushButton("Focus")
+        self._focus_btn.setIcon(icons.icon("play", size=14))
+        self._focus_btn.setToolTip(
+            "Start a focus timer on this item — stopping it logs the time to "
+            "Completed Work")
+        self._focus_btn.setStyleSheet(theme.btn_ghost_qss())
+        self._focus_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._focus_btn.clicked.connect(self._start_focus_current)
+        head.addWidget(self._focus_btn)
         self._open_btn = QPushButton("Open in browser")
         self._open_btn.setIcon(icons.icon("external-link", size=14))
         self._open_btn.setStyleSheet(theme.btn_ghost_qss())
@@ -573,7 +715,8 @@ class MyWorkScreen(QWidget):
                     tip += f"\nPriority: {wi.priority}"
                 if wi.iteration_path:
                     tip += f"\nIteration: {wi.iteration_path}"
-                tip += "\n\nClick to edit here · double-click to open in Azure DevOps"
+                tip += ("\n\nClick to edit here · drag to another column to change "
+                        "state · double-click to open in Azure DevOps")
                 item.setToolTip(tip)
                 color = self._state_color(wi)
                 if color is not None:
@@ -688,6 +831,7 @@ class MyWorkScreen(QWidget):
         finally:
             self._suspend = False
         self._set_dirty(False)
+        self._sync_focus_btn()
         self._load_comments(wi.id)
 
     def _apply_assignee(self, wi: WorkItem):
@@ -895,9 +1039,13 @@ class MyWorkScreen(QWidget):
         new_state = self._state_combo.currentText()
         if not new_state or new_state == self._current.state:
             return
-        wid = self._current.id
+        self._transition_state(self._current.id, new_state)
+
+    def _transition_state(self, wid, new_state):
+        """PATCH only System.State — shared by the editor's State combo and
+        drag-drop between columns."""
         self._state_combo.setEnabled(False)
-        self._set_save_status(f"Moving to {new_state}…")
+        self._set_save_status(f"Moving #{wid} to {new_state}…")
         worker = Worker(self.app_state.client.update_work_item_fields,
                         wid, {"System.State": new_state})
         worker.signals.result.connect(
@@ -912,6 +1060,13 @@ class MyWorkScreen(QWidget):
             fresh = (data or {}).get("fields") or {}
             wi.fields.update(fresh or {"System.State": new_state})
             wi.fields["_id"] = wid
+            # A drag on the item open in the editor must sync its State combo.
+            if self._current is not None and self._current.id == wid:
+                self._suspend = True
+                try:
+                    self._state_combo.setCurrentText(wi.state)
+                finally:
+                    self._suspend = False
         self._set_save_status(f"State → {new_state} ✓", ok=True)
         self._rebuild()   # the card moves column / retints
 
@@ -933,6 +1088,177 @@ class MyWorkScreen(QWidget):
         color = t["ok"] if ok else (t["error"] if error else t["text_dim"])
         self._save_status.setStyleSheet(f"color: {color}; font-size: 11px;")
         self._save_status.setText(text)
+
+    # ------------------------------------------------------------------ #
+    #  Drag-drop between columns → state transition                       #
+    # ------------------------------------------------------------------ #
+
+    def _on_drag_started(self, wi):
+        self._drag_wi = wi
+
+    def _state_for_column(self, wi: WorkItem, col: str):
+        """The state a drop on `col` should move `wi` to: the first state of the
+        column's category defined for the item's type (the API lists states in
+        workflow order). None when the process defines no such state."""
+        states = self._states_by_type.get(wi.type) or {}
+        for cat in _COLUMN_CATEGORIES.get(col, ()):
+            for name, (category, _color) in states.items():
+                if category == cat:
+                    return name
+        return None
+
+    def _on_card_dropped(self, col: str):
+        wi, self._drag_wi = self._drag_wi, None
+        if wi is None:
+            return
+        if wi.column(self._cat_map()) == col:
+            return   # dropped back on its own column
+        new_state = self._state_for_column(wi, col)
+        if not new_state:
+            self._set_save_status(
+                f"{wi.type} has no {col} state in this process.", error=True)
+            return
+        self._transition_state(wi.id, new_state)
+
+    # ------------------------------------------------------------------ #
+    #  Focus timer — logs elapsed time to Completed Work                  #
+    # ------------------------------------------------------------------ #
+
+    def _focus_elapsed(self) -> float:
+        if not self._focus:
+            return 0.0
+        elapsed = self._focus["accum"]
+        if self._focus.get("run_started") is not None:
+            elapsed += time.monotonic() - self._focus["run_started"]
+        return elapsed
+
+    def _start_focus_current(self):
+        if self._current is not None:
+            self._start_focus(self._current)
+
+    def _start_focus(self, wi: WorkItem):
+        if self._focus and self._focus["id"] == wi.id:
+            if self._focus.get("run_started") is None:
+                self._toggle_focus_pause()   # same item, paused → resume
+            return
+        if self._focus:
+            self._stop_focus(log=True)       # switching focus logs the old item
+        self._focus = {"id": wi.id, "title": wi.title, "accum": 0.0,
+                       "run_started": time.monotonic()}
+        self._focus_ticks = 0
+        self._focus_tick.start()
+        self._persist_focus()
+        self._update_focus_ui()
+
+    def _toggle_focus_pause(self):
+        if not self._focus:
+            return
+        if self._focus.get("run_started") is not None:
+            self._focus["accum"] += time.monotonic() - self._focus["run_started"]
+            self._focus["run_started"] = None
+            self._focus_tick.stop()
+        else:
+            self._focus["run_started"] = time.monotonic()
+            self._focus_tick.start()
+        self._persist_focus()
+        self._update_focus_ui()
+
+    def _stop_focus(self, log: bool = True):
+        """Stop the timer; when `log`, add the elapsed hours to the item's
+        Completed Work (fresh read-modify-write on a worker)."""
+        if not self._focus:
+            return
+        focus = self._focus
+        hours = round(self._focus_elapsed() / 3600.0, 2)
+        self._focus = None
+        self._focus_tick.stop()
+        from app.utils.settings import clear_focus_timer
+        clear_focus_timer()
+        self._update_focus_ui()
+        if not log:
+            return
+        if hours < 0.01:
+            self._status_lbl.setText("Focus session under a minute — nothing logged.")
+            return
+        self._status_lbl.setText(f"Logging {hours:g}h to #{focus['id']}…")
+        worker = Worker(_log_focus_time, self.app_state.client, focus["id"], hours)
+        worker.signals.result.connect(
+            lambda res, f=focus, h=hours: self._on_time_logged(f, h, res))
+        worker.signals.error.connect(
+            lambda exc, f=focus, h=hours: self._on_time_log_error(f, h, exc))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_time_logged(self, focus, hours, res: dict):
+        wid = focus["id"]
+        wi = next((w for w in self._items if w.id == wid), None)
+        if wi is not None:
+            wi.fields.update((res or {}).get("fields", {}))
+            wi.fields["_id"] = wid
+            # Reflect the new numbers in the editor if the item is on screen
+            # (and the user isn't mid-edit).
+            if self._current is not None and self._current.id == wid and not self._dirty:
+                self._suspend = True
+                try:
+                    self._remaining_edit.setText(
+                        "" if wi.remaining_work is None else str(wi.remaining_work))
+                    self._completed_edit.setText(
+                        "" if wi.completed_work is None else str(wi.completed_work))
+                finally:
+                    self._suspend = False
+        self._status_lbl.setText(f"Logged {hours:g}h to #{wid} ✓")
+
+    def _on_time_log_error(self, focus, hours, exc):
+        # The time is not silently lost — the message carries the hours so they
+        # can be added in the browser (some processes don't track Completed Work).
+        self._status_lbl.setText(
+            f"Could not log {hours:g}h to #{focus['id']}: {exc} — add it in the "
+            "browser if this process tracks Completed Work.")
+
+    def _on_focus_tick(self):
+        self._update_focus_label()
+        self._focus_ticks += 1
+        if self._focus_ticks % 30 == 0:
+            self._persist_focus()   # survives a crash/kill at ≤30s granularity
+
+    def _persist_focus(self):
+        from app.utils.settings import save_focus_timer
+        if self._focus:
+            save_focus_timer({"id": self._focus["id"], "title": self._focus["title"],
+                              "accum": self._focus_elapsed()})
+
+    def _update_focus_label(self):
+        if self._focus:
+            self._focus_lbl.setText(
+                f"Now: <b>#{self._focus['id']}</b> · {_fmt_elapsed(self._focus_elapsed())}")
+
+    def _update_focus_ui(self):
+        from app.utils import icons
+        has = self._focus is not None
+        self._focus_frame.setVisible(has)
+        if has:
+            running = self._focus.get("run_started") is not None
+            self._focus_pause_btn.setIcon(icons.icon("pause" if running else "play", size=13))
+            self._focus_pause_btn.setToolTip(
+                "Pause the focus timer" if running else "Resume the focus timer")
+            self._focus_stop_btn.setIcon(icons.icon("stop", size=13))
+            self._update_focus_label()
+        self._sync_focus_btn()
+
+    def _sync_focus_btn(self):
+        """The editor's Focus button reflects the shown item's timer state."""
+        if self._current is None:
+            return
+        focused = self._focus is not None and self._focus["id"] == self._current.id
+        running = focused and self._focus.get("run_started") is not None
+        if running:
+            self._focus_btn.setText("Focusing…")
+            self._focus_btn.setEnabled(False)
+        elif focused:
+            self._focus_btn.setText("Resume focus")
+            self._focus_btn.setEnabled(True)
+        else:
+            self._focus_btn.setText("Focus")
+            self._focus_btn.setEnabled(True)
 
     # ------------------------------------------------------------------ #
     #  Comments                                                           #
@@ -1098,6 +1424,17 @@ class MyWorkScreen(QWidget):
         self._clear_btn.setIcon(icons.icon("x", size=13))
         self._open_btn.setStyleSheet(theme.btn_ghost_qss())
         self._open_btn.setIcon(icons.icon("external-link", size=14))
+        self._focus_btn.setStyleSheet(theme.btn_ghost_qss())
+        self._focus_btn.setIcon(icons.icon("play", size=14))
+        self._focus_frame.setStyleSheet(
+            f"#focusFrame {{ background: {t['surface2']}; "
+            f"border: 1px solid {t['border']}; border-radius: 12px; }}")
+        self._focus_lbl.setStyleSheet(
+            f"color: {t['text']}; font-size: 12px; background: transparent; border: none;")
+        for b in (self._focus_pause_btn, self._focus_stop_btn):
+            b.setStyleSheet(theme.btn_ghost_qss("padding: 2px;"))
+        if self._focus:
+            self._update_focus_ui()   # re-tint the pause/stop icons
         self._save_btn.setStyleSheet(theme.btn_primary_qss("padding: 6px 20px;"))
         self._save_btn.setIcon(icons.icon("check", color="white", size=14))
         self._comment_btn.setStyleSheet(theme.btn_neutral_qss())

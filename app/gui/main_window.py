@@ -705,6 +705,11 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
             "window_geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
             "edit_splitter_sizes": self.edit_widget.splitter_sizes(),
         })
+        # A running My Work focus timer survives the restart (restored paused).
+        try:
+            self.mywork_screen._persist_focus()
+        except Exception:
+            pass
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
