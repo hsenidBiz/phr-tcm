@@ -363,6 +363,33 @@ class DevOpsClient:
         )
         return [w["id"] for w in self._handle(resp).get("workItems", [])]
 
+    def get_teams(self) -> list:
+        """GET the teams in the current project, each {id, name}. Used by My Work's
+        team-scope selector. Read only."""
+        from urllib.parse import quote
+        url = (f"{self.tm.org_url}/_apis/projects/{quote(self.tm.project)}/teams"
+               f"?api-version={API_VERSION}")
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        return [{"id": t.get("id"), "name": t.get("name", "")}
+                for t in self._handle(resp).get("value", [])]
+
+    def get_team_field_values(self, team: str) -> dict:
+        """GET a team's 'team field' (usually System.AreaPath) and its values, so
+        My Work can scope a board to everything under the team's area(s). Returns
+        {field_ref, default, values:[{value, includeChildren}]}. Read only."""
+        from urllib.parse import quote
+        url = (f"{self.tm.org_url}/{quote(self.tm.project)}/{quote(team)}"
+               f"/_apis/work/teamsettings/teamfieldvalues?api-version={API_VERSION}")
+        resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+        data = self._handle(resp)
+        return {
+            "field_ref": (data.get("field") or {}).get("referenceName", "System.AreaPath"),
+            "default": data.get("defaultValue", ""),
+            "values": [{"value": v.get("value", ""),
+                        "includeChildren": bool(v.get("includeChildren"))}
+                       for v in data.get("values", [])],
+        }
+
     def get_work_item_states(self, wi_type: str) -> list:
         """GET the states defined for a work-item type on this project's process,
         each {name, color, category}. `category` (Proposed/InProgress/Resolved/

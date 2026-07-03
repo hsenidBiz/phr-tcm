@@ -281,17 +281,45 @@ class _ColumnList(QListWidget):
         self.card_dropped.emit()
 
 
-def _fetch_my_work(client) -> dict:
-    """Worker-thread fetch: ids via WIQL (@Me), fields via the batched GET, and
-    each distinct type's states (cached per type on the client). Read only."""
+def _wiql_str(value: str) -> str:
+    """A WIQL string literal with quotes escaped."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _team_area_clause(field_ref: str, values: list) -> str:
+    """A WIQL clause scoping to a team's area(s). Each value uses UNDER when it
+    includes children on a tree field (Area/Iteration path), otherwise '='."""
+    field = f"[{field_ref}]"
+    tree = field_ref.endswith("AreaPath") or field_ref.endswith("IterationPath")
+    parts = []
+    for v in values:
+        val = v.get("value") if isinstance(v, dict) else v
+        if not val:
+            continue
+        under = tree and (v.get("includeChildren") if isinstance(v, dict) else False)
+        parts.append(f"{field} {'UNDER' if under else '='} {_wiql_str(val)}")
+    return " OR ".join(parts)
+
+
+def _fetch_work(client, scope: dict) -> dict:
+    """Worker-thread board fetch. `scope` is {"mode": "me"} (items assigned to
+    me) or {"mode": "team", "team": name} (the team's board — everything under
+    the team's area path(s), whoever it's assigned to). Read only."""
     excluded = ", ".join(f"'{t}'" for t in _EXCLUDED_TYPES)
-    wiql = (
-        "SELECT [System.Id] FROM workitems "
-        "WHERE [System.TeamProject] = @project "
-        "AND [System.AssignedTo] = @Me "
-        f"AND [System.WorkItemType] NOT IN ({excluded}) "
-        "ORDER BY [System.ChangedDate] DESC"
-    )
+    where = ["[System.TeamProject] = @project",
+             f"[System.WorkItemType] NOT IN ({excluded})"]
+    if scope.get("mode") == "team":
+        tfv = client.get_team_field_values(scope["team"])
+        vals = tfv.get("values") or ([{"value": tfv["default"], "includeChildren": True}]
+                                     if tfv.get("default") else [])
+        clause = _team_area_clause(tfv.get("field_ref") or "System.AreaPath", vals)
+        if clause:
+            where.append(f"({clause})")
+    else:
+        where.append("[System.AssignedTo] = @Me")
+    wiql = ("SELECT [System.Id] FROM workitems WHERE "
+            + " AND ".join(where)
+            + " ORDER BY [System.ChangedDate] DESC")
     ids = client.query_work_items(wiql, top=_MAX_ITEMS)
     fields = client.get_work_items(ids, WORK_ITEM_FIELDS) if ids else []
     states = {}
@@ -303,7 +331,12 @@ def _fetch_my_work(client) -> dict:
                                  for s in client.get_work_item_states(wtype)}
             except Exception:
                 states[wtype] = {}   # unknown process — column falls back to heuristic
-    return {"fields": fields, "states": states}
+    return {"fields": fields, "states": states, "count": len(ids)}
+
+
+def _fetch_teams(client) -> list:
+    """Worker-thread: the project's team names (for the scope selector)."""
+    return [t.get("name", "") for t in client.get_teams() if t.get("name")]
 
 
 def _quick_create(client, kind: str, title: str, description: str, assign_to: str) -> dict:
@@ -423,6 +456,9 @@ class MyWorkScreen(QWidget):
         self._focus_tick = QTimer(self)
         self._focus_tick.setInterval(1000)
         self._focus_tick.timeout.connect(self._on_focus_tick)
+        # Board scope: {"mode": "me"} or {"mode": "team", "team": name}.
+        self._scope = {"mode": "me"}
+        self._teams_key = None               # (org, project) the team list is for
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -434,8 +470,14 @@ class MyWorkScreen(QWidget):
         changed since the last load (first entry included)."""
         tm = self.app_state.token_manager
         key = (tm.org_url, tm.project)
+        if key != self._teams_key:
+            # New org/project — a team from the previous project no longer
+            # applies, so fall back to personal scope before (re)loading.
+            self._scope = {"mode": "me"}
+            self._reset_scope_combo()
         if key != self._loaded_key and not self._loading:
             self.refresh()
+        self._load_teams()
         self._refresh_members()
         # A focus timer left running when the app closed comes back PAUSED with
         # its recorded time (offline hours are never counted) — resume or stop.
@@ -460,14 +502,63 @@ class MyWorkScreen(QWidget):
             return
         tm = self.app_state.token_manager
         key = (tm.org_url, tm.project)
+        scope = dict(self._scope)
         self._loading = True
         self._refresh_btn.setEnabled(False)
-        self._status_lbl.setText("Loading your work items…")
+        self._status_lbl.setText(
+            f"Loading the {scope['team']} board…" if scope.get("mode") == "team"
+            else "Loading your work items…")
         self._spinner.start()
-        worker = Worker(_fetch_my_work, self.app_state.client)
+        worker = Worker(_fetch_work, self.app_state.client, scope)
         worker.signals.result.connect(lambda res, k=key: self._on_loaded(k, res))
         worker.signals.error.connect(self._on_error)
         QThreadPool.globalInstance().start(worker)
+
+    # ---- team scope --------------------------------------------------------
+
+    def _load_teams(self):
+        """Populate the scope selector with the project's teams (once per
+        org/project). Failure just leaves 'My work' as the only option."""
+        tm = self.app_state.token_manager
+        key = (tm.org_url, tm.project)
+        if key == self._teams_key:
+            return
+        self._teams_key = key
+        worker = Worker(_fetch_teams, self.app_state.client)
+        worker.signals.result.connect(lambda names, k=key: self._on_teams(k, names))
+        worker.signals.error.connect(lambda _exc: None)
+        QThreadPool.globalInstance().start(worker)
+
+    def _reset_scope_combo(self):
+        """Collapse the scope selector back to just 'My work' (used on a project
+        switch, before the new team list arrives)."""
+        self._scope_combo.blockSignals(True)
+        self._scope_combo.clear()
+        self._scope_combo.addItem("My work", None)
+        self._scope_combo.setCurrentIndex(0)
+        self._scope_combo.blockSignals(False)
+
+    def _on_teams(self, key, names):
+        if key != self._teams_key:
+            return
+        cur = self._scope_combo.currentData()
+        self._scope_combo.blockSignals(True)
+        self._scope_combo.clear()
+        self._scope_combo.addItem("My work", None)
+        for name in sorted(names):
+            self._scope_combo.addItem(f"Team: {name}", name)
+        idx = self._scope_combo.findData(cur)
+        self._scope_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._scope_combo.blockSignals(False)
+
+    def _on_scope_changed(self, _idx):
+        team = self._scope_combo.currentData()
+        new_scope = {"mode": "team", "team": team} if team else {"mode": "me"}
+        if new_scope == self._scope:
+            return
+        self._scope = new_scope
+        self._loaded_key = None   # force reload for the new scope
+        self.refresh()
 
     def _on_loaded(self, key, result):
         self._loading = False
@@ -500,11 +591,19 @@ class MyWorkScreen(QWidget):
         layout.setContentsMargins(16, 14, 16, 12)
         layout.setSpacing(8)
 
-        # Header: title · count · spinner · hint · new · refresh
+        # Header: title · scope · count · spinner · focus · new · refresh
         hdr = QHBoxLayout()
         self._title_lbl = QLabel("<b>My Work</b>")
         self._title_lbl.setStyleSheet("font-size: 16px;")
         hdr.addWidget(self._title_lbl)
+        hdr.addSpacing(10)
+        self._scope_combo = QComboBox()
+        self._scope_combo.setToolTip("Show your items, or a whole team's board")
+        self._scope_combo.addItem("My work", None)
+        self._scope_combo.setMinimumWidth(150)
+        self._scope_combo.setCursor(QCursor(Qt.PointingHandCursor))
+        self._scope_combo.currentIndexChanged.connect(self._on_scope_changed)
+        hdr.addWidget(self._scope_combo)
         hdr.addSpacing(10)
         self._count_lbl = QLabel("")
         hdr.addWidget(self._count_lbl)
@@ -889,8 +988,13 @@ class MyWorkScreen(QWidget):
                 self._count_lbl.setText(f"{total} item{'s' if total != 1 else ''}"
                                         if self._loaded_key else "")
             self._empty_lbl.setVisible(self._loaded_key is not None and total == 0)
-            self._empty_lbl.setText(
-                "No work items are assigned to you in this project." if total == 0 else "")
+            if total == 0:
+                self._empty_lbl.setText(
+                    f"No work items on the {self._scope['team']} board."
+                    if self._scope.get("mode") == "team"
+                    else "No work items are assigned to you in this project.")
+            else:
+                self._empty_lbl.setText("")
             # Keep the edited card highlighted after a rebuild.
             if self._current is not None:
                 self._select_card(self._current.id)
