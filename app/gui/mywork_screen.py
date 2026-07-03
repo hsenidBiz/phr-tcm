@@ -21,10 +21,12 @@ from urllib.parse import quote
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit,
-    QMessageBox, QScrollArea, QFrame,
+    QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle,
 )
-from PyQt5.QtCore import Qt, QThreadPool, QTimer, pyqtSignal
-from PyQt5.QtGui import QCursor, QColor, QBrush, QPalette
+from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, pyqtSignal
+from PyQt5.QtGui import QCursor, QColor, QPalette, QPainter, QPen, QFont
+
+from app.gui.delegates import HoverTrackerMixin
 
 from app.utils.worker import Worker
 from app.utils import theme
@@ -32,7 +34,7 @@ from app.utils.anim import Spinner
 from app.utils.xml_builder import html_to_text
 from app.models.work_item import WorkItem, WORK_ITEM_FIELDS, COLUMNS
 from app.gui.checkable_combo import CheckableComboBox
-from app.gui import delegates, frameless
+from app.gui import frameless
 
 # Test artifacts are managed in the app's normal mode — keep the board about
 # actual work (stories, bugs, tasks, …).
@@ -56,6 +58,160 @@ _COLUMN_CATEGORIES = {
     "Doing": ("InProgress", "Resolved"),
     "Done": ("Completed",),
 }
+
+
+# Work-item-type → (icon name, badge colour). Colours echo ADO's own type
+# accents but nudged for contrast on both themes. Unknown types fall back to a
+# neutral document icon.
+_TYPE_META = {
+    "Bug": ("bug", "#e15b64"),
+    "Task": ("square-check", "#d99e2b"),
+    "Product Backlog Item": ("bookmark", "#2aa5e0"),
+    "User Story": ("bookmark", "#2aa5e0"),
+    "Issue": ("bookmark", "#2aa5e0"),
+    "Feature": ("star", "#9a74d8"),
+    "Epic": ("flag", "#e0873c"),
+}
+_DEFAULT_TYPE_ICON = "file-text"
+
+# Extra item-data roles (per card) the delegate reads.
+_STATE_HEX_ROLE = Qt.UserRole + 1     # the state's ADO colour, hex without '#'
+
+
+def _type_meta(wtype: str):
+    return _TYPE_META.get(wtype, (_DEFAULT_TYPE_ICON, None))
+
+
+def _priority_hex(priority, tokens):
+    return {1: "#e15b64", 2: "#d99e2b"}.get(priority, tokens["text_dim2"])
+
+
+def _wrap_lines(fm, text, width, max_lines):
+    """Greedy word-wrap `text` into at most `max_lines`, eliding the last line
+    with '…' when it overflows. Used by the card delegate to draw titles."""
+    words = text.split()
+    lines, cur, i = [], "", 0
+    while i < len(words):
+        trial = words[i] if not cur else cur + " " + words[i]
+        if not cur or fm.horizontalAdvance(trial) <= width:
+            cur = trial
+            i += 1
+        else:
+            lines.append(cur)
+            cur = ""
+            if len(lines) == max_lines:
+                break
+    if cur and len(lines) < max_lines:
+        lines.append(cur)
+        i = len(words)
+    if i < len(words) and lines:          # words left over → elide the last line
+        last = lines[-1]
+        while last and fm.horizontalAdvance(last + "…") > width:
+            last = last[:-1].rstrip()
+        lines[-1] = (last + "…") if last else "…"
+    return lines
+
+
+class _CardDelegate(HoverTrackerMixin, QStyledItemDelegate):
+    """Paints each work item as a card — a type icon + colour, its id, a wrapped
+    title, a state chip and a priority badge — instead of a line of text. The
+    WorkItem is on Qt.UserRole; the state colour on _STATE_HEX_ROLE."""
+
+    _H = 90   # card slot height (a few px are the gap between cards)
+
+    def __init__(self, view):
+        super().__init__(view)
+        self._init_hover(view)
+
+    def sizeHint(self, option, index):
+        return QSize(option.rect.width(), self._H)
+
+    def paint(self, painter, option, index):
+        wi = index.data(Qt.UserRole)
+        if wi is None:
+            return super().paint(painter, option, index)
+        t = theme.tokens()
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setClipRect(option.rect)
+
+        card = QRect(option.rect).adjusted(3, 3, -3, -4)
+        selected = bool(option.state & QStyle.State_Selected)
+        icon_name, type_hex = _type_meta(wi.type)
+        type_col = QColor(type_hex) if type_hex else QColor(t["text_dim"])
+
+        # Card surface + a coloured left accent bar by type.
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(t["surface2"]))
+        painter.drawRoundedRect(card, 7, 7)
+        painter.save()
+        clip = QRect(card)
+        painter.setClipRect(clip.intersected(option.rect))
+        bar = QColor(type_col)
+        painter.setBrush(bar)
+        painter.drawRoundedRect(QRect(card.left(), card.top(), 7, card.height()), 3, 3)
+        painter.fillRect(QRect(card.left() + 3, card.top(), 4, card.height()), bar)
+        painter.restore()
+
+        if self._is_hovered(option, index) and not selected:
+            painter.setBrush(self._hover_overlay_color())
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(card, 7, 7)
+        if selected:
+            pen = QPen(QColor(t["accent"]))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(card.adjusted(1, 1, -1, -1), 7, 7)
+
+        left = card.left() + 12
+        right = card.right() - 10
+        small = QFont(option.font)
+        small.setPixelSize(11)
+        title_font = QFont(option.font)
+        title_font.setPixelSize(13)
+
+        # Row 1: type icon · #id  ……  priority badge
+        from app.utils import icons
+        pm = icons.pixmap(icon_name, color=type_hex or t["text_dim"], size=16)
+        painter.drawPixmap(left, card.top() + 9, 16, 16, pm)
+        painter.setFont(small)
+        painter.setPen(QColor(t["text_dim"]))
+        painter.drawText(QRect(left + 22, card.top() + 8, right - (left + 22), 18),
+                         Qt.AlignVCenter | Qt.AlignLeft, f"#{wi.id}")
+        if wi.priority is not None:
+            ptext = f"P{wi.priority}"
+            pw = painter.fontMetrics().horizontalAdvance(ptext) + 2
+            painter.setPen(QColor(_priority_hex(wi.priority, t)))
+            painter.drawText(QRect(right - pw, card.top() + 8, pw, 18),
+                             Qt.AlignVCenter | Qt.AlignRight, ptext)
+
+        # Row 2: title, up to two wrapped lines.
+        painter.setFont(title_font)
+        fm = painter.fontMetrics()
+        title_top = card.top() + 30
+        lines = _wrap_lines(fm, wi.title, right - left, 2)
+        painter.setPen(QColor(t["text"]))
+        y = title_top
+        for line in lines:
+            painter.drawText(QRect(left, y, right - left, fm.lineSpacing()),
+                             Qt.AlignLeft | Qt.AlignVCenter, line)
+            y += fm.lineSpacing()
+
+        # Row 3: state dot + name.
+        state_hex = index.data(_STATE_HEX_ROLE)
+        dot = QColor(f"#{state_hex}") if state_hex else QColor(t["text_dim2"])
+        cy = card.bottom() - 13
+        painter.setBrush(dot)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QRect(left, cy, 8, 8))
+        painter.setFont(small)
+        painter.setPen(QColor(t["text_dim"]))
+        painter.drawText(QRect(left + 13, cy - 4, right - (left + 13), 16),
+                         Qt.AlignVCenter | Qt.AlignLeft,
+                         painter.fontMetrics().elidedText(
+                             wi.state, Qt.ElideRight, right - (left + 13)))
+        painter.restore()
 
 
 def _fmt_elapsed(seconds: float) -> str:
@@ -452,14 +608,15 @@ class MyWorkScreen(QWidget):
             col_v.addWidget(lbl)
             lst = _ColumnList()
             lst.setAlternatingRowColors(False)
-            lst.setWordWrap(True)
             lst.setSelectionMode(QListWidget.SingleSelection)
+            lst.setUniformItemSizes(True)
+            lst.setSpacing(0)
+            lst.setItemDelegate(_CardDelegate(lst))   # paint items as cards
             lst.itemDoubleClicked.connect(self._open_in_browser)
             lst.itemSelectionChanged.connect(
                 lambda l=None, s=lst: self._on_card_selected(s))
             lst.drag_started.connect(self._on_drag_started)
             lst.card_dropped.connect(lambda c=col: self._on_card_dropped(c))
-            delegates.apply_hover(lst)
             self._col_lists[col] = lst
             col_v.addWidget(lst, 1)
             board.addLayout(col_v, 1)
@@ -682,14 +839,13 @@ class MyWorkScreen(QWidget):
             items.sort(key=lambda w: w.title.lower(), reverse=(mode == "za"))
         return items   # default: WIQL order (recently changed first)
 
-    def _state_color(self, wi: WorkItem):
+    def _state_hex(self, wi: WorkItem) -> str:
+        """The item's state colour as a bare hex string ('' if the process didn't
+        supply one) — stashed per card for the delegate's state dot."""
         entry = (self._states_by_type.get(wi.type) or {}).get(wi.state)
         if entry and entry[1]:
-            col = QColor(f"#{entry[1].lstrip('#')}")
-            if col.isValid():
-                col.setAlpha(46)   # subtle translucent tint over the list base
-                return col
-        return None
+            return str(entry[1]).lstrip("#")
+        return ""
 
     def _cat_map(self) -> dict:
         """{type: {state: category}} for WorkItem.column (strip the colours)."""
@@ -708,19 +864,18 @@ class MyWorkScreen(QWidget):
                 col = wi.column(cat_map)
                 if col is None:   # Removed — hidden
                     continue
-                item = QListWidgetItem(f"#{wi.id}  ·  {wi.type}\n{wi.title}")
+                # Item text (the title) is kept only for keyboard type-search;
+                # the card delegate draws the actual layout from the WorkItem.
+                item = QListWidgetItem(wi.title)
                 item.setData(Qt.UserRole, wi)
-                tip = f"State: {wi.state}"
+                item.setData(_STATE_HEX_ROLE, self._state_hex(wi))
+                tip = f"#{wi.id}  ·  {wi.type}  ·  {wi.state}"
                 if wi.priority is not None:
-                    tip += f"\nPriority: {wi.priority}"
-                if wi.iteration_path:
-                    tip += f"\nIteration: {wi.iteration_path}"
-                tip += ("\n\nClick to edit here · drag to another column to change "
+                    tip += f"  ·  P{wi.priority}"
+                tip += (f"\n{wi.title}"
+                        "\n\nClick to edit here · drag to another column to change "
                         "state · double-click to open in Azure DevOps")
                 item.setToolTip(tip)
-                color = self._state_color(wi)
-                if color is not None:
-                    item.setBackground(QBrush(color))
                 self._col_lists[col].addItem(item)
                 counts[col] += 1
                 shown += 1
