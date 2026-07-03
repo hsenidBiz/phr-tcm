@@ -25,7 +25,9 @@ COLUMNS = ["To Do", "Doing", "Done"]
 _CATEGORY_COLUMN = {
     "Proposed": "To Do",
     "InProgress": "Doing",
-    "Resolved": "Doing",
+    # Resolved and Completed both land in Done — once an item is resolved or
+    # later, it's off the active "Doing" work.
+    "Resolved": "Done",
     "Completed": "Done",
     # "Removed" -> None (hidden)
 }

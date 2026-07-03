@@ -52,11 +52,12 @@ _REMAINING = "Microsoft.VSTS.Scheduling.RemainingWork"
 
 # Dropping a card on a column moves the item to the FIRST state of these
 # categories (in order) defined for its type — process-discovered, never
-# hardcoded state names.
+# hardcoded state names. Dropping on Done prefers a truly-closed (Completed)
+# state, falling back to Resolved for processes that only reach Resolved.
 _COLUMN_CATEGORIES = {
     "To Do": ("Proposed",),
-    "Doing": ("InProgress", "Resolved"),
-    "Done": ("Completed",),
+    "Doing": ("InProgress",),
+    "Done": ("Completed", "Resolved"),
 }
 
 
