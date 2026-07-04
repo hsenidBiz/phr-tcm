@@ -137,6 +137,7 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .pre { font-size: 13px; background: #f7f9fc; border-left: 3px solid #b9c6da;
        padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
 .pre b { color: #44506a; }
+.pre .none { color: #8a94a6; font-style: italic; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; background: #f0f3f8; color: #44506a; font-size: 12px;
      padding: 6px 10px; border: 1px solid #e1e7f0; }
@@ -204,7 +205,7 @@ def export_records_to_html(records: list, path: str, subtitle: str = ""):
         f"<p class='subtitle'>{_esc(subtitle) or f'{len(records)} test case(s)'}</p>",
         "<div class='searchbar'>",
         "<input id='tc-search' type='search' "
-        "placeholder='Search title, ID, tags, steps, preconditions…' "
+        "placeholder='Search title, ID, tags, steps, prerequisites…' "
         "aria-label='Search test cases'>",
         "<span id='tc-count'></span></div>",
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>",
@@ -228,10 +229,11 @@ def export_records_to_html(records: list, path: str, subtitle: str = ""):
         if chips:
             parts.append(f"<div class='meta'>{''.join(chips)}</div>")
 
-        if rec.get("preconditions"):
-            parts.append(
-                f"<p class='pre'><b>Preconditions:</b> {_esc(rec['preconditions'])}</p>"
-            )
+        # Every case shows a Prerequisites block, even when the field is empty,
+        # so reviewers can see at a glance that none were specified.
+        prereq = (rec.get("preconditions") or "").strip()
+        prereq_html = _esc(prereq) if prereq else "<span class='none'>None</span>"
+        parts.append(f"<p class='pre'><b>Prerequisites:</b> {prereq_html}</p>")
 
         steps = rec.get("steps") or []
         if steps:

@@ -157,7 +157,7 @@ def _parse_json(path: Path) -> tuple:
             automation_status = "Not Automated"
 
         module_value = str(_json_value(raw, "module", "module_value") or "").strip()
-        preconditions = str(raw.get("preconditions", "") or "").strip()
+        preconditions = str(_json_value(raw, "preconditions", "prerequisites") or "").strip()
 
         raw_steps = raw.get("steps") or []
         if not isinstance(raw_steps, list):

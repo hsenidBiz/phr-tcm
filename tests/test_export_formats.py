@@ -126,6 +126,10 @@ def test_html_export_contains_cases_and_escapes(tmp_path):
     assert "Login as admin" in text
     assert "#4242" in text
     assert "Open login page" in text and "Dashboard shown" in text
+    # Every case renders a Prerequisites block — "None" when the field is empty.
+    assert text.count("Prerequisites:") == 2
+    assert "User exists" in text
+    assert "<span class='none'>None</span>" in text
     # HTML in a title must be escaped, never rendered.
     assert "Update case &lt;b&gt;" in text
     assert "Update case <b>" not in text
