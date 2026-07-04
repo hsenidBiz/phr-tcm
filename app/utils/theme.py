@@ -254,10 +254,17 @@ def style_inputs(root) -> None:
     left untouched. Inputs we style are tagged (`_autoInput`) so they re-theme on
     a theme toggle instead of being skipped (a styled widget is no longer
     "plain"). Per-widget (not a global app stylesheet), so item views are never
-    switched to QStyleSheetStyle. Call on init and on every theme refresh."""
-    from PyQt5.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit
+    switched to QStyleSheetStyle. Call on init and on every theme refresh.
+
+    An editable QComboBox exposes its internal editor as a child QLineEdit;
+    stamping input_qss onto it would draw a second bordered, padded box inside
+    the already-padded combo and clip the text — so those are skipped and left
+    to combo_qss, which styles the embedded editor itself."""
+    from PyQt5.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit, QComboBox
     qss = input_qss()
     for w in root.findChildren((QLineEdit, QPlainTextEdit, QTextEdit)):
+        if isinstance(w.parent(), QComboBox):
+            continue
         if w.property("_autoInput") or not w.styleSheet():
             w.setProperty("_autoInput", True)
             w.setStyleSheet(qss)
@@ -332,11 +339,20 @@ def combo_qss(extra: str = "") -> str:
         f'QComboBox::down-arrow {{ image: url("{arrow}"); width: 12px; '
         "height: 12px; margin-right: 9px; }" if arrow else "")
     rules = [
+        # min-height guarantees vertical room for the text at any DPI/font size —
+        # without it an editable combo's embedded QLineEdit gets squeezed by the
+        # padding and clips the bottom of tall glyphs (Segoe UI descenders).
         f"QComboBox {{ background: {t['surface2']}; border: 1px solid {t['border']}; "
-        f"border-radius: 6px; padding: 5px 10px; color: {t['text']}; {extra} }}",
+        f"border-radius: 6px; padding: 5px 10px; min-height: 20px; color: {t['text']}; {extra} }}",
         f"QComboBox:hover {{ border-color: {t['scroll_handle_hover']}; }}",
         f"QComboBox:focus, QComboBox:on {{ border-color: {t['accent']}; }}",
         f"QComboBox:disabled {{ color: {t['text_dim2']}; background: {t['surface']}; }}",
+        # Editable combos render their text through an embedded QLineEdit; strip
+        # its own frame/margins so it fills the padded content rect instead of
+        # adding a second inset that clips the text.
+        f"QComboBox QLineEdit {{ border: none; background: transparent; padding: 0; "
+        f"margin: 0; color: {t['text']}; selection-background-color: {t['accent']}; "
+        "selection-color: #ffffff; }",
         "QComboBox::drop-down { border: none; width: 26px; }",
         arrow_rule,
         f"QComboBox QAbstractItemView {{ background: {t['surface2']}; "
