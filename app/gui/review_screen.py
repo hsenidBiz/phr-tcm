@@ -235,6 +235,10 @@ class ReviewScreen(QWidget):
 
         self.export_queue_btn = QPushButton("Export queue")
         self.export_queue_btn.setIcon(icons.icon("download", size=15))
+        self.export_queue_btn.setToolTip(
+            "Export the selected test cases (or the whole queue when nothing is\n"
+            "selected) as an HTML report, AI-editable JSON, or an Excel sheet."
+        )
         self.export_queue_btn.setEnabled(False)
         self.export_queue_btn.setStyleSheet(theme.btn_neutral_qss("padding: 7px 14px; font-size: 13px;"))
         self.export_queue_btn.setCursor(QCursor(Qt.PointingHandCursor))
@@ -609,17 +613,40 @@ class ReviewScreen(QWidget):
     def _on_export_queue(self):
         if not self.app_state.queue:
             return
-        path, _ = QFileDialog.getSaveFileName(
+        # Export the highlighted cases when there is a selection, else everything.
+        indices = self._selected_root_indices()
+        cases = ([self.app_state.queue[i] for i in indices]
+                 if indices else list(self.app_state.queue))
+        base = "test_cases_selected" if indices else "test_cases_queue"
+        path, selected_filter = QFileDialog.getSaveFileName(
             self, "Export Queue",
-            str(Path.home() / "Downloads" / "test_cases_queue.xlsx"),
+            str(Path.home() / "Downloads" / f"{base}.html"),
+            "HTML report — for people (*.html);;"
+            "AI-editable JSON (*.json);;"
             "Excel Files (*.xlsx)",
         )
         if not path:
             return
         try:
-            from app.utils.import_parser import export_queue_to_excel
-            export_queue_to_excel(self.app_state.queue, path)
-            QMessageBox.information(self, "Exported", f"Queue exported to:\n{path}")
+            from app.utils import export_formats
+            path, ext = export_formats.resolve_export_path(path, selected_filter)
+            if ext == ".xlsx":
+                from app.utils.import_parser import export_queue_to_excel
+                export_queue_to_excel(cases, path)
+            else:
+                records = export_formats.queue_to_records(cases)
+                if ext == ".html":
+                    export_formats.export_records_to_html(
+                        records, path,
+                        subtitle=f"Review queue export — {len(records)} test case(s)",
+                    )
+                else:
+                    export_formats.export_records_to_json(records, path)
+            n = len(cases)
+            QMessageBox.information(
+                self, "Exported",
+                f"{n} test case{'s' if n != 1 else ''} exported to:\n{path}",
+            )
         except Exception as exc:
             QMessageBox.critical(self, "Export Error", f"Could not export queue:\n{exc}")
 

@@ -569,7 +569,8 @@ class ImportWidget(QWidget):
             self,
             "Select Test Cases File(s)",
             str(Path.home()),
-            "Spreadsheet Files (*.xlsx *.csv);;Excel Files (*.xlsx);;CSV Files (*.csv)",
+            "Test Case Files (*.xlsx *.csv *.json);;Excel Files (*.xlsx);;"
+            "CSV Files (*.csv);;AI JSON Files (*.json)",
         )
         if not paths:
             return

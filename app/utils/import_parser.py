@@ -11,7 +11,7 @@ ALL_COLUMNS = {"TestCaseID", "TestCaseName", "StepNumber", "StepAction", "StepEx
 
 def parse_file(path: str) -> tuple:
     """
-    Parse an Excel (.xlsx) or CSV file into a list of TestCase objects.
+    Parse an Excel (.xlsx), CSV or AI-export JSON file into TestCase objects.
     Returns (list[TestCase], list[str]) — test cases and any warning messages.
     """
     p = Path(path)
@@ -19,8 +19,10 @@ def parse_file(path: str) -> tuple:
         return _parse_excel(p)
     elif p.suffix.lower() == ".csv":
         return _parse_csv(p)
+    elif p.suffix.lower() == ".json":
+        return _parse_json(p)
     else:
-        raise ValueError(f"Unsupported file type: {p.suffix}. Use .xlsx or .csv")
+        raise ValueError(f"Unsupported file type: {p.suffix}. Use .xlsx, .csv or .json")
 
 
 def _parse_excel(path: Path) -> tuple:
@@ -62,6 +64,143 @@ def _parse_csv(path: Path) -> tuple:
                 (reader.line_num, {k: (v.strip() if v else "") for k, v in row.items()})
             )
     return _parse_rows(data_rows, list(headers))
+
+
+def _json_value(d: dict, *keys):
+    """First present, non-empty value among alternate key spellings."""
+    for k in keys:
+        if k in d and d[k] not in (None, ""):
+            return d[k]
+    return None
+
+
+def _parse_json(path: Path) -> tuple:
+    """Parse the AI round-trip JSON format written by
+    ``export_formats.export_records_to_json``.
+
+    Accepts either the wrapper object (``{"test_cases": [...]}``) or a bare
+    list of test-case objects, and tolerates common alternate key spellings so
+    AI-edited files still import cleanly. A kept ``id`` flags the case as an
+    UPDATE of that work item — same contract as the TestCaseID column.
+    """
+    import json
+    with open(path, encoding="utf-8-sig") as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON: {exc}")
+
+    if isinstance(data, dict):
+        raw_cases = data.get("test_cases")
+        if raw_cases is None:
+            raise ValueError(
+                'JSON must contain a "test_cases" list '
+                "(or be a bare list of test-case objects)."
+            )
+    elif isinstance(data, list):
+        raw_cases = data
+    else:
+        raise ValueError(
+            'JSON must be an object with a "test_cases" list, '
+            "or a list of test-case objects."
+        )
+    if not isinstance(raw_cases, list):
+        raise ValueError('"test_cases" must be a list.')
+
+    warnings = []
+    test_cases = []
+    for i, raw in enumerate(raw_cases, start=1):
+        label = f"Test case {i}"
+        if not isinstance(raw, dict):
+            warnings.append(f"{label}: skipped — expected an object, got {type(raw).__name__}.")
+            continue
+
+        title = str(_json_value(raw, "title", "name", "test_case_name") or "").strip()
+        if not title:
+            warnings.append(f"{label}: skipped — no title.")
+            continue
+        if len(title) > TestCase.MAX_TITLE_LEN:
+            warnings.append(
+                f"{label}: '{title[:60]}…' has a title longer than "
+                f"{TestCase.MAX_TITLE_LEN} characters — Azure DevOps will reject it."
+            )
+
+        update_id = None
+        raw_id = _json_value(raw, "id", "test_case_id", "work_item_id")
+        if raw_id is not None:
+            try:
+                update_id = int(float(raw_id))
+            except (ValueError, TypeError):
+                warnings.append(
+                    f"{label} ('{title}'): id '{raw_id}' is not a valid work item ID; "
+                    "it will be created as a new test case instead of updating."
+                )
+
+        tags = raw.get("tags", "")
+        if isinstance(tags, list):
+            tags = "; ".join(str(t).strip() for t in tags if str(t).strip())
+        tags = str(tags or "").strip()
+        if "," in tags:
+            warnings.append(
+                f"{label} ('{title}'): Tags contain a comma; separate tags with "
+                "semicolons (Azure DevOps does not allow commas in tag names)."
+            )
+
+        automation_status = str(raw.get("automation_status", "") or "").strip()
+        if not automation_status:
+            automation_status = "Not Automated"
+        elif automation_status not in VALID_STATUSES:
+            warnings.append(
+                f"{label} ('{title}'): AutomationStatus '{automation_status}' is invalid. "
+                f"Defaulting to 'Not Automated'. Valid values: {', '.join(sorted(VALID_STATUSES))}"
+            )
+            automation_status = "Not Automated"
+
+        module_value = str(_json_value(raw, "module", "module_value") or "").strip()
+        preconditions = str(raw.get("preconditions", "") or "").strip()
+
+        raw_steps = raw.get("steps") or []
+        if not isinstance(raw_steps, list):
+            warnings.append(f"{label} ('{title}'): 'steps' must be a list — skipped.")
+            continue
+        steps = []
+        for j, rs in enumerate(raw_steps, start=1):
+            if isinstance(rs, str):
+                action, expected = rs.strip(), ""
+            elif isinstance(rs, dict):
+                action = str(_json_value(rs, "action", "step") or "").strip()
+                expected = str(
+                    _json_value(rs, "expected", "expected_result", "result") or ""
+                ).strip()
+            else:
+                warnings.append(
+                    f"{label} ('{title}') step {j}: expected an object or string — step skipped."
+                )
+                continue
+            if not action:
+                if expected:
+                    warnings.append(
+                        f"{label} ('{title}') step {j}: has an expected result but no "
+                        "action — step skipped."
+                    )
+                continue
+            steps.append(Step(action=action, expected=expected))
+
+        if not steps:
+            warnings.append(f"{label} ('{title}'): has no steps with an action — skipped.")
+            continue
+
+        test_cases.append(TestCase(
+            title=title,
+            steps=steps,
+            tags=tags,
+            automation_status=automation_status,
+            module_value=module_value,
+            preconditions=preconditions,
+            update_id=update_id,
+        ))
+
+    return test_cases, warnings
 
 
 def _step_sort_key(item):

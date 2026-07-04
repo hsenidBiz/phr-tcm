@@ -930,19 +930,23 @@ class EditScreen(QWidget):
             return
         selected = self._selected_cases()
         cases = selected if selected else self._cases
-        default_name = "test_cases_selected.xlsx" if selected else "test_cases_export.xlsx"
-        path, _ = QFileDialog.getSaveFileName(
+        default_name = "test_cases_selected.html" if selected else "test_cases_export.html"
+        path, selected_filter = QFileDialog.getSaveFileName(
             self, "Export Test Cases",
             str(Path.home() / "Downloads" / default_name),
+            "HTML report — for people (*.html);;"
+            "AI-editable JSON (*.json);;"
             "Excel Files (*.xlsx)",
         )
         if not path:
             return
+        from app.utils.export_formats import resolve_export_path
+        path, ext = resolve_export_path(path, selected_filter)
         self._export_count = len(cases)
         self._export_btn.setEnabled(False)
         self._export_btn.setText("Exporting…")
         worker = Worker(
-            self._do_export_cases, cases, path,
+            self._do_export_cases, cases, path, ext,
             self.app_state.module_ref, self.app_state.preconditions_ref,
         )
         worker.signals.result.connect(lambda _: self._on_export_done(path))
@@ -950,9 +954,20 @@ class EditScreen(QWidget):
         QThreadPool.globalInstance().start(worker)
 
     @staticmethod
-    def _do_export_cases(cases, path, module_ref, preconditions_ref):
-        from app.utils.import_parser import export_cases_to_excel
-        export_cases_to_excel(cases, path, module_ref, preconditions_ref)
+    def _do_export_cases(cases, path, ext, module_ref, preconditions_ref):
+        if ext == ".xlsx":
+            from app.utils.import_parser import export_cases_to_excel
+            export_cases_to_excel(cases, path, module_ref, preconditions_ref)
+            return
+        from app.utils import export_formats
+        records = export_formats.cases_to_records(cases, module_ref, preconditions_ref)
+        if ext == ".html":
+            export_formats.export_records_to_html(
+                records, path,
+                subtitle=f"Edit tab export — {len(records)} test case(s)",
+            )
+        else:
+            export_formats.export_records_to_json(records, path)
 
     def _on_export_done(self, path: str):
         self._export_btn.setEnabled(True)
