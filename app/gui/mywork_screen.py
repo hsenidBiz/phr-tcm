@@ -916,7 +916,7 @@ class MyWorkScreen(QWidget):
             lst.setItemDelegate(_CardDelegate(lst))   # paint items as cards
             lst.itemDoubleClicked.connect(self._open_in_browser)
             lst.itemSelectionChanged.connect(
-                lambda l=None, s=lst: self._on_card_selected(s))
+                lambda _=None, s=lst: self._on_card_selected(s))
             lst.drag_started.connect(self._on_drag_started)
             lst.card_dropped.connect(lambda c=col: self._on_card_dropped(c))
             self._col_lists[col] = lst
