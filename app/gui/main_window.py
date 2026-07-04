@@ -244,6 +244,21 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
+        # Mode switch — jump to Work Manager (beta). Sits in the tab bar's
+        # top-right corner, just under the queue pill.
+        from app.utils import icons as _icons, theme as _swtheme
+        self._mode_switch_btn = QPushButton("Work Manager (Beta)")
+        self._mode_switch_btn.setIcon(_icons.icon("switch", size=14))
+        self._mode_switch_btn.setStyleSheet(_swtheme.btn_ghost_qss("font-size: 12px;"))
+        self._mode_switch_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._mode_switch_btn.setToolTip("Switch to Work Manager (Ctrl+Shift+M)")
+        self._mode_switch_btn.clicked.connect(self._toggle_mywork)
+        _corner = QWidget()
+        _corner_l = QHBoxLayout(_corner)
+        _corner_l.setContentsMargins(0, 0, 10, 0)
+        _corner_l.addWidget(self._mode_switch_btn)
+        self.tabs.setCornerWidget(_corner, Qt.TopRightCorner)
+
         v.addWidget(self.tabs, 1)
 
         # Footer bar with Review button
@@ -363,6 +378,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         from app.gui.mywork_screen import MyWorkScreen
         self.mywork_screen = MyWorkScreen(self.app_state)
         self.stack.addWidget(self.mywork_screen)
+        self.mywork_screen.switch_to_test_cases.connect(self._toggle_mywork)
         self._mywork_return_page = PAGE_MAIN
         QShortcut(QKeySequence("Ctrl+Shift+M"), self).activated.connect(self._toggle_mywork)
 
@@ -374,7 +390,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
             return
         tm = self.app_state.token_manager
         if not (tm.org_url and tm.project):
-            self._status("My Work needs a connected organisation and project — sign in first.")
+            self._status("Work Manager needs a connected organisation and project — sign in first.")
             return
         self._mywork_return_page = self.stack.currentIndex()
         self.mywork_screen.on_enter()
@@ -886,5 +902,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.review_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
+        self._mode_switch_btn.setStyleSheet(theme.btn_ghost_qss("font-size: 12px;"))
+        self._mode_switch_btn.setIcon(_icons.icon("switch", size=14))
         self._import_count_label.setStyleSheet(f"color: {t['count_lbl_color']};")
         self._update_queue_label()  # re-tint the queue badge for the theme

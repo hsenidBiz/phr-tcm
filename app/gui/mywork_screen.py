@@ -619,6 +619,8 @@ class MyWorkScreen(QWidget):
     """Kanban-style view + inline editor for the work items assigned to the
     signed-in user in the current project."""
 
+    switch_to_test_cases = pyqtSignal()   # header button -> MainWindow toggles mode
+
     def __init__(self, app_state):
         super().__init__()
         self.app_state = app_state
@@ -782,7 +784,7 @@ class MyWorkScreen(QWidget):
 
         # Header: title · scope · count · spinner · focus · new · refresh
         hdr = QHBoxLayout()
-        self._title_lbl = QLabel("<b>My Work</b>")
+        self._title_lbl = QLabel("<b>Work Manager</b>")
         self._title_lbl.setStyleSheet("font-size: 16px;")
         hdr.addWidget(self._title_lbl)
         hdr.addSpacing(10)
@@ -823,8 +825,13 @@ class MyWorkScreen(QWidget):
         self._focus_frame.setVisible(False)
         hdr.addWidget(self._focus_frame)
         hdr.addStretch()
-        self._hint_lbl = QLabel("Ctrl+Shift+M to return")
-        hdr.addWidget(self._hint_lbl)
+        self._switch_btn = QPushButton("Test Case Manager")
+        self._switch_btn.setIcon(icons.icon("switch", size=15))
+        self._switch_btn.setStyleSheet(theme.btn_ghost_qss())
+        self._switch_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._switch_btn.setToolTip("Switch back to Test Case Manager (Ctrl+Shift+M)")
+        self._switch_btn.clicked.connect(lambda: self.switch_to_test_cases.emit())
+        hdr.addWidget(self._switch_btn)
         hdr.addSpacing(8)
         self._new_btn = QPushButton("New item")
         self._new_btn.setIcon(icons.icon("plus", size=15))
@@ -1926,7 +1933,8 @@ class MyWorkScreen(QWidget):
         from app.utils import icons
         t = theme.tokens()
         self._count_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 12px;")
-        self._hint_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+        self._switch_btn.setStyleSheet(theme.btn_ghost_qss())
+        self._switch_btn.setIcon(icons.icon("switch", size=15))
         self._status_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
         self._empty_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
         self._no_sel_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
