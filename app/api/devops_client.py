@@ -322,16 +322,29 @@ class DevOpsClient:
         if not tc_ids:
             return [], 0
 
-        base_fields = [
-            "System.Id", "System.Title", "System.Tags",
-            "Microsoft.VSTS.TCM.AutomationStatus",
-            "Microsoft.VSTS.TCM.Steps",
-            "System.CreatedBy", "System.CreatedDate", "System.AssignedTo",
-        ]
-        if extra_fields:
-            base_fields.extend(f for f in extra_fields if f not in base_fields)
+        return self.get_test_cases_by_ids(tc_ids, extra_fields), total
 
-        return self.get_work_items(tc_ids, base_fields), total
+    # The field set every Test Case consumer (Run Tests / Edit) expects. Kept in
+    # one place so cases fetched by-PBI and by-suite-id are shaped identically.
+    _TEST_CASE_FIELDS = [
+        "System.Id", "System.Title", "System.Tags",
+        "Microsoft.VSTS.TCM.AutomationStatus",
+        "Microsoft.VSTS.TCM.Steps",
+        "System.CreatedBy", "System.CreatedDate", "System.AssignedTo",
+    ]
+
+    def get_test_cases_by_ids(self, ids: list, extra_fields: list = None) -> list:
+        """GET full Test Case field dicts for the given work-item ids, using the
+        same field set as get_test_cases_for_pbi so the Run Tests / Edit tabs can
+        consume either source interchangeably. Each dict has an '_id' key. Lets the
+        Test Suites browser feed an arbitrary suite's cases into those tabs.
+        Read only."""
+        if not ids:
+            return []
+        fields = list(self._TEST_CASE_FIELDS)
+        if extra_fields:
+            fields.extend(f for f in extra_fields if f not in fields)
+        return self.get_work_items(ids, fields)
 
     def get_work_items(self, ids: list, fields: list) -> list:
         """Batch-GET work items by id, returning field dicts each with an '_id'

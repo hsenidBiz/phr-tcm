@@ -7,7 +7,7 @@ multi-select them, accumulate a session, and open the always-on-top runner.
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
     QListWidgetItem, QLineEdit, QProgressBar,
-    QComboBox,
+    QComboBox, QFrame,
 )
 from PyQt5.QtCore import Qt, QThreadPool, QTimer
 from PyQt5.QtGui import QCursor, QColor, QBrush
@@ -35,6 +35,11 @@ class RunScreen(QWidget):
         self._cases = []           # all loaded case dicts (rows map 1:1)
         self._session = []         # case dicts queued for the run
         self._loaded_pbi = None
+        # When cases were sent from the Test Suites browser this holds that
+        # suite's context ({pbi_id,pbi_title,plan_id,suite_id,suite_name,…}) and
+        # the tab shows/records against it instead of the configured PBI.
+        self._ext_context = None
+        self._ext_ids = []         # the suite's case ids (for Refresh re-fetch)
         self._open_runners = []    # keep references so windows aren't GC'd
         self._plan_poll = None     # QTimer that waits for test-plan detection
         self._plan_poll_ticks = 0
@@ -49,6 +54,8 @@ class RunScreen(QWidget):
         self.ensure_loaded()
 
     def ensure_loaded(self):
+        if self._ext_context:
+            return   # showing a Test Suites-browser suite; don't reload the PBI over it
         pbi = self.app_state.pbi_id
         if not pbi:
             return
@@ -146,6 +153,8 @@ class RunScreen(QWidget):
         in place right after a create/update on this PBI) — no network re-fetch of
         the case list. No-op unless the cache is authoritative for the current PBI.
         Session (right-hand) selections are preserved."""
+        if self._ext_context:
+            return   # showing a browser suite; the PBI cache isn't what's on screen
         pbi = self.app_state.pbi_id
         cache = self.app_state.existing_cases
         if not pbi or cache is None or self.app_state.existing_cases_pbi != pbi:
@@ -156,12 +165,86 @@ class RunScreen(QWidget):
         self._header_lbl.setText(f"Could not load test cases: {exc}")
         self._refresh_btn.setEnabled(True)
 
+    # ------------------------------------------------------------------ #
+    #  Cases sent from the Test Suites browser (an arbitrary suite)        #
+    # ------------------------------------------------------------------ #
+
+    def _on_refresh_clicked(self):
+        """Refresh re-fetches whichever source is on screen: the browser suite
+        when in external mode, otherwise the configured PBI."""
+        if self._ext_context:
+            self.load_from_suite(self._ext_ids, self._ext_context)
+        else:
+            self._load_cases()
+
+    def load_from_suite(self, case_ids: list, context: dict):
+        """Replace the tab's contents with a suite's cases (sent from the Test
+        Suites browser) and queue them straight into the run session. Outcomes
+        recorded here are written to that suite, not the configured PBI."""
+        self._ext_context = context
+        self._ext_ids = list(case_ids)
+        self._show_external_banner(context.get("suite_name", ""))
+        self._available.clear()
+        self._session_list.clear()
+        self._cases = []
+        self._session = []
+        self._header_lbl.setText("Loading test cases…")
+        self._refresh_btn.setEnabled(False)
+        if not case_ids:
+            self._header_lbl.setText("This suite has no test cases.")
+            self._refresh_btn.setEnabled(True)
+            self._rebuild_available()
+            self._rebuild_session_list()
+            return
+        worker = Worker(self.app_state.client.get_test_cases_by_ids, case_ids)
+        worker.signals.result.connect(self._on_suite_cases_loaded)
+        worker.signals.error.connect(lambda exc: self._on_cases_error(exc))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_suite_cases_loaded(self, cases):
+        self._cases = cases
+        self._loaded_pbi = None          # the PBI view reloads when we exit external
+        self._session = list(cases)      # per the design: straight into the session
+        self._rebuild_available()        # left pool ends up empty (all are queued)
+        self._rebuild_session_list()
+        self._header_lbl.setText("")
+        self._refresh_btn.setEnabled(True)
+        self._prefetch_points()
+
+    def _show_external_banner(self, suite_name: str):
+        name = suite_name or "(unnamed)"
+        self._ext_banner_lbl.setText(
+            f"Showing cases from test suite <b>{name}</b>. Results you record here "
+            f"are saved to this suite.")
+        self._ext_banner.show()
+
+    def _exit_external(self):
+        """Leave external mode and return to the configured PBI's cases."""
+        self._ext_context = None
+        self._ext_ids = []
+        self._ext_banner.hide()
+        self._session = []
+        self._session_list.clear()
+        self._cases = []
+        self._available.clear()
+        self._loaded_pbi = None
+        self._start_btn.setEnabled(False)
+        self.ensure_loaded()
+
+    def _plan_suite(self):
+        """The (plan_id, suite_id) this tab is bound to: the browser suite when
+        cases were sent from the Test Suites tab, else the configured PBI's. All
+        points/outcome lookups and the run submission key off this pair."""
+        if self._ext_context:
+            return self._ext_context.get("plan_id"), self._ext_context.get("suite_id")
+        return self.app_state.test_plan_id, self.app_state.suite_id
+
     def _prefetch_points(self):
         """Warm app_state's test-points cache in the background so the runner can
         show previous outcomes instantly when it opens. Read-only; silent on
         failure. Caches the whole suite (all loaded cases) so any session subset
         is covered."""
-        plan, suite = self.app_state.test_plan_id, self.app_state.suite_id
+        plan, suite = self._plan_suite()
         if not (plan and suite):
             return
         key = (plan, suite)
@@ -201,7 +284,7 @@ class RunScreen(QWidget):
         """Tint each row of `list_widget` by its case's last recorded outcome so
         the status is readable at a glance. Uses the prefetched points cache;
         rows with no data yet are left at the default colour."""
-        key = (self.app_state.test_plan_id, self.app_state.suite_id)
+        key = self._plan_suite()
         points = self.app_state.test_points_by_suite.get(key)
         if not points:
             return
@@ -293,9 +376,25 @@ class RunScreen(QWidget):
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._refresh_btn.clicked.connect(self._load_cases)
+        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
         hdr.addWidget(self._refresh_btn)
         layout.addLayout(hdr)
+
+        # Banner shown when cases were sent from the Test Suites browser.
+        self._ext_banner = QFrame()
+        self._ext_banner.setObjectName("extBanner")
+        _eb = QHBoxLayout(self._ext_banner)
+        _eb.setContentsMargins(10, 6, 10, 6)
+        _eb.setSpacing(8)
+        self._ext_banner_lbl = QLabel("")
+        self._ext_banner_lbl.setWordWrap(True)
+        _eb.addWidget(self._ext_banner_lbl, 1)
+        self._ext_back_btn = QPushButton("Back to PBI")
+        self._ext_back_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._ext_back_btn.clicked.connect(self._exit_external)
+        _eb.addWidget(self._ext_back_btn)
+        self._ext_banner.hide()
+        layout.addWidget(self._ext_banner)
 
         self._header_lbl = QLabel("")
         self._header_lbl.setStyleSheet("color: #888; font-size: 11px;")
@@ -518,7 +617,7 @@ class RunScreen(QWidget):
         """Map {test_case_id: outcome} (lower-case) from the prefetched points
         cache. Cases with a point but no recorded result — or no point at all —
         are absent, and treated as 'not run' by the filter."""
-        key = (self.app_state.test_plan_id, self.app_state.suite_id)
+        key = self._plan_suite()
         points = self.app_state.test_points_by_suite.get(key) or []
         by_tc = {}
         for p in points:
@@ -583,15 +682,18 @@ class RunScreen(QWidget):
                 visible += 1
         self._update_filter_count(visible)
 
+    def _avail_title(self):
+        return "Test cases in this suite" if self._ext_context else "Test cases on this PBI"
+
     def _update_filter_count(self, visible):
         total = self._available.count()
         if total and self._filters_active():
             self._avail_lbl.setText(
-                "<b>Test cases on this PBI</b>  "
+                f"<b>{self._avail_title()}</b>  "
                 f"<span style='color:{theme.tokens()['text_dim2']}'>"
                 f"{visible} of {total}</span>")
         else:
-            self._avail_lbl.setText("<b>Test cases on this PBI</b>")
+            self._avail_lbl.setText(f"<b>{self._avail_title()}</b>")
 
     def _selected_available(self):
         return [it.data(Qt.UserRole) for it in self._available.selectedItems()]
@@ -641,7 +743,8 @@ class RunScreen(QWidget):
             return
         if not self._session:
             return
-        runner = TestRunner(self.app_state, list(self._session))
+        runner = TestRunner(self.app_state, list(self._session),
+                            context=self._ext_context)
         self.register_runner(runner)
         runner.show()
         runner.raise_()
@@ -672,6 +775,11 @@ class RunScreen(QWidget):
         from app.utils import icons
         t = theme.tokens()
         self._header_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+        self._ext_banner.setStyleSheet(
+            f"#extBanner {{ background: {t['tmpl_bg']}; "
+            f"border: 1px solid {t['tmpl_border']}; border-radius: 6px; }}")
+        self._ext_banner_lbl.setStyleSheet(f"color: {t['text']}; font-size: 12px;")
+        self._ext_back_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._add_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 10px;"))

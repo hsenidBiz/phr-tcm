@@ -249,6 +249,8 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
         from app.gui.suite_browser_screen import SuiteBrowserScreen
         self.suites_widget = SuiteBrowserScreen(self.app_state)
+        self.suites_widget.run_suite_requested.connect(self._on_run_suite_requested)
+        self.suites_widget.edit_suite_requested.connect(self._on_edit_suite_requested)
         self.tabs.addTab(self.suites_widget, "Test Suites")
         self.tabs.setTabToolTip(
             self.tabs.indexOf(self.suites_widget),
@@ -337,6 +339,18 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         """Ctrl+1..4 — jump between the main tabs (only on the main page)."""
         if self.stack.currentIndex() == PAGE_MAIN and 0 <= idx < self.tabs.count():
             self.tabs.setCurrentIndex(idx)
+
+    def _on_run_suite_requested(self, payload: dict):
+        """A suite's cases were sent from the Test Suites tab → show them, ready
+        to run, on the Run Tests tab (recording against that suite)."""
+        self.tabs.setCurrentWidget(self.run_widget)
+        self.run_widget.load_from_suite(payload["case_ids"], payload["context"])
+
+    def _on_edit_suite_requested(self, payload: dict):
+        """A suite's cases were sent from the Test Suites tab → load them for
+        editing on the Edit Test Cases tab."""
+        self.tabs.setCurrentWidget(self.edit_widget)
+        self.edit_widget.load_from_suite(payload["case_ids"], payload["context"])
 
     def _focus_current_search(self):
         """Ctrl+F — focus the current tab's search box (or the Review filter)."""

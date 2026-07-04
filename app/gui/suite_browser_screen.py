@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView,
 )
-from PyQt5.QtCore import Qt, QThreadPool
+from PyQt5.QtCore import Qt, QThreadPool, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor, QCursor
 
 from app.utils.worker import Worker
@@ -56,7 +56,13 @@ def _tree_qss() -> str:
 
 
 class SuiteBrowserScreen(QWidget):
-    """Read-only Test Plan → Test Suite → Test Points browser."""
+    """Read-only Test Plan → Test Suite → Test Points browser. Its cases can be
+    sent to the Run Tests / Edit tabs via the two request signals."""
+
+    # payload: {"case_ids": [...], "context": {plan_id, suite_id, suite_name,
+    #           pbi_id, pbi_title}}
+    run_suite_requested = pyqtSignal(dict)
+    edit_suite_requested = pyqtSignal(dict)
 
     def __init__(self, app_state):
         super().__init__()
@@ -66,6 +72,7 @@ class SuiteBrowserScreen(QWidget):
         self._points_req = 0             # bumped per points request; stale results ignored
         self._points_cache = {}          # (plan_id, suite_id) -> list[point dict]
         self._current_suite = None       # (plan_id, suite_id) shown on the right
+        self._current_suite_data = None  # full node data of the shown suite
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -202,6 +209,7 @@ class SuiteBrowserScreen(QWidget):
                 node.setData(0, _ROLE, {
                     "kind": "suite", "plan_id": plan_id, "suite_id": s["id"],
                     "suite_type": s["suite_type"], "base_name": s["name"],
+                    "requirement_id": s.get("requirement_id"),
                 })
                 node.setToolTip(0, s["name"])
                 parent_item.addChild(node)
@@ -231,10 +239,12 @@ class SuiteBrowserScreen(QWidget):
         data = (items[0].data(0, _ROLE) or {}) if items else {}
         if data.get("kind") != "suite":
             self._current_suite = None
+            self._current_suite_data = None
             self._show_points_hint("Select a test suite to see its test points.")
             return
         key = (data["plan_id"], data["suite_id"])
         self._current_suite = key
+        self._current_suite_data = data
         self._suite_lbl.setText(data.get("base_name", ""))
         cached = self._points_cache.get(key)
         if cached is not None:
@@ -294,10 +304,46 @@ class SuiteBrowserScreen(QWidget):
         n = len(points)
         self._count_lbl.setText(f"{n} test point{'s' if n != 1 else ''}")
         self._count_lbl.show()
+        self._set_send_enabled(True)
+
+    def _set_send_enabled(self, on: bool):
+        if hasattr(self, "_run_btn"):
+            self._run_btn.setEnabled(on)
+            self._edit_btn.setEnabled(on)
+
+    def _send_cases(self, signal):
+        """Emit the selected test-case ids (or all shown if none selected) plus
+        the suite context for the Run Tests / Edit tab to load. Rows carry their
+        test_case_id in the _ROLE data (column 0)."""
+        selected = self._points.selectedItems()
+        rows = selected or [self._points.topLevelItem(i)
+                            for i in range(self._points.topLevelItemCount())]
+        ids = []
+        for it in rows:
+            cid = it.data(0, _ROLE)
+            if cid and cid not in ids:
+                ids.append(int(cid))
+        if not ids or not self._current_suite_data:
+            return
+        data = self._current_suite_data
+        name = data.get("base_name", "")
+        signal.emit({
+            "case_ids": ids,
+            "context": {
+                "plan_id": data.get("plan_id"),
+                "suite_id": data.get("suite_id"),
+                "suite_name": name,
+                # Requirement suites map to a PBI/requirement work item — use it so
+                # the run gets a meaningful name and bug links; None otherwise.
+                "pbi_id": data.get("requirement_id"),
+                "pbi_title": name,
+            },
+        })
 
     def _show_points_hint(self, text: str):
         self._points.hide()
         self._count_lbl.hide()
+        self._set_send_enabled(False)
         self._points_hint.setText(text)
         self._points_hint.show()
         if self._current_suite is None:
@@ -317,20 +363,30 @@ class SuiteBrowserScreen(QWidget):
     def _apply_tree_filter(self):
         text = self._filter_edit.text().strip().lower()
 
-        def visit(item) -> bool:
-            """Show `item` if its name matches or any descendant does."""
+        def visit(item, ancestor_match: bool) -> bool:
+            """Reveal `item` if it matches, an ancestor matched, or a descendant
+            matches. Returns whether it or a descendant genuinely matched."""
             data = item.data(0, _ROLE) or {}
+            kind = data.get("kind")
+            # A lazy "Loading…" placeholder has no searchable name; keep it
+            # visible whenever its plan is, so the plan keeps its expander arrow
+            # and can still be opened to load (and then filter) its suites.
+            if kind == "loading":
+                item.setHidden(False)
+                return False
             name = (data.get("base_name") or item.text(0)).lower()
+            self_match = (not text) or (text in name and kind in ("plan", "suite"))
+            # A matched node reveals its whole subtree; otherwise a descendant
+            # match still pulls the node (and the path to it) into view.
             child_hit = False
             for i in range(item.childCount()):
-                child_hit = visit(item.child(i)) or child_hit
-            hit = (not text) or child_hit or (text in name
-                                              and data.get("kind") in ("plan", "suite"))
-            item.setHidden(not hit)
-            return hit
+                child_hit = visit(item.child(i),
+                                  ancestor_match or self_match) or child_hit
+            item.setHidden(not (ancestor_match or self_match or child_hit))
+            return self_match or child_hit
 
         for i in range(self._tree.topLevelItemCount()):
-            visit(self._tree.topLevelItem(i))
+            visit(self._tree.topLevelItem(i), False)
 
     # ------------------------------------------------------------------ #
     #  UI                                                                  #
@@ -396,6 +452,21 @@ class SuiteBrowserScreen(QWidget):
         rhdr.addWidget(self._count_lbl)
         self._count_lbl.hide()
         rhdr.addStretch()
+        # Send the suite's cases (selected rows, or all if none) to another tab.
+        self._run_btn = QPushButton("  Run Tests")
+        self._run_btn.setIcon(icons.icon("play", size=14))
+        self._run_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._run_btn.setEnabled(False)
+        self._run_btn.setToolTip("Send these test cases to the Run Tests tab")
+        self._run_btn.clicked.connect(lambda: self._send_cases(self.run_suite_requested))
+        rhdr.addWidget(self._run_btn)
+        self._edit_btn = QPushButton("  Edit")
+        self._edit_btn.setIcon(icons.icon("edit", size=14))
+        self._edit_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._edit_btn.setEnabled(False)
+        self._edit_btn.setToolTip("Send these test cases to the Edit Test Cases tab")
+        self._edit_btn.clicked.connect(lambda: self._send_cases(self.edit_suite_requested))
+        rhdr.addWidget(self._edit_btn)
         self._legend = self._build_legend()
         rhdr.addWidget(self._legend)
         rv.addLayout(rhdr)
@@ -408,6 +479,7 @@ class SuiteBrowserScreen(QWidget):
         self._points.setUniformRowHeights(True)
         self._points.setAllColumnsShowFocus(True)
         self._points.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._points.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._points.setItemDelegate(StatusTintDelegate(self._points))
         self._points.itemDoubleClicked.connect(self._on_point_double_clicked)
         header = self._points.header()
@@ -504,6 +576,11 @@ class SuiteBrowserScreen(QWidget):
         self._points_hint.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss("padding: 5px 12px; font-size: 12px;"))
         self._refresh_btn.setIcon(icons.icon("refresh", size=14))
+        _send_qss = theme.btn_neutral_qss("padding: 5px 12px; font-size: 12px;")
+        self._run_btn.setStyleSheet(_send_qss)
+        self._run_btn.setIcon(icons.icon("play", size=14))
+        self._edit_btn.setStyleSheet(_send_qss)
+        self._edit_btn.setIcon(icons.icon("edit", size=14))
         self._tree.setStyleSheet(_tree_qss())
         self._points.setStyleSheet(_tree_qss())
         theme.style_inputs(self)

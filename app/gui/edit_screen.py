@@ -26,6 +26,10 @@ class EditScreen(QWidget):
         self._cases = []
         self._current_idx = None
         self._loaded_pbi = None
+        # When cases were sent from the Test Suites browser this holds that
+        # suite's context; the tab shows them instead of the configured PBI's.
+        self._ext_context = None
+        self._ext_ids = []
         self._bulk_queue: list = []
         self._bulk_total = 0
         self._bulk_done = 0
@@ -44,6 +48,8 @@ class EditScreen(QWidget):
     def ensure_loaded(self):
         """Load cases for the configured PBI if not already loaded (also warms
         known_module_values and duplicate-title detection for other tabs)."""
+        if self._ext_context:
+            return   # showing a Test Suites-browser suite; don't reload the PBI over it
         if self.app_state.pbi_id and self.app_state.pbi_id != self._loaded_pbi:
             self._load_cases()
 
@@ -64,6 +70,8 @@ class EditScreen(QWidget):
         """Rebuild the list from the shared existing-cases cache (updated in place
         right after a create/update on this PBI) — no network re-fetch. No-op if
         the cache isn't the authoritative list for the current PBI."""
+        if self._ext_context:
+            return   # showing a browser suite; the PBI cache isn't what's on screen
         pbi = self.app_state.pbi_id
         cache = self.app_state.existing_cases
         if not pbi or cache is None or self.app_state.existing_cases_pbi != pbi:
@@ -177,7 +185,7 @@ class EditScreen(QWidget):
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._refresh_btn.setStyleSheet(_hdr_btn_style)
         self._refresh_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._refresh_btn.clicked.connect(self._load_cases)
+        self._refresh_btn.clicked.connect(self._on_refresh_clicked)
         hdr.addWidget(self._refresh_btn)
 
         self._rename_btn = QPushButton("  Rename")
@@ -197,6 +205,22 @@ class EditScreen(QWidget):
         hdr.addWidget(self._export_btn)
 
         layout.addLayout(hdr)
+
+        # Banner shown when cases were sent from the Test Suites browser.
+        self._ext_banner = QFrame()
+        self._ext_banner.setObjectName("editExtBanner")
+        _eb = QHBoxLayout(self._ext_banner)
+        _eb.setContentsMargins(10, 6, 10, 6)
+        _eb.setSpacing(8)
+        self._ext_banner_lbl = QLabel("")
+        self._ext_banner_lbl.setWordWrap(True)
+        _eb.addWidget(self._ext_banner_lbl, 1)
+        self._ext_back_btn = QPushButton("Back to PBI")
+        self._ext_back_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._ext_back_btn.clicked.connect(self._exit_external)
+        _eb.addWidget(self._ext_back_btn)
+        self._ext_banner.hide()
+        layout.addWidget(self._ext_banner)
 
         # Splitter: left = list, right = form
         from app.gui.grip_splitter import GripSplitter
@@ -492,10 +516,61 @@ class EditScreen(QWidget):
         primary = theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         self._save_btn.setStyleSheet(primary)
         self._bulk_save_btn.setStyleSheet(primary)
+        self._ext_banner.setStyleSheet(
+            f"#editExtBanner {{ background: {t['tmpl_bg']}; "
+            f"border: 1px solid {t['tmpl_border']}; border-radius: 6px; }}")
+        self._ext_banner_lbl.setStyleSheet(f"color: {t['text']}; font-size: 12px;")
+        self._ext_back_btn.setStyleSheet(theme.btn_neutral_qss())
 
     # ------------------------------------------------------------------ #
     #  Loading                                                             #
     # ------------------------------------------------------------------ #
+
+    def _on_refresh_clicked(self):
+        """Refresh re-fetches whichever source is on screen: the browser suite
+        when in external mode, otherwise the configured PBI."""
+        if self._ext_context:
+            self.load_from_suite(self._ext_ids, self._ext_context)
+        else:
+            self._load_cases()
+
+    def load_from_suite(self, case_ids: list, context: dict):
+        """Replace the tab's contents with a suite's cases (sent from the Test
+        Suites browser) for editing. Editing a Test Case is a work-item update, so
+        this is independent of the configured PBI; the PBI's own duplicate-detection
+        cache is left untouched (share=False)."""
+        self._ext_context = context
+        self._ext_ids = list(case_ids)
+        self._show_external_banner(context.get("suite_name", ""))
+        self._reset_list_ui()
+        self._rename_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
+        if not case_ids:
+            self._header_lbl.setText("This suite has no test cases.")
+            return
+        self._header_lbl.setText("Loading test cases…")
+        self._refresh_btn.setEnabled(False)
+        worker = Worker(self.app_state.client.get_test_cases_by_ids, case_ids)
+        worker.signals.result.connect(
+            lambda cases: self._on_cases_loaded(None, (cases, len(cases)), share=False))
+        worker.signals.error.connect(lambda exc: self._on_cases_error(None, exc))
+        QThreadPool.globalInstance().start(worker)
+
+    def _show_external_banner(self, suite_name: str):
+        name = suite_name or "(unnamed)"
+        self._ext_banner_lbl.setText(
+            f"Editing cases from test suite <b>{name}</b>. Saving updates the "
+            f"Test Case work items directly.")
+        self._ext_banner.show()
+
+    def _exit_external(self):
+        """Leave external mode and return to the configured PBI's cases."""
+        self._ext_context = None
+        self._ext_ids = []
+        self._ext_banner.hide()
+        self._loaded_pbi = None
+        self._reset_list_ui()
+        self.ensure_loaded()
 
     def _load_cases(self):
         pbi_id = self.app_state.pbi_id
@@ -519,14 +594,17 @@ class EditScreen(QWidget):
         worker.signals.error.connect(lambda exc: self._on_cases_error(pbi_id, exc))
         QThreadPool.globalInstance().start(worker)
 
-    def _on_cases_loaded(self, pbi_id: int, result: tuple):
+    def _on_cases_loaded(self, pbi_id: int, result: tuple, share: bool = True):
         from app.utils.settings import load_settings
         cases, _total = result  # all linked cases are fetched in batches — no cap
         self._cases = cases
         self._loaded_pbi = pbi_id
-        # Share with the Import tab so it can detect duplicates / offer updates
-        self.app_state.existing_cases = cases
-        self.app_state.existing_cases_pbi = pbi_id
+        # Share with the Import tab so it can detect duplicates / offer updates.
+        # Skipped for a browser-suite load (share=False) — those cases aren't the
+        # current PBI's, so they must not poison its duplicate-detection cache.
+        if share:
+            self.app_state.existing_cases = cases
+            self.app_state.existing_cases_pbi = pbi_id
 
         for tc in cases:
             tc_id = tc.get("_id", "?")
@@ -554,7 +632,8 @@ class EditScreen(QWidget):
             if idx >= 0:
                 self._module_filter.setCurrentIndex(idx)
             # Share module values with other screens and refresh the edit combo
-            self.app_state.known_module_values = module_vals
+            if share:
+                self.app_state.known_module_values = module_vals
             from app.gui.helpers import refresh_module_combo
             refresh_module_combo(self._module_edit, module_vals)
         self._module_filter.blockSignals(False)

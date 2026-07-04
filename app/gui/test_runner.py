@@ -534,7 +534,8 @@ class TestRunner(frameless.FramelessMixin, QWidget):
     # can recolour immediately without a re-fetch.
     results_submitted = pyqtSignal()
 
-    def __init__(self, app_state, cases: list, restore: dict = None):
+    def __init__(self, app_state, cases: list, restore: dict = None,
+                 context: dict = None):
         super().__init__()
         self.app_state = app_state
         self._ready = False           # gates autosave until construction completes
@@ -542,7 +543,9 @@ class TestRunner(frameless.FramelessMixin, QWidget):
         self._suspend_dirty = False   # set while programmatically filling fields
         # Snapshot the PBI context at launch (or from the restored session) so that
         # changing the PBI elsewhere can never redirect this submission, and a
-        # resumed run still targets the PBI it was started for.
+        # resumed run still targets the PBI it was started for. `context` overrides
+        # app_state for a run launched from the Test Suites browser (an arbitrary
+        # plan/suite that isn't the currently-configured PBI's).
         if restore:
             pbi = restore.get("pbi", {})
             self._pbi_id = pbi.get("id")
@@ -552,6 +555,14 @@ class TestRunner(frameless.FramelessMixin, QWidget):
             self._area = pbi.get("area", "")
             self._iteration = pbi.get("iteration", "")
             self._preconditions_ref = pbi.get("preconditions_ref")
+        elif context:
+            self._pbi_id = context.get("pbi_id")
+            self._pbi_title = context.get("pbi_title", "")
+            self._plan_id = context.get("plan_id")
+            self._suite_id = context.get("suite_id")
+            self._area = context.get("area", "")
+            self._iteration = context.get("iteration", "")
+            self._preconditions_ref = context.get("preconditions_ref")
         else:
             self._pbi_id = app_state.pbi_id
             self._pbi_title = app_state.pbi_title

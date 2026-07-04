@@ -42,13 +42,16 @@ class AuthScreen(QWidget):
         card_layout.setContentsMargins(48, 44, 48, 36)
         card_layout.setSpacing(0)
 
-        # App logo
+        # App logo. Pin the label to the pixmap size so a short window can't
+        # compress it — an unscaled pixmap in an under-height QLabel gets cropped
+        # top and bottom (the flask looked clipped on shorter displays).
         logo = QLabel()
         logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedSize(84, 84)
         _logo_path = icons.resource_path(os.path.join("resources", "icon.ico"))
         if os.path.exists(_logo_path):
             logo.setPixmap(QIcon(_logo_path).pixmap(QSize(84, 84)))
-        card_layout.addWidget(logo)
+        card_layout.addWidget(logo, alignment=Qt.AlignHCenter)
         card_layout.addSpacing(16)
 
         # Title

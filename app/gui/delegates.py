@@ -15,7 +15,7 @@ The hovered row is tracked from the viewport's mouse-move (not the ``entered``
 signal) so the highlight spans every column of a multi-column table and clears
 correctly when the cursor moves into empty space below the last row.
 """
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt, QEvent, QPersistentModelIndex
 from PyQt5.QtGui import QColor, QBrush
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyle, QStyleOptionViewItem
 
@@ -30,30 +30,39 @@ class HoverTrackerMixin:
 
     def _init_hover(self, view):
         self._hview = view
-        self._hover_row = -1
+        # Track the hovered row by its column-0 index identity, not a bare row
+        # number: in a QTreeWidget row() is parent-relative, so a bare row would
+        # highlight every same-positioned item across sibling branches. The
+        # column-0 index encodes the parent, so it uniquely names one row while
+        # still spanning all columns of a flat multi-column table.
+        self._hover_pidx = QPersistentModelIndex()
         view.setMouseTracking(True)
         vp = view.viewport()
         if vp is not None:
             vp.setMouseTracking(True)
             vp.installEventFilter(self)
 
-    def _set_hover_row(self, row):
-        if row != getattr(self, "_hover_row", -1):
-            self._hover_row = row
+    def _set_hover_pidx(self, pidx):
+        if pidx != getattr(self, "_hover_pidx", QPersistentModelIndex()):
+            self._hover_pidx = pidx
             self._hview.viewport().update()
 
     def eventFilter(self, obj, ev):
         et = ev.type()
         if et == QEvent.MouseMove:
             idx = self._hview.indexAt(ev.pos())
-            self._set_hover_row(idx.row() if idx.isValid() else -1)
+            self._set_hover_pidx(
+                QPersistentModelIndex(idx.sibling(idx.row(), 0))
+                if idx.isValid() else QPersistentModelIndex())
         elif et in (QEvent.Leave, QEvent.Hide):
-            self._set_hover_row(-1)
+            self._set_hover_pidx(QPersistentModelIndex())
         # Fall through so QStyledItemDelegate's editor-event handling still runs.
         return super().eventFilter(obj, ev)
 
     def _is_hovered(self, option, index):
-        return (getattr(self, "_hover_row", -1) == index.row()
+        pidx = getattr(self, "_hover_pidx", QPersistentModelIndex())
+        return (pidx.isValid()
+                and pidx == QPersistentModelIndex(index.sibling(index.row(), 0))
                 and not (option.state & QStyle.State_Selected))
 
     @staticmethod
