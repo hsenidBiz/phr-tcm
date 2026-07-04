@@ -13,6 +13,7 @@ from app.utils.xml_builder import parse_steps_xml, build_steps_xml
 from app.utils.worker import Worker
 from app.models.test_case import Step, TestCase
 from app.gui import delegates
+from app.gui.grouped_tree import GroupedCaseTree
 
 
 class EditScreen(QWidget):
@@ -34,6 +35,7 @@ class EditScreen(QWidget):
         self._bulk_total = 0
         self._bulk_done = 0
         self._bulk_errors = []
+        self._grouped = False       # Smart Grouping (folder tree) over the list
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -58,6 +60,7 @@ class EditScreen(QWidget):
         a fresh network load and the local-cache adopt path)."""
         self._search_edit.clear()
         self._list.clear()
+        self._tree.populate([])
         self._cases = []
         self._current_idx = None
         self._form.setVisible(False)
@@ -236,6 +239,17 @@ class EditScreen(QWidget):
         list_hdr.setContentsMargins(0, 0, 0, 0)
         list_hdr.addWidget(QLabel("Test Cases:"))
         list_hdr.addStretch()
+        from app.utils import theme, icons
+        self._group_toggle = QPushButton("  Group")
+        self._group_toggle.setCheckable(True)
+        self._group_toggle.setIcon(icons.icon("folder", size=14))
+        self._group_toggle.setCursor(QCursor(Qt.PointingHandCursor))
+        self._group_toggle.setToolTip(
+            "Smart Grouping: fold cases with a shared title prefix into folders.\n"
+            "Select a folder to bulk-edit its whole group at once.")
+        self._group_toggle.setStyleSheet(theme.btn_neutral_qss("padding: 3px 10px;"))
+        self._group_toggle.toggled.connect(self._on_group_toggled)
+        list_hdr.addWidget(self._group_toggle)
         from app.utils.settings import load_settings
         _s = load_settings()
         self._mine_chk = QCheckBox("My cases only")
@@ -278,6 +292,13 @@ class EditScreen(QWidget):
         self._list.itemSelectionChanged.connect(self._on_selection_changed)
         delegates.apply_hover(self._list)   # subtle hover highlight
         left_v.addWidget(self._list)
+        # Smart-grouping folder view — same slot, shown only when toggled on.
+        # Payload is the case's index into self._cases, so selection maps back to
+        # the same model the flat list uses.
+        self._tree = GroupedCaseTree()
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self._tree.hide()
+        left_v.addWidget(self._tree)
 
         self._sel_count_lbl = QLabel("")
         self._sel_count_lbl.setStyleSheet("color: #888; font-size: 11px;")
@@ -504,6 +525,8 @@ class EditScreen(QWidget):
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._rename_btn.setIcon(icons.icon("edit", size=15))
         self._export_btn.setIcon(icons.icon("download", size=15))
+        self._group_toggle.setStyleSheet(theme.btn_neutral_qss("padding: 3px 10px;"))
+        self._group_toggle.setIcon(icons.icon("folder", size=14))
         self._sel_count_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self._mine_chk.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
         self._no_sel_lbl.setStyleSheet(f"color: {t['text_dim2']};")
@@ -607,9 +630,8 @@ class EditScreen(QWidget):
             self.app_state.existing_cases_pbi = pbi_id
 
         for tc in cases:
-            tc_id = tc.get("_id", "?")
-            title = tc.get("System.Title", "(no title)")
-            self._list.addItem(QListWidgetItem(f"#{tc_id}  —  {title}"))
+            self._list.addItem(QListWidgetItem(self._case_label(tc)))
+        self._populate_tree()
 
         # No summary line here — the PBI is shown in the main window header and
         # the case count appears at the bottom-left of the list.
@@ -669,27 +691,29 @@ class EditScreen(QWidget):
         if current_upn:
             current_upn = current_upn.lower()
 
+        def visible(idx):
+            tc = self._cases[idx] if 0 <= idx < len(self._cases) else None
+            if tc is None:
+                return True
+            if query and query not in self._case_label(tc).lower():
+                return False
+            if mine_only and not self._is_mine(tc, current_upn):
+                return False
+            if (status_filter != "All Statuses"
+                    and tc.get("Microsoft.VSTS.TCM.AutomationStatus",
+                               "Not Automated") != status_filter):
+                return False
+            if self.app_state.module_ref and module_filter != "All Modules":
+                if (tc.get(self.app_state.module_ref, "") or "") != module_filter:
+                    return False
+            return True
+
         for row in range(self._list.count()):
-            item = self._list.item(row)
-            tc = self._cases[row] if row < len(self._cases) else None
+            self._list.item(row).setHidden(not visible(row))
+        if self._grouped:
+            self._tree.apply_predicate(visible)
 
-            by_search = bool(query) and query not in item.text().lower()
-            by_owner = mine_only and tc is not None and not self._is_mine(tc, current_upn)
-            by_status = (
-                status_filter != "All Statuses" and tc is not None
-                and tc.get("Microsoft.VSTS.TCM.AutomationStatus", "Not Automated") != status_filter
-            )
-            module_val = (
-                tc.get(self.app_state.module_ref, "") or ""
-                if tc is not None and self.app_state.module_ref else ""
-            )
-            by_module = (
-                module_filter != "All Modules" and tc is not None
-                and module_val != module_filter
-            )
-            item.setHidden(by_search or by_owner or by_status or by_module)
-
-        if not self._list.selectedItems():
+        if not self._selected_indices():
             self._update_filter_count()
 
     def _update_filter_count(self):
@@ -719,12 +743,9 @@ class EditScreen(QWidget):
         return creator == current_upn
 
     def _open_rename_dialog(self):
-        selected_items = self._list.selectedItems()
-        if not selected_items:
+        selected_cases = self._selected_cases()
+        if not selected_cases:
             return
-        selected_cases = [
-            self._cases[self._list.row(item)] for item in selected_items
-        ]
         from app.gui.rename_dialog import PowerRenameDialog
         dlg = PowerRenameDialog(selected_cases, self.app_state.client, parent=self)
         dlg.exec_()
@@ -736,18 +757,48 @@ class EditScreen(QWidget):
     def _refresh_list_from_cache(self):
         for row in range(self._list.count()):
             if row < len(self._cases):
-                tc = self._cases[row]
-                tc_id = tc.get("_id", "?")
-                title = tc.get("System.Title", "(no title)")
-                self._list.item(row).setText(f"#{tc_id}  —  {title}")
+                self._list.item(row).setText(self._case_label(self._cases[row]))
+        # Titles may have changed (rename) → regroup the folder view from scratch.
+        self._populate_tree()
+        self._apply_filters()
 
     # ------------------------------------------------------------------ #
     #  TC selection → populate form                                        #
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _case_label(tc: dict) -> str:
+        return f"#{tc.get('_id', '?')}  —  {tc.get('System.Title', '(no title)')}"
+
+    def _populate_tree(self):
+        """Rebuild the folder tree from the current cases (payload = case index)."""
+        self._tree.populate(
+            (tc.get("System.Title", ""), self._case_label(tc), i)
+            for i, tc in enumerate(self._cases))
+
+    def _selected_indices(self) -> list:
+        """Indices into self._cases for the current selection, from whichever
+        view is active. A selected folder expands to all its (visible) cases."""
+        if self._grouped:
+            idxs = self._tree.selected_payloads()
+        else:
+            idxs = [self._list.row(it) for it in self._list.selectedItems()]
+        return sorted(i for i in idxs if 0 <= i < len(self._cases))
+
+    def _on_group_toggled(self, on: bool):
+        """Swap the flat list for the grouped folder tree (or back). Clears the
+        selection so the detail/bulk pane resets cleanly to the new view."""
+        self._grouped = bool(on)
+        self._list.setVisible(not self._grouped)
+        self._tree.setVisible(self._grouped)
+        self._list.clearSelection()
+        self._tree.clearSelection()
+        self._apply_filters()
+        self._on_selection_changed()
+
     def _on_selection_changed(self):
-        selected = self._list.selectedItems()
-        n_sel = len(selected)
+        sel = self._selected_indices()
+        n_sel = len(sel)
         n_total = len(self._cases)
         self._update_export_btn_text()
 
@@ -760,9 +811,8 @@ class EditScreen(QWidget):
             self._rename_btn.setEnabled(False)
             self._update_filter_count()
         elif n_sel == 1:
-            row = self._list.row(selected[0])
-            self._current_idx = row
-            self._populate_form(row)
+            self._current_idx = sel[0]
+            self._populate_form(sel[0])
             self._form.setVisible(True)
             self._bulk_frame.setVisible(False)
             self._no_sel_lbl.setVisible(False)
@@ -948,9 +998,15 @@ class EditScreen(QWidget):
             else:
                 tc["System.AssignedTo"] = ""
         if self._current_idx is not None:
+            new_label = f"#{tc_id}  —  {title}"
             item = self._list.item(self._current_idx)
             if item:
-                item.setText(f"#{tc_id}  —  {title}")
+                item.setText(new_label)
+            # Keep the folder view's row in sync too (title unchanged → same
+            # folder; a changed title still reads correctly until the next
+            # rebuild).
+            _idx = self._current_idx
+            self._tree.update_label(lambda p, i=_idx: p == i, new_label)
         self._save_btn.setEnabled(True)
         self._save_btn.setText("Save changes")
         from app.gui.helpers import status_message
@@ -987,16 +1043,14 @@ class EditScreen(QWidget):
     # ------------------------------------------------------------------ #
 
     def _selected_cases(self) -> list:
-        """Case dicts for the highlighted rows, in list order. Empty when nothing
-        is selected. List rows map 1:1 to self._cases by index (filters only hide
-        rows, never reorder them)."""
-        rows = sorted(self._list.row(it) for it in self._list.selectedItems())
-        return [self._cases[r] for r in rows if 0 <= r < len(self._cases)]
+        """Case dicts for the current selection (flat list or folder tree), in
+        self._cases order. Empty when nothing is selected."""
+        return [self._cases[i] for i in self._selected_indices()]
 
     def _update_export_btn_text(self):
         """Label the export button so it's clear whether it exports the selection
         or everything loaded."""
-        n_sel = len(self._list.selectedItems())
+        n_sel = len(self._selected_indices())
         if n_sel:
             self._export_btn.setText(f"  Export {n_sel} selected")
             self._export_btn.setToolTip("Export only the highlighted test cases (Ctrl+E)")
@@ -1078,7 +1132,7 @@ class EditScreen(QWidget):
         from app.gui.helpers import warn_if_token_expired
         if warn_if_token_expired(self, self.app_state.token_manager):
             return
-        selected = self._list.selectedItems()
+        selected = self._selected_indices()
         if not selected:
             return
 
@@ -1088,10 +1142,7 @@ class EditScreen(QWidget):
         assigned_to = self._bulk_assigned_combo.currentData()  # uniqueName or None
 
         updates = []
-        for item in selected:
-            idx = self._list.row(item)
-            if idx >= len(self._cases):
-                continue
+        for idx in selected:
             tc = self._cases[idx]
             tc_id = tc.get("_id")
             if not tc_id:

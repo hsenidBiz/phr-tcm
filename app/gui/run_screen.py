@@ -9,13 +9,14 @@ from PyQt5.QtWidgets import (
     QListWidgetItem, QLineEdit, QProgressBar,
     QComboBox, QFrame,
 )
-from PyQt5.QtCore import Qt, QThreadPool, QTimer
+from PyQt5.QtCore import Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt5.QtGui import QCursor, QColor, QBrush
 
 from app.utils.worker import Worker
 from app.utils import theme
 from app.gui.test_runner import TestRunner
 from app.gui.delegates import StatusTintDelegate
+from app.gui.grouped_tree import GroupedCaseTree
 from app.gui.checkable_combo import CheckableComboBox
 from app.gui import outcome_style
 
@@ -28,6 +29,11 @@ _StatusColorDelegate = StatusTintDelegate
 
 class RunScreen(QWidget):
     """Tab for assembling and launching a manual test execution session."""
+
+    # Re-emitted from a runner's submit: (plan_id, suite_id, {tc_id: outcome}).
+    # MainWindow forwards it to the Test Suites browser so it can patch its cached
+    # points in place instead of re-fetching.
+    results_submitted_for_suite = pyqtSignal(int, int, dict)
 
     def __init__(self, app_state):
         super().__init__()
@@ -43,6 +49,7 @@ class RunScreen(QWidget):
         self._open_runners = []    # keep references so windows aren't GC'd
         self._plan_poll = None     # QTimer that waits for test-plan detection
         self._plan_poll_ticks = 0
+        self._grouped = False       # Smart Grouping (folder tree) on the left list
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -308,6 +315,7 @@ class RunScreen(QWidget):
         """Re-tint both the PBI list and the session list from the points cache."""
         self._color_list(self._available)
         self._color_list(self._session_list)
+        self._color_tree()
 
     # Legend explaining the row tints. ("_active" = has a test point but no
     # recorded result yet → the dark-blue _OUTCOME_ACTIVE_BG tint.)
@@ -408,8 +416,21 @@ class RunScreen(QWidget):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(4)
+        avail_hdr = QHBoxLayout()
+        avail_hdr.setContentsMargins(0, 0, 0, 0)
         self._avail_lbl = QLabel("<b>Test cases on this PBI</b>")
-        lv.addWidget(self._avail_lbl)
+        avail_hdr.addWidget(self._avail_lbl, 1)
+        self._group_toggle = QPushButton("  Group")
+        self._group_toggle.setCheckable(True)
+        self._group_toggle.setIcon(icons.icon("folder", size=14))
+        self._group_toggle.setCursor(QCursor(Qt.PointingHandCursor))
+        self._group_toggle.setToolTip(
+            "Smart Grouping: fold cases with a shared title prefix into folders.\n"
+            "Select a folder and Add to queue its whole group at once.")
+        self._group_toggle.setStyleSheet(theme.btn_neutral_qss("padding: 3px 10px;"))
+        self._group_toggle.toggled.connect(self._on_group_toggled)
+        avail_hdr.addWidget(self._group_toggle)
+        lv.addLayout(avail_hdr)
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search by ID or title…")
         self._search.setClearButtonEnabled(True)
@@ -424,6 +445,12 @@ class RunScreen(QWidget):
         self._available.setSelectionMode(QListWidget.ExtendedSelection)
         self._available.itemDoubleClicked.connect(lambda _it: self._add_to_session())
         lv.addWidget(self._available, 1)
+        # Smart-grouping folder view — same left slot, shown only when toggled on.
+        self._available_tree = GroupedCaseTree()
+        self._available_tree.itemActivatedPayload.connect(
+            lambda _it: self._add_to_session())
+        self._available_tree.hide()
+        lv.addWidget(self._available_tree, 1)
         splitter.addWidget(left)
 
         # -- Middle: move buttons (PBI list  ⇄  session) ------------------
@@ -525,14 +552,50 @@ class RunScreen(QWidget):
         exactly one list at a time, so adding/removing moves it between them)."""
         self._available.clear()
         session_ids = {c.get("_id") for c in self._session}
-        for tc in self._sorted_cases():
-            if tc.get("_id") in session_ids:
-                continue
+        avail_cases = [tc for tc in self._sorted_cases()
+                       if tc.get("_id") not in session_ids]
+        for tc in avail_cases:
             item = QListWidgetItem(self._label_for(tc))
             item.setData(Qt.UserRole, tc)
             self._available.addItem(item)
+        # Mirror the same cases into the folder tree (payload = the case dict).
+        self._available_tree.populate(
+            (tc.get("System.Title", ""), self._label_for(tc), tc)
+            for tc in avail_cases)
         self._apply_filters()
         self._color_list(self._available)
+        self._color_tree()
+
+    def _on_group_toggled(self, on):
+        """Swap the flat available list for the grouped folder tree (or back).
+        The session side and every downstream flow are unchanged — selection is
+        read from whichever view is active."""
+        self._grouped = bool(on)
+        self._available.setVisible(not self._grouped)
+        self._available_tree.setVisible(self._grouped)
+        # Counts/colours/filter state differ per view, so refresh the now-visible
+        # one from the current cases.
+        self._apply_filters()
+
+    def _color_tree(self):
+        """Tint the folder tree's case rows by last outcome, like _color_list."""
+        key = self._plan_suite()
+        points = self.app_state.test_points_by_suite.get(key)
+        by_tc = {}
+        for p in (points or []):
+            tc = p.get("test_case_id")
+            if tc and tc not in by_tc:
+                by_tc[tc] = (p.get("last_outcome") or "").lower()
+
+        def tint(case):
+            oc = by_tc.get((case or {}).get("_id"))
+            if oc is None:
+                return None
+            col = QColor(self._OUTCOME_BG.get(oc, self._OUTCOME_ACTIVE_BG))
+            col.setAlpha(self._OUTCOME_ALPHA)
+            return col
+
+        self._available_tree.apply_tint(tint)
 
     # ------------------------------------------------------------------ #
     #  Filtering (left "Test cases on this PBI" list)                     #
@@ -669,17 +732,26 @@ class RunScreen(QWidget):
         results = set(self._result_combo.checked_data())
         outcomes = self._outcomes_by_case() if results else {}
 
-        visible = 0
-        for row in range(self._available.count()):
-            item = self._available.item(row)
-            case = item.data(Qt.UserRole) or {}
-            hidden = bool(query) and query not in item.text().lower()
-            if not hidden and results:
+        def matches(case):
+            case = case or {}
+            if query and query not in self._label_for(case).lower():
+                return False
+            if results:
                 oc = outcomes.get(case.get("_id")) or "notrun"
-                hidden = oc not in results
-            item.setHidden(hidden)
-            if not hidden:
-                visible += 1
+                if oc not in results:
+                    return False
+            return True
+
+        if self._grouped:
+            visible = self._available_tree.apply_predicate(matches)
+        else:
+            visible = 0
+            for row in range(self._available.count()):
+                item = self._available.item(row)
+                hidden = not matches(item.data(Qt.UserRole))
+                item.setHidden(hidden)
+                if not hidden:
+                    visible += 1
         self._update_filter_count(visible)
 
     def _avail_title(self):
@@ -696,6 +768,8 @@ class RunScreen(QWidget):
             self._avail_lbl.setText(f"<b>{self._avail_title()}</b>")
 
     def _selected_available(self):
+        if self._grouped:
+            return self._available_tree.selected_payloads()
         return [it.data(Qt.UserRole) for it in self._available.selectedItems()]
 
     def _selected_session(self):
@@ -756,6 +830,7 @@ class RunScreen(QWidget):
         self._open_runners.append(runner)
         try:
             runner.results_submitted.connect(self._on_results_submitted)
+            runner.outcomes_submitted.connect(self.results_submitted_for_suite)
         except Exception:
             pass
 
@@ -782,6 +857,9 @@ class RunScreen(QWidget):
         self._ext_back_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
+        self._group_toggle.setStyleSheet(theme.btn_neutral_qss("padding: 3px 10px;"))
+        self._group_toggle.setIcon(icons.icon("folder", size=14))
+        self._color_tree()   # re-tint folder rows for the new theme base
         self._add_btn.setStyleSheet(theme.btn_neutral_qss("padding: 6px 10px;"))
         self._add_btn.setIcon(icons.icon("arrow-right", size=15))
         self._remove_btn.setStyleSheet(theme.btn_neutral_qss())
