@@ -50,6 +50,12 @@ _MAX_ITEMS = 500   # WIQL $top cap — personal boards stay far below this
 # them lazily for the selected card only.
 _DESC_FIELDS = ["System.Description", "Microsoft.VSTS.TCM.ReproSteps"]
 
+# The mode-switch pill on the Work Manager header — enlarged, fully rounded
+# (radius = half the fixed height). Kept in a constant so the build and
+# refresh_theme paths stay in sync.
+_SWITCH_PILL_H = 34
+_SWITCH_PILL_EXTRA = "border-radius: 17px; padding: 0 24px; font-size: 14px;"
+
 # Deterministic avatar colours for comment authors. No profile image is fetched;
 # initials on a coloured disc read as "a person" the way ADO's web comments do.
 _AVATAR_COLORS = ["#e15b64", "#d99e2b", "#2aa5e0", "#9a74d8", "#e0873c",
@@ -826,12 +832,14 @@ class MyWorkScreen(QWidget):
         hdr.addWidget(self._focus_frame)
         hdr.addStretch()
         self._switch_btn = QPushButton("Test Case Manager")
-        self._switch_btn.setIcon(icons.icon("switch", color=theme.tokens()["accent"], size=15))
-        self._switch_btn.setStyleSheet(theme.btn_pill_accent_qss())
+        self._switch_btn.setIcon(icons.icon("switch", color=theme.tokens()["accent"], size=16))
+        self._switch_btn.setFixedHeight(_SWITCH_PILL_H)
+        self._switch_btn.setStyleSheet(theme.btn_pill_accent_qss(_SWITCH_PILL_EXTRA))
         self._switch_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._switch_btn.setToolTip("Switch back to Test Case Manager (Ctrl+Shift+M)")
         self._switch_btn.clicked.connect(lambda: self.switch_to_test_cases.emit())
-        hdr.addWidget(self._switch_btn)
+        hdr.addWidget(self._switch_btn, 0, Qt.AlignVCenter)
+        hdr.addStretch()   # a stretch on each side centres the switch pill
         hdr.addSpacing(8)
         self._new_btn = QPushButton("New item")
         self._new_btn.setIcon(icons.icon("plus", size=15))
@@ -1933,8 +1941,8 @@ class MyWorkScreen(QWidget):
         from app.utils import icons
         t = theme.tokens()
         self._count_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 12px;")
-        self._switch_btn.setStyleSheet(theme.btn_pill_accent_qss())
-        self._switch_btn.setIcon(icons.icon("switch", color=t["accent"], size=15))
+        self._switch_btn.setStyleSheet(theme.btn_pill_accent_qss(_SWITCH_PILL_EXTRA))
+        self._switch_btn.setIcon(icons.icon("switch", color=t["accent"], size=16))
         self._status_lbl.setStyleSheet(f"color: {t['text_dim']}; font-size: 11px;")
         self._empty_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
         self._no_sel_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")

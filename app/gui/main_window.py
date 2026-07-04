@@ -28,6 +28,11 @@ PAGE_REVIEW = 3
 PAGE_PROGRESS = 4
 PAGE_MYWORK = 5
 
+# The mode-switch pill in the tab-bar corner — compact, fully rounded
+# (radius = half the fixed height).
+_CORNER_PILL_H = 28
+_CORNER_PILL_EXTRA = "border-radius: 14px; padding: 0 14px; font-size: 12px;"
+
 
 class MainWindow(frameless.FramelessMixin, QMainWindow):
     def __init__(self, app_state):
@@ -250,7 +255,8 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._mode_switch_btn = QPushButton("Work Manager (Beta)")
         self._mode_switch_btn.setIcon(
             _icons.icon("switch", color=_swtheme.tokens()["accent"], size=14))
-        self._mode_switch_btn.setStyleSheet(_swtheme.btn_pill_accent_qss("font-size: 12px;"))
+        self._mode_switch_btn.setFixedHeight(_CORNER_PILL_H)
+        self._mode_switch_btn.setStyleSheet(_swtheme.btn_pill_accent_qss(_CORNER_PILL_EXTRA))
         self._mode_switch_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._mode_switch_btn.setToolTip("Switch to Work Manager (Ctrl+Shift+M)")
         self._mode_switch_btn.clicked.connect(self._toggle_mywork)
@@ -903,7 +909,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.review_btn.setStyleSheet(
             theme.btn_primary_qss("border-radius: 4px; font-size: 13px; padding: 0 20px;")
         )
-        self._mode_switch_btn.setStyleSheet(theme.btn_pill_accent_qss("font-size: 12px;"))
+        self._mode_switch_btn.setStyleSheet(theme.btn_pill_accent_qss(_CORNER_PILL_EXTRA))
         self._mode_switch_btn.setIcon(_icons.icon("switch", color=t["accent"], size=14))
         self._import_count_label.setStyleSheet(f"color: {t['count_lbl_color']};")
         self._update_queue_label()  # re-tint the queue badge for the theme
