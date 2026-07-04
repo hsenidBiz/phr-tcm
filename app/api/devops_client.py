@@ -845,6 +845,34 @@ class DevOpsClient:
             "requirementId": data.get("requirementId"),
         }
 
+    def get_all_suites(self, plan_id: int) -> list:
+        """Every suite in a plan, flat, for the Test Suites browser tree.
+        Returns a list of {id, name, parent_id, suite_type, requirement_id};
+        parent_id is None for the plan's root suite, so callers rebuild the
+        hierarchy from the parent links. Pages through the same endpoint
+        find_requirement_suite uses, without its requirement filter.
+        Safe — read only."""
+        suites = []
+        continuation = None
+        while True:
+            url = f"{self._base()}/testplan/Plans/{plan_id}/suites?api-version={API_VERSION}"
+            if continuation:
+                url += f"&continuationToken={continuation}"
+            resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
+            data = self._handle(resp)
+            for s in data.get("value", []):
+                suites.append({
+                    "id": s.get("id"),
+                    "name": s.get("name", ""),
+                    "parent_id": (s.get("parentSuite") or {}).get("id"),
+                    "suite_type": s.get("suiteType", ""),
+                    "requirement_id": s.get("requirementId"),
+                })
+            continuation = resp.headers.get("x-ms-continuationtoken")
+            if not continuation:
+                break
+        return suites
+
     def create_test_plan(self, name: str, area_path: str = "", iteration: str = "") -> dict:
         """POST a new test plan. Returns {id, name, areaPath, rootSuiteId}.
         Creating a plan also creates its root suite (returned as rootSuite)."""
@@ -933,8 +961,11 @@ class DevOpsClient:
                 points.append({
                     "point_id": p.get("id"),
                     "test_case_id": tcref.get("id"),
+                    "test_case_name": tcref.get("name", "") or "",
+                    "test_case_state": tcref.get("state", "") or "",
                     "config_id": cfg.get("id"),
                     "config_name": cfg.get("name", ""),
+                    "tester": (p.get("tester") or {}).get("displayName", "") or "",
                     "last_outcome": results.get("outcome", "") or "",
                     "last_run_id": results.get("lastTestRunId"),
                     "last_result_id": results.get("lastResultId"),

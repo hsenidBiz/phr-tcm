@@ -31,6 +31,12 @@ Thumbs.db
 # Claude Code / MCP tool data
 .claude/
 .playwright-mcp/
+.tokensave/
+
+# Node-based local tooling (headroom, etc.) — not app source
+node_modules/
+package.json
+package-lock.json
 
 # Local test-authoring scratch (not app source)
 /Test Case Writing/

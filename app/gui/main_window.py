@@ -247,6 +247,14 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.run_widget = RunScreen(self.app_state)
         self.tabs.addTab(self.run_widget, "Run Tests")
 
+        from app.gui.suite_browser_screen import SuiteBrowserScreen
+        self.suites_widget = SuiteBrowserScreen(self.app_state)
+        self.tabs.addTab(self.suites_widget, "Test Suites")
+        self.tabs.setTabToolTip(
+            self.tabs.indexOf(self.suites_widget),
+            "Browse every test plan and suite in the project (read-only; "
+            "not limited to the selected PBI)")
+
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Mode switch — jump to Work Manager (beta). Sits in the tab bar's
@@ -743,6 +751,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         save_settings({
             "window_geometry": bytes(self.saveGeometry().toBase64()).decode("ascii"),
             "edit_splitter_sizes": self.edit_widget.splitter_sizes(),
+            "suite_splitter_sizes": self.suites_widget.splitter_sizes(),
         })
         # A running My Work focus timer survives the restart (restored paused).
         try:
@@ -877,6 +886,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.import_widget.refresh_theme()
         self.edit_widget.refresh_theme()
         self.run_widget.refresh_theme()
+        self.suites_widget.refresh_theme()
         self.review_screen.refresh_theme()
         self.progress_screen.refresh_theme()
         self.mywork_screen.refresh_theme()

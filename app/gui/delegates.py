@@ -104,3 +104,46 @@ def apply_hover(view):
     """Give a plain item view a subtle background-only row hover highlight."""
     view.setItemDelegate(HoverDelegate(view))
     return view
+
+
+class StatusTintDelegate(HoverTrackerMixin, QStyledItemDelegate):
+    """Paints each cell's status tint (a translucent BackgroundRole colour) over
+    the view background, keeping the theme's normal text colour. Done in a
+    delegate because these views live under a styled QTabWidget, and
+    QStyleSheetStyle otherwise ignores item background brushes set via
+    setBackground(). Also overlays a subtle hover tint on the row under the
+    mouse. Used by the Run Tests lists and the Test Suites points table."""
+
+    def __init__(self, view):
+        super().__init__(view)
+        self._init_hover(view)
+
+    def initStyleOption(self, option, index):
+        # Plain (non-status) rows are painted by super().paint() below; tint
+        # their background here so the hover never recolours the text.
+        super().initStyleOption(option, index)
+        if self._is_hovered(option, index):
+            self._apply_hover_bg(option)
+
+    def paint(self, painter, option, index):
+        brush = index.data(Qt.BackgroundRole)
+        color = brush.color() if isinstance(brush, QBrush) else None
+        if (color is not None and color.alpha() > 0
+                and not (option.state & QStyle.State_Selected)):
+            painter.save()
+            # Opaque base first, so every row of a given status is the exact same
+            # shade (no alternating-row tint, no alpha stacking on repaint).
+            painter.fillRect(option.rect, option.palette.base().color())
+            painter.fillRect(option.rect, color)   # translucent status tint
+            if self._is_hovered(option, index):
+                # Tint the background *before* the text, so text colour is kept.
+                painter.fillRect(option.rect, self._hover_overlay_color())
+            painter.setPen(option.palette.text().color())
+            rect = option.rect.adjusted(6, 0, -6, 0)
+            text = str(index.data(Qt.DisplayRole) or "")
+            painter.drawText(
+                rect, Qt.AlignVCenter | Qt.AlignLeft,
+                option.fontMetrics.elidedText(text, Qt.ElideRight, rect.width()))
+            painter.restore()
+        else:
+            super().paint(painter, option, index)

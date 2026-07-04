@@ -7,7 +7,7 @@ multi-select them, accumulate a session, and open the always-on-top runner.
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
     QListWidgetItem, QLineEdit, QProgressBar,
-    QStyledItemDelegate, QStyle, QComboBox,
+    QComboBox,
 )
 from PyQt5.QtCore import Qt, QThreadPool, QTimer
 from PyQt5.QtGui import QCursor, QColor, QBrush
@@ -15,51 +15,15 @@ from PyQt5.QtGui import QCursor, QColor, QBrush
 from app.utils.worker import Worker
 from app.utils import theme
 from app.gui.test_runner import TestRunner
-from app.gui.delegates import HoverTrackerMixin
+from app.gui.delegates import StatusTintDelegate
 from app.gui.checkable_combo import CheckableComboBox
+from app.gui import outcome_style
 
 
-class _StatusColorDelegate(HoverTrackerMixin, QStyledItemDelegate):
-    """Paints each row's status tint (a translucent BackgroundRole colour) over
-    the list background, keeping the theme's normal text colour. Done in a
-    delegate because the list lives under a styled QTabWidget, and
-    QStyleSheetStyle otherwise ignores item background brushes set via
-    setBackground(). Also overlays a subtle hover tint on the row under the
-    mouse (see app.gui.delegates)."""
-
-    def __init__(self, view):
-        super().__init__(view)
-        self._init_hover(view)
-
-    def initStyleOption(self, option, index):
-        # Plain (non-status) rows are painted by super().paint() below; tint
-        # their background here so the hover never recolours the text.
-        super().initStyleOption(option, index)
-        if self._is_hovered(option, index):
-            self._apply_hover_bg(option)
-
-    def paint(self, painter, option, index):
-        brush = index.data(Qt.BackgroundRole)
-        color = brush.color() if isinstance(brush, QBrush) else None
-        if (color is not None and color.alpha() > 0
-                and not (option.state & QStyle.State_Selected)):
-            painter.save()
-            # Opaque base first, so every row of a given status is the exact same
-            # shade (no alternating-row tint, no alpha stacking on repaint).
-            painter.fillRect(option.rect, option.palette.base().color())
-            painter.fillRect(option.rect, color)   # translucent status tint
-            if self._is_hovered(option, index):
-                # Tint the background *before* the text, so text colour is kept.
-                painter.fillRect(option.rect, self._hover_overlay_color())
-            painter.setPen(option.palette.text().color())
-            rect = option.rect.adjusted(6, 0, -6, 0)
-            text = str(index.data(Qt.DisplayRole) or "")
-            painter.drawText(
-                rect, Qt.AlignVCenter | Qt.AlignLeft,
-                option.fontMetrics.elidedText(text, Qt.ElideRight, rect.width()))
-            painter.restore()
-        else:
-            super().paint(painter, option, index)
+# Row status tint + hover, moved to app.gui.delegates so the Test Suites
+# browser shares the exact same painting. Kept under the old private name so
+# the rest of this module reads unchanged.
+_StatusColorDelegate = StatusTintDelegate
 
 
 class RunScreen(QWidget):
@@ -223,24 +187,15 @@ class RunScreen(QWidget):
         if self._result_combo.checked_data():
             self._apply_filters()
 
-    # Status colours, applied as a translucent tint over the list background so
-    # they read as dim hints rather than bold blocks. _OUTCOME_ALPHA (0–255) is
-    # the one knob: lower = dimmer/more transparent.
-    _OUTCOME_BG = {
-        "passed": "#1E5E1E",          # dark green
-        "failed": "#7A2222",          # dark red
-        "blocked": "#6E5A12",         # dark amber / yellow
-        "paused": "#4A2A6E",          # dark purple
-        "notapplicable": "#4A4A4A",   # dark neutral grey
-    }
-    _OUTCOME_ACTIVE_BG = "#1E3F6E"    # dark blue — not yet run (Active)
-    _OUTCOME_ALPHA = 150             # darker, richer tint (still slightly translucent)
+    # Status colours — shared with the Test Suites browser (see
+    # app/gui/outcome_style.py, the single source of truth for the mapping).
+    _OUTCOME_BG = outcome_style.OUTCOME_BG
+    _OUTCOME_ACTIVE_BG = outcome_style.OUTCOME_ACTIVE_BG
+    _OUTCOME_ALPHA = outcome_style.OUTCOME_ALPHA
 
     @classmethod
     def _outcome_label(cls, oc):
-        return {"passed": "Passed", "failed": "Failed", "blocked": "Blocked",
-                "paused": "Paused",
-                "notapplicable": "Not Applicable"}.get(oc, "Active (not run)")
+        return outcome_style.outcome_label(oc)
 
     def _color_list(self, list_widget):
         """Tint each row of `list_widget` by its case's last recorded outcome so

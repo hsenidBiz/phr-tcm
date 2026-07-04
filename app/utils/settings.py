@@ -52,7 +52,7 @@ _ALLOWED_KEYS = {
     "org_url", "project", "preconditions", "recent_pbis", "dark_mode",
     "mine_only_filter", "status_filter", "module_filter", "templates",
     "execution_notes", "test_plan_cache", "always_on_top",
-    "window_geometry", "edit_splitter_sizes",
+    "window_geometry", "edit_splitter_sizes", "suite_splitter_sizes",
 }
 
 
