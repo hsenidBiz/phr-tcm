@@ -839,7 +839,6 @@ class MyWorkScreen(QWidget):
         self._switch_btn.setToolTip("Switch back to Test Case Manager (Ctrl+Shift+M)")
         self._switch_btn.clicked.connect(lambda: self.switch_to_test_cases.emit())
         hdr.addWidget(self._switch_btn, 0, Qt.AlignVCenter)
-        hdr.addStretch()   # a stretch on each side centres the switch pill
         hdr.addSpacing(8)
         self._new_btn = QPushButton("New item")
         self._new_btn.setIcon(icons.icon("plus", size=15))
