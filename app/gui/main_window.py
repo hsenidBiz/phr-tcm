@@ -34,7 +34,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         super().__init__()
         self.app_state = app_state
         from app.version import VERSION
-        self._normal_title = f"Azure DevOps Test Case Manager  v{VERSION}"
+        self._normal_title = f"Test Case Manager  v{VERSION}"
         self._work_title = f"Work Manager  v{VERSION}"
         self.setWindowTitle(self._normal_title)
         self.setMinimumSize(860, 640)
@@ -394,14 +394,14 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         mode, and the normal app name with the flask glyph everywhere else.
         Centralised here so any exit from My Work restores the chrome."""
         if index == PAGE_MYWORK:
-            title, glyph = self._work_title, "briefcase"
+            title, glyph, color = self._work_title, "briefcase", "#eab308"
         else:
-            title, glyph = self._normal_title, "flask"
+            title, glyph, color = self._normal_title, "flask", None
         self.setWindowTitle(title)
         tb = getattr(self, "_title_bar", None)
         if tb is not None:
             tb.set_title(title)
-            tb.set_app_icon(glyph)
+            tb.set_app_icon(glyph, color)
 
     def _go_auth(self):
         self._go_to(PAGE_AUTH)

@@ -85,6 +85,7 @@ class TitleBar(QWidget):
         self._win = win
         self._can_max = show_max
         self._icon_name = "flask"   # app glyph; swappable per mode (set_app_icon)
+        self._icon_color = None     # None -> theme accent; else a fixed hex
         self.setObjectName("framelessTitleBar")
         self.setFixedHeight(36)
         lay = QHBoxLayout(self)
@@ -126,12 +127,14 @@ class TitleBar(QWidget):
         """Update the title-bar caption text."""
         self._title.setText(text)
 
-    def set_app_icon(self, name):
-        """Swap the app glyph (e.g. per app mode). Persists across theme toggles
-        because refresh_theme re-renders from self._icon_name."""
+    def set_app_icon(self, name, color=None):
+        """Swap the app glyph (e.g. per app mode), optionally in a fixed colour
+        (None uses the theme accent). Persists across theme toggles because
+        refresh_theme re-renders from self._icon_name / self._icon_color."""
         self._icon_name = name
-        self._app_icon.setPixmap(
-            _icons.pixmap(name, color=theme.tokens()["accent"], size=16))
+        self._icon_color = color
+        self._app_icon.setPixmap(_icons.pixmap(
+            name, color=color or theme.tokens()["accent"], size=16))
 
     def sync_max_state(self):
         """Keep the maximise/restore glyph in step with the window state (covers
@@ -157,8 +160,8 @@ class TitleBar(QWidget):
             f"#framelessTitleBar {{ background: {t['header_bg']}; "
             f"border-bottom: 1px solid {t['border']}; }}"
         )
-        self._app_icon.setPixmap(
-            _icons.pixmap(self._icon_name, color=t["accent"], size=16))
+        self._app_icon.setPixmap(_icons.pixmap(
+            self._icon_name, color=self._icon_color or t["accent"], size=16))
         self._title.setStyleSheet(
             f"color: {t['text_dim']}; font-size: 12px; font-weight: 500;")
         if self._btn_min is not None:

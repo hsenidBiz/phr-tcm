@@ -59,7 +59,7 @@ _SIGNIN_SUCCESS_HTML = """<!DOCTYPE html>
    <path d="M20 6 9 17l-5-5"/></svg>
  </div>
  <h1>You're signed in</h1>
- <p>You can close this tab and return to Azure DevOps Test Case Manager.</p>
+ <p>You can close this tab and return to Test Case Manager.</p>
 </div>
 </body></html>
 """
