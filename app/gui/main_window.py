@@ -34,7 +34,9 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         super().__init__()
         self.app_state = app_state
         from app.version import VERSION
-        self.setWindowTitle(f"Azure DevOps Test Case Manager  v{VERSION}")
+        self._normal_title = f"Azure DevOps Test Case Manager  v{VERSION}"
+        self._work_title = f"Work Manager  v{VERSION}"
+        self.setWindowTitle(self._normal_title)
         self.setMinimumSize(860, 640)
         self.resize(980, 720)
         self._restore_window_geometry()
@@ -50,8 +52,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._build_mywork_page()
 
         # Custom dark title bar + 1px border in place of the native OS chrome.
-        self._title_bar = self.init_frameless(
-            f"Azure DevOps Test Case Manager  v{VERSION}")
+        self._title_bar = self.init_frameless(self._normal_title)
 
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -385,7 +386,22 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
     def _go_to(self, index: int):
         self.stack.setCurrentIndex(index)
+        self._apply_window_chrome(index)
         fade_in(self.stack.currentWidget())
+
+    def _apply_window_chrome(self, index: int):
+        """The title bar reads 'Work Manager' with a briefcase glyph in My Work
+        mode, and the normal app name with the flask glyph everywhere else.
+        Centralised here so any exit from My Work restores the chrome."""
+        if index == PAGE_MYWORK:
+            title, glyph = self._work_title, "briefcase"
+        else:
+            title, glyph = self._normal_title, "flask"
+        self.setWindowTitle(title)
+        tb = getattr(self, "_title_bar", None)
+        if tb is not None:
+            tb.set_title(title)
+            tb.set_app_icon(glyph)
 
     def _go_auth(self):
         self._go_to(PAGE_AUTH)
