@@ -443,19 +443,47 @@ class DevOpsClient:
 
     def get_work_item_comments(self, wi_id: int) -> list:
         """GET a work item's comments, newest first, each {id, text, created_by,
-        created_date}. Read only."""
+        created_date, avatar_url}. Read only."""
         url = (f"{self._base()}/wit/workItems/{wi_id}/comments"
                f"?order=desc&api-version={self._COMMENTS_API}")
         resp = self._session.get(url, headers=self.tm.get_json_headers(), timeout=20)
         out = []
         for c in self._handle(resp).get("comments", []):
+            cb = c.get("createdBy") or {}
+            avatar = (((cb.get("_links") or {}).get("avatar") or {}).get("href")
+                      or cb.get("imageUrl") or "")
             out.append({
                 "id": c.get("id"),
                 "text": c.get("text", ""),
-                "created_by": (c.get("createdBy") or {}).get("displayName", ""),
+                "created_by": cb.get("displayName", ""),
                 "created_date": c.get("createdDate", ""),
+                "avatar_url": avatar,
             })
         return out
+
+    def get_avatar_image(self, url: str) -> bytes | None:
+        """Fetch a comment author's avatar image bytes for `url`.
+
+        Best-effort and read only: returns None on any problem (no URL, non-200,
+        auth hiccup) so the UI can fall back to an initials avatar. Never raises,
+        never DELETEs. Handles both the raw-image identity endpoint and the Graph
+        avatar endpoint (which can answer with a base64 JSON body)."""
+        if not url:
+            return None
+        try:
+            headers = dict(self.tm.get_json_headers())
+            headers["Accept"] = "image/png,image/*;q=0.8"
+            headers.pop("Content-Type", None)
+            resp = self._session.get(url, headers=headers, timeout=15)
+            if resp.status_code != 200 or not resp.content:
+                return None
+            if "application/json" in resp.headers.get("Content-Type", ""):
+                import base64
+                val = (resp.json() or {}).get("value")
+                return base64.b64decode(val) if val else None
+            return resp.content
+        except Exception:
+            return None
 
     def update_test_case_from_model(
         self,

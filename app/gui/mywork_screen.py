@@ -25,7 +25,9 @@ from PyQt5.QtWidgets import (
     QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle,
 )
 from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, pyqtSignal
-from PyQt5.QtGui import QCursor, QColor, QPalette, QPainter, QPen, QFont, QPixmap
+from PyQt5.QtGui import (
+    QCursor, QColor, QPalette, QPainter, QPen, QFont, QPixmap, QPainterPath,
+)
 
 from app.gui.delegates import HoverTrackerMixin
 
@@ -81,6 +83,24 @@ def _avatar_pixmap(name: str, size: int) -> QPixmap:
     p.drawText(pm.rect(), Qt.AlignCenter, _initials(name))
     p.end()
     return pm
+
+
+def _round_pixmap(src: QPixmap, size: int) -> QPixmap:
+    """Centre-crop `src` into a circular `size`x`size` avatar."""
+    scaled = src.scaled(size, size, Qt.KeepAspectRatioByExpanding,
+                        Qt.SmoothTransformation)
+    out = QPixmap(size, size)
+    out.fill(Qt.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    path = QPainterPath()
+    path.addEllipse(0, 0, size, size)
+    p.setClipPath(path)
+    x = (scaled.width() - size) // 2
+    y = (scaled.height() - size) // 2
+    p.drawPixmap(-x, -y, scaled)
+    p.end()
+    return out
 
 
 def _friendly_when(iso: str) -> str:
@@ -208,6 +228,10 @@ class _CommentEntry(QWidget):
         self._body.setStyleSheet(
             f"color:{t['text']}; background: transparent; border: none; "
             f"font-size: 12px;")
+
+    def set_avatar(self, pixmap: QPixmap):
+        """Swap the initials disc for the author's real profile photo."""
+        self._avatar.setPixmap(pixmap)
 
 _COMPLETED = "Microsoft.VSTS.Scheduling.CompletedWork"
 _REMAINING = "Microsoft.VSTS.Scheduling.RemainingWork"
@@ -610,6 +634,8 @@ class MyWorkScreen(QWidget):
         self._desc_field = "System.Description"   # field the shown text came from
         self._desc_original = ""
         self._comments_cache: dict = {}     # {work_item_id: [comment dicts]}
+        self._avatar_cache: dict = {}       # {avatar_url: rounded QPixmap}
+        self._avatar_pending: dict = {}     # {avatar_url: [_CommentEntry awaiting]}
         self._drag_wi = None                # WorkItem mid-drag between columns
         # Focus timer: {"id", "title", "accum" (sec), "run_started" (monotonic
         # while running, None while paused)}. Persisted so it survives restarts.
@@ -1745,8 +1771,46 @@ class MyWorkScreen(QWidget):
                 sep.setAutoFillBackground(True)
                 sep.setStyleSheet(f"background: {theme.tokens()['border']};")
                 self._comments_layout.addWidget(sep)
-            self._comments_layout.addWidget(_CommentEntry(c))
+            entry = _CommentEntry(c)
+            self._comments_layout.addWidget(entry)
+            self._request_avatar(entry, c.get("avatar_url", ""))
         self._comments_layout.addStretch()
+
+    def _request_avatar(self, entry, url: str):
+        """Load the author's real profile photo for `entry`, keeping the initials
+        avatar until it arrives. Coalesces concurrent requests for the same URL
+        and caches the rounded result so re-renders / theme toggles never
+        refetch."""
+        if not url:
+            return
+        cached = self._avatar_cache.get(url)
+        if cached is not None:
+            entry.set_avatar(cached)
+            return
+        waiters = self._avatar_pending.get(url)
+        if waiters is not None:
+            waiters.append(entry)   # a fetch for this author is already in flight
+            return
+        self._avatar_pending[url] = [entry]
+        worker = Worker(self.app_state.client.get_avatar_image, url)
+        worker.signals.result.connect(lambda data, u=url: self._on_avatar(u, data))
+        worker.signals.error.connect(lambda _exc, u=url: self._on_avatar(u, None))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_avatar(self, url: str, data):
+        waiters = self._avatar_pending.pop(url, [])
+        if not data:
+            return   # leave the initials fallback in place
+        pm = QPixmap()
+        if not pm.loadFromData(data):
+            return
+        rounded = _round_pixmap(pm, 30)
+        self._avatar_cache[url] = rounded
+        for entry in waiters:
+            try:
+                entry.set_avatar(rounded)
+            except RuntimeError:
+                pass   # entry was replaced by a re-render before the image loaded
 
     def _on_add_comment(self):
         if self._current is None:
