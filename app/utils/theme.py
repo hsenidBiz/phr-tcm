@@ -188,6 +188,22 @@ def btn_ghost_qss(extra: str = "padding: 5px 12px;") -> str:
     )
 
 
+def btn_pill_accent_qss(extra: str = "padding: 5px 14px;") -> str:
+    """An outlined accent 'pill' chip — a distinct, clearly-clickable control for
+    things like a mode switch. Accent text/border on a transparent fill, with a
+    soft accent wash on hover and a solid accent fill when pressed. Pair with an
+    accent-tinted icon so it stays legible in every state."""
+    t = tokens()
+    return (
+        f"QPushButton {{ background: transparent; border: 1px solid {t['accent']}; "
+        f"color: {t['accent']}; border-radius: 12px; font-weight: 600; {extra} }}"
+        f"QPushButton:hover {{ background: rgba(0, 120, 212, 0.14); }}"       # accent @ 14%
+        f"QPushButton:pressed {{ background: rgba(0, 120, 212, 0.22); }}"
+        f"QPushButton:disabled {{ border-color: {t['btn_disabled_bg']}; "
+        f"color: {t['btn_disabled_fg']}; }}"
+    )
+
+
 # ------------------------------------------------------------------ #
 #  Design-system helpers — spacing, type, surfaces                     #
 # ------------------------------------------------------------------ #
