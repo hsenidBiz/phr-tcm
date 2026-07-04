@@ -1,5 +1,8 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the project root on sys.path so `import app` resolves under a bare
+# `pytest` run (CI), not just `python -m pytest` which adds CWD implicitly.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120
