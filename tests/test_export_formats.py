@@ -129,6 +129,11 @@ def test_html_export_contains_cases_and_escapes(tmp_path):
     # HTML in a title must be escaped, never rendered.
     assert "Update case &lt;b&gt;" in text
     assert "Update case <b>" not in text
+    # Client-side search: input, counter, empty state and the filter script.
+    assert "id='tc-search'" in text
+    assert "id='tc-count'" in text
+    assert "id='tc-no-match'" in text
+    assert "<script>" in text and "tc-search" in text.split("<script>")[1]
 
 
 def test_cases_to_records_maps_api_fields():

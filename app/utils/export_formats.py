@@ -143,8 +143,52 @@ th { text-align: left; background: #f0f3f8; color: #44506a; font-size: 12px;
 td { padding: 7px 10px; border: 1px solid #e7ecf3; vertical-align: top;
      white-space: pre-wrap; }
 td.num { width: 34px; text-align: center; color: #7c8698; }
+.searchbar { position: sticky; top: 0; z-index: 5; background: #f3f5f8;
+             display: flex; align-items: center; gap: 12px; padding: 10px 0 14px; }
+#tc-search { flex: 1; font: inherit; font-size: 14px; padding: 9px 14px;
+             border: 1px solid #c9d3e2; border-radius: 8px; background: #fff;
+             color: inherit; outline: none; }
+#tc-search:focus { border-color: #2a7ab8; box-shadow: 0 0 0 3px rgba(42,122,184,.15); }
+#tc-count { color: #5c6675; font-size: 12.5px; white-space: nowrap; }
+.no-match { color: #5c6675; font-size: 14px; text-align: center;
+            padding: 28px 0; border: 1px dashed #c9d3e2; border-radius: 10px; }
+.hidden { display: none !important; }
 @media print { body { background: #fff; padding: 0; }
-               .case { box-shadow: none; border-color: #ccc; } }
+               .case { box-shadow: none; border-color: #ccc; }
+               .searchbar { display: none; } }
+"""
+
+# Filters the report client-side: every space-separated word must appear
+# somewhere in a card's text (title, #id, tags, steps, preconditions).
+_HTML_JS = """
+(function () {
+  var input = document.getElementById('tc-search');
+  var count = document.getElementById('tc-count');
+  var noMatch = document.getElementById('tc-no-match');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.case'));
+  var texts = cards.map(function (c) { return c.textContent.toLowerCase(); });
+  var total = cards.length;
+
+  function apply() {
+    var words = input.value.toLowerCase().split(/\\s+/).filter(Boolean);
+    var shown = 0;
+    texts.forEach(function (t, i) {
+      var hit = words.every(function (w) { return t.indexOf(w) !== -1; });
+      cards[i].classList.toggle('hidden', !hit);
+      if (hit) shown++;
+    });
+    count.textContent = words.length
+      ? shown + ' of ' + total + ' shown'
+      : total + ' test case' + (total !== 1 ? 's' : '');
+    noMatch.classList.toggle('hidden', shown !== 0);
+  }
+
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { input.value = ''; apply(); }
+  });
+  apply();
+})();
 """
 
 
@@ -158,6 +202,12 @@ def export_records_to_html(records: list, path: str, subtitle: str = ""):
         f"<style>{_HTML_CSS}</style></head><body><div class='page'>",
         "<h1>Test Cases</h1>",
         f"<p class='subtitle'>{_esc(subtitle) or f'{len(records)} test case(s)'}</p>",
+        "<div class='searchbar'>",
+        "<input id='tc-search' type='search' "
+        "placeholder='Search title, ID, tags, steps, preconditions…' "
+        "aria-label='Search test cases'>",
+        "<span id='tc-count'></span></div>",
+        "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>",
     ]
     for rec in records:
         parts.append("<div class='case'>")
@@ -194,7 +244,7 @@ def export_records_to_html(records: list, path: str, subtitle: str = ""):
                 )
             parts.append("</table>")
         parts.append("</div>")
-    parts.append("</div></body></html>")
+    parts.append(f"</div><script>{_HTML_JS}</script></body></html>")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))
