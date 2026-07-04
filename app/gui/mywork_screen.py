@@ -14,6 +14,7 @@ lazily per card; a minimal quick-create files a Bug/Task with just a title.
 Toggled from anywhere with Ctrl+Shift+M (see MainWindow._toggle_mywork).
 """
 
+import html
 import time
 import webbrowser
 from urllib.parse import quote
@@ -24,7 +25,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle,
 )
 from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, pyqtSignal
-from PyQt5.QtGui import QCursor, QColor, QPalette, QPainter, QPen, QFont
+from PyQt5.QtGui import QCursor, QColor, QPalette, QPainter, QPen, QFont, QPixmap
 
 from app.gui.delegates import HoverTrackerMixin
 
@@ -46,6 +47,167 @@ _MAX_ITEMS = 500   # WIQL $top cap — personal boards stay far below this
 # Rich-text fields are heavy, so the board fetch skips them; the editor fetches
 # them lazily for the selected card only.
 _DESC_FIELDS = ["System.Description", "Microsoft.VSTS.TCM.ReproSteps"]
+
+# Deterministic avatar colours for comment authors. No profile image is fetched;
+# initials on a coloured disc read as "a person" the way ADO's web comments do.
+_AVATAR_COLORS = ["#e15b64", "#d99e2b", "#2aa5e0", "#9a74d8", "#e0873c",
+                  "#4caf7d", "#c65b9a", "#5b8ad9"]
+
+
+def _initials(name: str) -> str:
+    parts = [p for p in (name or "").replace(",", " ").split() if p]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][0].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+def _avatar_pixmap(name: str, size: int) -> QPixmap:
+    """A round initials avatar; the colour is a stable function of the name."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    idx = sum(ord(ch) for ch in (name or "?")) % len(_AVATAR_COLORS)
+    p.setBrush(QColor(_AVATAR_COLORS[idx]))
+    p.setPen(Qt.NoPen)
+    p.drawEllipse(0, 0, size, size)
+    f = QFont()
+    f.setPixelSize(int(size * 0.42))
+    f.setBold(True)
+    p.setFont(f)
+    p.setPen(QColor("#ffffff"))
+    p.drawText(pm.rect(), Qt.AlignCenter, _initials(name))
+    p.end()
+    return pm
+
+
+def _friendly_when(iso: str) -> str:
+    """Human 'commented ...' suffix: today / yesterday / weekday / '19 Jun'."""
+    from datetime import datetime, timezone
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso.strip().replace("Z", "+00:00"))
+    except Exception:
+        return iso[:10]
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    days = (now.date() - dt.astimezone(timezone.utc).date()).days
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    if days < 7:
+        return dt.strftime("%A")
+    if dt.year == now.year:
+        return f"{dt.day} {dt.strftime('%b')}"
+    return f"{dt.day} {dt.strftime('%b %Y')}"
+
+
+class _ResizableTextEdit(QPlainTextEdit):
+    """A QPlainTextEdit the user can resize vertically by dragging a grip in the
+    bottom-right corner, like an HTML <textarea>. The grip is painted as three
+    small ticks; dragging it changes the widget's height."""
+
+    _GRIP = 16
+
+    def __init__(self, parent=None, min_height=90, start_height=112):
+        super().__init__(parent)
+        self._min_h = min_height
+        self._drag_from = None
+        self._drag_h0 = 0
+        self.setFixedHeight(start_height)
+        self.viewport().setMouseTracking(True)
+
+    def _on_grip(self, pos) -> bool:
+        vp = self.viewport()
+        return (pos.x() >= vp.width() - self._GRIP
+                and pos.y() >= vp.height() - self._GRIP)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and self._on_grip(e.pos()):
+            self._drag_from = e.globalPos().y()
+            self._drag_h0 = self.height()
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._drag_from is not None:
+            dy = e.globalPos().y() - self._drag_from
+            self.setFixedHeight(max(self._min_h, self._drag_h0 + dy))
+            e.accept()
+            return
+        self.viewport().setCursor(
+            Qt.SizeVerCursor if self._on_grip(e.pos()) else Qt.IBeamCursor)
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._drag_from is not None:
+            self._drag_from = None
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        vp = self.viewport()
+        p = QPainter(vp)
+        pen = QPen(QColor(theme.tokens()["text_dim2"]))
+        pen.setWidth(1)
+        p.setPen(pen)
+        w, h = vp.width(), vp.height()
+        for off in (3, 7, 11):
+            p.drawLine(w - off, h - 3, w - 3, h - off)
+        p.end()
+
+
+class _CommentEntry(QWidget):
+    """One comment rendered like a comment: round avatar + bold author +
+    'commented <when>' + the body text. Re-themeable in place."""
+
+    def __init__(self, comment: dict, parent=None):
+        super().__init__(parent)
+        self._name = (comment.get("created_by") or "").strip() or "Unknown"
+        self._when = _friendly_when(comment.get("created_date", ""))
+        body = html_to_text(comment.get("text", "") or "").strip()
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 8, 0, 8)
+        row.setSpacing(8)
+        self._avatar = QLabel()
+        self._avatar.setFixedSize(30, 30)
+        self._avatar.setPixmap(_avatar_pixmap(self._name, 30))
+        self._avatar.setStyleSheet("background: transparent; border: none;")
+        row.addWidget(self._avatar, 0, Qt.AlignTop)
+
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+        self._head = QLabel()
+        self._head.setTextFormat(Qt.RichText)
+        self._body = QLabel(body or "—")
+        self._body.setWordWrap(True)
+        self._body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        col.addWidget(self._head)
+        col.addWidget(self._body)
+        row.addLayout(col, 1)
+        self.apply_theme()
+
+    def apply_theme(self):
+        t = theme.tokens()
+        self._head.setText(
+            f"<span style='color:{t['text']}'><b>{html.escape(self._name)}</b>"
+            f"</span> <span style='color:{t['text_dim2']}'>commented "
+            f"<u>{html.escape(self._when)}</u></span>")
+        self._head.setStyleSheet(
+            "background: transparent; border: none; font-size: 12px;")
+        self._body.setStyleSheet(
+            f"color:{t['text']}; background: transparent; border: none; "
+            f"font-size: 12px;")
 
 _COMPLETED = "Microsoft.VSTS.Scheduling.CompletedWork"
 _REMAINING = "Microsoft.VSTS.Scheduling.RemainingWork"
@@ -851,8 +1013,8 @@ class MyWorkScreen(QWidget):
 
         self._desc_lbl = _lbl("Description")
         v.addWidget(self._desc_lbl)
-        self._desc_edit = QPlainTextEdit()
-        self._desc_edit.setFixedHeight(104)
+        self._desc_edit = _ResizableTextEdit(min_height=90, start_height=112)
+        self._desc_edit.setToolTip("Drag the bottom-right corner to resize")
         self._desc_edit.textChanged.connect(self._on_edit)
         v.addWidget(self._desc_edit)
 
@@ -871,12 +1033,26 @@ class MyWorkScreen(QWidget):
 
         self._comments_lbl = _lbl("Comments")
         v.addWidget(self._comments_lbl)
-        self._comments_list = QListWidget()
-        self._comments_list.setWordWrap(True)
-        self._comments_list.setSelectionMode(QListWidget.NoSelection)
-        self._comments_list.setMinimumHeight(110)
-        self._comments_list.setMaximumHeight(190)
-        v.addWidget(self._comments_list)
+        # Comments render as avatar + author + "commented <when>" + body inside a
+        # bounded, self-scrolling column. Palette-based background only — never a
+        # stylesheet on this scroll area's ancestors (the QStyleSheetStyle gotcha
+        # noted above for the old list).
+        self._comments_scroll = QScrollArea()
+        self._comments_scroll.setWidgetResizable(True)
+        self._comments_scroll.setFrameShape(QFrame.NoFrame)
+        self._comments_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._comments_scroll.setMinimumHeight(120)
+        self._comments_scroll.setMaximumHeight(230)
+        self._comments_host = QWidget()
+        for w in (self._comments_scroll.viewport(), self._comments_host):
+            w.setBackgroundRole(QPalette.Window)
+            w.setAutoFillBackground(True)
+        self._comments_layout = QVBoxLayout(self._comments_host)
+        self._comments_layout.setContentsMargins(2, 0, 8, 0)
+        self._comments_layout.setSpacing(0)
+        self._comments_layout.addStretch()
+        self._comments_scroll.setWidget(self._comments_host)
+        v.addWidget(self._comments_scroll)
         self._comment_box = QPlainTextEdit()
         self._comment_box.setPlaceholderText("Write a comment…")
         self._comment_box.setFixedHeight(54)
@@ -1529,8 +1705,7 @@ class MyWorkScreen(QWidget):
         if cached is not None:
             self._render_comments(cached)
             return
-        self._comments_list.clear()
-        self._comments_list.addItem("Loading comments…")
+        self._show_comment_message("Loading comments…")
         worker = Worker(self.app_state.client.get_work_item_comments, wid)
         worker.signals.result.connect(lambda res, w=wid: self._on_comments(w, res))
         worker.signals.error.connect(
@@ -1542,20 +1717,36 @@ class MyWorkScreen(QWidget):
         if self._current is not None and self._current.id == wid:
             self._render_comments(comments)
 
+    def _clear_comments(self):
+        while self._comments_layout.count():
+            item = self._comments_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _show_comment_message(self, text: str):
+        self._clear_comments()
+        t = theme.tokens()
+        lab = QLabel(text)
+        lab.setStyleSheet(
+            f"color:{t['text_dim2']}; background: transparent; font-size: 12px;")
+        self._comments_layout.addWidget(lab)
+        self._comments_layout.addStretch()
+
     def _render_comments(self, comments: list):
-        self._comments_list.clear()
         if not comments:
-            it = QListWidgetItem("No comments yet.")
-            it.setFlags(Qt.NoItemFlags)
-            self._comments_list.addItem(it)
+            self._show_comment_message("No comments yet.")
             return
-        for c in comments:
-            date = (c.get("created_date") or "")[:10]
-            text = html_to_text(c.get("text", ""))
-            it = QListWidgetItem(f"{c.get('created_by', '')} · {date}\n{text}")
-            it.setToolTip(text)
-            it.setFlags(Qt.ItemIsEnabled)
-            self._comments_list.addItem(it)
+        self._clear_comments()
+        for i, c in enumerate(comments):
+            if i:
+                sep = QFrame()
+                sep.setFixedHeight(1)
+                sep.setAutoFillBackground(True)
+                sep.setStyleSheet(f"background: {theme.tokens()['border']};")
+                self._comments_layout.addWidget(sep)
+            self._comments_layout.addWidget(_CommentEntry(c))
+        self._comments_layout.addStretch()
 
     def _on_add_comment(self):
         if self._current is None:
@@ -1706,3 +1897,6 @@ class MyWorkScreen(QWidget):
             self._detail_id_lbl.setText(
                 f"<b>#{self._current.id}</b>  <span style='color:{t['text_dim']}'>"
                 f"{self._current.type}</span>")
+            cached = self._comments_cache.get(self._current.id)
+            if cached is not None:
+                self._render_comments(cached)   # rebuild entries with new tokens
