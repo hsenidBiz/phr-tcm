@@ -107,12 +107,17 @@ class WorkItem:
 
     def column(self, states_by_type: dict):
         """Board column for this item, using a {type: {state: category}} map from
-        the process. Falls back to a name heuristic when the type/state isn't in
-        the map (unknown/custom process). Returns None to hide (Removed)."""
+        the process. A state literally named "Later" always lands in Done —
+        parked/deferred items sit with the finished work, overriding whatever
+        category the process assigns it. Falls back to a name heuristic when the
+        type/state isn't in the map (unknown/custom process). Returns None to
+        hide (Removed)."""
+        name = self.state.strip().lower()
+        if name == "later":
+            return "Done"
         cat = (states_by_type.get(self.type) or {}).get(self.state)
         if cat:
             return column_for_category(cat)
-        name = self.state.lower()
         if name in ("new", "to do", "proposed", "open", "approved", "design"):
             return "To Do"
         if name == "removed":
