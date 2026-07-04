@@ -533,6 +533,9 @@ class TestRunner(frameless.FramelessMixin, QWidget):
     # updated in place with the just-recorded outcomes, so the Run Tests lists
     # can recolour immediately without a re-fetch.
     results_submitted = pyqtSignal()
+    # After a submit: (plan_id, suite_id, {tc_id: outcome}) so the Test Suites
+    # browser can patch its cached points in place without a re-fetch.
+    outcomes_submitted = pyqtSignal(int, int, dict)
 
     def __init__(self, app_state, cases: list, restore: dict = None,
                  context: dict = None):
@@ -1580,6 +1583,10 @@ class TestRunner(frameless.FramelessMixin, QWidget):
             # the next visit fetches fresh from the server, which has our results.
             self.app_state.test_points_by_suite.pop(key, None)
         self.results_submitted.emit()
+        # Tell the Test Suites browser exactly what changed (plan, suite, outcomes)
+        # so it can patch its own cache in place — no re-fetch needed.
+        if self._plan_id and self._suite_id and outcomes:
+            self.outcomes_submitted.emit(self._plan_id, self._suite_id, dict(outcomes))
         # The run is recorded — the resumable session is complete; drop it.
         from app.utils.settings import clear_run_session
         clear_run_session()

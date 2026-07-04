@@ -306,10 +306,51 @@ class SuiteBrowserScreen(QWidget):
         self._count_lbl.show()
         self._set_send_enabled(True)
 
+    def apply_outcomes(self, plan_id: int, suite_id: int, outcomes: dict):
+        """A run submitted from this suite recorded new outcomes — patch the
+        cached points (and re-tint the visible rows if this suite is shown)
+        instead of forcing a full re-fetch. `outcomes` maps test_case_id ->
+        outcome string. If this suite's points were never loaded, there's nothing
+        to patch: the next lazy load will already include the new outcomes."""
+        if not outcomes:
+            return
+        by_tc = {str(k): v for k, v in outcomes.items()}
+        key = (plan_id, suite_id)
+        points = self._points_cache.get(key)
+        if points:
+            for p in points:
+                oc = by_tc.get(str(p.get("test_case_id")))
+                if oc:
+                    p["last_outcome"] = oc
+        if self._current_suite == key:
+            self._retint_points(by_tc)
+
+    def _retint_points(self, by_tc: dict):
+        """Update the visible points table's Outcome column + row tint in place."""
+        for i in range(self._points.topLevelItemCount()):
+            row = self._points.topLevelItem(i)
+            oc = by_tc.get(str(row.data(0, _ROLE)))
+            if not oc:
+                continue
+            ocl = oc.lower()
+            row.setText(1, outcome_style.outcome_label(ocl))
+            tint = QBrush(outcome_style.outcome_tint(ocl))
+            for col in range(row.columnCount()):
+                row.setBackground(col, tint)
+
     def _set_send_enabled(self, on: bool):
         if hasattr(self, "_run_btn"):
             self._run_btn.setEnabled(on)
             self._edit_btn.setEnabled(on)
+
+    def set_send_targets(self, run_visible: bool, edit_visible: bool):
+        """Show/hide the 'Run Tests' and 'Edit' send buttons to match which
+        target tabs are enabled. When the Run Tests or Edit Test Cases tab is
+        hidden via Settings, its send button has nowhere to go, so it's hidden
+        too."""
+        if hasattr(self, "_run_btn"):
+            self._run_btn.setVisible(run_visible)
+            self._edit_btn.setVisible(edit_visible)
 
     def _send_cases(self, signal):
         """Emit the selected test-case ids (or all shown if none selected) plus

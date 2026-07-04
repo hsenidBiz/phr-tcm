@@ -59,6 +59,16 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         # Custom dark title bar + 1px border in place of the native OS chrome.
         self._title_bar = self.init_frameless(self._normal_title)
 
+        # Settings gear next to the version caption in the title bar.
+        self._settings_btn = QPushButton()
+        self._settings_btn.setFlat(True)
+        self._settings_btn.setFixedSize(24, 24)
+        self._settings_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._settings_btn.setToolTip("Settings")
+        self._settings_btn.clicked.connect(self._open_settings)
+        self._title_bar.add_left_widget(self._settings_btn)
+        self._update_settings_btn()
+
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
 
@@ -113,6 +123,12 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._expiry_tick.start()
 
         self.stack.setCurrentIndex(PAGE_AUTH)
+
+        # Demo mode (persisted): skip sign-in and open straight into sample data.
+        self._demo_mode = False
+        from app.utils.settings import load_settings as _ls
+        if _ls().get("demo_mode"):
+            self._enter_demo_mode()
 
         # Modern scrollbars + dropdowns across every screen (re-applied on toggle).
         theme.style_scrollbars(self)
@@ -251,11 +267,32 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self.suites_widget = SuiteBrowserScreen(self.app_state)
         self.suites_widget.run_suite_requested.connect(self._on_run_suite_requested)
         self.suites_widget.edit_suite_requested.connect(self._on_edit_suite_requested)
+        # A run submitted from a suite patches the browser's cached outcomes in
+        # place (no re-fetch) — see SuiteBrowserScreen.apply_outcomes.
+        self.run_widget.results_submitted_for_suite.connect(self.suites_widget.apply_outcomes)
         self.tabs.addTab(self.suites_widget, "Test Suites")
         self.tabs.setTabToolTip(
             self.tabs.indexOf(self.suites_widget),
             "Browse every test plan and suite in the project (read-only; "
             "not limited to the selected PBI)")
+
+        # Canonical tab order + keys (for the Settings show/hide-tabs option).
+        self._tab_defs = [
+            ("import", self.import_widget, "Import File"),
+            ("edit", self.edit_widget, "Edit Test Cases"),
+            ("manual", self.manual_widget, "Manual Entry"),
+            ("run", self.run_widget, "Run Tests"),
+            ("suites", self.suites_widget, "Test Suites"),
+        ]
+        self._all_tab_keys = [k for k, _w, _l in self._tab_defs]
+        from app.utils.settings import load_settings
+        _saved = load_settings().get("visible_tabs")
+        if isinstance(_saved, list):
+            self._visible_tabs = [k for k in self._all_tab_keys if k in _saved]
+        else:
+            self._visible_tabs = list(self._all_tab_keys)
+        if not self._visible_tabs:                 # never leave zero tabs
+            self._visible_tabs = list(self._all_tab_keys)
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -272,7 +309,12 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         self._mode_switch_btn.clicked.connect(self._toggle_mywork)
         _corner = QWidget()
         _corner_l = QHBoxLayout(_corner)
-        _corner_l.setContentsMargins(0, 0, 10, 0)
+        # Qt bottom-aligns the corner widget in the tab-bar band (the strip
+        # between the PBI header above and the tab content below), so a
+        # zero-margin pill sits ~8px below that band's centre. The bottom margin
+        # lifts it to the band's geometric centre (Segoe UI 17px → 47px band,
+        # centre 23.5; the 28px pill lands at 24). Logical px, so DPI-agnostic.
+        _corner_l.setContentsMargins(0, 0, 10, 8)
         _corner_l.addWidget(self._mode_switch_btn)
         self.tabs.setCornerWidget(_corner, Qt.TopRightCorner)
 
@@ -323,6 +365,9 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
         self.stack.addWidget(container)
 
+        # Apply the saved tab-visibility choice (and sync the suite send buttons).
+        self._apply_tab_visibility()
+
         # Keyboard shortcut: Ctrl+Shift+R = Review & Create
         QShortcut(QKeySequence("Ctrl+Shift+R"), self).activated.connect(self._go_review)
 
@@ -334,6 +379,128 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self._focus_current_search)
         QShortcut(QKeySequence("F5"), self).activated.connect(self._refresh_edit_list)
         QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self._export_from_edit)
+
+    # ------------------------------------------------------------------ #
+    #  Settings — show/hide main tabs                                     #
+    # ------------------------------------------------------------------ #
+
+    def _update_settings_btn(self):
+        from app.utils import icons
+        t = theme.tokens()
+        self._settings_btn.setIcon(icons.icon("settings", color=t["text_dim"], size=15))
+        self._settings_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; }"
+            f"QPushButton:hover {{ background: {t['btn_hover']}; border-radius: 4px; }}"
+        )
+
+    def _open_settings(self):
+        from app.gui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self, self._tab_defs, set(self._visible_tabs),
+                             getattr(self, "_demo_mode", False))
+        if not (dlg.exec_() and dlg.result_keys is not None):
+            return
+        self._visible_tabs = [k for k in self._all_tab_keys if k in dlg.result_keys]
+        self._apply_tab_visibility()
+        from app.utils.settings import save_settings
+        save_settings({"visible_tabs": self._visible_tabs,
+                       "demo_mode": bool(dlg.demo_enabled)})
+        if bool(dlg.demo_enabled) != getattr(self, "_demo_mode", False):
+            if dlg.demo_enabled:
+                self._enter_demo_mode()
+            else:
+                self._exit_demo_mode()
+
+    def _enter_demo_mode(self):
+        """Swap in the offline demo client + a signed-in demo token manager,
+        preset the demo PBI/plan/suite, and jump straight to the main screen —
+        no sign-in required. Every screen then shows canned sample data."""
+        from app.api import demo_client as demo
+        tm = demo.DemoTokenManager()
+        self.app_state.token_manager = tm
+        self.app_state.client = demo.DemoClient(tm)
+        self._demo_mode = True
+
+        s = self.app_state
+        s.pbi_id = demo.DEMO_PBI_ID
+        s.pbi_title = demo.DEMO_PBI_TITLE
+        s.area_path = demo.DEMO_AREA
+        s.iteration_path = demo.DEMO_ITERATION
+        s.module_ref = demo.DEMO_MODULE_REF
+        s.preconditions_ref = demo.DEMO_PRECOND_REF
+        s.test_plan_id = demo.DEMO_PLAN_ID
+        s.test_plan_name = demo.DEMO_PLAN_NAME
+        s.suite_id = demo.DEMO_SUITE_ID
+        s.test_plan_pbi = demo.DEMO_PBI_ID
+        s.test_plan_detecting = False
+        # Drop any caches from a prior real session so demo data loads fresh.
+        s.existing_cases = []
+        s.existing_cases_pbi = None
+        s.cached_team_members = None
+        s.test_points_by_suite = {}
+        self.edit_widget._loaded_pbi = None
+        self.run_widget._loaded_pbi = None
+
+        self._go_main(land_on_import=True)
+        self._status("Demo mode — sample data, nothing is sent to Azure DevOps.")
+
+    def _exit_demo_mode(self):
+        """Leave demo mode: restore a real client + token manager and return to
+        the sign-in screen."""
+        from app.auth.token_manager import TokenManager
+        from app.api.devops_client import DevOpsClient
+        tm = TokenManager()
+        self.app_state.token_manager = tm
+        self.app_state.client = DevOpsClient(tm)
+        self._demo_mode = False
+
+        s = self.app_state
+        s.pbi_id = None
+        s.pbi_title = ""
+        s.test_plan_id = None
+        s.test_plan_name = ""
+        s.suite_id = None
+        s.test_plan_pbi = None
+        s.existing_cases = []
+        s.existing_cases_pbi = None
+        s.cached_team_members = None
+        s.test_points_by_suite = {}
+        self.edit_widget._loaded_pbi = None
+        self.run_widget._loaded_pbi = None
+
+        self._go_to(PAGE_AUTH)
+        self._status("Signed out of demo mode.")
+
+    def _apply_tab_visibility(self):
+        """Show only the enabled tabs, in canonical order. QTabWidget has no
+        hide-tab API, so rebuild the bar — removeTab keeps the widget alive."""
+        desired = [(k, w, lbl) for k, w, lbl in self._tab_defs if k in self._visible_tabs]
+        current = [self.tabs.widget(i) for i in range(self.tabs.count())]
+        if current != [w for _k, w, _l in desired]:
+            keep = self.tabs.currentWidget()
+            self.tabs.blockSignals(True)
+            while self.tabs.count():
+                self.tabs.removeTab(0)
+            for _k, w, lbl in desired:
+                self.tabs.addTab(w, lbl)
+            s_idx = self.tabs.indexOf(self.suites_widget)
+            if s_idx >= 0:
+                self.tabs.setTabToolTip(
+                    s_idx,
+                    "Browse every test plan and suite in the project (read-only; "
+                    "not limited to the selected PBI)")
+            self.tabs.blockSignals(False)
+            if keep is not None and self.tabs.indexOf(keep) >= 0:
+                self.tabs.setCurrentWidget(keep)
+            elif self.tabs.count():
+                self.tabs.setCurrentIndex(0)
+            self._on_tab_changed(self.tabs.currentIndex())
+        self._sync_suite_send_buttons()
+
+    def _sync_suite_send_buttons(self):
+        """The Test Suites tab's 'Run Tests'/'Edit' send buttons only make sense
+        when their target tab is enabled — hide them otherwise."""
+        self.suites_widget.set_send_targets(
+            "run" in self._visible_tabs, "edit" in self._visible_tabs)
 
     def _switch_main_tab(self, idx: int):
         """Ctrl+1..4 — jump between the main tabs (only on the main page)."""
@@ -910,6 +1077,7 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
 
     def _refresh_self_theme(self):
         t = theme.tokens()
+        self._update_settings_btn()          # re-tint the title-bar gear
         self._header_frame.setStyleSheet(
             f"#headerFrame {{ background: {t['header_bg']}; border-bottom: 1px solid {t['border']}; }}"
         )

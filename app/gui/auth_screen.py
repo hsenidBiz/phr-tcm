@@ -52,7 +52,7 @@ class AuthScreen(QWidget):
         if os.path.exists(_logo_path):
             logo.setPixmap(QIcon(_logo_path).pixmap(QSize(84, 84)))
         card_layout.addWidget(logo, alignment=Qt.AlignHCenter)
-        card_layout.addSpacing(16)
+        card_layout.addSpacing(28)
 
         # Title
         title = QLabel("Test Case Manager")

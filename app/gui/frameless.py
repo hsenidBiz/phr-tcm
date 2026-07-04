@@ -88,7 +88,7 @@ class TitleBar(QWidget):
         self._icon_color = None     # None -> theme accent; else a fixed hex
         self.setObjectName("framelessTitleBar")
         self.setFixedHeight(36)
-        lay = QHBoxLayout(self)
+        self._lay = lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 0, 0, 0)
         lay.setSpacing(8)
 
@@ -96,6 +96,7 @@ class TitleBar(QWidget):
         lay.addWidget(self._app_icon)
         self._title = QLabel(title)
         lay.addWidget(self._title)
+        self._stretch_index = lay.count()   # widgets added here sit left of the stretch
         lay.addStretch(1)
         if extra_widgets:
             for wdg in extra_widgets:
@@ -126,6 +127,13 @@ class TitleBar(QWidget):
     def set_title(self, text):
         """Update the title-bar caption text."""
         self._title.setText(text)
+
+    def add_left_widget(self, widget):
+        """Place a small widget just to the right of the title text (before the
+        stretch that pushes the caption buttons to the far right). Used e.g. for
+        a settings gear sitting next to the version caption."""
+        self._lay.insertWidget(self._stretch_index, widget)
+        self._stretch_index += 1
 
     def set_app_icon(self, name, color=None):
         """Swap the app glyph (e.g. per app mode), optionally in a fixed colour
