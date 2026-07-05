@@ -2,9 +2,9 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
+    QPushButton, QComboBox, QTableWidgetItem, QHeaderView,
     QListWidget, QListWidgetItem, QScrollArea, QFrame, QMessageBox,
-    QCheckBox, QFileDialog, QAbstractItemView, QShortcut
+    QCheckBox, QFileDialog, QAbstractItemView, QShortcut,
 )
 from PyQt5.QtCore import Qt, QThreadPool, pyqtSignal
 from PyQt5.QtGui import QCursor, QKeySequence
@@ -14,6 +14,8 @@ from app.utils.worker import Worker
 from app.models.test_case import Step, TestCase
 from app.gui import delegates
 from app.gui.grouped_tree import GroupedCaseTree
+from app.gui.steps_table import StepsTable
+from app.gui.tag_completer import TagLineEdit
 
 
 class EditScreen(QWidget):
@@ -36,6 +38,12 @@ class EditScreen(QWidget):
         self._bulk_done = 0
         self._bulk_errors = []
         self._grouped = False       # Smart Grouping (folder tree) over the list
+        # Unsaved-edit tracking for the single-case form. _loading suppresses
+        # dirty marks while the form is being populated; _reverting suppresses
+        # the guard while we programmatically restore a selection.
+        self._dirty = False
+        self._loading = False
+        self._reverting = False
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -46,6 +54,16 @@ class EditScreen(QWidget):
         super().showEvent(event)
         self._refresh_assigned_to_combo()
         self.ensure_loaded()
+        self._load_project_tags()
+
+    def _load_project_tags(self):
+        """Feed the Tags fields' autocomplete with the project's existing tags."""
+        from app.gui.helpers import fetch_project_tags
+
+        def _apply(names):
+            self._tags_edit.set_known_tags(names)
+            self._bulk_tags_edit.set_known_tags(names)
+        fetch_project_tags(self.app_state, _apply)
 
     def ensure_loaded(self):
         """Load cases for the configured PBI if not already loaded (also warms
@@ -199,6 +217,17 @@ class EditScreen(QWidget):
         self._rename_btn.clicked.connect(self._open_rename_dialog)
         hdr.addWidget(self._rename_btn)
 
+        self._view_btn = QPushButton("  View")
+        self._view_btn.setIcon(icons.icon("external-link", size=15))
+        self._view_btn.setEnabled(False)
+        self._view_btn.setStyleSheet(_hdr_btn_style)
+        self._view_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._view_btn.setToolTip(
+            "Open a formatted report of the highlighted test cases (or all if "
+            "none) in your browser")
+        self._view_btn.clicked.connect(self._on_view_cases)
+        hdr.addWidget(self._view_btn)
+
         self._export_btn = QPushButton("  Export")
         self._export_btn.setIcon(icons.icon("download", size=15))
         self._export_btn.setEnabled(False)
@@ -349,7 +378,7 @@ class EditScreen(QWidget):
         tc_col = QVBoxLayout()
         tc_col.setSpacing(4)
         tc_col.addWidget(QLabel("Tags  (semicolon-separated)"))
-        self._tags_edit = QLineEdit()
+        self._tags_edit = TagLineEdit()
         self._tags_edit.setPlaceholderText("e.g. smoke; regression")
         tc_col.addWidget(self._tags_edit)
         row2.addLayout(tc_col)
@@ -367,6 +396,14 @@ class EditScreen(QWidget):
         self._assigned_combo.addItem("Unassigned", "")
         fv.addWidget(self._assigned_combo)
 
+        # Track edits so switching cases can guard against silent data loss.
+        # (All fire during _populate_form too, but _mark_dirty ignores that.)
+        self._title_edit.textChanged.connect(self._mark_dirty)
+        self._tags_edit.textChanged.connect(self._mark_dirty)
+        self._auto_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._module_edit.currentTextChanged.connect(self._mark_dirty)
+        self._assigned_combo.currentIndexChanged.connect(self._mark_dirty)
+
         steps_hdr = QHBoxLayout()
         steps_hdr.addWidget(QLabel("Steps"))
         steps_hdr.addStretch()
@@ -379,8 +416,15 @@ class EditScreen(QWidget):
         steps_hdr.addWidget(self._add_step_btn)
         fv.addLayout(steps_hdr)
 
-        self._steps_tbl = QTableWidget(0, 4)
+        self._steps_tbl = StepsTable(0, 4, action_col=1, expected_col=2)
+        self._steps_tbl.request_add_row.connect(self._add_step)
+        self._steps_tbl.request_paste.connect(self._on_paste_steps)
+        self._steps_tbl.request_duplicate.connect(self._on_duplicate_step)
+        self._steps_tbl.itemChanged.connect(self._on_step_item_changed)
         self._steps_tbl.setHorizontalHeaderLabels(["#", "Action", "Expected Result", ""])
+        self._steps_tbl.setToolTip(
+            "Enter: next step (adds a row at the end) · Ctrl+V: paste rows · "
+            "Ctrl+D: duplicate step · drag to reorder")
         hh = self._steps_tbl.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.Fixed)
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -435,7 +479,7 @@ class EditScreen(QWidget):
 
         bfv.addWidget(QLabel("Tags"))
         tags_row = QHBoxLayout()
-        self._bulk_tags_edit = QLineEdit()
+        self._bulk_tags_edit = TagLineEdit()
         self._bulk_tags_edit.setPlaceholderText("e.g. smoke; regression")
         self._bulk_tags_edit.textChanged.connect(self._update_bulk_save_btn)
         tags_row.addWidget(self._bulk_tags_edit)
@@ -520,10 +564,12 @@ class EditScreen(QWidget):
         )
         self._refresh_btn.setStyleSheet(header_btn_style)
         self._rename_btn.setStyleSheet(header_btn_style)
+        self._view_btn.setStyleSheet(header_btn_style)
         self._export_btn.setStyleSheet(header_btn_style)
         from app.utils import icons
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._rename_btn.setIcon(icons.icon("edit", size=15))
+        self._view_btn.setIcon(icons.icon("external-link", size=15))
         self._export_btn.setIcon(icons.icon("download", size=15))
         self._group_toggle.setStyleSheet(theme.btn_neutral_qss("padding: 3px 10px;"))
         self._group_toggle.setIcon(icons.icon("folder", size=14))
@@ -568,6 +614,7 @@ class EditScreen(QWidget):
         self._reset_list_ui()
         self._rename_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
+        self._view_btn.setEnabled(False)
         if not case_ids:
             self._header_lbl.setText("This suite has no test cases.")
             return
@@ -609,6 +656,7 @@ class EditScreen(QWidget):
         self._refresh_btn.setEnabled(False)
         self._rename_btn.setEnabled(False)
         self._export_btn.setEnabled(False)
+        self._view_btn.setEnabled(False)
         self._reset_list_ui()
 
         extra = [r for r in (self.app_state.module_ref,) if r]
@@ -663,6 +711,7 @@ class EditScreen(QWidget):
         self._apply_filters()
         self._refresh_btn.setEnabled(True)
         self._export_btn.setEnabled(bool(cases))
+        self._view_btn.setEnabled(bool(cases))
         self._update_export_btn_text()
 
     def _on_cases_error(self, pbi_id: int, exc: Exception):
@@ -798,6 +847,18 @@ class EditScreen(QWidget):
 
     def _on_selection_changed(self):
         sel = self._selected_indices()
+        # Guard unsaved edits before we switch away from the current single case.
+        if (not self._reverting and self._current_idx is not None
+                and self._dirty and sel != [self._current_idx]):
+            reply = QMessageBox.question(
+                self, "Unsaved changes",
+                "You have unsaved changes to this test case.\n"
+                "Discard them and switch?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                self._restore_selection(self._current_idx)
+                return
+
         n_sel = len(sel)
         n_total = len(self._cases)
         self._update_export_btn_text()
@@ -836,6 +897,7 @@ class EditScreen(QWidget):
     def _populate_form(self, row: int):
         if row < 0 or row >= len(self._cases):
             return
+        self._loading = True   # suppress dirty marks while we fill the form
         tc = self._cases[row]
 
         self._tc_id_lbl.setText(f"Work Item  #{tc.get('_id', '?')}")
@@ -862,6 +924,38 @@ class EditScreen(QWidget):
         steps = parse_steps_xml(tc.get("Microsoft.VSTS.TCM.Steps", "") or "")
         for i, step in enumerate(steps):
             self._insert_step_row(i + 1, step.action, step.expected)
+
+        self._loading = False
+        self._dirty = False   # freshly loaded — no unsaved edits yet
+
+    # ------------------------------------------------------------------ #
+    #  Unsaved-change tracking                                              #
+    # ------------------------------------------------------------------ #
+
+    def _mark_dirty(self, *_a):
+        if not self._loading:
+            self._dirty = True
+
+    def _on_step_item_changed(self, item):
+        # The auto-renumbered "#" column isn't a user edit; everything else is.
+        if not self._loading and item.column() != 0:
+            self._dirty = True
+
+    def _restore_selection(self, idx):
+        """Re-select case `idx` in whichever view is active, without re-triggering
+        the unsaved-changes guard (used when the user cancels a switch)."""
+        self._reverting = True
+        try:
+            if self._grouped:
+                self._tree.select_only_payload(idx)
+            else:
+                self._list.clearSelection()
+                it = self._list.item(idx)
+                if it is not None:
+                    it.setSelected(True)
+                    self._list.setCurrentItem(it)
+        finally:
+            self._reverting = False
 
     # ------------------------------------------------------------------ #
     #  Steps table helpers                                                 #
@@ -912,6 +1006,7 @@ class EditScreen(QWidget):
             if self._steps_tbl.cellWidget(r, 3) is wrapper:
                 self._steps_tbl.removeRow(r)
                 self._renumber_steps()
+                self._mark_dirty()
                 break
 
     def _renumber_steps(self):
@@ -924,6 +1019,43 @@ class EditScreen(QWidget):
         self._renumber_steps()
         for r in range(self._steps_tbl.rowCount()):
             self._steps_tbl.setCellWidget(r, 3, self._make_rm_wrap())
+        self._mark_dirty()
+
+    def _on_paste_steps(self, start_row: int, pairs: list):
+        """Fill steps from `start_row` downward with pasted (action, expected)
+        pairs — overwriting existing rows and appending new ones as needed, the
+        way pasting a block into a spreadsheet behaves."""
+        r = max(start_row, 0)
+        for action, expected in pairs:
+            if r >= self._steps_tbl.rowCount():
+                self._insert_step_row(r + 1, action, expected)
+            else:
+                self._steps_tbl.item(r, 1).setText(action)
+                self._steps_tbl.item(r, 2).setText(expected)
+            r += 1
+        self._renumber_steps()
+        self._mark_dirty()
+
+    def _on_duplicate_step(self, row: int):
+        """Insert a copy of `row` directly below it (Ctrl+D)."""
+        if row < 0 or row >= self._steps_tbl.rowCount():
+            return
+        a_item = self._steps_tbl.item(row, 1)
+        e_item = self._steps_tbl.item(row, 2)
+        action = a_item.text() if a_item else ""
+        expected = e_item.text() if e_item else ""
+        self._steps_tbl.insertRow(row + 1)
+        num_item = QTableWidgetItem("")
+        num_item.setFlags(num_item.flags() & ~Qt.ItemIsEditable)
+        num_item.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        self._steps_tbl.setItem(row + 1, 0, num_item)
+        new_action = QTableWidgetItem(action)
+        new_action.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._steps_tbl.setItem(row + 1, 1, new_action)
+        new_expected = QTableWidgetItem(expected)
+        new_expected.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._steps_tbl.setItem(row + 1, 2, new_expected)
+        self._on_steps_rows_moved()   # renumber + rebuild remove buttons (marks dirty)
 
     # ------------------------------------------------------------------ #
     #  Save single case                                                    #
@@ -1009,6 +1141,7 @@ class EditScreen(QWidget):
             self._tree.update_label(lambda p, i=_idx: p == i, new_label)
         self._save_btn.setEnabled(True)
         self._save_btn.setText("Save changes")
+        self._dirty = False   # persisted — no unsaved edits to guard now
         from app.gui.helpers import status_message
         status_message(self, f"Test case #{tc_id} updated successfully.")
 
@@ -1058,16 +1191,55 @@ class EditScreen(QWidget):
             self._export_btn.setText("  Export all")
             self._export_btn.setToolTip("Nothing selected — exports all loaded test cases (Ctrl+E)")
 
+    def _on_view_cases(self):
+        """Render the highlighted cases (or all, if none) to an HTML report and
+        open it straight in the browser — no save dialog, no file to manage."""
+        if not self._cases:
+            return
+        selected = self._selected_cases()
+        cases = selected if selected else self._cases
+        self._view_btn.setEnabled(False)
+        self._view_btn.setText("  Opening…")
+        worker = Worker(
+            self._build_view_html, cases,
+            self.app_state.module_ref, self.app_state.preconditions_ref,
+        )
+        worker.signals.result.connect(self._on_view_ready)
+        worker.signals.error.connect(self._on_view_error)
+        QThreadPool.globalInstance().start(worker)
+
+    @staticmethod
+    def _build_view_html(cases, module_ref, preconditions_ref):
+        from app.utils import export_formats
+        records = export_formats.cases_to_records(cases, module_ref, preconditions_ref)
+        return export_formats.write_temp_html(
+            records, subtitle=f"Edit tab — {len(records)} test case(s)")
+
+    def _reset_view_btn(self):
+        self._view_btn.setText("  View")
+        self._view_btn.setEnabled(bool(self._cases))
+
+    def _on_view_ready(self, path: str):
+        import webbrowser
+        from pathlib import Path
+        webbrowser.open(Path(path).as_uri())
+        self._reset_view_btn()
+
+    def _on_view_error(self, exc: Exception):
+        self._reset_view_btn()
+        QMessageBox.critical(self, "View Error", f"Could not open report:\n{exc}")
+
     def _on_export_cases(self):
         if not self._cases:
             return
         selected = self._selected_cases()
         cases = selected if selected else self._cases
-        default_name = "test_cases_selected.html" if selected else "test_cases_export.html"
+        default_name = "test_cases_selected.json" if selected else "test_cases_export.json"
+        # HTML is no longer offered here — use the 'View' button to open a report
+        # in the browser. Export keeps the machine-readable formats.
         path, selected_filter = QFileDialog.getSaveFileName(
             self, "Export Test Cases",
             str(Path.home() / "Downloads" / default_name),
-            "HTML report — for people (*.html);;"
             "AI-editable JSON (*.json);;"
             "Excel Files (*.xlsx)",
         )

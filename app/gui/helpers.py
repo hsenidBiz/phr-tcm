@@ -93,6 +93,34 @@ def store_fetched_members(app_state, members: list) -> None:
         save_to_disk(tm.org_url, tm.project, members)
 
 
+def fetch_project_tags(app_state, on_ready) -> None:
+    """Fetch the project's existing tag names in the background and hand them to
+    ``on_ready(names)`` on the GUI thread (for a TagLineEdit's suggestions).
+
+    Cached per (org, project) on app_state so a second screen or a revisit reuses
+    them; a project switch refetches. Best-effort — on failure yields ``[]`` and
+    leaves the cache empty so the next visit retries. ``on_ready`` must be a
+    GUI-thread QObject method."""
+    from app.utils.worker import Worker
+    from PyQt5.QtCore import QThreadPool
+    tm = app_state.client.tm
+    key = (tm.org_url, tm.project)
+    cache = getattr(app_state, "_tags_cache", None)
+    if cache and cache[0] == key:
+        on_ready(cache[1])
+        return
+
+    def _ok(tags):
+        names = sorted({t.get("name", "") for t in (tags or []) if t.get("name")})
+        app_state._tags_cache = (key, names)
+        on_ready(names)
+
+    worker = Worker(app_state.client.get_tags)
+    worker.signals.result.connect(_ok)
+    worker.signals.error.connect(lambda _e: on_ready([]))
+    QThreadPool.globalInstance().start(worker)
+
+
 class UndoToast(QFrame):
     """Transient bottom-centred toast with a message and an Undo action.
 

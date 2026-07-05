@@ -21,8 +21,8 @@ from urllib.parse import quote
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit,
-    QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle,
+    QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit, QTextEdit,
+    QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle, QMenu,
 )
 from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, pyqtSignal
 from PyQt5.QtGui import (
@@ -34,9 +34,11 @@ from app.gui.delegates import HoverTrackerMixin
 from app.utils.worker import Worker
 from app.utils import theme
 from app.utils.anim import Spinner
+from app.utils.richtext import html_to_markdown, markdown_to_html
 from app.utils.xml_builder import html_to_text
 from app.models.work_item import WorkItem, WORK_ITEM_FIELDS, COLUMNS
 from app.gui.checkable_combo import CheckableComboBox
+from app.gui.tag_completer import TagLineEdit
 from app.gui import frameless
 
 # Test artifacts are managed in the app's normal mode — keep the board about
@@ -133,10 +135,11 @@ def _friendly_when(iso: str) -> str:
     return f"{dt.day} {dt.strftime('%b %Y')}"
 
 
-class _ResizableTextEdit(QPlainTextEdit):
-    """A QPlainTextEdit the user can resize vertically by dragging a grip in the
-    bottom-right corner, like an HTML <textarea>. The grip is painted as three
-    small ticks; dragging it changes the widget's height."""
+class _ResizableTextEdit(QTextEdit):
+    """A rich-text QTextEdit the user can resize vertically by dragging a grip in
+    the bottom-right corner, like an HTML <textarea>. The grip is painted as three
+    small ticks; dragging it changes the widget's height. Rich text (Markdown, set
+    via setMarkdown) renders in place so ADO descriptions keep their formatting."""
 
     _GRIP = 16
 
@@ -241,6 +244,8 @@ class _CommentEntry(QWidget):
 
 _COMPLETED = "Microsoft.VSTS.Scheduling.CompletedWork"
 _REMAINING = "Microsoft.VSTS.Scheduling.RemainingWork"
+_ORIGINAL = "Microsoft.VSTS.Scheduling.OriginalEstimate"
+_ACTIVITY = "Microsoft.VSTS.Common.Activity"
 
 # Dropping a card on a column moves the item to the FIRST state of these
 # categories (in order) defined for its type — process-discovered, never
@@ -479,6 +484,17 @@ def _wiql_str(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _strip_path_root(path: str) -> str:
+    """Display form of an Area/Iteration path with the leading project-root
+    segment dropped, e.g. 'HRM\\Gamma Guardians\\Sprint 9' → 'Gamma
+    Guardians\\Sprint 9'. That first segment is the project name and repeats on
+    every entry, so it's noise in the dropdowns. The bare root (just the project
+    name, nothing after it) is left unchanged so its item isn't blank. Only the
+    shown text is shortened — callers keep the full path as the item's data."""
+    parts = (path or "").split("\\", 1)
+    return parts[1] if len(parts) == 2 and parts[1] else path
+
+
 def _team_area_clause(field_ref: str, values: list) -> str:
     """A WIQL clause scoping to a team's area(s). Each value uses UNDER when it
     includes children on a tree field (Area/Iteration path), otherwise '='."""
@@ -516,6 +532,7 @@ def _fetch_work(client, scope: dict) -> dict:
     ids = client.query_work_items(wiql, top=_MAX_ITEMS)
     fields = client.get_work_items(ids, WORK_ITEM_FIELDS) if ids else []
     states = {}
+    activities = {}
     for f in fields:
         wtype = f.get("System.WorkItemType", "")
         if wtype and wtype not in states:
@@ -524,7 +541,22 @@ def _fetch_work(client, scope: dict) -> dict:
                                  for s in client.get_work_item_states(wtype)}
             except Exception:
                 states[wtype] = {}   # unknown process — column falls back to heuristic
-    return {"fields": fields, "states": states, "count": len(ids)}
+            try:
+                activities[wtype] = client.get_field_allowed_values(wtype, _ACTIVITY)
+            except Exception:
+                activities[wtype] = []   # type has no Activity field
+    # Project Area/Iteration trees for the editor dropdowns (client-cached, so
+    # this is one network round-trip each per project regardless of board loads).
+    try:
+        areas = client.get_classification_paths("areas")
+    except Exception:
+        areas = []
+    try:
+        iterations = client.get_classification_paths("iterations")
+    except Exception:
+        iterations = []
+    return {"fields": fields, "states": states, "activities": activities,
+            "areas": areas, "iterations": iterations, "count": len(ids)}
 
 
 def _fetch_teams(client) -> list:
@@ -632,6 +664,9 @@ class MyWorkScreen(QWidget):
         self.app_state = app_state
         self._items: list[WorkItem] = []
         self._states_by_type: dict = {}     # {type: {state: (category, color)}}
+        self._activities_by_type: dict = {}  # {type: [allowed Activity values]}
+        self._areas: list = []               # project Area paths (dropdown)
+        self._iterations: list = []          # project Iteration paths (dropdown)
         self._loaded_key = None             # (org_url, project) the items belong to
         self._loading = False
         self._current: WorkItem | None = None
@@ -656,6 +691,8 @@ class MyWorkScreen(QWidget):
         # Board scope: {"mode": "me"} or {"mode": "team", "team": name}.
         self._scope = {"mode": "me"}
         self._teams_key = None               # (org, project) the team list is for
+        # Locally hidden work-item ids (never sent to ADO); loaded per org.
+        self._hidden: set = set()
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -767,10 +804,18 @@ class MyWorkScreen(QWidget):
         self._loaded_key = key
         self._items = [WorkItem(f) for f in result.get("fields", [])]
         self._states_by_type = result.get("states", {})
+        self._activities_by_type = result.get("activities", {})
+        self._areas = result.get("areas", [])
+        self._iterations = result.get("iterations", [])
         self._comments_cache.clear()
+        from app.utils.settings import load_hidden_work_items
+        self._hidden = load_hidden_work_items(key[0])   # key = (org_url, project)
         self._show_placeholder()
         self._repopulate_type_filter()
         self._rebuild()
+        self._update_hidden_btn()
+        from app.gui.helpers import fetch_project_tags
+        fetch_project_tags(self.app_state, self._tags_edit.set_known_tags)
 
     def _on_error(self, exc):
         self._loading = False
@@ -846,6 +891,15 @@ class MyWorkScreen(QWidget):
         self._new_btn.setCursor(QCursor(Qt.PointingHandCursor))
         self._new_btn.clicked.connect(self._on_new_item)
         hdr.addWidget(self._new_btn)
+        # "Hidden (N)" — only shown when items are hidden; opens the unhide menu.
+        self._hidden_btn = QPushButton("Hidden")
+        self._hidden_btn.setIcon(icons.icon("minus", size=15))
+        self._hidden_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._hidden_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._hidden_btn.setToolTip("Show and unhide items you've hidden")
+        self._hidden_btn.clicked.connect(self._show_hidden_menu)
+        self._hidden_btn.setVisible(False)
+        hdr.addWidget(self._hidden_btn)
         self._refresh_btn = QPushButton("Refresh")
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
@@ -919,6 +973,9 @@ class MyWorkScreen(QWidget):
                 lambda _=None, s=lst: self._on_card_selected(s))
             lst.drag_started.connect(self._on_drag_started)
             lst.card_dropped.connect(lambda c=col: self._on_card_dropped(c))
+            lst.setContextMenuPolicy(Qt.CustomContextMenu)
+            lst.customContextMenuRequested.connect(
+                lambda pos, li=lst: self._on_card_context_menu(li, pos))
             self._col_lists[col] = lst
             col_v.addWidget(lst, 1)
             board.addLayout(col_v, 1)
@@ -1024,17 +1081,19 @@ class MyWorkScreen(QWidget):
         grid.addWidget(self._assigned_combo, 1, 1, 1, 3)
 
         grid.addWidget(_lbl("Iteration"), 2, 0)
-        self._iteration_edit = QLineEdit()
-        self._iteration_edit.textChanged.connect(self._on_edit)
-        grid.addWidget(self._iteration_edit, 2, 1, 1, 3)
+        self._iteration_combo = QComboBox()
+        self._iteration_combo.setToolTip("Select from the project's iterations")
+        self._iteration_combo.currentIndexChanged.connect(self._on_edit)
+        grid.addWidget(self._iteration_combo, 2, 1, 1, 3)
 
         grid.addWidget(_lbl("Area"), 3, 0)
-        self._area_edit = QLineEdit()
-        self._area_edit.textChanged.connect(self._on_edit)
-        grid.addWidget(self._area_edit, 3, 1, 1, 3)
+        self._area_combo = QComboBox()
+        self._area_combo.setToolTip("Select from the project's areas")
+        self._area_combo.currentIndexChanged.connect(self._on_edit)
+        grid.addWidget(self._area_combo, 3, 1, 1, 3)
 
         grid.addWidget(_lbl("Tags"), 4, 0)
-        self._tags_edit = QLineEdit()
+        self._tags_edit = TagLineEdit()
         self._tags_edit.setPlaceholderText("tag1; tag2")
         self._tags_edit.textChanged.connect(self._on_edit)
         grid.addWidget(self._tags_edit, 4, 1, 1, 3)
@@ -1049,6 +1108,18 @@ class MyWorkScreen(QWidget):
         self._completed_edit.setPlaceholderText("hours")
         self._completed_edit.textChanged.connect(self._on_edit)
         grid.addWidget(self._completed_edit, 5, 3)
+
+        grid.addWidget(_lbl("Estimate"), 6, 0)
+        self._estimate_edit = QLineEdit()
+        self._estimate_edit.setPlaceholderText("hours")
+        self._estimate_edit.setToolTip("Original Estimate (hours)")
+        self._estimate_edit.textChanged.connect(self._on_edit)
+        grid.addWidget(self._estimate_edit, 6, 1)
+        grid.addWidget(_lbl("Activity"), 6, 2)
+        self._activity_combo = QComboBox()
+        self._activity_combo.setToolTip("Activity (Development, Testing, …)")
+        self._activity_combo.currentIndexChanged.connect(self._on_edit)
+        grid.addWidget(self._activity_combo, 6, 3)
         v.addLayout(grid)
 
         self._desc_lbl = _lbl("Description")
@@ -1140,11 +1211,15 @@ class MyWorkScreen(QWidget):
         self._type_combo.clear_checks()
         self._on_filter_changed()
 
+    def _visible_items(self) -> list:
+        """Board items minus the ones the user has locally hidden."""
+        return [wi for wi in self._items if wi.id not in self._hidden]
+
     def _filtered_sorted(self) -> list:
         query = self._search.text().strip().lower()
         types = set(self._type_combo.checked_data())
         items = [
-            wi for wi in self._items
+            wi for wi in self._visible_items()
             if (not types or wi.type in types)
             and (not query or query in wi.title.lower() or query == str(wi.id))
         ]
@@ -1198,14 +1273,19 @@ class MyWorkScreen(QWidget):
             for col, lbl in self._col_labels.items():
                 lbl.setText(f"<b>{col}</b>  <span style='color:{theme.tokens()['text_dim2']}'>"
                             f"{counts[col]}</span>")
-            total = len(self._items)
+            total = len(self._visible_items())   # excludes locally hidden items
+            hidden = sum(1 for wi in self._items if wi.id in self._hidden)
             if self._filters_active() and total:
                 self._count_lbl.setText(f"{shown} of {total} items")
             else:
                 self._count_lbl.setText(f"{total} item{'s' if total != 1 else ''}"
                                         if self._loaded_key else "")
             self._empty_lbl.setVisible(self._loaded_key is not None and total == 0)
-            if total == 0:
+            if total == 0 and hidden:
+                self._empty_lbl.setText(
+                    f"All {hidden} item{'s' if hidden != 1 else ''} here are hidden — "
+                    "use “Hidden” to bring them back.")
+            elif total == 0:
                 self._empty_lbl.setText(
                     f"No work items on the {self._scope['team']} board."
                     if self._scope.get("mode") == "team"
@@ -1292,13 +1372,17 @@ class MyWorkScreen(QWidget):
 
             idx = self._priority_combo.findData(wi.priority)
             self._priority_combo.setCurrentIndex(idx if idx >= 0 else 0)
-            self._iteration_edit.setText(wi.iteration_path)
-            self._area_edit.setText(wi.area_path)
+            self._fill_path_combo(self._iteration_combo, self._iterations,
+                                  wi.iteration_path)
+            self._fill_path_combo(self._area_combo, self._areas, wi.area_path)
             self._tags_edit.setText(wi.tags)
             self._remaining_edit.setText(
                 "" if wi.remaining_work is None else str(wi.remaining_work))
             self._completed_edit.setText(
                 "" if wi.completed_work is None else str(wi.completed_work))
+            self._estimate_edit.setText(
+                "" if wi.original_estimate is None else str(wi.original_estimate))
+            self._populate_activity(wi)
 
             self._load_description(wi)
             self._save_status.setText("")
@@ -1387,20 +1471,23 @@ class MyWorkScreen(QWidget):
             self._show_description(wi, primary, fallback)
 
     def _show_description(self, wi: WorkItem, primary: str, fallback: str):
-        """Show the primary rich-text field as plain text; fall back to the other
-        when the primary is empty. Edits write back to whichever was shown."""
+        """Render the primary rich-text field as Markdown (headings, bold, tables
+        all show); fall back to the other when the primary is empty. Edits write
+        back to whichever was shown, re-serialised to HTML on save."""
         raw_primary = wi.fields.get(primary, "") or ""
         raw_fallback = wi.fields.get(fallback, "") or ""
         self._desc_field = primary if (raw_primary or not raw_fallback) else fallback
-        text = html_to_text(raw_primary or raw_fallback)
+        md = html_to_markdown(raw_primary or raw_fallback)
         self._suspend = True
         try:
             self._desc_edit.setEnabled(True)
             self._desc_edit.setPlaceholderText("Description")
-            self._desc_edit.setPlainText(text)
+            self._desc_edit.setMarkdown(md)
         finally:
             self._suspend = False
-        self._desc_original = text
+        # Baseline off the widget's own normalised Markdown so an untouched
+        # description never looks "changed" (setMarkdown/toMarkdown round-trip).
+        self._desc_original = self._desc_edit.toMarkdown()
 
     # ------------------------------------------------------------------ #
     #  Editing / saving                                                   #
@@ -1422,6 +1509,39 @@ class MyWorkScreen(QWidget):
             return None
         return float(text)
 
+    def _fill_path_combo(self, combo, values, current):
+        """Fill an Area/Iteration combo with the project's discovered paths,
+        selecting the item's current value (inserted if discovery somehow lacks
+        it, so nothing is silently lost). Called under _suspend."""
+        combo.clear()
+        vals = list(values)
+        if current and current not in vals:
+            vals.insert(0, current)
+        for v in vals:
+            # Show the path without the repeated project-root prefix; keep the
+            # full path as the item data (that's what the Save diff/PATCH uses).
+            combo.addItem(_strip_path_root(v), v)
+            combo.setItemData(combo.count() - 1, v, Qt.ToolTipRole)  # full path on hover
+        idx = combo.findData(current)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _populate_activity(self, wi: WorkItem):
+        """Fill the Activity combo with the type's allowed values (blank first),
+        selecting the item's current value. Disabled for types with no Activity
+        field. Called under _suspend, so signals won't mark the form dirty."""
+        combo = self._activity_combo
+        combo.clear()
+        combo.addItem("—", "")
+        values = self._activities_by_type.get(wi.type, []) or []
+        for val in values:
+            combo.addItem(val, val)
+        cur = wi.activity
+        if cur and cur not in values:
+            combo.addItem(cur, cur)   # honour a value outside the discovered list
+        idx = combo.findData(cur or "")
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.setEnabled(bool(values) or bool(cur))
+
     def _collect_changes(self) -> dict:
         """Diff the form against the current item — only what changed is sent
         (so untouched fields can never be clobbered, and processes without a
@@ -1437,24 +1557,32 @@ class MyWorkScreen(QWidget):
         prio = self._priority_combo.currentData()
         if prio is not None and prio != wi.priority:
             changes["Microsoft.VSTS.Common.Priority"] = prio
-        iteration = self._iteration_edit.text().strip()
+        iteration = self._iteration_combo.currentData() or ""
         if iteration and iteration != wi.iteration_path:
             changes["System.IterationPath"] = iteration
-        area = self._area_edit.text().strip()
+        area = self._area_combo.currentData() or ""
         if area and area != wi.area_path:
             changes["System.AreaPath"] = area
         tags = self._tags_edit.text().strip()
         if tags != wi.tags:
             changes["System.Tags"] = tags
-        desc = self._desc_edit.toPlainText()
+        # The editor holds Markdown; ADO's field is HTML, so serialise on save.
+        # Diff on Markdown (stable) but send HTML.
+        desc = self._desc_edit.toMarkdown()
         if self._desc_edit.isEnabled() and desc != self._desc_original:
-            changes[self._desc_field] = desc
+            changes[self._desc_field] = markdown_to_html(desc)
         remaining = self._parse_hours(self._remaining_edit.text())
         if remaining is not None and remaining != wi.remaining_work:
             changes["Microsoft.VSTS.Scheduling.RemainingWork"] = remaining
         completed = self._parse_hours(self._completed_edit.text())
         if completed is not None and completed != wi.completed_work:
             changes["Microsoft.VSTS.Scheduling.CompletedWork"] = completed
+        estimate = self._parse_hours(self._estimate_edit.text())
+        if estimate is not None and estimate != wi.original_estimate:
+            changes[_ORIGINAL] = estimate
+        activity = self._activity_combo.currentData() or ""
+        if activity != wi.activity:
+            changes[_ACTIVITY] = activity   # "" clears the Activity
         return changes
 
     def _on_save(self):
@@ -1492,7 +1620,7 @@ class MyWorkScreen(QWidget):
             wi.fields.update(fresh or changes)
             wi.fields["_id"] = wid
             if self._desc_field in changes:
-                self._desc_original = self._desc_edit.toPlainText()
+                self._desc_original = self._desc_edit.toMarkdown()
         self._set_dirty(False)
         self._set_save_status("Saved ✓", ok=True)
         self._rebuild()   # title/priority on the card may have changed
@@ -1933,6 +2061,81 @@ class MyWorkScreen(QWidget):
             webbrowser.open(self._web_url(self._current.id))
 
     # ------------------------------------------------------------------ #
+    #  Hide / unhide (local only — never touches ADO)                     #
+    # ------------------------------------------------------------------ #
+
+    def _on_card_context_menu(self, lst, pos):
+        """Right-click a card → open in browser / hide it."""
+        item = lst.itemAt(pos)
+        if item is None:
+            return
+        wi = item.data(Qt.UserRole)
+        if wi is None or wi.id is None:
+            return
+        menu = QMenu(self)
+        open_act = menu.addAction("Open in Azure DevOps")
+        menu.addSeparator()
+        hide_act = menu.addAction(f"Hide #{wi.id}")
+        act = menu.exec_(lst.viewport().mapToGlobal(pos))
+        if act == open_act:
+            webbrowser.open(self._web_url(wi.id))
+        elif act == hide_act:
+            self._hide_item(wi)
+
+    def _hide_item(self, wi: WorkItem):
+        self._hidden.add(wi.id)
+        self._persist_hidden()
+        # If the hidden card was open in the editor, clear the editor.
+        if self._current is not None and self._current.id == wi.id:
+            self._current = None
+            self._show_placeholder()
+        self._rebuild()
+        self._update_hidden_btn()
+        self._status_lbl.setText(f"Hid #{wi.id} — undo it from “Hidden”.")
+
+    def _unhide(self, wid):
+        self._hidden.discard(wid)
+        self._persist_hidden()
+        self._rebuild()
+        self._update_hidden_btn()
+
+    def _unhide_all(self):
+        self._hidden.clear()
+        self._persist_hidden()
+        self._rebuild()
+        self._update_hidden_btn()
+
+    def _persist_hidden(self):
+        from app.utils.settings import save_hidden_work_items
+        save_hidden_work_items(self.app_state.token_manager.org_url, self._hidden)
+
+    def _update_hidden_btn(self):
+        n = len(self._hidden)
+        self._hidden_btn.setVisible(n > 0)
+        self._hidden_btn.setText(f"Hidden ({n})" if n else "Hidden")
+
+    def _show_hidden_menu(self):
+        """Menu listing hidden items (title if known, else just the id) with a
+        per-item unhide plus 'Unhide all'."""
+        if not self._hidden:
+            return
+        titles = {wi.id: wi.title for wi in self._items}
+        menu = QMenu(self)
+        header = menu.addAction(f"Hidden items ({len(self._hidden)})")
+        header.setEnabled(False)
+        menu.addSeparator()
+        for wid in sorted(self._hidden):
+            title = titles.get(wid, "")
+            label = f"#{wid}  {title}" if title else f"#{wid}"
+            if len(label) > 60:
+                label = label[:57] + "…"
+            act = menu.addAction(label)
+            act.triggered.connect(lambda _=False, w=wid: self._unhide(w))
+        menu.addSeparator()
+        menu.addAction("Unhide all").triggered.connect(self._unhide_all)
+        menu.exec_(QCursor.pos())
+
+    # ------------------------------------------------------------------ #
     #  Theme                                                              #
     # ------------------------------------------------------------------ #
 
@@ -1950,6 +2153,8 @@ class MyWorkScreen(QWidget):
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._new_btn.setStyleSheet(theme.btn_neutral_qss())
         self._new_btn.setIcon(icons.icon("plus", size=15))
+        self._hidden_btn.setStyleSheet(theme.btn_neutral_qss())
+        self._hidden_btn.setIcon(icons.icon("minus", size=15))
         self._clear_btn.setStyleSheet(theme.btn_ghost_qss("padding: 4px;"))
         self._clear_btn.setIcon(icons.icon("x", size=13))
         self._open_btn.setStyleSheet(theme.btn_ghost_qss())

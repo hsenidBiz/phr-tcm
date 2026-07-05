@@ -403,6 +403,40 @@ class DevOpsClient:
                        for v in data.get("values", [])],
         }
 
+    def get_classification_paths(self, structure: str) -> list:
+        """GET the project's Area or Iteration tree flattened to path strings
+        (e.g. 'HRM\\Gamma Guardians\\Sprint 9'), matching the values stored in
+        System.AreaPath / System.IterationPath. `structure` is 'areas' or
+        'iterations'. Cached per structure. Read only."""
+        cache = getattr(self, "_classification_cache", None)
+        if cache is None:
+            cache = self._classification_cache = {}
+        if structure in cache:
+            return cache[structure]
+        url = (f"{self._base()}/wit/classificationnodes/{structure}"
+               f"?$depth=14&api-version={API_VERSION}")
+        paths: list = []
+        try:
+            resp = self._session.get(
+                url, headers=self.tm.get_json_headers(), timeout=20)
+            root = self._handle(resp)
+
+            def _walk(node, prefix):
+                # Build the path from node names (root name == project), NOT the
+                # node's own `path` field — that carries an extra \Area/\Iteration
+                # segment the stored field values don't have.
+                name = node.get("name", "")
+                path = f"{prefix}\\{name}" if prefix else name
+                paths.append(path)
+                for child in node.get("children", []) or []:
+                    _walk(child, path)
+
+            _walk(root, "")
+        except Exception:
+            paths = []   # discovery failed — editor falls back to current value
+        cache[structure] = paths
+        return paths
+
     def get_work_item_states(self, wi_type: str) -> list:
         """GET the states defined for a work-item type on this project's process,
         each {name, color, category}. `category` (Proposed/InProgress/Resolved/
@@ -424,6 +458,29 @@ class DevOpsClient:
         ]
         cache[wi_type] = states
         return states
+
+    def get_field_allowed_values(self, wi_type: str, field_ref: str) -> list:
+        """GET the allowed (picklist) values for a field on a work-item type in
+        this project's process — e.g. Microsoft.VSTS.Common.Activity. Returns a
+        list of strings (empty if the type has no such field / no picklist).
+        Cached per (type, field). Read only."""
+        cache = getattr(self, "_field_values_cache", None)
+        if cache is None:
+            cache = self._field_values_cache = {}
+        key = (wi_type, field_ref)
+        if key in cache:
+            return cache[key]
+        from urllib.parse import quote
+        url = (f"{self._base()}/wit/workitemtypes/{quote(wi_type)}"
+               f"/fields/{quote(field_ref)}?api-version={API_VERSION}")
+        try:
+            resp = self._session.get(
+                url, headers=self.tm.get_json_headers(), timeout=20)
+            values = list(self._handle(resp).get("allowedValues", []) or [])
+        except Exception:
+            values = []   # field absent on this type / process — no picklist
+        cache[key] = values
+        return values
 
     def update_work_item_fields(self, wi_id: int, fields: dict) -> dict:
         """PATCH a work item's fields ({reference_name: value}); the 'add' op

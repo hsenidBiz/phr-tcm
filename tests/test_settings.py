@@ -72,3 +72,24 @@ def test_missing_draft_returns_empty(monkeypatch, tmp_path):
     _redirect(monkeypatch, tmp_path)
     assert settings.load_draft_queue() == []
     settings.clear_draft_queue()  # no-op on a missing file, must not raise
+
+
+def test_hidden_work_items_round_trip_per_org(monkeypatch, tmp_path):
+    _redirect(monkeypatch, tmp_path)
+    org_a = "https://dev.azure.com/a"
+    org_b = "https://dev.azure.com/b"
+    settings.save_hidden_work_items(org_a, {3, 1, 2})
+    settings.save_hidden_work_items(org_b, {9})
+    assert settings.load_hidden_work_items(org_a) == {1, 2, 3}
+    assert settings.load_hidden_work_items(org_b) == {9}
+    assert settings.load_hidden_work_items("https://dev.azure.com/none") == set()
+
+
+def test_hidden_work_items_empty_drops_entry(monkeypatch, tmp_path):
+    _redirect(monkeypatch, tmp_path)
+    org = "https://dev.azure.com/a"
+    settings.save_hidden_work_items(org, {5})
+    settings.save_hidden_work_items(org, set())   # unhid everything
+    on_disk = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+    assert org not in on_disk.get("hidden_work_items", {})
+    assert settings.load_hidden_work_items(org) == set()

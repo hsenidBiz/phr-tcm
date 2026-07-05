@@ -9,6 +9,12 @@ from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QBrush, QCursor, QKeySequence
 
 
+def _esc(text) -> str:
+    """HTML-escape a value for the rich-text confirmation dialog."""
+    return (str(text).replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+
+
 class _WrapDelegate(QStyledItemDelegate):
     """Sizes each row to fit its word-wrapped text, so long step / expected
     values are shown in full across several lines instead of being elided.
@@ -681,18 +687,61 @@ class ReviewScreen(QWidget):
         else:
             what = f"Create {n_creates} Test Case{'s' if n_creates != 1 else ''}"
 
-        parts = [f"{what} for PBI #{self.app_state.pbi_id}?"]
+        box = QMessageBox(self)
+        box.setWindowTitle("Confirm Creation")
+        box.setIcon(QMessageBox.Question)
+        box.setTextFormat(Qt.RichText)
+        box.setText(f"<b>{what} for PBI #{self.app_state.pbi_id}?</b>")
+
+        info = [self._destination_html(has_new=n_creates > 0)]
         note = self._plan_creation_note()
         if note:
-            parts.append(note)
-        parts.append("This cannot be undone.")
+            info.append(_esc(note))
+        info.append("<b>This cannot be undone.</b>")
+        box.setInformativeText("<br><br>".join(p for p in info if p))
 
-        reply = QMessageBox.question(
-            self,
-            "Confirm Creation",
-            "\n\n".join(parts),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply == QMessageBox.Yes:
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        if box.exec_() == QMessageBox.Yes:
             self.confirmed.emit()
+
+    def _destination_html(self, has_new: bool) -> str:
+        """A small labelled table spelling out exactly where the queued cases
+        land: project, PBI, and (for new cases) the test plan/suite/area/iteration
+        they'll be created in."""
+        st = self.app_state
+        rows = []
+
+        def row(label, value):
+            rows.append(
+                f"<tr><td style='padding:1px 14px 1px 0;color:#888;"
+                f"white-space:nowrap;vertical-align:top;'>{label}</td>"
+                f"<td style='padding:1px 0;'>{value}</td></tr>")
+
+        project = getattr(st.token_manager, "project", "") or ""
+        if project:
+            row("Project", _esc(project))
+        pbi = f"#{st.pbi_id}"
+        if st.pbi_title:
+            pbi += f" — {_esc(st.pbi_title)}"
+        row("PBI", pbi)
+
+        if has_new:
+            resolved = getattr(st, "test_plan_pbi", None) == st.pbi_id
+            name = getattr(st, "test_plan_name", "")
+            if resolved and name:
+                tag = "exists" if st.test_plan_id else "will be created"
+                row("Test Plan", f"{_esc(name)} "
+                                 f"<span style='color:#888;'>({tag})</span>")
+            else:
+                row("Test Plan", "<i>Created automatically</i>")
+            if resolved and st.suite_id:
+                row("Suite", "Existing requirement suite")
+            else:
+                row("Suite", "<i>Created automatically</i>")
+            if st.area_path:
+                row("Area", _esc(st.area_path))
+            if st.iteration_path:
+                row("Iteration", _esc(st.iteration_path))
+
+        return "<table cellspacing='0'>" + "".join(rows) + "</table>"

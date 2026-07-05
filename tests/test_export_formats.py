@@ -140,6 +140,19 @@ def test_html_export_contains_cases_and_escapes(tmp_path):
     assert "<script>" in text and "tc-search" in text.split("<script>")[1]
 
 
+def test_write_temp_html_creates_report_file():
+    records = export_formats.queue_to_records(_sample_queue())
+    path = export_formats.write_temp_html(records, subtitle="2 test case(s)")
+    try:
+        assert path.endswith(".html")
+        text = open(path, encoding="utf-8").read()
+        assert text.startswith("<!DOCTYPE html>")
+        assert "Login as admin" in text
+    finally:
+        import os
+        os.remove(path)
+
+
 def test_cases_to_records_maps_api_fields():
     from app.utils.xml_builder import build_steps_xml
     api_case = {

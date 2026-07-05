@@ -53,7 +53,7 @@ _ALLOWED_KEYS = {
     "mine_only_filter", "status_filter", "module_filter", "templates",
     "execution_notes", "test_plan_cache", "always_on_top",
     "window_geometry", "edit_splitter_sizes", "suite_splitter_sizes",
-    "visible_tabs", "demo_mode",
+    "visible_tabs", "demo_mode", "hidden_work_items",
 }
 
 
@@ -97,6 +97,40 @@ def save_execution_note(tc_id, text: str):
     else:
         notes.pop(key, None)
     save_settings({"execution_notes": notes})
+
+
+# ------------------------------------------------------------------ #
+#  Work Manager — locally hidden work items (never sent to ADO)       #
+#  Scoped per org so hiding an item in one org can't affect another.  #
+# ------------------------------------------------------------------ #
+
+def load_hidden_work_items(org_url: str) -> set:
+    """The set of work-item ids the user has hidden on the Work Manager board
+    for the given org."""
+    data = load_settings().get("hidden_work_items", {})
+    ids = data.get(org_url or "", []) if isinstance(data, dict) else []
+    if not isinstance(ids, list):
+        return set()
+    out = set()
+    for i in ids:
+        try:
+            out.add(int(i))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def save_hidden_work_items(org_url: str, ids) -> None:
+    """Persist the hidden work-item ids for an org (replacing that org's list)."""
+    data = load_settings().get("hidden_work_items", {})
+    if not isinstance(data, dict):
+        data = {}
+    cleaned = sorted({int(i) for i in ids})
+    if cleaned:
+        data[org_url or ""] = cleaned
+    else:
+        data.pop(org_url or "", None)   # nothing hidden — drop the empty entry
+    save_settings({"hidden_work_items": data})
 
 
 # ------------------------------------------------------------------ #

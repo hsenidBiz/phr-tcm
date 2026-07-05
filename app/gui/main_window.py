@@ -630,6 +630,11 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         # Warm-load the PBI's existing cases so module autocomplete and
         # duplicate-title detection work before the Edit tab is ever opened.
         self.edit_widget.ensure_loaded()
+        # Warm-load the whole test plan/suite tree in the background (with a
+        # progress bar) so the Test Suites tab is populated before it's opened.
+        # Skipped when that tab is hidden via Settings — no point fetching then.
+        if "suites" in self._visible_tabs:
+            self.suites_widget.preload()
         # Fresh arrival from Config lands on Import File; returning via "Back"
         # from Review keeps whatever tab the user last had open.
         if land_on_import:

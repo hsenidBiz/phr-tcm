@@ -14,9 +14,10 @@ WORK_ITEM_FIELDS = [
     "System.Id", "System.Title", "System.WorkItemType", "System.State",
     "System.AssignedTo", "System.CreatedBy", "System.ChangedDate",
     "System.AreaPath", "System.IterationPath", "System.Tags", "System.Rev",
-    "Microsoft.VSTS.Common.Priority",
+    "Microsoft.VSTS.Common.Priority", "Microsoft.VSTS.Common.Activity",
     "Microsoft.VSTS.Scheduling.RemainingWork",
     "Microsoft.VSTS.Scheduling.CompletedWork",
+    "Microsoft.VSTS.Scheduling.OriginalEstimate",
 ]
 
 # The three board columns, and the ADO state *category* that lands in each.
@@ -89,6 +90,14 @@ class WorkItem:
     @property
     def completed_work(self):
         return self.fields.get("Microsoft.VSTS.Scheduling.CompletedWork")
+
+    @property
+    def original_estimate(self):
+        return self.fields.get("Microsoft.VSTS.Scheduling.OriginalEstimate")
+
+    @property
+    def activity(self) -> str:
+        return self.fields.get("Microsoft.VSTS.Common.Activity", "") or ""
 
     def identity(self, ref: str):
         """(displayName, uniqueName) for an identity field, or ('', '')."""

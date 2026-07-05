@@ -14,11 +14,13 @@ anything in Azure DevOps.
 """
 
 import webbrowser
+from pathlib import Path
 from urllib.parse import quote
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView,
+    QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView, QProgressBar,
+    QMessageBox,
 )
 from PyQt5.QtCore import Qt, QThreadPool, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor, QCursor
@@ -73,6 +75,8 @@ class SuiteBrowserScreen(QWidget):
         self._points_cache = {}          # (plan_id, suite_id) -> list[point dict]
         self._current_suite = None       # (plan_id, suite_id) shown on the right
         self._current_suite_data = None  # full node data of the shown suite
+        self._preloading = False         # eager background load (post-login) in flight
+        self._preload_pending = 0        # plans whose suites are still loading
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -101,14 +105,33 @@ class SuiteBrowserScreen(QWidget):
             self._loaded_key = key
             self._load_plans(use_cache=True)
 
+    def preload(self):
+        """Warm-load the whole plan/suite tree in the background as soon as the
+        user reaches the main screen — before the Test Suites tab is ever opened
+        — so it's already populated on arrival. A progress bar tracks how many
+        plans' suites have loaded. No-op once the current project is loaded."""
+        key = self._key()
+        if key is None or key == self._loaded_key:
+            return
+        self._reset()
+        self._loaded_key = key
+        self._preloading = True
+        self._load_plans(use_cache=True)
+
     def _reset(self):
         self._gen += 1
         self._points_req += 1
         self._points_cache.clear()
         self._current_suite = None
+        self._preloading = False
+        self._preload_pending = 0
+        self._end_progress()
         self._tree.clear()
         self._points.clear()
         self._show_points_hint("Select a test suite to see its test points.")
+
+    def _end_progress(self):
+        self._progress.hide()
 
     def _on_refresh(self):
         """Manual refresh: drop every cache and re-fetch the plan list."""
@@ -123,6 +146,11 @@ class SuiteBrowserScreen(QWidget):
         self._tree_status.setText("Loading test plans…")
         self._tree_status.show()
         self._refresh_btn.setEnabled(False)
+        # Busy (indeterminate) until the plan count is known; a preload then
+        # switches it to a determinate "N / M plans" bar once suites start.
+        self._progress.setTextVisible(False)
+        self._progress.setRange(0, 0)
+        self._progress.show()
         worker = Worker(self.app_state.client.get_test_plans, use_cache=use_cache)
         worker.signals.result.connect(lambda plans: self._on_plans(gen, plans))
         worker.signals.error.connect(lambda exc: self._on_plans_error(gen, exc))
@@ -134,10 +162,13 @@ class SuiteBrowserScreen(QWidget):
         self._refresh_btn.setEnabled(True)
         self._tree_status.hide()
         if not plans:
+            self._end_progress()
+            self._preloading = False
             self._tree_status.setText("No test plans exist in this project yet.")
             self._tree_status.show()
             return
         plan_icon = icons.icon("briefcase", size=15)
+        plan_items = []
         for plan in sorted(plans, key=lambda p: (p.get("name") or "").lower()):
             item = QTreeWidgetItem([plan.get("name", "") or f"Plan {plan.get('id')}"])
             item.setIcon(0, plan_icon)
@@ -147,12 +178,66 @@ class SuiteBrowserScreen(QWidget):
             self._tree.addTopLevelItem(item)
             # Dummy child so the expander arrow shows before the suites load.
             item.addChild(self._info_item("Loading…", kind="loading"))
+            plan_items.append((item, plan.get("id")))
         self._apply_tree_filter()
+        if self._preloading:
+            self._start_suite_preload(gen, plan_items)
+        else:
+            self._end_progress()
+
+    def _start_suite_preload(self, gen: int, plan_items: list):
+        """Eagerly fetch every plan's suites in the background, advancing the
+        progress bar as each plan resolves. Marking each plan 'loaded' up front
+        means a user expand during the preload won't trigger a duplicate fetch."""
+        self._preload_pending = len(plan_items)
+        self._progress.setRange(0, len(plan_items))
+        self._progress.setValue(0)
+        self._progress.setFormat("Loading suites… %v / %m plans")
+        self._progress.setTextVisible(True)
+        self._progress.show()
+        for item, plan_id in plan_items:
+            data = item.data(0, _ROLE) or {}
+            data["loaded"] = True
+            item.setData(0, _ROLE, data)
+            worker = Worker(self.app_state.client.get_all_suites, plan_id)
+            worker.signals.result.connect(
+                lambda suites, it=item, pid=plan_id:
+                self._on_preload_suites(gen, it, pid, suites))
+            worker.signals.error.connect(
+                lambda exc, it=item, pid=plan_id:
+                self._on_preload_suites_error(gen, it, pid, exc))
+            QThreadPool.globalInstance().start(worker)
+
+    def _on_preload_suites(self, gen: int, item: QTreeWidgetItem, plan_id: int,
+                           suites: list):
+        if gen != self._gen:
+            return
+        self._on_suites(gen, item, plan_id, suites)
+        self._preload_step(gen)
+
+    def _on_preload_suites_error(self, gen: int, item: QTreeWidgetItem,
+                                 plan_id: int, exc: Exception):
+        if gen != self._gen:
+            return
+        # Leaves the plan retryable (via expand); the preload still advances.
+        self._on_suites_error(gen, item, plan_id, exc)
+        self._preload_step(gen)
+
+    def _preload_step(self, gen: int):
+        if gen != self._gen:
+            return
+        self._preload_pending -= 1
+        self._progress.setValue(self._progress.maximum() - max(self._preload_pending, 0))
+        if self._preload_pending <= 0:
+            self._preloading = False
+            self._end_progress()
 
     def _on_plans_error(self, gen: int, exc: Exception):
         if gen != self._gen:
             return
         self._refresh_btn.setEnabled(True)
+        self._preloading = False
+        self._end_progress()
         self._loaded_key = None   # retry on next show
         self._tree_status.setText(f"Could not load test plans: {exc}")
         self._tree_status.show()
@@ -342,6 +427,7 @@ class SuiteBrowserScreen(QWidget):
         if hasattr(self, "_run_btn"):
             self._run_btn.setEnabled(on)
             self._edit_btn.setEnabled(on)
+            self._view_btn.setEnabled(on)
 
     def set_send_targets(self, run_visible: bool, edit_visible: bool):
         """Show/hide the 'Run Tests' and 'Edit' send buttons to match which
@@ -352,10 +438,9 @@ class SuiteBrowserScreen(QWidget):
             self._run_btn.setVisible(run_visible)
             self._edit_btn.setVisible(edit_visible)
 
-    def _send_cases(self, signal):
-        """Emit the selected test-case ids (or all shown if none selected) plus
-        the suite context for the Run Tests / Edit tab to load. Rows carry their
-        test_case_id in the _ROLE data (column 0)."""
+    def _shown_case_ids(self) -> list:
+        """The selected point rows' test-case ids, or all shown if none selected.
+        Rows carry their test_case_id in the _ROLE data (column 0)."""
         selected = self._points.selectedItems()
         rows = selected or [self._points.topLevelItem(i)
                             for i in range(self._points.topLevelItemCount())]
@@ -364,6 +449,12 @@ class SuiteBrowserScreen(QWidget):
             cid = it.data(0, _ROLE)
             if cid and cid not in ids:
                 ids.append(int(cid))
+        return ids
+
+    def _send_cases(self, signal):
+        """Emit the selected test-case ids (or all shown if none selected) plus
+        the suite context for the Run Tests / Edit tab to load."""
+        ids = self._shown_case_ids()
         if not ids or not self._current_suite_data:
             return
         data = self._current_suite_data
@@ -380,6 +471,44 @@ class SuiteBrowserScreen(QWidget):
                 "pbi_title": name,
             },
         })
+
+    def _on_view_suite(self):
+        """Fetch the full test cases behind the shown/selected points and open a
+        formatted HTML report in the browser — no file for the user to manage.
+        Unlike the points table (a summary), this includes every case's steps."""
+        ids = self._shown_case_ids()
+        client = self.app_state.client
+        if not ids or client is None:
+            return
+        name = (self._current_suite_data or {}).get("base_name", "")
+        self._view_btn.setEnabled(False)
+        self._view_btn.setText("  Opening…")
+        worker = Worker(self._build_suite_html, client, ids, name)
+        worker.signals.result.connect(self._on_view_ready)
+        worker.signals.error.connect(self._on_view_error)
+        QThreadPool.globalInstance().start(worker)
+
+    @staticmethod
+    def _build_suite_html(client, ids, suite_name):
+        from app.utils import export_formats
+        cases = client.get_test_cases_by_ids(ids)
+        records = export_formats.cases_to_records(cases, None, None)
+        subtitle = (f"Suite “{suite_name}” — {len(records)} test case(s)"
+                    if suite_name else f"{len(records)} test case(s)")
+        return export_formats.write_temp_html(records, subtitle=subtitle)
+
+    def _on_view_ready(self, path: str):
+        webbrowser.open(Path(path).as_uri())
+        self._reset_view_btn()
+
+    def _on_view_error(self, exc: Exception):
+        self._reset_view_btn()
+        QMessageBox.critical(self, "View Error", f"Could not open report:\n{exc}")
+
+    def _reset_view_btn(self):
+        self._view_btn.setText("  View")
+        # Re-enable only while a suite's points are still on screen.
+        self._view_btn.setEnabled(self._points.topLevelItemCount() > 0)
 
     def _show_points_hint(self, text: str):
         self._points.hide()
@@ -469,6 +598,12 @@ class SuiteBrowserScreen(QWidget):
         lv.addWidget(self._tree_status)
         self._tree_status.hide()
 
+        self._progress = QProgressBar()
+        self._progress.setFixedHeight(16)
+        self._progress.setTextVisible(False)
+        lv.addWidget(self._progress)
+        self._progress.hide()
+
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setColumnCount(1)
@@ -508,6 +643,14 @@ class SuiteBrowserScreen(QWidget):
         self._edit_btn.setToolTip("Send these test cases to the Edit Test Cases tab")
         self._edit_btn.clicked.connect(lambda: self._send_cases(self.edit_suite_requested))
         rhdr.addWidget(self._edit_btn)
+        self._view_btn = QPushButton("  View")
+        self._view_btn.setIcon(icons.icon("external-link", size=14))
+        self._view_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._view_btn.setEnabled(False)
+        self._view_btn.setToolTip(
+            "Open a formatted report of these test cases in your browser")
+        self._view_btn.clicked.connect(self._on_view_suite)
+        rhdr.addWidget(self._view_btn)
         self._legend = self._build_legend()
         rhdr.addWidget(self._legend)
         rv.addLayout(rhdr)
@@ -614,6 +757,11 @@ class SuiteBrowserScreen(QWidget):
             f"font-size: 14px; font-weight: bold; color: {t['text']};")
         self._count_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
         self._tree_status.setStyleSheet(f"color: {t['text_dim']}; font-size: 12px;")
+        self._progress.setStyleSheet(
+            f"QProgressBar {{ background: {t['surface']}; border: 1px solid {t['border']}; "
+            f"border-radius: 4px; text-align: center; color: {t['text_dim']}; "
+            f"font-size: 11px; }} "
+            f"QProgressBar::chunk {{ background: {t['accent']}; border-radius: 3px; }}")
         self._points_hint.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss("padding: 5px 12px; font-size: 12px;"))
         self._refresh_btn.setIcon(icons.icon("refresh", size=14))
@@ -622,6 +770,8 @@ class SuiteBrowserScreen(QWidget):
         self._run_btn.setIcon(icons.icon("play", size=14))
         self._edit_btn.setStyleSheet(_send_qss)
         self._edit_btn.setIcon(icons.icon("edit", size=14))
+        self._view_btn.setStyleSheet(_send_qss)
+        self._view_btn.setIcon(icons.icon("external-link", size=14))
         self._tree.setStyleSheet(_tree_qss())
         self._points.setStyleSheet(_tree_qss())
         theme.style_inputs(self)

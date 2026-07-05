@@ -103,6 +103,18 @@ class GroupedCaseTree(QTreeWidget):
                     out.append(payload)
         return out
 
+    def select_only_payload(self, payload):
+        """Select exactly the case row carrying `payload`, clearing any other
+        selection. Used to restore a selection after a guarded switch is
+        cancelled. No-op if the payload isn't currently in the tree."""
+        self.clearSelection()
+        for item in self._iter_in_order():
+            if (item.data(0, _KIND_ROLE) == "case"
+                    and item.data(0, _PAYLOAD_ROLE) == payload):
+                item.setSelected(True)
+                self.setCurrentItem(item)
+                return
+
     def _iter_in_order(self):
         """Folders then their children, in visual order — so selection results
         read the same way the tree looks."""

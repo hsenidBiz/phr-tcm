@@ -3,7 +3,26 @@
 Qt-free logic, so it runs under plain pytest (no offscreen Qt needed).
 """
 
-from app.models.work_item import WorkItem, column_for_category
+from app.models.work_item import WORK_ITEM_FIELDS, WorkItem, column_for_category
+
+
+def test_original_estimate_and_activity_properties():
+    wi = WorkItem({
+        "_id": 1,
+        "Microsoft.VSTS.Scheduling.OriginalEstimate": 8.0,
+        "Microsoft.VSTS.Common.Activity": "Development",
+    })
+    assert wi.original_estimate == 8.0
+    assert wi.activity == "Development"
+    # Absent fields degrade cleanly.
+    blank = WorkItem({"_id": 2})
+    assert blank.original_estimate is None
+    assert blank.activity == ""
+
+
+def test_scheduling_fields_are_requested():
+    assert "Microsoft.VSTS.Scheduling.OriginalEstimate" in WORK_ITEM_FIELDS
+    assert "Microsoft.VSTS.Common.Activity" in WORK_ITEM_FIELDS
 
 # A minimal process map: {type: {state: category}}. Real one comes from
 # DevOpsClient.get_work_item_states(); the shape is all column() cares about.

@@ -1,12 +1,13 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QComboBox, QTableWidget, QTableWidgetItem,
+    QPushButton, QComboBox, QTableWidgetItem,
     QHeaderView, QMessageBox, QAbstractItemView, QShortcut
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QCursor, QKeySequence
 
 from app.models.test_case import TestCase, Step
+from app.gui.steps_table import StepsTable
 
 
 class ManualEntryWidget(QWidget):
@@ -100,7 +101,13 @@ class ManualEntryWidget(QWidget):
         steps_header.addWidget(self._remove_step_btn)
         layout.addLayout(steps_header)
 
-        self.steps_table = QTableWidget(0, 2)
+        self.steps_table = StepsTable(0, 2, action_col=0, expected_col=1)
+        self.steps_table.request_add_row.connect(self._add_step)
+        self.steps_table.request_paste.connect(self._on_paste_steps)
+        self.steps_table.request_duplicate.connect(self._on_duplicate_step)
+        self.steps_table.setToolTip(
+            "Enter: next step (adds a row at the end) · Ctrl+V: paste rows · "
+            "Ctrl+D: duplicate step · drag to reorder")
         self.steps_table.setHorizontalHeaderLabels(["Action *", "Expected Result"])
         self.steps_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.steps_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -221,6 +228,42 @@ class ManualEntryWidget(QWidget):
         """Renumber vertical header labels after drag-drop reorder."""
         for r in range(self.steps_table.rowCount()):
             self.steps_table.setVerticalHeaderItem(r, QTableWidgetItem(str(r + 1)))
+
+    def _on_paste_steps(self, start_row: int, pairs: list):
+        """Fill steps from `start_row` downward with pasted (action, expected)
+        pairs — overwriting existing rows and appending new ones as needed, the
+        way pasting a block into a spreadsheet behaves (Ctrl+V)."""
+        tbl = self.steps_table
+        r = max(start_row, 0)
+        for action, expected in pairs:
+            if r >= tbl.rowCount():
+                row = tbl.rowCount()
+                tbl.insertRow(row)
+                tbl.setItem(row, 0, QTableWidgetItem(action))
+                tbl.setItem(row, 1, QTableWidgetItem(expected))
+            else:
+                for c, val in ((0, action), (1, expected)):
+                    it = tbl.item(r, c)
+                    if it is None:
+                        it = QTableWidgetItem()
+                        tbl.setItem(r, c, it)
+                    it.setText(val)
+            r += 1
+        self._renumber_steps_header()
+
+    def _on_duplicate_step(self, row: int):
+        """Insert a copy of `row` directly below it (Ctrl+D)."""
+        tbl = self.steps_table
+        if row < 0 or row >= tbl.rowCount():
+            return
+        a_item = tbl.item(row, 0)
+        e_item = tbl.item(row, 1)
+        action = a_item.text() if a_item else ""
+        expected = e_item.text() if e_item else ""
+        tbl.insertRow(row + 1)
+        tbl.setItem(row + 1, 0, QTableWidgetItem(action))
+        tbl.setItem(row + 1, 1, QTableWidgetItem(expected))
+        self._renumber_steps_header()
 
     def _collect_steps(self) -> list:
         steps = []

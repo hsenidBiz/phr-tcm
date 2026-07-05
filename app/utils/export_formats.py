@@ -250,3 +250,16 @@ def export_records_to_html(records: list, path: str, subtitle: str = ""):
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))
+
+
+def write_temp_html(records: list, subtitle: str = "") -> str:
+    """Render records to an HTML report in a temp file and return its path, for
+    the 'View' buttons that open the report directly in the browser (no save
+    dialog, no file for the user to manage). The temp file is left on disk — the
+    OS reclaims the temp dir, and the browser needs it to stay put while open."""
+    import os
+    import tempfile
+    fd, path = tempfile.mkstemp(prefix="test_cases_", suffix=".html")
+    os.close(fd)
+    export_records_to_html(records, path, subtitle=subtitle)
+    return path
