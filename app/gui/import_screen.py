@@ -13,6 +13,7 @@ from PyQt5.QtGui import QColor, QCursor
 from app.utils.import_parser import parse_file, generate_template
 from app.utils.settings import load_settings, save_settings
 from app.gui import delegates
+from app.gui.frameless import FramelessDialog
 
 _DETAIL = "detail"   # Qt.UserRole marker for step-detail rows
 
@@ -184,6 +185,112 @@ class TagPickerWidget(QWidget):
         self._dropdown.setVisible(False)
 
 
+class CaseDetailDialog(FramelessDialog):
+    """Read-only detail view of a single parsed test case, so the user can
+    inspect the full case — title, metadata, preconditions and every step's
+    action/expected — before adding it to the queue and uploading."""
+
+    def __init__(self, parent, tc):
+        super().__init__(parent, "Test Case Details", resizable=True)
+        from app.utils import theme
+        t = theme.tokens()
+        self._tc = tc
+
+        self.setMinimumSize(560, 480)
+        lay = self.content_layout
+        lay.setSpacing(10)
+
+        # --- Title + new/update badge ---
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_lbl = QLabel(tc.title)
+        title_lbl.setWordWrap(True)
+        title_lbl.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {t['text']};")
+        title_row.addWidget(title_lbl, 1)
+
+        badge = QLabel()
+        if getattr(tc, "update_id", None):
+            badge.setText(f"↻ Updates #{tc.update_id}")
+            badge.setStyleSheet(
+                f"background: {t['tmpl_bg']}; color: {t['accent']}; border: 1px solid "
+                f"{t['tmpl_border']}; border-radius: 10px; padding: 3px 10px; font-size: 11px;"
+            )
+        else:
+            badge.setText("＋ New")
+            badge.setStyleSheet(
+                f"background: {t['green_btn_bg']}; color: {t['text']}; border: 1px solid "
+                f"{t['green_btn_border']}; border-radius: 10px; padding: 3px 10px; font-size: 11px;"
+            )
+        badge.setAlignment(Qt.AlignTop)
+        title_row.addWidget(badge, 0, Qt.AlignTop)
+        lay.addLayout(title_row)
+
+        # --- Metadata grid ---
+        meta = QLabel()
+        meta.setTextFormat(Qt.RichText)
+        meta.setWordWrap(True)
+        rows = [
+            ("Automation status", tc.automation_status or "Not Automated"),
+            ("Tags", tc.tags or "—"),
+            ("Module", tc.module_value or "—"),
+            ("Preconditions", tc.preconditions or "—"),
+        ]
+        html = "<table cellspacing='0' cellpadding='4'>"
+        for label, value in rows:
+            safe = (str(value).replace("&", "&amp;").replace("<", "&lt;")
+                    .replace(">", "&gt;").replace("\n", "<br>"))
+            html += (
+                f"<tr><td style='color:{t['text_dim']};'><b>{label}</b></td>"
+                f"<td style='color:{t['text']};'>{safe}</td></tr>"
+            )
+        html += "</table>"
+        meta.setText(html)
+        lay.addWidget(meta)
+
+        # --- Steps ---
+        steps_lbl = QLabel(f"Steps ({len(tc.steps)})")
+        steps_lbl.setStyleSheet(f"font-weight: bold; color: {t['text']};")
+        lay.addWidget(steps_lbl)
+
+        steps_table = QTableWidget(len(tc.steps), 3)
+        steps_table.setHorizontalHeaderLabels(["#", "Action", "Expected Result"])
+        steps_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        steps_table.setSelectionMode(QTableWidget.NoSelection)
+        steps_table.setWordWrap(True)
+        steps_table.verticalHeader().setVisible(False)
+        theme.style_item_view(steps_table)
+        sh = steps_table.horizontalHeader()
+        sh.setSectionResizeMode(0, QHeaderView.Fixed)
+        sh.setSectionResizeMode(1, QHeaderView.Stretch)
+        sh.setSectionResizeMode(2, QHeaderView.Stretch)
+        steps_table.setColumnWidth(0, 34)
+        for i, step in enumerate(tc.steps):
+            num = QTableWidgetItem(str(i + 1))
+            num.setTextAlignment(Qt.AlignTop | Qt.AlignHCenter)
+            steps_table.setItem(i, 0, num)
+            act = QTableWidgetItem(step.action)
+            act.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
+            steps_table.setItem(i, 1, act)
+            exp = QTableWidgetItem(step.expected or "—")
+            exp.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
+            steps_table.setItem(i, 2, exp)
+        steps_table.resizeRowsToContents()
+        lay.addWidget(steps_table, 1)
+
+        # --- Close ---
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setFixedHeight(32)
+        close_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        close_btn.setStyleSheet(theme.btn_primary_qss("border-radius: 6px; padding: 0 20px;"))
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        lay.addLayout(btn_row)
+
+        self.finalize_frameless()
+
+
 class ImportWidget(QWidget):
     """Tab widget for importing test cases from an Excel or CSV file."""
 
@@ -339,6 +446,17 @@ class ImportWidget(QWidget):
         preview_row.addWidget(preview_lbl)
         preview_row.addStretch()
         from app.utils import theme, icons
+        # Appears only once a file is imported — opens the parsed cases in the
+        # browser via the shared HTML report viewer.
+        self._view_html_btn = QPushButton("View in Browser")
+        self._view_html_btn.setIcon(icons.icon("external-link", size=15))
+        self._view_html_btn.setVisible(False)
+        self._view_html_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._view_html_btn.setToolTip("Open the parsed test cases in your browser to review them")
+        self._view_html_btn.setStyleSheet(theme.btn_ghost_qss("padding: 5px 12px; font-size: 12px;"))
+        self._view_html_btn.clicked.connect(self._on_view_in_browser)
+        preview_row.addWidget(self._view_html_btn)
+
         self._clear_all_btn = QPushButton("Remove all")
         self._clear_all_btn.setIcon(icons.icon("trash", size=15))
         self._clear_all_btn.setEnabled(False)
@@ -361,7 +479,7 @@ class ImportWidget(QWidget):
         hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(5, QHeaderView.Fixed)
         self.preview_table.setColumnWidth(0, 34)
-        self.preview_table.setColumnWidth(5, 36)
+        self.preview_table.setColumnWidth(5, 66)
         self.preview_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.preview_table.setSelectionMode(QTableWidget.NoSelection)
         self.preview_table.setAlternatingRowColors(True)
@@ -457,6 +575,8 @@ class ImportWidget(QWidget):
         self.queue_btn.setIcon(icons.icon("plus", color="white", size=15))
         self._clear_all_btn.setStyleSheet(theme.btn_ghost_qss("padding: 5px 12px; font-size: 12px;"))
         self._clear_all_btn.setIcon(icons.icon("trash", size=15))
+        self._view_html_btn.setStyleSheet(theme.btn_ghost_qss("padding: 5px 12px; font-size: 12px;"))
+        self._view_html_btn.setIcon(icons.icon("external-link", size=15))
         self.tag_picker.refresh_theme()
         # Restyle the per-row expand arrows so they stay visible in dark mode
         expand_style = self._expand_btn_style()
@@ -681,8 +801,16 @@ class ImportWidget(QWidget):
         self.preview_table.setItem(row, 3, QTableWidgetItem(tc.tags or "—"))
         self.preview_table.setItem(row, 4, QTableWidgetItem(tc.module_value or "—"))
 
-        # Col 5 — remove button
+        # Col 5 — view + remove buttons
         from app.utils import theme, icons
+        view_btn = QPushButton()
+        view_btn.setIcon(icons.icon("search", size=13))
+        view_btn.setFixedSize(26, 22)
+        view_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        view_btn.setToolTip("View full test case details")
+        view_btn.setStyleSheet(theme.btn_ghost_qss("border-radius: 3px;"))
+        view_btn.clicked.connect(self._view_case)
+
         remove_btn = QPushButton()
         remove_btn.setIcon(icons.icon("x", size=13))
         remove_btn.setFixedSize(26, 22)
@@ -690,10 +818,13 @@ class ImportWidget(QWidget):
         remove_btn.setToolTip("Remove from preview")
         remove_btn.setStyleSheet(theme.btn_ghost_qss("border-radius: 3px;"))
         remove_btn.clicked.connect(self._remove_case)
+
         _rm_wrap = QWidget()
         _rm_layout = QHBoxLayout(_rm_wrap)
         _rm_layout.setContentsMargins(0, 0, 0, 0)
+        _rm_layout.setSpacing(2)
         _rm_layout.setAlignment(Qt.AlignCenter)
+        _rm_layout.addWidget(view_btn)
         _rm_layout.addWidget(remove_btn)
         self.preview_table.setCellWidget(row, 5, _rm_wrap)
 
@@ -780,6 +911,16 @@ class ImportWidget(QWidget):
     #  Remove case                                                         #
     # ------------------------------------------------------------------ #
 
+    def _view_case(self):
+        """Open a read-only detail dialog for the clicked summary row's case."""
+        btn = self.sender()
+        wrapper = btn.parent()
+        for row in range(self.preview_table.rowCount()):
+            if self.preview_table.cellWidget(row, 5) is wrapper:
+                tc_idx = self._tc_index_for_row(row)
+                CaseDetailDialog(self, self._parsed_cases[tc_idx]).exec_()
+                break
+
     def _remove_case(self):
         btn = self.sender()
         wrapper = btn.parent()
@@ -840,6 +981,26 @@ class ImportWidget(QWidget):
             self.count_label.setText(f"{n} test case{'s' if n != 1 else ''} parsed")
         self.queue_btn.setEnabled(n > 0)
         self._clear_all_btn.setEnabled(n > 0)
+        self._view_html_btn.setVisible(n > 0)
+
+    def _on_view_in_browser(self):
+        """Render the parsed cases with the shared HTML viewer and open them in
+        the default browser, so the user can review them before uploading."""
+        if not self._parsed_cases:
+            return
+        import webbrowser
+        from pathlib import Path
+        from app.utils import export_formats
+        try:
+            records = export_formats.queue_to_records(self._parsed_cases)
+            path = export_formats.write_temp_html(
+                records, subtitle=f"Imported test cases — {len(records)} to review"
+            )
+            webbrowser.open(Path(path).as_uri())
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "View Error", f"Could not open the report in your browser:\n{exc}"
+            )
 
     # ------------------------------------------------------------------ #
     #  Queue                                                               #

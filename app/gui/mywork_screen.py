@@ -23,8 +23,9 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit, QTextEdit,
     QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle, QMenu,
+    QDateEdit, QToolButton,
 )
-from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, pyqtSignal
+from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, QDate, pyqtSignal
 from PyQt5.QtGui import (
     QCursor, QColor, QPalette, QPainter, QPen, QFont, QPixmap, QPainterPath,
 )
@@ -192,6 +193,58 @@ class _ResizableTextEdit(QTextEdit):
         for off in (3, 7, 11):
             p.drawLine(w - off, h - 3, w - 3, h - off)
         p.end()
+
+
+class _ClearableDateEdit(QWidget):
+    """A calendar date-picker that also supports an empty ("not set") state,
+    which a plain QDateEdit can't represent. The minimum date doubles as the
+    "unset" sentinel (shown via special value text); a small ✕ clears back to it.
+    Emits ``changed`` on any edit so the editor's dirty-tracking picks it up."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+
+        self._edit = QDateEdit()
+        self._edit.setCalendarPopup(True)
+        self._edit.setDisplayFormat("yyyy-MM-dd")
+        # Minimum date is the "unset" sentinel; special value text renders it as
+        # a placeholder rather than an actual date.
+        self._edit.setMinimumDate(QDate(1900, 1, 1))
+        self._edit.setSpecialValueText("Not set")
+        self._edit.setDate(self._edit.minimumDate())
+        self._edit.dateChanged.connect(lambda _d: self.changed.emit())
+        lay.addWidget(self._edit, 1)
+
+        self._clear_btn = QToolButton()
+        self._clear_btn.setText("✕")
+        self._clear_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self._clear_btn.setToolTip("Clear date")
+        self._clear_btn.setFixedWidth(22)
+        self._clear_btn.clicked.connect(self.clear)
+        lay.addWidget(self._clear_btn)
+
+    def clear(self):
+        self._edit.setDate(self._edit.minimumDate())
+
+    def set_iso(self, iso: str):
+        """Load a value from an ADO date string (``YYYY-MM-DD...``) or clear."""
+        d = QDate.fromString((iso or "")[:10], "yyyy-MM-dd")
+        if d.isValid():
+            self._edit.setDate(d)
+        else:
+            self.clear()
+
+    def is_set(self) -> bool:
+        return self._edit.date() != self._edit.minimumDate()
+
+    def iso_date(self):
+        """Return ``YYYY-MM-DD`` when set, else ``None``."""
+        return self._edit.date().toString("yyyy-MM-dd") if self.is_set() else None
 
 
 class _CommentEntry(QWidget):
@@ -1120,6 +1173,17 @@ class MyWorkScreen(QWidget):
         self._activity_combo.setToolTip("Activity (Development, Testing, …)")
         self._activity_combo.currentIndexChanged.connect(self._on_edit)
         grid.addWidget(self._activity_combo, 6, 3)
+
+        grid.addWidget(_lbl("Start date"), 7, 0)
+        self._start_date_edit = _ClearableDateEdit()
+        self._start_date_edit.setToolTip("Planned start date (Microsoft.VSTS.Scheduling.StartDate)")
+        self._start_date_edit.changed.connect(self._on_edit)
+        grid.addWidget(self._start_date_edit, 7, 1)
+        grid.addWidget(_lbl("End date"), 7, 2)
+        self._finish_date_edit = _ClearableDateEdit()
+        self._finish_date_edit.setToolTip("Planned finish date (Microsoft.VSTS.Scheduling.FinishDate)")
+        self._finish_date_edit.changed.connect(self._on_edit)
+        grid.addWidget(self._finish_date_edit, 7, 3)
         v.addLayout(grid)
 
         self._desc_lbl = _lbl("Description")
@@ -1263,6 +1327,9 @@ class MyWorkScreen(QWidget):
                 tip = f"#{wi.id}  ·  {wi.type}  ·  {wi.state}"
                 if wi.priority is not None:
                     tip += f"  ·  P{wi.priority}"
+                if wi.start_date or wi.finish_date:
+                    span = f"{(wi.start_date or '')[:10] or '…'} → {(wi.finish_date or '')[:10] or '…'}"
+                    tip += f"  ·  {span}"
                 tip += (f"\n{wi.title}"
                         "\n\nClick to edit here · drag to another column to change "
                         "state · double-click to open in Azure DevOps")
@@ -1382,6 +1449,8 @@ class MyWorkScreen(QWidget):
                 "" if wi.completed_work is None else str(wi.completed_work))
             self._estimate_edit.setText(
                 "" if wi.original_estimate is None else str(wi.original_estimate))
+            self._start_date_edit.set_iso(wi.start_date)
+            self._finish_date_edit.set_iso(wi.finish_date)
             self._populate_activity(wi)
 
             self._load_description(wi)
@@ -1583,6 +1652,13 @@ class MyWorkScreen(QWidget):
         activity = self._activity_combo.currentData() or ""
         if activity != wi.activity:
             changes[_ACTIVITY] = activity   # "" clears the Activity
+        # Dates diff on the YYYY-MM-DD portion; None clears the field in ADO.
+        new_start = self._start_date_edit.iso_date()
+        if new_start != ((wi.start_date or "")[:10] or None):
+            changes["Microsoft.VSTS.Scheduling.StartDate"] = new_start
+        new_finish = self._finish_date_edit.iso_date()
+        if new_finish != ((wi.finish_date or "")[:10] or None):
+            changes["Microsoft.VSTS.Scheduling.FinishDate"] = new_finish
         return changes
 
     def _on_save(self):

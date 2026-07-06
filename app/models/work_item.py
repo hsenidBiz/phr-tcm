@@ -18,6 +18,8 @@ WORK_ITEM_FIELDS = [
     "Microsoft.VSTS.Scheduling.RemainingWork",
     "Microsoft.VSTS.Scheduling.CompletedWork",
     "Microsoft.VSTS.Scheduling.OriginalEstimate",
+    "Microsoft.VSTS.Scheduling.StartDate",
+    "Microsoft.VSTS.Scheduling.FinishDate",
 ]
 
 # The three board columns, and the ADO state *category* that lands in each.
@@ -82,6 +84,14 @@ class WorkItem:
     @property
     def changed_date(self) -> str:
         return self.fields.get("System.ChangedDate", "") or ""
+
+    @property
+    def start_date(self) -> str:
+        return self.fields.get("Microsoft.VSTS.Scheduling.StartDate", "") or ""
+
+    @property
+    def finish_date(self) -> str:
+        return self.fields.get("Microsoft.VSTS.Scheduling.FinishDate", "") or ""
 
     @property
     def remaining_work(self):
