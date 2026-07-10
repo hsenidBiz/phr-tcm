@@ -23,16 +23,14 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit, QTextEdit,
     QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle, QMenu,
-    QDateEdit, QToolButton, QCalendarWidget,
 )
-from PyQt5.QtCore import (
-    Qt, QThreadPool, QTimer, QRect, QSize, QDate, QEvent, pyqtSignal,
-)
+from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, pyqtSignal
 from PyQt5.QtGui import (
     QCursor, QColor, QPalette, QPainter, QPen, QFont, QPixmap, QPainterPath,
 )
 
 from app.gui.delegates import HoverTrackerMixin
+from app.gui.date_picker import ClearableDateEdit as _ClearableDateEdit
 
 from app.utils.worker import Worker
 from app.utils import theme
@@ -195,81 +193,6 @@ class _ResizableTextEdit(QTextEdit):
         for off in (3, 7, 11):
             p.drawLine(w - off, h - 3, w - 3, h - off)
         p.end()
-
-
-class _ClearableDateEdit(QWidget):
-    """A calendar date-picker that also supports an empty ("not set") state,
-    which a plain QDateEdit can't represent. The minimum date doubles as the
-    "unset" sentinel (shown via special value text); a small ✕ clears back to it.
-    Emits ``changed`` on any edit so the editor's dirty-tracking picks it up."""
-
-    changed = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(4)
-
-        self._edit = QDateEdit()
-        self._edit.setCalendarPopup(True)
-        self._edit.setDisplayFormat("yyyy-MM-dd")
-        # Minimum date is the "unset" sentinel; special value text renders it as
-        # a placeholder rather than an actual date.
-        self._edit.setMinimumDate(QDate(1900, 1, 1))
-        self._edit.setSpecialValueText("Not set")
-        self._edit.setDate(self._edit.minimumDate())
-        self._edit.dateChanged.connect(lambda _d: self.changed.emit())
-        # Own calendar so it can be themed (no gridlines / week-number gutter)
-        # and steered: while unset, the popup opens on TODAY's month instead of
-        # January 1900 (the sentinel), so picking a nearby date needs no paging.
-        self._cal = QCalendarWidget()
-        self._cal.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
-        self._cal.setGridVisible(False)
-        self._cal.installEventFilter(self)
-        self._edit.setCalendarWidget(self._cal)
-        lay.addWidget(self._edit, 1)
-
-        self._clear_btn = QToolButton()
-        self._clear_btn.setText("✕")
-        self._clear_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self._clear_btn.setToolTip("Clear date")
-        self._clear_btn.setFixedWidth(22)
-        self._clear_btn.clicked.connect(self.clear)
-        lay.addWidget(self._clear_btn)
-        self.apply_theme()
-
-    def eventFilter(self, obj, event):
-        if obj is self._cal and event.type() == QEvent.Show and not self.is_set():
-            today = QDate.currentDate()
-            self._cal.setCurrentPage(today.year(), today.month())
-        return super().eventFilter(obj, event)
-
-    def apply_theme(self):
-        self._cal.setStyleSheet(theme.calendar_qss())
-        t = theme.tokens()
-        self._clear_btn.setStyleSheet(
-            f"QToolButton {{ border: none; background: transparent; "
-            f"color: {t['text_dim']}; border-radius: 4px; }}"
-            f"QToolButton:hover {{ background: {t['btn_hover']}; color: {t['text']}; }}")
-
-    def clear(self):
-        self._edit.setDate(self._edit.minimumDate())
-
-    def set_iso(self, iso: str):
-        """Load a value from an ADO date string (``YYYY-MM-DD...``) or clear."""
-        d = QDate.fromString((iso or "")[:10], "yyyy-MM-dd")
-        if d.isValid():
-            self._edit.setDate(d)
-        else:
-            self.clear()
-
-    def is_set(self) -> bool:
-        return self._edit.date() != self._edit.minimumDate()
-
-    def iso_date(self):
-        """Return ``YYYY-MM-DD`` when set, else ``None``."""
-        return self._edit.date().toString("yyyy-MM-dd") if self.is_set() else None
 
 
 class _LoadingOverlay(QWidget):
