@@ -9,6 +9,11 @@ class Step:
 
 @dataclass
 class TestCase:
+    # Domain class, not a test — the Test* name otherwise makes pytest try (and
+    # warn) to collect it from every test module that imports it. Unannotated,
+    # so @dataclass does not treat it as a field.
+    __test__ = False
+
     title: str
     steps: list[Step] = field(default_factory=list)
     tags: str = ""                              # semicolon-separated

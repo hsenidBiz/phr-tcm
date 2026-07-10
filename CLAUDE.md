@@ -133,3 +133,24 @@ then retry), `PermissionError` (403), `LookupError` (404), `RuntimeError` (other
   `refresh_theme()` can't drift apart.
 - **Automation status** is constrained to `"Not Automated"` or `"Planned"`
   (validated in `TestCase.is_valid()` and the import parser).
+
+## Working conventions (this machine)
+
+- **Commits: use a Bash heredoc — `git commit -F - <<'EOF' … EOF` — never
+  PowerShell message flags.** All four PS 5.1 failure modes have happened here:
+  embedded quotes in `-m` split into pathspecs; a here-string piped to `-F -`
+  puts a UTF-8 BOM in the subject; a here-string as an argument parses as a
+  pathspec; and a failing cleanup command later in the same block aborts it so
+  the commit silently never lands. Confirm with `git log -1` after committing.
+- **Releases: run `.\scripts\release.ps1`** (patch bump by default; `-Bump
+  minor|major`, `-Version X.Y.Z`). It runs ruff+pytest, bumps `app/version.py`,
+  pushes source to private master FIRST, builds via `build.ps1`, verifies the
+  frozen-build QtSvg gate, then publishes to the public releases repo using
+  `gh auth token` in-process. Never publish without the source pushed.
+- **Big GUI modules** (`main_window.py`, `mywork_screen.py`, `test_runner.py`,
+  `run_screen.py`, `config_screen.py`) are 50–90 KB: Grep for the region, then
+  bounded Read (offset/limit) — don't re-read whole files repeatedly.
+- **Lint/format:** `python -m ruff check .` (line-length 120 in pyproject).
+- **Headless GUI verification:** offscreen full-window construction; end smoke
+  scripts with `os._exit(0)` (Qt's at-exit teardown segfaults offscreen).
+  Offscreen has no font rasterizer — text visuals need a real display.

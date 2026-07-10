@@ -11,7 +11,9 @@
 #   .\build.ps1            # build installer + update packages into .\Releases
 #   .\build.ps1 -Upload    # also publish a GitHub Release to the releases repo
 #
-# Release flow: bump VERSION in app\version.py -> .\build.ps1 -Upload.
+# Release flow: scripts\release.ps1 wraps the whole thing (checks -> bump ->
+# push -> build -> verify -> publish). Manual flow: bump VERSION in
+# app\version.py -> .\build.ps1 -Upload.
 # Installed clients pick up the new release on next launch (delta if possible).
 
 param(
@@ -19,7 +21,15 @@ param(
     [string]$Token = $env:GITHUB_TOKEN
 )
 
-$ErrorActionPreference = "Stop"
+# NOT "Stop": under Windows PowerShell 5.1 with redirected streams (CI, agent
+# harnesses), Stop turns ANY native stderr line (pip warnings, pyinstaller and
+# vpk INFO logs) into a terminating NativeCommandError. Real failures are
+# caught explicitly via $LASTEXITCODE checks after each native step instead.
+$ErrorActionPreference = "Continue"
+
+function Assert-LastExit([string]$step) {
+    if ($LASTEXITCODE -ne 0) { throw "$step failed (exit $LASTEXITCODE)" }
+}
 
 $RepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-releases"
 $PackId  = "AzureDevOpsTestCaseCreator"
@@ -33,7 +43,9 @@ Write-Host "Building $Title v$Version" -ForegroundColor Cyan
 
 # 2. Build dependencies
 pip install -r requirements.txt --quiet
+Assert-LastExit "pip install -r requirements.txt"
 pip install pyinstaller pillow --quiet
+Assert-LastExit "pip install pyinstaller pillow"
 
 # 3. Icon: convert resources\icon.png -> multi-resolution .ico if needed
 if ((Test-Path "resources\icon.png") -and -not (Test-Path "resources\icon.ico")) {
@@ -42,6 +54,7 @@ if ((Test-Path "resources\icon.png") -and -not (Test-Path "resources\icon.ico"))
 
 # 4. PyInstaller one-folder build -> dist\AzureDevOpsTestCaseCreator\
 pyinstaller --clean --noconfirm devops_test_case_creator.spec
+Assert-LastExit "pyinstaller"
 if (-not (Test-Path "dist\$PackId\$MainExe")) { throw "PyInstaller output missing: dist\$PackId\$MainExe" }
 
 # 5. Velopack pack -> .\Releases (Setup.exe + full/delta .nupkg packages).
@@ -61,11 +74,13 @@ $packArgs = @(
 )
 if (Test-Path "resources\icon.ico") { $packArgs += @("--icon", "resources\icon.ico") }
 vpk @packArgs
+Assert-LastExit "vpk pack"
 
 # 6. Optionally publish a GitHub Release on the public releases repo
 if ($Upload) {
     if (-not $Token) { throw "Set -Token or `$env:GITHUB_TOKEN to upload (needs write access to the releases repo)." }
     vpk upload github --repoUrl $RepoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $Token
+    Assert-LastExit "vpk upload github"
     Write-Host "Published v$Version to $RepoUrl" -ForegroundColor Green
 } else {
     Write-Host "Built .\Releases (Setup.exe + packages). Re-run with -Upload to publish." -ForegroundColor Green
