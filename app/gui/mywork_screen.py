@@ -1,8 +1,8 @@
 """My Work — a fast board + inline editor for the work items assigned to you.
 
 POC Phase 1: read-only board — one WIQL round-trip (assigned to me, most
-recently changed first) + one batched field GET, grouped into To Do / Doing /
-Done columns by each state's process *category*.
+recently changed first) + one batched field GET, grouped into To Do / In
+Progress / Done columns by each state's process *category*.
 
 POC Phase 2: full inline editing. Selecting a card opens it in a right-hand
 editor (title, state, assignee, priority, iteration/area, tags, description,
@@ -297,7 +297,7 @@ _ACTIVITY = "Microsoft.VSTS.Common.Activity"
 # state, falling back to Resolved for processes that only reach Resolved.
 _COLUMN_CATEGORIES = {
     "To Do": ("Proposed",),
-    "Doing": ("InProgress",),
+    "In Progress": ("InProgress",),
     "Done": ("Completed", "Resolved"),
 }
 
@@ -1779,11 +1779,21 @@ class MyWorkScreen(QWidget):
         self._drag_wi = wi
 
     def _state_for_column(self, wi: WorkItem, col: str):
-        """The state a drop on `col` should move `wi` to: the first state of the
-        column's category defined for the item's type (the API lists states in
-        workflow order). None when the process defines no such state."""
+        """The state a drop on `col` should move `wi` to. Prefers a state named
+        exactly like the column ("To Do" / "In Progress" / "Done") when the
+        item's type defines one — so a Task or Bug dropped into In Progress
+        becomes the "In Progress" state, not merely the first in-progress state
+        (e.g. "Active"). Falls back to the first state of the column's
+        category/ies (the API lists states in workflow order). None when the
+        process defines no such state."""
         states = self._states_by_type.get(wi.type) or {}
-        for cat in _COLUMN_CATEGORIES.get(col, ()):
+        cats = _COLUMN_CATEGORIES.get(col, ())
+        target = col.strip().lower()
+        # Exact column-name match, but only within the column's own categories.
+        for name, (category, _color) in states.items():
+            if category in cats and name.strip().lower() == target:
+                return name
+        for cat in cats:
             for name, (category, _color) in states.items():
                 if category == cat:
                     return name

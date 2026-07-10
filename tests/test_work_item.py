@@ -29,7 +29,7 @@ def test_scheduling_fields_are_requested():
 STATES = {
     "Task": {
         "To Do": "Proposed",
-        "Doing": "InProgress",
+        "In Progress": "InProgress",
         "Done": "Completed",
         "Removed": "Removed",
         # A custom parked state whose process category is Proposed.
@@ -50,12 +50,13 @@ def _wi(state, wtype="Task"):
 
 def test_category_mapping():
     assert _wi("To Do").column(STATES) == "To Do"
-    assert _wi("Doing").column(STATES) == "Doing"
+    assert _wi("In Progress").column(STATES) == "In Progress"
+    assert _wi("Active", "Bug").column(STATES) == "In Progress"
     assert _wi("Done").column(STATES) == "Done"
 
 
 def test_resolved_category_lands_in_done():
-    # Resolved and Completed both belong to Done (once resolved, off "Doing").
+    # Resolved and Completed both belong to Done (once resolved, off In Progress).
     assert _wi("Resolved", "Bug").column(STATES) == "Done"
     assert _wi("Closed", "Bug").column(STATES) == "Done"
 

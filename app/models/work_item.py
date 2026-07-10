@@ -24,12 +24,12 @@ WORK_ITEM_FIELDS = [
 
 # The three board columns, and the ADO state *category* that lands in each.
 # (Categories are process-independent: every process tags its states with one.)
-COLUMNS = ["To Do", "Doing", "Done"]
+COLUMNS = ["To Do", "In Progress", "Done"]
 _CATEGORY_COLUMN = {
     "Proposed": "To Do",
-    "InProgress": "Doing",
+    "InProgress": "In Progress",
     # Resolved and Completed both land in Done — once an item is resolved or
-    # later, it's off the active "Doing" work.
+    # later, it's off the active "In Progress" work.
     "Resolved": "Done",
     "Completed": "Done",
     # "Removed" -> None (hidden)
@@ -143,4 +143,4 @@ class WorkItem:
             return None
         if name in ("done", "closed", "completed", "resolved"):
             return "Done"
-        return "Doing"
+        return "In Progress"

@@ -113,8 +113,10 @@ _WI_SPECS = [
 # ADO state -> category per work-item type (drives the My Work board columns).
 _STATES = {
     "Bug": [("New", "#b2b2b2", "Proposed"), ("Active", "#007acc", "InProgress"),
+            ("In Progress", "#007acc", "InProgress"),
             ("Resolved", "#ff9d00", "Resolved"), ("Closed", "#339933", "Completed")],
     "Task": [("New", "#b2b2b2", "Proposed"), ("Active", "#007acc", "InProgress"),
+             ("In Progress", "#007acc", "InProgress"),
              ("Closed", "#339933", "Completed")],
     "User Story": [("New", "#b2b2b2", "Proposed"), ("Active", "#007acc", "InProgress"),
                    ("Resolved", "#ff9d00", "Resolved"), ("Closed", "#339933", "Completed")],
