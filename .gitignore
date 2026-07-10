@@ -28,8 +28,11 @@ Thumbs.db
 # App runtime data
 *.log
 
-# Claude Code / MCP tool data
-.claude/
+# Claude Code / MCP tool data.
+# Share project skills (e.g. /release) but keep local settings out of git.
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 .playwright-mcp/
 .tokensave/
 
