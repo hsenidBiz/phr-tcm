@@ -204,8 +204,9 @@ class DemoClient(DevOpsClient):
         return [DEMO_PROJECT, "Contoso Mobile"]
 
     def search_work_items(self, text, top=20):
+        # PBI-only, mirroring the real client's WIQL type filter.
         results = [{"id": DEMO_PBI_ID, "title": DEMO_PBI_TITLE, "type": "Product Backlog Item"},
-                   {"id": 1080, "title": "Payments hardening", "type": "Feature"}]
+                   {"id": 1080, "title": "Payments hardening", "type": "Product Backlog Item"}]
         t = (text or "").strip().lower()
         if not t:
             return results[:top]

@@ -283,7 +283,16 @@ class SuiteBrowserScreen(QWidget):
         for r in roots:
             top.extend(by_parent.get(r["id"], []))
         if not top:
-            plan_item.addChild(self._info_item("(no test suites in this plan)"))
+            # A plan with no suites has nothing to browse — drop it from the
+            # tree entirely (the preload resolves every plan, so empties
+            # disappear shortly after load; a lazy expand of one does the same).
+            idx = self._tree.indexOfTopLevelItem(plan_item)
+            if idx >= 0:
+                self._tree.takeTopLevelItem(idx)
+            if self._tree.topLevelItemCount() == 0:
+                self._tree_status.setText(
+                    "No test plans with test suites in this project yet.")
+                self._tree_status.show()
             return
 
         def add_children(parent_item, children):

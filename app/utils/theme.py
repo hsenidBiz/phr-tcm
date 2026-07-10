@@ -188,6 +188,32 @@ def btn_ghost_qss(extra: str = "padding: 5px 12px;") -> str:
     )
 
 
+def calendar_qss() -> str:
+    """Themed QSS for a QCalendarWidget popup (date pickers). Flat modern look:
+    clean navigation bar, no vertical week-number gutter styling artifacts,
+    accent selection, hover on the nav buttons. Apply to the calendar widget
+    itself (stylesheets propagate downward only, so the parent QDateEdit keeps
+    native rendering)."""
+    t = tokens()
+    return (
+        f"QCalendarWidget QWidget#qt_calendar_navigationbar {{ "
+        f"background: {t['header_bg']}; border-bottom: 1px solid {t['border']}; }}"
+        f"QCalendarWidget QToolButton {{ background: transparent; border: none; "
+        f"color: {t['text']}; font-size: 12px; font-weight: 600; "
+        f"padding: 5px 8px; border-radius: 4px; margin: 2px; }}"
+        f"QCalendarWidget QToolButton:hover {{ background: {t['btn_hover']}; }}"
+        f"QCalendarWidget QToolButton::menu-indicator {{ image: none; }}"
+        f"QCalendarWidget QMenu {{ background: {t['surface']}; color: {t['text']}; "
+        f"border: 1px solid {t['border']}; }}"
+        f"QCalendarWidget QSpinBox {{ background: {t['surface']}; color: {t['text']}; "
+        f"border: 1px solid {t['border']}; border-radius: 4px; padding: 1px 4px; }}"
+        f"QCalendarWidget QAbstractItemView:enabled {{ background: {t['surface']}; "
+        f"color: {t['text']}; selection-background-color: {t['accent']}; "
+        f"selection-color: white; outline: 0; font-size: 12px; }}"
+        f"QCalendarWidget QAbstractItemView:disabled {{ color: {t['text_dim2']}; }}"
+    )
+
+
 def btn_pill_accent_qss(extra: str = "padding: 5px 14px;") -> str:
     """An outlined accent 'pill' chip — a distinct, clearly-clickable control for
     things like a mode switch. Accent text/border on a transparent fill, with a

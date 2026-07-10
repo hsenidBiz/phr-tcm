@@ -126,9 +126,11 @@ class DevOpsClient:
         """
         Search work items in the current project by title substring (and by
         exact ID when the text is numeric) via a WIQL query. The POST here is
-        query-only — it creates and modifies nothing. Test artifacts and tasks
-        are excluded. Returns list of {"id", "title", "type"}, most recently
-        changed first. Safe — read only.
+        query-only — it creates and modifies nothing. Only Product Backlog
+        Items are returned — the picker exists to choose the PBI that test
+        cases link to, so Bugs/Features/etc. are just noise there. Returns
+        list of {"id", "title", "type"}, most recently changed first.
+        Safe — read only.
         """
         safe = text.strip().replace("'", "''")
         clause = f"[System.Title] CONTAINS '{safe}'"
@@ -137,8 +139,7 @@ class DevOpsClient:
         wiql = (
             "SELECT [System.Id] FROM workitems "
             f"WHERE [System.TeamProject] = @project AND {clause} "
-            "AND [System.WorkItemType] NOT IN "
-            "('Test Case', 'Test Suite', 'Test Plan', 'Shared Steps', 'Task') "
+            "AND [System.WorkItemType] = 'Product Backlog Item' "
             "ORDER BY [System.ChangedDate] DESC"
         )
         url = f"{self._base()}/wit/wiql?$top={top}&api-version={API_VERSION}"

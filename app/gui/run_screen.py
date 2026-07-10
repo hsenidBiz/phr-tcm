@@ -14,6 +14,7 @@ from PyQt5.QtGui import QCursor, QColor, QBrush
 
 from app.utils.worker import Worker
 from app.utils import theme
+from app.utils.anim import Spinner
 from app.gui.test_runner import TestRunner
 from app.gui.delegates import StatusTintDelegate
 from app.gui.grouped_tree import GroupedCaseTree
@@ -50,6 +51,7 @@ class RunScreen(QWidget):
         self._plan_poll = None     # QTimer that waits for test-plan detection
         self._plan_poll_ticks = 0
         self._grouped = False       # Smart Grouping (folder tree) on the left list
+        self._pending_session = False  # session list also waiting on the deferred render
         self._build_ui()
 
     # ------------------------------------------------------------------ #
@@ -134,6 +136,7 @@ class RunScreen(QWidget):
         if not pbi_id or self.app_state.token_manager.is_expired():
             return
         self._header_lbl.setText("Loading test cases…")
+        self._load_spinner.start()
         self._refresh_btn.setEnabled(False)
         self._available.clear()
         self._cases = []
@@ -150,10 +153,8 @@ class RunScreen(QWidget):
         self._loaded_pbi = pbi_id
         self.app_state.existing_cases = cases
         self.app_state.existing_cases_pbi = pbi_id
-        self._rebuild_available()
-        self._header_lbl.setText("")
-        self._refresh_btn.setEnabled(True)
-        self._prefetch_points()
+        self._pending_session = False
+        self._render_after_points()
 
     def adopt_shared_cache(self):
         """Rebuild the PBI case list from the shared existing-cases cache (updated
@@ -169,6 +170,7 @@ class RunScreen(QWidget):
         self._on_cases_loaded(pbi, (cache, len(cache)))
 
     def _on_cases_error(self, exc):
+        self._load_spinner.stop()
         self._header_lbl.setText(f"Could not load test cases: {exc}")
         self._refresh_btn.setEnabled(True)
 
@@ -212,11 +214,8 @@ class RunScreen(QWidget):
         self._cases = cases
         self._loaded_pbi = None          # the PBI view reloads when we exit external
         self._session = list(cases)      # per the design: straight into the session
-        self._rebuild_available()        # left pool ends up empty (all are queued)
-        self._rebuild_session_list()
-        self._header_lbl.setText("")
-        self._refresh_btn.setEnabled(True)
-        self._prefetch_points()
+        self._pending_session = True     # session list renders with the colours too
+        self._render_after_points()
 
     def _show_external_banner(self, suite_name: str):
         name = suite_name or "(unnamed)"
@@ -247,35 +246,68 @@ class RunScreen(QWidget):
         return self.app_state.test_plan_id, self.app_state.suite_id
 
     def _prefetch_points(self):
-        """Warm app_state's test-points cache in the background so the runner can
-        show previous outcomes instantly when it opens. Read-only; silent on
-        failure. Caches the whole suite (all loaded cases) so any session subset
-        is covered."""
-        plan, suite = self._plan_suite()
-        if not (plan and suite):
-            return
-        key = (plan, suite)
+        """Recolour path (list already on screen): warm app_state's test-points
+        cache in the background, then tint the visible rows. Read-only; silent
+        on failure."""
+        key = self._plan_suite()
         if key in self.app_state.test_points_by_suite:
             self._color_lists()   # already cached -> colour now
             return
-        if not any(c.get("_id") for c in self._cases):
+        self._fetch_points(render=False)
+
+    def _render_after_points(self):
+        """Load path: rows and their outcome tints appear TOGETHER. The rebuilt
+        list is held back until the points cache is ready (spinner + header text
+        show meanwhile); a fetch failure renders uncoloured rather than never."""
+        plan, suite = key = self._plan_suite()
+        if (not (plan and suite)
+                or key in self.app_state.test_points_by_suite
+                or not any(c.get("_id") for c in self._cases)):
+            self._finish_render()   # nothing to wait for
             return
-        # Fetch the WHOLE suite's points (no testCaseId filter). One read covers
-        # every loaded case AND sidesteps a long comma-separated testCaseId list,
-        # which silently fails for a big PBI (~50 cases) — that left every row
-        # uncoloured even though the data existed (the runner, fetching only its
-        # small session subset, still got outcomes).
+        self._header_lbl.setText("Loading test cases…")
+        self._load_spinner.start()
+        self._fetch_points(render=True)
+
+    def _fetch_points(self, render: bool):
+        """Fetch the WHOLE suite's points (no testCaseId filter). One read covers
+        every loaded case AND sidesteps a long comma-separated testCaseId list,
+        which silently fails for a big PBI (~50 cases) — that left every row
+        uncoloured even though the data existed (the runner, fetching only its
+        small session subset, still got outcomes)."""
+        plan, suite = key = self._plan_suite()
+        if not (plan and suite) or not any(c.get("_id") for c in self._cases):
+            return
         worker = Worker(self.app_state.client.get_test_points, plan, suite)
-        worker.signals.result.connect(lambda pts, k=key: self._on_points_prefetched(k, pts))
-        worker.signals.error.connect(lambda _exc: None)
+        worker.signals.result.connect(
+            lambda pts, k=key, r=render: self._on_points_prefetched(k, pts, r))
+        if render:
+            worker.signals.error.connect(lambda _exc: self._finish_render())
+        else:
+            worker.signals.error.connect(lambda _exc: None)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_points_prefetched(self, key, pts):
+    def _on_points_prefetched(self, key, pts, render=False):
         self.app_state.test_points_by_suite[key] = pts
-        self._color_lists()
+        if render:
+            self._finish_render()
+        else:
+            self._color_lists()
         # Outcomes just became known — re-run a result filter if one is active.
         if self._result_combo.checked_data():
             self._apply_filters()
+
+    def _finish_render(self):
+        """Complete a deferred load: build the row(s) and tint them in the same
+        pass, then clear the loading indicators."""
+        self._load_spinner.stop()
+        self._rebuild_available()
+        if self._pending_session:
+            self._pending_session = False
+            self._rebuild_session_list()
+        self._color_lists()
+        self._header_lbl.setText("")
+        self._refresh_btn.setEnabled(True)
 
     # Status colours — shared with the Test Suites browser (see
     # app/gui/outcome_style.py, the single source of truth for the mapping).
@@ -404,9 +436,16 @@ class RunScreen(QWidget):
         self._ext_banner.hide()
         layout.addWidget(self._ext_banner)
 
+        header_row = QHBoxLayout()
+        header_row.setSpacing(6)
+        self._load_spinner = Spinner(size=14, line_width=2)
+        self._load_spinner.stop()   # hidden until a load starts
+        header_row.addWidget(self._load_spinner)
         self._header_lbl = QLabel("")
         self._header_lbl.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(self._header_lbl)
+        header_row.addWidget(self._header_lbl)
+        header_row.addStretch()
+        layout.addLayout(header_row)
 
         from app.gui.grip_splitter import GripSplitter
         splitter = GripSplitter(Qt.Horizontal)
@@ -850,6 +889,7 @@ class RunScreen(QWidget):
         from app.utils import icons
         t = theme.tokens()
         self._header_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 11px;")
+        self._load_spinner.set_color(t["accent"])
         self._ext_banner.setStyleSheet(
             f"#extBanner {{ background: {t['tmpl_bg']}; "
             f"border: 1px solid {t['tmpl_border']}; border-radius: 6px; }}")

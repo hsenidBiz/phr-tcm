@@ -23,9 +23,11 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QLineEdit, QComboBox, QPlainTextEdit, QTextEdit,
     QMessageBox, QScrollArea, QFrame, QStyledItemDelegate, QStyle, QMenu,
-    QDateEdit, QToolButton,
+    QDateEdit, QToolButton, QCalendarWidget,
 )
-from PyQt5.QtCore import Qt, QThreadPool, QTimer, QRect, QSize, QDate, pyqtSignal
+from PyQt5.QtCore import (
+    Qt, QThreadPool, QTimer, QRect, QSize, QDate, QEvent, pyqtSignal,
+)
 from PyQt5.QtGui import (
     QCursor, QColor, QPalette, QPainter, QPen, QFont, QPixmap, QPainterPath,
 )
@@ -218,6 +220,14 @@ class _ClearableDateEdit(QWidget):
         self._edit.setSpecialValueText("Not set")
         self._edit.setDate(self._edit.minimumDate())
         self._edit.dateChanged.connect(lambda _d: self.changed.emit())
+        # Own calendar so it can be themed (no gridlines / week-number gutter)
+        # and steered: while unset, the popup opens on TODAY's month instead of
+        # January 1900 (the sentinel), so picking a nearby date needs no paging.
+        self._cal = QCalendarWidget()
+        self._cal.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
+        self._cal.setGridVisible(False)
+        self._cal.installEventFilter(self)
+        self._edit.setCalendarWidget(self._cal)
         lay.addWidget(self._edit, 1)
 
         self._clear_btn = QToolButton()
@@ -227,6 +237,21 @@ class _ClearableDateEdit(QWidget):
         self._clear_btn.setFixedWidth(22)
         self._clear_btn.clicked.connect(self.clear)
         lay.addWidget(self._clear_btn)
+        self.apply_theme()
+
+    def eventFilter(self, obj, event):
+        if obj is self._cal and event.type() == QEvent.Show and not self.is_set():
+            today = QDate.currentDate()
+            self._cal.setCurrentPage(today.year(), today.month())
+        return super().eventFilter(obj, event)
+
+    def apply_theme(self):
+        self._cal.setStyleSheet(theme.calendar_qss())
+        t = theme.tokens()
+        self._clear_btn.setStyleSheet(
+            f"QToolButton {{ border: none; background: transparent; "
+            f"color: {t['text_dim']}; border-radius: 4px; }}"
+            f"QToolButton:hover {{ background: {t['btn_hover']}; color: {t['text']}; }}")
 
     def clear(self):
         self._edit.setDate(self._edit.minimumDate())
@@ -245,6 +270,49 @@ class _ClearableDateEdit(QWidget):
     def iso_date(self):
         """Return ``YYYY-MM-DD`` when set, else ``None``."""
         return self._edit.date().toString("yyyy-MM-dd") if self.is_set() else None
+
+
+class _LoadingOverlay(QWidget):
+    """Full-screen dimming overlay with a large centred spinner, shown while the
+    board's work items load — unmissable, unlike the small header spinner. Also
+    blocks interaction with the half-empty board underneath."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName("mwLoadingOverlay")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setVisible(False)
+        lay = QVBoxLayout(self)
+        lay.setAlignment(Qt.AlignCenter)
+        lay.setSpacing(14)
+        self._spinner = Spinner(size=56, line_width=5)
+        self._spinner.stop()
+        lay.addWidget(self._spinner, 0, Qt.AlignHCenter)
+        self._lbl = QLabel("Loading work items…")
+        self._lbl.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self._lbl)
+        self.apply_theme()
+
+    def start(self, text: str = "Loading work items…"):
+        self._lbl.setText(text)
+        self.setGeometry(self.parentWidget().rect())
+        self._spinner.start()
+        self.setVisible(True)
+        self.raise_()
+
+    def stop(self):
+        self._spinner.stop()
+        self.setVisible(False)
+
+    def apply_theme(self):
+        t = theme.tokens()
+        # A dark scrim reads as "busy" in both themes; the label sits on it
+        # directly, so it is always light.
+        self.setStyleSheet(
+            "#mwLoadingOverlay { background: rgba(15, 15, 16, 0.55); }")
+        self._lbl.setStyleSheet(
+            "color: #f0f0f0; font-size: 15px; background: transparent;")
+        self._spinner.set_color(t["accent"])
 
 
 class _CommentEntry(QWidget):
@@ -796,6 +864,7 @@ class MyWorkScreen(QWidget):
             f"Loading the {scope['team']} board…" if scope.get("mode") == "team"
             else "Loading your work items…")
         self._spinner.start()
+        self._loading_overlay.start()
         worker = Worker(_fetch_work, self.app_state.client, scope)
         worker.signals.result.connect(lambda res, k=key: self._on_loaded(k, res))
         worker.signals.error.connect(self._on_error)
@@ -850,6 +919,7 @@ class MyWorkScreen(QWidget):
     def _on_loaded(self, key, result):
         self._loading = False
         self._spinner.stop()
+        self._loading_overlay.stop()
         self._refresh_btn.setEnabled(True)
         # Preserve a just-restored focus-timer note; otherwise clear "Loading…".
         self._status_lbl.setText(getattr(self, "_focus_note", None) or "")
@@ -873,6 +943,7 @@ class MyWorkScreen(QWidget):
     def _on_error(self, exc):
         self._loading = False
         self._spinner.stop()
+        self._loading_overlay.stop()
         self._refresh_btn.setEnabled(True)
         self._status_lbl.setText(f"Could not load work items: {exc}")
 
@@ -1046,7 +1117,15 @@ class MyWorkScreen(QWidget):
         self._empty_lbl.setVisible(False)
         layout.addWidget(self._empty_lbl)
 
+        # Created last so it stacks above everything on the screen.
+        self._loading_overlay = _LoadingOverlay(self)
+
         self.refresh_theme()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._loading_overlay.isVisible():
+            self._loading_overlay.setGeometry(self.rect())
 
     def _build_detail_panel(self) -> QWidget:
         """The right-hand editor: a scrollable form + comments, hidden behind a
@@ -2225,6 +2304,9 @@ class MyWorkScreen(QWidget):
         self._empty_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
         self._no_sel_lbl.setStyleSheet(f"color: {t['text_dim2']}; font-size: 13px;")
         self._spinner.set_color(t["accent"])
+        self._loading_overlay.apply_theme()
+        self._start_date_edit.apply_theme()
+        self._finish_date_edit.apply_theme()
         self._refresh_btn.setStyleSheet(theme.btn_neutral_qss())
         self._refresh_btn.setIcon(icons.icon("refresh", size=15))
         self._new_btn.setStyleSheet(theme.btn_neutral_qss())
