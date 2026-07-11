@@ -43,3 +43,12 @@ package-lock.json
 
 # Local test-authoring scratch (not app source)
 /Test Case Writing/
+
+# Tauri v2 rewrite (v2/)
+v2/node_modules/
+v2/dist/
+v2/src-tauri/target/
+v2/Releases/
+# The global package.json ignore above is for local tooling only - v2's are real source.
+!v2/package.json
+!v2/package-lock.json
