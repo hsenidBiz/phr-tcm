@@ -1,5 +1,7 @@
 pub mod ado;
 pub mod auth;
+pub mod import_parser;
+pub mod model;
 pub mod steps_xml;
 
 use std::sync::Mutex;
