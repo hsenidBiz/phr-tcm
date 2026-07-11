@@ -127,6 +127,118 @@ async fn pbi_test_cases(
         .await
 }
 
+#[tauri::command]
+#[specta::specta]
+fn parse_import_file(path: String) -> Result<ImportResult, String> {
+    let (cases, warnings) = import_parser::parse_file(&path)?;
+    Ok(ImportResult { cases, warnings })
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct ImportResult {
+    pub cases: Vec<model::TestCase>,
+    pub warnings: Vec<String>,
+}
+
+#[tauri::command]
+#[specta::specta]
+fn export_queue(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
+    import_parser::export_queue_to_excel(&queue, &path)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn write_template(path: String) -> Result<(), String> {
+    import_parser::generate_template(&path)
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct SubmitItemResult {
+    pub index: u32,
+    pub title: String,
+    /// "created" | "updated" | "failed"
+    pub action: String,
+    pub id: Option<i32>,
+    pub error: Option<String>,
+}
+
+/// Serial creation loop ported from v1 CreationWorker: one item at a time,
+/// 500 ms spacing (rate-limit respect), new cases linked to the PBI, updates
+/// patched in place. A failed item never aborts the rest.
+#[tauri::command]
+#[specta::specta]
+async fn submit_queue(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    pbi_id: i32,
+    queue: Vec<model::TestCase>,
+) -> Result<Vec<SubmitItemResult>, String> {
+    let mut results = vec![];
+    for (i, tc) in queue.iter().enumerate() {
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if let Err(msg) = tc.is_valid() {
+            results.push(SubmitItemResult {
+                index: i as u32,
+                title: tc.title.clone(),
+                action: "failed".into(),
+                id: None,
+                error: Some(msg),
+            });
+            continue;
+        }
+        let token = match get_fresh_token(&app).await {
+            Ok(t) => t,
+            Err(e) => {
+                results.push(SubmitItemResult {
+                    index: i as u32,
+                    title: tc.title.clone(),
+                    action: "failed".into(),
+                    id: None,
+                    error: Some(e.to_string()),
+                });
+                continue;
+            }
+        };
+        let client = ado::AdoClient::new(token);
+        let outcome = match tc.update_id {
+            Some(existing_id) => client
+                .update_test_case_from_model(&organization, &project, existing_id, tc, None, None)
+                .await
+                .map(|_| (existing_id, "updated")),
+            None => match client
+                .create_test_case(&organization, &project, tc, None, "", "", None)
+                .await
+            {
+                Ok(new_id) => client
+                    .link_to_pbi(&organization, &project, new_id, pbi_id)
+                    .await
+                    .map(|_| (new_id, "created")),
+                Err(e) => Err(e),
+            },
+        };
+        match outcome {
+            Ok((id, action)) => results.push(SubmitItemResult {
+                index: i as u32,
+                title: tc.title.clone(),
+                action: action.into(),
+                id: Some(id),
+                error: None,
+            }),
+            Err(e) => results.push(SubmitItemResult {
+                index: i as u32,
+                title: tc.title.clone(),
+                action: "failed".into(),
+                id: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+    Ok(results)
+}
+
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         ping,
@@ -135,7 +247,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         list_projects,
         list_orgs,
         search_pbis,
-        pbi_test_cases
+        pbi_test_cases,
+        parse_import_file,
+        export_queue,
+        write_template,
+        submit_queue
     ])
 }
 
@@ -144,6 +260,7 @@ pub fn run() {
     let builder = specta_builder();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(auth::AuthState::default()))
         .invoke_handler(builder.invoke_handler())
         .run(tauri::generate_context!())

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import { unwrap } from "../lib/ipc";
+import QueuePanel from "./QueuePanel";
 
 const inputCls =
   "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
@@ -118,6 +119,8 @@ export default function Browse() {
           ))}
         </ul>
       )}
+
+      {pbi && <QueuePanel org={org} project={project} pbiId={pbi.id} />}
 
       {pbi && (
         <section className="space-y-2">

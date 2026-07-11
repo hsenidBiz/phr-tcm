@@ -60,7 +60,7 @@ test("full browse flow: org -> project -> search -> test cases", async () => {
   // Clicking the hit loads its linked test cases.
   fireEvent.click(hit);
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
-  expect(screen.getByText("Planned")).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "Planned" })).toBeInTheDocument();
 });
 
 test("empty search result shows a friendly message", async () => {

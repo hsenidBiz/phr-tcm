@@ -11,6 +11,15 @@ export const commands = {
 	listOrgs: () => typedError<Org[], AdoError>(__TAURI_INVOKE("list_orgs")),
 	searchPbis: (organization: string, project: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis", { organization, project, query })),
 	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
+	parseImportFile: (path: string) => typedError<ImportResult, string>(__TAURI_INVOKE("parse_import_file", { path })),
+	exportQueue: (path: string, queue: TestCase[]) => typedError<null, string>(__TAURI_INVOKE("export_queue", { path, queue })),
+	writeTemplate: (path: string) => typedError<null, string>(__TAURI_INVOKE("write_template", { path })),
+	/**
+	 *  Serial creation loop ported from v1 CreationWorker: one item at a time,
+	 *  500 ms spacing (rate-limit respect), new cases linked to the PBI, updates
+	 *  patched in place. A failed item never aborts the rest.
+	 */
+	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase[]) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue })),
 };
 
 /* Types */
@@ -24,6 +33,11 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 export type AuthStatus = {
 	signed_in: boolean,
 	account: string | null,
+};
+
+export type ImportResult = {
+	cases: TestCase[],
+	warnings: string[],
 };
 
 export type Org = {
@@ -40,6 +54,33 @@ export type PbiHit = {
 export type Project = {
 	id: string,
 	name: string,
+};
+
+export type Step = {
+	action: string,
+	expected: string,
+};
+
+export type SubmitItemResult = {
+	index: number,
+	title: string,
+	/**  "created" | "updated" | "failed" */
+	action: string,
+	id: number | null,
+	error: string | null,
+};
+
+export type TestCase = {
+	title: string,
+	steps: Step[],
+	/**  Semicolon-separated. */
+	tags: string,
+	/**  "Not Automated" or "Planned". */
+	automation_status: string,
+	module_value: string,
+	preconditions: string,
+	/**  When set, update this existing work item instead of creating a new one. */
+	update_id: number | null,
 };
 
 export type TestCaseSummary = {
