@@ -1,4 +1,5 @@
 pub mod ado;
+pub mod auth;
 
 use tauri_specta::{collect_commands, Builder};
 
