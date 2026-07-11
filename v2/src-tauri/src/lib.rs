@@ -2,6 +2,7 @@ pub mod ado;
 pub mod auth;
 
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::Manager;
 use tauri_specta::{collect_commands, Builder};
 
@@ -9,6 +10,49 @@ use tauri_specta::{collect_commands, Builder};
 pub struct AuthStatus {
     pub signed_in: bool,
     pub account: Option<String>,
+}
+
+fn status_from(state: &auth::AuthState) -> AuthStatus {
+    AuthStatus {
+        signed_in: state.tokens.is_some(),
+        account: state.tokens.as_ref().and_then(|t| t.account.clone()),
+    }
+}
+
+/// Returns a valid access token, silently refreshing when it is within
+/// 5 minutes of expiry. The token itself never leaves the Rust side.
+async fn get_fresh_token(app: &tauri::AppHandle) -> Result<String, ado::AdoError> {
+    let (token, refresh_needed, refresh_token, account) = {
+        let state = app.state::<Mutex<auth::AuthState>>();
+        let s = state.lock().unwrap();
+        match &s.tokens {
+            None => return Err(ado::AdoError::Unauthorized),
+            Some(t) => (
+                t.access_token.clone(),
+                auth::needs_refresh(t.expires_at, Instant::now()),
+                t.refresh_token.clone(),
+                t.account.clone(),
+            ),
+        }
+    };
+    if !refresh_needed {
+        return Ok(token);
+    }
+    let Some(rt) = refresh_token else {
+        // No refresh token: keep using the current one until it hard-fails.
+        return Ok(token);
+    };
+    match auth::refresh(&rt, account).await {
+        Ok(new_tokens) => {
+            let fresh = new_tokens.access_token.clone();
+            let state = app.state::<Mutex<auth::AuthState>>();
+            state.lock().unwrap().tokens = Some(new_tokens);
+            Ok(fresh)
+        }
+        // Refresh failed (revoked, offline, CAE): fall back to the existing
+        // token; a hard 401 from the API will surface as Unauthorized.
+        Err(_) => Ok(token),
+    }
 }
 
 #[tauri::command]
@@ -20,28 +64,20 @@ fn ping(msg: String) -> String {
 #[tauri::command]
 #[specta::specta]
 fn auth_status(state: tauri::State<'_, Mutex<auth::AuthState>>) -> AuthStatus {
-    let s = state.lock().unwrap();
-    AuthStatus {
-        signed_in: s.access_token.is_some(),
-        account: s.account.clone(),
-    }
+    status_from(&state.lock().unwrap())
 }
 
 #[tauri::command]
 #[specta::specta]
 async fn sign_in(app: tauri::AppHandle) -> Result<AuthStatus, String> {
-    let (token, upn) = auth::sign_in_interactive(|url| {
+    let tokens = auth::sign_in_interactive(|url| {
         let _ = tauri_plugin_opener::open_url(url, None::<&str>);
     })
     .await?;
     let state = app.state::<Mutex<auth::AuthState>>();
     let mut s = state.lock().unwrap();
-    s.access_token = Some(token);
-    s.account = upn.clone();
-    Ok(AuthStatus {
-        signed_in: true,
-        account: upn,
-    })
+    s.tokens = Some(tokens);
+    Ok(status_from(&s))
 }
 
 #[tauri::command]
@@ -50,11 +86,7 @@ async fn list_projects(
     app: tauri::AppHandle,
     organization: String,
 ) -> Result<Vec<ado::Project>, ado::AdoError> {
-    let token = {
-        let state = app.state::<Mutex<auth::AuthState>>();
-        let s = state.lock().unwrap();
-        s.access_token.clone().ok_or(ado::AdoError::Unauthorized)?
-    };
+    let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token).get_projects(&organization).await
 }
 

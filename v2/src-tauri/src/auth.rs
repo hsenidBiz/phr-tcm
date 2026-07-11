@@ -1,14 +1,18 @@
 //! Microsoft Entra ID sign-in via OAuth2 authorization-code + PKCE (RFC 7636)
 //! against the well-known Azure CLI public client — no app registration, no
-//! PATs, no client secret. The access token lives in [`AuthState`] in Rust
-//! memory only and must never be returned over IPC (enforced by tests).
+//! PATs, no client secret. Tokens live in [`AuthState`] in Rust memory only
+//! and must never be returned over IPC (enforced by tests/bindings.rs).
 
 use base64::Engine;
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 
 const CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"; // Azure CLI public client
 const AUTHORITY: &str = "https://login.microsoftonline.com/organizations";
 const SCOPE: &str = "499b84ac-1321-427f-aa17-267ca6975798/.default offline_access openid profile";
+
+/// Refresh this long before the access token actually expires.
+const EARLY_RENEW: Duration = Duration::from_secs(300);
 
 pub fn b64url(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
@@ -22,11 +26,26 @@ pub fn pkce_pair() -> (String, String) {
     (verifier, challenge)
 }
 
-/// Access token + display account, Rust-side only.
+/// The full token set, Rust-side only. Deliberately does NOT derive
+/// specta::Type / Serialize: nothing here may ever cross IPC.
+pub struct TokenSet {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<Instant>,
+    pub account: Option<String>,
+}
+
 #[derive(Default)]
 pub struct AuthState {
-    pub access_token: Option<String>,
-    pub account: Option<String>,
+    pub tokens: Option<TokenSet>,
+}
+
+/// True when the access token is missing an expiry or within EARLY_RENEW of it.
+pub fn needs_refresh(expires_at: Option<Instant>, now: Instant) -> bool {
+    match expires_at {
+        None => true,
+        Some(at) => now + EARLY_RENEW >= at,
+    }
 }
 
 pub fn build_authorize_url(challenge: &str, redirect_uri: &str, state: &str) -> String {
@@ -41,7 +60,29 @@ pub fn build_authorize_url(challenge: &str, redirect_uri: &str, state: &str) -> 
 struct TokenResponse {
     access_token: String,
     #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_in: Option<u64>,
+    #[serde(default)]
     id_token: Option<String>,
+}
+
+impl TokenResponse {
+    fn into_token_set(self, fallback_account: Option<String>) -> TokenSet {
+        let account = self
+            .id_token
+            .as_deref()
+            .and_then(upn_from_id_token)
+            .or(fallback_account);
+        TokenSet {
+            access_token: self.access_token,
+            refresh_token: self.refresh_token,
+            expires_at: self
+                .expires_in
+                .map(|secs| Instant::now() + Duration::from_secs(secs)),
+            account,
+        }
+    }
 }
 
 /// Extract the UPN ("preferred_username") from an id_token without signature
@@ -55,22 +96,20 @@ pub fn upn_from_id_token(id_token: &str) -> Option<String> {
     claims["preferred_username"].as_str().map(String::from)
 }
 
-async fn exchange_code(
-    code: &str,
-    verifier: &str,
-    redirect_uri: &str,
-) -> Result<TokenResponse, String> {
-    let params = [
-        ("client_id", CLIENT_ID),
-        ("grant_type", "authorization_code"),
-        ("code", code),
-        ("redirect_uri", redirect_uri),
-        ("code_verifier", verifier),
-        ("scope", SCOPE),
-    ];
+/// Form params for the refresh_token grant (pure, for tests).
+pub fn refresh_params(refresh_token: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("client_id", CLIENT_ID.to_string()),
+        ("grant_type", "refresh_token".to_string()),
+        ("refresh_token", refresh_token.to_string()),
+        ("scope", SCOPE.to_string()),
+    ]
+}
+
+async fn post_token_endpoint(params: &[(&str, String)]) -> Result<TokenResponse, String> {
     let resp = reqwest::Client::new()
         .post(format!("{AUTHORITY}/oauth2/v2.0/token"))
-        .form(&params)
+        .form(params)
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -84,12 +123,32 @@ async fn exchange_code(
     resp.json().await.map_err(|e| e.to_string())
 }
 
+/// Exchange a refresh token for a new token set (silent renew).
+pub async fn refresh(refresh_token: &str, account: Option<String>) -> Result<TokenSet, String> {
+    let params = refresh_params(refresh_token);
+    let tokens = post_token_endpoint(&params).await?;
+    Ok(tokens.into_token_set(account))
+}
+
+async fn exchange_code(
+    code: &str,
+    verifier: &str,
+    redirect_uri: &str,
+) -> Result<TokenResponse, String> {
+    let params = [
+        ("client_id", CLIENT_ID.to_string()),
+        ("grant_type", "authorization_code".to_string()),
+        ("code", code.to_string()),
+        ("redirect_uri", redirect_uri.to_string()),
+        ("code_verifier", verifier.to_string()),
+        ("scope", SCOPE.to_string()),
+    ];
+    post_token_endpoint(&params).await
+}
+
 /// Runs the interactive flow: opens the system browser at the authorize URL,
 /// waits for the loopback redirect, exchanges the code.
-/// Returns (access_token, account_upn).
-pub async fn sign_in_interactive(
-    open_url: impl Fn(&str),
-) -> Result<(String, Option<String>), String> {
+pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, String> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
 
@@ -140,6 +199,5 @@ pub async fn sign_in_interactive(
     .map_err(|e| e.to_string())??;
 
     let tokens = exchange_code(&code, &verifier, &redirect_uri).await?;
-    let upn = tokens.id_token.as_deref().and_then(upn_from_id_token);
-    Ok((tokens.access_token, upn))
+    Ok(tokens.into_token_set(None))
 }
