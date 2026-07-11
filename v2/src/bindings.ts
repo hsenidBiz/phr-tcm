@@ -8,6 +8,9 @@ export const commands = {
 	authStatus: () => __TAURI_INVOKE<AuthStatus>("auth_status"),
 	signIn: () => typedError<AuthStatus, string>(__TAURI_INVOKE("sign_in")),
 	listProjects: (organization: string) => typedError<Project[], AdoError>(__TAURI_INVOKE("list_projects", { organization })),
+	listOrgs: () => typedError<Org[], AdoError>(__TAURI_INVOKE("list_orgs")),
+	searchPbis: (organization: string, project: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis", { organization, project, query })),
+	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
 };
 
 /* Types */
@@ -23,9 +26,27 @@ export type AuthStatus = {
 	account: string | null,
 };
 
+export type Org = {
+	name: string,
+	url: string,
+};
+
+export type PbiHit = {
+	id: number,
+	title: string,
+	work_item_type: string,
+};
+
 export type Project = {
 	id: string,
 	name: string,
+};
+
+export type TestCaseSummary = {
+	id: number,
+	title: string,
+	tags: string,
+	automation_status: string,
 };
 
 /* Tauri Specta runtime */

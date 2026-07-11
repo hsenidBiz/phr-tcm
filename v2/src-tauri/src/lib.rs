@@ -90,12 +90,49 @@ async fn list_projects(
     ado::AdoClient::new(token).get_projects(&organization).await
 }
 
+#[tauri::command]
+#[specta::specta]
+async fn list_orgs(app: tauri::AppHandle) -> Result<Vec<ado::Org>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).list_orgs().await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn search_pbis(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    query: String,
+) -> Result<Vec<ado::PbiHit>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .search_pbis(&organization, &project, &query, 20)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn pbi_test_cases(
+    app: tauri::AppHandle,
+    organization: String,
+    pbi_id: i32,
+) -> Result<Vec<ado::TestCaseSummary>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_pbi_test_cases(&organization, pbi_id)
+        .await
+}
+
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         ping,
         auth_status,
         sign_in,
-        list_projects
+        list_projects,
+        list_orgs,
+        search_pbis,
+        pbi_test_cases
     ])
 }
 
