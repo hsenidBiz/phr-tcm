@@ -162,6 +162,92 @@ async fn pbi_test_cases_follow_testedby_relations() {
     assert_eq!(cases[1].automation_status, "");
 }
 
+fn sample_tc() -> v2_lib::model::TestCase {
+    v2_lib::model::TestCase {
+        title: "My case".into(),
+        steps: vec![v2_lib::steps_xml::Step {
+            action: "Do".into(),
+            expected: "Done".into(),
+        }],
+        tags: "smoke".into(),
+        automation_status: "Planned".into(),
+        module_value: "Auth".into(),
+        preconditions: "Logged out".into(),
+        update_id: None,
+    }
+}
+
+#[tokio::test]
+async fn create_test_case_posts_json_patch() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/workitems/$Test%20Case"))
+        .and(header("Content-Type", "application/json-patch+json"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!([
+            {"op": "add", "path": "/fields/System.Title", "value": "My case"}
+        ])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 777})))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let id = client
+        .create_test_case("org", "proj", &sample_tc(), Some("Custom.Module"), "Area\\Sub", "It\\1", Some("Custom.Prec"))
+        .await
+        .unwrap();
+    assert_eq!(id, 777);
+}
+
+#[tokio::test]
+async fn update_from_model_skips_blank_fields() {
+    // SAFETY: a blank imported column must never wipe existing ADO data.
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/wit/workitems/55"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 55})))
+        .mount(&server)
+        .await;
+
+    let mut tc = sample_tc();
+    tc.tags = String::new();
+    tc.module_value = String::new();
+    tc.preconditions = String::new();
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client
+        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"))
+        .await
+        .unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    let body: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
+    let paths: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|op| op["path"].as_str().unwrap())
+        .collect();
+    assert!(paths.contains(&"/fields/Microsoft.VSTS.TCM.Steps"));
+    assert!(paths.contains(&"/fields/Microsoft.VSTS.TCM.AutomationStatus"));
+    assert!(!paths.iter().any(|p| p.contains("Tags")), "blank tags must be skipped");
+    assert!(!paths.iter().any(|p| p.contains("Custom.Module")));
+    assert!(!paths.iter().any(|p| p.contains("Custom.Prec")));
+}
+
+#[tokio::test]
+async fn link_to_pbi_adds_testedby_reverse_relation() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/wit/workitems/777"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!([
+            {"op": "add", "path": "/relations/-", "value": {"rel": "Microsoft.VSTS.Common.TestedBy-Reverse"}}
+        ])))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 777})))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client.link_to_pbi("org", "proj", 777, 100).await.unwrap();
+}
+
 /// The tool must never destroy data: no DELETE requests, ever.
 #[test]
 fn client_source_has_no_delete_calls() {

@@ -322,6 +322,170 @@ impl AdoClient {
         Ok(cases)
     }
 
+    /// PATCH-shaped request helpers. The only verbs this client will ever
+    /// grow are GET, POST and PATCH - no DELETE, ever.
+    async fn send_json_patch(
+        &self,
+        method: reqwest::Method,
+        url: String,
+        patch: &serde_json::Value,
+    ) -> Result<serde_json::Value, AdoError> {
+        let resp = self
+            .http
+            .request(method, &url)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json-patch+json")
+            .json(patch)
+            .send()
+            .await
+            .map_err(|e| AdoError::Network(e.to_string()))?;
+        Self::handle_json(resp).await
+    }
+
+    /// POST a new Test Case work item, ported from v1 create_test_case.
+    /// Only creates work items of type 'Test Case'. Returns the new id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_test_case(
+        &self,
+        organization: &str,
+        project: &str,
+        tc: &crate::model::TestCase,
+        module_ref: Option<&str>,
+        area_path: &str,
+        iteration_path: &str,
+        preconditions_ref: Option<&str>,
+    ) -> Result<i32, AdoError> {
+        let mut patch = vec![
+            serde_json::json!({"op": "add", "path": "/fields/System.Title", "value": tc.title}),
+            serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps",
+                "value": crate::steps_xml::build_steps_xml(&tc.steps)}),
+            serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.TCM.AutomationStatus",
+                "value": tc.automation_status}),
+        ];
+        if !area_path.is_empty() {
+            patch.push(serde_json::json!({"op": "add", "path": "/fields/System.AreaPath", "value": area_path}));
+        }
+        if !iteration_path.is_empty() {
+            patch.push(serde_json::json!({"op": "add", "path": "/fields/System.IterationPath", "value": iteration_path}));
+        }
+        if !tc.tags.is_empty() {
+            patch.push(serde_json::json!({"op": "add", "path": "/fields/System.Tags", "value": tc.tags}));
+        }
+        if let Some(m) = module_ref {
+            if !tc.module_value.is_empty() {
+                patch.push(serde_json::json!({"op": "add", "path": format!("/fields/{m}"), "value": tc.module_value}));
+            }
+        }
+        if let Some(p) = preconditions_ref {
+            if !tc.preconditions.is_empty() {
+                patch.push(serde_json::json!({"op": "add", "path": format!("/fields/{p}"),
+                    "value": format!("<div>{}</div>", tc.preconditions)}));
+            }
+        }
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/$Test%20Case?api-version=7.1",
+            self.base_url, organization, project
+        );
+        let data = self
+            .send_json_patch(reqwest::Method::POST, url, &serde_json::Value::Array(patch))
+            .await?;
+        Ok(data["id"].as_i64().unwrap_or_default() as i32)
+    }
+
+    /// PATCH a work item's fields ({reference_name: value}); the 'add' op
+    /// creates-or-replaces. Ported from v1 update_work_item_fields.
+    pub async fn update_work_item_fields(
+        &self,
+        organization: &str,
+        project: &str,
+        wi_id: i32,
+        fields: &[(String, String)],
+    ) -> Result<(), AdoError> {
+        let patch: Vec<serde_json::Value> = fields
+            .iter()
+            .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
+            .collect();
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+            self.base_url, organization, project, wi_id
+        );
+        self.send_json_patch(reqwest::Method::PATCH, url, &serde_json::Value::Array(patch))
+            .await?;
+        Ok(())
+    }
+
+    /// SAFETY RULE (ported from v1 update_test_case_from_model): always
+    /// overwrites Steps and AutomationStatus, but overwrites Tags / module /
+    /// Preconditions only when the imported case provides a value - a blank
+    /// spreadsheet column must never wipe existing data.
+    pub async fn update_test_case_from_model(
+        &self,
+        organization: &str,
+        project: &str,
+        tc_id: i32,
+        tc: &crate::model::TestCase,
+        module_ref: Option<&str>,
+        preconditions_ref: Option<&str>,
+    ) -> Result<(), AdoError> {
+        let mut fields = vec![
+            (
+                "Microsoft.VSTS.TCM.Steps".to_string(),
+                crate::steps_xml::build_steps_xml(&tc.steps),
+            ),
+            (
+                "Microsoft.VSTS.TCM.AutomationStatus".to_string(),
+                tc.automation_status.clone(),
+            ),
+        ];
+        if !tc.tags.is_empty() {
+            fields.push(("System.Tags".to_string(), tc.tags.clone()));
+        }
+        if let Some(m) = module_ref {
+            if !tc.module_value.is_empty() {
+                fields.push((m.to_string(), tc.module_value.clone()));
+            }
+        }
+        if let Some(p) = preconditions_ref {
+            if !tc.preconditions.is_empty() {
+                fields.push((p.to_string(), format!("<div>{}</div>", tc.preconditions)));
+            }
+        }
+        self.update_work_item_fields(organization, project, tc_id, &fields)
+            .await
+    }
+
+    /// PATCH the Test Case to add a TestedBy-Reverse relation to the PBI -
+    /// 'Tests' on the Test Case side, 'Tested By' on the PBI side. The PBI
+    /// itself is never modified directly. Ported from v1 link_to_pbi.
+    pub async fn link_to_pbi(
+        &self,
+        organization: &str,
+        project: &str,
+        test_case_id: i32,
+        pbi_id: i32,
+    ) -> Result<(), AdoError> {
+        let pbi_url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}",
+            self.base_url, organization, project, pbi_id
+        );
+        let patch = serde_json::json!([{
+            "op": "add",
+            "path": "/relations/-",
+            "value": {
+                "rel": "Microsoft.VSTS.Common.TestedBy-Reverse",
+                "url": pbi_url,
+                "attributes": {"comment": "Linked by DevOps Test Case Manager"},
+            },
+        }]);
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+            self.base_url, organization, project, test_case_id
+        );
+        self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
+        Ok(())
+    }
+
     pub async fn get_projects(&self, organization: &str) -> Result<Vec<Project>, AdoError> {
         let url = format!(
             "{}/{}/_apis/projects?api-version=7.1&$top=500",
