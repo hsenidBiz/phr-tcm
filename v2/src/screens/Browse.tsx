@@ -8,9 +8,17 @@ import RunPanel from "./RunPanel";
 const inputCls =
   "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
 
-export default function Browse() {
-  const [org, setOrg] = useState("");
-  const [project, setProject] = useState("");
+export default function Browse({
+  org,
+  setOrg,
+  project,
+  setProject,
+}: {
+  org: string;
+  setOrg: (v: string) => void;
+  project: string;
+  setProject: (v: string) => void;
+}) {
   const [searchText, setSearchText] = useState("");
   const [query, setQuery] = useState("");
   const [pbi, setPbi] = useState<PbiHit | null>(null);

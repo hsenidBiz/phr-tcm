@@ -1,16 +1,23 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import Browse from "./Browse";
 
 afterEach(() => clearMocks());
 
+function Harness() {
+  const [org, setOrg] = useState("");
+  const [project, setProject] = useState("");
+  return <Browse org={org} setOrg={setOrg} project={project} setProject={setProject} />;
+}
+
 function renderBrowse() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Browse />
+      <Harness />
     </QueryClientProvider>,
   );
 }

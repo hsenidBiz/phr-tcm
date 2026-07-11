@@ -175,7 +175,7 @@ impl AdoClient {
 
     /// POST used for WIQL queries only — query-only, creates and modifies
     /// nothing. Still no DELETE anywhere in this client.
-    async fn post_json_query(
+    pub(crate) async fn post_json_query(
         &self,
         url: String,
         body: &serde_json::Value,

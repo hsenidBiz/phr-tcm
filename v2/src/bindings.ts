@@ -29,6 +29,12 @@ export const commands = {
 	 *  PATCH outcomes, complete the run. Returns the run's web URL.
 	 */
 	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
+	fetchBoard: (organization: string, project: string) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project })),
+	/**
+	 *  Move a board item into a column: resolves the target state exactly like
+	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
+	 */
+	moveBoardItem: (organization: string, project: string, itemId: number, workItemType: string, column: string) => typedError<string, AdoError>(__TAURI_INVOKE("move_board_item", { organization, project, itemId, workItemType, column })),
 };
 
 /* Types */
@@ -42,6 +48,25 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 export type AuthStatus = {
 	signed_in: boolean,
 	account: string | null,
+};
+
+export type BoardData = {
+	items: BoardItem[],
+	states_by_type: { [key in string]: StateInfo[] },
+};
+
+export type BoardItem = {
+	id: number,
+	title: string,
+	work_item_type: string,
+	state: string,
+	state_color: string,
+	/**  "To Do" | "In Progress" | "Done"; None = hidden (Removed). */
+	column: string | null,
+	assigned_to: string,
+	tags: string,
+	priority: number | null,
+	changed_date: string,
 };
 
 export type EnsuredSuite = {
@@ -82,6 +107,12 @@ export type Project = {
 export type RunCreated = {
 	run_id: number,
 	web_url: string,
+};
+
+export type StateInfo = {
+	name: string,
+	color: string,
+	category: string,
 };
 
 export type Step = {

@@ -4,6 +4,7 @@ pub mod auth;
 pub mod import_parser;
 pub mod model;
 pub mod steps_xml;
+pub mod work_board;
 
 use std::sync::Mutex;
 use std::time::Instant;
@@ -342,6 +343,53 @@ async fn submit_test_run(
     Ok(run)
 }
 
+#[tauri::command]
+#[specta::specta]
+async fn fetch_board(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<work_board::BoardData, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).fetch_board(&organization, &project).await
+}
+
+/// Move a board item into a column: resolves the target state exactly like
+/// v1 (_state_for_column) and PATCHes System.State. Returns the state set.
+#[tauri::command]
+#[specta::specta]
+async fn move_board_item(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    item_id: i32,
+    work_item_type: String,
+    column: String,
+) -> Result<String, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let states = client
+        .get_work_item_states(&organization, &project, &work_item_type)
+        .await?;
+    let mut by_type = std::collections::HashMap::new();
+    by_type.insert(work_item_type.clone(), states);
+    let target = work_board::state_for_column(&work_item_type, &column, &by_type).ok_or(
+        ado::AdoError::Http {
+            status: 0,
+            body: format!("no state maps to column '{column}' for {work_item_type}"),
+        },
+    )?;
+    client
+        .update_work_item_fields(
+            &organization,
+            &project,
+            item_id,
+            &[("System.State".to_string(), target.clone())],
+        )
+        .await?;
+    Ok(target)
+}
+
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         ping,
@@ -357,7 +405,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         submit_queue,
         ensure_pbi_suite,
         list_test_points,
-        submit_test_run
+        submit_test_run,
+        fetch_board,
+        move_board_item
     ])
 }
 
