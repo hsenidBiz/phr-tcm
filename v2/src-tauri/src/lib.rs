@@ -1,4 +1,5 @@
 pub mod ado;
+pub mod ado_testplan;
 pub mod auth;
 pub mod import_parser;
 pub mod model;
@@ -174,6 +175,22 @@ async fn submit_queue(
     pbi_id: i32,
     queue: Vec<model::TestCase>,
 ) -> Result<Vec<SubmitItemResult>, String> {
+    // Best-effort board visibility (ported from v1 CreationWorker._ensure_suite):
+    // make sure the PBI's requirement-based suite exists before creating, so
+    // linked cases surface on the board's test count. Failures never block
+    // creation.
+    if let Ok(token) = get_fresh_token(&app).await {
+        let client = ado::AdoClient::new(token);
+        if let Ok((area, iteration)) = client
+            .get_work_item_paths(&organization, &project, pbi_id)
+            .await
+        {
+            let _ = client
+                .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
+                .await;
+        }
+    }
+
     let mut results = vec![];
     for (i, tc) in queue.iter().enumerate() {
         if i > 0 {
@@ -239,6 +256,92 @@ async fn submit_queue(
     Ok(results)
 }
 
+/// Find-or-create the PBI's requirement suite and return it with its plan.
+#[tauri::command]
+#[specta::specta]
+async fn ensure_pbi_suite(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    pbi_id: i32,
+) -> Result<ado_testplan::EnsuredSuite, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let (area, iteration) = client
+        .get_work_item_paths(&organization, &project, pbi_id)
+        .await?;
+    client
+        .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn list_test_points(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    plan_id: i32,
+    suite_id: i32,
+) -> Result<Vec<ado_testplan::TestPoint>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_test_points(&organization, &project, plan_id, suite_id, &[])
+        .await
+}
+
+#[derive(serde::Deserialize, specta::Type)]
+pub struct PointOutcome {
+    pub point_id: i32,
+    /// Passed / Failed / Blocked / NotApplicable.
+    pub outcome: String,
+    pub comment: Option<String>,
+    pub duration_ms: Option<i32>,
+}
+
+/// Full manual-run lifecycle ported from v1 run_screen submission: create a
+/// run seeded from the points, map each point to its auto-created result,
+/// PATCH outcomes, complete the run. Returns the run's web URL.
+#[tauri::command]
+#[specta::specta]
+async fn submit_test_run(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    plan_id: i32,
+    run_name: String,
+    outcomes: Vec<PointOutcome>,
+) -> Result<ado_testplan::RunCreated, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let point_ids: Vec<i32> = outcomes.iter().map(|o| o.point_id).collect();
+    let run = client
+        .create_test_run(&organization, &project, plan_id, &run_name, &point_ids)
+        .await?;
+    let results = client
+        .get_run_results(&organization, &project, run.run_id)
+        .await?;
+    let updates: Vec<ado_testplan::OutcomeUpdate> = outcomes
+        .iter()
+        .filter_map(|o| {
+            let result = results.iter().find(|r| r.point_id == Some(o.point_id))?;
+            Some(ado_testplan::OutcomeUpdate {
+                id: result.result_id,
+                outcome: o.outcome.clone(),
+                comment: o.comment.clone(),
+                duration_ms: o.duration_ms,
+            })
+        })
+        .collect();
+    client
+        .update_run_results(&organization, &project, run.run_id, &updates)
+        .await?;
+    client
+        .complete_test_run(&organization, &project, run.run_id)
+        .await?;
+    Ok(run)
+}
+
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         ping,
@@ -251,7 +354,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         parse_import_file,
         export_queue,
         write_template,
-        submit_queue
+        submit_queue,
+        ensure_pbi_suite,
+        list_test_points,
+        submit_test_run
     ])
 }
 

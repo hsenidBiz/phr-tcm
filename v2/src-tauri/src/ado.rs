@@ -51,10 +51,10 @@ pub enum AdoError {
 }
 
 pub struct AdoClient {
-    http: reqwest::Client,
-    token: String,
-    base_url: String, // "https://dev.azure.com" in prod, mock server in tests
-    vssps_base_url: String, // "https://app.vssps.visualstudio.com" in prod
+    pub(crate) http: reqwest::Client,
+    pub(crate) token: String,
+    pub(crate) base_url: String, // "https://dev.azure.com" in prod, mock server in tests
+    pub(crate) vssps_base_url: String, // "https://app.vssps.visualstudio.com" in prod
 }
 
 impl AdoClient {
@@ -80,7 +80,67 @@ impl AdoClient {
         }
     }
 
-    async fn get_json(&self, url: String) -> Result<serde_json::Value, AdoError> {
+    /// GET returning (body, x-ms-continuationtoken) for ADO's paginated
+    /// testplan endpoints.
+    pub(crate) async fn get_json_with_continuation(
+        &self,
+        url: String,
+    ) -> Result<(serde_json::Value, Option<String>), AdoError> {
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| AdoError::Network(e.to_string()))?;
+        let cont = resp
+            .headers()
+            .get("x-ms-continuationtoken")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
+        let body = Self::handle_json(resp).await?;
+        Ok((body, cont))
+    }
+
+    /// Plain-JSON POST (application/json) - used by testplan/test-run
+    /// endpoints. Still no DELETE anywhere in this client.
+    pub(crate) async fn post_json(
+        &self,
+        url: String,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, AdoError> {
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| AdoError::Network(e.to_string()))?;
+        Self::handle_json(resp).await
+    }
+
+    /// Plain-JSON PATCH (application/json, not json-patch).
+    pub(crate) async fn patch_plain_json(
+        &self,
+        url: String,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, AdoError> {
+        let resp = self
+            .http
+            .patch(&url)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| AdoError::Network(e.to_string()))?;
+        Self::handle_json(resp).await
+    }
+
+    pub(crate) async fn get_json(&self, url: String) -> Result<serde_json::Value, AdoError> {
         let resp = self
             .http
             .get(&url)
@@ -484,6 +544,25 @@ impl AdoClient {
         );
         self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
         Ok(())
+    }
+
+    /// A work item's area + iteration path (used to home the PBI's test
+    /// plan). Read only.
+    pub async fn get_work_item_paths(
+        &self,
+        organization: &str,
+        project: &str,
+        wi_id: i32,
+    ) -> Result<(String, String), AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1&$select=System.AreaPath,System.IterationPath",
+            self.base_url, organization, project, wi_id
+        );
+        let data = self.get_json(url).await?;
+        Ok((
+            data["fields"]["System.AreaPath"].as_str().unwrap_or_default().to_string(),
+            data["fields"]["System.IterationPath"].as_str().unwrap_or_default().to_string(),
+        ))
     }
 
     pub async fn get_projects(&self, organization: &str) -> Result<Vec<Project>, AdoError> {
