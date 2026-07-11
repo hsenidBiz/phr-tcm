@@ -1,0 +1,15 @@
+# Pack the Tauri v2 build with Velopack. LOCAL ONLY - never publishes.
+# Pure ASCII on purpose (PS 5.1 reads BOM-less UTF-8 as cp1252).
+param([string]$Version = "0.0.1")
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot          # v2/
+$exeDir = Join-Path $root "src-tauri\target\release"
+$exe = Get-ChildItem $exeDir -Filter "*.exe" | Where-Object { $_.Name -notmatch "setup" } | Select-Object -First 1
+if (-not $exe) { throw "No release exe found in $exeDir - run 'npm run tauri build' first." }
+$stage = Join-Path $env:TEMP "tcm-v2-pack"
+if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+New-Item -ItemType Directory -Force $stage | Out-Null
+Copy-Item $exe.FullName $stage
+vpk pack --packId "AzureDevOpsTestCaseManager.V2" --packVersion $Version --packDir $stage --mainExe $exe.Name --outputDir (Join-Path $root "Releases")
+if ($LASTEXITCODE -ne 0) { throw "vpk pack failed with exit code $LASTEXITCODE" }
+Write-Host "Packed v$Version to v2/Releases"
