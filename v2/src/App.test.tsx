@@ -25,18 +25,12 @@ test("shows sign-in button when signed out", async () => {
   ).toBeInTheDocument();
 });
 
-test("shows account and project list when signed in", async () => {
-  mockIPC((cmd, args) => {
+test("shows account and the browse screen when signed in", async () => {
+  mockIPC((cmd) => {
     if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
-    if (cmd === "list_projects" && (args as { organization: string }).organization === "myorg")
-      return [{ id: "1", name: "Proj One" }];
+    if (cmd === "list_orgs") return [{ name: "acme", url: "https://dev.azure.com/acme" }];
   });
-  const { container } = renderApp();
+  renderApp();
   expect(await screen.findByText("a@b.com")).toBeInTheDocument();
-
-  const input = await screen.findByPlaceholderText("Organization name");
-  const { fireEvent } = await import("@testing-library/react");
-  fireEvent.change(input, { target: { value: "myorg" } });
-  expect(await screen.findByText("Proj One")).toBeInTheDocument();
-  expect(container.textContent).not.toContain("Rate limited");
+  expect(await screen.findByRole("option", { name: "acme" })).toBeInTheDocument();
 });

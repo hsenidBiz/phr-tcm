@@ -1,27 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { commands, type AdoError } from "./bindings";
-
-function describeAdoError(e: AdoError): string {
-  switch (e.kind) {
-    case "Unauthorized":
-      return "Not authorized - sign in again.";
-    case "RateLimited":
-      return `Rate limited - retry in ${e.detail.retry_after_secs}s.`;
-    case "Forbidden":
-      return "You don't have permission for this organization.";
-    case "NotFound":
-      return "Organization not found.";
-    case "Http":
-      return `Azure DevOps returned HTTP ${e.detail.status}.`;
-    case "Network":
-      return `Network error: ${e.detail}`;
-  }
-}
+import { commands } from "./bindings";
+import Browse from "./screens/Browse";
 
 export default function App() {
   const qc = useQueryClient();
-  const [org, setOrg] = useState("");
 
   const status = useQuery({
     queryKey: ["auth"],
@@ -35,17 +17,6 @@ export default function App() {
       return r.data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }),
-  });
-
-  const projects = useQuery({
-    queryKey: ["projects", org],
-    queryFn: async () => {
-      const r = await commands.listProjects(org);
-      if (r.status === "error") throw new Error(describeAdoError(r.error));
-      return r.data;
-    },
-    enabled: Boolean(status.data?.signed_in && org),
-    retry: false,
   });
 
   return (
@@ -71,30 +42,7 @@ export default function App() {
             )}
           </div>
         ) : (
-          <div className="space-y-4">
-            <input
-              className="w-72 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm"
-              placeholder="Organization name"
-              value={org}
-              onChange={(e) => setOrg(e.target.value)}
-            />
-            {projects.isLoading && org && (
-              <p className="text-sm text-neutral-400">Loading projects...</p>
-            )}
-            {projects.isError && (
-              <p className="text-sm text-red-400">{projects.error.message}</p>
-            )}
-            <ul className="space-y-1">
-              {(projects.data ?? []).map((p) => (
-                <li
-                  key={p.id}
-                  className="rounded-md border border-neutral-800 px-3 py-2 text-sm"
-                >
-                  {p.name}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <Browse />
         )}
       </main>
     </div>
