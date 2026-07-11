@@ -3,6 +3,7 @@ import { useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import { unwrap } from "../lib/ipc";
 import QueuePanel from "./QueuePanel";
+import RunPanel from "./RunPanel";
 
 const inputCls =
   "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
@@ -121,6 +122,8 @@ export default function Browse() {
       )}
 
       {pbi && <QueuePanel org={org} project={project} pbiId={pbi.id} />}
+
+      {pbi && <RunPanel org={org} project={project} pbiId={pbi.id} pbiTitle={pbi.title} />}
 
       {pbi && (
         <section className="space-y-2">

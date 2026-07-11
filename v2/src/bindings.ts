@@ -20,6 +20,15 @@ export const commands = {
 	 *  patched in place. A failed item never aborts the rest.
 	 */
 	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase[]) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue })),
+	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
+	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
+	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
+	/**
+	 *  Full manual-run lifecycle ported from v1 run_screen submission: create a
+	 *  run seeded from the points, map each point to its auto-created result,
+	 *  PATCH outcomes, complete the run. Returns the run's web URL.
+	 */
+	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
 };
 
 /* Types */
@@ -33,6 +42,12 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 export type AuthStatus = {
 	signed_in: boolean,
 	account: string | null,
+};
+
+export type EnsuredSuite = {
+	plan_id: number,
+	plan_name: string,
+	suite_id: number,
 };
 
 export type ImportResult = {
@@ -51,9 +66,22 @@ export type PbiHit = {
 	work_item_type: string,
 };
 
+export type PointOutcome = {
+	point_id: number,
+	/**  Passed / Failed / Blocked / NotApplicable. */
+	outcome: string,
+	comment: string | null,
+	duration_ms: number | null,
+};
+
 export type Project = {
 	id: string,
 	name: string,
+};
+
+export type RunCreated = {
+	run_id: number,
+	web_url: string,
 };
 
 export type Step = {
@@ -88,6 +116,17 @@ export type TestCaseSummary = {
 	title: string,
 	tags: string,
 	automation_status: string,
+};
+
+export type TestPoint = {
+	point_id: number,
+	test_case_id: number | null,
+	test_case_name: string,
+	config_name: string,
+	tester: string,
+	last_outcome: string,
+	last_run_id: number | null,
+	last_result_id: number | null,
 };
 
 /* Tauri Specta runtime */

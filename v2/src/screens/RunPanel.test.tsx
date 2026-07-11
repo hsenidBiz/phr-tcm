@@ -1,0 +1,85 @@
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, test } from "vitest";
+import RunPanel from "./RunPanel";
+
+afterEach(() => clearMocks());
+
+function renderPanel() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <RunPanel org="acme" project="Web" pbiId={42} pbiTitle="Login flow" />
+    </QueryClientProvider>,
+  );
+}
+
+function mockAll(submitted: { runName?: string; outcomes?: unknown[] }) {
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 3,
+            last_result_id: 30,
+          },
+          {
+            point_id: 8,
+            test_case_id: 202,
+            test_case_name: "Invalid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "",
+            last_run_id: null,
+            last_result_id: null,
+          },
+        ];
+      case "submit_test_run": {
+        const a = args as { runName: string; outcomes: unknown[] };
+        submitted.runName = a.runName;
+        submitted.outcomes = a.outcomes;
+        return { run_id: 300, web_url: "https://x/run/300" };
+      }
+    }
+  });
+}
+
+test("loads suite + points and records chosen outcomes", async () => {
+  const submitted: { runName?: string; outcomes?: Array<{ point_id: number; outcome: string }> } = {};
+  mockAll(submitted);
+  renderPanel();
+
+  expect(await screen.findByText(/Auth - Test Plan/)).toBeInTheDocument();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("failed")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Outcome for Valid login"), {
+    target: { value: "Passed" },
+  });
+  const btn = screen.getByRole("button", { name: /Record 1 outcome/ });
+  fireEvent.click(btn);
+
+  expect(await screen.findByText("View run in Azure DevOps")).toBeInTheDocument();
+  expect(submitted.runName).toBe("Login flow - manual run");
+  expect(submitted.outcomes).toEqual([
+    { point_id: 7, outcome: "Passed", comment: null, duration_ms: null },
+  ]);
+});
+
+test("skipped points are not submitted", async () => {
+  const submitted: { outcomes?: unknown[] } = {};
+  mockAll(submitted);
+  renderPanel();
+  await screen.findByText("Valid login");
+  // Nothing chosen: button disabled.
+  expect(screen.getByRole("button", { name: /Record 0 outcomes/ })).toBeDisabled();
+});
