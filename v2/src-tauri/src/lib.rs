@@ -1,5 +1,6 @@
 pub mod ado;
 pub mod auth;
+pub mod steps_xml;
 
 use std::sync::Mutex;
 use std::time::Instant;
