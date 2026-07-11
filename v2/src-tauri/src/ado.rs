@@ -16,8 +16,9 @@ pub struct Project {
 pub enum AdoError {
     #[error("unauthorized")]
     Unauthorized,
+    // u32 (not u64): specta forbids BigInt-style types crossing IPC.
     #[error("rate limited, retry after {retry_after_secs}s")]
-    RateLimited { retry_after_secs: u64 },
+    RateLimited { retry_after_secs: u32 },
     #[error("forbidden")]
     Forbidden,
     #[error("not found")]

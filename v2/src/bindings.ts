@@ -5,5 +5,36 @@ import { invoke as __TAURI_INVOKE } from "@tauri-apps/api/core";
 /** Commands */
 export const commands = {
 	ping: (msg: string) => __TAURI_INVOKE<string>("ping", { msg }),
+	authStatus: () => __TAURI_INVOKE<AuthStatus>("auth_status"),
+	signIn: () => typedError<AuthStatus, string>(__TAURI_INVOKE("sign_in")),
+	listProjects: (organization: string) => typedError<Project[], AdoError>(__TAURI_INVOKE("list_projects", { organization })),
 };
+
+/* Types */
+export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
+	retry_after_secs: number,
+} } | { kind: "Forbidden" } | { kind: "NotFound" } | { kind: "Http"; detail: {
+	status: number,
+	body: string,
+} } | { kind: "Network"; detail: string };
+
+export type AuthStatus = {
+	signed_in: boolean,
+	account: string | null,
+};
+
+export type Project = {
+	id: string,
+	name: string,
+};
+
+/* Tauri Specta runtime */
+async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {
+    try {
+        return { status: "ok", data: await result };
+    } catch (e) {
+        if (e instanceof Error) throw e;
+        return { status: "error", error: e as any };
+    }
+}
 
