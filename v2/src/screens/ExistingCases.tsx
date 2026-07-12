@@ -1,14 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type TestCase, type TestCaseFull } from "../bindings";
+import BulkEditDialog from "../components/BulkEditDialog";
+import ModuleField from "../components/ModuleField";
+import StepsEditor from "../components/StepsEditor";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { useFieldRefs } from "../hooks/useFieldRefs";
+import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
 import { validateCase } from "../lib/validate";
 
@@ -54,23 +58,8 @@ function CaseEditor({
     onError: (e) => toast.error(`Save failed: ${e.message}`),
   });
 
-  const setStep = (i: number, key: "action" | "expected", value: string) =>
-    setTc((t) => ({
-      ...t,
-      steps: t.steps.map((s, j) => (j === i ? { ...s, [key]: value } : s)),
-    }));
-
-  const moveStep = (i: number, delta: -1 | 1) =>
-    setTc((t) => {
-      const steps = [...t.steps];
-      const j = i + delta;
-      if (j < 0 || j >= steps.length) return t;
-      [steps[i], steps[j]] = [steps[j], steps[i]];
-      return { ...t, steps };
-    });
-
   return (
-    <div className="space-y-2 border-t border-border p-3">
+    <div className="space-y-2 border-t border-border p-3" onClick={(e) => e.stopPropagation()}>
       <div className="flex gap-2">
         <Input
           aria-label="Case title"
@@ -96,11 +85,11 @@ function CaseEditor({
           onChange={(e) => setTc((t) => ({ ...t, tags: e.target.value }))}
         />
         {moduleRef && (
-          <Input
-            aria-label="Module"
-            placeholder="Module"
+          <ModuleField
+            org={org}
+            project={project}
             value={tc.module_value}
-            onChange={(e) => setTc((t) => ({ ...t, module_value: e.target.value }))}
+            onChange={(v) => setTc((t) => ({ ...t, module_value: v }))}
           />
         )}
       </div>
@@ -114,49 +103,7 @@ function CaseEditor({
         />
       )}
 
-      <div className="space-y-1">
-        {tc.steps.map((s, i) => (
-          <div key={i} className="flex items-center gap-1">
-            <span className="w-5 text-right text-xs text-faint">{i + 1}</span>
-            <Input
-              aria-label={`Step ${i + 1} action`}
-              className="flex-1 px-2 py-1 text-xs"
-              placeholder="Action"
-              value={s.action}
-              onChange={(e) => setStep(i, "action", e.target.value)}
-            />
-            <Input
-              aria-label={`Step ${i + 1} expected`}
-              className="flex-1 px-2 py-1 text-xs"
-              placeholder="Expected"
-              value={s.expected}
-              onChange={(e) => setStep(i, "expected", e.target.value)}
-            />
-            <button className="px-1 text-xs text-faint hover:text-text" title="Move up" onClick={() => moveStep(i, -1)}>
-              ↑
-            </button>
-            <button className="px-1 text-xs text-faint hover:text-text" title="Move down" onClick={() => moveStep(i, 1)}>
-              ↓
-            </button>
-            <button
-              className="px-1 text-xs text-faint hover:text-danger"
-              title="Remove step"
-              onClick={() => setTc((t) => ({ ...t, steps: t.steps.filter((_, j) => j !== i) }))}
-            >
-              ✕
-            </button>
-          </div>
-        ))}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() =>
-            setTc((t) => ({ ...t, steps: [...t.steps, { action: "", expected: "" }] }))
-          }
-        >
-          + Add step
-        </Button>
-      </div>
+      <StepsEditor steps={tc.steps} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
 
       <div className="flex items-center gap-3">
         <Button size="sm" disabled={Boolean(problem) || saveCase.isPending} onClick={() => saveCase.mutate()}>
@@ -168,127 +115,242 @@ function CaseEditor({
   );
 }
 
-/** The v1 Edit tab: the PBI's linked cases, editable in place. */
+/** The Edit tab: click selects a card, ctrl+click toggles, shift+click
+ * ranges; the chevron (or double-click) expands the editor. Selection
+ * unlocks the bulk toolbar. Grouping by module is the v1 smart grouping. */
 export default function ExistingCases({
   org,
   project,
   pbiId,
+  caseIds,
+  label,
 }: {
   org: string;
   project: string;
-  pbiId: number;
+  pbiId: number | null;
+  /** When set, edit these exact cases (suite handoff) instead of a PBI's. */
+  caseIds?: number[];
+  label?: string;
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
   const [openId, setOpenId] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [groupByModule, setGroupByModule] = useState(
+    () => localStorage.getItem("tcm-v2-group-cases") === "on",
+  );
+
+  const queryKey = caseIds
+    ? ["cases-by-ids", org, caseIds, prefs.moduleRef, prefs.preconditionsRef]
+    : ["pbi-tcs", org, pbiId, prefs.moduleRef, prefs.preconditionsRef];
 
   const cases = useQuery({
-    queryKey: ["pbi-tcs", org, pbiId, prefs.moduleRef, prefs.preconditionsRef],
+    queryKey,
     queryFn: () =>
-      unwrap(commands.pbiTestCasesFull(org, pbiId, prefs.moduleRef, prefs.preconditionsRef)),
-    enabled: Boolean(org && pbiId),
+      caseIds
+        ? unwrap(commands.testCasesByIds(org, caseIds, prefs.moduleRef, prefs.preconditionsRef))
+        : unwrap(commands.pbiTestCasesFull(org, pbiId!, prefs.moduleRef, prefs.preconditionsRef)),
+    enabled: Boolean(org && (caseIds ? caseIds.length > 0 : pbiId != null)),
     retry: false,
   });
 
-  const exportSel = useMutation({
-    mutationFn: async (format: "xlsx" | "json") => {
-      const chosen = (cases.data ?? []).filter((c) => selected.has(c.id)).map(toTestCase);
-      if (chosen.length === 0) return;
+  const list = cases.data ?? [];
+  const ordered = useMemo(() => {
+    if (!groupByModule) return [{ group: "", items: list }];
+    const groups = new Map<string, TestCaseFull[]>();
+    for (const c of list) {
+      const key = c.module_value || "No module";
+      groups.set(key, [...(groups.get(key) ?? []), c]);
+    }
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([group, items]) => ({ group, items }));
+  }, [list, groupByModule]);
+  const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
+
+  const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
+    const idx = flat.findIndex((x) => x.id === c.id);
+    if (e.shiftKey && anchor != null) {
+      const a = flat.findIndex((x) => x.id === anchor);
+      if (a >= 0 && idx >= 0) {
+        const [lo, hi] = a < idx ? [a, idx] : [idx, a];
+        const range = flat.slice(lo, hi + 1).map((x) => x.id);
+        setSelected((s) => (e.ctrlKey || e.metaKey ? new Set([...s, ...range]) : new Set(range)));
+        return;
+      }
+    }
+    if (e.ctrlKey || e.metaKey) {
+      setSelected((s) => {
+        const next = new Set(s);
+        if (next.has(c.id)) next.delete(c.id);
+        else next.add(c.id);
+        return next;
+      });
+    } else {
+      setSelected(new Set([c.id]));
+    }
+    setAnchor(c.id);
+  };
+
+  const selectedCases = list.filter((c) => selected.has(c.id));
+
+  const exportJson = useMutation({
+    mutationFn: async () => {
       const path = await save({
-        defaultPath: format === "xlsx" ? "test-cases.xlsx" : "test-cases.json",
-        filters: [
-          format === "xlsx"
-            ? { name: "Excel", extensions: ["xlsx"] }
-            : { name: "JSON", extensions: ["json"] },
-        ],
+        defaultPath: "test-cases.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
-      const r =
-        format === "xlsx"
-          ? await commands.exportQueue(path, chosen)
-          : await commands.exportQueueJson(path, chosen);
+      const r = await commands.exportQueueJson(path, selectedCases.map(toTestCase));
       if (r.status === "error") throw new Error(r.error);
-      toast.success(`Exported ${chosen.length} case(s).`);
+      toast.success(`Exported ${selectedCases.length} case(s).`);
     },
     onError: (e) => toast.error(`Export failed: ${e.message}`),
   });
 
-  const toggle = (id: number) =>
-    setSelected((s) => {
-      const next = new Set(s);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const viewHtml = useMutation({
+    mutationFn: async () => {
+      const chosen = selectedCases.length > 0 ? selectedCases : list;
+      const r = await commands.viewQueueHtml(
+        chosen.map(toTestCase),
+        label ?? (pbiId != null ? `PBI #${pbiId}` : ""),
+      );
+      if (r.status === "error") throw new Error(r.error);
+    },
+    onError: (e) => toast.error(`Could not open the report: ${e.message}`),
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey });
+    qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, pbiId] });
+  };
 
   return (
     <section className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
-          Test cases linked to #{pbiId} ({cases.data?.length ?? "..."})
+          {label ?? `Test cases linked to #${pbiId}`} ({list.length})
         </h2>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={selected.size === 0}
-            onClick={() => exportSel.mutate("xlsx")}
-          >
-            Export selected xlsx...
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={selected.size === 0}
-            onClick={() => exportSel.mutate("json")}
-          >
-            Export selected JSON...
+        <button
+          aria-label="Refresh"
+          title="Refresh"
+          className="rounded p-1 text-muted hover:text-accent"
+          onClick={refresh}
+        >
+          <RefreshCw size={14} />
+        </button>
+        <label className="flex items-center gap-1.5 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={groupByModule}
+            onChange={(e) => {
+              setGroupByModule(e.target.checked);
+              try {
+                localStorage.setItem("tcm-v2-group-cases", e.target.checked ? "on" : "off");
+              } catch {
+                // session-only
+              }
+            }}
+          />
+          Group by module
+        </label>
+        <div className="ml-auto">
+          <Button variant="outline" size="sm" disabled={list.length === 0} onClick={() => viewHtml.mutate()}>
+            View in browser
           </Button>
         </div>
       </div>
 
-      {cases.isLoading && <Skeleton className="h-24" />}
-      {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
-      {cases.data && cases.data.length === 0 && (
-        <p className="text-sm text-muted">No test cases linked yet.</p>
+      {selected.size > 0 && (
+        <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
+          <span className="font-medium text-accent">{selected.size} selected</span>
+          <Button size="sm" onClick={() => setBulkOpen(true)}>
+            Bulk edit...
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => exportJson.mutate()}>
+            Export JSON...
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+          <span className="ml-auto text-xs text-faint">Ctrl+click to toggle · Shift+click for range</span>
+        </div>
       )}
 
-      <ul className="space-y-1">
-        {(cases.data ?? []).map((c) => (
-          <li key={c.id} className="rounded-md border border-border">
-            <div className="flex items-center gap-2 px-3 py-2 text-sm">
-              <input
-                type="checkbox"
-                aria-label={`Select #${c.id}`}
-                checked={selected.has(c.id)}
-                onChange={() => toggle(c.id)}
-              />
-              <button
-                className="flex flex-1 items-center gap-2 text-left"
-                onClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
-              >
-                {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="id-mono text-faint">#{c.id}</span>
-                <span className="text-text">{c.title}</span>
-                <span className="ml-auto text-xs text-faint">
-                  {c.steps.length} steps · {c.automation_status}
-                </span>
-              </button>
+      {cases.isLoading && <Skeleton className="h-24" />}
+      {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
+      {cases.data && list.length === 0 && (
+        <p className="text-sm text-muted">No test cases here yet.</p>
+      )}
+
+      {ordered.map(({ group, items }) => (
+        <div key={group || "__all"} className="space-y-1">
+          {group && (
+            <div className="pt-1 text-xs font-semibold uppercase tracking-wide text-faint">
+              {group} <span className="normal-case">({items.length})</span>
             </div>
-            {openId === c.id && (
-              <CaseEditor
-                original={c}
-                org={org}
-                project={project}
-                moduleRef={prefs.moduleRef}
-                preconditionsRef={prefs.preconditionsRef}
-                onSaved={() => qc.invalidateQueries({ queryKey: ["pbi-tcs", org, pbiId] })}
-              />
-            )}
-          </li>
-        ))}
-      </ul>
+          )}
+          <ul className="space-y-1">
+            {items.map((c) => (
+              <li
+                key={c.id}
+                className={cn(
+                  "cursor-pointer select-none rounded-md border transition-colors",
+                  selected.has(c.id)
+                    ? "border-accent bg-accent-soft"
+                    : "border-border hover:border-border-strong",
+                )}
+                onClick={(e) => handleCardClick(c, e)}
+                onDoubleClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
+              >
+                <div className="flex items-center gap-2 px-3 py-2 text-sm">
+                  <button
+                    aria-label={`Expand #${c.id}`}
+                    className="text-muted hover:text-accent"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenId((o) => (o === c.id ? null : c.id));
+                    }}
+                  >
+                    {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  <span className="id-mono text-faint">#{c.id}</span>
+                  <span className="text-text">{c.title}</span>
+                  <span className="ml-auto text-xs text-faint">
+                    {c.steps.length} steps · {c.automation_status}
+                  </span>
+                </div>
+                {openId === c.id && (
+                  <CaseEditor
+                    original={c}
+                    org={org}
+                    project={project}
+                    moduleRef={prefs.moduleRef}
+                    preconditionsRef={prefs.preconditionsRef}
+                    onSaved={refresh}
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      {bulkOpen && (
+        <BulkEditDialog
+          org={org}
+          project={project}
+          cases={selectedCases}
+          onClose={() => setBulkOpen(false)}
+          onDone={() => {
+            setBulkOpen(false);
+            setSelected(new Set());
+            refresh();
+          }}
+        />
+      )}
     </section>
   );
 }
