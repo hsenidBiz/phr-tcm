@@ -71,7 +71,16 @@ test("loads suite + points and records chosen outcomes", async () => {
   expect(await screen.findByText("View run in Azure DevOps")).toBeInTheDocument();
   expect(submitted.runName).toBe("Login flow - manual run");
   expect(submitted.outcomes).toEqual([
-    { point_id: 7, outcome: "Passed", comment: null, duration_ms: null },
+    {
+      point_id: 7,
+      outcome: "Passed",
+      comment: null,
+      duration_ms: null,
+      step_ids: null,
+      step_outcomes: null,
+      screenshots_b64: null,
+      bug_ids: null,
+    },
   ]);
 });
 

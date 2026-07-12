@@ -8,6 +8,7 @@ import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
+import { openRunnerWindow } from "../lib/openRunner";
 
 const OUTCOMES = ["Passed", "Failed", "Blocked", "NotApplicable"] as const;
 type Outcome = (typeof OUTCOMES)[number] | "";
@@ -59,6 +60,10 @@ export default function RunPanel({
           outcome: outcome as string,
           comment: comments[Number(pointId)] || null,
           duration_ms: null,
+          step_ids: null,
+          step_outcomes: null,
+          screenshots_b64: null,
+          bug_ids: null,
         }));
       return unwrap(
         commands.submitTestRun(org, project, suite.data!.plan_id, `${pbiTitle} - manual run`, outcomes),
@@ -79,7 +84,31 @@ export default function RunPanel({
 
   return (
     <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-      <h2 className="text-sm font-semibold text-text">Run tests for #{pbiId}</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-text">Run tests for #{pbiId}</h2>
+        {suite.data && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              openRunnerWindow({
+                org,
+                project,
+                planId: suite.data.plan_id,
+                planName: suite.data.plan_name,
+                suiteId: suite.data.suite_id,
+                pbi: { id: pbiId, title: pbiTitle, work_item_type: "" },
+              }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`))
+            }
+          >
+            Open runner window
+          </Button>
+        )}
+      </div>
+      <p className="text-xs text-muted">
+        Quick outcomes below, or the runner window for a step-by-step player
+        with screenshots and bug filing.
+      </p>
 
       {suite.isLoading && <Skeleton className="h-16" />}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}

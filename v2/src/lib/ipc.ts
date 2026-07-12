@@ -19,9 +19,18 @@ export function describeAdoError(e: AdoError): string {
 
 type IpcResult<T> = { status: "ok"; data: T } | { status: "error"; error: AdoError };
 
-/** Unwrap a specta Result command; throws a readable Error for TanStack Query. */
+/** Unwrap a specta Result<T, AdoError> command; throws a readable Error. */
 export async function unwrap<T>(p: Promise<IpcResult<T>>): Promise<T> {
   const r = await p;
   if (r.status === "error") throw new Error(describeAdoError(r.error));
+  return r.data;
+}
+
+type StringResult<T> = { status: "ok"; data: T } | { status: "error"; error: string };
+
+/** Unwrap a specta Result<T, String> command (plain-string errors). */
+export async function unwrapStr<T>(p: Promise<StringResult<T>>): Promise<T> {
+  const r = await p;
+  if (r.status === "error") throw new Error(r.error);
   return r.data;
 }

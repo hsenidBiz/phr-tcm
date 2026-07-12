@@ -27,6 +27,7 @@ const fullCase = {
     { action: "Open page", expected: "Shown" },
     { action: "Submit", expected: "" },
   ],
+  step_ids: ["2", "3"],
   module_value: "",
   preconditions: "",
 };
