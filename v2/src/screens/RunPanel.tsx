@@ -54,12 +54,24 @@ export default function RunPanel({
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
 
   const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
+  const readSuiteSeed = (): EnsuredSuite | undefined => {
+    try {
+      const raw = localStorage.getItem(suiteKey);
+      return raw ? (JSON.parse(raw) as EnsuredSuite) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
-  // Suite resolution is expensive (scans plans) - cache it forever and seed
-  // from the last run's localStorage entry; Refresh forces a re-resolve.
+  // Suite resolution is expensive (scans plans), so the queryFn itself
+  // short-circuits to the persisted seed: no matter what triggers a
+  // refetch (remount, focus, gc), the network is only hit when no seed
+  // exists. Refresh deletes the seed to force a true re-resolve.
   const suite = useQuery({
     queryKey: ["suite", org, project, pbiId],
     queryFn: async () => {
+      const seed = readSuiteSeed();
+      if (seed) return seed;
       const s = await unwrap(commands.ensurePbiSuite(org, project, pbiId));
       try {
         localStorage.setItem(suiteKey, JSON.stringify(s));
@@ -68,14 +80,7 @@ export default function RunPanel({
       }
       return s;
     },
-    initialData: () => {
-      try {
-        const raw = localStorage.getItem(suiteKey);
-        return raw ? (JSON.parse(raw) as EnsuredSuite) : undefined;
-      } catch {
-        return undefined;
-      }
-    },
+    initialData: readSuiteSeed,
     staleTime: Infinity,
     retry: false,
   });

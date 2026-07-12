@@ -114,6 +114,31 @@ test("row clicks select cases for a targeted runner session", async () => {
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
 });
 
+test("suite is resolved once, then every later mount reuses the seed", async () => {
+  let ensured = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "ensure_pbi_suite") {
+      ensured++;
+      return { plan_id: 9, plan_name: "Fresh Plan", suite_id: 91 };
+    }
+    if (cmd === "list_test_points") return [];
+  });
+
+  // First visit: no seed -> one real resolve that writes the seed.
+  const first = renderPanel();
+  expect(await screen.findByText(/Fresh Plan/)).toBeInTheDocument();
+  expect(ensured).toBe(1);
+  first.unmount();
+
+  // Tab switch back - even with a brand-new QueryClient (no in-memory
+  // cache), the queryFn short-circuits to the localStorage seed.
+  renderPanel();
+  expect(await screen.findByText(/Fresh Plan/)).toBeInTheDocument();
+  expect(ensured).toBe(1);
+});
+
 test("suite resolution is cached in localStorage and reused", async () => {
   localStorage.setItem(
     "tcm-v2-suite:acme/42",
