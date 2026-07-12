@@ -57,6 +57,7 @@ export default function Sidebar({
       {ITEMS.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
+          data-tour={`nav-${id}`}
           onClick={() => onSelect(id)}
           aria-current={section === id ? "page" : undefined}
           title={label}

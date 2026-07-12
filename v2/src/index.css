@@ -242,7 +242,8 @@ body {
 }
 .empty-art .bubble {
   position: absolute;
-  bottom: 55%;
+  /* Emit from the flask's mouth (top of the neck), not inside the body. */
+  bottom: 68%;
   left: 50%;
   width: 6px;
   height: 6px;
@@ -254,13 +255,13 @@ body {
 .empty-art .b2 {
   width: 4px;
   height: 4px;
-  margin-left: -11px;
+  margin-left: -6px;
   animation-delay: 1.1s;
 }
 .empty-art .b3 {
   width: 5px;
   height: 5px;
-  margin-left: 9px;
+  margin-left: 5px;
   animation-delay: 2.2s;
 }
 @keyframes art-float {

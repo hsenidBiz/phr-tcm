@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { commands } from "../bindings";
 import { Button } from "../components/ui/button";
 import { Select } from "../components/ui/select";
+import { START_TOUR_EVENT } from "../components/UiTour";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { saveFieldPrefs } from "../lib/fieldPrefs";
 import {
@@ -148,6 +149,20 @@ export default function Settings({ org, project }: { org: string; project: strin
             ))}
           </div>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Interface tour</h2>
+        <p className="text-sm text-muted">
+          Replay the walkthrough that highlights each area of the app.
+        </p>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => window.dispatchEvent(new Event(START_TOUR_EVENT))}
+        >
+          Show UI tour
+        </Button>
       </section>
 
       <section className="space-y-3">

@@ -45,6 +45,7 @@ export default function ContextBar({
   return (
     <div className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
       <Select
+        data-tour="org"
         aria-label="Organization"
         className="w-44 py-1.5"
         value={org}
@@ -79,18 +80,19 @@ export default function ContextBar({
         ))}
       </Select>
       {/* The PBI chip gets all remaining width so long titles stay readable. */}
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1" data-tour="pbi">
         <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
       </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 
       <div className="flex shrink-0 items-center gap-2">
-        <Button variant="pill" size="sm" onClick={onToggleWork}>
+        <Button data-tour="work" variant="pill" size="sm" onClick={onToggleWork}>
           <KanbanSquare size={14} />
           {workMode ? "Test Case Manager" : "Work Manager (Beta)"}
         </Button>
         {account && <span className="text-sm text-muted">{account}</span>}
         <button
+          data-tour="settings"
           aria-label="Settings"
           className="rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text"
           onClick={onOpenSettings}

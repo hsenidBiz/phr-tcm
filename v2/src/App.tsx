@@ -7,6 +7,7 @@ import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
+import UiTour, { START_TOUR_EVENT, tourDone } from "./components/UiTour";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
 import { getTheme, initTheme } from "./lib/theme";
@@ -164,6 +165,21 @@ export default function App() {
 
   const signedIn = Boolean(status.data?.signed_in);
 
+  // First-run walkthrough: opens once after the first sign-in, and again
+  // whenever Settings fires the start-tour event.
+  const [tourOpen, setTourOpen] = useState(false);
+  useEffect(() => {
+    if (signedIn && !tourDone()) {
+      const t = setTimeout(() => setTourOpen(true), 800);
+      return () => clearTimeout(t);
+    }
+  }, [signedIn]);
+  useEffect(() => {
+    const start = () => setTourOpen(true);
+    window.addEventListener(START_TOUR_EVENT, start);
+    return () => window.removeEventListener(START_TOUR_EVENT, start);
+  }, []);
+
   // Warm the Test Suites data in the background so the screen is ready
   // when the user navigates there (same key/staleTime as the screen).
   useEffect(() => {
@@ -222,6 +238,7 @@ export default function App() {
       />
 
       <TitleBar title={workMode ? "Work Manager" : "Test Case Manager"} />
+      {tourOpen && signedIn && <UiTour onClose={() => setTourOpen(false)} />}
 
       <div className="flex min-h-0 flex-1">
       {signedIn && <Sidebar section={section} onSelect={goToSection} />}
