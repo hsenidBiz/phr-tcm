@@ -43,7 +43,9 @@ export default function ContextBar({
   });
 
   return (
-    <div className="flex items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
+    // flex-wrap: in a narrow window the right-side group drops to a second
+    // row instead of overlapping the PBI picker.
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-border bg-surface px-4 py-2.5">
       <Select
         data-tour="org"
         aria-label="Organization"
@@ -79,18 +81,28 @@ export default function ContextBar({
           </option>
         ))}
       </Select>
-      {/* The PBI chip gets all remaining width so long titles stay readable. */}
-      <div className="min-w-0 flex-1" data-tour="pbi">
+      {/* The PBI chip gets all remaining width so long titles stay readable;
+          min-w keeps it usable and forces a wrap instead of a squeeze. */}
+      <div className="min-w-56 flex-1" data-tour="pbi">
         <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
       </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 
-      <div className="flex shrink-0 items-center gap-2">
-        <Button data-tour="work" variant="pill" size="sm" onClick={onToggleWork}>
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Button
+          data-tour="work"
+          variant="pill"
+          size="sm"
+          title={workMode ? "Test Case Manager" : "Work Manager (Beta)"}
+          onClick={onToggleWork}
+        >
           <KanbanSquare size={14} />
-          {workMode ? "Test Case Manager" : "Work Manager (Beta)"}
+          {/* Icon-only below lg so the button never crowds the PBI picker. */}
+          <span className="hidden lg:inline">
+            {workMode ? "Test Case Manager" : "Work Manager (Beta)"}
+          </span>
         </Button>
-        {account && <span className="text-sm text-muted">{account}</span>}
+        {account && <span className="hidden text-sm text-muted xl:inline">{account}</span>}
         <button
           data-tour="settings"
           aria-label="Settings"
