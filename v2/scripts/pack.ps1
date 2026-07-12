@@ -6,6 +6,10 @@ $root = Split-Path -Parent $PSScriptRoot          # v2/
 $exeDir = Join-Path $root "src-tauri\target\release"
 $exe = Get-ChildItem $exeDir -Filter "*.exe" | Where-Object { $_.Name -notmatch "setup" } | Select-Object -First 1
 if (-not $exe) { throw "No release exe found in $exeDir - run 'npm run tauri build' first." }
+# Releases/ is a local staging dir for upload - stale packs make vpk refuse
+# to build the same version again, so start clean every time.
+$out = Join-Path $root "Releases"
+if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 $stage = Join-Path $env:TEMP "tcm-v2-pack"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
