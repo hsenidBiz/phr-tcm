@@ -2,7 +2,7 @@ import { forwardRef, type InputHTMLAttributes, type TextareaHTMLAttributes } fro
 import { cn } from "../../lib/cn";
 
 const base =
-  "rounded-md border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-faint focus:border-accent focus:outline-none disabled:opacity-50";
+  "rounded-md border border-border bg-surface px-3 py-2 text-sm text-text transition-colors placeholder:text-faint hover:border-border-strong focus:border-accent focus:outline-none disabled:opacity-50";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
