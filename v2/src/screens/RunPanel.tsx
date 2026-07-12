@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, events, type EnsuredSuite, type TestPoint } from "./../bindings";
@@ -249,16 +249,9 @@ export default function RunPanel({
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-text">Run tests for #{pbiId}</h2>
         {suite.data && (
-          <div className="flex gap-2">
-            {selected.size > 0 && (
-              <Button size="sm" onClick={() => openRunner([...selected])}>
-                Run {selected.size} in runner
-              </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={() => openRunner()}>
-              Open runner window
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={() => openRunner()}>
+            Open runner window
+          </Button>
         )}
       </div>
       <p className="text-xs text-muted">
@@ -446,17 +439,30 @@ export default function RunPanel({
             ? "Recording"
             : `Record ${selectedCount} outcome${selectedCount === 1 ? "" : "s"}`}
         </Button>
-        {selected.size > 0 && (
-          <button className="text-xs text-muted hover:text-text" onClick={() => setSelected(new Set())}>
-            Clear selection ({selected.size})
-          </button>
-        )}
         {runUrl && (
           <a className="text-sm text-accent underline" href={runUrl} target="_blank" rel="noreferrer">
             View run in Azure DevOps
           </a>
         )}
       </div>
+
+      {/* Floating action bar: stays on screen while scrolling the table. */}
+      {suite.data && selected.size > 0 && (
+        <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-4 pr-2 shadow-2xl">
+          <span className="text-xs font-medium text-muted">{selected.size} selected</span>
+          <Button size="sm" onClick={() => openRunner([...selected])}>
+            Run {selected.size} in runner
+          </Button>
+          <button
+            aria-label="Clear selection"
+            title="Clear selection"
+            className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
+            onClick={() => setSelected(new Set())}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
     </section>
   );
 }
