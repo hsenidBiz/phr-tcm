@@ -187,7 +187,39 @@ pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, St
                 _ => {}
             }
         }
-        let body = "<html><body style=\"font-family:sans-serif\"><h3>Signed in - you can close this tab.</h3></body></html>";
+        // The one page a user sees outside the app - make it feel like ours.
+        let body = r##"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<title>Signed in - Test Case Manager</title>
+<style>
+  * { margin:0; box-sizing:border-box; }
+  body { min-height:100vh; display:flex; align-items:center; justify-content:center;
+         font-family:'Segoe UI',system-ui,sans-serif; color:#f8fafc;
+         background:radial-gradient(1200px 600px at 20% -10%, #1e3a5f 0%, #0f172a 55%, #0a0f1e 100%); }
+  .card { text-align:center; padding:56px 64px; border:1px solid rgba(148,163,184,.25);
+          border-radius:20px; background:rgba(30,41,59,.55); backdrop-filter:blur(8px);
+          box-shadow:0 24px 80px rgba(0,0,0,.45); animation:pop .5s cubic-bezier(.2,.9,.3,1.2) both; }
+  .mark { width:84px; height:84px; margin:0 auto 20px; border-radius:22px;
+          background:linear-gradient(135deg,#2aa5e0,#1565c0); display:flex;
+          align-items:center; justify-content:center; box-shadow:0 10px 30px rgba(21,101,192,.5); }
+  .mark svg { width:44px; height:44px; stroke:#fff; fill:none; stroke-width:2;
+              stroke-linecap:round; stroke-linejoin:round; }
+  h1 { font-size:26px; font-weight:600; margin-bottom:8px; }
+  p  { color:#94a3b8; font-size:15px; line-height:1.6; }
+  .check { display:inline-flex; align-items:center; gap:8px; margin-top:22px;
+           padding:8px 18px; border-radius:999px; font-size:13.5px; font-weight:600;
+           color:#4ade80; background:rgba(34,197,94,.12); border:1px solid rgba(74,222,128,.35);
+           animation:fade .6s .25s both; }
+  @keyframes pop  { from { opacity:0; transform:translateY(14px) scale(.97); } }
+  @keyframes fade { from { opacity:0; } }
+</style></head><body>
+<div class="card">
+  <div class="mark"><svg viewBox="0 0 24 24"><path d="M10 2v7.31L4.29 19.7A2 2 0 0 0 6.05 22h11.9a2 2 0 0 0 1.76-2.3L14 9.31V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg></div>
+  <h1>You're signed in</h1>
+  <p>Head back to <b>Test Case Manager</b> - it already has your session.<br>This tab can be closed.</p>
+  <span class="check">&#10003;&nbsp;Authentication complete</span>
+</div>
+<script>setTimeout(function(){ try { window.close(); } catch(e){} }, 2500);</script>
+</body></html>"##;
         let _ = write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",

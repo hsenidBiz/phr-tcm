@@ -79,11 +79,28 @@ export const commands = {
 	exportQueueHtml: (path: string, queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	listProjectTags: (organization: string, project: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_project_tags", { organization, project })),
 	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),
+	/**
+	 *  Render the queue's HTML report to a temp file and open it in the
+	 *  default browser - v1's "View" behaviour, no save dialog.
+	 */
+	viewQueueHtml: (queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle })),
+	/**  Test cases for arbitrary ids (suite browser handoffs). */
+	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
+	/**  Allowed values for ANY Test Case field (module picklists etc.). */
+	testCaseFieldValues: (organization: string, project: string, fieldRef: string) => typedError<string[], AdoError>(__TAURI_INVOKE("test_case_field_values", { organization, project, fieldRef })),
+	/**  Read any file for attaching to a result (name + base64 bytes). */
+	readFileB64: (path: string) => typedError<RunAttachmentOut, string>(__TAURI_INVOKE("read_file_b64", { path })),
+	/**
+	 *  Launch the Windows snipping overlay (result lands on the clipboard; the
+	 *  runner polls and attaches it).
+	 */
+	openSnip: () => typedError<null, string>(__TAURI_INVOKE("open_snip")),
 };
 
 /** Events */
 export const events = {
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
+	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 };
 
 /* Types */
@@ -177,8 +194,8 @@ export type PointOutcome = {
 	 */
 	step_ids: string[] | null,
 	step_outcomes: (string | null)[] | null,
-	/**  PNG screenshots (base64) to attach to this result. */
-	screenshots_b64: string[] | null,
+	/**  Files (screenshots or anything else) to attach to this result. */
+	attachments: RunAttachment[] | null,
 	/**  Bug work-item ids to associate with this result. */
 	bug_ids: number[] | null,
 };
@@ -191,6 +208,16 @@ export type Project = {
 export type ResultDetail = {
 	outcome: string,
 	comment: string,
+};
+
+export type RunAttachment = {
+	file_name: string,
+	b64: string,
+};
+
+export type RunAttachmentOut = {
+	file_name: string,
+	b64: string,
 };
 
 export type RunCreated = {
@@ -238,6 +265,21 @@ export type SuiteRef = {
 	name: string,
 	suite_type: string,
 	requirement_id: number | null,
+	/**
+	 *  Parent suite id so the browser can render the real folder tree
+	 *  (None = direct child of the plan's stripped root).
+	 */
+	parent_id: number | null,
+};
+
+/**
+ *  Emitted while test plans are being scanned for suites, so Run Tests and
+ *  the Suites browser can show "Scanning plans X of Y" instead of a bare
+ *  skeleton.
+ */
+export type SuiteScanProgress = {
+	done: number,
+	total: number,
 };
 
 export type TeamRef = {

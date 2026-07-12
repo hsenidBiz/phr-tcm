@@ -28,6 +28,15 @@ pub struct SubmitProgress {
     pub action: String,
 }
 
+/// Emitted while test plans are being scanned for suites, so Run Tests and
+/// the Suites browser can show "Scanning plans X of Y" instead of a bare
+/// skeleton.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct SuiteScanProgress {
+    pub done: u32,
+    pub total: u32,
+}
+
 #[derive(serde::Serialize, specta::Type)]
 pub struct AuthStatus {
     pub signed_in: bool,
@@ -382,6 +391,90 @@ fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), St
     import_parser::export_queue_to_json(&queue, &path)
 }
 
+/// Render the queue's HTML report to a temp file and open it in the
+/// default browser - v1's "View" behaviour, no save dialog.
+#[tauri::command]
+#[specta::specta]
+fn view_queue_html(queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!(
+        "test-cases-{}-{}.html",
+        std::process::id(),
+        queue.len()
+    ));
+    let path_str = path.to_string_lossy().to_string();
+    import_parser::export_queue_to_html(&queue, &path_str, &subtitle)?;
+    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Test cases for arbitrary ids (suite browser handoffs).
+#[tauri::command]
+#[specta::specta]
+async fn test_cases_by_ids(
+    app: tauri::AppHandle,
+    organization: String,
+    ids: Vec<i32>,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<Vec<ado::TestCaseFull>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_test_cases_by_ids(
+            &organization,
+            &ids,
+            module_ref.as_deref(),
+            preconditions_ref.as_deref(),
+        )
+        .await
+}
+
+/// Allowed values for ANY Test Case field (module picklists etc.).
+#[tauri::command]
+#[specta::specta]
+async fn test_case_field_values(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    field_ref: String,
+) -> Result<Vec<String>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_field_allowed_values(&organization, &project, "Test Case", &field_ref)
+        .await
+}
+
+/// Read any file for attaching to a result (name + base64 bytes).
+#[tauri::command]
+#[specta::specta]
+fn read_file_b64(path: String) -> Result<RunAttachmentOut, String> {
+    use base64::Engine;
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    if bytes.len() > 25 * 1024 * 1024 {
+        return Err("File is larger than 25 MB.".into());
+    }
+    let file_name = std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "attachment".into());
+    Ok(RunAttachmentOut {
+        file_name,
+        b64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct RunAttachmentOut {
+    pub file_name: String,
+    pub b64: String,
+}
+
+/// Launch the Windows snipping overlay (result lands on the clipboard; the
+/// runner polls and attaches it).
+#[tauri::command]
+#[specta::specta]
+fn open_snip() -> Result<(), String> {
+    tauri_plugin_opener::open_url("ms-screenclip:", None::<&str>).map_err(|e| e.to_string())
+}
+
 /// Stop the running submit loop after the in-flight item finishes.
 #[tauri::command]
 #[specta::specta]
@@ -444,8 +537,11 @@ async fn list_plans_with_suites(
     project: String,
 ) -> Result<Vec<ado_testplan::PlanWithSuites>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
+    let emitter = app.clone();
     ado::AdoClient::new(token)
-        .list_plans_with_suites(&organization, &project)
+        .list_plans_with_suites_cb(&organization, &project, move |done, total| {
+            let _ = SuiteScanProgress { done, total }.emit(&emitter);
+        })
         .await
 }
 
@@ -463,8 +559,11 @@ async fn ensure_pbi_suite(
     let (area, iteration) = client
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;
+    let emitter = app.clone();
     client
-        .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
+        .ensure_requirement_suite_cb(&organization, &project, pbi_id, &area, &iteration, move |done, total| {
+            let _ = SuiteScanProgress { done, total }.emit(&emitter);
+        })
         .await
 }
 
@@ -483,6 +582,12 @@ async fn list_test_points(
         .await
 }
 
+#[derive(Clone, serde::Deserialize, specta::Type)]
+pub struct RunAttachment {
+    pub file_name: String,
+    pub b64: String,
+}
+
 #[derive(serde::Deserialize, specta::Type)]
 pub struct PointOutcome {
     pub point_id: i32,
@@ -494,8 +599,8 @@ pub struct PointOutcome {
     /// step_outcomes; both present only when steps were marked individually.
     pub step_ids: Option<Vec<String>>,
     pub step_outcomes: Option<Vec<Option<String>>>,
-    /// PNG screenshots (base64) to attach to this result.
-    pub screenshots_b64: Option<Vec<String>>,
+    /// Files (screenshots or anything else) to attach to this result.
+    pub attachments: Option<Vec<RunAttachment>>,
     /// Bug work-item ids to associate with this result.
     pub bug_ids: Option<Vec<i32>>,
 }
@@ -560,16 +665,16 @@ async fn submit_test_run(
                     .await;
             }
         }
-        if let Some(shots) = &o.screenshots_b64 {
-            for (i, b64) in shots.iter().enumerate() {
+        if let Some(files) = &o.attachments {
+            for att in files {
                 let _ = client
                     .add_result_attachment(
                         &organization,
                         &project,
                         run.run_id,
                         result.result_id,
-                        b64,
-                        &format!("screenshot-{}-{}.png", o.point_id, i + 1),
+                        &att.b64,
+                        &att.file_name,
                         "",
                     )
                     .await;
@@ -882,7 +987,7 @@ async fn move_board_item(
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
-        .events(collect_events![SubmitProgress])
+        .events(collect_events![SubmitProgress, SuiteScanProgress])
         .commands(collect_commands![
         ping,
         auth_status,
@@ -923,7 +1028,12 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         cancel_submit,
         export_queue_html,
         list_project_tags,
-        result_screenshots
+        result_screenshots,
+        view_queue_html,
+        test_cases_by_ids,
+        test_case_field_values,
+        read_file_b64,
+        open_snip
     ])
 }
 

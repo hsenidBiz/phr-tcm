@@ -80,6 +80,10 @@ pub enum AdoError {
     Network(String),
 }
 
+fn tc_ids_i32(ids: &[i64]) -> Vec<i32> {
+    ids.iter().map(|i| *i as i32).collect()
+}
+
 pub struct AdoClient {
     pub(crate) http: reqwest::Client,
     pub(crate) token: String,
@@ -649,6 +653,23 @@ impl AdoClient {
             return Ok(vec![]);
         }
 
+        self.get_test_cases_by_ids(organization, &tc_ids_i32(&tc_ids), module_ref, preconditions_ref)
+            .await
+    }
+
+    /// Full test cases for arbitrary work-item ids (chunked at 200) - the
+    /// suite browser's Edit-cases handoff and browser views use this
+    /// directly; get_pbi_test_cases_full delegates here. Read only.
+    pub async fn get_test_cases_by_ids(
+        &self,
+        organization: &str,
+        ids: &[i32],
+        module_ref: Option<&str>,
+        preconditions_ref: Option<&str>,
+    ) -> Result<Vec<TestCaseFull>, AdoError> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
         let mut field_list = vec![
             "System.Id",
             "System.Title",
@@ -666,8 +687,8 @@ impl AdoClient {
             field_list.push(p.to_string());
         }
 
-        let mut cases = Vec::with_capacity(tc_ids.len());
-        for chunk in tc_ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+        let mut cases = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
             let ids_csv = chunk
                 .iter()
                 .map(|i| i.to_string())

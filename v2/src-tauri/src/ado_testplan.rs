@@ -21,6 +21,9 @@ pub struct SuiteRef {
     pub name: String,
     pub suite_type: String,
     pub requirement_id: Option<i32>,
+    /// Parent suite id so the browser can render the real folder tree
+    /// (None = direct child of the plan's stripped root).
+    pub parent_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -216,6 +219,7 @@ impl AdoClient {
                         name: s["name"].as_str().unwrap_or_default().to_string(),
                         suite_type: "requirementTestSuite".to_string(),
                         requirement_id: Some(pbi_id),
+                        parent_id: s["parentSuite"]["id"].as_i64().map(|i| i as i32),
                     }));
                 }
             }
@@ -252,6 +256,7 @@ impl AdoClient {
                     name: s["name"].as_str().unwrap_or_default().to_string(),
                     suite_type: s["suiteType"].as_str().unwrap_or_default().to_string(),
                     requirement_id: s["requirementId"].as_i64().map(|i| i as i32),
+                    parent_id: s["parentSuite"]["id"].as_i64().map(|i| i as i32),
                 });
             }
             continuation = cont;
@@ -271,9 +276,24 @@ impl AdoClient {
         org: &str,
         project: &str,
     ) -> Result<Vec<PlanWithSuites>, AdoError> {
+        self.list_plans_with_suites_cb(org, project, |_, _| {}).await
+    }
+
+    /// Same, reporting (done, total) after each plan scanned so the UI can
+    /// show "Scanning plans X of Y".
+    pub async fn list_plans_with_suites_cb(
+        &self,
+        org: &str,
+        project: &str,
+        mut progress: impl FnMut(u32, u32),
+    ) -> Result<Vec<PlanWithSuites>, AdoError> {
         let plans = self.get_test_plans(org, project).await?;
+        let total = plans.len() as u32;
+        let mut done = 0u32;
         let mut out = vec![];
         for plan in plans {
+            done += 1;
+            progress(done, total);
             let suites = match self.get_all_suites(org, project, plan.id).await {
                 Ok(s) => s,
                 Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
@@ -298,6 +318,17 @@ impl AdoClient {
             if non_root.is_empty() {
                 continue;
             }
+            // Children of the stripped root become top-level in the tree.
+            let root_id = plan.root_suite_id;
+            let non_root: Vec<SuiteRef> = non_root
+                .into_iter()
+                .map(|mut s| {
+                    if s.parent_id == root_id {
+                        s.parent_id = None;
+                    }
+                    s
+                })
+                .collect();
             out.push(PlanWithSuites { plan, suites: non_root });
         }
         Ok(out)
@@ -364,11 +395,30 @@ impl AdoClient {
         area_path: &str,
         iteration: &str,
     ) -> Result<EnsuredSuite, AdoError> {
+        self.ensure_requirement_suite_cb(org, project, pbi_id, area_path, iteration, |_, _| {})
+            .await
+    }
+
+    /// Same, reporting (done, total) per plan scanned.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn ensure_requirement_suite_cb(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        iteration: &str,
+        mut progress: impl FnMut(u32, u32),
+    ) -> Result<EnsuredSuite, AdoError> {
         let plans = self.get_test_plans(org, project).await?;
         // Area-matched plans first: the common case finds the suite quickly.
         let mut ordered: Vec<&TestPlan> = plans.iter().collect();
         ordered.sort_by_key(|p| if area_matches(&p.area_path, area_path) { 0 } else { 1 });
+        let total = ordered.len() as u32;
+        let mut done = 0u32;
         for plan in &ordered {
+            done += 1;
+            progress(done, total);
             // A plan whose suites can't be listed (permissions) is skipped
             // rather than aborting the search; auth/rate-limit errors still
             // propagate so callers can re-auth / back off.
@@ -469,7 +519,12 @@ impl AdoClient {
                     test_case_name: p["testCaseReference"]["name"].as_str().unwrap_or_default().to_string(),
                     config_name: p["configuration"]["name"].as_str().unwrap_or_default().to_string(),
                     tester: p["tester"]["displayName"].as_str().unwrap_or_default().to_string(),
-                    last_outcome: p["results"]["outcome"].as_str().unwrap_or_default().to_string(),
+                    // ADO reports never-run points as "unspecified" - that
+                    // reads as a real outcome in the UI, so strip it here.
+                    last_outcome: {
+                        let o = p["results"]["outcome"].as_str().unwrap_or_default();
+                        if o.eq_ignore_ascii_case("unspecified") { String::new() } else { o.to_string() }
+                    },
                     last_run_id: p["results"]["lastTestRunId"].as_i64().map(|i| i as i32),
                     last_result_id: p["results"]["lastResultId"].as_i64().map(|i| i as i32),
                 });
