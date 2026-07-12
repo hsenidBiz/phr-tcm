@@ -1,3 +1,44 @@
+# Iteration UX — v1.2.0 (2026-07-12)
+
+Follow-up UX round after 1.1.0, driven by live testing feedback. Branch
+stays `feat/tauri-rewrite` — NO merge to master, NO v1-user migration.
+
+## What shipped in 1.2.0
+
+- **Suite performance/correctness**: suite-detection cache short-circuits
+  in the queryFn (no re-resolve on tab switches or remount); plan scans
+  run 8-concurrent instead of serially (~8x faster on big projects); the
+  tauri-specta event registry is now mounted, so `SuiteScanProgress` /
+  `SubmitProgress` emits reach the UI instead of panicking a tokio worker.
+- **Smart grouping (v1 parity)**: `groupIndices` ported from
+  `app/utils/grouping.py` (golden tests too) — "Group by title" on Edit
+  Test Cases and Run Tests, delimiter- then word-prefix folders.
+- **Test Suites**: multi-level folders collapsed by default; search box
+  (prunes + auto-expands matches); larger View/Edit-cases/Run buttons.
+- **Full theme system**: `data-theme` swaps the entire palette — Light,
+  Slate, Midnight, Graphite, Ocean, **OLED** (true-black); "Theme
+  default" accent option; theme cards + accent swatches in Settings; the
+  context-bar dark/light toggle removed (themes live in Settings).
+- **Run Tests**: shift+click range selection; outcomes capitalized for
+  display ("passed" -> "Passed").
+- **Work Manager**: "Hide Done" toggle (2-column board, more drawer
+  room); drawer slides in from the right; drawer is drag-resizable from
+  its left edge (persisted); markdown description editor (Write/Preview,
+  saved as HTML).
+- **Calendar**: shadcn-style react-day-picker calendar+DateField replaces
+  the native date inputs (themes correctly).
+- **Polish**: native-dark `color-scheme` for form controls; wide PBI chip
+  in the context bar; recent PBIs as a labeled vertical list; ambient
+  flask animation fills the pick-a-PBI empty states; violet splash
+  (flask/bar/background); Import card spans full width; single Work
+  Manager scrollbar; queue "Remove all"; trailing "..." removed app-wide.
+
+Deviations/limits: markdown descriptions round-trip through ADO's stored
+HTML (reopening shows flattened text, not the original markdown source);
+region capture uses the ms-screenclip overlay + clipboard poll.
+
+---
+
 # Iteration UX — v1.1.0 (2026-07-12)
 
 The ~30-item UX-conveniences batch (user list, 2026-07-12). Plan of record:
