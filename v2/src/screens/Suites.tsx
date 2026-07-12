@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
 import { Badge } from "../components/ui/badge";
+import { Input } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { outcomeLabel } from "./RunPanel";
@@ -34,6 +35,18 @@ function buildTree(suites: SuiteRef[]): SuiteNode[] {
 
 function descendantIds(n: SuiteNode): number[] {
   return [n.suite.id, ...n.children.flatMap(descendantIds)];
+}
+
+/** Keep nodes whose name matches `q` (with their whole subtree) or that
+ * contain a matching descendant (pruned to the matching branches). */
+function pruneTree(nodes: SuiteNode[], q: string): SuiteNode[] {
+  return nodes
+    .map((n) => {
+      if (n.suite.name.toLowerCase().includes(q)) return n;
+      const kids = pruneTree(n.children, q);
+      return kids.length ? { suite: n.suite, children: kids } : null;
+    })
+    .filter((n): n is SuiteNode => n !== null);
 }
 
 function SuitePoints({
@@ -106,6 +119,7 @@ export default function Suites({
   const [openSuite, setOpenSuite] = useState<number | null>(null);
   // Folders start collapsed; clicking a folder row toggles it open.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [search, setSearch] = useState("");
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
 
   // Scanning every plan is the expensive part - cache the result for the
@@ -129,6 +143,20 @@ export default function Suites({
     () => (plans.data ?? []).map(({ plan, suites }) => ({ plan, roots: buildTree(suites) })),
     [plans.data],
   );
+
+  const q = search.trim().toLowerCase();
+  const visibleTrees = useMemo(() => {
+    if (!q) return trees;
+    return trees
+      .map(({ plan, roots }) => {
+        // A matching plan name keeps the whole plan; otherwise prune to
+        // the suites (or branches) that match.
+        if (plan.name.toLowerCase().includes(q)) return { plan, roots };
+        const pruned = pruneTree(roots, q);
+        return pruned.length ? { plan, roots: pruned } : null;
+      })
+      .filter((t): t is (typeof trees)[number] => t !== null);
+  }, [trees, q]);
 
   /** Collect the distinct test case ids under the given suites (a folder
    * action passes all its descendants). */
@@ -201,7 +229,8 @@ export default function Suites({
   const renderNode = (node: SuiteNode, planId: number, depth: number): ReactNode => {
     const s = node.suite;
     const isFolder = node.children.length > 0;
-    const isCollapsed = !expanded.has(s.id);
+    // While searching, matches are always shown expanded.
+    const isCollapsed = q ? false : !expanded.has(s.id);
     const allIds = descendantIds(node);
 
     return (
@@ -279,6 +308,13 @@ export default function Suites({
         >
           <RefreshCw size={14} />
         </button>
+        <Input
+          aria-label="Search suites"
+          className="w-64 px-2 py-1"
+          placeholder="Search plans and suites..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         {busy && <span className="text-xs text-muted">Collecting test cases...</span>}
       </div>
 
@@ -291,8 +327,11 @@ export default function Suites({
       {plans.data && plans.data.length === 0 && (
         <p className="text-sm text-muted">No test plans with test suites in this project yet.</p>
       )}
+      {q && (plans.data?.length ?? 0) > 0 && visibleTrees.length === 0 && (
+        <p className="text-sm text-muted">Nothing matches "{search.trim()}".</p>
+      )}
 
-      {trees.map(({ plan, roots }) => (
+      {visibleTrees.map(({ plan, roots }) => (
         <section key={plan.id} className="rounded-md border border-border bg-surface">
           <header className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm font-medium text-text">
             <FolderTree size={14} className="text-accent" />

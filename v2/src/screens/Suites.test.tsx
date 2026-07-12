@@ -143,6 +143,45 @@ test("folder Edit cases collects descendant case ids and hands off", async () =>
   await vi.waitFor(() => expect(onEdit).toHaveBeenCalledWith("Regression", [201]));
 });
 
+test("search filters the tree and auto-expands matching branches", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+            {
+              id: 96,
+              name: "PBI 50 suite",
+              suite_type: "requirementTestSuite",
+              requirement_id: 50,
+              parent_id: 95,
+            },
+            {
+              id: 97,
+              name: "Smoke pack",
+              suite_type: "staticTestSuite",
+              requirement_id: null,
+              parent_id: null,
+            },
+          ],
+        },
+      ];
+  });
+  renderSuites();
+  await screen.findByText("Regression");
+
+  // A nested match keeps its ancestor folder, expanded, and hides the rest.
+  fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "PBI 50" } });
+  expect(screen.getByText("PBI 50 suite")).toBeInTheDocument();
+  expect(screen.getByText("Regression")).toBeInTheDocument();
+  expect(screen.queryByText("Smoke pack")).not.toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "zzz" } });
+  expect(await screen.findByText(/Nothing matches "zzz"/)).toBeInTheDocument();
+});
+
 test("empty project shows the friendly message", async () => {
   baseMock((cmd) => {
     if (cmd === "list_plans_with_suites") return [];

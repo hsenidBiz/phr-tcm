@@ -62,12 +62,12 @@ export default function PbiPicker({
 
   if (pbi) {
     return (
-      <span className="flex max-w-md items-center gap-1.5 rounded-md border border-accent/50 bg-accent-soft px-2.5 py-1.5 text-sm">
+      <span className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-accent/50 bg-accent-soft px-2.5 py-1.5 text-sm">
         <span className="id-mono text-faint">#{pbi.id}</span>
-        <span className="truncate text-text">{pbi.title}</span>
+        <span className="min-w-0 truncate text-text">{pbi.title}</span>
         <button
           aria-label="Clear PBI"
-          className="ml-1 text-muted hover:text-danger"
+          className="ml-1 shrink-0 text-muted hover:text-danger"
           onClick={() => {
             onChange(null);
             setText("");

@@ -1,28 +1,49 @@
 import { afterEach, expect, test } from "vitest";
-import { applyTheme, getTheme, setTheme } from "./theme";
+import { getTheme, getThemeChoice, setTheme, setThemeChoice } from "./theme";
 import { cn } from "./cn";
 
 afterEach(() => {
   localStorage.clear();
   document.documentElement.classList.remove("dark");
+  document.documentElement.removeAttribute("data-theme");
 });
 
-test("explicit theme persists and applies the dark class", () => {
-  setTheme("dark");
-  expect(getTheme()).toBe("dark");
+test("full themes apply the dark class and data-theme palette", () => {
+  setThemeChoice("midnight");
+  expect(getThemeChoice()).toBe("midnight");
   expect(document.documentElement.classList.contains("dark")).toBe(true);
+  expect(document.documentElement.getAttribute("data-theme")).toBe("midnight");
+  expect(getTheme()).toBe("dark");
 
+  setThemeChoice("light");
+  expect(document.documentElement.classList.contains("dark")).toBe(false);
+  expect(document.documentElement.getAttribute("data-theme")).toBeNull();
+  expect(getTheme()).toBe("light");
+});
+
+test("base slate theme uses no data-theme attribute", () => {
+  setThemeChoice("slate");
+  expect(document.documentElement.classList.contains("dark")).toBe(true);
+  expect(document.documentElement.getAttribute("data-theme")).toBeNull();
+});
+
+test("the light/dark toggle returns to the last dark theme", () => {
+  setThemeChoice("ocean");
   setTheme("light");
   expect(getTheme()).toBe("light");
-  expect(document.documentElement.classList.contains("dark")).toBe(false);
+  setTheme("dark"); // sun/moon toggle back
+  expect(getThemeChoice()).toBe("ocean");
+  expect(document.documentElement.getAttribute("data-theme")).toBe("ocean");
 });
 
-test("system theme clears the stored choice", () => {
-  setTheme("dark");
-  setTheme("system");
-  expect(localStorage.getItem("tcm-v2-theme")).toBeNull();
-  expect(getTheme()).toBe("system");
-  applyTheme("system"); // must not throw regardless of matchMedia support
+test("system clears the stored choice; legacy dark key migrates to slate", () => {
+  setThemeChoice("graphite");
+  setThemeChoice("system");
+  expect(localStorage.getItem("tcm-v2-theme-id")).toBeNull();
+  expect(getThemeChoice()).toBe("system");
+
+  localStorage.setItem("tcm-v2-theme", "dark"); // pre-theme-system value
+  expect(getThemeChoice()).toBe("slate");
 });
 
 test("cn merges tailwind classes with later-wins semantics", () => {

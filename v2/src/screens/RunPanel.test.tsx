@@ -114,6 +114,16 @@ test("row clicks select cases for a targeted runner session", async () => {
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
 });
 
+test("shift+click selects the whole range between two rows", async () => {
+  mockAll({});
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByText("Valid login"));
+  fireEvent.click(screen.getByText("Invalid login"), { shiftKey: true });
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+});
+
 test("suite is resolved once, then every later mount reuses the seed", async () => {
   let ensured = 0;
   mockIPC((cmd) => {

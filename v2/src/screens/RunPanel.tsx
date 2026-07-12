@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { commands, events, type EnsuredSuite } from "./../bindings";
+import { commands, events, type EnsuredSuite, type TestPoint } from "./../bindings";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
@@ -56,6 +56,7 @@ export default function RunPanel({
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-points") === "on",
   );
+  const [anchor, setAnchor] = useState<number | null>(null); // shift-range start
 
   const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
   const readSuiteSeed = (): EnsuredSuite | undefined => {
@@ -189,14 +190,30 @@ export default function RunPanel({
     }));
   }, [filtered, grouped]);
 
-  const toggleRow = (caseId: number | null) => {
-    if (caseId == null) return;
+  // Click toggles a row; shift+click selects the whole range from the
+  // last clicked row, in the visible (filtered/grouped) order.
+  const handleRowClick = (p: TestPoint, e: React.MouseEvent) => {
+    if (p.test_case_id == null) return;
+    const flat = sections.flatMap((s) => s.pts);
+    if (e.shiftKey && anchor != null) {
+      const ids = flat.map((x) => x.test_case_id);
+      const a = ids.indexOf(anchor);
+      const b = ids.indexOf(p.test_case_id);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        const range = ids.slice(lo, hi + 1).filter((x): x is number => x != null);
+        setSelected((s) => new Set([...s, ...range]));
+        return;
+      }
+    }
+    const caseId = p.test_case_id;
     setSelected((s) => {
       const next = new Set(s);
       if (next.has(caseId)) next.delete(caseId);
       else next.add(caseId);
       return next;
     });
+    setAnchor(caseId);
   };
 
   return (
@@ -318,13 +335,13 @@ export default function RunPanel({
               <tr
                 key={p.point_id}
                 className={cn(
-                  "cursor-pointer border-b border-border/50 transition-colors",
+                  "cursor-pointer select-none border-b border-border/50 transition-colors",
                   p.test_case_id != null && selected.has(p.test_case_id)
                     ? "bg-accent-soft"
                     : (outcomeRowTint[p.last_outcome.toLowerCase()] ?? ""),
                   "hover:bg-surface-2",
                 )}
-                onClick={() => toggleRow(p.test_case_id)}
+                onClick={(e) => handleRowClick(p, e)}
               >
                 <td className="px-2 py-1 text-text">
                   <span className="id-mono text-faint">#{p.test_case_id}</span> {p.test_case_name}

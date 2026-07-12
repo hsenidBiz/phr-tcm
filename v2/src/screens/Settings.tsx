@@ -9,12 +9,13 @@ import { useFieldRefs } from "../hooks/useFieldRefs";
 import { saveFieldPrefs } from "../lib/fieldPrefs";
 import {
   ACCENTS,
+  THEMES,
   getAccent,
-  getTheme,
+  getThemeChoice,
   setAccent,
-  setTheme,
+  setThemeChoice,
   type Accent,
-  type Theme,
+  type ThemeChoice,
 } from "../lib/theme";
 
 const ACCENT_SWATCH: Record<Accent, string> = {
@@ -26,7 +27,7 @@ const ACCENT_SWATCH: Record<Accent, string> = {
 };
 
 export default function Settings({ org, project }: { org: string; project: string }) {
-  const [theme, setThemeState] = useState<Theme>(getTheme());
+  const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
   const { fields, prefs } = useFieldRefs(org, project);
   const [, bump] = useState(0); // re-render after saving field prefs
@@ -45,9 +46,9 @@ export default function Settings({ org, project }: { org: string; project: strin
         : toast.success("You are on the latest version."),
   });
 
-  const pick = (t: Theme) => {
-    setThemeState(t);
-    setTheme(t);
+  const pick = (t: ThemeChoice) => {
+    setChoiceState(t);
+    setThemeChoice(t);
   };
 
   const setRef = (which: "moduleRef" | "preconditionsRef", value: string) => {
@@ -60,20 +61,53 @@ export default function Settings({ org, project }: { org: string; project: strin
     <div className="max-w-lg space-y-8">
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Appearance</h2>
-        <div className="flex gap-2">
-          {(["light", "dark", "system"] as Theme[]).map((t) => (
-            <Button
-              key={t}
-              size="sm"
-              variant={theme === t ? "default" : "outline"}
-              onClick={() => pick(t)}
+        <div>
+          <p className="mb-2 text-xs text-muted">Theme - changes the entire UI palette</p>
+          <div className="flex flex-wrap gap-2">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                aria-label={`Theme ${t.label}`}
+                className={`w-20 rounded-md border-2 p-1 text-left transition-transform hover:scale-105 ${
+                  choice === t.id ? "border-accent" : "border-border"
+                }`}
+                onClick={() => pick(t.id)}
+              >
+                <span
+                  className="block h-10 w-full overflow-hidden rounded"
+                  style={{ backgroundColor: t.preview.bg }}
+                >
+                  <span
+                    className="mx-1.5 mt-1.5 block h-3 rounded-sm"
+                    style={{ backgroundColor: t.preview.surface }}
+                  />
+                  <span
+                    className="mx-1.5 mt-1 block h-1.5 w-6 rounded-sm"
+                    style={{ backgroundColor: t.preview.accent }}
+                  />
+                </span>
+                <span className="mt-1 block text-center text-xs text-muted">{t.label}</span>
+              </button>
+            ))}
+            <button
+              aria-label="Theme System"
+              className={`w-20 rounded-md border-2 p-1 text-left transition-transform hover:scale-105 ${
+                choice === "system" ? "border-accent" : "border-border"
+              }`}
+              onClick={() => pick("system")}
             >
-              {t[0].toUpperCase() + t.slice(1)}
-            </Button>
-          ))}
+              <span className="block h-10 w-full overflow-hidden rounded">
+                <span className="flex h-full">
+                  <span className="h-full w-1/2" style={{ backgroundColor: "#f8fafc" }} />
+                  <span className="h-full w-1/2" style={{ backgroundColor: "#0f172a" }} />
+                </span>
+              </span>
+              <span className="mt-1 block text-center text-xs text-muted">System</span>
+            </button>
+          </div>
         </div>
         <div>
-          <p className="mb-2 text-xs text-muted">Accent theme</p>
+          <p className="mb-2 text-xs text-muted">Accent - overrides the theme's accent color</p>
           <div className="flex gap-2">
             {ACCENTS.map((a) => (
               <button

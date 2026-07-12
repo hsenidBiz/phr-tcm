@@ -84,10 +84,13 @@ export default function ContextBar({
           </option>
         ))}
       </Select>
-      <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+      {/* The PBI chip gets all remaining width so long titles stay readable. */}
+      <div className="min-w-0 flex-1">
+        <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+      </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <Button variant="pill" size="sm" onClick={onToggleWork}>
           <KanbanSquare size={14} />
           {workMode ? "Test Case Manager" : "Work Manager (Beta)"}
