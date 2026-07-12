@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
+import { diffCase, diffSummary } from "../lib/caseDiff";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import { Badge } from "./ui/badge";
@@ -54,6 +55,31 @@ export default function QueueSection({
     retry: false,
   });
   const existingTitles = (existing.data ?? []).map((t) => t.title);
+
+  // Diff-preview (spec EDT-B): once the review gate opens, fetch the
+  // current server values for every queued UPDATE in one batch so rows
+  // can show what will actually change. Failure degrades to "diff
+  // unavailable" - it never blocks submitting.
+  const updateIds = queue
+    .map((tc) => tc.update_id)
+    .filter((x): x is number => x != null);
+  const currentCases = useQuery({
+    queryKey: ["diff-cases", org, [...updateIds].sort(), prefs.moduleRef, prefs.preconditionsRef],
+    queryFn: () =>
+      unwrap(commands.testCasesByIds(org, updateIds, prefs.moduleRef, prefs.preconditionsRef)),
+    enabled: reviewing && updateIds.length > 0,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const currentById = new Map((currentCases.data ?? []).map((c) => [c.id, c]));
+  const [expandedDiffs, setExpandedDiffs] = useState<Set<number>>(new Set());
+  const toggleDiff = (i: number) =>
+    setExpandedDiffs((s) => {
+      const next = new Set(s);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
 
   const unlistenRef = useRef<(() => void) | null>(null);
   useEffect(() => () => unlistenRef.current?.(), []);
@@ -171,34 +197,80 @@ export default function QueueSection({
 
       {queue.length > 0 && (
         <ul className="space-y-1">
-          {queue.map((tc, i) => (
-            <li
-              key={i}
-              className="flex items-center justify-between rounded-md border border-border px-3 py-1.5 text-sm"
-            >
-              <span className="text-text">
-                {tc.update_id != null && (
-                  <Badge className="mr-2 bg-warning/20 text-warning">
-                    UPDATE #{tc.update_id}
-                  </Badge>
+          {queue.map((tc, i) => {
+            const cur = tc.update_id != null ? currentById.get(tc.update_id) : undefined;
+            const diff = reviewing && cur ? diffCase(tc, cur) : null;
+            const diffFailed =
+              reviewing && tc.update_id != null && !cur && currentCases.isError;
+            return (
+              <li key={i} className="rounded-md border border-border text-sm">
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-text">
+                    {tc.update_id != null && (
+                      <Badge className="mr-2 bg-warning/20 text-warning">
+                        UPDATE #{tc.update_id}
+                      </Badge>
+                    )}
+                    {tc.title}
+                    <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
+                    {diff?.noop && (
+                      <Badge className="ml-2 bg-warning/20 text-warning">
+                        no-op — nothing will change
+                      </Badge>
+                    )}
+                    {diff && !diff.noop && (
+                      <button
+                        className="ml-2 text-xs text-accent hover:underline"
+                        onClick={() => toggleDiff(i)}
+                      >
+                        {diffSummary(diff)} {expandedDiffs.has(i) ? "▾" : "▸"}
+                      </button>
+                    )}
+                    {diffFailed && (
+                      <span className="ml-2 text-xs text-faint">diff unavailable</span>
+                    )}
+                    {reviewing && problems[i] && (
+                      <span className="ml-2 text-xs text-danger">{problems[i]}</span>
+                    )}
+                    {reviewing && !problems[i] && duplicates[i] && (
+                      <span className="ml-2 text-xs text-warning">{duplicates[i]}</span>
+                    )}
+                  </span>
+                  <button
+                    className="text-xs text-faint hover:text-danger"
+                    onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </button>
+                </div>
+                {diff && !diff.noop && expandedDiffs.has(i) && (
+                  <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
+                    {diff.fields.map((f) => (
+                      <div key={f.name}>
+                        <span className="font-medium text-muted">{f.name}:</span>{" "}
+                        <span className="text-danger line-through">{f.old || "(empty)"}</span>{" "}
+                        <span className="text-faint">→</span>{" "}
+                        <span className="text-success">{f.new}</span>
+                      </div>
+                    ))}
+                    {diff.steps.detail.length > 0 && (
+                      <div className="text-muted">
+                        <span className="font-medium">Steps:</span>{" "}
+                        {diff.steps.detail
+                          .map((d) => `#${d.index + 1} ${d.kind}`)
+                          .join(", ")}
+                      </div>
+                    )}
+                    {diff.blankSkipped.length > 0 && (
+                      <div className="text-faint">
+                        Left untouched (blank in import): {diff.blankSkipped.join(", ")}
+                      </div>
+                    )}
+                  </div>
                 )}
-                {tc.title}
-                <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
-                {reviewing && problems[i] && (
-                  <span className="ml-2 text-xs text-danger">{problems[i]}</span>
-                )}
-                {reviewing && !problems[i] && duplicates[i] && (
-                  <span className="ml-2 text-xs text-warning">{duplicates[i]}</span>
-                )}
-              </span>
-              <button
-                className="text-xs text-faint hover:text-danger"
-                onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}
-              >
-                Remove
-              </button>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 
