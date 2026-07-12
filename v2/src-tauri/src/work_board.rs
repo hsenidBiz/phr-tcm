@@ -365,8 +365,10 @@ impl AdoClient {
         wi_type: &str,
         field_ref: &str,
     ) -> Result<Vec<String>, AdoError> {
+        // $expand=allowedValues is REQUIRED for custom picklist fields -
+        // without it ADO omits allowedValues for them entirely.
         let url = format!(
-            "{}/{}/{}/_apis/wit/workitemtypes/{}/fields/{}?api-version=7.1",
+            "{}/{}/{}/_apis/wit/workitemtypes/{}/fields/{}?$expand=allowedValues&api-version=7.1",
             self.base_url,
             org,
             urlencoding::encode(project),

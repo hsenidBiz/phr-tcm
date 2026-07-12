@@ -27,15 +27,27 @@ export function saveFieldPrefs(org: string, project: string, prefs: FieldPrefs) 
   }
 }
 
-/** v1 config_screen auto-pick: first field whose display name contains
- * "module" / "prerequisite" or "precondition". Skip when nothing matches. */
+/** Best field for a term: an exact name match beats a name that starts
+ * with the term, which beats one merely containing it - so "Module" wins
+ * over "Sub Module" when both exist. */
+function bestMatch(fields: FieldRef[], terms: string[]): string | null {
+  const ranked = [
+    (n: string) => terms.some((t) => n === t),
+    (n: string) => terms.some((t) => n.startsWith(t)),
+    (n: string) => terms.some((t) => n.includes(t)),
+  ];
+  for (const matches of ranked) {
+    const hit = fields.find((f) => matches(f.name.toLowerCase()));
+    if (hit) return hit.reference_name;
+  }
+  return null;
+}
+
+/** v1 config_screen auto-pick, ranked (exact > prefix > contains). Skip
+ * when nothing matches. */
 export function autoPick(fields: FieldRef[]): FieldPrefs {
-  const moduleRef =
-    fields.find((f) => f.name.toLowerCase().includes("module"))?.reference_name ?? null;
-  const preconditionsRef =
-    fields.find((f) => {
-      const n = f.name.toLowerCase();
-      return n.includes("prerequisite") || n.includes("precondition");
-    })?.reference_name ?? null;
-  return { moduleRef, preconditionsRef };
+  return {
+    moduleRef: bestMatch(fields, ["module"]),
+    preconditionsRef: bestMatch(fields, ["prerequisite", "precondition"]),
+  };
 }
