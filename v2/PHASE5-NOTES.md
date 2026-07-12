@@ -22,14 +22,21 @@ ports on the localhost form).
   `AzureDevOpsTestCaseManager.V2`), `vpk upload github` with in-process
   `gh auth token`.
 
-## Remaining manual steps (permission-gated: public repo creation must be
-done by a human)
+## SHIPPED: v0.1.0 published 2026-07-12
 
-1. Create the public releases repo (one time):
-   `gh repo create AvinAlwis/azure-devops-test-case-manager-v2-releases --public`
-2. Publish the first release: `cd v2; .\scripts\release-v2.ps1 -Version 0.1.0`
-3. Install on a user machine from that release's Setup.exe; subsequent
-   releases arrive via the in-app update banner.
+https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases/releases/tag/v0.1.0
+(Setup.exe + Portable.zip + full.nupkg + releases.win.json feed).
+
+Publish gotchas hit once, fixed for good:
+- vpk pack refuses a version already present in the local Releases/ staging
+  dir - pack.ps1 now cleans it first.
+- GitHub cannot publish (tag) a release on an EMPTY repo ("Repository is
+  empty", 422) - the releases repo needs at least one commit; a README
+  initial commit fixed it. vpk leaves a draft release behind on that
+  failure; delete the draft before retrying.
+
+Install from the release's Setup.exe; subsequent releases arrive via the
+in-app update banner (release-v2.ps1 -Version X.Y.Z).
 
 ## Cutover decisions on record
 
