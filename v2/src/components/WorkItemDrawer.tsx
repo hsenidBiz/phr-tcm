@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { unwrap } from "../lib/ipc";
 import { Button } from "./ui/button";
+import DateField from "./ui/datefield";
 import { Input, Textarea } from "./ui/input";
 import { Select } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
@@ -225,24 +226,24 @@ export default function WorkItemDrawer({
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <label className="block text-xs text-muted">
+              <div className="text-xs text-muted">
                 Start date
-                <Input
-                  className="mt-1 w-full px-2"
-                  type="date"
+                <DateField
+                  className="mt-1"
+                  ariaLabel="Start date"
                   value={draft.startDate}
-                  onChange={(e) => setDraft({ ...draft, startDate: e.target.value })}
+                  onChange={(v) => setDraft({ ...draft, startDate: v })}
                 />
-              </label>
-              <label className="block text-xs text-muted">
+              </div>
+              <div className="text-xs text-muted">
                 Finish date
-                <Input
-                  className="mt-1 w-full px-2"
-                  type="date"
+                <DateField
+                  className="mt-1"
+                  ariaLabel="Finish date"
                   value={draft.finishDate}
-                  onChange={(e) => setDraft({ ...draft, finishDate: e.target.value })}
+                  onChange={(v) => setDraft({ ...draft, finishDate: v })}
                 />
-              </label>
+              </div>
             </div>
 
             <label className="block text-xs text-muted">

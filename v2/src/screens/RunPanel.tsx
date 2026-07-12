@@ -14,9 +14,13 @@ import { openRunnerWindow } from "../lib/openRunner";
 const OUTCOMES = ["Passed", "Failed", "Blocked", "NotApplicable"] as const;
 type Outcome = (typeof OUTCOMES)[number] | "";
 
-/** Display label only - the ADO value stays "NotApplicable". */
+/** Display label only - the ADO value is unchanged. Capitalizes the raw
+ * lowercase outcomes ("passed" -> "Passed") and spells out Not Applicable. */
 export function outcomeLabel(o: string): string {
-  return o.toLowerCase() === "notapplicable" ? "Not Applicable" : o;
+  if (!o) return "";
+  const k = o.toLowerCase();
+  if (k === "notapplicable") return "Not Applicable";
+  return k[0].toUpperCase() + k.slice(1);
 }
 
 const outcomeColor: Record<string, string> = {

@@ -64,7 +64,7 @@ test("plans render with suites; a suite click shows its points", async () => {
   expect(await screen.findByText("Auth - Test Plan")).toBeInTheDocument();
   fireEvent.click(screen.getByText("PBI 42 suite"));
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
-  expect(screen.getByText("passed")).toBeInTheDocument();
+  expect(screen.getByText("Passed")).toBeInTheDocument(); // capitalized display
 });
 
 test("folders build a collapsible tree from parent links", async () => {

@@ -67,7 +67,10 @@ test("loads suite + points and records chosen outcomes", async () => {
 
   expect(await screen.findByText(/Auth - Test Plan/)).toBeInTheDocument();
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
-  expect(screen.getByText("failed")).toBeInTheDocument();
+  // Last-outcome cell shows the capitalized display value ("failed" from
+  // ADO renders as "Failed"); options in the selects also say "Failed",
+  // so assert specifically on a table cell.
+  expect(screen.getAllByText("Failed").some((el) => el.tagName === "TD")).toBe(true);
 
   fireEvent.change(screen.getByLabelText("Outcome for Valid login"), {
     target: { value: "Passed" },
