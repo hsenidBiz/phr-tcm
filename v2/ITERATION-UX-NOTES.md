@@ -1,3 +1,34 @@
+# Iteration UX — v1.3.0 (2026-07-12)
+
+Third same-day UX round from live testing. Branch stays
+`feat/tauri-rewrite` — NO merge, NO migration.
+
+## What shipped in 1.3.0
+
+- **Searchable pickers**: Module is a searchable combobox (custom entry
+  kept for unmapped fields); Tags are a searchable multi-select with
+  removable chips (project-tag suggestions, Enter adds new, Backspace
+  pops) — in Manual Entry, the case editor and Bulk edit.
+- **Module data correctness**: picklists fetched with
+  `$expand=allowedValues` (custom picklist fields omit values without
+  it); when a field truly has no picklist, `field_values_in_use` falls
+  back to the distinct values on the project's recent Test Cases (WIQL,
+  unsafe-ref guarded); auto-pick ranks exact "Module" > prefix > contains.
+- **Background prefetch**: Test Suites' plan scan warms on org/project
+  pick; on PBI pick the suite resolves via the new READ-ONLY
+  `find_pbi_suite` (never creates) and its points prefetch - both screens
+  render instantly on navigation.
+- **Grouping upgrades**: headers are centered "Title (N)" flanked by
+  full-width separator lines; clicking a title selects the whole group;
+  a chevron collapses/expands each group (Edit + Run Tests).
+- **Controls polish**: hover states on every Input/Textarea/Select;
+  shadcn-style Checkbox everywhere; new-picker backgrounds matched to
+  the standard inputs.
+- **Sign-in flair**: animated flask logo (draw-on, glow, comet orbits,
+  bubbles from the mouth), accent-tinted, reduced-motion aware.
+
+---
+
 # Iteration UX — v1.2.0 (2026-07-12)
 
 Follow-up UX round after 1.1.0, driven by live testing feedback. Branch
