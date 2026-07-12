@@ -7,9 +7,9 @@ DevOps test cases against a Product Backlog Item (PBI), plus a lightweight
 Built with **Tauri 2 + Rust + React/TypeScript**. Signs in with your own
 Microsoft account; ships and auto-updates via Velopack.
 
-> Internal tool. Current version: **1.2.0** (on `feat/tauri-rewrite`; the
-> shipping product for existing users is still the PyQt5 v1 — see the repo-root
-> `README.md`).
+> Internal tool. Current version: **1.3.0**. This is the **primary product**
+> since the 2026-07-12 cutover; the PyQt5 v1 (repo root) is in feature freeze
+> and prompts its users to upgrade.
 
 ---
 
