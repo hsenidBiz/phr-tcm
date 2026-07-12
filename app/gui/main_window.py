@@ -147,6 +147,9 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
         # Check GitHub for a newer version in the background
         QTimer.singleShot(1500, self._check_for_update)
 
+        # V2 has replaced this app - invite the user over (dismissible).
+        QTimer.singleShot(2500, self._maybe_prompt_v2)
+
     def _restore_window_geometry(self):
         """Re-open at the last session's size/position (best-effort — a bad or
         missing value just keeps the defaults set above)."""
@@ -953,6 +956,10 @@ class MainWindow(frameless.FramelessMixin, QMainWindow):
     # ------------------------------------------------------------------ #
     #  Auto-update (Velopack + public GitHub Releases repo)                #
     # ------------------------------------------------------------------ #
+
+    def _maybe_prompt_v2(self):
+        from app.gui.v2_prompt import maybe_show_v2_prompt
+        maybe_show_v2_prompt(self)
 
     def _check_for_update(self):
         from app.utils import updater

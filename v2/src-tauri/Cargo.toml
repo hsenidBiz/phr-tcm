@@ -1,0 +1,59 @@
+[package]
+name = "v2"
+version = "1.3.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# The bin has no tests of its own; test=false keeps `cargo test` from linking
+# it as a test harness (which would double-embed the Windows manifest).
+[[bin]]
+name = "v2"
+path = "src/main.rs"
+test = false
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "v2_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+# All tests live in tests/ (integration targets) so they receive the
+# Common-Controls v6 manifest from build.rs rustc-link-arg-tests; a lib
+# unit-test binary would not and would crash at startup on Windows.
+test = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "sync"] }
+thiserror = "2.0.18"
+reqwest = { version = "0.13.4", features = ["form", "json", "native-tls"], default-features = false }
+sha2 = "0.11.0"
+base64 = "0.22.1"
+rand = "0.10.2"
+urlencoding = "2.1.3"
+quick-xml = "0.41.0"
+regex = "1.13.0"
+calamine = "0.36.0"
+rust_xlsxwriter = "0.96.0"
+csv = "1.4.0"
+tauri-plugin-dialog = "2.7.1"
+velopack = "1.2.0"
+xcap = "0.9.6"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+futures = { version = "0.3.32", default-features = false, features = ["std", "async-await"] }
+
+[dev-dependencies]
+wiremock = "0.6.5"
+

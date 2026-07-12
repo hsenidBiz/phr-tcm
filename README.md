@@ -7,6 +7,17 @@ updates itself via Velopack.
 
 > Internal tool. Current version: **2.0.4**.
 
+> ### 🚀 A rewrite (V2) is now available
+> A ground-up rewrite on **Tauri 2 + Rust + React/TypeScript** lives in
+> [`v2/`](v2/) (branch `feat/tauri-rewrite`) — smaller install, faster start,
+> the same no-DELETE / in-memory-token safety, plus a Work Manager board,
+> selectable full-UI themes, smart grouping, a multi-level Test Suites browser,
+> and more. See [`v2/README.md`](v2/README.md) for its features and
+> architecture. It is distributed from its **own** releases repo
+> ([azure-devops-test-case-manager-v2-releases](https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases)).
+> This PyQt5 app (below) remains the shipping product until the rewrite is
+> cut over.
+
 ---
 
 ## What it does
