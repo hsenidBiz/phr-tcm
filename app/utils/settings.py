@@ -53,7 +53,7 @@ _ALLOWED_KEYS = {
     "mine_only_filter", "status_filter", "module_filter", "templates",
     "execution_notes", "test_plan_cache", "always_on_top",
     "window_geometry", "edit_splitter_sizes", "suite_splitter_sizes",
-    "visible_tabs", "demo_mode", "hidden_work_items",
+    "visible_tabs", "demo_mode", "hidden_work_items", "v2_prompt_optout",
 }
 
 
