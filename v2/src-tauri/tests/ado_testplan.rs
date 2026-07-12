@@ -352,3 +352,20 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
     assert_eq!(c202.outcomes.len(), 1);
     assert_eq!(c202.outcomes[0].outcome, "Passed");
 }
+
+#[tokio::test]
+async fn result_report_info_parses_comment_and_bugs() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/test/Runs/5/Results/50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "comment": "It exploded",
+            "associatedBugs": [{"id": "901"}, {"id": 902}]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let (comment, bugs) = client.get_result_report_info("o", "p", 5, 50).await.unwrap();
+    assert_eq!(comment, "It exploded");
+    assert_eq!(bugs, vec![901, 902]);
+}

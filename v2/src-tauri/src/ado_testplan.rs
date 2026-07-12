@@ -835,6 +835,38 @@ impl AdoClient {
     }
 
     /// A single result's last outcome + comment (runner preload). Read only.
+    /// Comment + associated bug ids for one result - the execution report's
+    /// failure details ($expand-style WorkItems inclusion). Read only.
+    pub async fn get_result_report_info(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+    ) -> Result<(String, Vec<i32>), AdoError> {
+        let url = format!(
+            "{}/test/Runs/{}/Results/{}?detailsToInclude=WorkItems&api-version=7.1",
+            self.tp_base(org, project),
+            run_id,
+            result_id
+        );
+        let data = self.get_json(url).await?;
+        let comment = data["comment"].as_str().unwrap_or_default().to_string();
+        let bugs = data["associatedBugs"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|b| {
+                b["id"]
+                    .as_str()
+                    .and_then(|s| s.parse::<i32>().ok())
+                    .or_else(|| b["id"].as_i64().map(|i| i as i32))
+            })
+            .collect();
+        Ok((comment, bugs))
+    }
+
     pub async fn get_result(
         &self,
         org: &str,

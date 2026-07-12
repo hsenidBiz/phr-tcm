@@ -104,6 +104,13 @@ export const commands = {
 } | null, AdoError>(__TAURI_INVOKE("find_pbi_suite", { organization, project, pbiId })),
 	/**  Recent outcome history per test case for a plan (last 5, newest first). */
 	runHistory: (organization: string, project: string, planId: number) => typedError<CaseHistory[], AdoError>(__TAURI_INVOKE("run_history", { organization, project, planId })),
+	/**
+	 *  Execution report for one or more suites (a folder passes all its
+	 *  descendants): gathers points + failure details (comments, linked bugs),
+	 *  renders the failures-first HTML to a temp file and opens the browser.
+	 *  GET-only against ADO; writes only the local temp file.
+	 */
+	viewExecutionReport: (organization: string, project: string, planId: number, suiteIds: number[], title: string) => typedError<null, string>(__TAURI_INVOKE("view_execution_report", { organization, project, planId, suiteIds, title })),
 	/**  Read any file for attaching to a result (name + base64 bytes). */
 	readFileB64: (path: string) => typedError<RunAttachmentOut, string>(__TAURI_INVOKE("read_file_b64", { path })),
 	/**

@@ -5,6 +5,7 @@ pub mod capture;
 pub mod import_parser;
 pub mod model;
 pub mod steps_xml;
+pub mod report;
 pub mod updater;
 pub mod work_board;
 
@@ -597,6 +598,80 @@ async fn find_pbi_suite(
         .await
 }
 
+/// Execution report for one or more suites (a folder passes all its
+/// descendants): gathers points + failure details (comments, linked bugs),
+/// renders the failures-first HTML to a temp file and opens the browser.
+/// GET-only against ADO; writes only the local temp file.
+#[tauri::command]
+#[specta::specta]
+async fn view_execution_report(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    plan_id: i32,
+    suite_ids: Vec<i32>,
+    title: String,
+) -> Result<(), String> {
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    let client = ado::AdoClient::new(token);
+
+    // Points per suite (deduped across a folder's overlapping suites).
+    let mut points: Vec<ado_testplan::TestPoint> = vec![];
+    let mut seen = std::collections::HashSet::new();
+    for sid in &suite_ids {
+        let pts = client
+            .get_test_points(&organization, &project, plan_id, *sid, &[])
+            .await
+            .map_err(|e| e.to_string())?;
+        for p in pts {
+            if seen.insert(p.point_id) {
+                points.push(p);
+            }
+        }
+    }
+
+    // Failure details (comment + linked bugs) for failed points only.
+    let mut failures = std::collections::HashMap::new();
+    for p in &points {
+        if !p.last_outcome.eq_ignore_ascii_case("failed") {
+            continue;
+        }
+        if let (Some(run), Some(res)) = (p.last_run_id, p.last_result_id) {
+            if let Ok((comment, bug_ids)) = client
+                .get_result_report_info(&organization, &project, run, res)
+                .await
+            {
+                failures.insert(p.point_id, report::FailureInfo { comment, bug_ids });
+            }
+        }
+    }
+
+    let generated_at = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        report::format_epoch_utc(secs)
+    };
+    let html = report::build_report_html(
+        &title,
+        &organization,
+        &project,
+        &points,
+        &failures,
+        &generated_at,
+    );
+    let path = std::env::temp_dir().join(format!(
+        "execution-report-{}-{}.html",
+        std::process::id(),
+        points.len()
+    ));
+    std::fs::write(&path, html).map_err(|e| e.to_string())?;
+    tauri_plugin_opener::open_path(path.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// Recent outcome history per test case for a plan (last 5, newest first).
 #[tauri::command]
 #[specta::specta]
@@ -1079,6 +1154,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         test_case_field_values,
         find_pbi_suite,
         run_history,
+        view_execution_report,
         read_file_b64,
         open_snip
     ])

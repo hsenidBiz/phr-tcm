@@ -10,7 +10,7 @@ import { Select } from "../components/ui/select";
 import HistoryDots from "../components/HistoryDots";
 import { cn } from "../lib/cn";
 import { groupIndices } from "../lib/grouping";
-import { unwrap } from "../lib/ipc";
+import { unwrap, unwrapStr } from "../lib/ipc";
 import { openRunnerWindow } from "../lib/openRunner";
 
 const OUTCOMES = ["Passed", "Failed", "Blocked", "NotApplicable"] as const;
@@ -177,6 +177,20 @@ export default function RunPanel({
 
   const selectedCount = Object.values(chosen).filter(Boolean).length;
 
+  const report = useMutation({
+    mutationFn: () =>
+      unwrapStr(
+        commands.viewExecutionReport(
+          org,
+          project,
+          suite.data!.plan_id,
+          [suite.data!.suite_id],
+          `PBI #${pbiId} — ${pbiTitle}`,
+        ),
+      ),
+    onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
+  });
+
   const openRunner = (caseIds?: number[]) =>
     openRunnerWindow({
       org,
@@ -265,9 +279,19 @@ export default function RunPanel({
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-text">Run tests for #{pbiId}</h2>
         {suite.data && (
-          <Button variant="outline" size="sm" onClick={() => openRunner()}>
-            Open runner window
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={report.isPending}
+              onClick={() => report.mutate()}
+            >
+              {report.isPending ? "Building report" : "Execution report"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => openRunner()}>
+              Open runner window
+            </Button>
+          </div>
         )}
       </div>
       <p className="text-xs text-muted">

@@ -208,7 +208,13 @@ export default function Suites({
     onError: (e) => toast.error(e.message),
   });
 
-  const busy = view.isPending || edit.isPending;
+  const report = useMutation({
+    mutationFn: ({ planId, suiteIds, label }: SuiteAction) =>
+      unwrapStr(commands.viewExecutionReport(org, project, planId, suiteIds, label)),
+    onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
+  });
+
+  const busy = view.isPending || edit.isPending || report.isPending;
 
   if (!org || !project) {
     return (
@@ -291,6 +297,7 @@ export default function Suites({
               onEditCases &&
               chip("Edit cases", () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))
             )}
+            {chip("Report", () => report.mutate({ planId, suiteIds: allIds, label: s.name }))}
           </span>
         </button>
         {!isFolder && openSuite === s.id && (
