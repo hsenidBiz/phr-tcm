@@ -1,8 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem } from "../bindings";
+import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { unwrap } from "../lib/ipc";
 
@@ -17,18 +21,30 @@ const typeColor: Record<string, string> = {
   Epic: "#e0873c",
 };
 
-function Card({ item, onDragStart }: { item: BoardItem; onDragStart: () => void }) {
+function Card({
+  item,
+  onDragStart,
+  onOpen,
+}: {
+  item: BoardItem;
+  onDragStart: () => void;
+  onOpen: () => void;
+}) {
   return (
     <div
       draggable
       onDragStart={onDragStart}
-      className="cursor-grab space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-border-strong"
+      onClick={onOpen}
+      className="cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent"
     >
       <div className="flex items-center gap-2">
         <Badge color={typeColor[item.work_item_type] ?? "#9ca3af"}>
           {item.work_item_type}
         </Badge>
         <span className="id-mono text-xs text-faint">#{item.id}</span>
+        {item.assigned_to && (
+          <span className="ml-auto truncate text-[10px] text-faint">{item.assigned_to}</span>
+        )}
       </div>
       <div className="text-text">{item.title}</div>
       <div className="flex items-center gap-2 text-xs text-muted">
@@ -46,10 +62,25 @@ function Card({ item, onDragStart }: { item: BoardItem; onDragStart: () => void 
 export default function WorkBoard({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   const [dragging, setDragging] = useState<BoardItem | null>(null);
+  const [scope, setScope] = useState(""); // "" = my work, else team name
+  const [filterText, setFilterText] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [openItem, setOpenItem] = useState<number | null>(null);
+  const [quickTitle, setQuickTitle] = useState("");
+  const [quickType, setQuickType] = useState("Task");
+
+  const boardKey = ["board", org, project, scope];
+
+  const teams = useQuery({
+    queryKey: ["teams", org, project],
+    queryFn: () => unwrap(commands.listTeams(org, project)),
+    enabled: Boolean(org && project),
+    staleTime: 60 * 60_000,
+  });
 
   const board = useQuery({
-    queryKey: ["board", org, project],
-    queryFn: () => unwrap(commands.fetchBoard(org, project)),
+    queryKey: boardKey,
+    queryFn: () => unwrap(commands.fetchBoard(org, project, scope || null)),
     enabled: Boolean(org && project),
     retry: false,
   });
@@ -62,10 +93,10 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       return { item, column, state };
     },
     onMutate: async ({ item, column }) => {
-      await qc.cancelQueries({ queryKey: ["board", org, project] });
-      const prev = qc.getQueryData<BoardData>(["board", org, project]);
+      await qc.cancelQueries({ queryKey: boardKey });
+      const prev = qc.getQueryData<BoardData>(boardKey);
       if (prev) {
-        qc.setQueryData<BoardData>(["board", org, project], {
+        qc.setQueryData<BoardData>(boardKey, {
           ...prev,
           items: prev.items.map((i) => (i.id === item.id ? { ...i, column } : i)),
         });
@@ -73,15 +104,15 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       return { prev };
     },
     onError: (e, { item }, ctx) => {
-      if (ctx?.prev) qc.setQueryData(["board", org, project], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(boardKey, ctx.prev);
       toast.error(`Could not move #${item.id}: ${e.message}`);
     },
     onSuccess: ({ item, state }) => {
-      const data = qc.getQueryData<BoardData>(["board", org, project]);
+      const data = qc.getQueryData<BoardData>(boardKey);
       if (data) {
         const color =
           data.states_by_type[item.work_item_type]?.find((s) => s.name === state)?.color ?? "";
-        qc.setQueryData<BoardData>(["board", org, project], {
+        qc.setQueryData<BoardData>(boardKey, {
           ...data,
           items: data.items.map((i) =>
             i.id === item.id ? { ...i, state, state_color: color } : i,
@@ -90,6 +121,36 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       }
       toast.success(`#${item.id} moved to ${state}`);
     },
+  });
+
+  const quickCreate = useMutation({
+    mutationFn: () =>
+      unwrap(commands.quickCreateItem(org, project, quickType, quickTitle.trim(), true)),
+    onSuccess: (id) => {
+      toast.success(`Created ${quickType} #${id}`);
+      setQuickTitle("");
+      qc.invalidateQueries({ queryKey: boardKey });
+    },
+    onError: (e) => toast.error(`Create failed: ${e.message}`),
+  });
+
+  const types = useMemo(
+    () => [...new Set((board.data?.items ?? []).map((i) => i.work_item_type))].sort(),
+    [board.data],
+  );
+
+  const visible = (board.data?.items ?? []).filter((i) => {
+    if (filterType && i.work_item_type !== filterType) return false;
+    if (filterText) {
+      const t = filterText.toLowerCase();
+      if (
+        !i.title.toLowerCase().includes(t) &&
+        !String(i.id).includes(t) &&
+        !i.tags.toLowerCase().includes(t)
+      )
+        return false;
+    }
+    return true;
   });
 
   if (!org || !project) {
@@ -101,48 +162,134 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   }
 
   return (
-    <div className="space-y-3">
-      {board.isError && <p className="text-sm text-danger">{board.error.message}</p>}
+    <div className="flex h-full min-h-0 gap-0">
+      <div className="min-w-0 flex-1 space-y-3 overflow-y-auto pr-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            aria-label="Board scope"
+            className="py-1.5"
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+          >
+            <option value="">My work</option>
+            {(teams.data ?? []).map((t) => (
+              <option key={t.id} value={t.name}>
+                Team: {t.name}
+              </option>
+            ))}
+          </Select>
+          <Input
+            aria-label="Filter items"
+            className="w-56 py-1.5"
+            placeholder="Filter by title, id, tag..."
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+          />
+          <Select
+            aria-label="Filter type"
+            className="py-1.5"
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+          >
+            <option value="">All types</option>
+            {types.map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </Select>
 
-      {board.isLoading && (
-        <div className="grid grid-cols-3 gap-3">
-          {COLUMNS.map((col) => (
-            <div key={col} className="space-y-2 rounded-md border border-border p-2">
-              <Skeleton className="h-4 w-20" />
-              <Skeleton className="h-16" />
-              <Skeleton className="h-16" />
-            </div>
-          ))}
+          <div className="ml-auto flex items-center gap-2">
+            <Select
+              aria-label="New item type"
+              className="py-1.5"
+              value={quickType}
+              onChange={(e) => setQuickType(e.target.value)}
+            >
+              <option>Task</option>
+              <option>Bug</option>
+            </Select>
+            <Input
+              aria-label="New item title"
+              className="w-56 py-1.5"
+              placeholder="Quick create title..."
+              value={quickTitle}
+              onChange={(e) => setQuickTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && quickTitle.trim()) quickCreate.mutate();
+              }}
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!quickTitle.trim() || quickCreate.isPending}
+              onClick={() => quickCreate.mutate()}
+            >
+              Create
+            </Button>
+          </div>
         </div>
-      )}
 
-      {board.data && (
-        <div className="grid grid-cols-3 gap-3">
-          {COLUMNS.map((col) => {
-            const items = board.data.items.filter((i) => i.column === col);
-            return (
-              <div
-                key={col}
-                data-testid={`col-${col}`}
-                className="space-y-2 rounded-md border border-border bg-bg p-2"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => {
-                  if (dragging && dragging.column !== col) {
-                    move.mutate({ item: dragging, column: col });
-                  }
-                  setDragging(null);
-                }}
-              >
-                <h3 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                  {col} <span className="text-faint">{items.length}</span>
-                </h3>
-                {items.map((item) => (
-                  <Card key={item.id} item={item} onDragStart={() => setDragging(item)} />
-                ))}
+        {board.isError && <p className="text-sm text-danger">{board.error.message}</p>}
+
+        {board.isLoading && (
+          <div className="grid grid-cols-3 gap-3">
+            {COLUMNS.map((col) => (
+              <div key={col} className="space-y-2 rounded-md border border-border p-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-16" />
+                <Skeleton className="h-16" />
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
+
+        {board.data && (
+          <div className="grid grid-cols-3 gap-3">
+            {COLUMNS.map((col) => {
+              const items = visible.filter((i) => i.column === col);
+              return (
+                <div
+                  key={col}
+                  data-testid={`col-${col}`}
+                  className="space-y-2 rounded-md border border-border bg-bg p-2"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => {
+                    if (dragging && dragging.column !== col) {
+                      move.mutate({ item: dragging, column: col });
+                    }
+                    setDragging(null);
+                  }}
+                >
+                  <h3 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                    {col} <span className="text-faint">{items.length}</span>
+                  </h3>
+                  {items.map((item) => (
+                    <Card
+                      key={item.id}
+                      item={item}
+                      onDragStart={() => setDragging(item)}
+                      onOpen={() => setOpenItem(item.id)}
+                    />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {openItem != null && board.data && (
+        <WorkItemDrawer
+          org={org}
+          project={project}
+          itemId={openItem}
+          states={(
+            board.data.states_by_type[
+              board.data.items.find((i) => i.id === openItem)?.work_item_type ?? ""
+            ] ?? []
+          ).map((s) => s.name)}
+          onClose={() => setOpenItem(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: boardKey })}
+        />
       )}
     </div>
   );

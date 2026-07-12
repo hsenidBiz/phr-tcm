@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import WorkBoard from "./WorkBoard";
 
 afterEach(() => clearMocks());
@@ -54,6 +54,7 @@ const boardData = {
 test("items land in their columns", async () => {
   mockIPC((cmd) => {
     if (cmd === "fetch_board") return boardData;
+    if (cmd === "list_teams") return [];
   });
   renderBoard();
   const todo = await screen.findByTestId("col-To Do");
@@ -66,6 +67,7 @@ test("drop moves card and applies the returned state", async () => {
   let moved: unknown = null;
   mockIPC((cmd, args) => {
     if (cmd === "fetch_board") return boardData;
+    if (cmd === "list_teams") return [];
     if (cmd === "move_board_item") {
       moved = args;
       return "In Progress";
@@ -82,4 +84,63 @@ test("drop moves card and applies the returned state", async () => {
   const movedCard = movedTitle.closest("[draggable]") as HTMLElement;
   expect(await within(movedCard).findByText("In Progress")).toBeInTheDocument();
   expect(moved).toMatchObject({ itemId: 11, workItemType: "Task", column: "In Progress" });
+});
+
+test("text filter narrows visible cards", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "list_teams") return [];
+  });
+  renderBoard();
+  await screen.findByText("Write docs");
+  fireEvent.change(screen.getByLabelText("Filter items"), { target: { value: "bug" } });
+  expect(screen.queryByText("Write docs")).not.toBeInTheDocument();
+  expect(screen.getByText("Fix bug")).toBeInTheDocument();
+});
+
+test("card click opens the drawer; save patches only dirty fields", async () => {
+  let patched: { patches?: Array<{ reference_name: string; value: string }> } = {};
+  mockIPC((cmd, args) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "list_teams") return [];
+    if (cmd === "work_item_detail")
+      return {
+        id: 11,
+        title: "Write docs",
+        work_item_type: "Task",
+        state: "To Do",
+        assigned_to: "Avin",
+        assigned_to_unique: "a@x.com",
+        activity: "",
+        tags: "",
+        area_path: "P",
+        iteration_path: "P\\S1",
+        remaining_work: null,
+        completed_work: null,
+        original_estimate: null,
+        start_date: "",
+        finish_date: "",
+        description_text: "old text",
+        description_field: "System.Description",
+      };
+    if (cmd === "list_team_members")
+      return [{ display_name: "Avin", unique_name: "a@x.com" }];
+    if (cmd === "activity_values") return [];
+    if (cmd === "work_item_comments") return [];
+    if (cmd === "update_work_item") {
+      patched = args as typeof patched;
+      return null;
+    }
+  });
+  renderBoard();
+  fireEvent.click(await screen.findByText("Write docs"));
+
+  const title = await screen.findByLabelText(/Title/);
+  fireEvent.change(title, { target: { value: "Write better docs" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+  await vi.waitFor(() => expect(patched.patches).toBeTruthy());
+  expect(patched.patches).toEqual([
+    { reference_name: "System.Title", value: "Write better docs" },
+  ]);
 });
