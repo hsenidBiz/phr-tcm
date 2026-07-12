@@ -145,6 +145,14 @@ export default function ExistingCases({
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
   );
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleCollapsed = (name: string) =>
+    setCollapsedGroups((s) => {
+      const next = new Set(s);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
 
   const queryKey = caseIds
     ? ["cases-by-ids", org, caseIds, prefs.moduleRef, prefs.preconditionsRef]
@@ -301,16 +309,29 @@ export default function ExistingCases({
       {ordered.map(({ group, items }) => (
         <div key={group || "__all"} className="space-y-1">
           {group && (
-            <button
-              className="group flex w-full items-center justify-center pb-1 pt-2"
-              title="Select all test cases in this group"
-              onClick={() => toggleGroup(items)}
-            >
-              <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                — {group} ({items.length}) —
-              </span>
-            </button>
+            <div className="flex w-full items-center gap-3 pb-1 pt-2">
+              <span aria-hidden className="h-px flex-1 bg-border" />
+              <button
+                aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
+                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                className="text-muted transition-colors hover:text-accent"
+                onClick={() => toggleCollapsed(group)}
+              >
+                {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+              </button>
+              <button
+                className="group"
+                title="Select all test cases in this group"
+                onClick={() => toggleGroup(items)}
+              >
+                <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                  {group} ({items.length})
+                </span>
+              </button>
+              <span aria-hidden className="h-px flex-1 bg-border" />
+            </div>
           )}
+          {group && collapsedGroups.has(group) ? null : (
           <ul className="space-y-1">
             {items.map((c) => (
               <li
@@ -354,6 +375,7 @@ export default function ExistingCases({
               </li>
             ))}
           </ul>
+          )}
         </div>
       ))}
 

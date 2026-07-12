@@ -84,15 +84,20 @@ test("group-header click selects every case in the group", async () => {
   });
   renderCases();
 
-  const header = await screen.findByRole("button", {
-    name: "— Login (2) —",
-  });
+  const header = await screen.findByRole("button", { name: "Login (2)" });
   fireEvent.click(header);
   expect(screen.getByText("2 selected")).toBeInTheDocument();
 
   // Clicking again clears the group's selection.
   fireEvent.click(header);
   expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
+
+  // The chevron collapses the group's cards (header stays).
+  fireEvent.click(screen.getByLabelText("Collapse group Login"));
+  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
+  expect(screen.getByText("Standalone thing")).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Expand group Login"));
+  expect(screen.getByText("Login - valid")).toBeInTheDocument();
 });
 
 test("card clicks drive multi-select and unlock the bulk toolbar", async () => {

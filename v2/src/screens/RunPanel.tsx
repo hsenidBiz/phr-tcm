@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, events, type EnsuredSuite, type TestPoint } from "./../bindings";
@@ -62,6 +62,14 @@ export default function RunPanel({
     () => localStorage.getItem("tcm-v2-group-points") === "on",
   );
   const [anchor, setAnchor] = useState<number | null>(null); // shift-range start
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleCollapsed = (name: string) =>
+    setCollapsedGroups((s) => {
+      const next = new Set(s);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
 
   const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
   const readSuiteSeed = (): EnsuredSuite | undefined => {
@@ -342,19 +350,35 @@ export default function RunPanel({
                 {name && (
                   <tr>
                     <td colSpan={4} className="px-2 pb-1 pt-2">
-                      <button
-                        className="group flex w-full items-center justify-center"
-                        title="Select all test cases in this group"
-                        onClick={() => toggleSection(pts)}
-                      >
-                        <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
-                          — {name} ({pts.length}) —
-                        </span>
-                      </button>
+                      <div className="flex w-full items-center gap-3">
+                        <span aria-hidden className="h-px flex-1 bg-border" />
+                        <button
+                          aria-label={`${collapsedGroups.has(name) ? "Expand" : "Collapse"} group ${name}`}
+                          title={collapsedGroups.has(name) ? "Expand group" : "Collapse group"}
+                          className="text-muted transition-colors hover:text-accent"
+                          onClick={() => toggleCollapsed(name)}
+                        >
+                          {collapsedGroups.has(name) ? (
+                            <ChevronRight size={15} />
+                          ) : (
+                            <ChevronDown size={15} />
+                          )}
+                        </button>
+                        <button
+                          className="group"
+                          title="Select all test cases in this group"
+                          onClick={() => toggleSection(pts)}
+                        >
+                          <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                            {name} ({pts.length})
+                          </span>
+                        </button>
+                        <span aria-hidden className="h-px flex-1 bg-border" />
+                      </div>
                     </td>
                   </tr>
                 )}
-                {pts.map((p) => (
+                {(name && collapsedGroups.has(name) ? [] : pts).map((p) => (
               <tr
                 key={p.point_id}
                 className={cn(
