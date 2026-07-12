@@ -58,6 +58,12 @@ pub struct OutcomeUpdate {
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PlanWithSuites {
+    pub plan: TestPlan,
+    pub suites: Vec<SuiteRef>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct EnsuredSuite {
     pub plan_id: i32,
     pub plan_name: String,
@@ -210,6 +216,47 @@ impl AdoClient {
             }
         }
         Ok(suites)
+    }
+
+    /// Every plan with its suites, for the Test Suites browser. Plans whose
+    /// suites can't be read (permissions) are skipped, and - the v1 rule the
+    /// suite browser shipped with - plans containing no suites beyond their
+    /// root are hidden entirely. Read only.
+    pub async fn list_plans_with_suites(
+        &self,
+        org: &str,
+        project: &str,
+    ) -> Result<Vec<PlanWithSuites>, AdoError> {
+        let plans = self.get_test_plans(org, project).await?;
+        let mut out = vec![];
+        for plan in plans {
+            let suites = match self.get_all_suites(org, project, plan.id).await {
+                Ok(s) => s,
+                Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                Err(e) => return Err(e),
+            };
+            // The root suite is structural, not user content: a plan whose
+            // only suite is its root has no suites worth browsing.
+            let non_root: Vec<SuiteRef> = suites
+                .into_iter()
+                .filter(|s| Some(s.id) != plan.root_suite_id && s.suite_type != "")
+                .collect();
+            let non_root: Vec<SuiteRef> = if plan.root_suite_id.is_some() {
+                non_root
+            } else {
+                // Root id unknown from the list endpoint: drop the first
+                // suite only when it is the conventional "<plan name>" root.
+                non_root
+                    .into_iter()
+                    .filter(|s| !(s.suite_type == "staticTestSuite" && s.name == plan.name))
+                    .collect()
+            };
+            if non_root.is_empty() {
+                continue;
+            }
+            out.push(PlanWithSuites { plan, suites: non_root });
+        }
+        Ok(out)
     }
 
     /// POST a new test plan (creating one also creates its root suite).

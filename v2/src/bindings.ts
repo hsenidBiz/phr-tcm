@@ -48,6 +48,7 @@ export const commands = {
 	 */
 	updateTestCase: (organization: string, project: string, tc: TestCase, moduleRef: string | null, preconditionsRef: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef })),
 	exportQueueJson: (path: string, queue: TestCase[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
+	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 };
 
 /** Events */
@@ -114,6 +115,11 @@ export type PbiHit = {
 	work_item_type: string,
 };
 
+export type PlanWithSuites = {
+	plan: TestPlan,
+	suites: SuiteRef[],
+};
+
 export type PointOutcome = {
 	point_id: number,
 	/**  Passed / Failed / Blocked / NotApplicable. */
@@ -161,6 +167,13 @@ export type SubmitProgress = {
 	action: string,
 };
 
+export type SuiteRef = {
+	id: number,
+	name: string,
+	suite_type: string,
+	requirement_id: number | null,
+};
+
 export type TestCase = {
 	title: string,
 	steps: Step[],
@@ -194,6 +207,13 @@ export type TestCaseSummary = {
 	title: string,
 	tags: string,
 	automation_status: string,
+};
+
+export type TestPlan = {
+	id: number,
+	name: string,
+	area_path: string,
+	root_suite_id: number | null,
 };
 
 export type TestPoint = {

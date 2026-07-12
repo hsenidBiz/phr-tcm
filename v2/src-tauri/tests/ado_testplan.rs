@@ -122,6 +122,54 @@ async fn ensure_suite_creates_plan_and_suite_when_none_exist() {
 }
 
 #[tokio::test]
+async fn plans_without_suites_are_hidden() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": 1, "name": "Empty Plan", "areaPath": "A", "rootSuite": {"id": 10}},
+                {"id": 2, "name": "Full Plan", "areaPath": "A", "rootSuite": {"id": 20}},
+                {"id": 3, "name": "Locked Plan", "areaPath": "A", "rootSuite": {"id": 30}}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/1/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": 10, "name": "Empty Plan", "suiteType": "staticTestSuite"}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/2/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": 20, "name": "Full Plan", "suiteType": "staticTestSuite"},
+                {"id": 21, "name": "PBI 42", "suiteType": "requirementTestSuite", "requirementId": 42}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/3/suites"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let plans = client.list_plans_with_suites("org", "proj").await.unwrap();
+    // Empty plan hidden (root-only), locked plan skipped, full plan kept
+    // with its root suite stripped.
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].plan.id, 2);
+    assert_eq!(plans[0].suites.len(), 1);
+    assert_eq!(plans[0].suites[0].id, 21);
+    assert_eq!(plans[0].suites[0].requirement_id, Some(42));
+}
+
+#[tokio::test]
 async fn points_parse_reference_and_results() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

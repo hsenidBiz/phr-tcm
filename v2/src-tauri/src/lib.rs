@@ -355,6 +355,19 @@ fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), St
     import_parser::export_queue_to_json(&queue, &path)
 }
 
+#[tauri::command]
+#[specta::specta]
+async fn list_plans_with_suites(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<ado_testplan::PlanWithSuites>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .list_plans_with_suites(&organization, &project)
+        .await
+}
+
 /// Find-or-create the PBI's requirement suite and return it with its plan.
 #[tauri::command]
 #[specta::specta]
@@ -538,7 +551,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         list_test_case_fields,
         pbi_test_cases_full,
         update_test_case,
-        export_queue_json
+        export_queue_json,
+        list_plans_with_suites
     ])
 }
 
