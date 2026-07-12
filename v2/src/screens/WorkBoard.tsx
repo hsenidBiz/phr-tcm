@@ -9,6 +9,7 @@ import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import Combobox from "../components/ui/combobox";
 import { Input } from "../components/ui/input";
+import MultiSelect from "../components/ui/multiselect";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { unwrap } from "../lib/ipc";
@@ -67,7 +68,23 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const [dragging, setDragging] = useState<BoardItem | null>(null);
   const [scope, setScope] = useState(""); // "" = my work, else team name
   const [filterText, setFilterText] = useState("");
-  const [filterType, setFilterType] = useState("");
+  // Multi-select type filter (empty = all), persisted across sessions.
+  const [typeFilter, setTypeFilter] = useState<string[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("tcm-v2-type-filter") ?? "[]");
+      return Array.isArray(raw) ? raw.filter((t) => typeof t === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const changeTypeFilter = (v: string[]) => {
+    setTypeFilter(v);
+    try {
+      localStorage.setItem("tcm-v2-type-filter", JSON.stringify(v));
+    } catch {
+      // session-only
+    }
+  };
   // Hiding Done frees a third of the board for the detail drawer.
   const [hideDone, setHideDone] = useState(
     () => localStorage.getItem("tcm-v2-hide-done") === "on",
@@ -147,7 +164,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   );
 
   const visible = (board.data?.items ?? []).filter((i) => {
-    if (filterType && i.work_item_type !== filterType) return false;
+    if (typeFilter.length > 0 && !typeFilter.includes(i.work_item_type)) return false;
     if (filterText) {
       const t = filterText.toLowerCase();
       if (
@@ -188,17 +205,14 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
           />
-          <Select
-            aria-label="Filter type"
-            className="py-1.5"
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-          >
-            <option value="">All types</option>
-            {types.map((t) => (
-              <option key={t}>{t}</option>
-            ))}
-          </Select>
+          <MultiSelect
+            ariaLabel="Filter type"
+            className="w-44"
+            allLabel="All types"
+            options={types}
+            selected={typeFilter}
+            onChange={changeTypeFilter}
+          />
           <button
             aria-label="Refresh work items"
             title="Refresh work items"
