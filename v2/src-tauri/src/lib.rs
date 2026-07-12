@@ -1047,6 +1047,13 @@ pub fn run() {
         .manage(updater::UpdateState::default())
         .manage(SubmitCancel::default())
         .invoke_handler(builder.invoke_handler())
+        .setup(move |app| {
+            // Registers the typed-event registry in Tauri state; without
+            // this every specta Event::emit panics with "EventRegistry not
+            // found in Tauri state".
+            builder.mount_events(app);
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
