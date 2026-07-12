@@ -611,9 +611,157 @@ async fn fetch_board(
     app: tauri::AppHandle,
     organization: String,
     project: String,
+    team: Option<String>,
 ) -> Result<work_board::BoardData, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token).fetch_board(&organization, &project).await
+    ado::AdoClient::new(token)
+        .fetch_board(&organization, &project, team.as_deref())
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn list_teams(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<work_board::TeamRef>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).list_teams(&organization, &project).await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn list_team_members(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<work_board::Member>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .list_team_members(&organization, &project)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn work_item_detail(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: i32,
+) -> Result<work_board::WorkItemDetail, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_work_item_detail(&organization, &project, id)
+        .await
+}
+
+/// PATCH a work item's fields (create-or-replace 'add' ops, only the
+/// changed refs). ADO 4xx (invalid transition / required field) surfaces
+/// verbatim for the drawer to show.
+#[tauri::command]
+#[specta::specta]
+async fn update_work_item(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: i32,
+    patches: Vec<work_board::FieldPatch>,
+) -> Result<(), ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let fields: Vec<(String, String)> = patches
+        .into_iter()
+        .map(|p| (p.reference_name, p.value))
+        .collect();
+    ado::AdoClient::new(token)
+        .update_work_item_fields(&organization, &project, id, &fields)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn activity_values(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    wi_type: String,
+) -> Result<Vec<String>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_field_allowed_values(
+            &organization,
+            &project,
+            &wi_type,
+            "Microsoft.VSTS.Common.Activity",
+        )
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn work_item_comments(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: i32,
+) -> Result<Vec<work_board::WorkComment>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_work_item_comments(&organization, &project, id)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn add_comment(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: i32,
+    text: String,
+) -> Result<(), ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .add_work_item_comment(&organization, &project, id, &text)
+        .await
+}
+
+/// Best-effort avatar fetch (None -> initials disc in the UI).
+#[tauri::command]
+#[specta::specta]
+async fn avatar_b64(app: tauri::AppHandle, url: String) -> Option<String> {
+    let token = get_fresh_token(&app).await.ok()?;
+    ado::AdoClient::new(token).get_avatar_b64(&url).await
+}
+
+/// Quick create a Task/Bug from the board, optionally assigned to me.
+#[tauri::command]
+#[specta::specta]
+async fn quick_create_item(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    wi_type: String,
+    title: String,
+    assign_to_me: bool,
+) -> Result<i32, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let mut fields = vec![("System.Title".to_string(), title)];
+    if assign_to_me {
+        let account = {
+            let state = app.state::<Mutex<auth::AuthState>>();
+            let s = state.lock().unwrap();
+            s.tokens.as_ref().and_then(|t| t.account.clone())
+        };
+        if let Some(upn) = account {
+            fields.push(("System.AssignedTo".to_string(), upn));
+        }
+    }
+    let (id, _url) = ado::AdoClient::new(token)
+        .create_work_item(&organization, &project, &wi_type, &fields, &[])
+        .await?;
+    Ok(id)
 }
 
 /// Move a board item into a column: resolves the target state exactly like
@@ -681,7 +829,16 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         list_plans_with_suites,
         get_result_detail,
         capture_screens,
-        file_bug
+        file_bug,
+        list_teams,
+        list_team_members,
+        work_item_detail,
+        update_work_item,
+        activity_values,
+        work_item_comments,
+        add_comment,
+        avatar_b64,
+        quick_create_item
     ])
 }
 

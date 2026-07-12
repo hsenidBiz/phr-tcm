@@ -30,7 +30,7 @@ export const commands = {
 	 *  PATCH outcomes, complete the run. Returns the run's web URL.
 	 */
 	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
-	fetchBoard: (organization: string, project: string) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project })),
+	fetchBoard: (organization: string, project: string, team: string | null) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, team })),
 	/**
 	 *  Move a board item into a column: resolves the target state exactly like
 	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
@@ -56,6 +56,22 @@ export const commands = {
 	 *  Related links to the test case + PBI, screenshots attached. POST only.
 	 */
 	fileBug: (organization: string, project: string, title: string, reproText: string, testCaseId: number, pbiId: number, screenshotsB64: string[]) => typedError<FiledBug, string>(__TAURI_INVOKE("file_bug", { organization, project, title, reproText, testCaseId, pbiId, screenshotsB64 })),
+	listTeams: (organization: string, project: string) => typedError<TeamRef[], AdoError>(__TAURI_INVOKE("list_teams", { organization, project })),
+	listTeamMembers: (organization: string, project: string) => typedError<Member[], AdoError>(__TAURI_INVOKE("list_team_members", { organization, project })),
+	workItemDetail: (organization: string, project: string, id: number) => typedError<WorkItemDetail, AdoError>(__TAURI_INVOKE("work_item_detail", { organization, project, id })),
+	/**
+	 *  PATCH a work item's fields (create-or-replace 'add' ops, only the
+	 *  changed refs). ADO 4xx (invalid transition / required field) surfaces
+	 *  verbatim for the drawer to show.
+	 */
+	updateWorkItem: (organization: string, project: string, id: number, patches: FieldPatch[]) => typedError<null, AdoError>(__TAURI_INVOKE("update_work_item", { organization, project, id, patches })),
+	activityValues: (organization: string, project: string, wiType: string) => typedError<string[], AdoError>(__TAURI_INVOKE("activity_values", { organization, project, wiType })),
+	workItemComments: (organization: string, project: string, id: number) => typedError<WorkComment[], AdoError>(__TAURI_INVOKE("work_item_comments", { organization, project, id })),
+	addComment: (organization: string, project: string, id: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("add_comment", { organization, project, id, text })),
+	/**  Best-effort avatar fetch (None -> initials disc in the UI). */
+	avatarB64: (url: string) => __TAURI_INVOKE<string | null>("avatar_b64", { url }),
+	/**  Quick create a Task/Bug from the board, optionally assigned to me. */
+	quickCreateItem: (organization: string, project: string, wiType: string, title: string, assignToMe: boolean) => typedError<number, AdoError>(__TAURI_INVOKE("quick_create_item", { organization, project, wiType, title, assignToMe })),
 };
 
 /** Events */
@@ -101,6 +117,11 @@ export type EnsuredSuite = {
 	suite_id: number,
 };
 
+export type FieldPatch = {
+	reference_name: string,
+	value: string,
+};
+
 export type FieldRef = {
 	name: string,
 	reference_name: string,
@@ -114,6 +135,11 @@ export type FiledBug = {
 export type ImportResult = {
 	cases: TestCase[],
 	warnings: string[],
+};
+
+export type Member = {
+	display_name: string,
+	unique_name: string,
 };
 
 export type Org = {
@@ -207,6 +233,11 @@ export type SuiteRef = {
 	requirement_id: number | null,
 };
 
+export type TeamRef = {
+	id: string,
+	name: string,
+};
+
 export type TestCase = {
 	title: string,
 	steps: Step[],
@@ -263,6 +294,42 @@ export type TestPoint = {
 	last_outcome: string,
 	last_run_id: number | null,
 	last_result_id: number | null,
+};
+
+export type WorkComment = {
+	id: number,
+	text: string,
+	created_by: string,
+	created_date: string,
+	avatar_url: string,
+};
+
+export type WorkItemDetail = {
+	id: number,
+	title: string,
+	work_item_type: string,
+	state: string,
+	assigned_to: string,
+	assigned_to_unique: string,
+	activity: string,
+	tags: string,
+	area_path: string,
+	iteration_path: string,
+	remaining_work: number | null,
+	completed_work: number | null,
+	original_estimate: number | null,
+	start_date: string,
+	finish_date: string,
+	/**
+	 *  Description (or ReproSteps for Bugs) flattened to plain text for the
+	 *  editor; saving wraps it back into a div like v1's preconditions.
+	 */
+	description_text: string,
+	/**
+	 *  Which field the description came from (System.Description or
+	 *  Microsoft.VSTS.TCM.ReproSteps) so the save writes the right one.
+	 */
+	description_field: string,
 };
 
 /* Tauri Specta runtime */

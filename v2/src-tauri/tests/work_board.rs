@@ -3,9 +3,119 @@
 
 use std::collections::HashMap;
 use v2_lib::ado::AdoClient;
-use v2_lib::work_board::{column_for_state, state_for_column, StateInfo};
+use v2_lib::work_board::{
+    column_for_state, state_for_column, team_area_clause, wiql_str, StateInfo,
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[test]
+fn wiql_clause_builders_match_v1() {
+    assert_eq!(wiql_str("it's"), "'it''s'");
+    // Tree field + includeChildren -> UNDER; flat value -> '='.
+    let clause = team_area_clause(
+        "System.AreaPath",
+        &[
+            ("Proj\\Team".to_string(), true),
+            ("Proj\\Other".to_string(), false),
+            (String::new(), true), // empty values dropped
+        ],
+    );
+    assert_eq!(
+        clause,
+        "[System.AreaPath] UNDER 'Proj\\Team' OR [System.AreaPath] = 'Proj\\Other'"
+    );
+    // Non-tree fields never use UNDER.
+    let clause = team_area_clause("Custom.Squad", &[("Alpha".to_string(), true)]);
+    assert_eq!(clause, "[Custom.Squad] = 'Alpha'");
+}
+
+#[tokio::test]
+async fn comments_parse_with_avatar_fallback_chain() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workItems/11/comments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "comments": [
+                {"id": 1, "text": "<div>Looks <b>good</b></div>",
+                 "createdBy": {"displayName": "Ada",
+                     "_links": {"avatar": {"href": "https://x/avatar/ada"}}},
+                 "createdDate": "2026-07-12T01:00:00Z"},
+                {"id": 2, "text": "plain",
+                 "createdBy": {"displayName": "Bob", "imageUrl": "https://x/img/bob"},
+                 "createdDate": "2026-07-12T00:00:00Z"},
+                {"id": 3, "text": "x", "createdBy": {"displayName": "Cy"},
+                 "createdDate": "2026-07-11T00:00:00Z"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let comments = client.get_work_item_comments("org", "proj", 11).await.unwrap();
+    assert_eq!(comments.len(), 3);
+    assert_eq!(comments[0].text, "Looks good"); // html flattened
+    assert_eq!(comments[0].avatar_url, "https://x/avatar/ada"); // _links first
+    assert_eq!(comments[1].avatar_url, "https://x/img/bob"); // imageUrl fallback
+    assert_eq!(comments[2].avatar_url, ""); // initials disc in the UI
+}
+
+#[tokio::test]
+async fn team_members_dedupe_and_sort() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/projects/proj/teams"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": "t1", "name": "Alpha"}, {"id": "t2", "name": "Beta"}]
+        })))
+        .mount(&server)
+        .await;
+    for (tid, members) in [
+        ("t1", serde_json::json!([
+            {"identity": {"displayName": "Zoe", "uniqueName": "z@x.com"}},
+            {"identity": {"displayName": "Avin", "uniqueName": "a@x.com"}}
+        ])),
+        ("t2", serde_json::json!([
+            {"identity": {"displayName": "Avin", "uniqueName": "a@x.com"}}
+        ])),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/org/_apis/projects/proj/teams/{tid}/members")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"value": members})),
+            )
+            .mount(&server)
+            .await;
+    }
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let members = client.list_team_members("org", "proj").await.unwrap();
+    assert_eq!(members.len(), 2); // Avin deduped across teams
+    assert_eq!(members[0].display_name, "Avin");
+    assert_eq!(members[1].display_name, "Zoe");
+}
+
+#[tokio::test]
+async fn detail_uses_reprosteps_for_bugs() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitems/12"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 12,
+            "fields": {
+                "System.Title": "Crash", "System.WorkItemType": "Bug",
+                "System.State": "Active",
+                "Microsoft.VSTS.TCM.ReproSteps": "<div>Click &amp; boom</div>",
+                "Microsoft.VSTS.Scheduling.RemainingWork": 2.5
+            }
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let d = client.get_work_item_detail("org", "proj", 12).await.unwrap();
+    assert_eq!(d.description_field, "Microsoft.VSTS.TCM.ReproSteps");
+    assert_eq!(d.description_text, "Click & boom");
+    assert_eq!(d.remaining_work, Some(2.5));
+}
 
 fn s(name: &str, category: &str) -> StateInfo {
     StateInfo {
@@ -116,7 +226,7 @@ async fn fetch_board_pipeline() {
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let board = client.fetch_board("org", "proj").await.unwrap();
+    let board = client.fetch_board("org", "proj", None).await.unwrap();
     assert_eq!(board.items.len(), 2);
     // WIQL order preserved: 11 first.
     assert_eq!(board.items[0].id, 11);

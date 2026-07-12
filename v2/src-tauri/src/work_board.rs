@@ -131,6 +131,79 @@ pub fn state_for_column(
     None
 }
 
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct WorkItemDetail {
+    pub id: i32,
+    pub title: String,
+    pub work_item_type: String,
+    pub state: String,
+    pub assigned_to: String,
+    pub assigned_to_unique: String,
+    pub activity: String,
+    pub tags: String,
+    pub area_path: String,
+    pub iteration_path: String,
+    pub remaining_work: Option<f64>,
+    pub completed_work: Option<f64>,
+    pub original_estimate: Option<f64>,
+    pub start_date: String,
+    pub finish_date: String,
+    /// Description (or ReproSteps for Bugs) flattened to plain text for the
+    /// editor; saving wraps it back into a div like v1's preconditions.
+    pub description_text: String,
+    /// Which field the description came from (System.Description or
+    /// Microsoft.VSTS.TCM.ReproSteps) so the save writes the right one.
+    pub description_field: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct Member {
+    pub display_name: String,
+    pub unique_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct TeamRef {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct WorkComment {
+    pub id: i32,
+    pub text: String,
+    pub created_by: String,
+    pub created_date: String,
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct FieldPatch {
+    pub reference_name: String,
+    pub value: String,
+}
+
+/// A WIQL string literal with quotes escaped (v1 _wiql_str).
+pub fn wiql_str(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// A WIQL clause scoping to a team's area(s), ported from v1
+/// _team_area_clause: tree fields use UNDER when includeChildren, else '='.
+pub fn team_area_clause(field_ref: &str, values: &[(String, bool)]) -> String {
+    let field = format!("[{field_ref}]");
+    let tree = field_ref.ends_with("AreaPath") || field_ref.ends_with("IterationPath");
+    values
+        .iter()
+        .filter(|(v, _)| !v.is_empty())
+        .map(|(v, include_children)| {
+            let op = if tree && *include_children { "UNDER" } else { "=" };
+            format!("{field} {op} {}", wiql_str(v))
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
 impl AdoClient {
     /// Run a WIQL query and return matching ids (query only). Ported from v1
     /// query_work_items.
@@ -185,21 +258,295 @@ impl AdoClient {
             .collect())
     }
 
-    /// The whole personal board in one call, ported from v1 _fetch_work with
-    /// scope "me": WIQL for @Me minus test artifacts, batch field fetch
-    /// (chunks of 200), states per distinct type (a type whose states can't
-    /// be read falls back to the name heuristic). Read only.
-    pub async fn fetch_board(&self, org: &str, project: &str) -> Result<BoardData, AdoError> {
+    /// Teams in the project (for the board's team-scope selector). Read only.
+    pub async fn list_teams(&self, org: &str, project: &str) -> Result<Vec<TeamRef>, AdoError> {
+        let url = format!(
+            "{}/{}/_apis/projects/{}/teams?api-version=7.1",
+            self.base_url,
+            org,
+            urlencoding::encode(project)
+        );
+        let data = self.get_json(url).await?;
+        Ok(data["value"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|t| TeamRef {
+                id: t["id"].as_str().unwrap_or_default().to_string(),
+                name: t["name"].as_str().unwrap_or_default().to_string(),
+            })
+            .collect())
+    }
+
+    /// A team's team-field (usually AreaPath) values, ported from v1
+    /// get_team_field_values. Returns (field_ref, values) where values fall
+    /// back to the default with includeChildren when the list is empty.
+    pub async fn get_team_scope(
+        &self,
+        org: &str,
+        project: &str,
+        team: &str,
+    ) -> Result<(String, Vec<(String, bool)>), AdoError> {
+        let url = format!(
+            "{}/{}/{}/{}/_apis/work/teamsettings/teamfieldvalues?api-version=7.1",
+            self.base_url,
+            org,
+            urlencoding::encode(project),
+            urlencoding::encode(team)
+        );
+        let data = self.get_json(url).await?;
+        let field_ref = data["field"]["referenceName"]
+            .as_str()
+            .unwrap_or("System.AreaPath")
+            .to_string();
+        let mut values: Vec<(String, bool)> = data["values"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|v| {
+                (
+                    v["value"].as_str().unwrap_or_default().to_string(),
+                    v["includeChildren"].as_bool().unwrap_or(false),
+                )
+            })
+            .collect();
+        if values.is_empty() {
+            let default = data["defaultValue"].as_str().unwrap_or_default();
+            if !default.is_empty() {
+                values.push((default.to_string(), true));
+            }
+        }
+        Ok((field_ref, values))
+    }
+
+    /// All members across the project's teams, deduped by uniqueName and
+    /// sorted by display name (v1 get_team_members, without the thread pool -
+    /// team counts are small). Read only.
+    pub async fn list_team_members(&self, org: &str, project: &str) -> Result<Vec<Member>, AdoError> {
+        let teams = self.list_teams(org, project).await?;
+        let mut by_unique: std::collections::HashMap<String, Member> = Default::default();
+        for team in teams {
+            let url = format!(
+                "{}/{}/_apis/projects/{}/teams/{}/members?api-version=7.1",
+                self.base_url,
+                org,
+                urlencoding::encode(project),
+                team.id
+            );
+            let Ok(data) = self.get_json(url).await else { continue };
+            for m in data["value"].as_array().cloned().unwrap_or_default() {
+                let identity = &m["identity"];
+                let unique = identity["uniqueName"].as_str().unwrap_or_default().to_string();
+                if unique.is_empty() {
+                    continue;
+                }
+                by_unique.insert(
+                    unique.clone(),
+                    Member {
+                        display_name: identity["displayName"].as_str().unwrap_or_default().to_string(),
+                        unique_name: unique,
+                    },
+                );
+            }
+        }
+        let mut members: Vec<Member> = by_unique.into_values().collect();
+        members.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+        Ok(members)
+    }
+
+    /// Allowed (picklist) values for a field on a type - e.g. Activity.
+    /// Absent field / no picklist -> empty (v1 get_field_allowed_values).
+    pub async fn get_field_allowed_values(
+        &self,
+        org: &str,
+        project: &str,
+        wi_type: &str,
+        field_ref: &str,
+    ) -> Result<Vec<String>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitemtypes/{}/fields/{}?api-version=7.1",
+            self.base_url,
+            org,
+            urlencoding::encode(project),
+            urlencoding::encode(wi_type),
+            urlencoding::encode(field_ref)
+        );
+        match self.get_json(url).await {
+            Ok(data) => Ok(data["allowedValues"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()),
+            Err(_) => Ok(vec![]),
+        }
+    }
+
+    /// One work item, fully loaded for the detail drawer. Read only.
+    pub async fn get_work_item_detail(
+        &self,
+        org: &str,
+        project: &str,
+        id: i32,
+    ) -> Result<WorkItemDetail, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+            self.base_url, org, project, id
+        );
+        let data = self.get_json(url).await?;
+        let f = &data["fields"];
+        let s = |key: &str| f[key].as_str().unwrap_or_default().to_string();
+        let wi_type = s("System.WorkItemType");
+        let description_field = if wi_type == "Bug" && f["Microsoft.VSTS.TCM.ReproSteps"].is_string()
+        {
+            "Microsoft.VSTS.TCM.ReproSteps"
+        } else {
+            "System.Description"
+        };
+        Ok(WorkItemDetail {
+            id,
+            title: s("System.Title"),
+            state: s("System.State"),
+            assigned_to: f["System.AssignedTo"]["displayName"].as_str().unwrap_or_default().to_string(),
+            assigned_to_unique: f["System.AssignedTo"]["uniqueName"].as_str().unwrap_or_default().to_string(),
+            activity: s("Microsoft.VSTS.Common.Activity"),
+            tags: s("System.Tags"),
+            area_path: s("System.AreaPath"),
+            iteration_path: s("System.IterationPath"),
+            remaining_work: f["Microsoft.VSTS.Scheduling.RemainingWork"].as_f64(),
+            completed_work: f["Microsoft.VSTS.Scheduling.CompletedWork"].as_f64(),
+            original_estimate: f["Microsoft.VSTS.Scheduling.OriginalEstimate"].as_f64(),
+            start_date: s("Microsoft.VSTS.Scheduling.StartDate"),
+            finish_date: s("Microsoft.VSTS.Scheduling.FinishDate"),
+            description_text: crate::steps_xml::html_to_text(&s(description_field)),
+            description_field: description_field.to_string(),
+            work_item_type: wi_type,
+        })
+    }
+
+    /// A work item's comments, newest first, ported from v1
+    /// get_work_item_comments incl. the avatar fallback chain
+    /// (_links.avatar.href -> imageUrl -> empty = initials disc). Read only.
+    pub async fn get_work_item_comments(
+        &self,
+        org: &str,
+        project: &str,
+        wi_id: i32,
+    ) -> Result<Vec<WorkComment>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workItems/{}/comments?order=desc&api-version=7.1-preview.4",
+            self.base_url, org, project, wi_id
+        );
+        let data = self.get_json(url).await?;
+        Ok(data["comments"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|c| {
+                let cb = &c["createdBy"];
+                let avatar = cb["_links"]["avatar"]["href"]
+                    .as_str()
+                    .or_else(|| cb["imageUrl"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                WorkComment {
+                    id: c["id"].as_i64().unwrap_or_default() as i32,
+                    text: crate::steps_xml::html_to_text(c["text"].as_str().unwrap_or_default()),
+                    created_by: cb["displayName"].as_str().unwrap_or_default().to_string(),
+                    created_date: c["createdDate"].as_str().unwrap_or_default().to_string(),
+                    avatar_url: avatar,
+                }
+            })
+            .collect())
+    }
+
+    /// POST a comment; no DELETE.
+    pub async fn add_work_item_comment(
+        &self,
+        org: &str,
+        project: &str,
+        wi_id: i32,
+        text: &str,
+    ) -> Result<(), AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workItems/{}/comments?api-version=7.1-preview.4",
+            self.base_url, org, project, wi_id
+        );
+        self.post_json(url, &serde_json::json!({"text": text})).await?;
+        Ok(())
+    }
+
+    /// Fetch an avatar as base64 PNG-ish bytes. Best-effort like v1
+    /// get_avatar_image: any problem -> None so the UI falls back to
+    /// initials. Handles the Graph endpoint's base64-JSON body variant.
+    pub async fn get_avatar_b64(&self, url: &str) -> Option<String> {
+        use base64::Engine;
+        if url.is_empty() {
+            return None;
+        }
+        let resp = self
+            .http
+            .get(url)
+            .bearer_auth(&self.token)
+            .header("Accept", "image/png,image/*;q=0.8")
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let is_json = resp
+            .headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .map(|c| c.contains("application/json"))
+            .unwrap_or(false);
+        let bytes = resp.bytes().await.ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        if is_json {
+            let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+            return v["value"].as_str().map(String::from);
+        }
+        Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
+    }
+
+    /// The board in one call, ported from v1 _fetch_work: scope is "me"
+    /// (AssignedTo = @Me) or a team (everything under the team's area(s),
+    /// whoever it's assigned to). Test artifacts excluded in both. Read only.
+    pub async fn fetch_board(
+        &self,
+        org: &str,
+        project: &str,
+        team: Option<&str>,
+    ) -> Result<BoardData, AdoError> {
         let excluded = EXCLUDED_TYPES
             .iter()
             .map(|t| format!("'{t}'"))
             .collect::<Vec<_>>()
             .join(", ");
+        let mut where_clauses = vec![
+            "[System.TeamProject] = @project".to_string(),
+            format!("[System.WorkItemType] NOT IN ({excluded})"),
+        ];
+        match team {
+            Some(team) => {
+                let (field_ref, values) = self.get_team_scope(org, project, team).await?;
+                let clause = team_area_clause(&field_ref, &values);
+                if !clause.is_empty() {
+                    where_clauses.push(format!("({clause})"));
+                }
+            }
+            None => where_clauses.push("[System.AssignedTo] = @Me".to_string()),
+        }
         let wiql = format!(
-            "SELECT [System.Id] FROM workitems WHERE [System.TeamProject] = @project \
-             AND [System.WorkItemType] NOT IN ({excluded}) \
-             AND [System.AssignedTo] = @Me \
-             ORDER BY [System.ChangedDate] DESC"
+            "SELECT [System.Id] FROM workitems WHERE {} ORDER BY [System.ChangedDate] DESC",
+            where_clauses.join(" AND ")
         );
         let ids = self.query_work_items(org, project, &wiql, MAX_ITEMS).await?;
 
