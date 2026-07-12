@@ -35,6 +35,10 @@ export const commands = {
 	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
 	 */
 	moveBoardItem: (organization: string, project: string, itemId: number, workItemType: string, column: string) => typedError<string, AdoError>(__TAURI_INVOKE("move_board_item", { organization, project, itemId, workItemType, column })),
+	/**  Non-blocking update check; Some(version) when a newer build is published. */
+	checkUpdate: () => __TAURI_INVOKE<string | null>("check_update"),
+	/**  Download the pending update and restart into it. */
+	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
 };
 
 /* Types */

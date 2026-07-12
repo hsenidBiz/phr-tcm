@@ -4,6 +4,7 @@ pub mod auth;
 pub mod import_parser;
 pub mod model;
 pub mod steps_xml;
+pub mod updater;
 pub mod work_board;
 
 use std::sync::Mutex;
@@ -343,6 +344,31 @@ async fn submit_test_run(
     Ok(run)
 }
 
+/// Non-blocking update check; Some(version) when a newer build is published.
+#[tauri::command]
+#[specta::specta]
+async fn check_update(app: tauri::AppHandle) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<updater::UpdateState>();
+        updater::check(&state)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Download the pending update and restart into it.
+#[tauri::command]
+#[specta::specta]
+async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<updater::UpdateState>();
+        updater::download_and_apply(&state)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 #[specta::specta]
 async fn fetch_board(
@@ -407,7 +433,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         list_test_points,
         submit_test_run,
         fetch_board,
-        move_board_item
+        move_board_item,
+        check_update,
+        apply_update
     ])
 }
 
@@ -418,6 +446,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(auth::AuthState::default()))
+        .manage(updater::UpdateState::default())
         .invoke_handler(builder.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
