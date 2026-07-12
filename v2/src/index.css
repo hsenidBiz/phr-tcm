@@ -208,6 +208,21 @@ body {
   font-family: var(--font-sans);
 }
 
+/* Work Manager detail drawer slides in from the right instead of popping. */
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0.4;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.drawer-in {
+  animation: drawer-in 0.22s ease-out;
+}
+
 /* Data alignment: ids, counts and outcome columns never wobble. */
 table {
   font-variant-numeric: tabular-nums;

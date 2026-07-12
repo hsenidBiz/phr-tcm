@@ -122,7 +122,7 @@ export default function WorkItemDrawer({
   });
 
   return (
-    <aside className="flex h-full w-96 shrink-0 flex-col border-l border-border bg-surface">
+    <aside className="drawer-in flex h-full w-96 shrink-0 flex-col border-l border-border bg-surface">
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <span className="text-sm font-semibold text-text">
           <span className="id-mono text-faint">#{itemId}</span>{" "}
