@@ -21,6 +21,7 @@ export async function openRunnerWindow(session: RunnerSession) {
     alwaysOnTop: true,
     resizable: true,
     focus: true,
+    decorations: false,
   });
   runner.once("tauri://error", (e) => {
     // eslint-disable-next-line no-console

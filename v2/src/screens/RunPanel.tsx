@@ -64,7 +64,7 @@ export default function RunPanel({
           duration_ms: null,
           step_ids: null,
           step_outcomes: null,
-          screenshots_b64: null,
+          attachments: null,
           bug_ids: null,
         }));
       return unwrap(

@@ -5,6 +5,7 @@ import { commands, type PbiHit } from "./bindings";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
+import TitleBar from "./components/TitleBar";
 import { Button } from "./components/ui/button";
 import { getTheme, initTheme } from "./lib/theme";
 import EditCases from "./screens/EditCases";
@@ -157,7 +158,7 @@ export default function App() {
   const signedIn = Boolean(status.data?.signed_in);
 
   return (
-    <div className="flex h-screen bg-bg text-text">
+    <div className="flex h-screen flex-col bg-bg text-text">
       <Toaster theme={getTheme() === "light" ? "light" : "dark"} richColors position="bottom-right" />
       <CommandPalette
         onNavigate={goToSection}
@@ -166,6 +167,9 @@ export default function App() {
         onToggleWork={() => setWorkMode((w) => !w)}
       />
 
+      <TitleBar title={workMode ? "Work Manager" : "Test Case Manager"} />
+
+      <div className="flex min-h-0 flex-1">
       {signedIn && <Sidebar section={section} onSelect={goToSection} />}
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -231,6 +235,7 @@ export default function App() {
             </>
           )}
         </main>
+      </div>
       </div>
     </div>
   );

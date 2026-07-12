@@ -69,11 +69,59 @@
   --color-warning: var(--color-warning);
 }
 
+/* Accent theme presets (Settings > Appearance). data-accent on <html>;
+   green is the default identity, others override the accent family only,
+   with per-mode values chosen for 4.5:1 button text. */
+:root[data-accent="blue"] {
+  --color-accent: #1d4ed8; --color-accent-hover: #1e40af;
+  --color-accent-soft: rgb(29 78 216 / 0.1); --color-on-accent: #ffffff;
+}
+.dark[data-accent="blue"] {
+  --color-accent: #3b82f6; --color-accent-hover: #60a5fa;
+  --color-accent-soft: rgb(59 130 246 / 0.16); --color-on-accent: #0f172a;
+}
+:root[data-accent="violet"] {
+  --color-accent: #6d28d9; --color-accent-hover: #5b21b6;
+  --color-accent-soft: rgb(109 40 217 / 0.1); --color-on-accent: #ffffff;
+}
+.dark[data-accent="violet"] {
+  --color-accent: #8b5cf6; --color-accent-hover: #a78bfa;
+  --color-accent-soft: rgb(139 92 246 / 0.16); --color-on-accent: #0f172a;
+}
+:root[data-accent="amber"] {
+  --color-accent: #b45309; --color-accent-hover: #92400e;
+  --color-accent-soft: rgb(180 83 9 / 0.12); --color-on-accent: #ffffff;
+}
+.dark[data-accent="amber"] {
+  --color-accent: #f59e0b; --color-accent-hover: #fbbf24;
+  --color-accent-soft: rgb(245 158 11 / 0.16); --color-on-accent: #0f172a;
+}
+:root[data-accent="rose"] {
+  --color-accent: #be123c; --color-accent-hover: #9f1239;
+  --color-accent-soft: rgb(190 18 60 / 0.1); --color-on-accent: #ffffff;
+}
+.dark[data-accent="rose"] {
+  --color-accent: #f43f5e; --color-accent-hover: #fb7185;
+  --color-accent-soft: rgb(244 63 94 / 0.16); --color-on-accent: #0f172a;
+}
+
 html,
 body,
 #root {
   height: 100%;
 }
+
+/* Scrollbars that belong to the app (WebView2 = chromium engine). */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-border-strong); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 body {
   font-family: var(--font-sans);

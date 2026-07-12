@@ -78,7 +78,7 @@ test("loads suite + points and records chosen outcomes", async () => {
       duration_ms: null,
       step_ids: null,
       step_outcomes: null,
-      screenshots_b64: null,
+      attachments: null,
       bug_ids: null,
     },
   ]);

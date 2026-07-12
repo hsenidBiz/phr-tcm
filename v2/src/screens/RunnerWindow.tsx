@@ -165,7 +165,12 @@ export default function RunnerWindow() {
             step_outcomes: marked.length
               ? c.steps.map((_, i) => s.stepOutcomes[i] || null)
               : null,
-            screenshots_b64: s.screenshots.length ? s.screenshots : null,
+            attachments: s.screenshots.length
+              ? s.screenshots.map((b64, i) => ({
+                  file_name: `screenshot-${c.id}-${i + 1}.png`,
+                  b64,
+                }))
+              : null,
             bug_ids: s.bugIds.length ? s.bugIds : null,
           };
         });
@@ -208,8 +213,11 @@ export default function RunnerWindow() {
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
       <Toaster theme={getTheme() === "light" ? "light" : "dark"} richColors position="bottom-right" />
-      <header className="flex items-center gap-2 border-b border-border bg-surface px-3 py-2">
-        <span className="text-sm font-semibold">Runner</span>
+      <header
+        data-tauri-drag-region
+        className="flex select-none items-center gap-2 border-b border-border bg-surface px-3 py-2"
+      >
+        <span className="pointer-events-none text-sm font-semibold">Runner</span>
         <span className="id-mono text-xs text-faint">#{session.pbi.id}</span>
         <span className="ml-auto text-xs text-muted">
           {markedCount}/{list.length} marked

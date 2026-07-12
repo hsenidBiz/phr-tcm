@@ -20,3 +20,17 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     </QueryClientProvider>
   </React.StrictMode>,
 );
+
+// React has mounted: fade the splash out and reveal the (hidden-at-start)
+// window - together these kill the white startup flash.
+requestAnimationFrame(() => {
+  const splash = document.getElementById("splash");
+  if (splash) {
+    splash.style.transition = "opacity 250ms ease-out";
+    splash.style.opacity = "0";
+    setTimeout(() => splash.remove(), 300);
+  }
+  import("@tauri-apps/api/window")
+    .then(({ getCurrentWindow }) => getCurrentWindow().show())
+    .catch(() => {}); // vitest/browser: no tauri window to show
+});

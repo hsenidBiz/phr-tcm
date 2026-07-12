@@ -7,10 +7,27 @@ import { Button } from "../components/ui/button";
 import { Select } from "../components/ui/select";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { saveFieldPrefs } from "../lib/fieldPrefs";
-import { getTheme, setTheme, type Theme } from "../lib/theme";
+import {
+  ACCENTS,
+  getAccent,
+  getTheme,
+  setAccent,
+  setTheme,
+  type Accent,
+  type Theme,
+} from "../lib/theme";
+
+const ACCENT_SWATCH: Record<Accent, string> = {
+  green: "#22c55e",
+  blue: "#3b82f6",
+  violet: "#8b5cf6",
+  amber: "#f59e0b",
+  rose: "#f43f5e",
+};
 
 export default function Settings({ org, project }: { org: string; project: string }) {
   const [theme, setThemeState] = useState<Theme>(getTheme());
+  const [accent, setAccentState] = useState<Accent>(getAccent());
   const { fields, prefs } = useFieldRefs(org, project);
   const [, bump] = useState(0); // re-render after saving field prefs
 
@@ -54,6 +71,29 @@ export default function Settings({ org, project }: { org: string; project: strin
               {t[0].toUpperCase() + t.slice(1)}
             </Button>
           ))}
+        </div>
+        <div>
+          <p className="mb-2 text-xs text-muted">Accent theme</p>
+          <div className="flex gap-2">
+            {ACCENTS.map((a) => (
+              <button
+                key={a}
+                aria-label={`Accent ${a}`}
+                title={a[0].toUpperCase() + a.slice(1)}
+                className="flex h-8 w-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-110"
+                style={{
+                  backgroundColor: ACCENT_SWATCH[a],
+                  borderColor: accent === a ? "var(--color-text)" : "transparent",
+                }}
+                onClick={() => {
+                  setAccentState(a);
+                  setAccent(a);
+                }}
+              >
+                {accent === a && <span className="text-xs font-bold text-white">✓</span>}
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
