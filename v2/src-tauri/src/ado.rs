@@ -32,6 +32,26 @@ pub struct TestCaseSummary {
     pub automation_status: String,
 }
 
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct FieldRef {
+    pub name: String,
+    pub reference_name: String,
+}
+
+/// A fully-loaded Test Case for the editor: steps parsed from the XML blob,
+/// preconditions flattened to plain text. `id` doubles as update_id when the
+/// editor saves.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct TestCaseFull {
+    pub id: i32,
+    pub title: String,
+    pub tags: String,
+    pub automation_status: String,
+    pub steps: Vec<crate::steps_xml::Step>,
+    pub module_value: String,
+    pub preconditions: String,
+}
+
 #[derive(Debug, thiserror::Error, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "detail")]
 pub enum AdoError {
@@ -544,6 +564,133 @@ impl AdoClient {
         );
         self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
         Ok(())
+    }
+
+    /// All writable fields on the Test Case type, ported from v1
+    /// get_test_case_fields: readOnly dropped, System.* dropped except
+    /// Title/Tags/Description, sorted by display name. Read only.
+    pub async fn get_test_case_fields(
+        &self,
+        organization: &str,
+        project: &str,
+    ) -> Result<Vec<FieldRef>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitemtypes/Test%20Case/fields?api-version=7.1",
+            self.base_url, organization, project
+        );
+        let data = self.get_json(url).await?;
+        let mut fields: Vec<FieldRef> = data["value"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|f| {
+                let reference_name = f["referenceName"].as_str()?.to_string();
+                if f["readOnly"].as_bool().unwrap_or(false) {
+                    return None;
+                }
+                if reference_name.starts_with("System.")
+                    && !matches!(
+                        reference_name.as_str(),
+                        "System.Title" | "System.Tags" | "System.Description"
+                    )
+                {
+                    return None;
+                }
+                Some(FieldRef {
+                    name: f["name"].as_str().unwrap_or(&reference_name).to_string(),
+                    reference_name,
+                })
+            })
+            .collect();
+        fields.sort_by_key(|f| f.name.to_lowercase());
+        Ok(fields)
+    }
+
+    /// The v1 Edit-tab field set (same batch endpoint as the summaries) plus
+    /// the optional module/preconditions refs, with steps parsed and
+    /// preconditions flattened for editing. Read only.
+    pub async fn get_pbi_test_cases_full(
+        &self,
+        organization: &str,
+        pbi_id: i32,
+        module_ref: Option<&str>,
+        preconditions_ref: Option<&str>,
+    ) -> Result<Vec<TestCaseFull>, AdoError> {
+        let url = format!(
+            "{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
+            self.base_url, organization, pbi_id
+        );
+        let data = self.get_json(url).await?;
+        let tc_ids: Vec<i64> = data["relations"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| {
+                r["rel"]
+                    .as_str()
+                    .map(|s| s.to_lowercase().contains("testedby"))
+                    .unwrap_or(false)
+            })
+            .filter_map(|r| r["url"].as_str()?.rsplit('/').next()?.parse().ok())
+            .collect();
+        if tc_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut field_list = vec![
+            "System.Id",
+            "System.Title",
+            "System.Tags",
+            "Microsoft.VSTS.TCM.AutomationStatus",
+            "Microsoft.VSTS.TCM.Steps",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+        if let Some(m) = module_ref {
+            field_list.push(m.to_string());
+        }
+        if let Some(p) = preconditions_ref {
+            field_list.push(p.to_string());
+        }
+
+        let mut cases = Vec::with_capacity(tc_ids.len());
+        for chunk in tc_ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let ids_csv = chunk
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let url = format!(
+                "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+                self.base_url,
+                organization,
+                ids_csv,
+                field_list.join(",")
+            );
+            let fetched = self.get_json(url).await?;
+            for w in fetched["value"].as_array().cloned().unwrap_or_default() {
+                let f = &w["fields"];
+                let str_of = |key: &str| f[key].as_str().unwrap_or_default().to_string();
+                cases.push(TestCaseFull {
+                    id: w["id"].as_i64().unwrap_or_default() as i32,
+                    title: str_of("System.Title"),
+                    tags: str_of("System.Tags"),
+                    automation_status: {
+                        let s = str_of("Microsoft.VSTS.TCM.AutomationStatus");
+                        if s.is_empty() { "Not Automated".to_string() } else { s }
+                    },
+                    steps: crate::steps_xml::parse_steps_xml(&str_of("Microsoft.VSTS.TCM.Steps")),
+                    module_value: module_ref.map(str_of).unwrap_or_default(),
+                    preconditions: preconditions_ref
+                        .map(|p| crate::steps_xml::html_to_text(&str_of(p)))
+                        .unwrap_or_default(),
+                });
+            }
+        }
+        Ok(cases)
     }
 
     /// A work item's area + iteration path (used to home the PBI's test

@@ -248,6 +248,74 @@ async fn link_to_pbi_adds_testedby_reverse_relation() {
     client.link_to_pbi("org", "proj", 777, 100).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_case_fields_filter_and_sort_like_v1() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Test%20Case/fields"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"name": "Zebra Module", "referenceName": "Custom.Module"},
+                {"name": "State", "referenceName": "System.State"},
+                {"name": "Title", "referenceName": "System.Title"},
+                {"name": "Locked", "referenceName": "Custom.Locked", "readOnly": true},
+                {"name": "Apples", "referenceName": "Custom.Apples"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let fields = client.get_test_case_fields("org", "proj").await.unwrap();
+    let names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
+    // System.State and readOnly dropped; System.Title kept; sorted by name.
+    assert_eq!(names, vec!["Apples", "Title", "Zebra Module"]);
+}
+
+#[tokio::test]
+async fn full_cases_parse_steps_and_optional_refs() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/wit/workitems/100"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 100,
+            "relations": [
+                {"rel": "Microsoft.VSTS.Common.TestedBy-Forward", "url": "https://x/_apis/wit/workItems/201"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "id": 201,
+                "fields": {
+                    "System.Title": "TC one",
+                    "System.Tags": "smoke",
+                    "Microsoft.VSTS.TCM.Steps": "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Open</parameterizedString><parameterizedString isformatted=\"true\">Shown</parameterizedString></step></steps>",
+                    "Custom.Module": "Auth",
+                    "Custom.Prec": "<div>Logged out</div>"
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let cases = client
+        .get_pbi_test_cases_full("org", 100, Some("Custom.Module"), Some("Custom.Prec"))
+        .await
+        .unwrap();
+    assert_eq!(cases.len(), 1);
+    let c = &cases[0];
+    assert_eq!(c.steps.len(), 1);
+    assert_eq!(c.steps[0].action, "Open");
+    assert_eq!(c.steps[0].expected, "Shown");
+    assert_eq!(c.module_value, "Auth");
+    assert_eq!(c.preconditions, "Logged out"); // html flattened
+    assert_eq!(c.automation_status, "Not Automated"); // empty -> default
+}
+
 /// The tool must never destroy data: no DELETE requests, ever.
 #[test]
 fn client_source_has_no_delete_calls() {

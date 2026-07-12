@@ -10,7 +10,17 @@ pub mod work_board;
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::Manager;
-use tauri_specta::{collect_commands, Builder};
+use tauri_specta::{collect_commands, collect_events, Builder, Event};
+
+/// Emitted once per queue item while submit_queue runs.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct SubmitProgress {
+    pub index: u32,
+    pub total: u32,
+    pub title: String,
+    /// "created" | "updated" | "failed"
+    pub action: String,
+}
 
 #[derive(serde::Serialize, specta::Type)]
 pub struct AuthStatus {
@@ -176,6 +186,8 @@ async fn submit_queue(
     project: String,
     pbi_id: i32,
     queue: Vec<model::TestCase>,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
 ) -> Result<Vec<SubmitItemResult>, String> {
     // Best-effort board visibility (ported from v1 CreationWorker._ensure_suite):
     // make sure the PBI's requirement-based suite exists before creating, so
@@ -193,69 +205,154 @@ async fn submit_queue(
         }
     }
 
-    let mut results = vec![];
+    let total = queue.len() as u32;
+    let mut results: Vec<SubmitItemResult> = vec![];
     for (i, tc) in queue.iter().enumerate() {
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        if let Err(msg) = tc.is_valid() {
-            results.push(SubmitItemResult {
-                index: i as u32,
-                title: tc.title.clone(),
-                action: "failed".into(),
-                id: None,
-                error: Some(msg),
-            });
-            continue;
+        let item = process_queue_item(
+            &app,
+            &organization,
+            &project,
+            pbi_id,
+            i as u32,
+            tc,
+            module_ref.as_deref(),
+            preconditions_ref.as_deref(),
+        )
+        .await;
+        let _ = SubmitProgress {
+            index: item.index,
+            total,
+            title: item.title.clone(),
+            action: item.action.clone(),
         }
-        let token = match get_fresh_token(&app).await {
-            Ok(t) => t,
-            Err(e) => {
-                results.push(SubmitItemResult {
-                    index: i as u32,
-                    title: tc.title.clone(),
-                    action: "failed".into(),
-                    id: None,
-                    error: Some(e.to_string()),
-                });
-                continue;
-            }
-        };
-        let client = ado::AdoClient::new(token);
-        let outcome = match tc.update_id {
-            Some(existing_id) => client
-                .update_test_case_from_model(&organization, &project, existing_id, tc, None, None)
-                .await
-                .map(|_| (existing_id, "updated")),
-            None => match client
-                .create_test_case(&organization, &project, tc, None, "", "", None)
-                .await
-            {
-                Ok(new_id) => client
-                    .link_to_pbi(&organization, &project, new_id, pbi_id)
-                    .await
-                    .map(|_| (new_id, "created")),
-                Err(e) => Err(e),
-            },
-        };
-        match outcome {
-            Ok((id, action)) => results.push(SubmitItemResult {
-                index: i as u32,
-                title: tc.title.clone(),
-                action: action.into(),
-                id: Some(id),
-                error: None,
-            }),
-            Err(e) => results.push(SubmitItemResult {
-                index: i as u32,
-                title: tc.title.clone(),
-                action: "failed".into(),
-                id: None,
-                error: Some(e.to_string()),
-            }),
-        }
+        .emit(&app);
+        results.push(item);
     }
     Ok(results)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_queue_item(
+    app: &tauri::AppHandle,
+    organization: &str,
+    project: &str,
+    pbi_id: i32,
+    index: u32,
+    tc: &model::TestCase,
+    m_ref: Option<&str>,
+    p_ref: Option<&str>,
+) -> SubmitItemResult {
+    let failed = |error: String| SubmitItemResult {
+        index,
+        title: tc.title.clone(),
+        action: "failed".into(),
+        id: None,
+        error: Some(error),
+    };
+    if let Err(msg) = tc.is_valid() {
+        return failed(msg);
+    }
+    let token = match get_fresh_token(app).await {
+        Ok(t) => t,
+        Err(e) => return failed(e.to_string()),
+    };
+    let client = ado::AdoClient::new(token);
+    let outcome = match tc.update_id {
+        Some(existing_id) => client
+            .update_test_case_from_model(organization, project, existing_id, tc, m_ref, p_ref)
+            .await
+            .map(|_| (existing_id, "updated")),
+        None => match client
+            .create_test_case(organization, project, tc, m_ref, "", "", p_ref)
+            .await
+        {
+            Ok(new_id) => client
+                .link_to_pbi(organization, project, new_id, pbi_id)
+                .await
+                .map(|_| (new_id, "created")),
+            Err(e) => Err(e),
+        },
+    };
+    match outcome {
+        Ok((id, action)) => SubmitItemResult {
+            index,
+            title: tc.title.clone(),
+            action: action.into(),
+            id: Some(id),
+            error: None,
+        },
+        Err(e) => failed(e.to_string()),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn list_test_case_fields(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<ado::FieldRef>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_test_case_fields(&organization, &project)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn pbi_test_cases_full(
+    app: tauri::AppHandle,
+    organization: String,
+    pbi_id: i32,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<Vec<ado::TestCaseFull>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_pbi_test_cases_full(
+            &organization,
+            pbi_id,
+            module_ref.as_deref(),
+            preconditions_ref.as_deref(),
+        )
+        .await
+}
+
+/// Save one existing case from the editor (no suite-ensure, no pacing).
+/// The case must carry update_id; blank-skip semantics apply as always.
+#[tauri::command]
+#[specta::specta]
+async fn update_test_case(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    tc: model::TestCase,
+    module_ref: Option<String>,
+    preconditions_ref: Option<String>,
+) -> Result<(), String> {
+    let id = tc.update_id.ok_or("update_test_case requires update_id")?;
+    tc.is_valid()?;
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    ado::AdoClient::new(token)
+        .update_test_case_from_model(
+            &organization,
+            &project,
+            id,
+            &tc,
+            module_ref.as_deref(),
+            preconditions_ref.as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
+    import_parser::export_queue_to_json(&queue, &path)
 }
 
 /// Find-or-create the PBI's requirement suite and return it with its plan.
@@ -417,7 +514,9 @@ async fn move_board_item(
 }
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
-    Builder::<tauri::Wry>::new().commands(collect_commands![
+    Builder::<tauri::Wry>::new()
+        .events(collect_events![SubmitProgress])
+        .commands(collect_commands![
         ping,
         auth_status,
         sign_in,
@@ -435,7 +534,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         fetch_board,
         move_board_item,
         check_update,
-        apply_update
+        apply_update,
+        list_test_case_fields,
+        pbi_test_cases_full,
+        update_test_case,
+        export_queue_json
     ])
 }
 

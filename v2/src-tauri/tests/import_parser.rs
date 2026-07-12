@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 use v2_lib::import_parser::{
-    export_queue_to_excel, generate_template, parse_file, parse_rows, EXCEL_HEADERS,
+    export_queue_to_excel, export_queue_to_json, generate_template, parse_file, parse_rows,
+    EXCEL_HEADERS,
 };
 use v2_lib::model::TestCase;
 use v2_lib::steps_xml::Step;
@@ -214,6 +215,44 @@ fn generate_template_parses_back() {
         vec!["Login as admin", "Invalid login attempt"]
     );
     assert_eq!(cases[0].steps.len(), 3);
+}
+
+#[test]
+fn json_export_round_trips_through_the_importer() {
+    let queue = vec![
+        TestCase {
+            title: "JSON case".into(),
+            steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+            tags: "smoke".into(),
+            automation_status: "Planned".into(),
+            module_value: "Auth".into(),
+            preconditions: "Logged out".into(),
+            update_id: Some(77),
+        },
+        TestCase {
+            title: "New one".into(),
+            steps: vec![Step { action: "Go".into(), expected: "".into() }],
+            automation_status: "Not Automated".into(),
+            ..Default::default()
+        },
+    ];
+    let path = tmp_path("roundtrip.json");
+    export_queue_to_json(&queue, &path).unwrap();
+
+    // v1 wrapper shape present
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(doc["format"], "azure-devops-test-cases");
+    assert_eq!(doc["version"], 1);
+    assert!(doc["instructions"].as_str().unwrap().contains("UPDATES"));
+
+    let (cases, warnings) = parse_file(&path).unwrap();
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    assert_eq!(cases.len(), 2);
+    assert_eq!(cases[0].update_id, Some(77));
+    assert_eq!(cases[0].module_value, "Auth");
+    assert_eq!(cases[0].preconditions, "Logged out");
+    assert_eq!(cases[1].update_id, None);
 }
 
 #[test]
