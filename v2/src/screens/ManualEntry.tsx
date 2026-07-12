@@ -1,15 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { commands, type PbiHit, type Step, type TestCase } from "../bindings";
+import { type PbiHit, type Step, type TestCase } from "../bindings";
 import ModuleField from "../components/ModuleField";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import QueueSection from "../components/QueueSection";
 import StepsEditor from "../components/StepsEditor";
+import TagsField from "../components/TagsField";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { useQueue } from "../hooks/useQueue";
-import { unwrap } from "../lib/ipc";
 
 export default function ManualEntry({
   org,
@@ -29,14 +28,6 @@ export default function ManualEntry({
   const [status, setStatus] = useState("Not Automated");
   const [moduleValue, setModuleValue] = useState("");
   const [preconditions, setPreconditions] = useState("");
-
-  // Project tag names feed the autocomplete datalist (v1 tag_completer).
-  const projectTags = useQuery({
-    queryKey: ["project-tags", org, project],
-    queryFn: () => unwrap(commands.listProjectTags(org, project)),
-    enabled: Boolean(org && project),
-    staleTime: 10 * 60_000,
-  });
 
   if (!org || !project || !pbi) {
     return (
@@ -83,18 +74,13 @@ export default function ManualEntry({
               onChange={(e) => setTitle(e.target.value)}
             />
             <div className="flex gap-2">
-              <Input
+              <TagsField
+                org={org}
+                project={project}
                 className="flex-1"
-                placeholder="Tags (semicolon-separated)"
-                list="project-tags"
                 value={tags}
-                onChange={(e) => setTags(e.target.value)}
+                onChange={setTags}
               />
-              <datalist id="project-tags">
-                {(projectTags.data ?? []).map((t) => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
               <Select value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option>Not Automated</option>
                 <option>Planned</option>

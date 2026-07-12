@@ -4,8 +4,9 @@ import { toast } from "sonner";
 import { commands, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import ModuleField from "./ModuleField";
+import TagsField from "./TagsField";
 import { Button } from "./ui/button";
-import { Input, Textarea } from "./ui/input";
+import { Textarea } from "./ui/input";
 import { Select } from "./ui/select";
 
 /** Bulk edit for the selected cases: every field defaults to "leave
@@ -140,11 +141,13 @@ export default function BulkEditDialog({
             </Select>
           </label>
           {tagsMode !== "unchanged" && (
-            <Input
+            <TagsField
+              org={org}
+              project={project}
               className="w-full"
-              placeholder="Tags (semicolon-separated)"
               value={tags}
-              onChange={(e) => setTags(e.target.value)}
+              onChange={setTags}
+              placeholder={tagsMode === "add" ? "Tags to add…" : "Replacement tags…"}
             />
           )}
         </div>

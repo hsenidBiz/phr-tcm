@@ -7,6 +7,7 @@ import { commands, type TestCase, type TestCaseFull } from "../bindings";
 import BulkEditDialog from "../components/BulkEditDialog";
 import ModuleField from "../components/ModuleField";
 import StepsEditor from "../components/StepsEditor";
+import TagsField from "../components/TagsField";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
@@ -78,17 +79,18 @@ function CaseEditor({
         </Select>
       </div>
       <div className="flex gap-2">
-        <Input
-          aria-label="Tags"
+        <TagsField
+          org={org}
+          project={project}
           className="flex-1"
-          placeholder="Tags (semicolon-separated)"
           value={tc.tags}
-          onChange={(e) => setTc((t) => ({ ...t, tags: e.target.value }))}
+          onChange={(v) => setTc((t) => ({ ...t, tags: v }))}
         />
         {moduleRef && (
           <ModuleField
             org={org}
             project={project}
+            className="w-48"
             value={tc.module_value}
             onChange={(v) => setTc((t) => ({ ...t, module_value: v }))}
           />

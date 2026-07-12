@@ -2,12 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { commands } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap } from "../lib/ipc";
-import { Input } from "./ui/input";
-import { Select } from "./ui/select";
+import Combobox from "./ui/combobox";
 
-/** Module picker: the org defines set Modules (a picklist on the mapped
- * field), so this renders a dropdown of allowed values; free-entry only
- * when the field has no picklist or none is mapped. */
+/** Module picker: a searchable dropdown of the org's allowed Modules (the
+ * picklist on the mapped field). Custom entry is allowed too, so projects
+ * with no picklist (or an unmapped field) can still type a value. */
 export default function ModuleField({
   org,
   project,
@@ -30,29 +29,16 @@ export default function ModuleField({
     staleTime: 60 * 60_000,
   });
 
-  if ((values.data?.length ?? 0) > 0) {
-    return (
-      <Select
-        aria-label="Module"
-        className={className}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="">Module</option>
-        {!values.data!.includes(value) && value && <option value={value}>{value}</option>}
-        {values.data!.map((m) => (
-          <option key={m}>{m}</option>
-        ))}
-      </Select>
-    );
-  }
   return (
-    <Input
-      aria-label="Module"
+    <Combobox
+      ariaLabel="Module"
       className={className}
-      placeholder="Module (optional)"
+      placeholder="Module"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={onChange}
+      options={values.data ?? []}
+      loading={values.isLoading}
+      allowCustom
     />
   );
 }
