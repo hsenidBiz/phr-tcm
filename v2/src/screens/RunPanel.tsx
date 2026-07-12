@@ -126,6 +126,7 @@ export default function RunPanel({
     queryFn: () =>
       unwrap(commands.listTestPoints(org, project, suite.data!.plan_id, suite.data!.suite_id)),
     enabled: Boolean(suite.data),
+    gcTime: 30 * 60_000, // keep the background prefetch alive while unobserved
     retry: false,
   });
 

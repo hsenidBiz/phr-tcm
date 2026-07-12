@@ -120,6 +120,10 @@ export default function Suites({
   // Folders start collapsed; clicking a folder row toggles it open.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState("");
+  // While searching, matches auto-expand - but the chevron must still be
+  // able to close them, so search mode tracks its own collapsed set
+  // (reset whenever the query changes).
+  const [searchCollapsed, setSearchCollapsed] = useState<Set<number>>(new Set());
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
 
   // Scanning every plan is the expensive part - cache the result for the
@@ -129,6 +133,9 @@ export default function Suites({
     queryFn: () => unwrap(commands.listPlansWithSuites(org, project)),
     enabled: Boolean(org && project),
     staleTime: Infinity,
+    // Long gcTime keeps the background-prefetched scan alive even while
+    // no screen is observing it (default 5min gc dropped it).
+    gcTime: 60 * 60_000,
     retry: false,
   });
 
@@ -145,6 +152,7 @@ export default function Suites({
   );
 
   const q = search.trim().toLowerCase();
+  useEffect(() => setSearchCollapsed(new Set()), [q]);
   const visibleTrees = useMemo(() => {
     if (!q) return trees;
     return trees
@@ -230,9 +238,18 @@ export default function Suites({
   const renderNode = (node: SuiteNode, planId: number, depth: number): ReactNode => {
     const s = node.suite;
     const isFolder = node.children.length > 0;
-    // While searching, matches are always shown expanded.
-    const isCollapsed = q ? false : !expanded.has(s.id);
+    // Search mode starts expanded but stays manually collapsible.
+    const isCollapsed = q ? searchCollapsed.has(s.id) : !expanded.has(s.id);
     const allIds = descendantIds(node);
+    // Search mode's set holds COLLAPSED ids, normal mode's holds EXPANDED
+    // ids - either way, toggling membership flips the folder.
+    const toggleFolder = () =>
+      (q ? setSearchCollapsed : setExpanded)((c) => {
+        const next = new Set(c);
+        if (next.has(s.id)) next.delete(s.id);
+        else next.add(s.id);
+        return next;
+      });
 
     return (
       <li key={s.id}>
@@ -240,14 +257,7 @@ export default function Suites({
           className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
           style={{ paddingLeft: 8 + depth * 18 }}
           onClick={() =>
-            isFolder
-              ? setExpanded((c) => {
-                  const next = new Set(c);
-                  if (next.has(s.id)) next.delete(s.id);
-                  else next.add(s.id);
-                  return next;
-                })
-              : setOpenSuite((o) => (o === s.id ? null : s.id))
+            isFolder ? toggleFolder() : setOpenSuite((o) => (o === s.id ? null : s.id))
           }
         >
           {isFolder ? (

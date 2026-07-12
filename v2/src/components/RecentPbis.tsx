@@ -25,12 +25,12 @@ export default function RecentPbis({
         {recents.map((p) => (
           <button
             key={p.id}
-            title={p.title}
             className="flex items-baseline gap-2.5 rounded-md border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-accent hover:bg-accent-soft"
             onClick={() => onPick(p)}
           >
             <span className="id-mono shrink-0 text-xs text-faint">#{p.id}</span>
-            <span className="min-w-0 truncate text-sm text-text">{p.title}</span>
+            {/* Full title, wrapped - the empty state has the vertical room. */}
+            <span className="min-w-0 break-words text-sm text-text">{p.title}</span>
           </button>
         ))}
       </div>

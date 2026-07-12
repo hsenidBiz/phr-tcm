@@ -188,6 +188,9 @@ export default function App() {
       queryKey: ["plans-suites", org, project],
       queryFn: () => unwrap(commands.listPlansWithSuites(org, project)),
       staleTime: Infinity,
+      // Without a long gcTime the unobserved prefetch is garbage-collected
+      // after 5 minutes and the screen loads from scratch again.
+      gcTime: 60 * 60_000,
     });
   }, [signedIn, org, project, qc]);
 
@@ -223,6 +226,7 @@ export default function App() {
       qc.prefetchQuery({
         queryKey: ["points", org, project, s.plan_id, s.suite_id],
         queryFn: () => unwrap(commands.listTestPoints(org, project, s.plan_id, s.suite_id)),
+        gcTime: 30 * 60_000,
       });
     })();
   }, [signedIn, org, project, pbiId, qc]);

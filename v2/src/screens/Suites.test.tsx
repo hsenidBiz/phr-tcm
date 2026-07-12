@@ -178,6 +178,12 @@ test("search filters the tree and auto-expands matching branches", async () => {
   expect(screen.getByText("Regression")).toBeInTheDocument();
   expect(screen.queryByText("Smoke pack")).not.toBeInTheDocument();
 
+  // Auto-expanded folders can still be collapsed (and reopened) mid-search.
+  fireEvent.click(screen.getByText("Regression"));
+  expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Regression"));
+  expect(screen.getByText("PBI 50 suite")).toBeInTheDocument();
+
   fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "zzz" } });
   expect(await screen.findByText(/Nothing matches "zzz"/)).toBeInTheDocument();
 });
