@@ -52,6 +52,7 @@ tauri-plugin-dialog = "2.7.1"
 velopack = "1.2.0"
 xcap = "0.9.6"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+futures = { version = "0.3.32", default-features = false, features = ["std", "async-await"] }
 
 [dev-dependencies]
 wiremock = "0.6.5"
