@@ -1,24 +1,39 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Toaster, toast } from "sonner";
 import { commands } from "./bindings";
+import CommandPalette from "./components/CommandPalette";
+import ContextBar from "./components/ContextBar";
+import Sidebar, { type Section } from "./components/Sidebar";
+import { Button } from "./components/ui/button";
+import { getTheme, initTheme } from "./lib/theme";
 import Browse from "./screens/Browse";
+import Settings from "./screens/Settings";
 import WorkBoard from "./screens/WorkBoard";
 
-// Last-used selection, restored on launch (user-facing prefs live in the
-// webview; secrets never do).
 const PREFS_KEY = "tcm-v2-prefs";
 
-function loadPrefs(): { org: string; project: string; mode: "tests" | "work" } {
+type Prefs = { org: string; project: string; section: Section };
+
+function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (raw) return { org: "", project: "", mode: "tests", ...JSON.parse(raw) };
+    if (raw) {
+      const p = JSON.parse(raw);
+      return {
+        org: p.org ?? "",
+        project: p.project ?? "",
+        // "mode" was the pre-iteration-1 key; map it forward.
+        section: p.section ?? (p.mode === "work" ? "work" : "tests"),
+      };
+    }
   } catch {
     // corrupted prefs -> defaults
   }
-  return { org: "", project: "", mode: "tests" };
+  return { org: "", project: "", section: "tests" };
 }
 
-function savePrefs(p: { org: string; project: string; mode: "tests" | "work" }) {
+function savePrefs(p: Prefs) {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify(p));
   } catch {
@@ -26,24 +41,32 @@ function savePrefs(p: { org: string; project: string; mode: "tests" | "work" }) 
   }
 }
 
+const TITLES: Record<Section, string> = {
+  tests: "Test Cases",
+  work: "Work",
+  settings: "Settings",
+};
+
 export default function App() {
   const qc = useQueryClient();
   const prefs = loadPrefs();
-  const [mode, setModeRaw] = useState<"tests" | "work">(prefs.mode);
+  const [section, setSectionRaw] = useState<Section>(prefs.section);
   const [org, setOrgRaw] = useState(prefs.org);
   const [project, setProjectRaw] = useState(prefs.project);
 
-  const setMode = (m: "tests" | "work") => {
-    setModeRaw(m);
-    savePrefs({ org, project, mode: m });
+  useEffect(() => initTheme(), []);
+
+  const setSection = (s: Section) => {
+    setSectionRaw(s);
+    savePrefs({ org, project, section: s });
   };
   const setOrg = (o: string) => {
     setOrgRaw(o);
-    savePrefs({ org: o, project: "", mode });
+    savePrefs({ org: o, project: "", section });
   };
   const setProject = (p: string) => {
     setProjectRaw(p);
-    savePrefs({ org, project: p, mode });
+    savePrefs({ org, project: p, section });
   };
 
   const status = useQuery({
@@ -63,6 +86,7 @@ export default function App() {
       const r = await commands.applyUpdate();
       if (r.status === "error") throw new Error(r.error);
     },
+    onError: (e) => toast.error(`Update failed: ${e.message}`),
   });
 
   const signIn = useMutation({
@@ -72,67 +96,64 @@ export default function App() {
       return r.data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }),
+    onError: (e) => toast.error(`Sign-in failed: ${e.message}`),
   });
 
   const signedIn = Boolean(status.data?.signed_in);
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <header className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
-        <h1 className="text-lg font-semibold">
-          {mode === "tests" ? "Test Case Manager V2" : "Work Manager V2"}
-        </h1>
-        <div className="flex items-center gap-4">
-          {signedIn && (
-            <button
-              className="rounded-full border border-blue-500/60 px-4 py-1.5 text-sm text-blue-400 hover:bg-blue-500/10"
-              onClick={() => setMode(mode === "tests" ? "work" : "tests")}
-            >
-              {mode === "tests" ? "Work Manager (Beta)" : "Test Case Manager"}
-            </button>
-          )}
-          {status.data?.account && (
-            <span className="text-sm text-neutral-400">{status.data.account}</span>
-          )}
-        </div>
-      </header>
+    <div className="flex h-screen bg-bg text-text">
+      <Toaster theme={getTheme() === "light" ? "light" : "dark"} richColors position="bottom-right" />
+      <CommandPalette
+        onNavigate={setSection}
+        org={org}
+        onSwitchProject={setProject}
+      />
 
-      {update.data && (
-        <div className="flex items-center justify-between border-b border-blue-900 bg-blue-950/60 px-6 py-2 text-sm">
-          <span>Version {update.data} is available.</span>
-          <button
-            className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium hover:bg-blue-500 disabled:opacity-50"
-            disabled={applyUpdate.isPending}
-            onClick={() => applyUpdate.mutate()}
-          >
-            {applyUpdate.isPending ? "Updating..." : "Restart to update"}
-          </button>
-        </div>
-      )}
-      {applyUpdate.isError && (
-        <p className="px-6 py-1 text-sm text-red-400">Update failed: {applyUpdate.error.message}</p>
-      )}
+      {signedIn && <Sidebar section={section} onSelect={setSection} />}
 
-      <main className="p-6">
-        {!signedIn ? (
-          <div className="space-y-3">
-            <button
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-500 disabled:opacity-50"
-              disabled={signIn.isPending}
-              onClick={() => signIn.mutate()}
-            >
-              {signIn.isPending ? "Waiting for browser..." : "Sign in with Microsoft"}
-            </button>
-            {signIn.isError && (
-              <p className="text-sm text-red-400">Sign-in failed: {signIn.error.message}</p>
-            )}
-          </div>
-        ) : mode === "tests" ? (
-          <Browse org={org} setOrg={setOrg} project={project} setProject={setProject} />
-        ) : (
-          <WorkBoard org={org} project={project} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        {signedIn && (
+          <ContextBar
+            org={org}
+            setOrg={setOrg}
+            project={project}
+            setProject={setProject}
+            account={status.data?.account ?? null}
+          />
         )}
-      </main>
+
+        {update.data && (
+          <div className="flex items-center justify-between border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
+            <span>Version {update.data} is available.</span>
+            <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
+              {applyUpdate.isPending ? "Updating..." : "Restart to update"}
+            </Button>
+          </div>
+        )}
+
+        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+          {!signedIn ? (
+            <div className="flex h-full flex-col items-center justify-center gap-4">
+              <h1 className="text-xl font-semibold">Test Case Manager V2</h1>
+              <p className="max-w-sm text-center text-sm text-muted">
+                Sign in with your Microsoft account to manage Azure DevOps test
+                cases, runs, and work items.
+              </p>
+              <Button disabled={signIn.isPending} onClick={() => signIn.mutate()}>
+                {signIn.isPending ? "Waiting for browser..." : "Sign in with Microsoft"}
+              </Button>
+            </div>
+          ) : (
+            <>
+              <h1 className="mb-4 text-lg font-semibold">{TITLES[section]}</h1>
+              {section === "tests" && <Browse org={org} project={project} />}
+              {section === "work" && <WorkBoard org={org} project={project} />}
+              {section === "settings" && <Settings />}
+            </>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

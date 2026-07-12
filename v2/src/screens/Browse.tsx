@@ -1,38 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, type PbiHit } from "../bindings";
+import { Input } from "../components/ui/input";
+import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
 import QueuePanel from "./QueuePanel";
 import RunPanel from "./RunPanel";
 
-const inputCls =
-  "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
-
-export default function Browse({
-  org,
-  setOrg,
-  project,
-  setProject,
-}: {
-  org: string;
-  setOrg: (v: string) => void;
-  project: string;
-  setProject: (v: string) => void;
-}) {
+/** PBI-centric hub: search a PBI, then everything (queue, linked cases,
+ * runs) hangs off it. Org/project come from the context bar. */
+export default function Browse({ org, project }: { org: string; project: string }) {
   const [searchText, setSearchText] = useState("");
   const [query, setQuery] = useState("");
   const [pbi, setPbi] = useState<PbiHit | null>(null);
-
-  const orgs = useQuery({
-    queryKey: ["orgs"],
-    queryFn: () => unwrap(commands.listOrgs()),
-  });
-
-  const projects = useQuery({
-    queryKey: ["projects", org],
-    queryFn: () => unwrap(commands.listProjects(org)),
-    enabled: Boolean(org),
-  });
 
   const pbis = useQuery({
     queryKey: ["pbis", org, project, query],
@@ -48,81 +28,48 @@ export default function Browse({
     retry: false,
   });
 
+  if (!org || !project) {
+    return (
+      <p className="text-sm text-muted">
+        Pick an organization and project in the bar above to get started.
+      </p>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-3">
-        <label className="flex flex-col gap-1 text-xs text-neutral-400">
-          Organization
-          <select
-            className={inputCls + " w-56"}
-            value={org}
-            onChange={(e) => {
-              setOrg(e.target.value);
-              setProject("");
+      <label className="flex max-w-md flex-col gap-1 text-xs text-muted">
+        Find PBI (Enter to search)
+        <Input
+          placeholder="Title or ID"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              setQuery(searchText.trim());
               setPbi(null);
-            }}
-          >
-            <option value="">Select organization...</option>
-            {(orgs.data ?? []).map((o) => (
-              <option key={o.name} value={o.name}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-neutral-400">
-          Project
-          <select
-            className={inputCls + " w-56"}
-            value={project}
-            disabled={!org}
-            onChange={(e) => {
-              setProject(e.target.value);
-              setPbi(null);
-            }}
-          >
-            <option value="">Select project...</option>
-            {(projects.data ?? []).map((p) => (
-              <option key={p.id} value={p.name}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-neutral-400">
-          Find PBI (Enter to search)
-          <input
-            className={inputCls + " w-72"}
-            placeholder="Title or ID"
-            value={searchText}
-            disabled={!project}
-            onChange={(e) => setSearchText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") setQuery(searchText.trim());
-            }}
-          />
-        </label>
-      </div>
+            }
+          }}
+        />
+      </label>
 
-      {orgs.isLoading && <p className="text-sm text-neutral-400">Loading organizations...</p>}
-      {orgs.isError && <p className="text-sm text-red-400">{orgs.error.message}</p>}
-      {pbis.isError && <p className="text-sm text-red-400">{pbis.error.message}</p>}
+      {pbis.isError && <p className="text-sm text-danger">{pbis.error.message}</p>}
 
       {pbis.data && (
         <ul className="space-y-1">
           {pbis.data.length === 0 && (
-            <li className="text-sm text-neutral-400">No PBIs match "{query}".</li>
+            <li className="text-sm text-muted">No PBIs match "{query}".</li>
           )}
           {pbis.data.map((hit) => (
             <li key={hit.id}>
               <button
-                className={
-                  "w-full rounded-md border px-3 py-2 text-left text-sm hover:border-blue-500 " +
-                  (pbi?.id === hit.id ? "border-blue-500 bg-neutral-900" : "border-neutral-800")
-                }
+                className={cn(
+                  "w-full rounded-md border px-3 py-2 text-left text-sm transition-colors hover:border-accent",
+                  pbi?.id === hit.id ? "border-accent bg-accent-soft" : "border-border",
+                )}
                 onClick={() => setPbi(hit)}
               >
-                <span className="text-neutral-500">#{hit.id}</span> {hit.title}
+                <span className="text-faint">#{hit.id}</span> {hit.title}
               </button>
             </li>
           ))}
@@ -135,20 +82,20 @@ export default function Browse({
 
       {pbi && (
         <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-neutral-300">
+          <h2 className="text-sm font-semibold text-muted">
             Test cases linked to #{pbi.id} {pbi.title}
           </h2>
-          {testCases.isLoading && <p className="text-sm text-neutral-400">Loading test cases...</p>}
+          {testCases.isLoading && <p className="text-sm text-muted">Loading test cases...</p>}
           {testCases.isError && (
-            <p className="text-sm text-red-400">{testCases.error.message}</p>
+            <p className="text-sm text-danger">{testCases.error.message}</p>
           )}
           {testCases.data && testCases.data.length === 0 && (
-            <p className="text-sm text-neutral-400">No test cases linked yet.</p>
+            <p className="text-sm text-muted">No test cases linked yet.</p>
           )}
           {testCases.data && testCases.data.length > 0 && (
             <table className="w-full border-collapse text-sm">
               <thead>
-                <tr className="border-b border-neutral-800 text-left text-xs text-neutral-400">
+                <tr className="border-b border-border text-left text-xs text-muted">
                   <th className="px-2 py-1 font-medium">ID</th>
                   <th className="px-2 py-1 font-medium">Title</th>
                   <th className="px-2 py-1 font-medium">Tags</th>
@@ -157,11 +104,11 @@ export default function Browse({
               </thead>
               <tbody>
                 {testCases.data.map((tc) => (
-                  <tr key={tc.id} className="border-b border-neutral-900">
-                    <td className="px-2 py-1 text-neutral-500">{tc.id}</td>
-                    <td className="px-2 py-1">{tc.title}</td>
-                    <td className="px-2 py-1 text-neutral-400">{tc.tags}</td>
-                    <td className="px-2 py-1 text-neutral-400">{tc.automation_status}</td>
+                  <tr key={tc.id} className="border-b border-border/50">
+                    <td className="px-2 py-1 text-faint">{tc.id}</td>
+                    <td className="px-2 py-1 text-text">{tc.title}</td>
+                    <td className="px-2 py-1 text-muted">{tc.tags}</td>
+                    <td className="px-2 py-1 text-muted">{tc.automation_status}</td>
                   </tr>
                 ))}
               </tbody>

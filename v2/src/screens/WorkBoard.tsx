@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem } from "../bindings";
+import { Badge } from "../components/ui/badge";
+import { Skeleton } from "../components/ui/skeleton";
 import { unwrap } from "../lib/ipc";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
@@ -14,33 +17,27 @@ const typeColor: Record<string, string> = {
   Epic: "#e0873c",
 };
 
-const inputCls =
-  "rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none";
-
 function Card({ item, onDragStart }: { item: BoardItem; onDragStart: () => void }) {
   return (
     <div
       draggable
       onDragStart={onDragStart}
-      className="cursor-grab space-y-1 rounded-md border border-neutral-800 bg-neutral-900 p-2 text-sm hover:border-neutral-600"
+      className="cursor-grab space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-border-strong"
     >
       <div className="flex items-center gap-2">
-        <span
-          className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-black"
-          style={{ backgroundColor: typeColor[item.work_item_type] ?? "#9ca3af" }}
-        >
+        <Badge color={typeColor[item.work_item_type] ?? "#9ca3af"}>
           {item.work_item_type}
-        </span>
-        <span className="text-xs text-neutral-500">#{item.id}</span>
+        </Badge>
+        <span className="text-xs text-faint">#{item.id}</span>
       </div>
-      <div>{item.title}</div>
-      <div className="flex items-center gap-2 text-xs text-neutral-400">
+      <div className="text-text">{item.title}</div>
+      <div className="flex items-center gap-2 text-xs text-muted">
         <span
           className="inline-block h-2 w-2 rounded-full"
           style={{ backgroundColor: item.state_color ? `#${item.state_color}` : "#9ca3af" }}
         />
         {item.state}
-        {item.tags && <span className="text-neutral-600">{item.tags}</span>}
+        {item.tags && <span className="text-faint">{item.tags}</span>}
       </div>
     </div>
   );
@@ -65,7 +62,6 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       return { item, column, state };
     },
     onMutate: async ({ item, column }) => {
-      // Optimistic column move; state text updates when the PATCH returns.
       await qc.cancelQueries({ queryKey: ["board", org, project] });
       const prev = qc.getQueryData<BoardData>(["board", org, project]);
       if (prev) {
@@ -76,8 +72,9 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       }
       return { prev };
     },
-    onError: (_e, _v, ctx) => {
+    onError: (e, { item }, ctx) => {
       if (ctx?.prev) qc.setQueryData(["board", org, project], ctx.prev);
+      toast.error(`Could not move #${item.id}: ${e.message}`);
     },
     onSuccess: ({ item, state }) => {
       const data = qc.getQueryData<BoardData>(["board", org, project]);
@@ -91,18 +88,33 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           ),
         });
       }
+      toast.success(`#${item.id} moved to ${state}`);
     },
   });
 
   if (!org || !project) {
-    return <p className="text-sm text-neutral-400">Pick an organization and project first.</p>;
+    return (
+      <p className="text-sm text-muted">
+        Pick an organization and project in the bar above first.
+      </p>
+    );
   }
 
   return (
     <div className="space-y-3">
-      {board.isLoading && <p className="text-sm text-neutral-400">Loading your work items...</p>}
-      {board.isError && <p className="text-sm text-red-400">{board.error.message}</p>}
-      {move.isError && <p className="text-sm text-red-400">{move.error.message}</p>}
+      {board.isError && <p className="text-sm text-danger">{board.error.message}</p>}
+
+      {board.isLoading && (
+        <div className="grid grid-cols-3 gap-3">
+          {COLUMNS.map((col) => (
+            <div key={col} className="space-y-2 rounded-md border border-border p-2">
+              <Skeleton className="h-4 w-20" />
+              <Skeleton className="h-16" />
+              <Skeleton className="h-16" />
+            </div>
+          ))}
+        </div>
+      )}
 
       {board.data && (
         <div className="grid grid-cols-3 gap-3">
@@ -112,7 +124,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
               <div
                 key={col}
                 data-testid={`col-${col}`}
-                className="space-y-2 rounded-md border border-neutral-800 bg-neutral-950 p-2"
+                className="space-y-2 rounded-md border border-border bg-bg p-2"
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => {
                   if (dragging && dragging.column !== col) {
@@ -121,8 +133,8 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                   setDragging(null);
                 }}
               >
-                <h3 className="px-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  {col} <span className="text-neutral-600">{items.length}</span>
+                <h3 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                  {col} <span className="text-faint">{items.length}</span>
                 </h3>
                 {items.map((item) => (
                   <Card key={item.id} item={item} onDragStart={() => setDragging(item)} />
@@ -134,8 +146,4 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       )}
     </div>
   );
-}
-
-export function boardInputCls() {
-  return inputCls;
 }
