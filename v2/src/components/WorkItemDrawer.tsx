@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import TurndownService from "turndown";
@@ -190,9 +191,23 @@ export default function WorkItemDrawer({
           <span className="id-mono text-faint">#{itemId}</span>{" "}
           {detail.data?.work_item_type}
         </span>
-        <button aria-label="Close details" className="text-muted hover:text-text" onClick={onClose}>
-          <X size={16} />
-        </button>
+        <span className="flex items-center gap-1">
+          <button
+            aria-label="Open in Azure DevOps"
+            title="Open in Azure DevOps"
+            className="rounded p-1 text-muted transition-colors hover:text-accent"
+            onClick={() =>
+              openUrl(
+                `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_workitems/edit/${itemId}`,
+              ).catch(() => toast.error("Could not open the browser."))
+            }
+          >
+            <ExternalLink size={15} />
+          </button>
+          <button aria-label="Close details" className="rounded p-1 text-muted hover:text-text" onClick={onClose}>
+            <X size={16} />
+          </button>
+        </span>
       </header>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">

@@ -7,6 +7,7 @@ import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
+import Combobox from "../components/ui/combobox";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
@@ -171,19 +172,15 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     <div className="flex h-full min-h-0 gap-0">
       <div className="min-w-0 flex-1 space-y-3 overflow-y-auto pr-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Select
-            aria-label="Board scope"
-            className="py-1.5"
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-          >
-            <option value="">My work</option>
-            {(teams.data ?? []).map((t) => (
-              <option key={t.id} value={t.name}>
-                Team: {t.name}
-              </option>
-            ))}
-          </Select>
+          {/* Searchable scope: type to find a team in long team lists. */}
+          <Combobox
+            ariaLabel="Board scope"
+            className="w-56"
+            placeholder="My work"
+            value={scope ? `Team: ${scope}` : "My work"}
+            options={["My work", ...(teams.data ?? []).map((t) => `Team: ${t.name}`)]}
+            onChange={(v) => setScope(!v || v === "My work" ? "" : v.replace(/^Team: /, ""))}
+          />
           <Input
             aria-label="Filter items"
             className="w-56 py-1.5"
