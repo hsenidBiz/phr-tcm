@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { marked } from "marked";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { unwrap } from "../lib/ipc";
@@ -79,6 +79,39 @@ export default function WorkItemDrawer({
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [descMode, setDescMode] = useState<"write" | "preview">("write");
+
+  // The drawer's left edge is draggable; the chosen width persists.
+  const MIN_W = 320;
+  const MAX_W = 900;
+  const [width, setWidth] = useState(() => {
+    const v = Number(localStorage.getItem("tcm-v2-drawer-width"));
+    return v >= MIN_W && v <= MAX_W ? v : 384;
+  });
+  const asideRef = useRef<HTMLElement>(null);
+  const startResize = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    const right = asideRef.current?.getBoundingClientRect().right ?? window.innerWidth;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.cursor = "col-resize";
+    const onMove = (ev: MouseEvent) => {
+      setWidth(Math.min(MAX_W, Math.max(MIN_W, Math.round(right - ev.clientX))));
+    };
+    const onUp = () => {
+      document.body.style.cursor = prevCursor;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      setWidth((w) => {
+        try {
+          localStorage.setItem("tcm-v2-drawer-width", String(w));
+        } catch {
+          // session-only
+        }
+        return w;
+      });
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
   useEffect(() => {
     if (detail.data) setDraft(toDraft(detail.data));
   }, [detail.data]);
@@ -126,7 +159,20 @@ export default function WorkItemDrawer({
   });
 
   return (
-    <aside className="drawer-in flex h-full w-96 shrink-0 flex-col border-l border-border bg-surface">
+    <aside
+      ref={asideRef}
+      className="drawer-in relative flex h-full shrink-0 flex-col border-l border-border bg-surface"
+      style={{ width }}
+    >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize details panel"
+        title="Drag to resize"
+        className="absolute -left-0.5 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent/50"
+        onMouseDown={startResize}
+        onDoubleClick={() => setWidth(384)}
+      />
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <span className="text-sm font-semibold text-text">
           <span className="id-mono text-faint">#{itemId}</span>{" "}
