@@ -25,6 +25,16 @@ function mockAll(submitted: { runName?: string; outcomes?: unknown[] }) {
         return 1;
       case "plugin:event|unlisten":
         return null;
+      case "run_history":
+        return [
+          {
+            test_case_id: 201,
+            outcomes: [
+              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7 },
+              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6 },
+            ],
+          },
+        ];
       case "ensure_pbi_suite":
         return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
       case "list_test_points":
@@ -71,6 +81,10 @@ test("loads suite + points and records chosen outcomes", async () => {
   // ADO renders as "Failed"); options in the selects also say "Failed",
   // so assert specifically on a table cell.
   expect(screen.getAllByText("Failed").some((el) => el.tagName === "TD")).toBe(true);
+
+  // History dots render for case 201 (newest first, tooltip carries date).
+  expect(screen.getByTitle("Failed · 2026-07-12 (run #7)")).toBeInTheDocument();
+  expect(screen.getByTitle("Passed · 2026-07-11 (run #6)")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Outcome for Valid login"), {
     target: { value: "Passed" },

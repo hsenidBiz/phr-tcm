@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
+import HistoryDots from "../components/HistoryDots";
 import { cn } from "../lib/cn";
 import { groupIndices } from "../lib/grouping";
 import { unwrap } from "../lib/ipc";
@@ -121,6 +122,20 @@ export default function RunPanel({
     qc.invalidateQueries({ queryKey: ["points"] });
   };
 
+  // Last-5 outcome history per case (spec: Execution Depth & Trust, A).
+  const history = useQuery({
+    queryKey: ["run-history", org, project, suite.data?.plan_id],
+    queryFn: () => unwrap(commands.runHistory(org, project, suite.data!.plan_id)),
+    enabled: Boolean(suite.data),
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: false,
+  });
+  const historyByCase = useMemo(
+    () => new Map((history.data ?? []).map((h) => [h.test_case_id, h.outcomes])),
+    [history.data],
+  );
+
   const points = useQuery({
     queryKey: ["points", org, project, suite.data?.plan_id, suite.data?.suite_id],
     queryFn: () =>
@@ -154,6 +169,7 @@ export default function RunPanel({
       setChosen({});
       setComments({});
       qc.invalidateQueries({ queryKey: ["points"] });
+      qc.invalidateQueries({ queryKey: ["run-history"] });
       toast.success(`Recorded ${n} outcome${n === 1 ? "" : "s"} (run #${run.run_id})`);
     },
     onError: (e) => toast.error(`Run failed: ${e.message}`),
@@ -334,6 +350,7 @@ export default function RunPanel({
             <tr className="border-b border-border text-left text-xs text-muted">
               <th className="px-2 py-1 font-medium">Test case</th>
               <th className="px-2 py-1 font-medium">Last outcome</th>
+              <th className="px-2 py-1 font-medium">History</th>
               <th className="px-2 py-1 font-medium">This run</th>
               <th className="px-2 py-1 font-medium">Comment</th>
             </tr>
@@ -343,7 +360,7 @@ export default function RunPanel({
               <Fragment key={name || "__all"}>
                 {name && (
                   <tr>
-                    <td colSpan={4} className="px-2 pb-1 pt-2">
+                    <td colSpan={5} className="px-2 pb-1 pt-2">
                       <div className="flex w-full items-center gap-3">
                         <span aria-hidden className="h-px flex-1 bg-border" />
                         <button
@@ -394,6 +411,13 @@ export default function RunPanel({
                   )}
                 >
                   {outcomeLabel(p.last_outcome) || "—"}
+                </td>
+                <td className="px-2 py-1">
+                  <HistoryDots
+                    outcomes={
+                      p.test_case_id != null ? (historyByCase.get(p.test_case_id) ?? []) : []
+                    }
+                  />
                 </td>
                 <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
                   <Select

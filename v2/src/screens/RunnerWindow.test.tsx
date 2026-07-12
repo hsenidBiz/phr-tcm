@@ -54,6 +54,7 @@ function renderRunner() {
 test("plays a case, records an outcome, submits per-point with step results", async () => {
   let submitted: { runName?: string; outcomes?: Array<Record<string, unknown>> } = {};
   mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full") return [fullCase];
     if (cmd === "list_test_points")
       return [
@@ -106,6 +107,7 @@ test("session caseIds restrict the runner's case list", async () => {
     }),
   );
   mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full") return [fullCase];
     if (cmd === "list_test_points") return [];
   });
@@ -116,6 +118,7 @@ test("session caseIds restrict the runner's case list", async () => {
 
 test("File bug appears only after a failure", async () => {
   mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full") return [fullCase];
     if (cmd === "list_test_points") return [];
   });

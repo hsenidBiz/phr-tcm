@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
 import BugDialog from "../components/BugDialog";
+import HistoryDots from "../components/HistoryDots";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
@@ -83,6 +84,15 @@ export default function RunnerWindow() {
         commands.listTestPoints(session!.org, session!.project, session!.planId, session!.suiteId),
       ),
     enabled: Boolean(session),
+    retry: false,
+  });
+
+  // Last-5 outcome history (shared shape with Run Tests, own QueryClient).
+  const history = useQuery({
+    queryKey: ["run-history", session?.org, session?.project, session?.planId],
+    queryFn: () => unwrap(commands.runHistory(session!.org, session!.project, session!.planId)),
+    enabled: Boolean(session),
+    staleTime: 5 * 60_000,
     retry: false,
   });
 
@@ -350,6 +360,13 @@ export default function RunnerWindow() {
                 >
                   Last: {outcomeLabel(currentPoint.last_outcome)}
                 </span>
+              )}
+              {(history.data?.find((h) => h.test_case_id === current.id)?.outcomes.length ?? 0) >
+                0 && (
+                <HistoryDots
+                  size={7}
+                  outcomes={history.data!.find((h) => h.test_case_id === current.id)!.outcomes}
+                />
               )}
             </div>
           </div>

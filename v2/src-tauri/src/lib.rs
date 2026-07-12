@@ -597,6 +597,21 @@ async fn find_pbi_suite(
         .await
 }
 
+/// Recent outcome history per test case for a plan (last 5, newest first).
+#[tauri::command]
+#[specta::specta]
+async fn run_history(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    plan_id: i32,
+) -> Result<Vec<ado_testplan::CaseHistory>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .run_history(&organization, &project, plan_id)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 async fn list_test_points(
@@ -1063,6 +1078,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         test_cases_by_ids,
         test_case_field_values,
         find_pbi_suite,
+        run_history,
         read_file_b64,
         open_snip
     ])

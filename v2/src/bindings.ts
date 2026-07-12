@@ -102,6 +102,8 @@ export const commands = {
 	plan_name: string,
 	suite_id: number,
 } | null, AdoError>(__TAURI_INVOKE("find_pbi_suite", { organization, project, pbiId })),
+	/**  Recent outcome history per test case for a plan (last 5, newest first). */
+	runHistory: (organization: string, project: string, planId: number) => typedError<CaseHistory[], AdoError>(__TAURI_INVOKE("run_history", { organization, project, planId })),
 	/**  Read any file for attaching to a result (name + base64 bytes). */
 	readFileB64: (path: string) => typedError<RunAttachmentOut, string>(__TAURI_INVOKE("read_file_b64", { path })),
 	/**
@@ -147,6 +149,12 @@ export type BoardItem = {
 	tags: string,
 	priority: number | null,
 	changed_date: string,
+};
+
+/**  One test case's recent outcomes (newest first, capped at 5). */
+export type CaseHistory = {
+	test_case_id: number,
+	outcomes: RunOutcome[],
 };
 
 export type EnsuredSuite = {
@@ -237,6 +245,12 @@ export type RunAttachmentOut = {
 export type RunCreated = {
 	run_id: number,
 	web_url: string,
+};
+
+export type RunOutcome = {
+	outcome: string,
+	completed_date: string,
+	run_id: number,
 };
 
 export type ScreenShot = {

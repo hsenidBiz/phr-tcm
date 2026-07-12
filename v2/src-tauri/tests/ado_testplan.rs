@@ -284,3 +284,71 @@ async fn run_lifecycle_create_update_complete() {
         .unwrap();
     client.complete_test_run("org", "proj", 300).await.unwrap();
 }
+
+#[tokio::test]
+async fn run_history_aggregates_newest_first_and_caps_at_five() {
+    let server = MockServer::start().await;
+    // Three runs, listed out of order - the sweep must sort newest first.
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/test/runs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": 1, "completedDate": "2026-07-10T10:00:00Z"},
+                {"id": 3, "completedDate": "2026-07-12T10:00:00Z"},
+                {"id": 2, "completedDate": "2026-07-11T10:00:00Z"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    // Run 3 (newest): case 201 failed + an unspecified result to skip.
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/test/Runs/3/results"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"outcome": "Failed", "completedDate": "2026-07-12T10:05:00Z", "testCase": {"id": "201"}},
+                {"outcome": "Unspecified", "testCase": {"id": "201"}},
+                {"outcome": "Passed", "completedDate": "2026-07-12T10:06:00Z", "testCase": {"id": "202"}}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    // Runs 2 and 1: five more outcomes for case 201 (total 6 -> capped at 5).
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/test/Runs/2/results"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"outcome": "Passed", "completedDate": "2026-07-11T10:01:00Z", "testCase": {"id": "201"}},
+                {"outcome": "Passed", "completedDate": "2026-07-11T10:02:00Z", "testCase": {"id": "201"}},
+                {"outcome": "Blocked", "completedDate": "2026-07-11T10:03:00Z", "testCase": {"id": "201"}}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/test/Runs/1/results"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"outcome": "Passed", "completedDate": "2026-07-10T10:01:00Z", "testCase": {"id": "201"}},
+                {"outcome": "Failed", "completedDate": "2026-07-10T10:02:00Z", "testCase": {"id": "201"}}
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let mut history = client.run_history("o", "p", 9).await.unwrap();
+    history.sort_by_key(|h| h.test_case_id);
+
+    assert_eq!(history.len(), 2);
+    let c201 = &history[0];
+    assert_eq!(c201.test_case_id, 201);
+    // Newest run's outcome first, capped at 5 (6 valid outcomes existed).
+    assert_eq!(c201.outcomes.len(), 5);
+    assert_eq!(c201.outcomes[0].outcome, "Failed");
+    assert_eq!(c201.outcomes[0].run_id, 3);
+    assert_eq!(c201.outcomes[1].outcome, "Passed");
+    assert_eq!(c201.outcomes[1].run_id, 2);
+    let c202 = &history[1];
+    assert_eq!(c202.outcomes.len(), 1);
+    assert_eq!(c202.outcomes[0].outcome, "Passed");
+}
