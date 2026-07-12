@@ -153,6 +153,14 @@
 /* Accent theme presets (Settings > Appearance). data-accent on <html>;
    green is the default identity, others override the accent family only,
    with per-mode values chosen for 4.5:1 button text. */
+:root[data-accent="green"] {
+  --color-accent: #15803d; --color-accent-hover: #166534;
+  --color-accent-soft: rgb(21 128 61 / 0.1); --color-on-accent: #ffffff;
+}
+.dark[data-accent="green"] {
+  --color-accent: #22c55e; --color-accent-hover: #4ade80;
+  --color-accent-soft: rgb(34 197 94 / 0.14); --color-on-accent: #0f172a;
+}
 :root[data-accent="blue"] {
   --color-accent: #1d4ed8; --color-accent-hover: #1e40af;
   --color-accent-soft: rgb(29 78 216 / 0.1); --color-on-accent: #ffffff;

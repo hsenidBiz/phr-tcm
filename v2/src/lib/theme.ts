@@ -84,24 +84,27 @@ export function setTheme(mode: Theme) {
   else setThemeChoice(mode === "light" ? "light" : darkPref());
 }
 
-export type Accent = "green" | "blue" | "violet" | "amber" | "rose";
-export const ACCENTS: Accent[] = ["green", "blue", "violet", "amber", "rose"];
+/** "default" = no override: the theme's own accent shows (green for
+ * Light/Slate/OLED, indigo for Midnight, amber for Graphite, cyan for
+ * Ocean). Every other value forces that accent family on any theme. */
+export type Accent = "default" | "green" | "blue" | "violet" | "amber" | "rose";
+export const ACCENTS: Accent[] = ["default", "green", "blue", "violet", "amber", "rose"];
 
 const ACCENT_KEY = "tcm-v2-accent";
 
 export function getAccent(): Accent {
   const a = localStorage.getItem(ACCENT_KEY);
-  return ACCENTS.includes(a as Accent) ? (a as Accent) : "green";
+  return a && ACCENTS.includes(a as Accent) ? (a as Accent) : "default";
 }
 
 export function setAccent(accent: Accent) {
-  if (accent === "green") localStorage.removeItem(ACCENT_KEY);
+  if (accent === "default") localStorage.removeItem(ACCENT_KEY);
   else localStorage.setItem(ACCENT_KEY, accent);
   applyAccent(accent);
 }
 
 function applyAccent(accent: Accent) {
-  if (accent === "green") document.documentElement.removeAttribute("data-accent");
+  if (accent === "default") document.documentElement.removeAttribute("data-accent");
   else document.documentElement.setAttribute("data-accent", accent);
 }
 

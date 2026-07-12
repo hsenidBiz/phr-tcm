@@ -19,11 +19,21 @@ import {
 } from "../lib/theme";
 
 const ACCENT_SWATCH: Record<Accent, string> = {
+  default: "var(--color-accent)", // live preview of the theme's own accent
   green: "#22c55e",
   blue: "#3b82f6",
   violet: "#8b5cf6",
   amber: "#f59e0b",
   rose: "#f43f5e",
+};
+
+const ACCENT_TITLE: Record<Accent, string> = {
+  default: "Theme default",
+  green: "Green",
+  blue: "Blue",
+  violet: "Violet",
+  amber: "Amber",
+  rose: "Rose",
 };
 
 export default function Settings({ org, project }: { org: string; project: string }) {
@@ -112,12 +122,18 @@ export default function Settings({ org, project }: { org: string; project: strin
             {ACCENTS.map((a) => (
               <button
                 key={a}
-                aria-label={`Accent ${a}`}
-                title={a[0].toUpperCase() + a.slice(1)}
+                aria-label={`Accent ${ACCENT_TITLE[a]}`}
+                title={ACCENT_TITLE[a]}
                 className="flex h-8 w-8 items-center justify-center rounded-full border-2 transition-transform hover:scale-110"
                 style={{
                   backgroundColor: ACCENT_SWATCH[a],
                   borderColor: accent === a ? "var(--color-text)" : "transparent",
+                  // The default swatch previews the active theme's accent,
+                  // marked with a dashed ring so it reads as "auto".
+                  borderStyle: a === "default" && accent !== a ? "dashed" : "solid",
+                  ...(a === "default" && accent !== a
+                    ? { borderColor: "var(--color-border-strong)" }
+                    : {}),
                 }}
                 onClick={() => {
                   setAccentState(a);
@@ -125,6 +141,9 @@ export default function Settings({ org, project }: { org: string; project: strin
                 }}
               >
                 {accent === a && <span className="text-xs font-bold text-white">✓</span>}
+                {a === "default" && accent !== a && (
+                  <span className="text-[10px] font-semibold text-on-accent">A</span>
+                )}
               </button>
             ))}
           </div>
