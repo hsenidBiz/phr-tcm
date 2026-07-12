@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type PbiHit } from "./bindings";
+import AnimatedFlask from "./components/AnimatedFlask";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
@@ -261,6 +262,7 @@ export default function App() {
         >
           {!signedIn ? (
             <div className="flex h-full flex-col items-center justify-center gap-4">
+              <AnimatedFlask />
               <h1 className="text-xl font-semibold">Test Case Manager V2</h1>
               <p className="max-w-sm text-center text-sm text-muted">
                 Sign in with your Microsoft account to manage Azure DevOps test
