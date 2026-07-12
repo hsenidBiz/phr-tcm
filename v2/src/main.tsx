@@ -9,6 +9,14 @@ import "./index.css";
 const queryClient = new QueryClient();
 initTheme();
 
+// Suppress the browser context menu (back / refresh / inspect) everywhere
+// except editable fields, where the native cut/copy/paste menu stays useful.
+// Applies to both the main and runner windows (same bundle).
+window.addEventListener("contextmenu", (e) => {
+  const t = e.target as HTMLElement | null;
+  if (!t?.closest?.('input, textarea, [contenteditable="true"]')) e.preventDefault();
+});
+
 // The compact always-on-top runner opens as a second webview window on the
 // same bundle, routed by hash (see RunTests -> openRunnerWindow).
 const Root = window.location.hash === "#runner" ? RunnerWindow : App;

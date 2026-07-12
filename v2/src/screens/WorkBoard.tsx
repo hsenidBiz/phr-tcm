@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem } from "../bindings";
@@ -201,6 +202,14 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
               <option key={t}>{t}</option>
             ))}
           </Select>
+          <button
+            aria-label="Refresh work items"
+            title="Refresh work items"
+            className="rounded p-1.5 text-muted transition-colors hover:text-accent"
+            onClick={() => qc.invalidateQueries({ queryKey: boardKey })}
+          >
+            <RefreshCw size={14} className={board.isFetching ? "animate-spin" : undefined} />
+          </button>
           <label className="flex items-center gap-1.5 text-xs text-muted">
             <Checkbox
               checked={hideDone}
