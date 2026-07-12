@@ -4,6 +4,7 @@ import { commands, type PbiHit } from "../bindings";
 import { Input } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
+import ExistingCases from "./ExistingCases";
 import QueuePanel from "./QueuePanel";
 import RunPanel from "./RunPanel";
 
@@ -21,8 +22,10 @@ export default function Browse({ org, project }: { org: string; project: string 
     retry: false,
   });
 
-  const testCases = useQuery({
-    queryKey: ["pbi-tcs", org, pbi?.id],
+  // Light summary fetch only to feed duplicate-title warnings in the queue;
+  // the editor below does its own full fetch.
+  const titles = useQuery({
+    queryKey: ["pbi-tc-titles", org, pbi?.id],
     queryFn: () => unwrap(commands.pbiTestCases(org, pbi!.id)),
     enabled: Boolean(org && pbi),
     retry: false,
@@ -76,46 +79,18 @@ export default function Browse({ org, project }: { org: string; project: string 
         </ul>
       )}
 
-      {pbi && <QueuePanel org={org} project={project} pbiId={pbi.id} />}
+      {pbi && (
+        <QueuePanel
+          org={org}
+          project={project}
+          pbiId={pbi.id}
+          existingTitles={(titles.data ?? []).map((t) => t.title)}
+        />
+      )}
+
+      {pbi && <ExistingCases org={org} project={project} pbiId={pbi.id} />}
 
       {pbi && <RunPanel org={org} project={project} pbiId={pbi.id} pbiTitle={pbi.title} />}
-
-      {pbi && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-muted">
-            Test cases linked to #{pbi.id} {pbi.title}
-          </h2>
-          {testCases.isLoading && <p className="text-sm text-muted">Loading test cases...</p>}
-          {testCases.isError && (
-            <p className="text-sm text-danger">{testCases.error.message}</p>
-          )}
-          {testCases.data && testCases.data.length === 0 && (
-            <p className="text-sm text-muted">No test cases linked yet.</p>
-          )}
-          {testCases.data && testCases.data.length > 0 && (
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-muted">
-                  <th className="px-2 py-1 font-medium">ID</th>
-                  <th className="px-2 py-1 font-medium">Title</th>
-                  <th className="px-2 py-1 font-medium">Tags</th>
-                  <th className="px-2 py-1 font-medium">Automation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {testCases.data.map((tc) => (
-                  <tr key={tc.id} className="border-b border-border/50">
-                    <td className="px-2 py-1 text-faint">{tc.id}</td>
-                    <td className="px-2 py-1 text-text">{tc.title}</td>
-                    <td className="px-2 py-1 text-muted">{tc.tags}</td>
-                    <td className="px-2 py-1 text-muted">{tc.automation_status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-      )}
     </div>
   );
 }

@@ -149,7 +149,7 @@ export default function App() {
               <h1 className="mb-4 text-lg font-semibold">{TITLES[section]}</h1>
               {section === "tests" && <Browse org={org} project={project} />}
               {section === "work" && <WorkBoard org={org} project={project} />}
-              {section === "settings" && <Settings />}
+              {section === "settings" && <Settings org={org} project={project} />}
             </>
           )}
         </main>

@@ -27,6 +27,20 @@ function mockAll() {
         return a.pbiId === 42
           ? [{ id: 201, title: "Valid login", tags: "smoke", automation_status: "Planned" }]
           : [];
+      case "pbi_test_cases_full":
+        return a.pbiId === 42
+          ? [{
+              id: 201,
+              title: "Valid login",
+              tags: "smoke",
+              automation_status: "Planned",
+              steps: [{ action: "Open", expected: "Shown" }],
+              module_value: "",
+              preconditions: "",
+            }]
+          : [];
+      case "list_test_case_fields":
+        return [];
       case "ensure_pbi_suite":
         return { plan_id: 9, plan_name: "Plan", suite_id: 91 };
       case "list_test_points":
@@ -35,7 +49,7 @@ function mockAll() {
   });
 }
 
-test("search -> pick PBI -> linked test cases", async () => {
+test("search -> pick PBI -> linked cases render in the editor", async () => {
   mockAll();
   renderBrowse();
 
@@ -46,7 +60,7 @@ test("search -> pick PBI -> linked test cases", async () => {
 
   fireEvent.click(hit);
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
-  expect(screen.getByRole("cell", { name: "Planned" })).toBeInTheDocument();
+  expect(screen.getByText(/1 steps · Planned/)).toBeInTheDocument();
 });
 
 test("empty search result shows a friendly message", async () => {

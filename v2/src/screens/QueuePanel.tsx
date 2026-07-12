@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
-import { commands, type SubmitItemResult, type TestCase } from "../bindings";
+import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
+import { useFieldRefs } from "../hooks/useFieldRefs";
+import { duplicateWarning, validateCase } from "../lib/validate";
 
 function parseStepsText(text: string) {
   return text
@@ -20,24 +22,53 @@ function parseStepsText(text: string) {
     .filter((s) => s.action);
 }
 
+const draftKey = (org: string, pbiId: number) => `tcm-v2-draft:${org}/${pbiId}`;
+
+function loadDraft(org: string, pbiId: number): TestCase[] {
+  try {
+    const raw = localStorage.getItem(draftKey(org, pbiId));
+    return raw ? (JSON.parse(raw) as TestCase[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function QueuePanel({
   org,
   project,
   pbiId,
+  existingTitles = [],
 }: {
   org: string;
   project: string;
   pbiId: number;
+  existingTitles?: string[];
 }) {
   const qc = useQueryClient();
-  const [queue, setQueue] = useState<TestCase[]>([]);
+  const { prefs } = useFieldRefs(org, project);
+  const [queue, setQueue] = useState<TestCase[]>(() => loadDraft(org, pbiId));
   const [warnings, setWarnings] = useState<string[]>([]);
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const [title, setTitle] = useState("");
   const [stepsText, setStepsText] = useState("");
   const [tags, setTags] = useState("");
   const [status, setStatus] = useState("Not Automated");
+
+  // Draft persists per PBI so a closed app never loses queued work (v1 parity).
+  useEffect(() => {
+    try {
+      if (queue.length === 0) localStorage.removeItem(draftKey(org, pbiId));
+      else localStorage.setItem(draftKey(org, pbiId), JSON.stringify(queue));
+    } catch {
+      // storage unavailable -> session-only
+    }
+  }, [queue, org, pbiId]);
+
+  const unlistenRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => unlistenRef.current?.(), []);
 
   function addManual() {
     const steps = parseStepsText(stepsText);
@@ -97,13 +128,20 @@ export default function QueuePanel({
   });
 
   const exportQueue = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (format: "xlsx" | "json") => {
       const path = await save({
-        defaultPath: "test-case-queue.xlsx",
-        filters: [{ name: "Excel", extensions: ["xlsx"] }],
+        defaultPath: format === "xlsx" ? "test-case-queue.xlsx" : "test-case-queue.json",
+        filters: [
+          format === "xlsx"
+            ? { name: "Excel", extensions: ["xlsx"] }
+            : { name: "JSON", extensions: ["json"] },
+        ],
       });
       if (!path) return;
-      const r = await commands.exportQueue(path, queue);
+      const r =
+        format === "xlsx"
+          ? await commands.exportQueue(path, queue)
+          : await commands.exportQueueJson(path, queue);
       if (r.status === "error") throw new Error(r.error);
       toast.success("Queue exported.");
     },
@@ -112,12 +150,29 @@ export default function QueuePanel({
 
   const submit = useMutation({
     mutationFn: async () => {
-      const r = await commands.submitQueue(org, project, pbiId, queue);
+      setProgress({ done: 0, total: queue.length });
+      unlistenRef.current = await events.submitProgress.listen((e) => {
+        setProgress({ done: e.payload.index + 1, total: e.payload.total });
+      });
+      const r = await commands.submitQueue(
+        org,
+        project,
+        pbiId,
+        queue,
+        prefs.moduleRef,
+        prefs.preconditionsRef,
+      );
       if (r.status === "error") throw new Error(r.error);
       return r.data;
     },
+    onSettled: () => {
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+      setProgress(null);
+    },
     onSuccess: (data) => {
       setResults(data);
+      setReviewing(false);
       const failed = new Set(data.filter((r) => r.action === "failed").map((r) => r.index));
       setQueue((q) => q.filter((_, i) => failed.has(i)));
       qc.invalidateQueries({ queryKey: ["pbi-tcs", org, pbiId] });
@@ -127,6 +182,10 @@ export default function QueuePanel({
     },
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
   });
+
+  const problems = queue.map((tc) => validateCase(tc));
+  const duplicates = queue.map((tc) => duplicateWarning(tc, existingTitles));
+  const hasBlockers = problems.some(Boolean);
 
   return (
     <section className="space-y-3 rounded-md border border-border bg-surface p-4">
@@ -181,9 +240,17 @@ export default function QueuePanel({
               variant="outline"
               size="sm"
               disabled={queue.length === 0}
-              onClick={() => exportQueue.mutate()}
+              onClick={() => exportQueue.mutate("xlsx")}
             >
-              Export queue...
+              Export xlsx...
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={queue.length === 0}
+              onClick={() => exportQueue.mutate("json")}
+            >
+              Export JSON...
             </Button>
           </div>
           {warnings.length > 0 && (
@@ -211,6 +278,12 @@ export default function QueuePanel({
                 )}
                 {tc.title}
                 <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
+                {reviewing && problems[i] && (
+                  <span className="ml-2 text-xs text-danger">{problems[i]}</span>
+                )}
+                {reviewing && !problems[i] && duplicates[i] && (
+                  <span className="ml-2 text-xs text-warning">{duplicates[i]}</span>
+                )}
               </span>
               <button
                 className="text-xs text-faint hover:text-danger"
@@ -223,12 +296,41 @@ export default function QueuePanel({
         </ul>
       )}
 
+      {progress && (
+        <div className="space-y-1">
+          <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+            <div
+              className="h-full rounded-full bg-accent transition-all"
+              style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted">
+            Processing {progress.done}/{progress.total}...
+          </p>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
-        <Button disabled={queue.length === 0 || submit.isPending} onClick={() => submit.mutate()}>
-          {submit.isPending
-            ? "Creating..."
-            : `Create ${queue.length} test case${queue.length === 1 ? "" : "s"}`}
-        </Button>
+        {!reviewing ? (
+          <Button disabled={queue.length === 0} onClick={() => setReviewing(true)}>
+            Review {queue.length} test case{queue.length === 1 ? "" : "s"}...
+          </Button>
+        ) : (
+          <>
+            <Button
+              disabled={queue.length === 0 || hasBlockers || submit.isPending}
+              onClick={() => submit.mutate()}
+            >
+              {submit.isPending ? "Creating..." : `Confirm & create ${queue.length}`}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
+              Back
+            </Button>
+            {hasBlockers && (
+              <span className="text-xs text-danger">Fix the flagged items first.</span>
+            )}
+          </>
+        )}
       </div>
 
       {results && (
