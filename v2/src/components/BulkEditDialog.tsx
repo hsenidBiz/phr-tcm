@@ -6,6 +6,7 @@ import { useFieldRefs } from "../hooks/useFieldRefs";
 import ModuleField from "./ModuleField";
 import TagsField from "./TagsField";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { Textarea } from "./ui/input";
 import { Select } from "./ui/select";
 
@@ -109,11 +110,7 @@ export default function BulkEditDialog({
 
         <div className="space-y-1">
           <label className="flex items-center gap-2 text-xs text-muted">
-            <input
-              type="checkbox"
-              checked={applyModule}
-              onChange={(e) => setApplyModule(e.target.checked)}
-            />
+            <Checkbox checked={applyModule} onCheckedChange={setApplyModule} />
             Set module
           </label>
           {applyModule && (
@@ -154,11 +151,7 @@ export default function BulkEditDialog({
 
         <div className="space-y-1">
           <label className="flex items-center gap-2 text-xs text-muted">
-            <input
-              type="checkbox"
-              checked={applyPreconditions}
-              onChange={(e) => setApplyPreconditions(e.target.checked)}
-            />
+            <Checkbox checked={applyPreconditions} onCheckedChange={setApplyPreconditions} />
             Set preconditions
           </label>
           {applyPreconditions && (

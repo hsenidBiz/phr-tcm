@@ -5,6 +5,7 @@ import { commands, type BoardData, type BoardItem } from "../bindings";
 import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
@@ -201,13 +202,12 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             ))}
           </Select>
           <label className="flex items-center gap-1.5 text-xs text-muted">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={hideDone}
-              onChange={(e) => {
-                setHideDone(e.target.checked);
+              onCheckedChange={(v) => {
+                setHideDone(v);
                 try {
-                  localStorage.setItem("tcm-v2-hide-done", e.target.checked ? "on" : "off");
+                  localStorage.setItem("tcm-v2-hide-done", v ? "on" : "off");
                 } catch {
                   // session-only
                 }

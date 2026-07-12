@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, events, type EnsuredSuite, type TestPoint } from "./../bindings";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { cn } from "../lib/cn";
@@ -295,13 +296,12 @@ export default function RunPanel({
             <option value="none">Never run</option>
           </Select>
           <label className="flex items-center gap-1.5 text-xs text-muted">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={grouped}
-              onChange={(e) => {
-                setGrouped(e.target.checked);
+              onCheckedChange={(v) => {
+                setGrouped(v);
                 try {
-                  localStorage.setItem("tcm-v2-group-points", e.target.checked ? "on" : "off");
+                  localStorage.setItem("tcm-v2-group-points", v ? "on" : "off");
                 } catch {
                   // session-only
                 }

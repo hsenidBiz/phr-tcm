@@ -9,6 +9,7 @@ import ModuleField from "../components/ModuleField";
 import StepsEditor from "../components/StepsEditor";
 import TagsField from "../components/TagsField";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
@@ -242,13 +243,12 @@ export default function ExistingCases({
           <RefreshCw size={14} />
         </button>
         <label className="flex items-center gap-1.5 text-xs text-muted">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={grouped}
-            onChange={(e) => {
-              setGrouped(e.target.checked);
+            onCheckedChange={(v) => {
+              setGrouped(v);
               try {
-                localStorage.setItem("tcm-v2-group-cases", e.target.checked ? "on" : "off");
+                localStorage.setItem("tcm-v2-group-cases", v ? "on" : "off");
               } catch {
                 // session-only
               }
