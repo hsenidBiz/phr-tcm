@@ -151,6 +151,9 @@ pub struct WorkItemDetail {
     /// Description (or ReproSteps for Bugs) flattened to plain text for the
     /// editor; saving wraps it back into a div like v1's preconditions.
     pub description_text: String,
+    /// The same field's RAW HTML, so the editor can convert it to markdown
+    /// and preserve the formatting ADO stored (bold, lists, links...).
+    pub description_html: String,
     /// Which field the description came from (System.Description or
     /// Microsoft.VSTS.TCM.ReproSteps) so the save writes the right one.
     pub description_field: String,
@@ -424,6 +427,7 @@ impl AdoClient {
             start_date: s("Microsoft.VSTS.Scheduling.StartDate"),
             finish_date: s("Microsoft.VSTS.Scheduling.FinishDate"),
             description_text: crate::steps_xml::html_to_text(&s(description_field)),
+            description_html: s(description_field),
             description_field: description_field.to_string(),
             work_item_type: wi_type,
         })

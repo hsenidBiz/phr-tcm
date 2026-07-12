@@ -389,6 +389,11 @@ export type WorkItemDetail = {
 	 */
 	description_text: string,
 	/**
+	 *  The same field's RAW HTML, so the editor can convert it to markdown
+	 *  and preserve the formatting ADO stored (bold, lists, links...).
+	 */
+	description_html: string,
+	/**
 	 *  Which field the description came from (System.Description or
 	 *  Microsoft.VSTS.TCM.ReproSteps) so the save writes the right one.
 	 */

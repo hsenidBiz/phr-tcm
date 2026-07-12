@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { marked } from "marked";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import TurndownService from "turndown";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { unwrap } from "../lib/ipc";
@@ -25,6 +26,15 @@ type Draft = {
   description: string;
 };
 
+/** ADO stores descriptions as HTML; converting to markdown here means the
+ * Write tab shows the formatting ADO has (bold, lists, links) as markdown
+ * source, and saving (marked: md -> HTML) round-trips it. */
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+  bulletListMarker: "-",
+});
+
 function toDraft(d: WorkItemDetail): Draft {
   return {
     title: d.title,
@@ -36,7 +46,9 @@ function toDraft(d: WorkItemDetail): Draft {
     original: d.original_estimate?.toString() ?? "",
     startDate: d.start_date.slice(0, 10),
     finishDate: d.finish_date.slice(0, 10),
-    description: d.description_text,
+    description: d.description_html?.trim()
+      ? turndown.turndown(d.description_html)
+      : d.description_text,
   };
 }
 

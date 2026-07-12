@@ -121,6 +121,7 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
         start_date: "",
         finish_date: "",
         description_text: "old text",
+        description_html: "<div>old text</div>",
         description_field: "System.Description",
       };
     if (cmd === "list_team_members")
