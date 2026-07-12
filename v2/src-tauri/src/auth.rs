@@ -154,7 +154,11 @@ pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, St
 
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let redirect_uri = format!("http://127.0.0.1:{port}");
+    // Entra ID only allows arbitrary ports on "http://localhost" (RFC 8252
+    // loopback), NOT on the literal 127.0.0.1 - using the IP form fails with
+    // AADSTS50011 against the Azure CLI app registration. The socket still
+    // binds to 127.0.0.1; localhost resolves there for the browser redirect.
+    let redirect_uri = format!("http://localhost:{port}");
     let (verifier, challenge) = pkce_pair();
     let state = b64url(&rand::random::<[u8; 16]>());
     open_url(&build_authorize_url(&challenge, &redirect_uri, &state));
