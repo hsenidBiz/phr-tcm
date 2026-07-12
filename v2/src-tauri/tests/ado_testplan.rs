@@ -1,5 +1,31 @@
 use v2_lib::ado::AdoClient;
-use v2_lib::ado_testplan::{area_matches, default_plan_name, OutcomeUpdate};
+use v2_lib::ado_testplan::{
+    area_matches, build_iteration_details, default_plan_name, OutcomeUpdate,
+};
+
+#[test]
+fn iteration_details_match_v1_shape() {
+    let ids = vec!["7".to_string(), "12".to_string(), "abc".to_string()];
+    let outcomes = vec![Some("Passed".to_string()), None, Some("Failed".to_string())];
+    let details = build_iteration_details(&ids, &outcomes, "Failed").unwrap();
+    let arr = details.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["outcome"], "Failed");
+    let actions = arr[0]["actionResults"].as_array().unwrap();
+    // Unmarked step 12 is skipped; numeric ids become 8-digit hex paths;
+    // non-numeric ids pass through.
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[0]["actionPath"], "00000007");
+    assert_eq!(actions[0]["stepIdentifier"], "7");
+    assert_eq!(actions[1]["actionPath"], "abc");
+    assert_eq!(actions[1]["outcome"], "Failed");
+
+    // Nothing marked -> None (v1: don't PATCH at all).
+    assert!(build_iteration_details(&ids, &[None, None, None], "Passed").is_none());
+    // Empty overall defaults to Failed.
+    let d = build_iteration_details(&ids, &outcomes, "").unwrap();
+    assert_eq!(d[0]["outcome"], "Failed");
+}
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -251,6 +277,7 @@ async fn run_lifecycle_create_update_complete() {
                 outcome: "Passed".into(),
                 comment: Some("ok".into()),
                 duration_ms: Some(1200),
+                bug_ids: None,
             }],
         )
         .await

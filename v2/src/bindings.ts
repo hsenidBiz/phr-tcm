@@ -49,6 +49,13 @@ export const commands = {
 	updateTestCase: (organization: string, project: string, tc: TestCase, moduleRef: string | null, preconditionsRef: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef })),
 	exportQueueJson: (path: string, queue: TestCase[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
+	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
+	captureScreens: () => typedError<ScreenShot[], string>(__TAURI_INVOKE("capture_screens")),
+	/**
+	 *  File a Bug (or Issue on Basic-process projects) for a failed case:
+	 *  Related links to the test case + PBI, screenshots attached. POST only.
+	 */
+	fileBug: (organization: string, project: string, title: string, reproText: string, testCaseId: number, pbiId: number, screenshotsB64: string[]) => typedError<FiledBug, string>(__TAURI_INVOKE("file_bug", { organization, project, title, reproText, testCaseId, pbiId, screenshotsB64 })),
 };
 
 /** Events */
@@ -99,6 +106,11 @@ export type FieldRef = {
 	reference_name: string,
 };
 
+export type FiledBug = {
+	id: number,
+	url: string,
+};
+
 export type ImportResult = {
 	cases: TestCase[],
 	warnings: string[],
@@ -126,6 +138,16 @@ export type PointOutcome = {
 	outcome: string,
 	comment: string | null,
 	duration_ms: number | null,
+	/**
+	 *  The case's real step ids (from TestCaseFull.step_ids), aligned with
+	 *  step_outcomes; both present only when steps were marked individually.
+	 */
+	step_ids: string[] | null,
+	step_outcomes: (string | null)[] | null,
+	/**  PNG screenshots (base64) to attach to this result. */
+	screenshots_b64: string[] | null,
+	/**  Bug work-item ids to associate with this result. */
+	bug_ids: number[] | null,
 };
 
 export type Project = {
@@ -133,9 +155,20 @@ export type Project = {
 	name: string,
 };
 
+export type ResultDetail = {
+	outcome: string,
+	comment: string,
+};
+
 export type RunCreated = {
 	run_id: number,
 	web_url: string,
+};
+
+export type ScreenShot = {
+	name: string,
+	/**  PNG, base64 (no data: prefix) - the shape add_result_attachment wants. */
+	b64_png: string,
 };
 
 export type StateInfo = {
@@ -198,6 +231,11 @@ export type TestCaseFull = {
 	tags: string,
 	automation_status: string,
 	steps: Step[],
+	/**
+	 *  Real ADO step ids (document order, aligned with `steps`) - the runner
+	 *  needs them to build iterationDetails.
+	 */
+	step_ids: string[],
 	module_value: string,
 	preconditions: string,
 };

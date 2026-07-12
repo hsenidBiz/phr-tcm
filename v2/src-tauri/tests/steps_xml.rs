@@ -78,6 +78,24 @@ fn parse_html_encoded_content() {
 }
 
 #[test]
+fn step_ids_come_from_the_real_xml_not_index_math() {
+    // ADO reassigns arbitrary ids once a case is edited in the web UI.
+    let xml = concat!(
+        "<steps id=\"0\" last=\"9\">",
+        "<step id=\"7\" type=\"ActionStep\"><parameterizedString/><parameterizedString/></step>",
+        "<step id=\"2\" type=\"ActionStep\"><parameterizedString/><parameterizedString/></step>",
+        "<step id=\"9\" type=\"ActionStep\"><parameterizedString/><parameterizedString/></step>",
+        "</steps>"
+    );
+    assert_eq!(
+        v2_lib::steps_xml::parse_step_ids(xml),
+        vec!["7".to_string(), "2".to_string(), "9".to_string()]
+    );
+    assert!(v2_lib::steps_xml::parse_step_ids("").is_empty());
+    assert!(v2_lib::steps_xml::parse_step_ids("<steps><step").is_empty());
+}
+
+#[test]
 fn html_to_text_strips_tags_and_keeps_structure() {
     let txt = html_to_text("<div>First</div><ul><li>one</li><li>two</li></ul>");
     assert!(txt.contains("First"));

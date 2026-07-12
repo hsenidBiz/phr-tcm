@@ -55,6 +55,50 @@ pub struct OutcomeUpdate {
     pub outcome: String,
     pub comment: Option<String>,
     pub duration_ms: Option<i32>,
+    /// Bug work-item ids to associate with this result.
+    pub bug_ids: Option<Vec<i32>>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ResultDetail {
+    pub outcome: String,
+    pub comment: String,
+}
+
+/// Build the ADO iterationDetails payload from per-step outcomes, ported
+/// from v1 _iteration_details: actionPath is the step id as 8-digit hex,
+/// only individually-marked steps are included, None when nothing marked.
+pub fn build_iteration_details(
+    step_ids: &[String],
+    step_outcomes: &[Option<String>],
+    overall: &str,
+) -> Option<serde_json::Value> {
+    let mut action_results = vec![];
+    for (idx, sid) in step_ids.iter().enumerate() {
+        let Some(Some(oc)) = step_outcomes.get(idx) else { continue };
+        if oc.is_empty() {
+            continue;
+        }
+        let action_path = match sid.parse::<i64>() {
+            Ok(n) => format!("{n:08X}"),
+            Err(_) => sid.clone(),
+        };
+        action_results.push(serde_json::json!({
+            "actionPath": action_path,
+            "iterationId": 1,
+            "stepIdentifier": sid,
+            "outcome": oc,
+        }));
+    }
+    if action_results.is_empty() {
+        return None;
+    }
+    let overall = if overall.is_empty() { "Failed" } else { overall };
+    Some(serde_json::json!([{
+        "id": 1,
+        "outcome": overall,
+        "actionResults": action_results,
+    }]))
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -522,6 +566,13 @@ impl AdoClient {
                         item["durationInMs"] = serde_json::json!(d);
                     }
                 }
+                if let Some(bugs) = &r.bug_ids {
+                    if !bugs.is_empty() {
+                        item["associatedBugs"] = serde_json::json!(
+                            bugs.iter().map(|b| serde_json::json!({"id": b})).collect::<Vec<_>>()
+                        );
+                    }
+                }
                 item
             })
             .collect();
@@ -531,6 +582,47 @@ impl AdoClient {
             run_id
         );
         self.patch_plain_json(url, &serde_json::Value::Array(body)).await?;
+        Ok(())
+    }
+
+    /// A single result's last outcome + comment (runner preload). Read only.
+    pub async fn get_result(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+    ) -> Result<ResultDetail, AdoError> {
+        let url = format!(
+            "{}/test/Runs/{}/Results/{}?api-version=7.1",
+            self.tp_base(org, project),
+            run_id,
+            result_id
+        );
+        let data = self.get_json(url).await?;
+        Ok(ResultDetail {
+            outcome: data["outcome"].as_str().unwrap_or_default().to_string(),
+            comment: data["comment"].as_str().unwrap_or_default().to_string(),
+        })
+    }
+
+    /// Attach per-step (iteration) results so ADO's step-by-step view shows
+    /// which steps passed/failed. Additive and best-effort. Plain-JSON PATCH.
+    pub async fn update_result_steps(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+        iteration_details: serde_json::Value,
+    ) -> Result<(), AdoError> {
+        let body = serde_json::json!([{"id": result_id, "iterationDetails": iteration_details}]);
+        let url = format!(
+            "{}/test/Runs/{}/results?api-version=7.1",
+            self.tp_base(org, project),
+            run_id
+        );
+        self.patch_plain_json(url, &body).await?;
         Ok(())
     }
 

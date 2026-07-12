@@ -1,6 +1,7 @@
 pub mod ado;
 pub mod ado_testplan;
 pub mod auth;
+pub mod capture;
 pub mod import_parser;
 pub mod model;
 pub mod steps_xml;
@@ -409,6 +410,14 @@ pub struct PointOutcome {
     pub outcome: String,
     pub comment: Option<String>,
     pub duration_ms: Option<i32>,
+    /// The case's real step ids (from TestCaseFull.step_ids), aligned with
+    /// step_outcomes; both present only when steps were marked individually.
+    pub step_ids: Option<Vec<String>>,
+    pub step_outcomes: Option<Vec<Option<String>>>,
+    /// PNG screenshots (base64) to attach to this result.
+    pub screenshots_b64: Option<Vec<String>>,
+    /// Bug work-item ids to associate with this result.
+    pub bug_ids: Option<Vec<i32>>,
 }
 
 /// Full manual-run lifecycle ported from v1 run_screen submission: create a
@@ -442,16 +451,133 @@ async fn submit_test_run(
                 outcome: o.outcome.clone(),
                 comment: o.comment.clone(),
                 duration_ms: o.duration_ms,
+                bug_ids: o.bug_ids.clone(),
             })
         })
         .collect();
     client
         .update_run_results(&organization, &project, run.run_id, &updates)
         .await?;
+
+    // Per-step outcomes + screenshots are additive and best-effort (v1
+    // semantics): a failure here never loses the recorded outcomes.
+    for o in &outcomes {
+        let Some(result) = results.iter().find(|r| r.point_id == Some(o.point_id)) else {
+            continue;
+        };
+        if let (Some(ids), Some(step_ocs)) = (&o.step_ids, &o.step_outcomes) {
+            if let Some(details) =
+                ado_testplan::build_iteration_details(ids, step_ocs, &o.outcome)
+            {
+                let _ = client
+                    .update_result_steps(
+                        &organization,
+                        &project,
+                        run.run_id,
+                        result.result_id,
+                        details,
+                    )
+                    .await;
+            }
+        }
+        if let Some(shots) = &o.screenshots_b64 {
+            for (i, b64) in shots.iter().enumerate() {
+                let _ = client
+                    .add_result_attachment(
+                        &organization,
+                        &project,
+                        run.run_id,
+                        result.result_id,
+                        b64,
+                        &format!("screenshot-{}-{}.png", o.point_id, i + 1),
+                        "",
+                    )
+                    .await;
+            }
+        }
+    }
+
     client
         .complete_test_run(&organization, &project, run.run_id)
         .await?;
     Ok(run)
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn get_result_detail(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: i32,
+    result_id: i32,
+) -> Result<ado_testplan::ResultDetail, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_result(&organization, &project, run_id, result_id)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn capture_screens() -> Result<Vec<capture::ScreenShot>, String> {
+    tauri::async_runtime::spawn_blocking(capture::capture_all_monitors)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// File a Bug (or Issue on Basic-process projects) for a failed case:
+/// Related links to the test case + PBI, screenshots attached. POST only.
+#[tauri::command]
+#[specta::specta]
+async fn file_bug(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    title: String,
+    repro_text: String,
+    test_case_id: i32,
+    pbi_id: i32,
+    screenshots_b64: Vec<String>,
+) -> Result<work_bug::FiledBug, String> {
+    use base64::Engine;
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    let client = ado::AdoClient::new(token);
+    let info = client
+        .detect_bug_type(&organization, &project)
+        .await
+        .map_err(|e| e.to_string())?;
+    let repro_html = format!("<div>{}</div>", repro_text.replace('\n', "<br>"));
+    let fields = vec![
+        ("System.Title".to_string(), title),
+        (info.repro_field.clone(), repro_html),
+    ];
+    let (id, url) = client
+        .create_work_item(&organization, &project, &info.wi_type, &fields, &[test_case_id, pbi_id])
+        .await
+        .map_err(|e| e.to_string())?;
+    for (i, b64) in screenshots_b64.iter().enumerate() {
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) else {
+            continue;
+        };
+        if let Ok(att_url) = client
+            .upload_wi_attachment(&organization, &project, &format!("bug-{}-{}.png", id, i + 1), bytes)
+            .await
+        {
+            let _ = client
+                .add_wi_attachment_relation(&organization, &project, id, &att_url)
+                .await;
+        }
+    }
+    Ok(work_bug::FiledBug { id, url })
+}
+
+pub mod work_bug {
+    #[derive(serde::Serialize, specta::Type)]
+    pub struct FiledBug {
+        pub id: i32,
+        pub url: String,
+    }
 }
 
 /// Non-blocking update check; Some(version) when a newer build is published.
@@ -552,7 +678,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         pbi_test_cases_full,
         update_test_case,
         export_queue_json,
-        list_plans_with_suites
+        list_plans_with_suites,
+        get_result_detail,
+        capture_screens,
+        file_bug
     ])
 }
 

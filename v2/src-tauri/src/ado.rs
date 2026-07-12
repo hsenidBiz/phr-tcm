@@ -48,8 +48,18 @@ pub struct TestCaseFull {
     pub tags: String,
     pub automation_status: String,
     pub steps: Vec<crate::steps_xml::Step>,
+    /// Real ADO step ids (document order, aligned with `steps`) - the runner
+    /// needs them to build iterationDetails.
+    pub step_ids: Vec<String>,
     pub module_value: String,
     pub preconditions: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct BugTypeInfo {
+    pub wi_type: String,
+    pub repro_field: String,
+    pub has_severity: bool,
 }
 
 #[derive(Debug, thiserror::Error, Serialize, specta::Type)]
@@ -683,6 +693,7 @@ impl AdoClient {
                         if s.is_empty() { "Not Automated".to_string() } else { s }
                     },
                     steps: crate::steps_xml::parse_steps_xml(&str_of("Microsoft.VSTS.TCM.Steps")),
+                    step_ids: crate::steps_xml::parse_step_ids(&str_of("Microsoft.VSTS.TCM.Steps")),
                     module_value: module_ref.map(str_of).unwrap_or_default(),
                     preconditions: preconditions_ref
                         .map(|p| crate::steps_xml::html_to_text(&str_of(p)))
@@ -691,6 +702,138 @@ impl AdoClient {
             }
         }
         Ok(cases)
+    }
+
+    /// Which type bugs are filed as on this project's process, ported from
+    /// v1 detect_bug_type: prefer Bug (ReproSteps), fall back to Issue
+    /// (Description). Enumeration failure assumes Bug. Read only.
+    pub async fn detect_bug_type(
+        &self,
+        organization: &str,
+        project: &str,
+    ) -> Result<BugTypeInfo, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitemtypes?api-version=7.1",
+            self.base_url, organization, project
+        );
+        let names: Vec<String> = match self.get_json(url).await {
+            Ok(data) => data["value"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|wt| wt["name"].as_str().map(String::from))
+                .collect(),
+            Err(_) => vec![], // enumeration failure -> assume Bug (v1 behaviour)
+        };
+        let info = if names.iter().any(|n| n == "Bug") || names.is_empty() {
+            BugTypeInfo {
+                wi_type: "Bug".into(),
+                repro_field: "Microsoft.VSTS.TCM.ReproSteps".into(),
+                has_severity: true,
+            }
+        } else if names.iter().any(|n| n == "Issue") {
+            BugTypeInfo {
+                wi_type: "Issue".into(),
+                repro_field: "System.Description".into(),
+                has_severity: false,
+            }
+        } else {
+            BugTypeInfo {
+                wi_type: "Bug".into(),
+                repro_field: "Microsoft.VSTS.TCM.ReproSteps".into(),
+                has_severity: true,
+            }
+        };
+        Ok(info)
+    }
+
+    /// POST a new work item of `wi_type` with fields and optional Related
+    /// links. Returns (id, web_url). Only POST - never DELETEs.
+    pub async fn create_work_item(
+        &self,
+        organization: &str,
+        project: &str,
+        wi_type: &str,
+        fields: &[(String, String)],
+        related_ids: &[i32],
+    ) -> Result<(i32, String), AdoError> {
+        let mut patch: Vec<serde_json::Value> = fields
+            .iter()
+            .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
+            .collect();
+        for rel_id in related_ids {
+            patch.push(serde_json::json!({
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "System.LinkTypes.Related",
+                    "url": format!("{}/{}/{}/_apis/wit/workitems/{}", self.base_url, organization, project, rel_id),
+                },
+            }));
+        }
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/${}?api-version=7.1",
+            self.base_url,
+            organization,
+            project,
+            urlencoding::encode(wi_type)
+        );
+        let data = self
+            .send_json_patch(reqwest::Method::POST, url, &serde_json::Value::Array(patch))
+            .await?;
+        let web = data["_links"]["html"]["href"].as_str().unwrap_or_default().to_string();
+        Ok((data["id"].as_i64().unwrap_or_default() as i32, web))
+    }
+
+    /// Upload raw bytes as a work-item attachment; returns the attachment
+    /// URL for an AttachedFile relation. POST only.
+    pub async fn upload_wi_attachment(
+        &self,
+        organization: &str,
+        project: &str,
+        file_name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<String, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/attachments?fileName={}&api-version=7.1",
+            self.base_url,
+            organization,
+            project,
+            urlencoding::encode(file_name)
+        );
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.token)
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|e| AdoError::Network(e.to_string()))?;
+        let data = Self::handle_json(resp).await?;
+        Ok(data["url"].as_str().unwrap_or_default().to_string())
+    }
+
+    /// PATCH an AttachedFile relation onto a work item (bug screenshots).
+    pub async fn add_wi_attachment_relation(
+        &self,
+        organization: &str,
+        project: &str,
+        wi_id: i32,
+        attachment_url: &str,
+    ) -> Result<(), AdoError> {
+        let patch = serde_json::json!([{
+            "op": "add",
+            "path": "/relations/-",
+            "value": {"rel": "AttachedFile", "url": attachment_url},
+        }]);
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+            self.base_url, organization, project, wi_id
+        );
+        self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
+        Ok(())
     }
 
     /// A work item's area + iteration path (used to home the PBI's test

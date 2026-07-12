@@ -50,6 +50,8 @@ rust_xlsxwriter = "0.96.0"
 csv = "1.4.0"
 tauri-plugin-dialog = "2.7.1"
 velopack = "1.2.0"
+xcap = "0.9.6"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 wiremock = "0.6.5"

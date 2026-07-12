@@ -145,6 +145,37 @@ pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
         .collect()
 }
 
+/// The step ids in document order from a Steps XML blob. ADO assigns
+/// arbitrary ids (not 2,3,4...) once a case has been edited in the web UI,
+/// and iterationDetails must reference the REAL ids - never index math.
+pub fn parse_step_ids(xml_str: &str) -> Vec<String> {
+    if xml_str.trim().is_empty() {
+        return vec![];
+    }
+    let mut reader = Reader::from_str(xml_str);
+    let mut ids = vec![];
+    loop {
+        match reader.read_event() {
+            Err(_) => return vec![],
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                if e.name().as_ref() == b"step" {
+                    if let Some(id) = e
+                        .attributes()
+                        .flatten()
+                        .find(|a| a.key.as_ref() == b"id")
+                        .and_then(|a| String::from_utf8(a.value.to_vec()).ok())
+                    {
+                        ids.push(id);
+                    }
+                }
+            }
+            Ok(_) => {}
+        }
+    }
+    ids
+}
+
 /// Flatten an ADO rich-text/HTML field to clean plain text, ported from v1
 /// html_to_text: list items become bullets, block ends become line breaks,
 /// all tags stripped, entities unescaped, blank runs collapsed.
