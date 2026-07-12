@@ -13,6 +13,11 @@ use std::time::Instant;
 use tauri::Manager;
 use tauri_specta::{collect_commands, collect_events, Builder, Event};
 
+/// Cooperative cancel for the submit loop: checked between items, so the
+/// in-flight item always completes (never a half-created case).
+#[derive(Default)]
+pub struct SubmitCancel(std::sync::atomic::AtomicBool);
+
 /// Emitted once per queue item while submit_queue runs.
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
 pub struct SubmitProgress {
@@ -217,9 +222,15 @@ async fn submit_queue(
         .filter(|s| !s.is_empty())
         .unwrap_or(pbi_iteration);
 
+    let cancel = app.state::<SubmitCancel>();
+    cancel.0.store(false, std::sync::atomic::Ordering::SeqCst);
+
     let total = queue.len() as u32;
     let mut results: Vec<SubmitItemResult> = vec![];
     for (i, tc) in queue.iter().enumerate() {
+        if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
+            break; // unprocessed items stay in the client's queue
+        }
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
@@ -369,6 +380,45 @@ async fn update_test_case(
 #[specta::specta]
 fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
     import_parser::export_queue_to_json(&queue, &path)
+}
+
+/// Stop the running submit loop after the in-flight item finishes.
+#[tauri::command]
+#[specta::specta]
+fn cancel_submit(state: tauri::State<'_, SubmitCancel>) {
+    state.0.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[tauri::command]
+#[specta::specta]
+fn export_queue_html(path: String, queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
+    import_parser::export_queue_to_html(&queue, &path, &subtitle)
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn list_project_tags(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<String>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).get_tags(&organization, &project).await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn result_screenshots(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: i32,
+    result_id: i32,
+) -> Result<Vec<String>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_result_screenshots(&organization, &project, run_id, result_id)
+        .await
 }
 
 /// The project's Area or Iteration paths for the create pickers.
@@ -869,7 +919,11 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         add_comment,
         avatar_b64,
         quick_create_item,
-        classification_paths
+        classification_paths,
+        cancel_submit,
+        export_queue_html,
+        list_project_tags,
+        result_screenshots
     ])
 }
 
@@ -881,6 +935,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(auth::AuthState::default()))
         .manage(updater::UpdateState::default())
+        .manage(SubmitCancel::default())
         .invoke_handler(builder.invoke_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

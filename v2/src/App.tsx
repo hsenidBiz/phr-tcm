@@ -217,7 +217,16 @@ export default function App() {
               {section === "import" && <ImportFile org={org} project={project} pbi={pbi} />}
               {section === "edit" && <EditCases org={org} project={project} pbi={pbi} />}
               {section === "run" && <RunTests org={org} project={project} pbi={pbi} />}
-              {section === "suites" && <Suites org={org} project={project} />}
+              {section === "suites" && (
+                <Suites
+                  org={org}
+                  project={project}
+                  onOpenPbi={(p, target) => {
+                    setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" });
+                    goToSection(target === "edit" ? "edit" : "run");
+                  }}
+                />
+              )}
               {section === "settings" && <Settings org={org} project={project} />}
             </>
           )}

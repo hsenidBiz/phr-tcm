@@ -256,6 +256,29 @@ fn json_export_round_trips_through_the_importer() {
 }
 
 #[test]
+fn html_export_carries_cases_and_search() {
+    let queue = vec![TestCase {
+        title: "Login <works>".into(),
+        steps: vec![Step { action: "Open & go".into(), expected: "Shown".into() }],
+        tags: "smoke; ui".into(),
+        automation_status: "Planned".into(),
+        module_value: "Auth".into(),
+        preconditions: "".into(),
+        update_id: Some(42),
+    }];
+    let path = tmp_path("report.html");
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7").unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("Login &lt;works&gt;")); // escaped
+    assert!(html.contains("Open &amp; go"));
+    assert!(html.contains("#42"));
+    assert!(html.contains("chip status")); // Planned chip
+    assert!(html.contains("tc-search")); // client-side filter
+    assert!(html.contains("None")); // empty prerequisites block still shown
+    assert!(html.contains("PBI #7")); // subtitle
+}
+
+#[test]
 fn is_valid_rules_ported() {
     let ok = TestCase {
         title: "T".into(),

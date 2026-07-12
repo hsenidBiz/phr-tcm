@@ -1,10 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import type { PbiHit, TestCase } from "../bindings";
+import { commands, type PbiHit, type TestCase } from "../bindings";
 import QueueSection from "../components/QueueSection";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { useQueue } from "../hooks/useQueue";
+import { unwrap } from "../lib/ipc";
 
 function parseStepsText(text: string) {
   return text
@@ -32,6 +34,16 @@ export default function ManualEntry({
   const [stepsText, setStepsText] = useState("");
   const [tags, setTags] = useState("");
   const [status, setStatus] = useState("Not Automated");
+  const [moduleValue, setModuleValue] = useState("");
+  const [preconditions, setPreconditions] = useState("");
+
+  // Project tag names feed the autocomplete datalist (v1 tag_completer).
+  const projectTags = useQuery({
+    queryKey: ["project-tags", org, project],
+    queryFn: () => unwrap(commands.listProjectTags(org, project)),
+    enabled: Boolean(org && project),
+    staleTime: 10 * 60_000,
+  });
 
   if (!org || !project || !pbi) {
     return (
@@ -50,14 +62,16 @@ export default function ManualEntry({
       steps,
       tags: tags.trim(),
       automation_status: status,
-      module_value: "",
-      preconditions: "",
+      module_value: moduleValue.trim(),
+      preconditions: preconditions.trim(),
       update_id: null,
     };
     setQueue((q) => [...q, tc]);
     setTitle("");
     setStepsText("");
     setTags("");
+    setModuleValue("");
+    setPreconditions("");
   }
 
   return (
@@ -80,13 +94,33 @@ export default function ManualEntry({
           <Input
             className="flex-1"
             placeholder="Tags (semicolon-separated)"
+            list="project-tags"
             value={tags}
             onChange={(e) => setTags(e.target.value)}
           />
+          <datalist id="project-tags">
+            {(projectTags.data ?? []).map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
           <Select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option>Not Automated</option>
             <option>Planned</option>
           </Select>
+        </div>
+        <div className="flex gap-2">
+          <Input
+            className="flex-1"
+            placeholder="Module (optional)"
+            value={moduleValue}
+            onChange={(e) => setModuleValue(e.target.value)}
+          />
+          <Input
+            className="flex-1"
+            placeholder="Preconditions (optional)"
+            value={preconditions}
+            onChange={(e) => setPreconditions(e.target.value)}
+          />
           <Button variant="outline" size="sm" onClick={addManual}>
             Add to queue
           </Button>

@@ -35,6 +35,8 @@ export default function RunPanel({
   const [chosen, setChosen] = useState<Record<number, Outcome>>({});
   const [comments, setComments] = useState<Record<number, string>>({});
   const [runUrl, setRunUrl] = useState("");
+  const [filterText, setFilterText] = useState("");
+  const [filterOutcome, setFilterOutcome] = useState("");
 
   const suite = useQuery({
     queryKey: ["suite", org, project, pbiId],
@@ -125,6 +127,31 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
+        <div className="flex gap-2">
+          <Input
+            aria-label="Filter points"
+            className="w-56 px-2 py-1"
+            placeholder="Filter by name or id..."
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+          />
+          <Select
+            aria-label="Filter by last outcome"
+            className="px-2 py-1"
+            value={filterOutcome}
+            onChange={(e) => setFilterOutcome(e.target.value)}
+          >
+            <option value="">All outcomes</option>
+            <option value="passed">Passed</option>
+            <option value="failed">Failed</option>
+            <option value="blocked">Blocked</option>
+            <option value="notapplicable">Not applicable</option>
+            <option value="none">Never run</option>
+          </Select>
+        </div>
+      )}
+
+      {points.data && points.data.length > 0 && (
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted">
@@ -135,7 +162,26 @@ export default function RunPanel({
             </tr>
           </thead>
           <tbody>
-            {points.data.map((p) => (
+            {points.data
+              .filter((p) => {
+                if (filterOutcome === "none" && p.last_outcome) return false;
+                if (
+                  filterOutcome &&
+                  filterOutcome !== "none" &&
+                  p.last_outcome.toLowerCase() !== filterOutcome
+                )
+                  return false;
+                if (filterText) {
+                  const t = filterText.toLowerCase();
+                  if (
+                    !p.test_case_name.toLowerCase().includes(t) &&
+                    !String(p.test_case_id ?? "").includes(t)
+                  )
+                    return false;
+                }
+                return true;
+              })
+              .map((p) => (
               <tr key={p.point_id} className="border-b border-border/50">
                 <td className="px-2 py-1 text-text">
                   <span className="id-mono text-faint">#{p.test_case_id}</span> {p.test_case_name}

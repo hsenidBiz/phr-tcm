@@ -606,6 +606,62 @@ impl AdoClient {
         })
     }
 
+    /// A result's previously-uploaded *image* attachments as b64 (v1
+    /// get_result_screenshots). Non-image attachments skipped; download
+    /// failures skipped (best-effort viewing). Read only.
+    pub async fn get_result_screenshots(
+        &self,
+        org: &str,
+        project: &str,
+        run_id: i32,
+        result_id: i32,
+    ) -> Result<Vec<String>, AdoError> {
+        use base64::Engine;
+        let url = format!(
+            "{}/test/Runs/{}/Results/{}/attachments?api-version=7.1",
+            self.tp_base(org, project),
+            run_id,
+            result_id
+        );
+        let data = self.get_json(url).await?;
+        let mut shots = vec![];
+        for a in data["value"].as_array().cloned().unwrap_or_default() {
+            let name = a["fileName"].as_str().unwrap_or_default().to_lowercase();
+            if !(name.ends_with(".png")
+                || name.ends_with(".jpg")
+                || name.ends_with(".jpeg")
+                || name.ends_with(".gif"))
+            {
+                continue;
+            }
+            let Some(id) = a["id"].as_i64() else { continue };
+            let dl = format!(
+                "{}/test/Runs/{}/Results/{}/attachments/{}?api-version=7.1",
+                self.tp_base(org, project),
+                run_id,
+                result_id,
+                id
+            );
+            let Ok(resp) = self
+                .http
+                .get(&dl)
+                .bearer_auth(&self.token)
+                .header("Accept", "application/octet-stream")
+                .send()
+                .await
+            else {
+                continue;
+            };
+            if !resp.status().is_success() {
+                continue;
+            }
+            if let Ok(bytes) = resp.bytes().await {
+                shots.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+            }
+        }
+        Ok(shots)
+    }
+
     /// Attach per-step (iteration) results so ADO's step-by-step view shows
     /// which steps passed/failed. Additive and best-effort. Plain-JSON PATCH.
     pub async fn update_result_steps(

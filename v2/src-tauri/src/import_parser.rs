@@ -636,6 +636,162 @@ pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String
     std::fs::write(path, text).map_err(|e| e.to_string())
 }
 
+fn esc(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+const HTML_CSS: &str = r#"
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px 16px;
+       background: #f3f5f8; color: #1f2530; }
+.page { max-width: 900px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.subtitle { color: #5c6675; font-size: 13px; margin: 0 0 24px; }
+.case { background: #fff; border: 1px solid #dde3ec; border-radius: 10px;
+        padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(20,30,50,.05);
+        page-break-inside: avoid; }
+.case h2 { font-size: 16px; margin: 0 0 8px; }
+.case .wid { color: #2a7ab8; font-weight: 600; margin-right: 6px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.chip { font-size: 11.5px; border-radius: 999px; padding: 2px 10px;
+        background: #eef2f8; color: #44506a; border: 1px solid #dbe2ee; }
+.chip.status { background: #e8f3ea; color: #2f6b3c; border-color: #cfe5d4; }
+.chip.module { background: #f0eafa; color: #5b3e9e; border-color: #e0d5f2; }
+.pre { font-size: 13px; background: #f7f9fc; border-left: 3px solid #b9c6da;
+       padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
+.pre b { color: #44506a; }
+.pre .none { color: #8a94a6; font-style: italic; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; background: #f0f3f8; color: #44506a; font-size: 12px;
+     padding: 6px 10px; border: 1px solid #e1e7f0; }
+td { padding: 7px 10px; border: 1px solid #e7ecf3; vertical-align: top;
+     white-space: pre-wrap; }
+td.num { width: 34px; text-align: center; color: #7c8698; }
+.searchbar { position: sticky; top: 0; z-index: 5; background: #f3f5f8;
+             display: flex; align-items: center; gap: 12px; padding: 10px 0 14px; }
+#tc-search { flex: 1; font: inherit; font-size: 14px; padding: 9px 14px;
+             border: 1px solid #c9d3e2; border-radius: 8px; background: #fff;
+             color: inherit; outline: none; }
+#tc-search:focus { border-color: #2a7ab8; box-shadow: 0 0 0 3px rgba(42,122,184,.15); }
+#tc-count { color: #5c6675; font-size: 12.5px; white-space: nowrap; }
+.no-match { color: #5c6675; font-size: 14px; text-align: center;
+            padding: 28px 0; border: 1px dashed #c9d3e2; border-radius: 10px; }
+.hidden { display: none !important; }
+@media print { body { background: #fff; padding: 0; }
+               .case { box-shadow: none; border-color: #ccc; }
+               .searchbar { display: none; } }
+"#;
+
+const HTML_JS: &str = r#"
+(function () {
+  var input = document.getElementById('tc-search');
+  var count = document.getElementById('tc-count');
+  var noMatch = document.getElementById('tc-no-match');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.case'));
+  var texts = cards.map(function (c) { return c.textContent.toLowerCase(); });
+  var total = cards.length;
+
+  function apply() {
+    var words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+    var shown = 0;
+    texts.forEach(function (t, i) {
+      var hit = words.every(function (w) { return t.indexOf(w) !== -1; });
+      cards[i].classList.toggle('hidden', !hit);
+      if (hit) shown++;
+    });
+    count.textContent = words.length
+      ? shown + ' of ' + total + ' shown'
+      : total + ' test case' + (total !== 1 ? 's' : '');
+    noMatch.classList.toggle('hidden', shown !== 0);
+  }
+
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { input.value = ''; apply(); }
+  });
+  apply();
+})();
+"#;
+
+/// Standalone, print-friendly HTML report, ported from v1
+/// export_records_to_html (same cards, chips, sticky search filter).
+pub fn export_queue_to_html(queue: &[TestCase], path: &str, subtitle: &str) -> Result<(), String> {
+    let mut parts: Vec<String> = vec![
+        "<!DOCTYPE html>".into(),
+        "<html lang=\"en\"><head><meta charset=\"utf-8\">".into(),
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">".into(),
+        format!("<title>Test Cases ({})</title>", queue.len()),
+        format!("<style>{HTML_CSS}</style></head><body><div class='page'>"),
+        "<h1>Test Cases</h1>".into(),
+        format!(
+            "<p class='subtitle'>{}</p>",
+            if subtitle.is_empty() {
+                format!("{} test case(s)", queue.len())
+            } else {
+                esc(subtitle)
+            }
+        ),
+        "<div class='searchbar'>".into(),
+        "<input id='tc-search' type='search' placeholder='Search title, ID, tags, steps, prerequisites...' aria-label='Search test cases'>".into(),
+        "<span id='tc-count'></span></div>".into(),
+        "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),
+    ];
+    for tc in queue {
+        parts.push("<div class='case'>".into());
+        let wid = tc
+            .update_id
+            .map(|id| format!("<span class='wid'>#{id}</span>"))
+            .unwrap_or_default();
+        parts.push(format!("<h2>{wid}{}</h2>", esc(&tc.title)));
+
+        let mut chips = vec![];
+        if !tc.automation_status.is_empty() {
+            chips.push(format!("<span class='chip status'>{}</span>", esc(&tc.automation_status)));
+        }
+        if !tc.module_value.is_empty() {
+            chips.push(format!("<span class='chip module'>{}</span>", esc(&tc.module_value)));
+        }
+        for tag in tc.tags.split(';') {
+            let tag = tag.trim();
+            if !tag.is_empty() {
+                chips.push(format!("<span class='chip'>{}</span>", esc(tag)));
+            }
+        }
+        if !chips.is_empty() {
+            parts.push(format!("<div class='meta'>{}</div>", chips.join("")));
+        }
+
+        // Every case shows a Prerequisites block, even when empty (v1 rule).
+        let prereq = tc.preconditions.trim();
+        let prereq_html = if prereq.is_empty() {
+            "<span class='none'>None</span>".to_string()
+        } else {
+            esc(prereq)
+        };
+        parts.push(format!("<p class='pre'><b>Prerequisites:</b> {prereq_html}</p>"));
+
+        if !tc.steps.is_empty() {
+            parts.push("<table><tr><th>#</th><th>Action</th><th>Expected result</th></tr>".into());
+            for (i, step) in tc.steps.iter().enumerate() {
+                parts.push(format!(
+                    "<tr><td class='num'>{}</td><td>{}</td><td>{}</td></tr>",
+                    i + 1,
+                    esc(&step.action),
+                    esc(&step.expected)
+                ));
+            }
+            parts.push("</table>".into());
+        }
+        parts.push("</div>".into());
+    }
+    parts.push(format!("</div><script>{HTML_JS}</script></body></html>"));
+    std::fs::write(path, parts.join("\n")).map_err(|e| e.to_string())
+}
+
 /// Write a blank Excel template with the example rows from v1.
 pub fn generate_template(save_path: &str) -> Result<(), String> {
     let mut wb = rust_xlsxwriter::Workbook::new();

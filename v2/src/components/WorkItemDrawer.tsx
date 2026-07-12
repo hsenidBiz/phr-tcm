@@ -18,6 +18,8 @@ type Draft = {
   remaining: string;
   completed: string;
   original: string;
+  startDate: string;
+  finishDate: string;
   description: string;
 };
 
@@ -30,6 +32,8 @@ function toDraft(d: WorkItemDetail): Draft {
     remaining: d.remaining_work?.toString() ?? "",
     completed: d.completed_work?.toString() ?? "",
     original: d.original_estimate?.toString() ?? "",
+    startDate: d.start_date.slice(0, 10),
+    finishDate: d.finish_date.slice(0, 10),
     description: d.description_text,
   };
 }
@@ -92,6 +96,8 @@ export default function WorkItemDrawer({
       push("Microsoft.VSTS.Scheduling.RemainingWork", dr.remaining, orig.remaining);
       push("Microsoft.VSTS.Scheduling.CompletedWork", dr.completed, orig.completed);
       push("Microsoft.VSTS.Scheduling.OriginalEstimate", dr.original, orig.original);
+      push("Microsoft.VSTS.Scheduling.StartDate", dr.startDate, orig.startDate);
+      push("Microsoft.VSTS.Scheduling.FinishDate", dr.finishDate, orig.finishDate);
       if (dr.description !== orig.description) {
         patches.push({
           reference_name: d.description_field,
@@ -216,6 +222,27 @@ export default function WorkItemDrawer({
                   />
                 </label>
               ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block text-xs text-muted">
+                Start date
+                <Input
+                  className="mt-1 w-full px-2"
+                  type="date"
+                  value={draft.startDate}
+                  onChange={(e) => setDraft({ ...draft, startDate: e.target.value })}
+                />
+              </label>
+              <label className="block text-xs text-muted">
+                Finish date
+                <Input
+                  className="mt-1 w-full px-2"
+                  type="date"
+                  value={draft.finishDate}
+                  onChange={(e) => setDraft({ ...draft, finishDate: e.target.value })}
+                />
+              </label>
             </div>
 
             <label className="block text-xs text-muted">

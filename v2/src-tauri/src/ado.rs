@@ -836,6 +836,25 @@ impl AdoClient {
         Ok(())
     }
 
+    /// All work-item tag names in the project, sorted (v1 get_tags, for the
+    /// manual-entry autocomplete). Read only.
+    pub async fn get_tags(&self, organization: &str, project: &str) -> Result<Vec<String>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/tags?api-version=7.1",
+            self.base_url, organization, project
+        );
+        let data = self.get_json(url).await?;
+        let mut tags: Vec<String> = data["value"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect();
+        tags.sort_by_key(|t| t.to_lowercase());
+        Ok(tags)
+    }
+
     /// The project's Area or Iteration tree flattened to path strings,
     /// ported from v1 get_classification_paths: built from node NAMES, not
     /// the node's `path` field (that carries an extra \Area or \Iteration

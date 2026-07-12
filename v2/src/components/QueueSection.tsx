@@ -59,20 +59,19 @@ export default function QueueSection({
   useEffect(() => () => unlistenRef.current?.(), []);
 
   const exportQueue = useMutation({
-    mutationFn: async (format: "xlsx" | "json") => {
+    mutationFn: async (format: "xlsx" | "json" | "html") => {
+      const names = { xlsx: "Excel", json: "JSON", html: "HTML report" } as const;
       const path = await save({
-        defaultPath: format === "xlsx" ? "test-case-queue.xlsx" : "test-case-queue.json",
-        filters: [
-          format === "xlsx"
-            ? { name: "Excel", extensions: ["xlsx"] }
-            : { name: "JSON", extensions: ["json"] },
-        ],
+        defaultPath: `test-case-queue.${format}`,
+        filters: [{ name: names[format], extensions: [format] }],
       });
       if (!path) return;
       const r =
         format === "xlsx"
           ? await commands.exportQueue(path, queue)
-          : await commands.exportQueueJson(path, queue);
+          : format === "json"
+            ? await commands.exportQueueJson(path, queue)
+            : await commands.exportQueueHtml(path, queue, `PBI #${pbiId}`);
       if (r.status === "error") throw new Error(r.error);
       toast.success("Queue exported.");
     },
@@ -106,13 +105,17 @@ export default function QueueSection({
     onSuccess: (data) => {
       setResults(data);
       setReviewing(false);
-      const failed = new Set(data.filter((r) => r.action === "failed").map((r) => r.index));
-      setQueue((q) => q.filter((_, i) => failed.has(i)));
+      // Keep failed items AND anything the loop never reached (cancelled).
+      const succeeded = new Set(
+        data.filter((r) => r.action !== "failed").map((r) => r.index),
+      );
+      setQueue((q) => q.filter((_, i) => !succeeded.has(i)));
       qc.invalidateQueries({ queryKey: ["pbi-tcs", org, pbiId] });
       qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, pbiId] });
-      const ok = data.length - failed.size;
-      if (failed.size === 0) toast.success(`All ${ok} test case(s) processed.`);
-      else toast.warning(`${ok} processed, ${failed.size} failed - failed items stay queued.`);
+      const failedCount = data.filter((r) => r.action === "failed").length;
+      const ok = succeeded.size;
+      if (failedCount === 0) toast.success(`${ok} test case(s) processed.`);
+      else toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
     },
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
   });
@@ -143,6 +146,14 @@ export default function QueueSection({
             onClick={() => exportQueue.mutate("json")}
           >
             Export JSON...
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queue.length === 0}
+            onClick={() => exportQueue.mutate("html")}
+          >
+            Export HTML...
           </Button>
         </div>
       </div>
@@ -192,9 +203,21 @@ export default function QueueSection({
               style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }}
             />
           </div>
-          <p className="text-xs text-muted">
-            Processing {progress.done}/{progress.total}...
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted">
+              Processing {progress.done}/{progress.total}...
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                commands.cancelSubmit();
+                toast.info("Stopping after the current item...");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
         </div>
       )}
 

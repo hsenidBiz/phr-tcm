@@ -49,9 +49,65 @@ export default function RunnerWindow() {
     retry: false,
   });
 
+  // Points load up front so each case can preload its last comment and
+  // offer its previously-uploaded screenshots (v1 lazy-preload parity).
+  const points = useQuery({
+    queryKey: ["runner-points", session?.org, session?.planId, session?.suiteId],
+    queryFn: () =>
+      unwrap(
+        commands.listTestPoints(session!.org, session!.project, session!.planId, session!.suiteId),
+      ),
+    enabled: Boolean(session),
+    retry: false,
+  });
+
   const list = cases.data ?? [];
   const current = list[idx];
   const st = (current && states[current.id]) || emptyState();
+  const currentPoint = points.data?.find((p) => p.test_case_id === current?.id);
+  const [uploaded, setUploaded] = useState<Record<number, string[]>>({});
+
+  // Preload the last run's comment once per case, only while untouched.
+  useEffect(() => {
+    if (!current || !currentPoint?.last_run_id || !currentPoint.last_result_id) return;
+    if (states[current.id]?.comment) return;
+    let stale = false;
+    unwrap(
+      commands.getResultDetail(
+        session!.org,
+        session!.project,
+        currentPoint.last_run_id,
+        currentPoint.last_result_id,
+      ),
+    )
+      .then((d) => {
+        if (!stale && d.comment && !states[current.id]?.comment) {
+          patch(current.id, { comment: d.comment });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, currentPoint?.last_result_id]);
+
+  const loadUploaded = useMutation({
+    mutationFn: () =>
+      unwrap(
+        commands.resultScreenshots(
+          session!.org,
+          session!.project,
+          currentPoint!.last_run_id!,
+          currentPoint!.last_result_id!,
+        ),
+      ),
+    onSuccess: (shots) => {
+      if (current) setUploaded((u) => ({ ...u, [current.id]: shots }));
+      if (shots.length === 0) toast.info("No screenshots on the last result.");
+    },
+    onError: (e) => toast.error(`Could not load screenshots: ${e.message}`),
+  });
 
   // Per-case timer -> duration_ms. Reset on case switch.
   useEffect(() => {
@@ -243,7 +299,33 @@ export default function RunnerWindow() {
             {st.bugIds.length > 0 && (
               <span className="text-xs text-success">bug #{st.bugIds.join(", #")}</span>
             )}
+            {currentPoint?.last_run_id && currentPoint.last_result_id && !uploaded[current.id] && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={loadUploaded.isPending}
+                onClick={() => loadUploaded.mutate()}
+              >
+                {loadUploaded.isPending ? "Loading..." : "View uploaded"}
+              </Button>
+            )}
           </div>
+
+          {(uploaded[current.id]?.length ?? 0) > 0 && (
+            <div className="space-y-1">
+              <div className="text-xs text-muted">Previously uploaded:</div>
+              <div className="flex flex-wrap gap-1">
+                {uploaded[current.id].map((b64, i) => (
+                  <img
+                    key={i}
+                    alt={`Uploaded screenshot ${i + 1}`}
+                    className="h-16 rounded border border-border object-cover"
+                    src={`data:image/png;base64,${b64}`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-1">
             {OUTCOMES.map((o) => (

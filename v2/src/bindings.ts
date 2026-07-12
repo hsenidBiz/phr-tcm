@@ -74,6 +74,11 @@ export const commands = {
 	quickCreateItem: (organization: string, project: string, wiType: string, title: string, assignToMe: boolean) => typedError<number, AdoError>(__TAURI_INVOKE("quick_create_item", { organization, project, wiType, title, assignToMe })),
 	/**  The project's Area or Iteration paths for the create pickers. */
 	classificationPaths: (organization: string, project: string, structure: string) => typedError<string[], AdoError>(__TAURI_INVOKE("classification_paths", { organization, project, structure })),
+	/**  Stop the running submit loop after the in-flight item finishes. */
+	cancelSubmit: () => __TAURI_INVOKE<void>("cancel_submit"),
+	exportQueueHtml: (path: string, queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
+	listProjectTags: (organization: string, project: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_project_tags", { organization, project })),
+	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),
 };
 
 /** Events */

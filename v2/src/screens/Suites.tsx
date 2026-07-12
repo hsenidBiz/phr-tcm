@@ -64,8 +64,17 @@ function SuitePoints({
 }
 
 /** The v1 Test Suites browser: plan -> suite tree (plans with no suites are
- * hidden - the v1 rule), a suite click shows its points read-only. */
-export default function Suites({ org, project }: { org: string; project: string }) {
+ * hidden - the v1 rule), a suite click shows its points read-only, and a
+ * requirement suite can jump straight into Edit/Run for its PBI. */
+export default function Suites({
+  org,
+  project,
+  onOpenPbi,
+}: {
+  org: string;
+  project: string;
+  onOpenPbi?: (pbi: { id: number; title: string }, target: "edit" | "run") => void;
+}) {
   const [openSuite, setOpenSuite] = useState<number | null>(null);
 
   const plans = useQuery({
@@ -116,6 +125,23 @@ export default function Suites({ org, project }: { org: string; project: string 
                     <Badge className="bg-accent-soft text-accent">
                       PBI {s.requirement_id}
                     </Badge>
+                  )}
+                  {onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id && (
+                    <span className="ml-auto flex gap-1">
+                      {(["edit", "run"] as const).map((target) => (
+                        <span
+                          key={target}
+                          role="button"
+                          className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-accent"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenPbi({ id: s.requirement_id!, title: s.name }, target);
+                          }}
+                        >
+                          {target === "edit" ? "Edit cases" : "Run"}
+                        </span>
+                      ))}
+                    </span>
                   )}
                 </button>
                 {openSuite === s.id && (
