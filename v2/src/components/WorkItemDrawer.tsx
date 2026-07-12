@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
+import { marked } from "marked";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
@@ -77,6 +78,7 @@ export default function WorkItemDrawer({
   });
 
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [descMode, setDescMode] = useState<"write" | "preview">("write");
   useEffect(() => {
     if (detail.data) setDraft(toDraft(detail.data));
   }, [detail.data]);
@@ -100,9 +102,11 @@ export default function WorkItemDrawer({
       push("Microsoft.VSTS.Scheduling.StartDate", dr.startDate, orig.startDate);
       push("Microsoft.VSTS.Scheduling.FinishDate", dr.finishDate, orig.finishDate);
       if (dr.description !== orig.description) {
+        // The description is authored as markdown and stored in ADO as the
+        // rendered HTML (breaks: single newlines become <br>, like v1).
         patches.push({
           reference_name: d.description_field,
-          value: `<div>${dr.description.replace(/\n/g, "<br>")}</div>`,
+          value: `<div>${marked.parse(dr.description, { async: false, breaks: true })}</div>`,
         });
       }
       if (patches.length === 0) return false;
@@ -246,14 +250,46 @@ export default function WorkItemDrawer({
               </div>
             </div>
 
-            <label className="block text-xs text-muted">
-              Description
-              <Textarea
-                className="mt-1 h-28 w-full"
-                value={draft.description}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-              />
-            </label>
+            <div className="block text-xs text-muted">
+              <div className="flex items-center justify-between">
+                <span>Description</span>
+                <div className="flex gap-1">
+                  {(["write", "preview"] as const).map((m) => (
+                    <button
+                      key={m}
+                      className={
+                        descMode === m
+                          ? "rounded px-2 py-0.5 text-[11px] font-medium bg-accent-soft text-accent"
+                          : "rounded px-2 py-0.5 text-[11px] text-faint hover:text-text"
+                      }
+                      onClick={() => setDescMode(m)}
+                    >
+                      {m === "write" ? "Write" : "Preview"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {descMode === "write" ? (
+                <Textarea
+                  aria-label="Description (markdown)"
+                  className="mt-1 h-28 w-full"
+                  placeholder="Supports markdown: **bold**, - lists, `code`, [links](url)"
+                  value={draft.description}
+                  onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                />
+              ) : (
+                <div
+                  className="md-preview mt-1 min-h-28 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
+                  // Rendered from the user's own local draft only.
+                  dangerouslySetInnerHTML={{
+                    __html: marked.parse(draft.description || "*Nothing to preview*", {
+                      async: false,
+                      breaks: true,
+                    }),
+                  }}
+                />
+              )}
+            </div>
 
             <div className="text-xs text-faint">
               {detail.data.area_path} · {detail.data.iteration_path}

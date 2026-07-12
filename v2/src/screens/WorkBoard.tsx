@@ -65,6 +65,10 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const [scope, setScope] = useState(""); // "" = my work, else team name
   const [filterText, setFilterText] = useState("");
   const [filterType, setFilterType] = useState("");
+  // Hiding Done frees a third of the board for the detail drawer.
+  const [hideDone, setHideDone] = useState(
+    () => localStorage.getItem("tcm-v2-hide-done") === "on",
+  );
   const [openItem, setOpenItem] = useState<number | null>(null);
   const [quickTitle, setQuickTitle] = useState("");
   const [quickType, setQuickType] = useState("Task");
@@ -196,6 +200,21 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
               <option key={t}>{t}</option>
             ))}
           </Select>
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={hideDone}
+              onChange={(e) => {
+                setHideDone(e.target.checked);
+                try {
+                  localStorage.setItem("tcm-v2-hide-done", e.target.checked ? "on" : "off");
+                } catch {
+                  // session-only
+                }
+              }}
+            />
+            Hide Done
+          </label>
 
           <div className="ml-auto flex items-center gap-2">
             <Select
@@ -251,8 +270,8 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
         )}
 
         {board.data && (
-          <div className="grid grid-cols-3 gap-3">
-            {COLUMNS.map((col) => {
+          <div className={hideDone ? "grid grid-cols-2 gap-3" : "grid grid-cols-3 gap-3"}>
+            {COLUMNS.filter((col) => !(hideDone && col === "Done")).map((col) => {
               const items = visible.filter((i) => i.column === col);
               return (
                 <div
