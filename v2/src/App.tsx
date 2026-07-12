@@ -76,6 +76,28 @@ export default function App() {
 
   useEffect(() => initTheme(), []);
 
+  // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
+  // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
+  useEffect(() => {
+    const order: Section[] = ["manual", "import", "edit", "run", "suites"];
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.shiftKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        setWorkMode((w) => !w);
+        return;
+      }
+      const n = Number(e.key);
+      if (n >= 1 && n <= order.length) {
+        e.preventDefault();
+        setSection(order[n - 1]);
+        setWorkMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // One writer for all prefs so no path forgets to persist.
   useEffect(() => {
     try {

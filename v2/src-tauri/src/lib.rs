@@ -189,11 +189,16 @@ async fn submit_queue(
     queue: Vec<model::TestCase>,
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
+    area_path: Option<String>,
+    iteration_path: Option<String>,
 ) -> Result<Vec<SubmitItemResult>, String> {
     // Best-effort board visibility (ported from v1 CreationWorker._ensure_suite):
     // make sure the PBI's requirement-based suite exists before creating, so
     // linked cases surface on the board's test count. Failures never block
-    // creation.
+    // creation. The PBI's own paths double as the default area/iteration for
+    // created cases (unset picker = "Same as PBI").
+    let mut pbi_area = String::new();
+    let mut pbi_iteration = String::new();
     if let Ok(token) = get_fresh_token(&app).await {
         let client = ado::AdoClient::new(token);
         if let Ok((area, iteration)) = client
@@ -203,8 +208,14 @@ async fn submit_queue(
             let _ = client
                 .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
                 .await;
+            pbi_area = area;
+            pbi_iteration = iteration;
         }
     }
+    let effective_area = area_path.filter(|s| !s.is_empty()).unwrap_or(pbi_area);
+    let effective_iteration = iteration_path
+        .filter(|s| !s.is_empty())
+        .unwrap_or(pbi_iteration);
 
     let total = queue.len() as u32;
     let mut results: Vec<SubmitItemResult> = vec![];
@@ -221,6 +232,8 @@ async fn submit_queue(
             tc,
             module_ref.as_deref(),
             preconditions_ref.as_deref(),
+            &effective_area,
+            &effective_iteration,
         )
         .await;
         let _ = SubmitProgress {
@@ -245,6 +258,8 @@ async fn process_queue_item(
     tc: &model::TestCase,
     m_ref: Option<&str>,
     p_ref: Option<&str>,
+    area_path: &str,
+    iteration_path: &str,
 ) -> SubmitItemResult {
     let failed = |error: String| SubmitItemResult {
         index,
@@ -267,7 +282,7 @@ async fn process_queue_item(
             .await
             .map(|_| (existing_id, "updated")),
         None => match client
-            .create_test_case(organization, project, tc, m_ref, "", "", p_ref)
+            .create_test_case(organization, project, tc, m_ref, area_path, iteration_path, p_ref)
             .await
         {
             Ok(new_id) => client
@@ -354,6 +369,21 @@ async fn update_test_case(
 #[specta::specta]
 fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
     import_parser::export_queue_to_json(&queue, &path)
+}
+
+/// The project's Area or Iteration paths for the create pickers.
+#[tauri::command]
+#[specta::specta]
+async fn classification_paths(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    structure: String,
+) -> Result<Vec<String>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_classification_paths(&organization, &project, &structure)
+        .await
 }
 
 #[tauri::command]
@@ -838,7 +868,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         work_item_comments,
         add_comment,
         avatar_b64,
-        quick_create_item
+        quick_create_item,
+        classification_paths
     ])
 }
 

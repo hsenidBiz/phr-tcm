@@ -316,6 +316,35 @@ async fn full_cases_parse_steps_and_optional_refs() {
     assert_eq!(c.automation_status, "Not Automated"); // empty -> default
 }
 
+#[tokio::test]
+async fn classification_paths_walk_names_not_path_field() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/classificationnodes/areas"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "HRM",
+            "path": "\\HRM\\Area", // must be ignored - carries the extra segment
+            "children": [
+                {"name": "Gamma Guardians", "path": "\\HRM\\Area\\Gamma Guardians",
+                 "children": [{"name": "Sprint 9"}]}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let paths = client
+        .get_classification_paths("org", "proj", "areas")
+        .await
+        .unwrap();
+    assert_eq!(
+        paths,
+        vec!["HRM", "HRM\\Gamma Guardians", "HRM\\Gamma Guardians\\Sprint 9"]
+    );
+    // Discovery failure degrades to empty, never an error.
+    let bad = AdoClient::with_base_urls("tok".into(), "http://127.0.0.1:1".into(), "x".into());
+    assert!(bad.get_classification_paths("o", "p", "areas").await.unwrap().is_empty());
+}
+
 /// The tool must never destroy data: no DELETE requests, ever.
 #[test]
 fn client_source_has_no_delete_calls() {

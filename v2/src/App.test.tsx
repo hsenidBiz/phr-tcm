@@ -104,6 +104,23 @@ test("prefs restore section, scope and selected PBI", async () => {
   expect(await screen.findByText("Login flow")).toBeInTheDocument();
 });
 
+test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () => {
+  signedInMocks((cmd) => {
+    if (cmd === "fetch_board") return { items: [], states_by_type: {} };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+  expect(screen.getByRole("heading", { name: "Import File" })).toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
+  expect(screen.getByRole("heading", { name: "Work Manager" })).toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
+  expect(screen.getByRole("heading", { name: "Import File" })).toBeInTheDocument();
+});
+
 test("update banner appears when a newer version exists", async () => {
   mockIPC((cmd) => {
     if (cmd === "auth_status") return { signed_in: false, account: null };

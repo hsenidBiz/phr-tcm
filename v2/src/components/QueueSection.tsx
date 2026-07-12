@@ -8,6 +8,7 @@ import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Select } from "./ui/select";
 
 /** The shared pending-creation queue with the review gate, live progress and
  * exports. Manual Entry and Import File both render this under their own
@@ -30,6 +31,22 @@ export default function QueueSection({
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [areaPath, setAreaPath] = useState("");
+  const [iterationPath, setIterationPath] = useState("");
+
+  // Classification trees load lazily, only once the review gate opens.
+  const areas = useQuery({
+    queryKey: ["classification", org, project, "areas"],
+    queryFn: () => unwrap(commands.classificationPaths(org, project, "areas")),
+    enabled: reviewing,
+    staleTime: 60 * 60_000,
+  });
+  const iterations = useQuery({
+    queryKey: ["classification", org, project, "iterations"],
+    queryFn: () => unwrap(commands.classificationPaths(org, project, "iterations")),
+    enabled: reviewing,
+    staleTime: 60 * 60_000,
+  });
 
   const existing = useQuery({
     queryKey: ["pbi-tc-titles", org, pbiId],
@@ -75,6 +92,8 @@ export default function QueueSection({
         queue,
         prefs.moduleRef,
         prefs.preconditionsRef,
+        areaPath || null,
+        iterationPath || null,
       );
       if (r.status === "error") throw new Error(r.error);
       return r.data;
@@ -176,6 +195,37 @@ export default function QueueSection({
           <p className="text-xs text-muted">
             Processing {progress.done}/{progress.total}...
           </p>
+        </div>
+      )}
+
+      {reviewing && (
+        <div className="flex flex-wrap gap-3">
+          <label className="flex flex-col gap-1 text-xs text-muted">
+            Area path for new cases
+            <Select
+              className="w-64 py-1.5"
+              value={areaPath}
+              onChange={(e) => setAreaPath(e.target.value)}
+            >
+              <option value="">Same as PBI</option>
+              {(areas.data ?? []).map((p) => (
+                <option key={p}>{p}</option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted">
+            Iteration for new cases
+            <Select
+              className="w-64 py-1.5"
+              value={iterationPath}
+              onChange={(e) => setIterationPath(e.target.value)}
+            >
+              <option value="">Same as PBI</option>
+              {(iterations.data ?? []).map((p) => (
+                <option key={p}>{p}</option>
+              ))}
+            </Select>
+          </label>
         </div>
       )}
 

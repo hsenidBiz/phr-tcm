@@ -242,6 +242,14 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           </div>
         )}
 
+        {board.data && board.data.items.length === 0 && (
+          <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
+            {scope
+              ? `Nothing on Team ${scope}'s board yet.`
+              : "Nothing assigned to you in this project - quick create one above, or switch to a team board."}
+          </p>
+        )}
+
         {board.data && (
           <div className="grid grid-cols-3 gap-3">
             {COLUMNS.map((col) => {

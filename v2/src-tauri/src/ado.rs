@@ -836,6 +836,42 @@ impl AdoClient {
         Ok(())
     }
 
+    /// The project's Area or Iteration tree flattened to path strings,
+    /// ported from v1 get_classification_paths: built from node NAMES, not
+    /// the node's `path` field (that carries an extra \Area or \Iteration
+    /// segment the stored field values don't have). Failure -> empty so
+    /// pickers fall back gracefully. Read only.
+    pub async fn get_classification_paths(
+        &self,
+        organization: &str,
+        project: &str,
+        structure: &str,
+    ) -> Result<Vec<String>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/classificationnodes/{}?$depth=14&api-version=7.1",
+            self.base_url, organization, project, structure
+        );
+        let root = match self.get_json(url).await {
+            Ok(v) => v,
+            Err(_) => return Ok(vec![]),
+        };
+        fn walk(node: &serde_json::Value, prefix: &str, out: &mut Vec<String>) {
+            let name = node["name"].as_str().unwrap_or_default();
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}\\{name}")
+            };
+            out.push(path.clone());
+            for child in node["children"].as_array().cloned().unwrap_or_default() {
+                walk(&child, &path, out);
+            }
+        }
+        let mut paths = vec![];
+        walk(&root, "", &mut paths);
+        Ok(paths)
+    }
+
     /// A work item's area + iteration path (used to home the PBI's test
     /// plan). Read only.
     pub async fn get_work_item_paths(

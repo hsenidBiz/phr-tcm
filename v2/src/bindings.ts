@@ -20,7 +20,7 @@ export const commands = {
 	 *  500 ms spacing (rate-limit respect), new cases linked to the PBI, updates
 	 *  patched in place. A failed item never aborts the rest.
 	 */
-	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase[], moduleRef: string | null, preconditionsRef: string | null) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef })),
+	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath })),
 	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
 	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
@@ -72,6 +72,8 @@ export const commands = {
 	avatarB64: (url: string) => __TAURI_INVOKE<string | null>("avatar_b64", { url }),
 	/**  Quick create a Task/Bug from the board, optionally assigned to me. */
 	quickCreateItem: (organization: string, project: string, wiType: string, title: string, assignToMe: boolean) => typedError<number, AdoError>(__TAURI_INVOKE("quick_create_item", { organization, project, wiType, title, assignToMe })),
+	/**  The project's Area or Iteration paths for the create pickers. */
+	classificationPaths: (organization: string, project: string, structure: string) => typedError<string[], AdoError>(__TAURI_INVOKE("classification_paths", { organization, project, structure })),
 };
 
 /** Events */
