@@ -8,6 +8,8 @@ export type RunnerSession = {
   planName: string;
   suiteId: number;
   pbi: PbiHit;
+  /** Restrict the runner to these test case ids; empty/absent = all. */
+  caseIds?: number[];
 };
 
 const KEY = "tcm-v2-runner-session";

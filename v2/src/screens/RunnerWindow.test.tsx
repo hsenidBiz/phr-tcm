@@ -6,7 +6,7 @@ import RunnerWindow from "./RunnerWindow";
 
 // getCurrentWindow().close() must be a no-op in jsdom.
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ close: vi.fn(), setFocus: vi.fn() }),
+  getCurrentWindow: () => ({ close: vi.fn(), setFocus: vi.fn(), setAlwaysOnTop: vi.fn() }),
 }));
 
 beforeEach(() => {
@@ -90,6 +90,28 @@ test("plays a case, records an outcome, submits per-point with step results", as
   expect(o.outcome).toBe("Passed");
   expect(o.step_ids).toEqual(["2", "3"]);
   expect(o.step_outcomes).toEqual(["Passed", null]);
+});
+
+test("session caseIds restrict the runner's case list", async () => {
+  localStorage.setItem(
+    "tcm-v2-runner-session",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      planId: 9,
+      planName: "Plan",
+      suiteId: 91,
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      caseIds: [999],
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  expect(await screen.findByText("No linked test cases to run.")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
 });
 
 test("File bug appears only after a failure", async () => {

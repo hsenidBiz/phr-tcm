@@ -4,7 +4,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import RunPanel from "./RunPanel";
 
-afterEach(() => clearMocks());
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+});
 
 function renderPanel() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -18,6 +21,10 @@ function renderPanel() {
 function mockAll(submitted: { runName?: string; outcomes?: unknown[] }) {
   mockIPC((cmd, args) => {
     switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
       case "ensure_pbi_suite":
         return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
       case "list_test_points":
@@ -91,4 +98,38 @@ test("skipped points are not submitted", async () => {
   await screen.findByText("Valid login");
   // Nothing chosen: button disabled.
   expect(screen.getByRole("button", { name: /Record 0 outcomes/ })).toBeDisabled();
+});
+
+test("row clicks select cases for a targeted runner session", async () => {
+  mockAll({});
+  renderPanel();
+  await screen.findByText("Valid login");
+  expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
+
+  // Clicking again deselects.
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
+});
+
+test("suite resolution is cached in localStorage and reused", async () => {
+  localStorage.setItem(
+    "tcm-v2-suite:acme/42",
+    JSON.stringify({ plan_id: 9, plan_name: "Cached Plan", suite_id: 91 }),
+  );
+  let ensured = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "ensure_pbi_suite") {
+      ensured++;
+      return { plan_id: 9, plan_name: "Fresh Plan", suite_id: 91 };
+    }
+    if (cmd === "list_test_points") return [];
+  });
+  renderPanel();
+  expect(await screen.findByText(/Cached Plan/)).toBeInTheDocument();
+  expect(ensured).toBe(0);
 });
