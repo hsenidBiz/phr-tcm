@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit } from "../bindings";
@@ -21,9 +21,10 @@ export default function ImportFile({
 
   const importFile = useMutation({
     mutationFn: async () => {
+      // JSON is the import format (the AI round-trip file exports produce).
       const path = await open({
         multiple: false,
-        filters: [{ name: "Import", extensions: ["xlsx", "csv", "json"] }],
+        filters: [{ name: "Test cases (JSON)", extensions: ["json"] }],
       });
       if (typeof path !== "string") return null;
       const r = await commands.parseImportFile(path);
@@ -42,20 +43,6 @@ export default function ImportFile({
     onError: (e) => toast.error(`Import failed: ${e.message}`),
   });
 
-  const saveTemplate = useMutation({
-    mutationFn: async () => {
-      const path = await save({
-        defaultPath: "test-case-template.xlsx",
-        filters: [{ name: "Excel", extensions: ["xlsx"] }],
-      });
-      if (!path) return;
-      const r = await commands.writeTemplate(path);
-      if (r.status === "error") throw new Error(r.error);
-      toast.success("Template saved.");
-    },
-    onError: (e) => toast.error(`Could not save template: ${e.message}`),
-  });
-
   if (!org || !project || !pbi) {
     return (
       <p className="text-sm text-muted">
@@ -70,15 +57,12 @@ export default function ImportFile({
       <section className="max-w-2xl space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Import test cases</h2>
         <p className="text-sm text-muted">
-          9-column xlsx/csv or AI round-trip JSON. A filled TestCaseID updates
-          that work item; a blank one creates a new case.
+          The JSON round-trip format (what Export JSON produces, AI-editable).
+          A kept "id" updates that work item; a null id creates a new case.
         </p>
         <div className="flex gap-2">
           <Button disabled={importFile.isPending} onClick={() => importFile.mutate()}>
-            {importFile.isPending ? "Importing..." : "Import file..."}
-          </Button>
-          <Button variant="outline" onClick={() => saveTemplate.mutate()}>
-            Save template...
+            {importFile.isPending ? "Importing..." : "Import JSON..."}
           </Button>
         </div>
         {warnings.length > 0 && (

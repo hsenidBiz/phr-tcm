@@ -26,7 +26,9 @@ test("import feeds the shared queue; failed items stay queued", async () => {
     if (cmd === "plugin:event|unlisten") return null;
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases") return [];
-    if (cmd === "plugin:dialog|open") return "C:\\cases.xlsx";
+    if (cmd === "plugin:dialog|open") return "C:\\cases.json";
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
     if (cmd === "parse_import_file")
       return {
         cases: [
@@ -47,7 +49,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
     }
   });
   renderScreen();
-  fireEvent.click(screen.getByRole("button", { name: "Import file..." }));
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON..." }));
   await screen.findByText("Good");
   expect(screen.getByText("Row 9: something odd")).toBeInTheDocument();
 

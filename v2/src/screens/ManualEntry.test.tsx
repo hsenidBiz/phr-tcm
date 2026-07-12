@@ -25,6 +25,8 @@ function baseMocks(handler: (cmd: string, args: unknown) => unknown = () => unde
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
     if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke", "regression"];
+    if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [{ id: 201, title: "Existing case", tags: "", automation_status: "Planned" }];
     return handler(cmd, args);
   });
@@ -34,8 +36,16 @@ function addCase(title: string) {
   fireEvent.change(screen.getByPlaceholderText("Test case title"), {
     target: { value: title },
   });
-  fireEvent.change(screen.getByPlaceholderText(/One step per line/), {
-    target: { value: "Open page => Page shown\nSubmit form" },
+  // Fill step 1 via the shared StepsEditor grid, add + fill step 2.
+  fireEvent.change(screen.getByLabelText("Step 1 action"), {
+    target: { value: "Open page" },
+  });
+  fireEvent.change(screen.getByLabelText("Step 1 expected"), {
+    target: { value: "Page shown" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "+ Add Step" }));
+  fireEvent.change(screen.getByLabelText("Step 2 action"), {
+    target: { value: "Submit form" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Add to queue" }));
 }

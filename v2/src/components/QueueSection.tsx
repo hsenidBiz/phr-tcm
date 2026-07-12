@@ -58,24 +58,27 @@ export default function QueueSection({
   const unlistenRef = useRef<(() => void) | null>(null);
   useEffect(() => () => unlistenRef.current?.(), []);
 
-  const exportQueue = useMutation({
-    mutationFn: async (format: "xlsx" | "json" | "html") => {
-      const names = { xlsx: "Excel", json: "JSON", html: "HTML report" } as const;
+  const exportJson = useMutation({
+    mutationFn: async () => {
       const path = await save({
-        defaultPath: `test-case-queue.${format}`,
-        filters: [{ name: names[format], extensions: [format] }],
+        defaultPath: "test-case-queue.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
-      const r =
-        format === "xlsx"
-          ? await commands.exportQueue(path, queue)
-          : format === "json"
-            ? await commands.exportQueueJson(path, queue)
-            : await commands.exportQueueHtml(path, queue, `PBI #${pbiId}`);
+      const r = await commands.exportQueueJson(path, queue);
       if (r.status === "error") throw new Error(r.error);
       toast.success("Queue exported.");
     },
     onError: (e) => toast.error(`Export failed: ${e.message}`),
+  });
+
+  // v1's "View": render to a temp file and open the browser - no download.
+  const viewHtml = useMutation({
+    mutationFn: async () => {
+      const r = await commands.viewQueueHtml(queue, `PBI #${pbiId}`);
+      if (r.status === "error") throw new Error(r.error);
+    },
+    onError: (e) => toast.error(`Could not open the report: ${e.message}`),
   });
 
   const submit = useMutation({
@@ -134,26 +137,18 @@ export default function QueueSection({
           <Button
             variant="outline"
             size="sm"
-            disabled={queue.length === 0}
-            onClick={() => exportQueue.mutate("xlsx")}
+            disabled={queue.length === 0 || viewHtml.isPending}
+            onClick={() => viewHtml.mutate()}
           >
-            Export xlsx...
+            View in browser
           </Button>
           <Button
             variant="outline"
             size="sm"
             disabled={queue.length === 0}
-            onClick={() => exportQueue.mutate("json")}
+            onClick={() => exportJson.mutate()}
           >
             Export JSON...
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queue.length === 0}
-            onClick={() => exportQueue.mutate("html")}
-          >
-            Export HTML...
           </Button>
         </div>
       </div>

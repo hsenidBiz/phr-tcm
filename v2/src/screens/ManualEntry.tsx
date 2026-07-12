@@ -1,24 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { commands, type PbiHit, type TestCase } from "../bindings";
+import { commands, type PbiHit, type Step, type TestCase } from "../bindings";
+import ModuleField from "../components/ModuleField";
 import QueueSection from "../components/QueueSection";
+import StepsEditor from "../components/StepsEditor";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { useQueue } from "../hooks/useQueue";
 import { unwrap } from "../lib/ipc";
-
-function parseStepsText(text: string) {
-  return text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [action, expected = ""] = line.split("=>");
-      return { action: action.trim(), expected: expected.trim() };
-    })
-    .filter((s) => s.action);
-}
 
 export default function ManualEntry({
   org,
@@ -31,7 +21,7 @@ export default function ManualEntry({
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [title, setTitle] = useState("");
-  const [stepsText, setStepsText] = useState("");
+  const [steps, setSteps] = useState<Step[]>([{ action: "", expected: "" }]);
   const [tags, setTags] = useState("");
   const [status, setStatus] = useState("Not Automated");
   const [moduleValue, setModuleValue] = useState("");
@@ -54,12 +44,13 @@ export default function ManualEntry({
     );
   }
 
+  const cleanSteps = steps.filter((s) => s.action.trim());
+
   function addManual() {
-    const steps = parseStepsText(stepsText);
-    if (!title.trim() || steps.length === 0) return;
+    if (!title.trim() || cleanSteps.length === 0) return;
     const tc: TestCase = {
       title: title.trim(),
-      steps,
+      steps: cleanSteps,
       tags: tags.trim(),
       automation_status: status,
       module_value: moduleValue.trim(),
@@ -68,7 +59,7 @@ export default function ManualEntry({
     };
     setQueue((q) => [...q, tc]);
     setTitle("");
-    setStepsText("");
+    setSteps([{ action: "", expected: "" }]);
     setTags("");
     setModuleValue("");
     setPreconditions("");
@@ -76,55 +67,56 @@ export default function ManualEntry({
 
   return (
     <div className="space-y-4">
-      <section className="max-w-2xl space-y-2 rounded-md border border-border bg-surface p-4">
+      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">New test case</h2>
-        <Input
-          className="w-full"
-          placeholder="Test case title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <Textarea
-          className="h-28 w-full font-mono text-xs"
-          placeholder={"One step per line:\naction => expected result"}
-          value={stepsText}
-          onChange={(e) => setStepsText(e.target.value)}
-        />
-        <div className="flex gap-2">
-          <Input
-            className="flex-1"
-            placeholder="Tags (semicolon-separated)"
-            list="project-tags"
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
-          />
-          <datalist id="project-tags">
-            {(projectTags.data ?? []).map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-          <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option>Not Automated</option>
-            <option>Planned</option>
-          </Select>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-2">
+            <Input
+              className="w-full"
+              placeholder="Test case title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <Input
+                className="flex-1"
+                placeholder="Tags (semicolon-separated)"
+                list="project-tags"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+              />
+              <datalist id="project-tags">
+                {(projectTags.data ?? []).map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option>Not Automated</option>
+                <option>Planned</option>
+              </Select>
+            </div>
+            <ModuleField
+              org={org}
+              project={project}
+              value={moduleValue}
+              onChange={setModuleValue}
+              className="w-full"
+            />
+            <Textarea
+              className="h-20 w-full"
+              placeholder="Preconditions (optional)"
+              value={preconditions}
+              onChange={(e) => setPreconditions(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted">Steps</p>
+            <StepsEditor steps={steps} onChange={setSteps} />
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Input
-            className="flex-1"
-            placeholder="Module (optional)"
-            value={moduleValue}
-            onChange={(e) => setModuleValue(e.target.value)}
-          />
-          <Input
-            className="flex-1"
-            placeholder="Preconditions (optional)"
-            value={preconditions}
-            onChange={(e) => setPreconditions(e.target.value)}
-          />
-          <Button variant="outline" size="sm" onClick={addManual}>
-            Add to queue
-          </Button>
-        </div>
+        <Button disabled={!title.trim() || cleanSteps.length === 0} onClick={addManual}>
+          Add to queue
+        </Button>
       </section>
 
       <QueueSection org={org} project={project} pbiId={pbi.id} queue={queue} setQueue={setQueue} />
