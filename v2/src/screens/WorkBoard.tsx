@@ -28,7 +28,7 @@ function Card({ item, onDragStart }: { item: BoardItem; onDragStart: () => void 
         <Badge color={typeColor[item.work_item_type] ?? "#9ca3af"}>
           {item.work_item_type}
         </Badge>
-        <span className="text-xs text-faint">#{item.id}</span>
+        <span className="id-mono text-xs text-faint">#{item.id}</span>
       </div>
       <div className="text-text">{item.title}</div>
       <div className="flex items-center gap-2 text-xs text-muted">

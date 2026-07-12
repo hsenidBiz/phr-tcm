@@ -109,7 +109,7 @@ export default function RunPanel({
             {points.data.map((p) => (
               <tr key={p.point_id} className="border-b border-border/50">
                 <td className="px-2 py-1 text-text">
-                  <span className="text-faint">#{p.test_case_id}</span> {p.test_case_name}
+                  <span className="id-mono text-faint">#{p.test_case_id}</span> {p.test_case_name}
                 </td>
                 <td
                   className={cn(

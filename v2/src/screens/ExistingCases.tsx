@@ -269,7 +269,7 @@ export default function ExistingCases({
                 onClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
               >
                 {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="text-faint">#{c.id}</span>
+                <span className="id-mono text-faint">#{c.id}</span>
                 <span className="text-text">{c.title}</span>
                 <span className="ml-auto text-xs text-faint">
                   {c.steps.length} steps · {c.automation_status}
