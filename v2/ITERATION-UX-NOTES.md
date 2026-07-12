@@ -1,3 +1,20 @@
+# Iteration UX — v1.3.1 (2026-07-12)
+
+First post-cutover patch (developed on master).
+
+- **First-run UI tour**: spotlight walkthrough over the context bar, PBI
+  picker, every sidebar tab (incl. Import as the upload point), Work
+  Manager and Settings; auto-runs once after first sign-in
+  (`tcm-v2-tour-done`); replayable from Settings > Interface tour.
+- **Fixes**: suite-search folders collapsible mid-search (separate
+  search-mode collapse set); background prefetch survives React Query's
+  5-min gc (gcTime 60/30 min on plans-suites + points, prefetch AND
+  screen queries); recent-PBI titles word-wrap; context bar wraps at
+  narrow widths (icon-only Work Manager below lg, email hidden below xl,
+  min-w PBI picker); empty-state flask bubbles emit from the mouth.
+
+---
+
 # Iteration UX — v1.3.0 (2026-07-12)
 
 Third same-day UX round from live testing. Branch stays
