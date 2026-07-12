@@ -89,7 +89,9 @@ test("folders build a collapsible tree from parent links", async () => {
   renderSuites();
 
   expect(await screen.findByText("Regression")).toBeInTheDocument();
-  // Child is visible (expanded by default), collapse hides it.
+  // Folders start collapsed; clicking expands, clicking again re-collapses.
+  expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Regression"));
   expect(screen.getByText("PBI 50 suite")).toBeInTheDocument();
   fireEvent.click(screen.getByText("Regression"));
   expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();

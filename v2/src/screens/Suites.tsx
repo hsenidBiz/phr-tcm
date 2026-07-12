@@ -104,7 +104,8 @@ export default function Suites({
 }) {
   const qc = useQueryClient();
   const [openSuite, setOpenSuite] = useState<number | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  // Folders start collapsed; clicking a folder row toggles it open.
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
 
   // Scanning every plan is the expensive part - cache the result for the
@@ -200,7 +201,7 @@ export default function Suites({
   const renderNode = (node: SuiteNode, planId: number, depth: number): ReactNode => {
     const s = node.suite;
     const isFolder = node.children.length > 0;
-    const isCollapsed = collapsed.has(s.id);
+    const isCollapsed = !expanded.has(s.id);
     const allIds = descendantIds(node);
 
     return (
@@ -210,7 +211,7 @@ export default function Suites({
           style={{ paddingLeft: 8 + depth * 18 }}
           onClick={() =>
             isFolder
-              ? setCollapsed((c) => {
+              ? setExpanded((c) => {
                   const next = new Set(c);
                   if (next.has(s.id)) next.delete(s.id);
                   else next.add(s.id);
