@@ -108,7 +108,7 @@ function CaseEditor({
 
       <div className="flex items-center gap-3">
         <Button size="sm" disabled={Boolean(problem) || saveCase.isPending} onClick={() => saveCase.mutate()}>
-          {saveCase.isPending ? "Saving..." : "Save changes"}
+          {saveCase.isPending ? "Saving" : "Save changes"}
         </Button>
         {problem && <span className="text-xs text-danger">{problem}</span>}
       </div>
@@ -265,10 +265,10 @@ export default function ExistingCases({
         <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
           <span className="font-medium text-accent">{selected.size} selected</span>
           <Button size="sm" onClick={() => setBulkOpen(true)}>
-            Bulk edit...
+            Bulk edit
           </Button>
           <Button variant="outline" size="sm" onClick={() => exportJson.mutate()}>
-            Export JSON...
+            Export JSON
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
             Clear

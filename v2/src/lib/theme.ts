@@ -5,7 +5,7 @@
  * accent presets still compose on top (data-accent wins over the theme's
  * default accent because its CSS comes later). */
 
-export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean";
+export type ThemeId = "light" | "slate" | "midnight" | "graphite" | "ocean" | "oled";
 /** What the user picked - "system" follows the OS light/dark preference. */
 export type ThemeChoice = ThemeId | "system";
 
@@ -21,6 +21,7 @@ export const THEMES: {
   { id: "midnight", label: "Midnight", dark: true, preview: { bg: "#090e1a", surface: "#10172a", accent: "#818cf8" } },
   { id: "graphite", label: "Graphite", dark: true, preview: { bg: "#141416", surface: "#1d1d21", accent: "#f59e0b" } },
   { id: "ocean", label: "Ocean", dark: true, preview: { bg: "#071a1f", surface: "#0d262e", accent: "#22d3ee" } },
+  { id: "oled", label: "OLED", dark: true, preview: { bg: "#000000", surface: "#0b0b0d", accent: "#22c55e" } },
 ];
 
 const ID_KEY = "tcm-v2-theme-id";

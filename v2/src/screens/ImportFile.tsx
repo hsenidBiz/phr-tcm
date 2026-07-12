@@ -68,7 +68,7 @@ export default function ImportFile({
         </p>
         <div className="flex gap-2">
           <Button disabled={importFile.isPending} onClick={() => importFile.mutate()}>
-            {importFile.isPending ? "Importing..." : "Import JSON..."}
+            {importFile.isPending ? "Importing" : "Import JSON"}
           </Button>
         </div>
         {warnings.length > 0 && (

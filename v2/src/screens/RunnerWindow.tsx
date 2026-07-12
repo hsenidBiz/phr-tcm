@@ -327,7 +327,7 @@ export default function RunnerWindow() {
         </button>
       </header>
 
-      {cases.isLoading && <p className="p-4 text-sm text-muted">Loading test cases...</p>}
+      {cases.isLoading && <p className="p-4 text-sm text-muted">Loading test cases</p>}
       {cases.isError && <p className="p-4 text-sm text-danger">{cases.error.message}</p>}
       {cases.data && list.length === 0 && (
         <p className="p-4 text-sm text-muted">No linked test cases to run.</p>
@@ -399,13 +399,13 @@ export default function RunnerWindow() {
 
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" disabled={snipping} onClick={snip}>
-              <Scissors size={14} /> {snipping ? "Waiting for snip..." : "Snip"}
+              <Scissors size={14} /> {snipping ? "Waiting for snip" : "Snip"}
             </Button>
             <Button variant="outline" size="sm" onClick={pasteImage}>
               <ClipboardPaste size={14} /> Paste
             </Button>
             <Button variant="outline" size="sm" onClick={attachFile}>
-              <Paperclip size={14} /> Attach file...
+              <Paperclip size={14} /> Attach file
             </Button>
             {(st.outcome === "Failed" || Object.values(st.stepOutcomes).includes("Failed")) && (
               <Button variant="outline" size="sm" onClick={() => setBugFor(current)}>
@@ -490,7 +490,7 @@ export default function RunnerWindow() {
           disabled={markedCount === 0 || finish.isPending}
           onClick={() => finish.mutate()}
         >
-          {finish.isPending ? "Recording..." : `Finish (${markedCount})`}
+          {finish.isPending ? "Recording" : `Finish (${markedCount})`}
         </Button>
       </footer>
 

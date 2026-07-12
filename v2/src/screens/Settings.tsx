@@ -183,11 +183,11 @@ export default function Settings({ org, project }: { org: string; project: strin
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Updates</h2>
         <p className="text-sm text-muted">
-          Version {version.data ?? "..."} - updates install automatically from
+          Version {version.data ?? "-"} - updates install automatically from
           the releases feed.
         </p>
         <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
-          {check.isPending ? "Checking..." : "Check for updates"}
+          {check.isPending ? "Checking" : "Check for updates"}
         </Button>
       </section>
     </div>

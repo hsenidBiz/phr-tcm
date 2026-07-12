@@ -38,7 +38,7 @@ export default function ModuleField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
-        <option value="">Module...</option>
+        <option value="">Module</option>
         {!values.data!.includes(value) && value && <option value={value}>{value}</option>}
         {values.data!.map((m) => (
           <option key={m}>{m}</option>

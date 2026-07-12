@@ -49,7 +49,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
     }
   });
   renderScreen();
-  fireEvent.click(screen.getByRole("button", { name: "Import JSON..." }));
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
   await screen.findByText("Good");
   expect(screen.getByText("Row 9: something odd")).toBeInTheDocument();
 

@@ -66,7 +66,7 @@ function SuitePoints({
     retry: false,
   });
 
-  if (points.isLoading) return <p className="ml-8 text-sm text-muted">Loading test points...</p>;
+  if (points.isLoading) return <p className="ml-8 text-sm text-muted">Loading test points</p>;
   if (points.isError)
     return <p className="ml-8 text-sm text-danger">{points.error.message}</p>;
   if (!points.data || points.data.length === 0)
@@ -311,16 +311,16 @@ export default function Suites({
         <Input
           aria-label="Search suites"
           className="w-64 px-2 py-1"
-          placeholder="Search plans and suites..."
+          placeholder="Search plans and suites"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {busy && <span className="text-xs text-muted">Collecting test cases...</span>}
+        {busy && <span className="text-xs text-muted">Collecting test cases</span>}
       </div>
 
       {plans.isFetching && (
         <p className="text-sm text-muted">
-          {scan ? `Scanning test plans ${scan.done} of ${scan.total}...` : "Loading test plans..."}
+          {scan ? `Scanning test plans ${scan.done} of ${scan.total}` : "Loading test plans"}
         </p>
       )}
       {plans.isError && <p className="text-sm text-danger">{plans.error.message}</p>}

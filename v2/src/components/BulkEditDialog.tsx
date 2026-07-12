@@ -170,7 +170,7 @@ export default function BulkEditDialog({
 
         {progress && (
           <p className="text-xs text-muted">
-            Updating {progress.done} of {progress.total}...
+            Updating {progress.done} of {progress.total}
           </p>
         )}
 
@@ -179,7 +179,7 @@ export default function BulkEditDialog({
             Cancel
           </Button>
           <Button size="sm" disabled={nothingChosen || apply.isPending} onClick={() => apply.mutate()}>
-            {apply.isPending ? "Applying..." : `Apply to ${cases.length}`}
+            {apply.isPending ? "Applying" : `Apply to ${cases.length}`}
           </Button>
         </div>
       </div>

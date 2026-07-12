@@ -73,7 +73,7 @@ export default function BugDialog({
             Cancel
           </Button>
           <Button size="sm" disabled={!title.trim() || file.isPending} onClick={() => file.mutate()}>
-            {file.isPending ? "Filing..." : "File bug"}
+            {file.isPending ? "Filing" : "File bug"}
           </Button>
         </div>
       </div>

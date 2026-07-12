@@ -259,7 +259,7 @@ export default function WorkItemDrawer({
             </div>
 
             <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? "Saving..." : "Save changes"}
+              {save.isPending ? "Saving" : "Save changes"}
             </Button>
 
             <CommentsPanel org={org} project={project} itemId={itemId} />

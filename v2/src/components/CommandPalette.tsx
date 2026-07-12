@@ -51,7 +51,7 @@ export default function CommandPalette({
       overlayClassName="fixed inset-0 z-40 bg-black/40"
     >
       <Command.Input
-        placeholder="Type a command or search..."
+        placeholder="Type a command or search"
         className="w-full border-b border-border bg-transparent px-4 py-3 text-sm text-text outline-none placeholder:text-faint"
       />
       <Command.List className="max-h-72 overflow-y-auto p-2 text-sm">

@@ -241,7 +241,7 @@ export default function RunPanel({
 
       {suite.isFetching && !suite.data && (
         <p className="text-sm text-muted">
-          {scan ? `Scanning test plans ${scan.done} of ${scan.total}...` : "Resolving test suite..."}
+          {scan ? `Scanning test plans ${scan.done} of ${scan.total}` : "Resolving test suite"}
         </p>
       )}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}
@@ -256,12 +256,12 @@ export default function RunPanel({
           >
             <RefreshCw size={12} />
           </button>
-          {suite.isFetching && <span>(re-detecting...)</span>}
+          {suite.isFetching && <span>(re-detecting)</span>}
         </p>
       )}
 
       {points.isFetching && suite.data && !points.data && (
-        <p className="text-sm text-muted">Loading test points...</p>
+        <p className="text-sm text-muted">Loading test points</p>
       )}
       {points.isError && <p className="text-sm text-danger">{points.error.message}</p>}
       {points.data && points.data.length === 0 && (
@@ -273,7 +273,7 @@ export default function RunPanel({
           <Input
             aria-label="Filter points"
             className="w-56 px-2 py-1"
-            placeholder="Filter by name or id..."
+            placeholder="Filter by name or id"
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
           />
@@ -395,7 +395,7 @@ export default function RunPanel({
           onClick={() => submit.mutate()}
         >
           {submit.isPending
-            ? "Recording..."
+            ? "Recording"
             : `Record ${selectedCount} outcome${selectedCount === 1 ? "" : "s"}`}
         </Button>
         {selected.size > 0 && (

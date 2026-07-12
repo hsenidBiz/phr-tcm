@@ -104,7 +104,7 @@ export default function CommentsPanel({
         <Textarea
           aria-label="New comment"
           className="h-14 flex-1 text-sm"
-          placeholder="Write a comment..."
+          placeholder="Write a comment"
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
@@ -114,7 +114,7 @@ export default function CommentsPanel({
           disabled={!text.trim() || add.isPending}
           onClick={() => add.mutate()}
         >
-          {add.isPending ? "..." : "Post"}
+          {add.isPending ? "Posting" : "Post"}
         </Button>
       </div>
 

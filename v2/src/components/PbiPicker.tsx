@@ -102,7 +102,7 @@ export default function PbiPicker({
       />
       {open && (query || recents.length > 0) && (
         <div className="absolute left-0 top-full z-30 mt-1 w-96 rounded-md border border-border bg-surface shadow-xl">
-          {query && hits.isLoading && <p className="px-3 py-2 text-sm text-muted">Searching...</p>}
+          {query && hits.isLoading && <p className="px-3 py-2 text-sm text-muted">Searching</p>}
           {query && hits.isError && (
             <p className="px-3 py-2 text-sm text-danger">{hits.error.message}</p>
           )}

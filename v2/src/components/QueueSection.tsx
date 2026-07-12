@@ -148,7 +148,19 @@ export default function QueueSection({
             disabled={queue.length === 0}
             onClick={() => exportJson.mutate()}
           >
-            Export JSON...
+            Export JSON
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queue.length === 0 || submit.isPending}
+            onClick={() => {
+              const n = queue.length;
+              setQueue([]);
+              toast.info(`Removed ${n} queued case${n === 1 ? "" : "s"}.`);
+            }}
+          >
+            Remove all
           </Button>
         </div>
       </div>
@@ -200,14 +212,14 @@ export default function QueueSection({
           </div>
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted">
-              Processing {progress.done}/{progress.total}...
+              Processing {progress.done}/{progress.total}
             </p>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => {
                 commands.cancelSubmit();
-                toast.info("Stopping after the current item...");
+                toast.info("Stopping after the current item");
               }}
             >
               Cancel
@@ -250,7 +262,7 @@ export default function QueueSection({
       <div className="flex items-center gap-3">
         {!reviewing ? (
           <Button disabled={queue.length === 0} onClick={() => setReviewing(true)}>
-            Review {queue.length} test case{queue.length === 1 ? "" : "s"}...
+            Review {queue.length} test case{queue.length === 1 ? "" : "s"}
           </Button>
         ) : (
           <>
@@ -258,7 +270,7 @@ export default function QueueSection({
               disabled={queue.length === 0 || hasBlockers || submit.isPending}
               onClick={() => submit.mutate()}
             >
-              {submit.isPending ? "Creating..." : `Confirm & create ${queue.length}`}
+              {submit.isPending ? "Creating" : `Confirm & create ${queue.length}`}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
               Back

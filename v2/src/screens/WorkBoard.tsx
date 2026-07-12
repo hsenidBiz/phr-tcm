@@ -181,7 +181,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           <Input
             aria-label="Filter items"
             className="w-56 py-1.5"
-            placeholder="Filter by title, id, tag..."
+            placeholder="Filter by title, id, tag"
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
           />
@@ -210,7 +210,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             <Input
               aria-label="New item title"
               className="w-56 py-1.5"
-              placeholder="Quick create title..."
+              placeholder="Quick create title"
               value={quickTitle}
               onChange={(e) => setQuickTitle(e.target.value)}
               onKeyDown={(e) => {

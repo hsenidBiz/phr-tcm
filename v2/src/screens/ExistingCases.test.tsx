@@ -91,7 +91,7 @@ test("card clicks drive multi-select and unlock the bulk toolbar", async () => {
   expect(screen.getByText("2 selected")).toBeInTheDocument();
 
   // Bulk edit both: pick a status, apply serially.
-  fireEvent.click(screen.getByRole("button", { name: "Bulk edit..." }));
+  fireEvent.click(screen.getByRole("button", { name: "Bulk edit" }));
   fireEvent.change(screen.getByLabelText(/Automation status/), {
     target: { value: "Not Automated" },
   });

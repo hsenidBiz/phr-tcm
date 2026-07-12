@@ -60,7 +60,7 @@ export default function ContextBar({
           setPbi(null);
         }}
       >
-        <option value="">Organization...</option>
+        <option value="">Organization</option>
         {(orgs.data ?? []).map((o) => (
           <option key={o.name} value={o.name}>
             {o.name}
@@ -77,7 +77,7 @@ export default function ContextBar({
           setPbi(null);
         }}
       >
-        <option value="">Project...</option>
+        <option value="">Project</option>
         {(projects.data ?? []).map((p) => (
           <option key={p.id} value={p.name}>
             {p.name}

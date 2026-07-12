@@ -24,7 +24,7 @@ export default function RecentPbis({
           onClick={() => onPick(p)}
         >
           <span className="id-mono">#{p.id}</span>{" "}
-          {p.title.length > 45 ? `${p.title.slice(0, 45)}...` : p.title}
+          {p.title.length > 45 ? `${p.title.slice(0, 45)}…` : p.title}
         </button>
       ))}
     </div>

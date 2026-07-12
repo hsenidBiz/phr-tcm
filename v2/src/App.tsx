@@ -197,12 +197,20 @@ export default function App() {
           <div className="flex items-center justify-between border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
             <span>Version {update.data} is available.</span>
             <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
-              {applyUpdate.isPending ? "Updating..." : "Restart to update"}
+              {applyUpdate.isPending ? "Updating" : "Restart to update"}
             </Button>
           </div>
         )}
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+        {/* Work Manager scrolls inside its own columns - the outer main
+            must not add a second scrollbar around the board. */}
+        <main
+          className={
+            signedIn && workMode
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden p-6"
+              : "min-h-0 flex-1 overflow-y-auto p-6"
+          }
+        >
           {!signedIn ? (
             <div className="flex h-full flex-col items-center justify-center gap-4">
               <h1 className="text-xl font-semibold">Test Case Manager V2</h1>
@@ -211,13 +219,15 @@ export default function App() {
                 cases, runs, and work items.
               </p>
               <Button disabled={signIn.isPending} onClick={() => signIn.mutate()}>
-                {signIn.isPending ? "Waiting for browser..." : "Sign in with Microsoft"}
+                {signIn.isPending ? "Waiting for browser" : "Sign in with Microsoft"}
               </Button>
             </div>
           ) : workMode ? (
             <>
               <h1 className="mb-4 text-lg font-semibold">Work Manager</h1>
-              <WorkBoard org={org} project={project} />
+              <div className="min-h-0 flex-1">
+                <WorkBoard org={org} project={project} />
+              </div>
             </>
           ) : (
             <>
