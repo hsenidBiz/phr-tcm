@@ -1,131 +1,45 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
-import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
-import { Input, Textarea } from "../components/ui/input";
-import { Select } from "../components/ui/select";
 import { useFieldRefs } from "../hooks/useFieldRefs";
+import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
+import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 
-function parseStepsText(text: string) {
-  return text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [action, expected = ""] = line.split("=>");
-      return { action: action.trim(), expected: expected.trim() };
-    })
-    .filter((s) => s.action);
-}
-
-const draftKey = (org: string, pbiId: number) => `tcm-v2-draft:${org}/${pbiId}`;
-
-function loadDraft(org: string, pbiId: number): TestCase[] {
-  try {
-    const raw = localStorage.getItem(draftKey(org, pbiId));
-    return raw ? (JSON.parse(raw) as TestCase[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-export default function QueuePanel({
+/** The shared pending-creation queue with the review gate, live progress and
+ * exports. Manual Entry and Import File both render this under their own
+ * input areas (v1: every tab feeds one queue). */
+export default function QueueSection({
   org,
   project,
   pbiId,
-  existingTitles = [],
+  queue,
+  setQueue,
 }: {
   org: string;
   project: string;
   pbiId: number;
-  existingTitles?: string[];
+  queue: TestCase[];
+  setQueue: React.Dispatch<React.SetStateAction<TestCase[]>>;
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
-  const [queue, setQueue] = useState<TestCase[]>(() => loadDraft(org, pbiId));
-  const [warnings, setWarnings] = useState<string[]>([]);
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const [title, setTitle] = useState("");
-  const [stepsText, setStepsText] = useState("");
-  const [tags, setTags] = useState("");
-  const [status, setStatus] = useState("Not Automated");
-
-  // Draft persists per PBI so a closed app never loses queued work (v1 parity).
-  useEffect(() => {
-    try {
-      if (queue.length === 0) localStorage.removeItem(draftKey(org, pbiId));
-      else localStorage.setItem(draftKey(org, pbiId), JSON.stringify(queue));
-    } catch {
-      // storage unavailable -> session-only
-    }
-  }, [queue, org, pbiId]);
+  const existing = useQuery({
+    queryKey: ["pbi-tc-titles", org, pbiId],
+    queryFn: () => unwrap(commands.pbiTestCases(org, pbiId)),
+    retry: false,
+  });
+  const existingTitles = (existing.data ?? []).map((t) => t.title);
 
   const unlistenRef = useRef<(() => void) | null>(null);
   useEffect(() => () => unlistenRef.current?.(), []);
-
-  function addManual() {
-    const steps = parseStepsText(stepsText);
-    if (!title.trim() || steps.length === 0) return;
-    setQueue((q) => [
-      ...q,
-      {
-        title: title.trim(),
-        steps,
-        tags: tags.trim(),
-        automation_status: status,
-        module_value: "",
-        preconditions: "",
-        update_id: null,
-      },
-    ]);
-    setTitle("");
-    setStepsText("");
-    setTags("");
-  }
-
-  const importFile = useMutation({
-    mutationFn: async () => {
-      const path = await open({
-        multiple: false,
-        filters: [{ name: "Import", extensions: ["xlsx", "csv", "json"] }],
-      });
-      if (typeof path !== "string") return null;
-      const r = await commands.parseImportFile(path);
-      if (r.status === "error") throw new Error(r.error);
-      return r.data;
-    },
-    onSuccess: (data) => {
-      if (!data) return;
-      setQueue((q) => [...q, ...data.cases]);
-      setWarnings(data.warnings);
-      toast.success(
-        `Imported ${data.cases.length} case${data.cases.length === 1 ? "" : "s"}` +
-          (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : ""),
-      );
-    },
-    onError: (e) => toast.error(`Import failed: ${e.message}`),
-  });
-
-  const saveTemplate = useMutation({
-    mutationFn: async () => {
-      const path = await save({
-        defaultPath: "test-case-template.xlsx",
-        filters: [{ name: "Excel", extensions: ["xlsx"] }],
-      });
-      if (!path) return;
-      const r = await commands.writeTemplate(path);
-      if (r.status === "error") throw new Error(r.error);
-      toast.success("Template saved.");
-    },
-    onError: (e) => toast.error(`Could not save template: ${e.message}`),
-  });
 
   const exportQueue = useMutation({
     mutationFn: async (format: "xlsx" | "json") => {
@@ -176,6 +90,7 @@ export default function QueuePanel({
       const failed = new Set(data.filter((r) => r.action === "failed").map((r) => r.index));
       setQueue((q) => q.filter((_, i) => failed.has(i)));
       qc.invalidateQueries({ queryKey: ["pbi-tcs", org, pbiId] });
+      qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, pbiId] });
       const ok = data.length - failed.size;
       if (failed.size === 0) toast.success(`All ${ok} test case(s) processed.`);
       else toast.warning(`${ok} processed, ${failed.size} failed - failed items stay queued.`);
@@ -189,79 +104,33 @@ export default function QueuePanel({
 
   return (
     <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-      <h2 className="text-sm font-semibold text-text">
-        Queue for PBI #{pbiId} ({queue.length} queued)
-      </h2>
-
-      <div className="grid gap-2 md:grid-cols-2">
-        <div className="space-y-2">
-          <Input
-            className="w-full"
-            placeholder="Test case title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <Textarea
-            className="h-24 w-full font-mono text-xs"
-            placeholder={"One step per line:\naction => expected result"}
-            value={stepsText}
-            onChange={(e) => setStepsText(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <Input
-              className="flex-1"
-              placeholder="Tags (semicolon-separated)"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-            />
-            <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option>Not Automated</option>
-              <option>Planned</option>
-            </Select>
-            <Button variant="outline" size="sm" onClick={addManual}>
-              Add to queue
-            </Button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={importFile.isPending}
-              onClick={() => importFile.mutate()}
-            >
-              Import file...
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => saveTemplate.mutate()}>
-              Save template...
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={queue.length === 0}
-              onClick={() => exportQueue.mutate("xlsx")}
-            >
-              Export xlsx...
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={queue.length === 0}
-              onClick={() => exportQueue.mutate("json")}
-            >
-              Export JSON...
-            </Button>
-          </div>
-          {warnings.length > 0 && (
-            <ul className="max-h-24 space-y-0.5 overflow-y-auto text-xs text-warning">
-              {warnings.map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          )}
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-text">
+          Queue for PBI #{pbiId} ({queue.length} queued)
+        </h2>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queue.length === 0}
+            onClick={() => exportQueue.mutate("xlsx")}
+          >
+            Export xlsx...
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queue.length === 0}
+            onClick={() => exportQueue.mutate("json")}
+          >
+            Export JSON...
+          </Button>
         </div>
       </div>
+
+      {queue.length === 0 && (
+        <p className="text-sm text-muted">Nothing queued yet - add cases above.</p>
+      )}
 
       {queue.length > 0 && (
         <ul className="space-y-1">

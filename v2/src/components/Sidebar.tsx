@@ -1,12 +1,23 @@
-import { ClipboardList, KanbanSquare, Settings as SettingsIcon } from "lucide-react";
+import {
+  FileUp,
+  FolderTree,
+  PenLine,
+  Pencil,
+  PlayCircle,
+} from "lucide-react";
 import { cn } from "../lib/cn";
 
-export type Section = "tests" | "work" | "settings";
+/** The v1 tabs, one screen each. Settings and the Work Manager switch live
+ * in the context bar - the sidebar stays reserved for test-case workflows
+ * so new tabs can be added over time. */
+export type Section = "manual" | "import" | "edit" | "run" | "suites" | "settings";
 
-const ITEMS: { id: Section; label: string; icon: typeof ClipboardList }[] = [
-  { id: "tests", label: "Test Cases", icon: ClipboardList },
-  { id: "work", label: "Work", icon: KanbanSquare },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+const ITEMS: { id: Section; label: string; icon: typeof PenLine }[] = [
+  { id: "manual", label: "Manual Entry", icon: PenLine },
+  { id: "import", label: "Import File", icon: FileUp },
+  { id: "edit", label: "Edit Test Cases", icon: Pencil },
+  { id: "run", label: "Run Tests", icon: PlayCircle },
+  { id: "suites", label: "Test Suites", icon: FolderTree },
 ];
 
 export default function Sidebar({
@@ -17,7 +28,7 @@ export default function Sidebar({
   onSelect: (s: Section) => void;
 }) {
   return (
-    <nav className="flex h-full w-48 flex-col gap-1 border-r border-border bg-surface p-2">
+    <nav className="flex h-full w-52 flex-col gap-1 border-r border-border bg-surface p-2">
       <div className="px-3 py-3 text-sm font-semibold text-text">
         Test Case Manager
         <span className="ml-1 rounded bg-accent-soft px-1 text-[10px] font-semibold text-accent">

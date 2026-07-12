@@ -11,10 +11,12 @@ export default function CommandPalette({
   onNavigate,
   org,
   onSwitchProject,
+  onToggleWork,
 }: {
   onNavigate: (s: Section) => void;
   org: string;
   onSwitchProject: (p: string) => void;
+  onToggleWork: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -58,12 +60,16 @@ export default function CommandPalette({
         </Command.Empty>
 
         <Command.Group heading="Go to" className="px-1 text-[10px] uppercase tracking-wide text-faint">
-          <Item onSelect={() => run(() => onNavigate("tests"))}>Test Cases</Item>
-          <Item onSelect={() => run(() => onNavigate("work"))}>Work board</Item>
+          <Item onSelect={() => run(() => onNavigate("manual"))}>Manual Entry</Item>
+          <Item onSelect={() => run(() => onNavigate("import"))}>Import File</Item>
+          <Item onSelect={() => run(() => onNavigate("edit"))}>Edit Test Cases</Item>
+          <Item onSelect={() => run(() => onNavigate("run"))}>Run Tests</Item>
+          <Item onSelect={() => run(() => onNavigate("suites"))}>Test Suites</Item>
           <Item onSelect={() => run(() => onNavigate("settings"))}>Settings</Item>
         </Command.Group>
 
         <Command.Group heading="Actions" className="px-1 text-[10px] uppercase tracking-wide text-faint">
+          <Item onSelect={() => run(onToggleWork)}>Toggle Work Manager</Item>
           <Item
             onSelect={() =>
               run(() => setTheme(getTheme() === "light" ? "dark" : "light"))

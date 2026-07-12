@@ -1,21 +1,40 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Toaster, toast } from "sonner";
-import { commands } from "./bindings";
+import { commands, type PbiHit } from "./bindings";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
 import { Button } from "./components/ui/button";
 import { getTheme, initTheme } from "./lib/theme";
-import Browse from "./screens/Browse";
+import EditCases from "./screens/EditCases";
+import ImportFile from "./screens/ImportFile";
+import ManualEntry from "./screens/ManualEntry";
+import RunTests from "./screens/RunTests";
 import Settings from "./screens/Settings";
+import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
 
 const PREFS_KEY = "tcm-v2-prefs";
 
-type Prefs = { org: string; project: string; section: Section };
+type Prefs = {
+  org: string;
+  project: string;
+  section: Section;
+  pbi: PbiHit | null;
+  workMode: boolean;
+};
+
+const SECTIONS: Section[] = ["manual", "import", "edit", "run", "suites", "settings"];
 
 function loadPrefs(): Prefs {
+  const defaults: Prefs = {
+    org: "",
+    project: "",
+    section: "manual",
+    pbi: null,
+    workMode: false,
+  };
   try {
     const raw = localStorage.getItem(PREFS_KEY);
     if (raw) {
@@ -23,50 +42,64 @@ function loadPrefs(): Prefs {
       return {
         org: p.org ?? "",
         project: p.project ?? "",
-        // "mode" was the pre-iteration-1 key; map it forward.
-        section: p.section ?? (p.mode === "work" ? "work" : "tests"),
+        section: SECTIONS.includes(p.section) ? p.section : "manual",
+        pbi:
+          p.pbi && typeof p.pbi.id === "number" && typeof p.pbi.title === "string"
+            ? { id: p.pbi.id, title: p.pbi.title, work_item_type: p.pbi.work_item_type ?? "" }
+            : null,
+        workMode: Boolean(p.workMode),
       };
     }
   } catch {
     // corrupted prefs -> defaults
   }
-  return { org: "", project: "", section: "tests" };
-}
-
-function savePrefs(p: Prefs) {
-  try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
-  } catch {
-    // storage unavailable -> session-only
-  }
+  return defaults;
 }
 
 const TITLES: Record<Section, string> = {
-  tests: "Test Cases",
-  work: "Work",
+  manual: "Manual Entry",
+  import: "Import File",
+  edit: "Edit Test Cases",
+  run: "Run Tests",
+  suites: "Test Suites",
   settings: "Settings",
 };
 
 export default function App() {
   const qc = useQueryClient();
-  const prefs = loadPrefs();
-  const [section, setSectionRaw] = useState<Section>(prefs.section);
-  const [org, setOrgRaw] = useState(prefs.org);
-  const [project, setProjectRaw] = useState(prefs.project);
+  const initial = loadPrefs();
+  const [section, setSection] = useState<Section>(initial.section);
+  const [org, setOrgRaw] = useState(initial.org);
+  const [project, setProjectRaw] = useState(initial.project);
+  const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
+  const [workMode, setWorkMode] = useState(initial.workMode);
 
   useEffect(() => initTheme(), []);
 
-  const setSection = (s: Section) => {
-    setSectionRaw(s);
-    savePrefs({ org, project, section: s });
-  };
+  // One writer for all prefs so no path forgets to persist.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        PREFS_KEY,
+        JSON.stringify({ org, project, section, pbi, workMode }),
+      );
+    } catch {
+      // storage unavailable -> session-only
+    }
+  }, [org, project, section, pbi, workMode]);
+
   const setOrg = (o: string) => {
     setOrgRaw(o);
-    savePrefs({ org: o, project: "", section });
+    setProjectRaw("");
+    setPbiRaw(null);
   };
   const setProject = (p: string) => {
     setProjectRaw(p);
-    savePrefs({ org, project: p, section });
+    setPbiRaw(null);
+  };
+  const goToSection = (s: Section) => {
+    setSection(s);
+    setWorkMode(false); // any tab click exits Work Manager mode
   };
 
   const status = useQuery({
@@ -105,12 +138,13 @@ export default function App() {
     <div className="flex h-screen bg-bg text-text">
       <Toaster theme={getTheme() === "light" ? "light" : "dark"} richColors position="bottom-right" />
       <CommandPalette
-        onNavigate={setSection}
+        onNavigate={goToSection}
         org={org}
         onSwitchProject={setProject}
+        onToggleWork={() => setWorkMode((w) => !w)}
       />
 
-      {signedIn && <Sidebar section={section} onSelect={setSection} />}
+      {signedIn && <Sidebar section={section} onSelect={goToSection} />}
 
       <div className="flex min-w-0 flex-1 flex-col">
         {signedIn && (
@@ -119,7 +153,12 @@ export default function App() {
             setOrg={setOrg}
             project={project}
             setProject={setProject}
+            pbi={pbi}
+            setPbi={setPbiRaw}
             account={status.data?.account ?? null}
+            workMode={workMode}
+            onToggleWork={() => setWorkMode((w) => !w)}
+            onOpenSettings={() => goToSection("settings")}
           />
         )}
 
@@ -144,11 +183,19 @@ export default function App() {
                 {signIn.isPending ? "Waiting for browser..." : "Sign in with Microsoft"}
               </Button>
             </div>
+          ) : workMode ? (
+            <>
+              <h1 className="mb-4 text-lg font-semibold">Work Manager</h1>
+              <WorkBoard org={org} project={project} />
+            </>
           ) : (
             <>
               <h1 className="mb-4 text-lg font-semibold">{TITLES[section]}</h1>
-              {section === "tests" && <Browse org={org} project={project} />}
-              {section === "work" && <WorkBoard org={org} project={project} />}
+              {section === "manual" && <ManualEntry org={org} project={project} pbi={pbi} />}
+              {section === "import" && <ImportFile org={org} project={project} pbi={pbi} />}
+              {section === "edit" && <EditCases org={org} project={project} pbi={pbi} />}
+              {section === "run" && <RunTests org={org} project={project} pbi={pbi} />}
+              {section === "suites" && <Suites org={org} project={project} />}
               {section === "settings" && <Settings org={org} project={project} />}
             </>
           )}

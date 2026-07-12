@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import App from "./App";
 
@@ -18,7 +18,18 @@ function renderApp() {
   );
 }
 
-test("shows sign-in view when signed out (no sidebar)", async () => {
+function signedInMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
+  mockIPC((cmd, args) => {
+    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    return extra(cmd, args);
+  });
+}
+
+test("signed out: sign-in view only, no sidebar tabs", async () => {
   mockIPC((cmd) => {
     if (cmd === "auth_status") return { signed_in: false, account: null };
     if (cmd === "check_update") return null;
@@ -27,55 +38,77 @@ test("shows sign-in view when signed out (no sidebar)", async () => {
   expect(
     await screen.findByRole("button", { name: /sign in with microsoft/i }),
   ).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Work" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Manual Entry" })).not.toBeInTheDocument();
 });
 
-test("signed in: sidebar sections switch screens", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
-    if (cmd === "check_update") return null;
-    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+test("sidebar shows the v1 tabs and switches screens", async () => {
+  signedInMocks((cmd) => {
+    if (cmd === "list_plans_with_suites") return [];
   });
   renderApp();
   expect(await screen.findByText("a@b.com")).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Test Cases" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Work" }));
-  expect(screen.getByRole("heading", { name: "Work" })).toBeInTheDocument();
+  for (const tab of ["Import File", "Edit Test Cases", "Run Tests", "Test Suites"]) {
+    fireEvent.click(screen.getByRole("button", { name: tab }));
+    expect(screen.getByRole("heading", { name: tab })).toBeInTheDocument();
+  }
+});
 
-  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+test("settings opens from the gear, not the sidebar", async () => {
+  signedInMocks();
+  renderApp();
+  await screen.findByText("a@b.com");
+  const { within } = await import("@testing-library/react");
+  const nav = screen.getByRole("navigation");
+  expect(within(nav).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Settings"));
   expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
   expect(screen.getByText("Appearance")).toBeInTheDocument();
+});
+
+test("work pill toggles the board and a tab click returns", async () => {
+  signedInMocks((cmd) => {
+    if (cmd === "fetch_board") return { items: [], states_by_type: {} };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  fireEvent.click(screen.getByRole("button", { name: /Work Manager \(Beta\)/ }));
+  expect(screen.getByRole("heading", { name: "Work Manager" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Test Case Manager/ })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Run Tests" }));
+  expect(screen.getByRole("heading", { name: "Run Tests" })).toBeInTheDocument();
+});
+
+test("prefs restore section, scope and selected PBI", async () => {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "run",
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      workMode: false,
+    }),
+  );
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "ensure_pbi_suite") return { plan_id: 9, plan_name: "Plan", suite_id: 91 };
+    if (cmd === "list_test_points") return [];
+  });
+  renderApp();
+  expect(await screen.findByRole("heading", { name: "Run Tests" })).toBeInTheDocument();
+  // The chosen PBI is restored into the context bar chip.
+  expect(await screen.findByText("Login flow")).toBeInTheDocument();
 });
 
 test("update banner appears when a newer version exists", async () => {
   mockIPC((cmd) => {
     if (cmd === "auth_status") return { signed_in: false, account: null };
-    if (cmd === "check_update") return "0.3.0";
+    if (cmd === "check_update") return "0.5.0";
   });
   renderApp();
-  expect(await screen.findByText(/Version 0.3.0 is available/)).toBeInTheDocument();
-});
-
-test("remembers org/project/section across launches", async () => {
-  localStorage.setItem(
-    "tcm-v2-prefs",
-    JSON.stringify({ org: "acme", project: "Web", section: "work" }),
-  );
-  mockIPC((cmd, args) => {
-    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
-    if (cmd === "check_update") return null;
-    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
-    if (cmd === "list_projects")
-      return (args as { organization: string }).organization === "acme"
-        ? [{ id: "p1", name: "Web" }]
-        : [];
-    if (cmd === "fetch_board") return { items: [], states_by_type: {} };
-  });
-  renderApp();
-  expect(await screen.findByRole("heading", { name: "Work" })).toBeInTheDocument();
-  const orgSelect = (await screen.findByRole("combobox", {
-    name: /organization/i,
-  })) as HTMLSelectElement;
-  await waitFor(() => expect(orgSelect.value).toBe("acme"));
+  expect(await screen.findByText(/Version 0.5.0 is available/)).toBeInTheDocument();
 });
