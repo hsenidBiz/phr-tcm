@@ -73,7 +73,7 @@ export default function TagField({
   return (
     <div ref={ref} className={cn("relative", className)}>
       <div
-        className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-bg px-1.5 py-1 text-sm focus-within:border-border-strong"
+        className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-surface px-1.5 py-1 text-sm focus-within:border-border-strong"
         onClick={() => {
           setOpen(true);
           inputRef.current?.focus();

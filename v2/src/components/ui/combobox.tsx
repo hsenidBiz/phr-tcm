@@ -61,7 +61,7 @@ export default function Combobox({
       <button
         type="button"
         aria-label={ariaLabel}
-        className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-bg px-2 py-1.5 text-left text-sm transition-colors hover:border-border-strong"
+        className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5 text-left text-sm transition-colors hover:border-border-strong"
         onClick={() => setOpen((o) => !o)}
       >
         <span className={cn("truncate", value ? "text-text" : "text-faint")}>
@@ -90,7 +90,7 @@ export default function Combobox({
           <div className="border-b border-border p-1.5">
             <input
               ref={inputRef}
-              className="w-full rounded bg-bg px-2 py-1 text-sm text-text outline-none placeholder:text-faint"
+              className="w-full rounded bg-surface-2 px-2 py-1 text-sm text-text outline-none placeholder:text-faint"
               placeholder="Search…"
               value={query}
               onChange={(e) => {

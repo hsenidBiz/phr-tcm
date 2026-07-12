@@ -427,7 +427,9 @@ async fn test_cases_by_ids(
         .await
 }
 
-/// Allowed values for ANY Test Case field (module picklists etc.).
+/// Values for ANY Test Case field: the definition's picklist when one
+/// exists, otherwise the distinct values in use on the project's Test
+/// Cases (many orgs keep Modules as plain values, not allowedValues).
 #[tauri::command]
 #[specta::specta]
 async fn test_case_field_values(
@@ -437,8 +439,15 @@ async fn test_case_field_values(
     field_ref: String,
 ) -> Result<Vec<String>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token)
+    let client = ado::AdoClient::new(token);
+    let picklist = client
         .get_field_allowed_values(&organization, &project, "Test Case", &field_ref)
+        .await?;
+    if !picklist.is_empty() {
+        return Ok(picklist);
+    }
+    client
+        .field_values_in_use(&organization, &project, &field_ref)
         .await
 }
 

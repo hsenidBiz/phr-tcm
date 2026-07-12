@@ -356,6 +356,78 @@ impl AdoClient {
             .collect())
     }
 
+    /// Distinct values of `field_ref` actually used on the project's Test
+    /// Cases - the fallback when the field definition has no picklist (many
+    /// orgs keep Modules as plain values, not allowedValues). Scans the 200
+    /// most recently changed cases with the field set; values are deduped
+    /// case-insensitively (first casing wins) and sorted. Read only.
+    pub async fn field_values_in_use(
+        &self,
+        organization: &str,
+        project: &str,
+        field_ref: &str,
+    ) -> Result<Vec<String>, AdoError> {
+        // Field refs come from the project's own field list, but they are
+        // interpolated into WIQL - allow only reference-name characters.
+        if field_ref.is_empty()
+            || !field_ref.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+        {
+            return Ok(vec![]);
+        }
+        let wiql = format!(
+            "SELECT [System.Id] FROM workitems \
+             WHERE [System.TeamProject] = @project \
+             AND [System.WorkItemType] = 'Test Case' \
+             AND [{field_ref}] <> '' \
+             ORDER BY [System.ChangedDate] DESC"
+        );
+        let url = format!(
+            "{}/{}/{}/_apis/wit/wiql?$top=200&api-version=7.1",
+            self.base_url, organization, project
+        );
+        let body = self
+            .post_json_query(url, &serde_json::json!({ "query": wiql }))
+            .await?;
+        let ids: Vec<i64> = body["workItems"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|w| w["id"].as_i64())
+            .collect();
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut values: Vec<String> = vec![];
+        let mut seen = std::collections::HashSet::new();
+        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let ids_csv = chunk
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let url = format!(
+                "{}/{}/_apis/wit/workitems?ids={}&fields={}&api-version=7.1",
+                self.base_url,
+                organization,
+                ids_csv,
+                urlencoding::encode(field_ref)
+            );
+            let fetched = self.get_json(url).await?;
+            for wi in fetched["value"].as_array().cloned().unwrap_or_default() {
+                if let Some(v) = wi["fields"][field_ref].as_str() {
+                    let t = v.trim();
+                    if !t.is_empty() && seen.insert(t.to_lowercase()) {
+                        values.push(t.to_string());
+                    }
+                }
+            }
+        }
+        values.sort_by_key(|v| v.to_lowercase());
+        Ok(values)
+    }
+
     /// Azure DevOps caps the workitems batch-GET (?ids=) endpoint at 200 ids.
     const WORKITEM_BATCH_SIZE: usize = 200;
 

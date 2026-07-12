@@ -354,3 +354,42 @@ fn client_source_has_no_delete_calls() {
         "AdoClient must never issue DELETE requests"
     );
 }
+
+#[tokio::test]
+async fn field_values_in_use_dedupes_and_sorts() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/wiql"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "query": "SELECT [System.Id] FROM workitems WHERE [System.TeamProject] = @project AND [System.WorkItemType] = 'Test Case' AND [Custom.Module] <> '' ORDER BY [System.ChangedDate] DESC"
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "workItems": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/o/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": 1, "fields": {"Custom.Module": "Payments"}},
+                {"id": 2, "fields": {"Custom.Module": "auth"}},
+                {"id": 3, "fields": {"Custom.Module": "  payments "}}, // dup after trim, case-insensitive
+                {"id": 4, "fields": {}}                                  // field missing -> skipped
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let values = client.field_values_in_use("o", "p", "Custom.Module").await.unwrap();
+    assert_eq!(values, vec!["auth".to_string(), "Payments".to_string()]);
+}
+
+#[tokio::test]
+async fn field_values_in_use_rejects_unsafe_field_refs() {
+    // Never started server: an unsafe ref must short-circuit without any request.
+    let client = AdoClient::with_base_urls("tok".into(), "http://127.0.0.1:1".into(), "http://127.0.0.1:1".into());
+    let values = client.field_values_in_use("o", "p", "Bad] FROM x; --").await.unwrap();
+    assert!(values.is_empty());
+}
