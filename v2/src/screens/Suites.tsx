@@ -214,7 +214,8 @@ export default function Suites({
     <span
       role="button"
       className={cn(
-        "rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:border-accent hover:text-accent",
+        "rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors",
+        "hover:border-accent hover:bg-accent-soft hover:text-accent",
         busy && "pointer-events-none opacity-50",
       )}
       onClick={(e) => {
