@@ -71,6 +71,30 @@ test("invalid edits disable save with a reason", async () => {
   expect(screen.getByText(/Title is required/)).toBeInTheDocument();
 });
 
+test("group-header click selects every case in the group", async () => {
+  localStorage.setItem("tcm-v2-group-cases", "on");
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        { ...fullCase, id: 201, title: "Login - valid" },
+        { ...fullCase, id: 202, title: "Login - locked out" },
+        { ...fullCase, id: 203, title: "Standalone thing" },
+      ];
+  });
+  renderCases();
+
+  const header = await screen.findByRole("button", {
+    name: "— Login (2) —",
+  });
+  fireEvent.click(header);
+  expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+  // Clicking again clears the group's selection.
+  fireEvent.click(header);
+  expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
+});
+
 test("card clicks drive multi-select and unlock the bulk toolbar", async () => {
   const updatedIds: number[] = [];
   mockIPC((cmd, args) => {

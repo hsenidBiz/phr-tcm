@@ -576,6 +576,27 @@ async fn ensure_pbi_suite(
         .await
 }
 
+/// Read-only suite lookup for background prefetch: finds the PBI's
+/// requirement suite if one exists anywhere, but NEVER creates a plan or
+/// suite (creation stays on the Run Tests screen where the user asked).
+#[tauri::command]
+#[specta::specta]
+async fn find_pbi_suite(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    pbi_id: i32,
+) -> Result<Option<ado_testplan::EnsuredSuite>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let (area, _iteration) = client
+        .get_work_item_paths(&organization, &project, pbi_id)
+        .await?;
+    client
+        .find_pbi_requirement_suite(&organization, &project, pbi_id, &area)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 async fn list_test_points(
@@ -1041,6 +1062,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         view_queue_html,
         test_cases_by_ids,
         test_case_field_values,
+        find_pbi_suite,
         read_file_b64,
         open_snip
     ])

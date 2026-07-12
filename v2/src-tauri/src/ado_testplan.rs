@@ -412,6 +412,68 @@ impl AdoClient {
         Ok(data["id"].as_i64().unwrap_or_default() as i32)
     }
 
+    /// Scan `plans` for the PBI's requirement suite - area-matched plans
+    /// first (the common case finds it quickly), probed in concurrent
+    /// batches; join_all keeps plan order within a batch so the FIRST plan
+    /// holding the suite wins and the scan stops early. Read only.
+    async fn scan_plans_for_suite(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        plans: &[TestPlan],
+        progress: &mut impl FnMut(u32, u32),
+    ) -> Result<Option<EnsuredSuite>, AdoError> {
+        let mut ordered: Vec<&TestPlan> = plans.iter().collect();
+        ordered.sort_by_key(|p| if area_matches(&p.area_path, area_path) { 0 } else { 1 });
+        let total = ordered.len() as u32;
+        let mut done = 0u32;
+        for batch in ordered.chunks(SUITE_SCAN_CONCURRENCY) {
+            let results = futures::future::join_all(
+                batch
+                    .iter()
+                    .map(|plan| self.find_requirement_suite(org, project, plan.id, pbi_id)),
+            )
+            .await;
+            done += batch.len() as u32;
+            progress(done, total);
+            for (plan, res) in batch.iter().zip(results) {
+                // A plan whose suites can't be listed (permissions) is
+                // skipped rather than aborting the search; auth/rate-limit
+                // errors still propagate so callers can re-auth / back off.
+                match res {
+                    Ok(Some(suite)) => {
+                        return Ok(Some(EnsuredSuite {
+                            plan_id: plan.id,
+                            plan_name: plan.name.clone(),
+                            suite_id: suite.id,
+                        }))
+                    }
+                    Ok(None) => {}
+                    Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Read-only lookup of the PBI's requirement suite across every plan -
+    /// the background-prefetch variant of ensure: it NEVER creates a plan
+    /// or suite, so it is safe to run without the user asking to run tests.
+    pub async fn find_pbi_requirement_suite(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+    ) -> Result<Option<EnsuredSuite>, AdoError> {
+        let plans = self.get_test_plans(org, project).await?;
+        self.scan_plans_for_suite(org, project, pbi_id, area_path, &plans, &mut |_, _| {})
+            .await
+    }
+
     /// Find-or-create the area-matched plan and the PBI's requirement suite,
     /// ported from v1 ensure_requirement_suite. Reuses any existing suite so
     /// nothing is duplicated. May POST; never DELETEs.
@@ -439,41 +501,11 @@ impl AdoClient {
         mut progress: impl FnMut(u32, u32),
     ) -> Result<EnsuredSuite, AdoError> {
         let plans = self.get_test_plans(org, project).await?;
-        // Area-matched plans first: the common case finds the suite quickly.
-        let mut ordered: Vec<&TestPlan> = plans.iter().collect();
-        ordered.sort_by_key(|p| if area_matches(&p.area_path, area_path) { 0 } else { 1 });
-        let total = ordered.len() as u32;
-        let mut done = 0u32;
-        // Probe plans in concurrent batches (serial probing made detection
-        // take minutes on big projects). Batches preserve the area-matched-
-        // first ordering, and within a batch join_all keeps plan order, so
-        // the FIRST plan holding the suite still wins and we stop early.
-        for batch in ordered.chunks(SUITE_SCAN_CONCURRENCY) {
-            let results = futures::future::join_all(
-                batch
-                    .iter()
-                    .map(|plan| self.find_requirement_suite(org, project, plan.id, pbi_id)),
-            )
-            .await;
-            done += batch.len() as u32;
-            progress(done, total);
-            for (plan, res) in batch.iter().zip(results) {
-                // A plan whose suites can't be listed (permissions) is
-                // skipped rather than aborting the search; auth/rate-limit
-                // errors still propagate so callers can re-auth / back off.
-                match res {
-                    Ok(Some(suite)) => {
-                        return Ok(EnsuredSuite {
-                            plan_id: plan.id,
-                            plan_name: plan.name.clone(),
-                            suite_id: suite.id,
-                        })
-                    }
-                    Ok(None) => {}
-                    Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
-                    Err(e) => return Err(e),
-                }
-            }
+        if let Some(found) = self
+            .scan_plans_for_suite(org, project, pbi_id, area_path, &plans, &mut progress)
+            .await?
+        {
+            return Ok(found);
         }
 
         // No suite anywhere: find the most specific area-matched plan, or

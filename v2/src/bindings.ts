@@ -86,8 +86,22 @@ export const commands = {
 	viewQueueHtml: (queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
-	/**  Allowed values for ANY Test Case field (module picklists etc.). */
+	/**
+	 *  Values for ANY Test Case field: the definition's picklist when one
+	 *  exists, otherwise the distinct values in use on the project's Test
+	 *  Cases (many orgs keep Modules as plain values, not allowedValues).
+	 */
 	testCaseFieldValues: (organization: string, project: string, fieldRef: string) => typedError<string[], AdoError>(__TAURI_INVOKE("test_case_field_values", { organization, project, fieldRef })),
+	/**
+	 *  Read-only suite lookup for background prefetch: finds the PBI's
+	 *  requirement suite if one exists anywhere, but NEVER creates a plan or
+	 *  suite (creation stays on the Run Tests screen where the user asked).
+	 */
+	findPbiSuite: (organization: string, project: string, pbiId: number) => typedError<{
+	plan_id: number,
+	plan_name: string,
+	suite_id: number,
+} | null, AdoError>(__TAURI_INVOKE("find_pbi_suite", { organization, project, pbiId })),
 	/**  Read any file for attaching to a result (name + base64 bytes). */
 	readFileB64: (path: string) => typedError<RunAttachmentOut, string>(__TAURI_INVOKE("read_file_b64", { path })),
 	/**

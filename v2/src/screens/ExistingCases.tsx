@@ -195,6 +195,19 @@ export default function ExistingCases({
     setAnchor(c.id);
   };
 
+  /** Header click: select every case in the group (click again to clear). */
+  const toggleGroup = (items: TestCaseFull[]) => {
+    const ids = items.map((c) => c.id);
+    setSelected((s) => {
+      const all = ids.every((id) => s.has(id));
+      const next = new Set(s);
+      if (all) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+    if (ids.length) setAnchor(ids[0]);
+  };
+
   const selectedCases = list.filter((c) => selected.has(c.id));
 
   const exportJson = useMutation({
@@ -288,9 +301,15 @@ export default function ExistingCases({
       {ordered.map(({ group, items }) => (
         <div key={group || "__all"} className="space-y-1">
           {group && (
-            <div className="pt-1 text-xs font-semibold uppercase tracking-wide text-faint">
-              {group} <span className="normal-case">({items.length})</span>
-            </div>
+            <button
+              className="group flex w-full items-center justify-center pb-1 pt-2"
+              title="Select all test cases in this group"
+              onClick={() => toggleGroup(items)}
+            >
+              <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                — {group} ({items.length}) —
+              </span>
+            </button>
           )}
           <ul className="space-y-1">
             {items.map((c) => (

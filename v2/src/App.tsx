@@ -7,6 +7,7 @@ import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
 import { Button } from "./components/ui/button";
+import { unwrap } from "./lib/ipc";
 import { getTheme, initTheme } from "./lib/theme";
 import EditCases from "./screens/EditCases";
 import ImportFile from "./screens/ImportFile";
@@ -161,6 +162,53 @@ export default function App() {
   });
 
   const signedIn = Boolean(status.data?.signed_in);
+
+  // Warm the Test Suites data in the background so the screen is ready
+  // when the user navigates there (same key/staleTime as the screen).
+  useEffect(() => {
+    if (!signedIn || !org || !project) return;
+    qc.prefetchQuery({
+      queryKey: ["plans-suites", org, project],
+      queryFn: () => unwrap(commands.listPlansWithSuites(org, project)),
+      staleTime: Infinity,
+    });
+  }, [signedIn, org, project, qc]);
+
+  // Warm Run Tests: resolve the PBI's suite via the READ-ONLY finder
+  // (never creates a plan/suite - creation stays on the Run screen),
+  // seed the same cache RunPanel uses, then prefetch its test points.
+  const pbiId = pbi?.id;
+  useEffect(() => {
+    if (!signedIn || !org || !project || pbiId == null) return;
+    const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
+    (async () => {
+      let suite: { plan_id: number; plan_name: string; suite_id: number } | null = null;
+      try {
+        const raw = localStorage.getItem(suiteKey);
+        suite = raw ? JSON.parse(raw) : null;
+      } catch {
+        suite = null;
+      }
+      if (!suite) {
+        const r = await commands.findPbiSuite(org, project, pbiId).catch(() => null);
+        if (r && r.status === "ok" && r.data) {
+          suite = r.data;
+          try {
+            localStorage.setItem(suiteKey, JSON.stringify(suite));
+          } catch {
+            // cache is best-effort
+          }
+        }
+      }
+      if (!suite) return;
+      const s = suite;
+      qc.setQueryData(["suite", org, project, pbiId], s);
+      qc.prefetchQuery({
+        queryKey: ["points", org, project, s.plan_id, s.suite_id],
+        queryFn: () => unwrap(commands.listTestPoints(org, project, s.plan_id, s.suite_id)),
+      });
+    })();
+  }, [signedIn, org, project, pbiId, qc]);
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">

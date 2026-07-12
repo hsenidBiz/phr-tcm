@@ -221,6 +221,20 @@ export default function RunPanel({
     setAnchor(caseId);
   };
 
+  /** Group-header click: select every case under it (again to clear). */
+  const toggleSection = (pts: TestPoint[]) => {
+    const ids = pts.map((p) => p.test_case_id).filter((x): x is number => x != null);
+    if (!ids.length) return;
+    setSelected((s) => {
+      const all = ids.every((id) => s.has(id));
+      const next = new Set(s);
+      if (all) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+    setAnchor(ids[0]);
+  };
+
   return (
     <section className="space-y-3 rounded-md border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-2">
@@ -327,11 +341,16 @@ export default function RunPanel({
               <Fragment key={name || "__all"}>
                 {name && (
                   <tr>
-                    <td
-                      colSpan={4}
-                      className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-faint"
-                    >
-                      {name} <span className="normal-case">({pts.length})</span>
+                    <td colSpan={4} className="px-2 pb-1 pt-2">
+                      <button
+                        className="group flex w-full items-center justify-center"
+                        title="Select all test cases in this group"
+                        onClick={() => toggleSection(pts)}
+                      >
+                        <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                          — {name} ({pts.length}) —
+                        </span>
+                      </button>
                     </td>
                   </tr>
                 )}
