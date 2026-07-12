@@ -1,5 +1,15 @@
 # v1 → v2 Parity Checklist (v1.0.0 retirement sign-off)
 
+> **1.0.0 update (2026-07-12):** the owner elected to close every DEFERRED
+> item before 1.0.0 rather than sign them off as deferred. All nine are now
+> SHIPPED (HTML export, tag autocomplete, manual module/preconditions,
+> mid-batch cancel, run filters, uploaded-screenshot viewing, last-comment
+> preload, suite->Edit/Run handoff, start/finish dates). Remaining
+> non-parity: the two DROPPED items (focus timer, custom window chrome -
+> both with replacements) and the four CHANGED shapes noted below.
+> Migration and the branch merge are deliberately HELD: v2 continues
+> development on feat/tauri-rewrite; v1 users are not being pointed over yet.
+
 Compiled 2026-07-12 against v1 = v3.2.2 (PyQt5) and v2 = v0.7.0 (Tauri).
 Statuses: **SHIPPED** (parity), **IMPROVED** (parity plus), **CHANGED**
 (same job, different shape - review), **DEFERRED** (not built, reason +
