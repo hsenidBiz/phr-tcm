@@ -1,9 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { KanbanSquare, Moon, Settings as SettingsIcon, Sun } from "lucide-react";
-import { useState } from "react";
+import { KanbanSquare, Settings as SettingsIcon } from "lucide-react";
 import { commands, type PbiHit } from "../bindings";
 import { unwrap } from "../lib/ipc";
-import { getTheme, setTheme } from "../lib/theme";
 import PbiPicker from "./PbiPicker";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -33,10 +31,6 @@ export default function ContextBar({
   onToggleWork: () => void;
   onOpenSettings: () => void;
 }) {
-  const [dark, setDark] = useState(
-    () => document.documentElement.classList.contains("dark") || getTheme() !== "light",
-  );
-
   const orgs = useQuery({
     queryKey: ["orgs"],
     queryFn: () => unwrap(commands.listOrgs()),
@@ -102,17 +96,6 @@ export default function ContextBar({
           onClick={onOpenSettings}
         >
           <SettingsIcon size={16} />
-        </button>
-        <button
-          aria-label="Toggle theme"
-          className="rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text"
-          onClick={() => {
-            const next = !dark;
-            setDark(next);
-            setTheme(next ? "dark" : "light");
-          }}
-        >
-          {dark ? <Sun size={16} /> : <Moon size={16} />}
         </button>
       </div>
     </div>
