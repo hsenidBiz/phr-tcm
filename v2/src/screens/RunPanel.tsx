@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, events, type EnsuredSuite } from "./../bindings";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { cn } from "../lib/cn";
+import { groupIndices } from "../lib/grouping";
 import { unwrap } from "../lib/ipc";
 import { openRunnerWindow } from "../lib/openRunner";
 
@@ -52,6 +53,9 @@ export default function RunPanel({
   const [filterOutcome, setFilterOutcome] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set()); // test case ids
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
+  const [grouped, setGrouped] = useState(
+    () => localStorage.getItem("tcm-v2-group-points") === "on",
+  );
 
   const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
   const readSuiteSeed = (): EnsuredSuite | undefined => {
@@ -153,6 +157,38 @@ export default function RunPanel({
       caseIds,
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
+  const filtered = useMemo(
+    () =>
+      (points.data ?? []).filter((p) => {
+        if (filterOutcome === "none" && p.last_outcome) return false;
+        if (
+          filterOutcome &&
+          filterOutcome !== "none" &&
+          p.last_outcome.toLowerCase() !== filterOutcome
+        )
+          return false;
+        if (filterText) {
+          const t = filterText.toLowerCase();
+          if (
+            !p.test_case_name.toLowerCase().includes(t) &&
+            !String(p.test_case_id ?? "").includes(t)
+          )
+            return false;
+        }
+        return true;
+      }),
+    [points.data, filterOutcome, filterText],
+  );
+
+  // v1 smart grouping over the visible rows (shared title-prefix folders).
+  const sections = useMemo(() => {
+    if (!grouped) return [{ name: "", pts: filtered }];
+    return groupIndices(filtered.map((p) => p.test_case_name)).map(({ name, indices }) => ({
+      name: name || "Ungrouped",
+      pts: indices.map((i) => filtered[i]),
+    }));
+  }, [filtered, grouped]);
+
   const toggleRow = (caseId: number | null) => {
     if (caseId == null) return;
     setSelected((s) => {
@@ -237,6 +273,21 @@ export default function RunPanel({
             <option value="notapplicable">Not Applicable</option>
             <option value="none">Never run</option>
           </Select>
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={grouped}
+              onChange={(e) => {
+                setGrouped(e.target.checked);
+                try {
+                  localStorage.setItem("tcm-v2-group-points", e.target.checked ? "on" : "off");
+                } catch {
+                  // session-only
+                }
+              }}
+            />
+            Group by title
+          </label>
         </div>
       )}
 
@@ -251,26 +302,19 @@ export default function RunPanel({
             </tr>
           </thead>
           <tbody>
-            {points.data
-              .filter((p) => {
-                if (filterOutcome === "none" && p.last_outcome) return false;
-                if (
-                  filterOutcome &&
-                  filterOutcome !== "none" &&
-                  p.last_outcome.toLowerCase() !== filterOutcome
-                )
-                  return false;
-                if (filterText) {
-                  const t = filterText.toLowerCase();
-                  if (
-                    !p.test_case_name.toLowerCase().includes(t) &&
-                    !String(p.test_case_id ?? "").includes(t)
-                  )
-                    return false;
-                }
-                return true;
-              })
-              .map((p) => (
+            {sections.map(({ name, pts }) => (
+              <Fragment key={name || "__all"}>
+                {name && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-2 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-faint"
+                    >
+                      {name} <span className="normal-case">({pts.length})</span>
+                    </td>
+                  </tr>
+                )}
+                {pts.map((p) => (
               <tr
                 key={p.point_id}
                 className={cn(
@@ -321,6 +365,8 @@ export default function RunPanel({
                   />
                 </td>
               </tr>
+                ))}
+              </Fragment>
             ))}
           </tbody>
         </table>

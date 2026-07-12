@@ -13,6 +13,7 @@ import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { cn } from "../lib/cn";
+import { groupIndices } from "../lib/grouping";
 import { unwrap } from "../lib/ipc";
 import { validateCase } from "../lib/validate";
 
@@ -138,7 +139,7 @@ export default function ExistingCases({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [groupByModule, setGroupByModule] = useState(
+  const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
   );
 
@@ -158,16 +159,13 @@ export default function ExistingCases({
 
   const list = cases.data ?? [];
   const ordered = useMemo(() => {
-    if (!groupByModule) return [{ group: "", items: list }];
-    const groups = new Map<string, TestCaseFull[]>();
-    for (const c of list) {
-      const key = c.module_value || "No module";
-      groups.set(key, [...(groups.get(key) ?? []), c]);
-    }
-    return [...groups.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([group, items]) => ({ group, items }));
-  }, [list, groupByModule]);
+    if (!grouped) return [{ group: "", items: list }];
+    // v1 smart grouping: cluster by shared title prefixes.
+    return groupIndices(list.map((c) => c.title)).map(({ name, indices }) => ({
+      group: name || "Ungrouped",
+      items: indices.map((i) => list[i]),
+    }));
+  }, [list, grouped]);
   const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
 
   const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
@@ -244,9 +242,9 @@ export default function ExistingCases({
         <label className="flex items-center gap-1.5 text-xs text-muted">
           <input
             type="checkbox"
-            checked={groupByModule}
+            checked={grouped}
             onChange={(e) => {
-              setGroupByModule(e.target.checked);
+              setGrouped(e.target.checked);
               try {
                 localStorage.setItem("tcm-v2-group-cases", e.target.checked ? "on" : "off");
               } catch {
@@ -254,7 +252,7 @@ export default function ExistingCases({
               }
             }}
           />
-          Group by module
+          Group by title
         </label>
         <div className="ml-auto">
           <Button variant="outline" size="sm" disabled={list.length === 0} onClick={() => viewHtml.mutate()}>
