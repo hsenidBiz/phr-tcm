@@ -1,3 +1,25 @@
+# Iteration UX — v1.4.0 (2026-07-12)
+
+Work-Manager-heavy round from live testing.
+
+- **Board drag-drop actually works in the packed app**: Tauri's default
+  window drag-drop handler swallowed WebView2 drag events, silently
+  disabling HTML5 drag-to-column; `dragDropEnabled: false` (no file
+  drops exist) - drag a card to In Progress/Done moves it.
+- **Descriptions keep ADO formatting**: WorkItemDetail gains
+  `description_html`; the drawer converts it to markdown via turndown on
+  load, so DevOps bold/lists/links round-trip through Write/Preview/save.
+- **Work Manager**: refresh button (spins while fetching); searchable
+  team scope combobox; "Open in Azure DevOps" from the drawer header;
+  checkbox multi-select type filter (new MultiSelect primitive, v1
+  CheckableComboBox parity) persisted via tcm-v2-type-filter.
+- **Run Tests**: floating bottom-right selection pill (count / Run N in
+  runner / clear) stays on screen while the points table scrolls.
+- **Shell**: browser context menu suppressed everywhere except editable
+  fields (native cut/copy/paste kept).
+
+---
+
 # Iteration UX — v1.3.1 (2026-07-12)
 
 First post-cutover patch (developed on master).
