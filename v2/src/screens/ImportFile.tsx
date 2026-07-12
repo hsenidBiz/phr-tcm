@@ -3,8 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit } from "../bindings";
+import PickPbiEmpty from "../components/PickPbiEmpty";
 import QueueSection from "../components/QueueSection";
-import RecentPbis from "../components/RecentPbis";
 import { Button } from "../components/ui/button";
 import { useQueue } from "../hooks/useQueue";
 
@@ -48,13 +48,12 @@ export default function ImportFile({
 
   if (!org || !project || !pbi) {
     return (
-      <div>
-        <p className="text-sm text-muted">
-          Pick an organization, project and PBI in the bar above, then import
-          a JSON file of test cases.
-        </p>
-        <RecentPbis org={org} project={project} onPick={onPickPbi} />
-      </div>
+      <PickPbiEmpty
+        message="Pick an organization, project and PBI in the bar above, then import a JSON file of test cases."
+        org={org}
+        project={project}
+        onPickPbi={onPickPbi}
+      />
     );
   }
 

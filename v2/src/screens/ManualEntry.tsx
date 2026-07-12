@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, type PbiHit, type Step, type TestCase } from "../bindings";
 import ModuleField from "../components/ModuleField";
+import PickPbiEmpty from "../components/PickPbiEmpty";
 import QueueSection from "../components/QueueSection";
-import RecentPbis from "../components/RecentPbis";
 import StepsEditor from "../components/StepsEditor";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
@@ -40,13 +40,12 @@ export default function ManualEntry({
 
   if (!org || !project || !pbi) {
     return (
-      <div>
-        <p className="text-sm text-muted">
-          Pick an organization, project and PBI in the bar above to start
-          writing test cases.
-        </p>
-        <RecentPbis org={org} project={project} onPick={onPickPbi} />
-      </div>
+      <PickPbiEmpty
+        message="Pick an organization, project and PBI in the bar above to start writing test cases."
+        org={org}
+        project={project}
+        onPickPbi={onPickPbi}
+      />
     );
   }
 
