@@ -3,6 +3,7 @@ import { useState } from "react";
 import { commands, type PbiHit, type Step, type TestCase } from "../bindings";
 import ModuleField from "../components/ModuleField";
 import QueueSection from "../components/QueueSection";
+import RecentPbis from "../components/RecentPbis";
 import StepsEditor from "../components/StepsEditor";
 import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
@@ -14,10 +15,12 @@ export default function ManualEntry({
   org,
   project,
   pbi,
+  onPickPbi,
 }: {
   org: string;
   project: string;
   pbi: PbiHit | null;
+  onPickPbi?: (pbi: PbiHit) => void;
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [title, setTitle] = useState("");
@@ -37,10 +40,13 @@ export default function ManualEntry({
 
   if (!org || !project || !pbi) {
     return (
-      <p className="text-sm text-muted">
-        Pick an organization, project and PBI in the bar above to start
-        writing test cases.
-      </p>
+      <div>
+        <p className="text-sm text-muted">
+          Pick an organization, project and PBI in the bar above to start
+          writing test cases.
+        </p>
+        <RecentPbis org={org} project={project} onPick={onPickPbi} />
+      </div>
     );
   }
 

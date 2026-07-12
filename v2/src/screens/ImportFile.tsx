@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit } from "../bindings";
 import QueueSection from "../components/QueueSection";
+import RecentPbis from "../components/RecentPbis";
 import { Button } from "../components/ui/button";
 import { useQueue } from "../hooks/useQueue";
 
@@ -11,10 +12,12 @@ export default function ImportFile({
   org,
   project,
   pbi,
+  onPickPbi,
 }: {
   org: string;
   project: string;
   pbi: PbiHit | null;
+  onPickPbi?: (pbi: PbiHit) => void;
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -45,10 +48,13 @@ export default function ImportFile({
 
   if (!org || !project || !pbi) {
     return (
-      <p className="text-sm text-muted">
-        Pick an organization, project and PBI in the bar above, then import a
-        spreadsheet or JSON file.
-      </p>
+      <div>
+        <p className="text-sm text-muted">
+          Pick an organization, project and PBI in the bar above, then import
+          a JSON file of test cases.
+        </p>
+        <RecentPbis org={org} project={project} onPick={onPickPbi} />
+      </div>
     );
   }
 

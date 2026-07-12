@@ -74,6 +74,10 @@ export default function App() {
   const [project, setProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
   const [workMode, setWorkMode] = useState(initial.workMode);
+  // Suite-browser handoff: edit an arbitrary set of cases (not persisted).
+  const [caseSelection, setCaseSelection] = useState<{ label: string; caseIds: number[] } | null>(
+    null,
+  );
 
   useEffect(() => initTheme(), []);
 
@@ -123,6 +127,7 @@ export default function App() {
   const goToSection = (s: Section) => {
     setSection(s);
     setWorkMode(false); // any tab click exits Work Manager mode
+    setCaseSelection(null); // direct navigation returns Edit to PBI mode
   };
 
   const status = useQuery({
@@ -217,10 +222,25 @@ export default function App() {
           ) : (
             <>
               <h1 className="mb-4 text-lg font-semibold">{TITLES[section]}</h1>
-              {section === "manual" && <ManualEntry org={org} project={project} pbi={pbi} />}
-              {section === "import" && <ImportFile org={org} project={project} pbi={pbi} />}
-              {section === "edit" && <EditCases org={org} project={project} pbi={pbi} />}
-              {section === "run" && <RunTests org={org} project={project} pbi={pbi} />}
+              {section === "manual" && (
+                <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+              )}
+              {section === "import" && (
+                <ImportFile org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+              )}
+              {section === "edit" && (
+                <EditCases
+                  org={org}
+                  project={project}
+                  pbi={pbi}
+                  caseSelection={caseSelection}
+                  onClearSelection={() => setCaseSelection(null)}
+                  onPickPbi={setPbiRaw}
+                />
+              )}
+              {section === "run" && (
+                <RunTests org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+              )}
               {section === "suites" && (
                 <Suites
                   org={org}
@@ -228,6 +248,11 @@ export default function App() {
                   onOpenPbi={(p, target) => {
                     setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" });
                     goToSection(target === "edit" ? "edit" : "run");
+                  }}
+                  onEditCases={(label, caseIds) => {
+                    setCaseSelection({ label, caseIds });
+                    setSection("edit");
+                    setWorkMode(false);
                   }}
                 />
               )}
