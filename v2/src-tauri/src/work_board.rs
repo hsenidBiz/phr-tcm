@@ -157,6 +157,17 @@ pub struct WorkItemDetail {
     /// Which field the description came from (System.Description or
     /// Microsoft.VSTS.TCM.ReproSteps) so the save writes the right one.
     pub description_field: String,
+    /// Process-specific rich-text sections shown as extra editable tabs
+    /// (Bugs: RCA + Preventive Measures, discovered by field display name).
+    pub extra_sections: Vec<ExtraSection>,
+}
+
+/// An additional rich-text field rendered as its own tab in the drawer.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ExtraSection {
+    pub name: String,
+    pub reference_name: String,
+    pub html: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -411,6 +422,15 @@ impl AdoClient {
         } else {
             "System.Description"
         };
+        // Bugs in this process carry extra rich-text tabs (RCA, Preventive
+        // Measures). Field refs are org-specific (Custom.*), so discover
+        // them by display name from the type's field list. Best-effort: a
+        // failed lookup just means no extra tabs.
+        let extra_sections = if wi_type == "Bug" {
+            self.extra_sections_for(org, project, &wi_type, f).await
+        } else {
+            Vec::new()
+        };
         Ok(WorkItemDetail {
             id,
             title: s("System.Title"),
@@ -430,7 +450,59 @@ impl AdoClient {
             description_html: s(description_field),
             description_field: description_field.to_string(),
             work_item_type: wi_type,
+            extra_sections,
         })
+    }
+
+    /// Find the process's RCA / Preventive Measures fields on this work item
+    /// type by display name and pair them with the item's current values.
+    /// Fields are included even when empty so the drawer can fill them in.
+    async fn extra_sections_for(
+        &self,
+        org: &str,
+        project: &str,
+        wi_type: &str,
+        fields: &serde_json::Value,
+    ) -> Vec<ExtraSection> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitemtypes/{}/fields?api-version=7.1",
+            self.base_url,
+            org,
+            project,
+            urlencoding::encode(wi_type)
+        );
+        let Ok(data) = self.get_json(url).await else {
+            return Vec::new();
+        };
+        // (matcher, canonical tab title) - first match per slot wins.
+        let wanted: [(&dyn Fn(&str) -> bool, &str); 2] = [
+            (
+                &|n: &str| n == "rca" || n.contains("root cause"),
+                "RCA",
+            ),
+            (&|n: &str| n.contains("preventive"), "Preventive Measures"),
+        ];
+        let mut out: Vec<ExtraSection> = Vec::new();
+        for (matches, title) in wanted {
+            let found = data["value"].as_array().into_iter().flatten().find(|fld| {
+                fld["name"]
+                    .as_str()
+                    .map(|n| matches(&n.to_lowercase()))
+                    .unwrap_or(false)
+            });
+            if let Some(fld) = found {
+                let reference_name = fld["referenceName"].as_str().unwrap_or_default().to_string();
+                if reference_name.is_empty() {
+                    continue;
+                }
+                out.push(ExtraSection {
+                    name: title.to_string(),
+                    html: fields[&reference_name].as_str().unwrap_or_default().to_string(),
+                    reference_name,
+                });
+            }
+        }
+        out
     }
 
     /// A work item's comments, newest first, ported from v1

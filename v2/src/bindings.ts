@@ -182,6 +182,13 @@ export type EnsuredSuite = {
 	suite_id: number,
 };
 
+/**  An additional rich-text field rendered as its own tab in the drawer. */
+export type ExtraSection = {
+	name: string,
+	reference_name: string,
+	html: string,
+};
+
 export type FieldPatch = {
 	reference_name: string,
 	value: string,
@@ -431,6 +438,11 @@ export type WorkItemDetail = {
 	 *  Microsoft.VSTS.TCM.ReproSteps) so the save writes the right one.
 	 */
 	description_field: string,
+	/**
+	 *  Process-specific rich-text sections shown as extra editable tabs
+	 *  (Bugs: RCA + Preventive Measures, discovered by field display name).
+	 */
+	extra_sections: ExtraSection[],
 };
 
 /* Tauri Specta runtime */

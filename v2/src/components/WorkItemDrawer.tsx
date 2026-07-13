@@ -25,6 +25,9 @@ type Draft = {
   startDate: string;
   finishDate: string;
   description: string;
+  /** Extra rich-text tabs (Bug: RCA / Preventive Measures), markdown by
+   * reference name. */
+  extras: Record<string, string>;
 };
 
 /** ADO stores descriptions as HTML; converting to markdown here means the
@@ -36,8 +39,16 @@ const turndown = new TurndownService({
   bulletListMarker: "-",
 });
 
+function htmlToMd(html: string): string {
+  return html.trim() ? turndown.turndown(html) : "";
+}
+
 function toDraft(d: WorkItemDetail): Draft {
   return {
+    extras: Object.fromEntries(
+      // ?? []: tolerate cached details from before this field existed.
+      (d.extra_sections ?? []).map((s) => [s.reference_name, htmlToMd(s.html)]),
+    ),
     title: d.title,
     state: d.state,
     assignedToUnique: d.assigned_to_unique,
@@ -92,6 +103,9 @@ export default function WorkItemDrawer({
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [descMode, setDescMode] = useState<"write" | "preview">("write");
+  // Which rich-text tab is active: "" = Description, else the extra
+  // section's reference name (Bug: RCA / Preventive Measures).
+  const [docTab, setDocTab] = useState("");
 
   // The drawer's left edge is draggable; the chosen width persists.
   const MIN_W = 320;
@@ -126,7 +140,10 @@ export default function WorkItemDrawer({
     window.addEventListener("mouseup", onUp);
   };
   useEffect(() => {
-    if (detail.data) setDraft(toDraft(detail.data));
+    if (detail.data) {
+      setDraft(toDraft(detail.data));
+      setDocTab(""); // back to Description when a different item loads
+    }
   }, [detail.data]);
 
   const save = useMutation({
@@ -154,6 +171,17 @@ export default function WorkItemDrawer({
           reference_name: d.description_field,
           value: `<div>${marked.parse(dr.description, { async: false, breaks: true })}</div>`,
         });
+      }
+      // Extra rich-text tabs (Bug: RCA / Preventive Measures) save the same
+      // way - markdown -> HTML, and only when actually changed.
+      for (const s of d.extra_sections ?? []) {
+        const now = dr.extras[s.reference_name] ?? "";
+        if (now !== htmlToMd(s.html)) {
+          patches.push({
+            reference_name: s.reference_name,
+            value: `<div>${marked.parse(now, { async: false, breaks: true })}</div>`,
+          });
+        }
       }
       if (patches.length === 0) return false;
       await unwrap(commands.updateWorkItem(org, project, itemId, patches));
@@ -325,7 +353,29 @@ export default function WorkItemDrawer({
 
             <div className="block text-xs text-muted">
               <div className="flex items-center justify-between">
-                <span>Description</span>
+                {/* Tab per rich-text section: Description plus whatever the
+                    process adds (Bug: RCA, Preventive Measures). */}
+                <div className="flex gap-1">
+                  {[
+                    { key: "", label: "Description" },
+                    ...(detail.data.extra_sections ?? []).map((s) => ({
+                      key: s.reference_name,
+                      label: s.name,
+                    })),
+                  ].map((t) => (
+                    <button
+                      key={t.key || "__desc"}
+                      className={
+                        docTab === t.key
+                          ? "rounded px-2 py-0.5 text-[11px] font-medium bg-accent-soft text-accent"
+                          : "rounded px-2 py-0.5 text-[11px] text-faint hover:text-text"
+                      }
+                      onClick={() => setDocTab(t.key)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="flex gap-1">
                   {(["write", "preview"] as const).map((m) => (
                     <button
@@ -342,26 +392,37 @@ export default function WorkItemDrawer({
                   ))}
                 </div>
               </div>
-              {descMode === "write" ? (
-                <Textarea
-                  aria-label="Description (markdown)"
-                  className="mt-1 h-28 w-full"
-                  placeholder="Supports markdown: **bold**, - lists, `code`, [links](url)"
-                  value={draft.description}
-                  onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                />
-              ) : (
-                <div
-                  className="md-preview mt-1 min-h-28 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
-                  // Rendered from the user's own local draft only.
-                  dangerouslySetInnerHTML={{
-                    __html: marked.parse(draft.description || "*Nothing to preview*", {
-                      async: false,
-                      breaks: true,
-                    }),
-                  }}
-                />
-              )}
+              {(() => {
+                const label = docTab
+                  ? ((detail.data.extra_sections ?? []).find((s) => s.reference_name === docTab)
+                      ?.name ?? "Section")
+                  : "Description";
+                const value = docTab ? (draft.extras[docTab] ?? "") : draft.description;
+                const setValue = (v: string) =>
+                  docTab
+                    ? setDraft({ ...draft, extras: { ...draft.extras, [docTab]: v } })
+                    : setDraft({ ...draft, description: v });
+                return descMode === "write" ? (
+                  <Textarea
+                    aria-label={`${label} (markdown)`}
+                    className="mt-1 h-28 w-full"
+                    placeholder="Supports markdown: **bold**, - lists, `code`, [links](url)"
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                  />
+                ) : (
+                  <div
+                    className="md-preview mt-1 min-h-28 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
+                    // Rendered from the user's own local draft only.
+                    dangerouslySetInnerHTML={{
+                      __html: marked.parse(value || "*Nothing to preview*", {
+                        async: false,
+                        breaks: true,
+                      }),
+                    }}
+                  />
+                );
+              })()}
             </div>
 
             <div className="text-xs text-faint">

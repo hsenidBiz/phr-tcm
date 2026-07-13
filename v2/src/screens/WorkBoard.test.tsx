@@ -123,6 +123,7 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
         description_text: "old text",
         description_html: "<div>old text</div>",
         description_field: "System.Description",
+        extra_sections: [],
       };
     if (cmd === "list_team_members")
       return [{ display_name: "Avin", unique_name: "a@x.com" }];
@@ -144,4 +145,67 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
   expect(patched.patches).toEqual([
     { reference_name: "System.Title", value: "Write better docs" },
   ]);
+});
+
+test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", async () => {
+  let patched: { patches?: Array<{ reference_name: string; value: string }> } = {};
+  mockIPC((cmd, args) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "list_teams") return [];
+    if (cmd === "work_item_detail")
+      return {
+        id: 12,
+        title: "Fix bug",
+        work_item_type: "Bug",
+        state: "Done",
+        assigned_to: "Avin",
+        assigned_to_unique: "a@x.com",
+        activity: "",
+        tags: "",
+        area_path: "P",
+        iteration_path: "P\S1",
+        remaining_work: null,
+        completed_work: null,
+        original_estimate: null,
+        start_date: "",
+        finish_date: "",
+        description_text: "repro",
+        description_html: "<div>repro</div>",
+        description_field: "Microsoft.VSTS.TCM.ReproSteps",
+        extra_sections: [
+          { name: "RCA", reference_name: "Custom.RCA", html: "<div>null ref</div>" },
+          { name: "Preventive Measures", reference_name: "Custom.PreventiveMeasures", html: "" },
+        ],
+      };
+    if (cmd === "list_team_members") return [{ display_name: "Avin", unique_name: "a@x.com" }];
+    if (cmd === "activity_values") return [];
+    if (cmd === "work_item_comments") return [];
+    if (cmd === "update_work_item") {
+      patched = args as typeof patched;
+      return null;
+    }
+  });
+  renderBoard();
+  fireEvent.click(await screen.findByText("Fix bug"));
+
+  // Both process tabs are there; RCA shows its existing content as markdown.
+  const rcaTab = await screen.findByRole("button", { name: "RCA" });
+  fireEvent.click(rcaTab);
+  const editor = screen.getByLabelText("RCA (markdown)");
+  expect(editor).toHaveValue("null ref");
+  fireEvent.change(editor, { target: { value: "null ref in save path" } });
+
+  // The empty Preventive Measures tab is editable too.
+  fireEvent.click(screen.getByRole("button", { name: "Preventive Measures" }));
+  fireEvent.change(screen.getByLabelText("Preventive Measures (markdown)"), {
+    target: { value: "add a guard test" },
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await vi.waitFor(() => expect(patched.patches).toBeTruthy());
+  expect(patched.patches).toHaveLength(2);
+  expect(patched.patches![0].reference_name).toBe("Custom.RCA");
+  expect(patched.patches![0].value).toContain("null ref in save path");
+  expect(patched.patches![1].reference_name).toBe("Custom.PreventiveMeasures");
+  expect(patched.patches![1].value).toContain("add a guard test");
 });
