@@ -271,7 +271,11 @@ export default function ExistingCases({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
-          {label ?? "Test cases"} ({q ? `${visible.length}/${list.length}` : list.length})
+          {label
+            ? `${label} (${q ? `${visible.length}/${list.length}` : list.length})`
+            : q
+              ? `${visible.length} of ${list.length} Test Cases`
+              : `${list.length} Total Test Cases`}
         </h2>
         <button
           aria-label="Refresh"
