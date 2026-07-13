@@ -3,10 +3,10 @@ import { ExternalLink, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import TurndownService from "turndown";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { unwrap } from "../lib/ipc";
+import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
 import DateField from "./ui/datefield";
 import { Input, Textarea } from "./ui/input";
@@ -29,19 +29,6 @@ type Draft = {
    * keyed by reference name - markdown for html fields, raw otherwise. */
   extras: Record<string, string>;
 };
-
-/** ADO stores descriptions as HTML; converting to markdown here means the
- * Write tab shows the formatting ADO has (bold, lists, links) as markdown
- * source, and saving (marked: md -> HTML) round-trips it. */
-const turndown = new TurndownService({
-  headingStyle: "atx",
-  codeBlockStyle: "fenced",
-  bulletListMarker: "-",
-});
-
-function htmlToMd(html: string): string {
-  return html.trim() ? turndown.turndown(html) : "";
-}
 
 /** A field's editor-facing value: markdown for rich text, raw otherwise. */
 function extraValue(f: { kind: string; value: string }): string {
@@ -66,7 +53,7 @@ function toDraft(d: WorkItemDetail): Draft {
     startDate: d.start_date.slice(0, 10),
     finishDate: d.finish_date.slice(0, 10),
     description: d.description_html?.trim()
-      ? turndown.turndown(d.description_html)
+      ? htmlToMd(d.description_html)
       : d.description_text,
   };
 }
