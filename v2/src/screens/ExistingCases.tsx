@@ -271,7 +271,7 @@ export default function ExistingCases({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
-          {label ?? `Test cases linked to #${pbiId}`} ({q ? `${visible.length}/${list.length}` : list.length})
+          {label ?? "Test cases"} ({q ? `${visible.length}/${list.length}` : list.length})
         </h2>
         <button
           aria-label="Refresh"
@@ -295,19 +295,24 @@ export default function ExistingCases({
           />
           Group by title
         </label>
-        <div className="ml-auto flex items-center gap-2">
-          <Input
-            aria-label="Search test cases"
-            className="w-56 py-1.5"
-            placeholder="Search test cases"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        <div className="ml-auto">
           <Button variant="outline" size="sm" disabled={list.length === 0} onClick={() => viewHtml.mutate()}>
             View in browser
           </Button>
         </div>
       </div>
+
+      {list.length > 0 && (
+        <div className="flex gap-2">
+          <Input
+            aria-label="Search test cases"
+            className="w-56 px-2 py-1"
+            placeholder="Filter by name or id"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+      )}
 
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
