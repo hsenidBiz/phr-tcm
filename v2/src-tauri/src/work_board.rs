@@ -466,6 +466,10 @@ impl AdoClient {
     /// visible field control they contain - the same tabs ADO's own form
     /// shows (Bug: RCA, Preventive Measures). Fields are included even when
     /// empty so the drawer can fill them in.
+    ///
+    /// The layout lives in the org-level PROCESSES api (there is no
+    /// project-scoped layout endpoint), so this chains: project properties
+    /// (process id) -> work item type (reference name) -> process layout.
     async fn extra_pages_for(
         &self,
         org: &str,
@@ -473,33 +477,84 @@ impl AdoClient {
         wi_type: &str,
         item_fields: &serde_json::Value,
     ) -> Vec<ExtraPage> {
-        let url = format!(
-            "{}/{}/{}/_apis/wit/workitemtypes/{}/layout?api-version=7.1-preview.1",
+        let props_url = format!(
+            "{}/{}/_apis/projects/{}/properties?keys=System.ProcessTemplateType&api-version=7.1-preview.1",
+            self.base_url,
+            org,
+            urlencoding::encode(project)
+        );
+        let Ok(props) = self.get_json(props_url).await else {
+            return Vec::new();
+        };
+        let Some(process_id) = props["value"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["name"].as_str() == Some("System.ProcessTemplateType"))
+            .and_then(|p| p["value"].as_str())
+            .map(String::from)
+        else {
+            return Vec::new();
+        };
+
+        let wit_url = format!(
+            "{}/{}/{}/_apis/wit/workitemtypes/{}?api-version=7.1",
             self.base_url,
             org,
             project,
             urlencoding::encode(wi_type)
         );
-        let Ok(layout) = self.get_json(url).await else {
+        let Ok(wit) = self.get_json(wit_url).await else {
+            return Vec::new();
+        };
+        let Some(wit_ref) = wit["referenceName"].as_str().map(String::from) else {
+            return Vec::new();
+        };
+
+        let layout_url = format!(
+            "{}/{}/_apis/work/processes/{}/workItemTypes/{}/layout?api-version=7.1",
+            self.base_url,
+            org,
+            process_id,
+            urlencoding::encode(&wit_ref)
+        );
+        let Ok(layout) = self.get_json(layout_url).await else {
             return Vec::new();
         };
         let Some(pages) = layout["pages"].as_array() else {
             return Vec::new();
         };
+
         let mut out = Vec::new();
-        // Page 0 is the main form (the drawer's own Details); the rest are
-        // the extra tabs shown across the top of ADO's form.
-        for page in pages.iter().skip(1) {
-            if page["visible"].as_bool() == Some(false) {
+        // The layout lists the main Details page first plus system pages
+        // (history/links/attachments). The extra tabs are every "custom"
+        // page after that first one.
+        let mut seen_main = false;
+        for page in pages {
+            if page["pageType"].as_str() != Some("custom")
+                || page["visible"].as_bool() == Some(false)
+            {
+                continue;
+            }
+            if !seen_main {
+                seen_main = true; // the drawer already covers the main form
                 continue;
             }
             let name = page["label"].as_str().unwrap_or_default().to_string();
             let mut fields = Vec::new();
             for section in page["sections"].as_array().into_iter().flatten() {
                 for group in section["groups"].as_array().into_iter().flatten() {
+                    let group_label = group["label"].as_str().unwrap_or_default();
                     for control in group["controls"].as_array().into_iter().flatten() {
                         if let Some(f) = self
-                            .extra_field_from_control(org, project, wi_type, control, item_fields)
+                            .extra_field_from_control(
+                                org,
+                                project,
+                                wi_type,
+                                control,
+                                group_label,
+                                item_fields,
+                            )
                             .await
                         {
                             fields.push(f);
@@ -522,6 +577,7 @@ impl AdoClient {
         project: &str,
         wi_type: &str,
         control: &serde_json::Value,
+        group_label: &str,
         item_fields: &serde_json::Value,
     ) -> Option<ExtraField> {
         if control["visible"].as_bool() == Some(false)
@@ -539,10 +595,13 @@ impl AdoClient {
             "FieldControl" | "DateTimeControl" => "text".to_string(),
             _ => return None, // LinksControl, AttachmentsControl, extensions...
         };
-        let label = {
-            let l = control["label"].as_str().unwrap_or_default();
-            if l.is_empty() { reference_name.clone() } else { l.to_string() }
-        };
+        // Rich-text controls usually sit in their own group whose label is
+        // what ADO's form displays; the control label is the fallback.
+        let label = [control["label"].as_str().unwrap_or_default(), group_label]
+            .into_iter()
+            .find(|l| !l.is_empty())
+            .unwrap_or(reference_name.as_str())
+            .to_string();
         // Plain field controls may be picklists - ask the field definition.
         let (kind, allowed) = if kind == "text" && control_type == "FieldControl" {
             let url = format!(

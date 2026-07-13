@@ -237,7 +237,7 @@ async fn fetch_board_pipeline() {
 }
 
 #[tokio::test]
-async fn bug_detail_builds_extra_pages_from_the_form_layout() {
+async fn bug_detail_builds_extra_pages_from_the_process_layout() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/wit/workitems/13"))
@@ -253,16 +253,38 @@ async fn bug_detail_builds_extra_pages_from_the_form_layout() {
         })))
         .mount(&server)
         .await;
+    // Chain hop 1: project properties -> process id.
     Mock::given(method("GET"))
-        .and(path("/org/proj/_apis/wit/workitemtypes/Bug/layout"))
+        .and(path("/org/_apis/projects/proj/properties"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "count": 1,
+            "value": [{"name": "System.ProcessTemplateType", "value": "proc-guid-1"}]
+        })))
+        .mount(&server)
+        .await;
+    // Chain hop 2: work item type -> reference name.
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Bug"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "Bug", "referenceName": "Microsoft.VSTS.WorkItemTypes.Bug"
+        })))
+        .mount(&server)
+        .await;
+    // Chain hop 3: the org-level process layout (the real tabs source).
+    Mock::given(method("GET"))
+        .and(path(
+            "/org/_apis/work/processes/proc-guid-1/workItemTypes/Microsoft.VSTS.WorkItemTypes.Bug/layout",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "pages": [
-                {"label": "Details", "visible": true, "sections": []},
-                {"label": "RCA", "visible": true, "sections": [
+                {"label": "Details", "pageType": "custom", "visible": true, "sections": []},
+                {"label": "RCA", "pageType": "custom", "visible": true, "sections": [
                     {"groups": [
-                        {"controls": [
-                            {"id": "Custom.InitialFindings", "label": "Initial Findings",
-                             "controlType": "HtmlFieldControl", "visible": true},
+                        {"label": "Initial Findings", "controls": [
+                            {"id": "Custom.InitialFindings", "label": "",
+                             "controlType": "HtmlFieldControl", "visible": true}
+                        ]},
+                        {"label": "Root Cause Identification", "controls": [
                             {"id": "Custom.RootCauseCategory", "label": "Root Cause Category",
                              "controlType": "FieldControl", "visible": true},
                             {"id": "System.History", "label": "Discussion",
@@ -271,15 +293,17 @@ async fn bug_detail_builds_extra_pages_from_the_form_layout() {
                         ]}
                     ]}
                 ]},
-                {"label": "Preventive Measures", "visible": true, "sections": [
+                {"label": "Preventive Measures", "pageType": "custom", "visible": true, "sections": [
                     {"groups": [
-                        {"controls": [
-                            {"id": "Custom.LessonsLearned", "label": "Lessons Learned",
+                        {"label": "Lessons Learned", "controls": [
+                            {"id": "Custom.LessonsLearned", "label": "",
                              "controlType": "HtmlFieldControl", "visible": true}
                         ]}
                     ]}
                 ]},
-                {"label": "Hidden Page", "visible": false, "sections": []}
+                {"label": "History", "pageType": "history", "visible": true, "sections": []},
+                {"label": "Links", "pageType": "links", "visible": true, "sections": []},
+                {"label": "Hidden Page", "pageType": "custom", "visible": false, "sections": []}
             ]
         })))
         .mount(&server)
@@ -298,7 +322,8 @@ async fn bug_detail_builds_extra_pages_from_the_form_layout() {
     assert_eq!(d.extra_pages.len(), 2);
     let rca = &d.extra_pages[0];
     assert_eq!(rca.name, "RCA");
-    // Non-field controls (history, links) are dropped.
+    // Non-field controls (history, links) are dropped; rich-text controls
+    // take their group's label when their own is empty.
     assert_eq!(rca.fields.len(), 2);
     assert_eq!(rca.fields[0].label, "Initial Findings");
     assert_eq!(rca.fields[0].kind, "html");
@@ -316,7 +341,7 @@ async fn bug_detail_builds_extra_pages_from_the_form_layout() {
 }
 
 #[tokio::test]
-async fn detail_without_layout_pages_has_no_extra_tabs() {
+async fn detail_without_layout_access_has_no_extra_tabs() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/wit/workitems/14"))
@@ -329,13 +354,8 @@ async fn detail_without_layout_pages_has_no_extra_tabs() {
         })))
         .mount(&server)
         .await;
-    Mock::given(method("GET"))
-        .and(path("/org/proj/_apis/wit/workitemtypes/Task/layout"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "pages": [{"label": "Details", "visible": true, "sections": []}]
-        })))
-        .mount(&server)
-        .await;
+    // Properties endpoint unmocked -> 404 -> best-effort empty, detail
+    // still loads (the pre-layout behavior of the drawer).
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let d = client.get_work_item_detail("org", "proj", 14).await.unwrap();
     assert!(d.extra_pages.is_empty());
