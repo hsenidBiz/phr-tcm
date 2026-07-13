@@ -128,3 +128,36 @@ test("card clicks drive multi-select and unlock the bulk toolbar", async () => {
   await waitFor(() => expect(updatedIds).toHaveLength(2));
   expect([...updatedIds].sort()).toEqual([201, 202]);
 });
+
+test("search narrows the list by title, id or tag", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, secondCase, { ...fullCase, id: 203, title: "Checkout", tags: "regression" }];
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+
+  const box = screen.getByLabelText("Search test cases");
+
+  // Title match: only the checkout case stays.
+  fireEvent.change(box, { target: { value: "checkout" } });
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+  expect(screen.getByText("Checkout")).toBeInTheDocument();
+
+  // Id match.
+  fireEvent.change(box, { target: { value: "#202" } });
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+  expect(screen.queryByText("Checkout")).not.toBeInTheDocument();
+
+  // Tag match.
+  fireEvent.change(box, { target: { value: "regression" } });
+  expect(screen.getByText("Checkout")).toBeInTheDocument();
+
+  // No match shows the empty hint; clearing restores everything.
+  fireEvent.change(box, { target: { value: "zzz" } });
+  expect(screen.getByText(/No test cases match/)).toBeInTheDocument();
+  fireEvent.change(box, { target: { value: "" } });
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Checkout")).toBeInTheDocument();
+});

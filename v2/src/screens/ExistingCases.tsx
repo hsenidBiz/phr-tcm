@@ -142,6 +142,7 @@ export default function ExistingCases({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [search, setSearch] = useState("");
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
   );
@@ -169,14 +170,30 @@ export default function ExistingCases({
   });
 
   const list = cases.data ?? [];
+  const q = search.trim().toLowerCase();
+  // Search narrows the visible cards (title, #id or tag); grouping and the
+  // header count follow the filtered view.
+  const visible = useMemo(
+    () =>
+      q
+        ? list.filter(
+            (c) =>
+              c.title.toLowerCase().includes(q) ||
+              `#${c.id}`.includes(q) ||
+              String(c.id).includes(q) ||
+              c.tags.toLowerCase().includes(q),
+          )
+        : list,
+    [list, q],
+  );
   const ordered = useMemo(() => {
-    if (!grouped) return [{ group: "", items: list }];
+    if (!grouped) return [{ group: "", items: visible }];
     // v1 smart grouping: cluster by shared title prefixes.
-    return groupIndices(list.map((c) => c.title)).map(({ name, indices }) => ({
+    return groupIndices(visible.map((c) => c.title)).map(({ name, indices }) => ({
       group: name || "Ungrouped",
-      items: indices.map((i) => list[i]),
+      items: indices.map((i) => visible[i]),
     }));
-  }, [list, grouped]);
+  }, [visible, grouped]);
   const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
 
   const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
@@ -234,7 +251,8 @@ export default function ExistingCases({
 
   const viewHtml = useMutation({
     mutationFn: async () => {
-      const chosen = selectedCases.length > 0 ? selectedCases : list;
+      // Selection wins; otherwise export what the search currently shows.
+      const chosen = selectedCases.length > 0 ? selectedCases : visible;
       const r = await commands.viewQueueHtml(
         chosen.map(toTestCase),
         label ?? (pbiId != null ? `PBI #${pbiId}` : ""),
@@ -253,7 +271,7 @@ export default function ExistingCases({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
-          {label ?? `Test cases linked to #${pbiId}`} ({list.length})
+          {label ?? `Test cases linked to #${pbiId}`} ({q ? `${visible.length}/${list.length}` : list.length})
         </h2>
         <button
           aria-label="Refresh"
@@ -277,7 +295,14 @@ export default function ExistingCases({
           />
           Group by title
         </label>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Input
+            aria-label="Search test cases"
+            className="w-56 py-1.5"
+            placeholder="Search test cases"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           <Button variant="outline" size="sm" disabled={list.length === 0} onClick={() => viewHtml.mutate()}>
             View in browser
           </Button>
@@ -304,6 +329,9 @@ export default function ExistingCases({
       {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
       {cases.data && list.length === 0 && (
         <p className="text-sm text-muted">No test cases here yet.</p>
+      )}
+      {list.length > 0 && visible.length === 0 && (
+        <p className="text-sm text-muted">No test cases match "{search.trim()}".</p>
       )}
 
       {ordered.map(({ group, items }) => (
