@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -18,6 +18,7 @@ export default function CommandPalette({
   onSwitchProject: (p: string) => void;
   onToggleWork: () => void;
 }) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -81,7 +82,9 @@ export default function CommandPalette({
             onSelect={() =>
               run(async () => {
                 const v = await commands.checkUpdate();
-                if (v) toast.info(`Version ${v} is available.`);
+                // Seed the ["update"] query so App's update banner appears.
+                qc.setQueryData(["update"], v);
+                if (v) toast.info(`Version ${v} is available - use the banner to update.`);
                 else toast.success("You are on the latest version.");
               })
             }

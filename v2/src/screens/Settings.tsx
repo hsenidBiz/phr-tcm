@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -37,6 +37,7 @@ const ACCENT_TITLE: Record<Accent, string> = {
 // org/project stay in the signature (App passes them) for when a
 // project-scoped setting returns here.
 export default function Settings(_props: { org: string; project: string }) {
+  const qc = useQueryClient();
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
 
@@ -48,10 +49,13 @@ export default function Settings(_props: { org: string; project: string }) {
 
   const check = useMutation({
     mutationFn: () => commands.checkUpdate(),
-    onSuccess: (v) =>
-      v
-        ? toast.info(`Version ${v} is available - use the banner to update.`)
-        : toast.success("You are on the latest version."),
+    onSuccess: (v) => {
+      // App's update banner renders from the ["update"] query (fetched once
+      // at startup) - seed it so the banner appears for a manual check too.
+      qc.setQueryData(["update"], v);
+      if (v) toast.info(`Version ${v} is available - use the banner to update.`);
+      else toast.success("You are on the latest version.");
+    },
   });
 
   const pick = (t: ThemeChoice) => {
