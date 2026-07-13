@@ -4,10 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { commands } from "../bindings";
 import { Button } from "../components/ui/button";
-import { Select } from "../components/ui/select";
 import { START_TOUR_EVENT } from "../components/UiTour";
-import { useFieldRefs } from "../hooks/useFieldRefs";
-import { saveFieldPrefs } from "../lib/fieldPrefs";
 import {
   ACCENTS,
   THEMES,
@@ -37,11 +34,11 @@ const ACCENT_TITLE: Record<Accent, string> = {
   rose: "Rose",
 };
 
-export default function Settings({ org, project }: { org: string; project: string }) {
+// org/project stay in the signature (App passes them) for when a
+// project-scoped setting returns here.
+export default function Settings(_props: { org: string; project: string }) {
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
-  const { fields, prefs } = useFieldRefs(org, project);
-  const [, bump] = useState(0); // re-render after saving field prefs
 
   const version = useQuery({
     queryKey: ["app-version"],
@@ -62,11 +59,6 @@ export default function Settings({ org, project }: { org: string; project: strin
     setThemeChoice(t);
   };
 
-  const setRef = (which: "moduleRef" | "preconditionsRef", value: string) => {
-    saveFieldPrefs(org, project, { ...prefs, [which]: value || null });
-    bump((n) => n + 1);
-    toast.success("Field mapping saved.");
-  };
 
   return (
     <div className="max-w-lg space-y-8">
@@ -165,54 +157,10 @@ export default function Settings({ org, project }: { org: string; project: strin
         </Button>
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Test case fields</h2>
-        {!org || !project ? (
-          <p className="text-sm text-muted">
-            Pick an organization and project to map the Module and
-            Preconditions fields for this project's process.
-          </p>
-        ) : (
-          <>
-            <p className="text-sm text-muted">
-              Where imported Module / Preconditions values are written for{" "}
-              <span className="text-text">{project}</span>. Auto-detected; "Skip"
-              leaves the field untouched.
-            </p>
-            {fields.isError && <p className="text-sm text-danger">{fields.error.message}</p>}
-            <label className="flex flex-col gap-1 text-xs text-muted">
-              Module field
-              <Select
-                value={prefs.moduleRef ?? ""}
-                disabled={!fields.data}
-                onChange={(e) => setRef("moduleRef", e.target.value)}
-              >
-                <option value="">None - skip this field</option>
-                {(fields.data ?? []).map((f) => (
-                  <option key={f.reference_name} value={f.reference_name}>
-                    {f.name} ({f.reference_name})
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <label className="flex flex-col gap-1 text-xs text-muted">
-              Preconditions field
-              <Select
-                value={prefs.preconditionsRef ?? ""}
-                disabled={!fields.data}
-                onChange={(e) => setRef("preconditionsRef", e.target.value)}
-              >
-                <option value="">None - skip this field</option>
-                {(fields.data ?? []).map((f) => (
-                  <option key={f.reference_name} value={f.reference_name}>
-                    {f.name} ({f.reference_name})
-                  </option>
-                ))}
-              </Select>
-            </label>
-          </>
-        )}
-      </section>
+      {/* The Module / Preconditions field mapping is auto-detected
+          (useFieldRefs ranked match) and deliberately NOT user-editable -
+          re-add a "Test case fields" section here if that ever needs a
+          manual override. */}
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Updates</h2>
