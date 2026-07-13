@@ -186,6 +186,8 @@ export type EnsuredSuite = {
 export type ExtraField = {
 	label: string,
 	reference_name: string,
+	/**  Which form section (column in ADO's layout) the field sits in. */
+	section: number,
 	/**  "html" (rich text), "pick" (allowed values), or "text". */
 	kind: string,
 	/**  Allowed values when kind == "pick". */

@@ -181,6 +181,7 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
               {
                 label: "Initial Findings",
                 reference_name: "Custom.InitialFindings",
+                section: 0,
                 kind: "html",
                 allowed: [],
                 value: "<div>null ref</div>",
@@ -188,6 +189,7 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
               {
                 label: "Root Cause Category",
                 reference_name: "Custom.RootCauseCategory",
+                section: 1,
                 kind: "pick",
                 allowed: ["Code Defect", "Design/Requirement"],
                 value: "",
@@ -200,6 +202,7 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
               {
                 label: "Lessons Learned",
                 reference_name: "Custom.LessonsLearned",
+                section: 0,
                 kind: "html",
                 allowed: [],
                 value: "",

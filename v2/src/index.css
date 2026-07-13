@@ -461,6 +461,19 @@ body {
   }
 }
 
+/* Extra work-item form pages: one column per ADO layout section on wide
+   windows (--cols set inline), stacked when narrow. */
+.extra-grid {
+  display: grid;
+  gap: 1rem;
+}
+@media (min-width: 1024px) {
+  .extra-grid {
+    grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
 /* Rendered markdown in the work-item description preview. */
 .md-preview img { max-width: 100%; border-radius: 4px; }
 .md-preview p { margin: 0 0 0.5rem; }

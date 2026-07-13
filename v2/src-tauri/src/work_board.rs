@@ -189,6 +189,8 @@ pub struct ExtraPage {
 pub struct ExtraField {
     pub label: String,
     pub reference_name: String,
+    /// Which form section (column in ADO's layout) the field sits in.
+    pub section: u32,
     /// "html" (rich text), "pick" (allowed values), or "text".
     pub kind: String,
     /// Allowed values when kind == "pick".
@@ -577,11 +579,13 @@ impl AdoClient {
             }
             let name = page["label"].as_str().unwrap_or_default().to_string();
             let mut fields = Vec::new();
+            let mut section_no: u32 = 0;
             for section in page["sections"].as_array().into_iter().flatten() {
+                let mut section_used = false;
                 for group in section["groups"].as_array().into_iter().flatten() {
                     let group_label = group["label"].as_str().unwrap_or_default();
                     for control in group["controls"].as_array().into_iter().flatten() {
-                        if let Some(f) = self
+                        if let Some(mut f) = self
                             .extra_field_from_control(
                                 org,
                                 project,
@@ -592,9 +596,16 @@ impl AdoClient {
                             )
                             .await
                         {
+                            f.section = section_no;
+                            section_used = true;
                             fields.push(f);
                         }
                     }
+                }
+                // Only sections that contributed fields advance the column
+                // count (ADO pads layouts with empty sections).
+                if section_used {
+                    section_no += 1;
                 }
             }
             if !name.is_empty() && !fields.is_empty() {
@@ -669,7 +680,7 @@ impl AdoClient {
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        Some(ExtraField { label, reference_name, kind, allowed, value })
+        Some(ExtraField { label, reference_name, section: 0, kind, allowed, value })
     }
 
     /// A work item's comments, newest first, ported from v1

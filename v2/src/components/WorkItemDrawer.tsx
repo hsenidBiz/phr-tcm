@@ -200,9 +200,9 @@ export default function WorkItemDrawer({
       role="dialog"
       aria-modal="true"
       aria-label={`Work item ${itemId}`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 md:p-8"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 md:px-10 md:py-6"
     >
-      <div className="modal-in flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
+      <div className="modal-in flex h-full w-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
         <header className="flex items-center justify-between border-b border-border px-5 py-3">
           <span className="text-sm font-semibold text-text">
             <span className="id-mono text-faint">#{itemId}</span>{" "}
@@ -369,11 +369,33 @@ export default function WorkItemDrawer({
                   />
                 )
               ) : (
-                // An extra form page: every field it carries, in form order.
-                <div className="mt-1 space-y-3">
-                  {(detail.data.extra_pages ?? [])
-                    .find((p) => p.name === docTab)
-                    ?.fields.map((f) => {
+                // An extra form page, laid out like ADO's form: each layout
+                // section becomes a column (stacking on narrow windows).
+                <div
+                  className="extra-grid mt-1"
+                  style={{
+                    ["--cols" as string]: Math.min(
+                      3,
+                      new Set(
+                        (detail.data.extra_pages ?? [])
+                          .find((p) => p.name === docTab)
+                          ?.fields.map((f) => f.section) ?? [],
+                      ).size || 1,
+                    ),
+                  }}
+                >
+                  {[
+                    ...new Set(
+                      (detail.data.extra_pages ?? [])
+                        .find((p) => p.name === docTab)
+                        ?.fields.map((f) => f.section) ?? [],
+                    ),
+                  ].map((sec) => (
+                    <div key={sec} className="space-y-3">
+                      {(detail.data!.extra_pages ?? [])
+                        .find((p) => p.name === docTab)
+                        ?.fields.filter((f) => f.section === sec)
+                        .map((f) => {
                       const value = draft.extras[f.reference_name] ?? "";
                       const setValue = (v: string) =>
                         setDraft({
@@ -425,7 +447,9 @@ export default function WorkItemDrawer({
                           )}
                         </div>
                       );
-                    })}
+                        })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

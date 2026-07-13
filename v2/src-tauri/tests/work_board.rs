@@ -285,7 +285,9 @@ async fn bug_detail_builds_extra_pages_from_the_process_layout() {
                         {"label": "Initial Findings", "controls": [
                             {"id": "Custom.InitialFindings", "label": "",
                              "controlType": "HtmlFieldControl", "visible": true}
-                        ]},
+                        ]}
+                    ]},
+                    {"groups": [
                         {"label": "Root Cause Identification", "controls": [
                             {"id": "Custom.RootCauseCategory", "label": "Root Cause Category",
                              "controlType": "FieldControl", "visible": true},
@@ -293,7 +295,8 @@ async fn bug_detail_builds_extra_pages_from_the_process_layout() {
                              "controlType": "WorkItemLogControl", "visible": true},
                             {"controlType": "LinksControl", "label": "Links", "visible": true}
                         ]}
-                    ]}
+                    ]},
+                    {"groups": []}
                 ]},
                 {"label": "Preventive Measures", "pageType": "custom", "visible": true, "sections": [
                     {"groups": [
@@ -330,6 +333,9 @@ async fn bug_detail_builds_extra_pages_from_the_process_layout() {
     assert_eq!(rca.fields[0].label, "Initial Findings");
     assert_eq!(rca.fields[0].kind, "html");
     assert_eq!(rca.fields[0].value, "<div>Null ref in save path</div>");
+    // Sections map to ADO's form columns (empty ones don't count).
+    assert_eq!(rca.fields[0].section, 0);
+    assert_eq!(rca.fields[1].section, 1);
     // FieldControl with allowedValues becomes a picklist.
     assert_eq!(rca.fields[1].kind, "pick");
     assert_eq!(rca.fields[1].allowed.len(), 3);
