@@ -1,5 +1,6 @@
 pub mod ado;
 pub mod ado_testplan;
+pub mod audio;
 pub mod auth;
 pub mod capture;
 pub mod import_parser;
@@ -1070,6 +1071,22 @@ async fn quick_create_item(
 }
 
 /// Move a board item into a column: resolves the target state exactly like
+/// Start streaming AudioSpectrum events from system-audio loopback (the
+/// flask equalizer rings). No-op if already running; failures are silent by
+/// design - the feature is decorative.
+#[tauri::command]
+#[specta::specta]
+fn audio_capture_start(app: tauri::AppHandle) -> Result<(), String> {
+    audio::start(app)
+}
+
+/// Stop the AudioSpectrum stream (last UI subscriber unmounted).
+#[tauri::command]
+#[specta::specta]
+fn audio_capture_stop() {
+    audio::stop();
+}
+
 /// v1 (_state_for_column) and PATCHes System.State. Returns the state set.
 #[tauri::command]
 #[specta::specta]
@@ -1114,7 +1131,7 @@ async fn move_board_item(
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
-        .events(collect_events![SubmitProgress, SuiteScanProgress])
+        .events(collect_events![SubmitProgress, SuiteScanProgress, audio::AudioSpectrum])
         .commands(collect_commands![
         ping,
         auth_status,
@@ -1132,6 +1149,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         submit_test_run,
         fetch_board,
         move_board_item,
+        audio_capture_start,
+        audio_capture_stop,
         check_update,
         apply_update,
         list_test_case_fields,

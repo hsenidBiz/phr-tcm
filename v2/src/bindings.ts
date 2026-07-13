@@ -31,11 +31,17 @@ export const commands = {
 	 */
 	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
 	fetchBoard: (organization: string, project: string, team: string | null) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, team })),
+	/**  v1 (_state_for_column) and PATCHes System.State. Returns the state set. */
+	moveBoardItem: (organization: string, project: string, itemId: number, workItemType: string, column: string) => typedError<string, AdoError>(__TAURI_INVOKE("move_board_item", { organization, project, itemId, workItemType, column })),
 	/**
 	 *  Move a board item into a column: resolves the target state exactly like
-	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
+	 *  Start streaming AudioSpectrum events from system-audio loopback (the
+	 *  flask equalizer rings). No-op if already running; failures are silent by
+	 *  design - the feature is decorative.
 	 */
-	moveBoardItem: (organization: string, project: string, itemId: number, workItemType: string, column: string) => typedError<string, AdoError>(__TAURI_INVOKE("move_board_item", { organization, project, itemId, workItemType, column })),
+	audioCaptureStart: () => typedError<null, string>(__TAURI_INVOKE("audio_capture_start")),
+	/**  Stop the AudioSpectrum stream (last UI subscriber unmounted). */
+	audioCaptureStop: () => __TAURI_INVOKE<void>("audio_capture_stop"),
 	/**  Non-blocking update check; Some(version) when a newer build is published. */
 	checkUpdate: () => __TAURI_INVOKE<string | null>("check_update"),
 	/**  Download the pending update and restart into it. */
@@ -122,6 +128,7 @@ export const commands = {
 
 /** Events */
 export const events = {
+	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 };
@@ -133,6 +140,11 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 	status: number,
 	body: string,
 } } | { kind: "Network"; detail: string };
+
+export type AudioSpectrum = {
+	/**  `BAND_COUNT` values in 0..=1, low frequencies first. */
+	bands: (number | null)[],
+};
 
 export type AuthStatus = {
 	signed_in: boolean,
