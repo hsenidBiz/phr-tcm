@@ -4,7 +4,9 @@
 > The app has been rewritten on **Tauri 2 + Rust + React/TypeScript** and
 > lives in [`v2/`](v2/) — smaller install, faster start, the same
 > no-DELETE / in-memory-token safety, plus a Work Manager board, selectable
-> full-UI themes, smart grouping, and a multi-level Test Suites browser.
+> full-UI themes, smart grouping, a multi-level Test Suites browser,
+> per-case run history, update diff previews, and one-click HTML
+> execution reports.
 > **Start with [`v2/README.md`](v2/README.md)** for features, architecture,
 > and the dev/release workflow. Installers ship from
 > [azure-devops-test-case-manager-v2-releases](https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases).

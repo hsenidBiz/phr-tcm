@@ -7,7 +7,7 @@ DevOps test cases against a Product Backlog Item (PBI), plus a lightweight
 Built with **Tauri 2 + Rust + React/TypeScript**. Signs in with your own
 Microsoft account; ships and auto-updates via Velopack.
 
-> Internal tool. Current version: **1.3.0**. This is the **primary product**
+> Internal tool. Current version: **1.5.0**. This is the **primary product**
 > since the 2026-07-12 cutover; the PyQt5 v1 (repo root) is in feature freeze
 > and prompts its users to upgrade.
 
@@ -32,20 +32,31 @@ test count.
   creates a new case.
 - Queue cases before writing: **View in browser** (an HTML report opened
   directly), **Export JSON**, **Remove all**, or remove individually.
+- The review gate shows a **diff preview** for every queued update — field
+  old → new, step add/change/remove counts, blank-skipped fields — and flags
+  **no-op** updates that would change nothing.
 
 ### Edit Test Cases
 - Pull a PBI's linked cases; click to select, **ctrl/⌘+click** to toggle,
   **shift+click** for a range.
+- A **search box** (same placement as Run Tests) filters live by title, id,
+  or tag; the header shows *matched / total*.
 - **Bulk edit** selected cases (status, module, tags add/replace,
   preconditions) — titles and steps are never touched.
 - **Group by title** (v1 smart grouping — shared delimiter/word prefixes),
   refresh, and view/export the selection.
 
 ### Run Tests & the Runner
-- A results table tinted by last outcome, filterable by name/id/outcome, with
-  **Group by title** and **shift+click** range selection.
-- Record quick outcomes inline, or open the compact **always-on-top runner**
-  for a step-by-step player (optionally scoped to a selected subset).
+- A **read-only overview** table tinted by last outcome, filterable by
+  name/id/outcome, with **Group by title** and **shift+click** range
+  selection — outcomes are recorded only through the runner.
+- A **History** column shows each case's last five outcomes as colored dots
+  (hover for date and run number), in both the table and the runner.
+- **Execution report**: one click builds a shareable HTML summary — pass rate
+  over executed cases, outcome bar, failures-first table, and failure details
+  with result comments and linked bugs — and opens it in the browser.
+- Select rows and open the compact **always-on-top runner** for a
+  step-by-step player scoped to that subset (or the whole suite).
 - Runner: mark **Passed / Failed / Blocked / Not Applicable** per step and
   overall; a **Pin** toggle; per-case last-outcome badge; auto-loaded
   previously-uploaded screenshots; **Snip** (region capture via the Windows
@@ -57,13 +68,17 @@ test count.
 ### Test Suites
 - The plan → multi-level suite **folder tree** (folders collapsed by default),
   with a **search** box that prunes and auto-expands matches.
-- **View** any suite or folder as an HTML report, hand a folder's cases to
-  **Edit**, or jump a requirement suite straight to **Edit / Run**.
+- **View** any suite or folder as an HTML report, generate an **execution
+  report** for it, hand a folder's cases to **Edit**, or jump a requirement
+  suite straight to **Edit / Run** (folder actions roll up all descendants).
 - Plan scans run concurrently and are cached for the session (with a refresh).
 
 ### Work Manager
 - A **To Do / In Progress / Done** board of your (or a team's) work items with
   drag-drop between columns and a **Hide Done** toggle for more editing room.
+- Moves are **verified against what Azure DevOps actually saved** — if rules
+  (e.g. required dates) block a transition, the card rolls back and the rule
+  message is shown; the board never displays a state the server rejected.
 - A **detail drawer** (slides in, drag-resizable from its left edge) to edit
   state, assignee, activity, effort, dates, and a **markdown** description
   (Write / Preview), plus comments and quick-create.
@@ -76,6 +91,8 @@ test count.
   scrollbars; a startup splash; collapsible icon sidebar; frameless window
   chrome; a **Ctrl+K** command palette and **Ctrl+1..5 / Ctrl+Shift+M**
   shortcuts.
+- The **app icon** is the splash's violet flask mark, and installs create a
+  readable **"Test Case Manager"** shortcut.
 
 ---
 
