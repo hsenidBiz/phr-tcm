@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- App icon master: the splash-screen mark - violet flask on the deep
+       violet-tinted near-black splash background. Regenerate the icon set
+       with: npx tauri icon icon-source.svg -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="75%">
+      <stop offset="0%" stop-color="#1b1533"/>
+      <stop offset="55%" stop-color="#131028"/>
+      <stop offset="100%" stop-color="#0e0c1c"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.28"/>
+      <stop offset="60%" stop-color="#8b5cf6" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="184" fill="url(#bg)"/>
+  <circle cx="512" cy="540" r="360" fill="url(#glow)"/>
+  <g transform="translate(152,152) scale(30)"
+     fill="none" stroke="#8b5cf6" stroke-width="1.7"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 3h6"/>
+    <path d="M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3"/>
+    <path d="M7.5 14h9"/>
+  </g>
+</svg>
