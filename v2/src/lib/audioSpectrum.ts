@@ -27,7 +27,13 @@ async function acquire() {
 function release() {
   refs = Math.max(0, refs - 1);
   if (refs > 0) return;
-  unlisten?.();
+  try {
+    // The unlisten fn invokes the event plugin and can reject (teardown,
+    // window closing) - decorative feature, swallow either failure mode.
+    void Promise.resolve(unlisten?.() as unknown).catch(() => {});
+  } catch {
+    // synchronous throw - same story
+  }
   unlisten = null;
   latest.fill(0);
   commands.audioCaptureStop().catch(() => {});
