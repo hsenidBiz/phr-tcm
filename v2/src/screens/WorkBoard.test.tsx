@@ -220,8 +220,11 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
   fireEvent.click(await screen.findByText("Fix bug"));
 
   // The RCA page shows ALL its fields: rich text as markdown + a picklist.
+  // Rich text opens in Preview (rendered); switch to Write to edit.
   const rcaTab = await screen.findByRole("button", { name: "RCA" });
   fireEvent.click(rcaTab);
+  expect(screen.queryByLabelText("Initial Findings (markdown)")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Write" }));
   const findings = screen.getByLabelText("Initial Findings (markdown)");
   expect(findings).toHaveValue("null ref");
   fireEvent.change(findings, { target: { value: "null ref in save path" } });

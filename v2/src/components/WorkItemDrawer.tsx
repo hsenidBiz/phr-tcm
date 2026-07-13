@@ -109,7 +109,8 @@ export default function WorkItemDrawer({
   });
 
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [descMode, setDescMode] = useState<"write" | "preview">("write");
+  // Rich text opens rendered (like ADO's own form); Write is for editing.
+  const [descMode, setDescMode] = useState<"write" | "preview">("preview");
   // Which rich-text tab is active: "" = Description, else the extra
   // section's reference name (Bug: RCA / Preventive Measures).
   const [docTab, setDocTab] = useState("");
@@ -150,6 +151,7 @@ export default function WorkItemDrawer({
     if (detail.data) {
       setDraft(toDraft(detail.data));
       setDocTab(""); // back to Description when a different item loads
+      setDescMode("preview");
     }
   }, [detail.data]);
 
