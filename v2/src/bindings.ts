@@ -454,6 +454,11 @@ export type WorkItemDetail = {
 	 *  with every visible field on them, shown as editable tabs.
 	 */
 	extra_pages: ExtraPage[],
+	/**
+	 *  Why extra_pages is empty when the layout lookup failed - surfaced in
+	 *  the drawer so a permissions/endpoint problem is visible, not silent.
+	 */
+	extra_pages_error: string | null,
 };
 
 /* Tauri Specta runtime */

@@ -253,12 +253,14 @@ async fn bug_detail_builds_extra_pages_from_the_process_layout() {
         })))
         .mount(&server)
         .await;
-    // Chain hop 1: project properties -> process id.
+    // Chain hop 1: project capabilities -> process id (works by name).
     Mock::given(method("GET"))
-        .and(path("/org/_apis/projects/proj/properties"))
+        .and(path("/org/_apis/projects/proj"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "count": 1,
-            "value": [{"name": "System.ProcessTemplateType", "value": "proc-guid-1"}]
+            "id": "proj-guid", "name": "proj",
+            "capabilities": {"processTemplate": {
+                "templateName": "Custom Agile", "templateTypeId": "proc-guid-1"
+            }}
         })))
         .mount(&server)
         .await;
@@ -354,9 +356,11 @@ async fn detail_without_layout_access_has_no_extra_tabs() {
         })))
         .mount(&server)
         .await;
-    // Properties endpoint unmocked -> 404 -> best-effort empty, detail
-    // still loads (the pre-layout behavior of the drawer).
+    // Project endpoint unmocked -> 404 -> no tabs, but the detail still
+    // loads and the failure reason is surfaced instead of silent.
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let d = client.get_work_item_detail("org", "proj", 14).await.unwrap();
     assert!(d.extra_pages.is_empty());
+    let err = d.extra_pages_error.expect("failure reason should be surfaced");
+    assert!(err.contains("project lookup failed"), "got: {err}");
 }

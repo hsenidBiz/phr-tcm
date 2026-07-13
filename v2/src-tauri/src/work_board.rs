@@ -160,6 +160,9 @@ pub struct WorkItemDetail {
     /// The process's extra form pages (Bug: RCA, Preventive Measures...)
     /// with every visible field on them, shown as editable tabs.
     pub extra_pages: Vec<ExtraPage>,
+    /// Why extra_pages is empty when the layout lookup failed - surfaced in
+    /// the drawer so a permissions/endpoint problem is visible, not silent.
+    pub extra_pages_error: Option<String>,
 }
 
 /// One custom form page (an ADO tab) and its editable fields, in form order.
@@ -437,8 +440,12 @@ impl AdoClient {
         // The process can put extra form pages on a type (Bug: RCA,
         // Preventive Measures). Discover them from the type's layout so
         // every field on those tabs is shown, whatever the org calls them.
-        // Best-effort: a failed lookup just means no extra tabs.
-        let extra_pages = self.extra_pages_for(org, project, &wi_type, f).await;
+        // A failed lookup means no extra tabs, with the reason surfaced.
+        let (extra_pages, extra_pages_error) =
+            match self.extra_pages_for(org, project, &wi_type, f).await {
+                Ok(pages) => (pages, None),
+                Err(e) => (Vec::new(), Some(e)),
+            };
         Ok(WorkItemDetail {
             id,
             title: s("System.Title"),
@@ -459,6 +466,7 @@ impl AdoClient {
             description_field: description_field.to_string(),
             work_item_type: wi_type,
             extra_pages,
+            extra_pages_error,
         })
     }
 
@@ -468,34 +476,32 @@ impl AdoClient {
     /// empty so the drawer can fill them in.
     ///
     /// The layout lives in the org-level PROCESSES api (there is no
-    /// project-scoped layout endpoint), so this chains: project properties
+    /// project-scoped layout endpoint), so this chains: project capabilities
     /// (process id) -> work item type (reference name) -> process layout.
+    /// Every hop reports its failure so the drawer can show why.
     async fn extra_pages_for(
         &self,
         org: &str,
         project: &str,
         wi_type: &str,
         item_fields: &serde_json::Value,
-    ) -> Vec<ExtraPage> {
-        let props_url = format!(
-            "{}/{}/_apis/projects/{}/properties?keys=System.ProcessTemplateType&api-version=7.1-preview.1",
+    ) -> Result<Vec<ExtraPage>, String> {
+        // Capabilities work with the project NAME (the properties api wants
+        // a GUID) and carry the current process template id.
+        let proj_url = format!(
+            "{}/{}/_apis/projects/{}?includeCapabilities=true&api-version=7.1",
             self.base_url,
             org,
             urlencoding::encode(project)
         );
-        let Ok(props) = self.get_json(props_url).await else {
-            return Vec::new();
-        };
-        let Some(process_id) = props["value"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|p| p["name"].as_str() == Some("System.ProcessTemplateType"))
-            .and_then(|p| p["value"].as_str())
-            .map(String::from)
-        else {
-            return Vec::new();
-        };
+        let proj = self
+            .get_json(proj_url)
+            .await
+            .map_err(|e| format!("project lookup failed: {e}"))?;
+        let process_id = proj["capabilities"]["processTemplate"]["templateTypeId"]
+            .as_str()
+            .ok_or("project capabilities carried no process template id")?
+            .to_string();
 
         let wit_url = format!(
             "{}/{}/{}/_apis/wit/workitemtypes/{}?api-version=7.1",
@@ -504,25 +510,27 @@ impl AdoClient {
             project,
             urlencoding::encode(wi_type)
         );
-        let Ok(wit) = self.get_json(wit_url).await else {
-            return Vec::new();
-        };
+        let wit = self
+            .get_json(wit_url)
+            .await
+            .map_err(|e| format!("work item type lookup failed: {e}"))?;
         let Some(wit_ref) = wit["referenceName"].as_str().map(String::from) else {
-            return Vec::new();
+            return Err("work item type carried no referenceName".into());
         };
 
         let layout_url = format!(
-            "{}/{}/_apis/work/processes/{}/workItemTypes/{}/layout?api-version=7.1",
+            "{}/{}/_apis/work/processes/{}/workItemTypes/{}/layout?api-version=7.1-preview.1",
             self.base_url,
             org,
             process_id,
             urlencoding::encode(&wit_ref)
         );
-        let Ok(layout) = self.get_json(layout_url).await else {
-            return Vec::new();
-        };
+        let layout = self
+            .get_json(layout_url)
+            .await
+            .map_err(|e| format!("process layout failed: {e}"))?;
         let Some(pages) = layout["pages"].as_array() else {
-            return Vec::new();
+            return Err("process layout carried no pages".into());
         };
 
         let mut out = Vec::new();
@@ -566,7 +574,7 @@ impl AdoClient {
                 out.push(ExtraPage { name, fields });
             }
         }
-        out
+        Ok(out)
     }
 
     /// Map one layout control to an editable field (None for non-field

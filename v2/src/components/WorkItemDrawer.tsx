@@ -403,6 +403,12 @@ export default function WorkItemDrawer({
                 </div>
               </div>
 
+              {detail.data.extra_pages_error && (
+                <p className="mt-1 text-[11px] text-faint">
+                  Process tabs unavailable: {detail.data.extra_pages_error}
+                </p>
+              )}
+
               {docTab === "" ? (
                 descMode === "write" ? (
                   <Textarea
