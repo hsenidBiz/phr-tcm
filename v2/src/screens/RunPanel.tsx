@@ -13,8 +13,6 @@ import { groupIndices } from "../lib/grouping";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { openRunnerWindow } from "../lib/openRunner";
 
-const OUTCOMES = ["Passed", "Failed", "Blocked", "NotApplicable"] as const;
-type Outcome = (typeof OUTCOMES)[number] | "";
 
 /** Display label only - the ADO value is unchanged. Capitalizes the raw
  * lowercase outcomes ("passed" -> "Passed") and spells out Not Applicable. */
@@ -52,9 +50,6 @@ export default function RunPanel({
   pbiTitle: string;
 }) {
   const qc = useQueryClient();
-  const [chosen, setChosen] = useState<Record<number, Outcome>>({});
-  const [comments, setComments] = useState<Record<number, string>>({});
-  const [runUrl, setRunUrl] = useState("");
   const [filterText, setFilterText] = useState("");
   const [filterOutcome, setFilterOutcome] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set()); // test case ids
@@ -144,38 +139,6 @@ export default function RunPanel({
     gcTime: 30 * 60_000, // keep the background prefetch alive while unobserved
     retry: false,
   });
-
-  const submit = useMutation({
-    mutationFn: async () => {
-      const outcomes = Object.entries(chosen)
-        .filter(([, o]) => o)
-        .map(([pointId, outcome]) => ({
-          point_id: Number(pointId),
-          outcome: outcome as string,
-          comment: comments[Number(pointId)] || null,
-          duration_ms: null,
-          step_ids: null,
-          step_outcomes: null,
-          attachments: null,
-          bug_ids: null,
-        }));
-      return unwrap(
-        commands.submitTestRun(org, project, suite.data!.plan_id, `${pbiTitle} - manual run`, outcomes),
-      );
-    },
-    onSuccess: (run) => {
-      setRunUrl(run.web_url);
-      const n = Object.values(chosen).filter(Boolean).length;
-      setChosen({});
-      setComments({});
-      qc.invalidateQueries({ queryKey: ["points"] });
-      qc.invalidateQueries({ queryKey: ["run-history"] });
-      toast.success(`Recorded ${n} outcome${n === 1 ? "" : "s"} (run #${run.run_id})`);
-    },
-    onError: (e) => toast.error(`Run failed: ${e.message}`),
-  });
-
-  const selectedCount = Object.values(chosen).filter(Boolean).length;
 
   const report = useMutation({
     mutationFn: () =>
@@ -295,9 +258,9 @@ export default function RunPanel({
         )}
       </div>
       <p className="text-xs text-muted">
-        Quick outcomes below, or the runner window for a step-by-step player
-        with screenshots and bug filing. Click a row to include it in a
-        selective runner session.
+        Outcomes are recorded through the runner window - a step-by-step
+        player with screenshots and bug filing. Click rows to pick the cases
+        for a selective runner session.
       </p>
 
       {suite.isFetching && !suite.data && (
@@ -375,8 +338,6 @@ export default function RunPanel({
               <th className="px-2 py-1 font-medium">Test case</th>
               <th className="px-2 py-1 font-medium">Last outcome</th>
               <th className="px-2 py-1 font-medium">History</th>
-              <th className="px-2 py-1 font-medium">This run</th>
-              <th className="px-2 py-1 font-medium">Comment</th>
             </tr>
           </thead>
           <tbody>
@@ -384,7 +345,7 @@ export default function RunPanel({
               <Fragment key={name || "__all"}>
                 {name && (
                   <tr>
-                    <td colSpan={5} className="px-2 pb-1 pt-2">
+                    <td colSpan={3} className="px-2 pb-1 pt-2">
                       <div className="flex w-full items-center gap-3">
                         <span aria-hidden className="h-px flex-1 bg-border" />
                         <button
@@ -443,33 +404,6 @@ export default function RunPanel({
                     }
                   />
                 </td>
-                <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
-                  <Select
-                    aria-label={`Outcome for ${p.test_case_name}`}
-                    className="px-2 py-1"
-                    value={chosen[p.point_id] ?? ""}
-                    onChange={(e) =>
-                      setChosen((c) => ({ ...c, [p.point_id]: e.target.value as Outcome }))
-                    }
-                  >
-                    <option value="">(skip)</option>
-                    {OUTCOMES.map((o) => (
-                      <option key={o} value={o}>
-                        {outcomeLabel(o)}
-                      </option>
-                    ))}
-                  </Select>
-                </td>
-                <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
-                  <Input
-                    className="w-full px-2 py-1"
-                    placeholder="Optional comment"
-                    value={comments[p.point_id] ?? ""}
-                    onChange={(e) =>
-                      setComments((c) => ({ ...c, [p.point_id]: e.target.value }))
-                    }
-                  />
-                </td>
               </tr>
                 ))}
               </Fragment>
@@ -477,22 +411,6 @@ export default function RunPanel({
           </tbody>
         </table>
       )}
-
-      <div className="flex items-center gap-3">
-        <Button
-          disabled={selectedCount === 0 || submit.isPending}
-          onClick={() => submit.mutate()}
-        >
-          {submit.isPending
-            ? "Recording"
-            : `Record ${selectedCount} outcome${selectedCount === 1 ? "" : "s"}`}
-        </Button>
-        {runUrl && (
-          <a className="text-sm text-accent underline" href={runUrl} target="_blank" rel="noreferrer">
-            View run in Azure DevOps
-          </a>
-        )}
-      </div>
 
       {/* Floating action bar: stays on screen while scrolling the table. */}
       {suite.data && selected.size > 0 && (

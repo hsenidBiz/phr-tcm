@@ -18,8 +18,8 @@ function renderPanel() {
   );
 }
 
-function mockAll(submitted: { runName?: string; outcomes?: unknown[] }) {
-  mockIPC((cmd, args) => {
+function mockAll() {
+  mockIPC((cmd) => {
     switch (cmd) {
       case "plugin:event|listen":
         return 1;
@@ -60,65 +60,34 @@ function mockAll(submitted: { runName?: string; outcomes?: unknown[] }) {
             last_result_id: null,
           },
         ];
-      case "submit_test_run": {
-        const a = args as { runName: string; outcomes: unknown[] };
-        submitted.runName = a.runName;
-        submitted.outcomes = a.outcomes;
-        return { run_id: 300, web_url: "https://x/run/300" };
-      }
     }
   });
 }
 
-test("loads suite + points and records chosen outcomes", async () => {
-  const submitted: { runName?: string; outcomes?: Array<{ point_id: number; outcome: string }> } = {};
-  mockAll(submitted);
+test("loads suite + points as a read-only overview (outcomes live in the runner)", async () => {
+  mockAll();
   renderPanel();
 
   expect(await screen.findByText(/Auth - Test Plan/)).toBeInTheDocument();
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
   // Last-outcome cell shows the capitalized display value ("failed" from
-  // ADO renders as "Failed"); options in the selects also say "Failed",
-  // so assert specifically on a table cell.
+  // ADO renders as "Failed"); the outcome filter options also say
+  // "Failed", so assert specifically on a table cell.
   expect(screen.getAllByText("Failed").some((el) => el.tagName === "TD")).toBe(true);
 
   // History dots render for case 201 (newest first, tooltip carries date).
   expect(screen.getByTitle("Failed · 2026-07-12 (run #7)")).toBeInTheDocument();
   expect(screen.getByTitle("Passed · 2026-07-11 (run #6)")).toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText("Outcome for Valid login"), {
-    target: { value: "Passed" },
-  });
-  const btn = screen.getByRole("button", { name: /Record 1 outcome/ });
-  fireEvent.click(btn);
-
-  expect(await screen.findByText("View run in Azure DevOps")).toBeInTheDocument();
-  expect(submitted.runName).toBe("Login flow - manual run");
-  expect(submitted.outcomes).toEqual([
-    {
-      point_id: 7,
-      outcome: "Passed",
-      comment: null,
-      duration_ms: null,
-      step_ids: null,
-      step_outcomes: null,
-      attachments: null,
-      bug_ids: null,
-    },
-  ]);
-});
-
-test("skipped points are not submitted", async () => {
-  const submitted: { outcomes?: unknown[] } = {};
-  mockAll(submitted);
-  renderPanel();
-  await screen.findByText("Valid login");
-  // Nothing chosen: button disabled.
-  expect(screen.getByRole("button", { name: /Record 0 outcomes/ })).toBeDisabled();
+  // The quick-record flow is gone: no per-row outcome select, no comment
+  // box, no Record button - the runner is the only way to set outcomes.
+  expect(screen.queryByLabelText("Outcome for Valid login")).not.toBeInTheDocument();
+  expect(screen.queryByPlaceholderText("Optional comment")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Record .* outcome/ })).not.toBeInTheDocument();
 });
 
 test("row clicks select cases for a targeted runner session", async () => {
-  mockAll({});
+  mockAll();
   renderPanel();
   await screen.findByText("Valid login");
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
@@ -132,7 +101,7 @@ test("row clicks select cases for a targeted runner session", async () => {
 });
 
 test("shift+click selects the whole range between two rows", async () => {
-  mockAll({});
+  mockAll();
   renderPanel();
   await screen.findByText("Valid login");
 
