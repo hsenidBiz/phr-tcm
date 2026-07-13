@@ -14,6 +14,8 @@ $stage = Join-Path $env:TEMP "tcm-v2-pack"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item $exe.FullName $stage
-vpk pack --packId "AzureDevOpsTestCaseManager.V2" --packVersion $Version --packDir $stage --mainExe $exe.Name --outputDir (Join-Path $root "Releases")
+# packId is the app identity - never change it (existing installs update by
+# it). packTitle is the human-readable name used for shortcuts / Add-Remove.
+vpk pack --packId "AzureDevOpsTestCaseManager.V2" --packTitle "Test Case Manager" --packVersion $Version --packDir $stage --mainExe $exe.Name --outputDir (Join-Path $root "Releases")
 if ($LASTEXITCODE -ne 0) { throw "vpk pack failed with exit code $LASTEXITCODE" }
 Write-Host "Packed v$Version to v2/Releases"
