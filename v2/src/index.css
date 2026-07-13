@@ -346,6 +346,16 @@ body {
   border-radius: 9999px;
   border: 1px dashed color-mix(in srgb, var(--color-accent) 40%, transparent);
   animation: lf-spin 16s linear infinite;
+  transition: opacity 0.5s ease;
+}
+/* While the equalizer ring is dancing (EqRing sets data-eq-active on its
+   host) the orbit/halo circles yield the stage to the bars. */
+.login-flask[data-eq-active="true"] .orbit,
+.login-flask[data-eq-active="true"] .orbit2 {
+  opacity: 0;
+}
+.empty-art[data-eq-active="true"] .halo {
+  visibility: hidden;
 }
 .login-flask .orbit::before {
   content: "";
