@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { unwrap } from "../lib/ipc";
@@ -102,38 +102,16 @@ export default function WorkItemDrawer({
   // section's reference name (Bug: RCA / Preventive Measures).
   const [docTab, setDocTab] = useState("");
 
-  // The drawer's left edge is draggable; the chosen width persists.
-  const MIN_W = 320;
-  const MAX_W = 900;
-  const [width, setWidth] = useState(() => {
-    const v = Number(localStorage.getItem("tcm-v2-drawer-width"));
-    return v >= MIN_W && v <= MAX_W ? v : 384;
-  });
-  const asideRef = useRef<HTMLElement>(null);
-  const startResize = (e: ReactMouseEvent) => {
-    e.preventDefault();
-    const right = asideRef.current?.getBoundingClientRect().right ?? window.innerWidth;
-    const prevCursor = document.body.style.cursor;
-    document.body.style.cursor = "col-resize";
-    const onMove = (ev: MouseEvent) => {
-      setWidth(Math.min(MAX_W, Math.max(MIN_W, Math.round(right - ev.clientX))));
+  // Esc closes (X too); no overlay-click close so edits can't be lost by a
+  // stray click.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
     };
-    const onUp = () => {
-      document.body.style.cursor = prevCursor;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      setWidth((w) => {
-        try {
-          localStorage.setItem("tcm-v2-drawer-width", String(w));
-        } catch {
-          // session-only
-        }
-        return w;
-      });
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   useEffect(() => {
     if (detail.data) {
       setDraft(toDraft(detail.data));
@@ -218,158 +196,115 @@ export default function WorkItemDrawer({
   });
 
   return (
-    <aside
-      ref={asideRef}
-      className="drawer-in relative flex h-full shrink-0 flex-col border-l border-border bg-surface"
-      style={{ width }}
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Work item ${itemId}`}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 md:p-8"
     >
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize details panel"
-        title="Drag to resize"
-        className="absolute -left-0.5 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent/50"
-        onMouseDown={startResize}
-        onDoubleClick={() => setWidth(384)}
-      />
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <span className="text-sm font-semibold text-text">
-          <span className="id-mono text-faint">#{itemId}</span>{" "}
-          {detail.data?.work_item_type}
-        </span>
-        <span className="flex items-center gap-1">
-          <button
-            aria-label="Open in Azure DevOps"
-            title="Open in Azure DevOps"
-            className="rounded p-1 text-muted transition-colors hover:text-accent"
-            onClick={() =>
-              openUrl(
-                `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_workitems/edit/${itemId}`,
-              ).catch(() => toast.error("Could not open the browser."))
-            }
-          >
-            <ExternalLink size={15} />
-          </button>
-          <button aria-label="Close details" className="rounded p-1 text-muted hover:text-text" onClick={onClose}>
-            <X size={16} />
-          </button>
-        </span>
-      </header>
+      <div className="modal-in flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
+        <header className="flex items-center justify-between border-b border-border px-5 py-3">
+          <span className="text-sm font-semibold text-text">
+            <span className="id-mono text-faint">#{itemId}</span>{" "}
+            {detail.data?.work_item_type}
+          </span>
+          <span className="flex items-center gap-1">
+            <button
+              aria-label="Open in Azure DevOps"
+              title="Open in Azure DevOps"
+              className="rounded p-1 text-muted transition-colors hover:text-accent"
+              onClick={() =>
+                openUrl(
+                  `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_workitems/edit/${itemId}`,
+                ).catch(() => toast.error("Could not open the browser."))
+              }
+            >
+              <ExternalLink size={15} />
+            </button>
+            <button aria-label="Close details" className="rounded p-1 text-muted hover:text-text" onClick={onClose}>
+              <X size={16} />
+            </button>
+          </span>
+        </header>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-        {detail.isLoading && <Skeleton className="h-40" />}
-        {detail.isError && <p className="text-sm text-danger">{detail.error.message}</p>}
+        {(detail.isLoading || detail.isError) && (
+          <div className="space-y-3 p-5">
+            {detail.isLoading && <Skeleton className="h-40" />}
+            {detail.isError && <p className="text-sm text-danger">{detail.error.message}</p>}
+          </div>
+        )}
 
         {detail.data && draft && (
           <>
-            <label className="block text-xs text-muted">
-              Title
-              <Input
-                className="mt-1 w-full"
-                value={draft.title}
-                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
+            {/* ADO-style form head: full-width title, then the state row. */}
+            <div className="space-y-2 border-b border-border px-5 py-3">
               <label className="block text-xs text-muted">
-                State
-                <Select
+                Title
+                <Input
                   className="mt-1 w-full"
-                  value={draft.state}
-                  onChange={(e) => setDraft({ ...draft, state: e.target.value })}
-                >
-                  {!states.includes(draft.state) && <option>{draft.state}</option>}
-                  {states.map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
-                </Select>
+                  value={draft.title}
+                  onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                />
               </label>
-              <label className="block text-xs text-muted">
-                Assigned to
-                <Select
-                  className="mt-1 w-full"
-                  value={draft.assignedToUnique}
-                  onChange={(e) => setDraft({ ...draft, assignedToUnique: e.target.value })}
-                >
-                  <option value="">(unassigned)</option>
-                  {detail.data.assigned_to_unique &&
-                    !(members.data ?? []).some(
-                      (m) => m.unique_name === detail.data!.assigned_to_unique,
-                    ) && (
-                      <option value={detail.data.assigned_to_unique}>
-                        {detail.data.assigned_to}
-                      </option>
-                    )}
-                  {(members.data ?? []).map((m) => (
-                    <option key={m.unique_name} value={m.unique_name}>
-                      {m.display_name}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-            </div>
-
-            {(activities.data?.length ?? 0) > 0 && (
-              <label className="block text-xs text-muted">
-                Activity
-                <Select
-                  className="mt-1 w-full"
-                  value={draft.activity}
-                  onChange={(e) => setDraft({ ...draft, activity: e.target.value })}
-                >
-                  <option value="">(none)</option>
-                  {activities.data!.map((a) => (
-                    <option key={a}>{a}</option>
-                  ))}
-                </Select>
-              </label>
-            )}
-
-            <div className="grid grid-cols-3 gap-2">
-              {(
-                [
-                  ["Remaining", "remaining"],
-                  ["Completed", "completed"],
-                  ["Original", "original"],
-                ] as const
-              ).map(([label, key]) => (
-                <label key={key} className="block text-xs text-muted">
-                  {label}
-                  <Input
-                    className="mt-1 w-full px-2"
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={draft[key]}
-                    onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
-                  />
+              <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+                <label className="block text-xs text-muted">
+                  State
+                  <Select
+                    className="mt-1 w-full"
+                    value={draft.state}
+                    onChange={(e) => setDraft({ ...draft, state: e.target.value })}
+                  >
+                    {!states.includes(draft.state) && <option>{draft.state}</option>}
+                    {states.map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
+                  </Select>
                 </label>
-              ))}
+                <label className="block text-xs text-muted">
+                  Assigned to
+                  <Select
+                    className="mt-1 w-full"
+                    value={draft.assignedToUnique}
+                    onChange={(e) => setDraft({ ...draft, assignedToUnique: e.target.value })}
+                  >
+                    <option value="">(unassigned)</option>
+                    {detail.data.assigned_to_unique &&
+                      !(members.data ?? []).some(
+                        (m) => m.unique_name === detail.data!.assigned_to_unique,
+                      ) && (
+                        <option value={detail.data.assigned_to_unique}>
+                          {detail.data.assigned_to}
+                        </option>
+                      )}
+                    {(members.data ?? []).map((m) => (
+                      <option key={m.unique_name} value={m.unique_name}>
+                        {m.display_name}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                {(activities.data?.length ?? 0) > 0 && (
+                  <label className="block text-xs text-muted">
+                    Activity
+                    <Select
+                      className="mt-1 w-full"
+                      value={draft.activity}
+                      onChange={(e) => setDraft({ ...draft, activity: e.target.value })}
+                    >
+                      <option value="">(none)</option>
+                      {activities.data!.map((a) => (
+                        <option key={a}>{a}</option>
+                      ))}
+                    </Select>
+                  </label>
+                )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <div className="text-xs text-muted">
-                Start date
-                <DateField
-                  className="mt-1"
-                  ariaLabel="Start date"
-                  value={draft.startDate}
-                  onChange={(v) => setDraft({ ...draft, startDate: v })}
-                />
-              </div>
-              <div className="text-xs text-muted">
-                Finish date
-                <DateField
-                  className="mt-1"
-                  ariaLabel="Finish date"
-                  value={draft.finishDate}
-                  onChange={(v) => setDraft({ ...draft, finishDate: v })}
-                />
-              </div>
-            </div>
-
-            <div className="block text-xs text-muted">
+            {/* Body: rich text + comments left, planning details right. */}
+            <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_280px]">
+              <div className="min-h-0 space-y-3 overflow-y-auto p-5 lg:border-r lg:border-border">
+                <div className="block text-xs text-muted">
               <div className="flex items-center justify-between">
                 {/* Tab per form page: Description plus whatever the process
                     adds (Bug: RCA, Preventive Measures). */}
@@ -495,18 +430,72 @@ export default function WorkItemDrawer({
               )}
             </div>
 
-            <div className="text-xs text-faint">
-              {detail.data.area_path} · {detail.data.iteration_path}
+                <CommentsPanel org={org} project={project} itemId={itemId} />
+              </div>
+
+              <div className="space-y-3 overflow-y-auto p-5">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-faint">
+                  Planning
+                </h3>
+                {(
+                  [
+                    ["Remaining", "remaining"],
+                    ["Completed", "completed"],
+                    ["Original", "original"],
+                  ] as const
+                ).map(([label, key]) => (
+                  <label key={key} className="block text-xs text-muted">
+                    {label}
+                    <Input
+                      className="mt-1 w-full px-2"
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={draft[key]}
+                      onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+                    />
+                  </label>
+                ))}
+                <div className="text-xs text-muted">
+                  Start date
+                  <DateField
+                    className="mt-1"
+                    ariaLabel="Start date"
+                    value={draft.startDate}
+                    onChange={(v) => setDraft({ ...draft, startDate: v })}
+                  />
+                </div>
+                <div className="text-xs text-muted">
+                  Finish date
+                  <DateField
+                    className="mt-1"
+                    ariaLabel="Finish date"
+                    value={draft.finishDate}
+                    onChange={(v) => setDraft({ ...draft, finishDate: v })}
+                  />
+                </div>
+                <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-faint">
+                  Classification
+                </h3>
+                <p className="break-words text-xs text-faint">
+                  {detail.data.area_path}
+                  <br />
+                  {detail.data.iteration_path}
+                </p>
+              </div>
             </div>
 
-            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? "Saving" : "Save changes"}
-            </Button>
-
-            <CommentsPanel org={org} project={project} itemId={itemId} />
+            <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                Close
+              </Button>
+              <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+                {save.isPending ? "Saving" : "Save changes"}
+              </Button>
+            </footer>
           </>
         )}
       </div>
-    </aside>
+    </div>
   );
 }

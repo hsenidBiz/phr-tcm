@@ -495,19 +495,19 @@ body {
   color: var(--color-muted);
 }
 
-/* Work Manager detail drawer slides in from the right instead of popping. */
-@keyframes drawer-in {
+/* Work Manager detail modal scales in gently instead of popping. */
+@keyframes modal-in {
   from {
-    transform: translateX(100%);
-    opacity: 0.4;
+    transform: scale(0.97);
+    opacity: 0;
   }
   to {
-    transform: translateX(0);
+    transform: scale(1);
     opacity: 1;
   }
 }
-.drawer-in {
-  animation: drawer-in 0.22s ease-out;
+.modal-in {
+  animation: modal-in 0.16s ease-out;
 }
 
 /* Data alignment: ids, counts and outcome columns never wobble. */
