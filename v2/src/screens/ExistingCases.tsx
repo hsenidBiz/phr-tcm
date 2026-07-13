@@ -281,20 +281,6 @@ export default function ExistingCases({
         >
           <RefreshCw size={14} />
         </button>
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          <Checkbox
-            checked={grouped}
-            onCheckedChange={(v) => {
-              setGrouped(v);
-              try {
-                localStorage.setItem("tcm-v2-group-cases", v ? "on" : "off");
-              } catch {
-                // session-only
-              }
-            }}
-          />
-          Group by title
-        </label>
         <div className="ml-auto">
           <Button variant="outline" size="sm" disabled={list.length === 0} onClick={() => viewHtml.mutate()}>
             View in browser
@@ -311,6 +297,20 @@ export default function ExistingCases({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <Checkbox
+              checked={grouped}
+              onCheckedChange={(v) => {
+                setGrouped(v);
+                try {
+                  localStorage.setItem("tcm-v2-group-cases", v ? "on" : "off");
+                } catch {
+                  // session-only
+                }
+              }}
+            />
+            Group by title
+          </label>
         </div>
       )}
 
