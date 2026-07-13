@@ -123,7 +123,7 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
         description_text: "old text",
         description_html: "<div>old text</div>",
         description_field: "System.Description",
-        extra_sections: [],
+        extra_pages: [],
       };
     if (cmd === "list_team_members")
       return [{ display_name: "Avin", unique_name: "a@x.com" }];
@@ -172,9 +172,38 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
         description_text: "repro",
         description_html: "<div>repro</div>",
         description_field: "Microsoft.VSTS.TCM.ReproSteps",
-        extra_sections: [
-          { name: "RCA", reference_name: "Custom.RCA", html: "<div>null ref</div>" },
-          { name: "Preventive Measures", reference_name: "Custom.PreventiveMeasures", html: "" },
+        extra_pages: [
+          {
+            name: "RCA",
+            fields: [
+              {
+                label: "Initial Findings",
+                reference_name: "Custom.InitialFindings",
+                kind: "html",
+                allowed: [],
+                value: "<div>null ref</div>",
+              },
+              {
+                label: "Root Cause Category",
+                reference_name: "Custom.RootCauseCategory",
+                kind: "pick",
+                allowed: ["Code Defect", "Design/Requirement"],
+                value: "",
+              },
+            ],
+          },
+          {
+            name: "Preventive Measures",
+            fields: [
+              {
+                label: "Lessons Learned",
+                reference_name: "Custom.LessonsLearned",
+                kind: "html",
+                allowed: [],
+                value: "",
+              },
+            ],
+          },
         ],
       };
     if (cmd === "list_team_members") return [{ display_name: "Avin", unique_name: "a@x.com" }];
@@ -188,24 +217,32 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
   renderBoard();
   fireEvent.click(await screen.findByText("Fix bug"));
 
-  // Both process tabs are there; RCA shows its existing content as markdown.
+  // The RCA page shows ALL its fields: rich text as markdown + a picklist.
   const rcaTab = await screen.findByRole("button", { name: "RCA" });
   fireEvent.click(rcaTab);
-  const editor = screen.getByLabelText("RCA (markdown)");
-  expect(editor).toHaveValue("null ref");
-  fireEvent.change(editor, { target: { value: "null ref in save path" } });
+  const findings = screen.getByLabelText("Initial Findings (markdown)");
+  expect(findings).toHaveValue("null ref");
+  fireEvent.change(findings, { target: { value: "null ref in save path" } });
+  fireEvent.change(screen.getByLabelText("Root Cause Category"), {
+    target: { value: "Code Defect" },
+  });
 
-  // The empty Preventive Measures tab is editable too.
+  // The empty Preventive Measures page is editable too.
   fireEvent.click(screen.getByRole("button", { name: "Preventive Measures" }));
-  fireEvent.change(screen.getByLabelText("Preventive Measures (markdown)"), {
+  fireEvent.change(screen.getByLabelText("Lessons Learned (markdown)"), {
     target: { value: "add a guard test" },
   });
 
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await vi.waitFor(() => expect(patched.patches).toBeTruthy());
-  expect(patched.patches).toHaveLength(2);
-  expect(patched.patches![0].reference_name).toBe("Custom.RCA");
+  expect(patched.patches).toHaveLength(3);
+  expect(patched.patches![0].reference_name).toBe("Custom.InitialFindings");
   expect(patched.patches![0].value).toContain("null ref in save path");
-  expect(patched.patches![1].reference_name).toBe("Custom.PreventiveMeasures");
-  expect(patched.patches![1].value).toContain("add a guard test");
+  // Picklist saves the raw value, not HTML.
+  expect(patched.patches![1]).toEqual({
+    reference_name: "Custom.RootCauseCategory",
+    value: "Code Defect",
+  });
+  expect(patched.patches![2].reference_name).toBe("Custom.LessonsLearned");
+  expect(patched.patches![2].value).toContain("add a guard test");
 });

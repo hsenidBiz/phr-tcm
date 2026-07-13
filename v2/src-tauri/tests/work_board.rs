@@ -237,7 +237,7 @@ async fn fetch_board_pipeline() {
 }
 
 #[tokio::test]
-async fn bug_detail_discovers_rca_and_preventive_tabs_by_display_name() {
+async fn bug_detail_builds_extra_pages_from_the_form_layout() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/wit/workitems/13"))
@@ -246,36 +246,77 @@ async fn bug_detail_discovers_rca_and_preventive_tabs_by_display_name() {
             "fields": {
                 "System.Title": "Crash", "System.WorkItemType": "Bug",
                 "System.State": "Active",
-                "Custom.RCA": "<div>Null ref in save path</div>"
-                // Custom.PreventiveMeasures intentionally unset
+                "Custom.InitialFindings": "<div>Null ref in save path</div>",
+                "Custom.RootCauseCategory": "Design/Requirement"
+                // Custom.LessonsLearned intentionally unset
             }
         })))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/org/proj/_apis/wit/workitemtypes/Bug/fields"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Bug/layout"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "value": [
-                {"name": "Title", "referenceName": "System.Title"},
-                {"name": "RCA", "referenceName": "Custom.RCA"},
-                {"name": "Preventive Measures", "referenceName": "Custom.PreventiveMeasures"}
+            "pages": [
+                {"label": "Details", "visible": true, "sections": []},
+                {"label": "RCA", "visible": true, "sections": [
+                    {"groups": [
+                        {"controls": [
+                            {"id": "Custom.InitialFindings", "label": "Initial Findings",
+                             "controlType": "HtmlFieldControl", "visible": true},
+                            {"id": "Custom.RootCauseCategory", "label": "Root Cause Category",
+                             "controlType": "FieldControl", "visible": true},
+                            {"id": "System.History", "label": "Discussion",
+                             "controlType": "WorkItemLogControl", "visible": true},
+                            {"controlType": "LinksControl", "label": "Links", "visible": true}
+                        ]}
+                    ]}
+                ]},
+                {"label": "Preventive Measures", "visible": true, "sections": [
+                    {"groups": [
+                        {"controls": [
+                            {"id": "Custom.LessonsLearned", "label": "Lessons Learned",
+                             "controlType": "HtmlFieldControl", "visible": true}
+                        ]}
+                    ]}
+                ]},
+                {"label": "Hidden Page", "visible": false, "sections": []}
             ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Bug/fields/Custom.RootCauseCategory"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "referenceName": "Custom.RootCauseCategory",
+            "allowedValues": ["Code Defect", "Design/Requirement", "Environment"]
         })))
         .mount(&server)
         .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let d = client.get_work_item_detail("org", "proj", 13).await.unwrap();
-    assert_eq!(d.extra_sections.len(), 2);
-    assert_eq!(d.extra_sections[0].name, "RCA");
-    assert_eq!(d.extra_sections[0].reference_name, "Custom.RCA");
-    assert_eq!(d.extra_sections[0].html, "<div>Null ref in save path</div>");
-    // Empty fields still get a tab so the user can fill them in.
-    assert_eq!(d.extra_sections[1].name, "Preventive Measures");
-    assert_eq!(d.extra_sections[1].html, "");
+
+    assert_eq!(d.extra_pages.len(), 2);
+    let rca = &d.extra_pages[0];
+    assert_eq!(rca.name, "RCA");
+    // Non-field controls (history, links) are dropped.
+    assert_eq!(rca.fields.len(), 2);
+    assert_eq!(rca.fields[0].label, "Initial Findings");
+    assert_eq!(rca.fields[0].kind, "html");
+    assert_eq!(rca.fields[0].value, "<div>Null ref in save path</div>");
+    // FieldControl with allowedValues becomes a picklist.
+    assert_eq!(rca.fields[1].kind, "pick");
+    assert_eq!(rca.fields[1].allowed.len(), 3);
+    assert_eq!(rca.fields[1].value, "Design/Requirement");
+
+    // Empty fields still get an entry so the drawer can fill them in.
+    let pm = &d.extra_pages[1];
+    assert_eq!(pm.name, "Preventive Measures");
+    assert_eq!(pm.fields[0].label, "Lessons Learned");
+    assert_eq!(pm.fields[0].value, "");
 }
 
 #[tokio::test]
-async fn non_bug_detail_has_no_extra_sections() {
+async fn detail_without_layout_pages_has_no_extra_tabs() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/org/proj/_apis/wit/workitems/14"))
@@ -288,7 +329,14 @@ async fn non_bug_detail_has_no_extra_sections() {
         })))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Task/layout"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "pages": [{"label": "Details", "visible": true, "sections": []}]
+        })))
+        .mount(&server)
+        .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let d = client.get_work_item_detail("org", "proj", 14).await.unwrap();
-    assert!(d.extra_sections.is_empty());
+    assert!(d.extra_pages.is_empty());
 }

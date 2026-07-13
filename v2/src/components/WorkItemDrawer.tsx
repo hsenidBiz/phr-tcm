@@ -25,8 +25,8 @@ type Draft = {
   startDate: string;
   finishDate: string;
   description: string;
-  /** Extra rich-text tabs (Bug: RCA / Preventive Measures), markdown by
-   * reference name. */
+  /** Every field on the extra form pages (Bug: RCA / Preventive Measures),
+   * keyed by reference name - markdown for html fields, raw otherwise. */
   extras: Record<string, string>;
 };
 
@@ -43,11 +43,18 @@ function htmlToMd(html: string): string {
   return html.trim() ? turndown.turndown(html) : "";
 }
 
+/** A field's editor-facing value: markdown for rich text, raw otherwise. */
+function extraValue(f: { kind: string; value: string }): string {
+  return f.kind === "html" ? htmlToMd(f.value) : f.value;
+}
+
 function toDraft(d: WorkItemDetail): Draft {
   return {
     extras: Object.fromEntries(
       // ?? []: tolerate cached details from before this field existed.
-      (d.extra_sections ?? []).map((s) => [s.reference_name, htmlToMd(s.html)]),
+      (d.extra_pages ?? []).flatMap((p) =>
+        p.fields.map((f) => [f.reference_name, extraValue(f)]),
+      ),
     ),
     title: d.title,
     state: d.state,
@@ -172,16 +179,19 @@ export default function WorkItemDrawer({
           value: `<div>${marked.parse(dr.description, { async: false, breaks: true })}</div>`,
         });
       }
-      // Extra rich-text tabs (Bug: RCA / Preventive Measures) save the same
-      // way - markdown -> HTML, and only when actually changed.
-      for (const s of d.extra_sections ?? []) {
-        const now = dr.extras[s.reference_name] ?? "";
-        if (now !== htmlToMd(s.html)) {
-          patches.push({
-            reference_name: s.reference_name,
-            value: `<div>${marked.parse(now, { async: false, breaks: true })}</div>`,
-          });
-        }
+      // Extra form pages (Bug: RCA / Preventive Measures) save the same
+      // way - only fields that actually changed; rich text goes back as
+      // HTML, picklists and plain fields as raw values.
+      for (const f of (d.extra_pages ?? []).flatMap((p) => p.fields)) {
+        const now = dr.extras[f.reference_name] ?? "";
+        if (now === extraValue(f)) continue;
+        patches.push({
+          reference_name: f.reference_name,
+          value:
+            f.kind === "html"
+              ? `<div>${marked.parse(now, { async: false, breaks: true })}</div>`
+              : now,
+        });
       }
       if (patches.length === 0) return false;
       await unwrap(commands.updateWorkItem(org, project, itemId, patches));
@@ -353,14 +363,14 @@ export default function WorkItemDrawer({
 
             <div className="block text-xs text-muted">
               <div className="flex items-center justify-between">
-                {/* Tab per rich-text section: Description plus whatever the
-                    process adds (Bug: RCA, Preventive Measures). */}
-                <div className="flex gap-1">
+                {/* Tab per form page: Description plus whatever the process
+                    adds (Bug: RCA, Preventive Measures). */}
+                <div className="flex flex-wrap gap-1">
                   {[
                     { key: "", label: "Description" },
-                    ...(detail.data.extra_sections ?? []).map((s) => ({
-                      key: s.reference_name,
-                      label: s.name,
+                    ...(detail.data.extra_pages ?? []).map((p) => ({
+                      key: p.name,
+                      label: p.name,
                     })),
                   ].map((t) => (
                     <button
@@ -392,37 +402,93 @@ export default function WorkItemDrawer({
                   ))}
                 </div>
               </div>
-              {(() => {
-                const label = docTab
-                  ? ((detail.data.extra_sections ?? []).find((s) => s.reference_name === docTab)
-                      ?.name ?? "Section")
-                  : "Description";
-                const value = docTab ? (draft.extras[docTab] ?? "") : draft.description;
-                const setValue = (v: string) =>
-                  docTab
-                    ? setDraft({ ...draft, extras: { ...draft.extras, [docTab]: v } })
-                    : setDraft({ ...draft, description: v });
-                return descMode === "write" ? (
+
+              {docTab === "" ? (
+                descMode === "write" ? (
                   <Textarea
-                    aria-label={`${label} (markdown)`}
+                    aria-label="Description (markdown)"
                     className="mt-1 h-28 w-full"
                     placeholder="Supports markdown: **bold**, - lists, `code`, [links](url)"
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
+                    value={draft.description}
+                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                   />
                 ) : (
                   <div
                     className="md-preview mt-1 min-h-28 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
                     // Rendered from the user's own local draft only.
                     dangerouslySetInnerHTML={{
-                      __html: marked.parse(value || "*Nothing to preview*", {
+                      __html: marked.parse(draft.description || "*Nothing to preview*", {
                         async: false,
                         breaks: true,
                       }),
                     }}
                   />
-                );
-              })()}
+                )
+              ) : (
+                // An extra form page: every field it carries, in form order.
+                <div className="mt-1 space-y-3">
+                  {(detail.data.extra_pages ?? [])
+                    .find((p) => p.name === docTab)
+                    ?.fields.map((f) => {
+                      const value = draft.extras[f.reference_name] ?? "";
+                      const setValue = (v: string) =>
+                        setDraft({
+                          ...draft,
+                          extras: { ...draft.extras, [f.reference_name]: v },
+                        });
+                      if (f.kind === "pick") {
+                        return (
+                          <label key={f.reference_name} className="flex flex-col gap-1">
+                            {f.label}
+                            <Select value={value} onChange={(e) => setValue(e.target.value)} aria-label={f.label}>
+                              <option value="">(none)</option>
+                              {!f.allowed.includes(value) && value && <option>{value}</option>}
+                              {f.allowed.map((a) => (
+                                <option key={a}>{a}</option>
+                              ))}
+                            </Select>
+                          </label>
+                        );
+                      }
+                      if (f.kind === "text") {
+                        return (
+                          <label key={f.reference_name} className="flex flex-col gap-1">
+                            {f.label}
+                            <Input
+                              aria-label={f.label}
+                              value={value}
+                              onChange={(e) => setValue(e.target.value)}
+                            />
+                          </label>
+                        );
+                      }
+                      return (
+                        <div key={f.reference_name}>
+                          <span>{f.label}</span>
+                          {descMode === "write" ? (
+                            <Textarea
+                              aria-label={`${f.label} (markdown)`}
+                              className="mt-1 h-24 w-full"
+                              placeholder="Supports markdown: **bold**, - lists, `code`, [links](url)"
+                              value={value}
+                              onChange={(e) => setValue(e.target.value)}
+                            />
+                          ) : (
+                            <div
+                              className="md-preview mt-1 min-h-16 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
+                              dangerouslySetInnerHTML={{
+                                __html: marked.parse(value || "*Nothing to preview*", {
+                                  async: false,
+                                  breaks: true,
+                                }),
+                              }}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
             </div>
 
             <div className="text-xs text-faint">

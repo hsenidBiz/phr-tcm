@@ -157,17 +157,29 @@ pub struct WorkItemDetail {
     /// Which field the description came from (System.Description or
     /// Microsoft.VSTS.TCM.ReproSteps) so the save writes the right one.
     pub description_field: String,
-    /// Process-specific rich-text sections shown as extra editable tabs
-    /// (Bugs: RCA + Preventive Measures, discovered by field display name).
-    pub extra_sections: Vec<ExtraSection>,
+    /// The process's extra form pages (Bug: RCA, Preventive Measures...)
+    /// with every visible field on them, shown as editable tabs.
+    pub extra_pages: Vec<ExtraPage>,
 }
 
-/// An additional rich-text field rendered as its own tab in the drawer.
+/// One custom form page (an ADO tab) and its editable fields, in form order.
 #[derive(Debug, Clone, Serialize, specta::Type)]
-pub struct ExtraSection {
+pub struct ExtraPage {
     pub name: String,
+    pub fields: Vec<ExtraField>,
+}
+
+/// A single field on an extra page.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ExtraField {
+    pub label: String,
     pub reference_name: String,
-    pub html: String,
+    /// "html" (rich text), "pick" (allowed values), or "text".
+    pub kind: String,
+    /// Allowed values when kind == "pick".
+    pub allowed: Vec<String>,
+    /// Current raw value (HTML for html fields).
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -422,15 +434,11 @@ impl AdoClient {
         } else {
             "System.Description"
         };
-        // Bugs in this process carry extra rich-text tabs (RCA, Preventive
-        // Measures). Field refs are org-specific (Custom.*), so discover
-        // them by display name from the type's field list. Best-effort: a
-        // failed lookup just means no extra tabs.
-        let extra_sections = if wi_type == "Bug" {
-            self.extra_sections_for(org, project, &wi_type, f).await
-        } else {
-            Vec::new()
-        };
+        // The process can put extra form pages on a type (Bug: RCA,
+        // Preventive Measures). Discover them from the type's layout so
+        // every field on those tabs is shown, whatever the org calls them.
+        // Best-effort: a failed lookup just means no extra tabs.
+        let extra_pages = self.extra_pages_for(org, project, &wi_type, f).await;
         Ok(WorkItemDetail {
             id,
             title: s("System.Title"),
@@ -450,59 +458,124 @@ impl AdoClient {
             description_html: s(description_field),
             description_field: description_field.to_string(),
             work_item_type: wi_type,
-            extra_sections,
+            extra_pages,
         })
     }
 
-    /// Find the process's RCA / Preventive Measures fields on this work item
-    /// type by display name and pair them with the item's current values.
-    /// Fields are included even when empty so the drawer can fill them in.
-    async fn extra_sections_for(
+    /// The type's custom form pages beyond the first (main) one, with every
+    /// visible field control they contain - the same tabs ADO's own form
+    /// shows (Bug: RCA, Preventive Measures). Fields are included even when
+    /// empty so the drawer can fill them in.
+    async fn extra_pages_for(
         &self,
         org: &str,
         project: &str,
         wi_type: &str,
-        fields: &serde_json::Value,
-    ) -> Vec<ExtraSection> {
+        item_fields: &serde_json::Value,
+    ) -> Vec<ExtraPage> {
         let url = format!(
-            "{}/{}/{}/_apis/wit/workitemtypes/{}/fields?api-version=7.1",
+            "{}/{}/{}/_apis/wit/workitemtypes/{}/layout?api-version=7.1-preview.1",
             self.base_url,
             org,
             project,
             urlencoding::encode(wi_type)
         );
-        let Ok(data) = self.get_json(url).await else {
+        let Ok(layout) = self.get_json(url).await else {
             return Vec::new();
         };
-        // (matcher, canonical tab title) - first match per slot wins.
-        let wanted: [(&dyn Fn(&str) -> bool, &str); 2] = [
-            (
-                &|n: &str| n == "rca" || n.contains("root cause"),
-                "RCA",
-            ),
-            (&|n: &str| n.contains("preventive"), "Preventive Measures"),
-        ];
-        let mut out: Vec<ExtraSection> = Vec::new();
-        for (matches, title) in wanted {
-            let found = data["value"].as_array().into_iter().flatten().find(|fld| {
-                fld["name"]
-                    .as_str()
-                    .map(|n| matches(&n.to_lowercase()))
-                    .unwrap_or(false)
-            });
-            if let Some(fld) = found {
-                let reference_name = fld["referenceName"].as_str().unwrap_or_default().to_string();
-                if reference_name.is_empty() {
-                    continue;
+        let Some(pages) = layout["pages"].as_array() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        // Page 0 is the main form (the drawer's own Details); the rest are
+        // the extra tabs shown across the top of ADO's form.
+        for page in pages.iter().skip(1) {
+            if page["visible"].as_bool() == Some(false) {
+                continue;
+            }
+            let name = page["label"].as_str().unwrap_or_default().to_string();
+            let mut fields = Vec::new();
+            for section in page["sections"].as_array().into_iter().flatten() {
+                for group in section["groups"].as_array().into_iter().flatten() {
+                    for control in group["controls"].as_array().into_iter().flatten() {
+                        if let Some(f) = self
+                            .extra_field_from_control(org, project, wi_type, control, item_fields)
+                            .await
+                        {
+                            fields.push(f);
+                        }
+                    }
                 }
-                out.push(ExtraSection {
-                    name: title.to_string(),
-                    html: fields[&reference_name].as_str().unwrap_or_default().to_string(),
-                    reference_name,
-                });
+            }
+            if !name.is_empty() && !fields.is_empty() {
+                out.push(ExtraPage { name, fields });
             }
         }
         out
+    }
+
+    /// Map one layout control to an editable field (None for non-field
+    /// controls: links, attachments, extensions, history, hidden).
+    async fn extra_field_from_control(
+        &self,
+        org: &str,
+        project: &str,
+        wi_type: &str,
+        control: &serde_json::Value,
+        item_fields: &serde_json::Value,
+    ) -> Option<ExtraField> {
+        if control["visible"].as_bool() == Some(false)
+            || control["isContribution"].as_bool() == Some(true)
+        {
+            return None;
+        }
+        let control_type = control["controlType"].as_str().unwrap_or_default();
+        let reference_name = control["id"].as_str().unwrap_or_default().to_string();
+        if reference_name.is_empty() || !reference_name.contains('.') || reference_name == "System.History" {
+            return None;
+        }
+        let kind = match control_type {
+            "HtmlFieldControl" => "html".to_string(),
+            "FieldControl" | "DateTimeControl" => "text".to_string(),
+            _ => return None, // LinksControl, AttachmentsControl, extensions...
+        };
+        let label = {
+            let l = control["label"].as_str().unwrap_or_default();
+            if l.is_empty() { reference_name.clone() } else { l.to_string() }
+        };
+        // Plain field controls may be picklists - ask the field definition.
+        let (kind, allowed) = if kind == "text" && control_type == "FieldControl" {
+            let url = format!(
+                "{}/{}/{}/_apis/wit/workitemtypes/{}/fields/{}?$expand=allowedValues&api-version=7.1",
+                self.base_url,
+                org,
+                project,
+                urlencoding::encode(wi_type),
+                reference_name
+            );
+            let allowed: Vec<String> = match self.get_json(url).await {
+                Ok(def) => def["allowedValues"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+            if allowed.is_empty() {
+                ("text".to_string(), Vec::new())
+            } else {
+                ("pick".to_string(), allowed)
+            }
+        } else {
+            (kind, Vec::new())
+        };
+        let value = match &item_fields[&reference_name] {
+            serde_json::Value::Null => String::new(),
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        Some(ExtraField { label, reference_name, kind, allowed, value })
     }
 
     /// A work item's comments, newest first, ported from v1

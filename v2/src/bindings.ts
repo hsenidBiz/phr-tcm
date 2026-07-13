@@ -182,11 +182,22 @@ export type EnsuredSuite = {
 	suite_id: number,
 };
 
-/**  An additional rich-text field rendered as its own tab in the drawer. */
-export type ExtraSection = {
-	name: string,
+/**  A single field on an extra page. */
+export type ExtraField = {
+	label: string,
 	reference_name: string,
-	html: string,
+	/**  "html" (rich text), "pick" (allowed values), or "text". */
+	kind: string,
+	/**  Allowed values when kind == "pick". */
+	allowed: string[],
+	/**  Current raw value (HTML for html fields). */
+	value: string,
+};
+
+/**  One custom form page (an ADO tab) and its editable fields, in form order. */
+export type ExtraPage = {
+	name: string,
+	fields: ExtraField[],
 };
 
 export type FieldPatch = {
@@ -439,10 +450,10 @@ export type WorkItemDetail = {
 	 */
 	description_field: string,
 	/**
-	 *  Process-specific rich-text sections shown as extra editable tabs
-	 *  (Bugs: RCA + Preventive Measures, discovered by field display name).
+	 *  The process's extra form pages (Bug: RCA, Preventive Measures...)
+	 *  with every visible field on them, shown as editable tabs.
 	 */
-	extra_sections: ExtraSection[],
+	extra_pages: ExtraPage[],
 };
 
 /* Tauri Specta runtime */
