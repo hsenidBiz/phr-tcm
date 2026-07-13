@@ -129,6 +129,8 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     },
     onError: (e, { item }, ctx) => {
       if (ctx?.prev) qc.setQueryData(boardKey, ctx.prev);
+      // Re-sync with the server: the snapshot may itself be stale by now.
+      qc.invalidateQueries({ queryKey: boardKey });
       toast.error(`Could not move #${item.id}: ${e.message}`);
     },
     onSuccess: ({ item, state }) => {

@@ -1094,14 +1094,21 @@ async fn move_board_item(
             body: format!("no state maps to column '{column}' for {work_item_type}"),
         },
     )?;
-    client
-        .update_work_item_fields(
-            &organization,
-            &project,
-            item_id,
-            &[("System.State".to_string(), target.clone())],
-        )
+    // Verified move: ADO rules (e.g. required dates) can reject or rewrite
+    // the transition even on a 2xx, so trust only the persisted state.
+    let actual = client
+        .set_work_item_state(&organization, &project, item_id, &target)
         .await?;
+    if actual != target {
+        return Err(ado::AdoError::Http {
+            status: 409,
+            body: format!(
+                "Azure DevOps kept #{item_id} in '{actual}' — moving to '{target}' is blocked by \
+                 work item rules (for example required dates). Open the item, fill the required \
+                 fields, then try again."
+            ),
+        });
+    }
     Ok(target)
 }
 

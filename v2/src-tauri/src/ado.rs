@@ -559,6 +559,44 @@ impl AdoClient {
         Ok(data["id"].as_i64().unwrap_or_default() as i32)
     }
 
+    /// PATCH System.State and return the state ADO actually persisted.
+    /// Server-side rules (required dates, disallowed transitions) can reject
+    /// or rewrite the change - the response body is the truth, so callers
+    /// must never assume the requested state was applied. On a 400 rule
+    /// rejection, ADO's human-readable message replaces the raw JSON body.
+    pub async fn set_work_item_state(
+        &self,
+        organization: &str,
+        project: &str,
+        wi_id: i32,
+        state: &str,
+    ) -> Result<String, AdoError> {
+        let patch = serde_json::json!([
+            {"op": "add", "path": "/fields/System.State", "value": state}
+        ]);
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+            self.base_url, organization, project, wi_id
+        );
+        let data = self
+            .send_json_patch(reqwest::Method::PATCH, url, &patch)
+            .await
+            .map_err(|e| match e {
+                AdoError::Http { status: 400, body } => {
+                    let msg = serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|v| v["message"].as_str().map(String::from))
+                        .unwrap_or(body);
+                    AdoError::Http { status: 400, body: msg }
+                }
+                other => other,
+            })?;
+        Ok(data["fields"]["System.State"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
+    }
+
     /// PATCH a work item's fields ({reference_name: value}); the 'add' op
     /// creates-or-replaces. Ported from v1 update_work_item_fields.
     pub async fn update_work_item_fields(

@@ -393,3 +393,45 @@ async fn field_values_in_use_rejects_unsafe_field_refs() {
     let values = client.field_values_in_use("o", "p", "Bad] FROM x; --").await.unwrap();
     assert!(values.is_empty());
 }
+
+/// The move must trust the state ADO persisted, not the state we asked for -
+/// server rules (e.g. required dates) can keep or rewrite the transition.
+#[tokio::test]
+async fn set_state_returns_the_state_ado_actually_saved() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/o/p/_apis/wit/workitems/7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 7,
+            "fields": { "System.State": "To Do" } // rule kept the old state
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let actual = client.set_work_item_state("o", "p", 7, "In Progress").await.unwrap();
+    assert_eq!(actual, "To Do");
+}
+
+/// A 400 rule rejection must surface ADO's human-readable message, not the
+/// raw JSON body.
+#[tokio::test]
+async fn set_state_extracts_rule_message_from_400() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/o/p/_apis/wit/workitems/7"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "message": "TF401320: Rule Error: Start Date is required.",
+            "typeName": "RuleValidationException"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let err = client.set_work_item_state("o", "p", 7, "In Progress").await.unwrap_err();
+    match err {
+        AdoError::Http { status, body } => {
+            assert_eq!(status, 400);
+            assert_eq!(body, "TF401320: Rule Error: Start Date is required.");
+        }
+        other => panic!("expected Http error, got {other:?}"),
+    }
+}
