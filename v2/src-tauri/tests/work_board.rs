@@ -364,3 +364,44 @@ async fn detail_without_layout_access_has_no_extra_tabs() {
     let err = d.extra_pages_error.expect("failure reason should be surfaced");
     assert!(err.contains("project lookup failed"), "got: {err}");
 }
+
+#[tokio::test]
+async fn rich_text_attachment_images_are_downloaded_for_preview() {
+    let server = MockServer::start().await;
+    let img_url = format!(
+        "{}/org/proj/_apis/wit/attachments/att-1?fileName=shot.png&amp;download=true",
+        server.uri()
+    );
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitems/15"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 15,
+            "fields": {
+                "System.Title": "Crash", "System.WorkItemType": "Bug",
+                "System.State": "Active",
+                "Microsoft.VSTS.TCM.ReproSteps":
+                    format!("<div>Boom <img src=\"{img_url}\"></div>")
+            }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/attachments/att-1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "image/png")
+                .set_body_bytes(vec![137u8, 80, 78, 71]),
+        )
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let d = client.get_work_item_detail("org", "proj", 15).await.unwrap();
+
+    // The field value keeps the original URL (edits must round-trip it)...
+    assert!(d.description_html.contains("/_apis/wit/attachments/att-1"));
+    assert!(!d.description_html.contains("data:image"));
+    // ...while the preview map carries the authenticated download.
+    assert_eq!(d.inline_images.len(), 1);
+    assert!(d.inline_images[0].url.contains("fileName=shot.png&download=true"));
+    assert!(d.inline_images[0].data.starts_with("data:image/png;base64,"));
+}

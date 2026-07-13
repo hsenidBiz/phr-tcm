@@ -125,6 +125,7 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
         description_field: "System.Description",
         extra_pages: [],
         extra_pages_error: null,
+        inline_images: [],
       };
     if (cmd === "list_team_members")
       return [{ display_name: "Avin", unique_name: "a@x.com" }];
@@ -207,6 +208,7 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
           },
         ],
         extra_pages_error: null,
+        inline_images: [],
       };
     if (cmd === "list_team_members") return [{ display_name: "Avin", unique_name: "a@x.com" }];
     if (cmd === "activity_values") return [];

@@ -163,6 +163,18 @@ pub struct WorkItemDetail {
     /// Why extra_pages is empty when the layout lookup failed - surfaced in
     /// the drawer so a permissions/endpoint problem is visible, not silent.
     pub extra_pages_error: Option<String>,
+    /// Authenticated attachment images from the rich-text fields, downloaded
+    /// with the token so the preview can swap URLs for data: URIs (a plain
+    /// <img> gets 401). Field values themselves stay byte-faithful.
+    pub inline_images: Vec<InlineImage>,
+}
+
+/// One downloaded rich-text image: the (entity-unescaped) src URL and the
+/// data: URI to show instead.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct InlineImage {
+    pub url: String,
+    pub data: String,
 }
 
 /// One custom form page (an ADO tab) and its editable fields, in form order.
@@ -446,6 +458,20 @@ impl AdoClient {
                 Ok(pages) => (pages, None),
                 Err(e) => (Vec::new(), Some(e)),
             };
+        // Attachment images need auth the WebView can't send. Field values
+        // stay byte-faithful (edits must round-trip the URLs, not megabytes
+        // of base64) - the preview applies this url -> data-uri map instead.
+        let mut rich_htmls: Vec<&str> = vec![];
+        let desc_html = s(description_field);
+        rich_htmls.push(&desc_html);
+        for page in &extra_pages {
+            for field in &page.fields {
+                if field.kind == "html" {
+                    rich_htmls.push(&field.value);
+                }
+            }
+        }
+        let inline_images = self.collect_attachment_images(&rich_htmls).await;
         Ok(WorkItemDetail {
             id,
             title: s("System.Title"),
@@ -461,9 +487,10 @@ impl AdoClient {
             original_estimate: f["Microsoft.VSTS.Scheduling.OriginalEstimate"].as_f64(),
             start_date: s("Microsoft.VSTS.Scheduling.StartDate"),
             finish_date: s("Microsoft.VSTS.Scheduling.FinishDate"),
-            description_text: crate::steps_xml::html_to_text(&s(description_field)),
-            description_html: s(description_field),
+            description_text: crate::steps_xml::html_to_text(&desc_html),
+            description_html: desc_html,
             description_field: description_field.to_string(),
+            inline_images,
             work_item_type: wi_type,
             extra_pages,
             extra_pages_error,
@@ -696,6 +723,66 @@ impl AdoClient {
         );
         self.post_json(url, &serde_json::json!({"text": text})).await?;
         Ok(())
+    }
+
+    /// Download the attachment images referenced by rich-text HTML (a plain
+    /// <img> gets 401 - the WebView sends no bearer header) and return
+    /// url -> data-uri pairs for the preview to apply. Best-effort per
+    /// image; caps guard pathological fields.
+    pub async fn collect_attachment_images(&self, htmls: &[&str]) -> Vec<InlineImage> {
+        use base64::Engine;
+        let re = regex::Regex::new(r#"src=["']([^"']+)["']"#).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for html in htmls {
+            if !html.contains("<img") {
+                continue;
+            }
+            for cap in re.captures_iter(html) {
+                if out.len() >= 12 {
+                    return out;
+                }
+                // The src sits in an HTML attribute, so & is entity-encoded.
+                let url = cap[1].replace("&amp;", "&");
+                if !url.contains("/_apis/wit/attachments/") || !seen.insert(url.clone()) {
+                    continue;
+                }
+                let Ok(resp) = self
+                    .http
+                    .get(&url)
+                    .bearer_auth(&self.token)
+                    .header("Accept", "application/octet-stream")
+                    .send()
+                    .await
+                else {
+                    continue;
+                };
+                if !resp.status().is_success() {
+                    continue;
+                }
+                let mime = resp
+                    .headers()
+                    .get("Content-Type")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|c| c.split(';').next())
+                    .filter(|m| m.starts_with("image/"))
+                    .unwrap_or("image/png")
+                    .to_string();
+                let Ok(bytes) = resp.bytes().await else { continue };
+                if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+                    continue; // keep the broken link rather than a 10MB blob
+                }
+                out.push(InlineImage {
+                    url,
+                    data: format!(
+                        "data:{};base64,{}",
+                        mime,
+                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                    ),
+                });
+            }
+        }
+        out
     }
 
     /// Fetch an avatar as base64 PNG-ish bytes. Best-effort like v1

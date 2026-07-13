@@ -220,6 +220,15 @@ export type ImportResult = {
 	warnings: string[],
 };
 
+/**
+ *  One downloaded rich-text image: the (entity-unescaped) src URL and the
+ *  data: URI to show instead.
+ */
+export type InlineImage = {
+	url: string,
+	data: string,
+};
+
 export type Member = {
 	display_name: string,
 	unique_name: string,
@@ -459,6 +468,12 @@ export type WorkItemDetail = {
 	 *  the drawer so a permissions/endpoint problem is visible, not silent.
 	 */
 	extra_pages_error: string | null,
+	/**
+	 *  Authenticated attachment images from the rich-text fields, downloaded
+	 *  with the token so the preview can swap URLs for data: URIs (a plain
+	 *  <img> gets 401). Field values themselves stay byte-faithful.
+	 */
+	inline_images: InlineImage[],
 };
 
 /* Tauri Specta runtime */

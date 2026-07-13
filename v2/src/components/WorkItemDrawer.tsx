@@ -155,6 +155,25 @@ export default function WorkItemDrawer({
     }
   }, [detail.data]);
 
+  /** Preview-only: swap authenticated attachment URLs for the data: URIs
+   * Rust downloaded (a plain <img> gets 401). The markdown drafts keep the
+   * real URLs so saves round-trip them, not megabytes of base64. */
+  const withInlineImages = (html: string) => {
+    let out = html;
+    for (const img of detail.data?.inline_images ?? []) {
+      out = out
+        .split(img.url.replace(/&/g, "&amp;"))
+        .join(img.data)
+        .split(img.url)
+        .join(img.data);
+    }
+    return out;
+  };
+  const renderMd = (md: string) =>
+    withInlineImages(
+      marked.parse(md || "*Nothing to preview*", { async: false, breaks: true }) as string,
+    );
+
   const save = useMutation({
     mutationFn: async () => {
       const d = detail.data!;
@@ -424,12 +443,7 @@ export default function WorkItemDrawer({
                   <div
                     className="md-preview mt-1 min-h-28 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
                     // Rendered from the user's own local draft only.
-                    dangerouslySetInnerHTML={{
-                      __html: marked.parse(draft.description || "*Nothing to preview*", {
-                        async: false,
-                        breaks: true,
-                      }),
-                    }}
+                    dangerouslySetInnerHTML={{ __html: renderMd(draft.description) }}
                   />
                 )
               ) : (
@@ -484,12 +498,7 @@ export default function WorkItemDrawer({
                           ) : (
                             <div
                               className="md-preview mt-1 min-h-16 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
-                              dangerouslySetInnerHTML={{
-                                __html: marked.parse(value || "*Nothing to preview*", {
-                                  async: false,
-                                  breaks: true,
-                                }),
-                              }}
+                              dangerouslySetInnerHTML={{ __html: renderMd(value) }}
                             />
                           )}
                         </div>

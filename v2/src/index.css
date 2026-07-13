@@ -462,6 +462,7 @@ body {
 }
 
 /* Rendered markdown in the work-item description preview. */
+.md-preview img { max-width: 100%; border-radius: 4px; }
 .md-preview p { margin: 0 0 0.5rem; }
 .md-preview p:last-child { margin-bottom: 0; }
 .md-preview ul, .md-preview ol { margin: 0 0 0.5rem; padding-left: 1.25rem; }
