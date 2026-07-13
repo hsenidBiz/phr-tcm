@@ -354,7 +354,17 @@ body {
 .login-flask[data-eq-active="true"] .orbit2 {
   opacity: 0;
 }
-.empty-art[data-eq-active="true"] .halo {
+/* The empty-state scene goes further: while audio plays only the circular
+   equalizer stays - flask, halos and bubbles all step aside, and return
+   as soon as the music stops. */
+.empty-art > svg {
+  transition: opacity 0.5s ease;
+}
+.empty-art[data-eq-active="true"] > svg {
+  opacity: 0;
+}
+.empty-art[data-eq-active="true"] .halo,
+.empty-art[data-eq-active="true"] .bubble {
   visibility: hidden;
 }
 .login-flask .orbit::before {
