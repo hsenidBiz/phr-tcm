@@ -203,8 +203,14 @@ export default function WorkItemDrawer({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 md:px-10 md:py-6"
     >
       <div className="modal-in flex h-full w-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
-        <header className="flex items-center justify-between border-b border-border px-5 py-3">
-          <span className="text-sm font-semibold text-text">
+        {/* The modal covers the window's title-bar drag region, so its own
+            header doubles as one - drag it to move the window (buttons and
+            the title text opt out so they stay clickable/selectable). */}
+        <header
+          data-tauri-drag-region
+          className="flex select-none items-center justify-between border-b border-border px-5 py-3"
+        >
+          <span data-tauri-drag-region={false} className="text-sm font-semibold text-text">
             <span className="id-mono text-faint">#{itemId}</span>{" "}
             {detail.data?.work_item_type}
           </span>
