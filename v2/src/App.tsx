@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type PbiHit } from "./bindings";
 import AnimatedFlask from "./components/AnimatedFlask";
@@ -132,6 +132,21 @@ export default function App() {
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
   };
+  // Settings acts as a toggle: opening it remembers where you were (tab or
+  // Work Manager); clicking the gear again returns you there.
+  const beforeSettings = useRef<{ section: Section; workMode: boolean } | null>(null);
+  const toggleSettings = () => {
+    if (section === "settings" && !workMode) {
+      const back = beforeSettings.current;
+      beforeSettings.current = null;
+      setSection(back?.section ?? "manual");
+      setWorkMode(back?.workMode ?? false);
+      setCaseSelection(null);
+      return;
+    }
+    beforeSettings.current = { section, workMode };
+    goToSection("settings");
+  };
 
   const status = useQuery({
     queryKey: ["auth"],
@@ -259,7 +274,8 @@ export default function App() {
             account={status.data?.account ?? null}
             workMode={workMode}
             onToggleWork={() => setWorkMode((w) => !w)}
-            onOpenSettings={() => goToSection("settings")}
+            onOpenSettings={toggleSettings}
+            settingsOpen={section === "settings" && !workMode}
           />
         )}
 

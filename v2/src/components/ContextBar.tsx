@@ -19,6 +19,7 @@ export default function ContextBar({
   workMode,
   onToggleWork,
   onOpenSettings,
+  settingsOpen = false,
 }: {
   org: string;
   setOrg: (v: string) => void;
@@ -30,6 +31,7 @@ export default function ContextBar({
   workMode: boolean;
   onToggleWork: () => void;
   onOpenSettings: () => void;
+  settingsOpen?: boolean;
 }) {
   const orgs = useQuery({
     queryKey: ["orgs"],
@@ -105,8 +107,14 @@ export default function ContextBar({
         {account && <span className="hidden text-sm text-muted xl:inline">{account}</span>}
         <button
           data-tour="settings"
-          aria-label="Settings"
-          className="rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text"
+          aria-label={settingsOpen ? "Close settings" : "Settings"}
+          title={settingsOpen ? "Close settings" : "Settings"}
+          aria-pressed={settingsOpen}
+          className={
+            settingsOpen
+              ? "rounded-md bg-accent-soft p-2 text-accent transition-colors"
+              : "rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text"
+          }
           onClick={onOpenSettings}
         >
           <SettingsIcon size={16} />

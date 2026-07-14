@@ -65,6 +65,11 @@ test("settings opens from the gear, not the sidebar", async () => {
   fireEvent.click(screen.getByLabelText("Settings"));
   expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
   expect(screen.getByText("Appearance")).toBeInTheDocument();
+
+  // Clicking the gear again exits settings, back to the previous tab.
+  fireEvent.click(screen.getByLabelText("Close settings"));
+  expect(screen.queryByRole("heading", { name: "Settings" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
 });
 
 test("work pill toggles the board and a tab click returns", async () => {
