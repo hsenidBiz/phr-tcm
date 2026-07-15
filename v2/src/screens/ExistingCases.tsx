@@ -15,6 +15,7 @@ import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { cn } from "../lib/cn";
+import { usePersistedStringSet } from "../lib/collapsedGroups";
 import { groupIndices } from "../lib/grouping";
 import { unwrap } from "../lib/ipc";
 import { validateCase } from "../lib/validate";
@@ -146,14 +147,9 @@ export default function ExistingCases({
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
   );
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const toggleCollapsed = (name: string) =>
-    setCollapsedGroups((s) => {
-      const next = new Set(s);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
+  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+    "tcm-v2-edit-collapsed-groups",
+  );
 
   const queryKey = caseIds
     ? ["cases-by-ids", org, caseIds, prefs.moduleRef, prefs.preconditionsRef]

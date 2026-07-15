@@ -10,6 +10,7 @@ import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import HistoryDots from "../components/HistoryDots";
 import { cn } from "../lib/cn";
+import { usePersistedStringSet } from "../lib/collapsedGroups";
 import { groupIndices } from "../lib/grouping";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { openRunnerWindow } from "../lib/openRunner";
@@ -157,14 +158,9 @@ export default function RunPanel({
   );
   const [anchor, setAnchor] = useState<number | null>(null); // shift-range start
   const [expanded, setExpanded] = useState<number | null>(null); // open point_id
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const toggleCollapsed = (name: string) =>
-    setCollapsedGroups((s) => {
-      const next = new Set(s);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
+  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+    "tcm-v2-run-collapsed-groups",
+  );
 
   const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
   const readSuiteSeed = (): EnsuredSuite | undefined => {
