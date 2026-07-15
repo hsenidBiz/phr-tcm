@@ -12,6 +12,7 @@ import { Input } from "../components/ui/input";
 import MultiSelect from "../components/ui/multiselect";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
+import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
@@ -292,23 +293,36 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
         )}
 
         {board.data && (
-          <div className={hideDone ? "grid grid-cols-2 gap-3" : "grid grid-cols-3 gap-3"}>
-            {COLUMNS.filter((col) => !(hideDone && col === "Done")).map((col) => {
+          // The Done column stays mounted and collapses smoothly (animating
+          // grid-template-columns + fade) instead of vanishing, so the other
+          // two columns glide wider. Same easing as the drawer/modal.
+          <div
+            className="grid gap-3 transition-[grid-template-columns] duration-300 ease-out"
+            style={{ gridTemplateColumns: hideDone ? "1fr 1fr 0fr" : "1fr 1fr 1fr" }}
+          >
+            {COLUMNS.map((col) => {
+              const collapsed = hideDone && col === "Done";
               const items = visible.filter((i) => i.column === col);
               return (
                 <div
                   key={col}
                   data-testid={`col-${col}`}
-                  className="space-y-2 rounded-md border border-border bg-bg p-2"
+                  aria-hidden={collapsed}
+                  className={cn(
+                    "min-w-0 rounded-md border border-border bg-bg transition-[opacity,padding] duration-300 ease-out",
+                    collapsed
+                      ? "pointer-events-none overflow-hidden border-transparent p-0 opacity-0"
+                      : "space-y-2 p-2",
+                  )}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => {
-                    if (dragging && dragging.column !== col) {
+                    if (!collapsed && dragging && dragging.column !== col) {
                       move.mutate({ item: dragging, column: col });
                     }
                     setDragging(null);
                   }}
                 >
-                  <h3 className="px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                  <h3 className="whitespace-nowrap px-1 text-xs font-semibold uppercase tracking-wide text-muted">
                     {col} <span className="text-faint">{items.length}</span>
                   </h3>
                   {items.map((item) => (
