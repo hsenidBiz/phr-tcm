@@ -86,6 +86,66 @@ test("loads suite + points as a read-only overview (outcomes live in the runner)
   expect(screen.queryByRole("button", { name: /Record .* outcome/ })).not.toBeInTheDocument();
 });
 
+test("expanding a row shows the case steps and the last failure detail", async () => {
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 3,
+            last_result_id: 30,
+          },
+        ];
+      case "test_cases_by_ids": {
+        const a = args as { ids: number[] };
+        expect(a.ids).toEqual([201]);
+        return [
+          {
+            id: 201,
+            title: "Valid login",
+            tags: "",
+            automation_status: "Not Automated",
+            steps: [{ action: "Open login page", expected: "Form shown" }],
+            step_ids: ["2"],
+            module_value: "",
+            preconditions: "",
+          },
+        ];
+      }
+      case "result_failure_detail":
+        return { comment: "Timed out waiting for redirect", bug_ids: [900] };
+    }
+  });
+  renderPanel();
+
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText("Expand test case"));
+
+  // Steps and the last result comment + bug both appear.
+  expect(await screen.findByText("Open login page")).toBeInTheDocument();
+  expect(screen.getByText("Form shown")).toBeInTheDocument();
+  expect(screen.getByText("Timed out waiting for redirect")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "#900" })).toBeInTheDocument();
+
+  // Collapsing hides it again.
+  fireEvent.click(screen.getByLabelText("Collapse test case"));
+  expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
+});
+
 test("row clicks select cases for a targeted runner session", async () => {
   mockAll();
   renderPanel();

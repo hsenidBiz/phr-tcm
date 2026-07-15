@@ -24,6 +24,7 @@ export const commands = {
 	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
 	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
+	resultFailureDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultFailureDetail, AdoError>(__TAURI_INVOKE("result_failure_detail", { organization, project, runId, resultId })),
 	/**
 	 *  Full manual-run lifecycle ported from v1 run_screen submission: create a
 	 *  run seeded from the points, map each point to its auto-created result,
@@ -278,6 +279,15 @@ export type Project = {
 export type ResultDetail = {
 	outcome: string,
 	comment: string,
+};
+
+/**
+ *  The last run's comment + linked bugs for one test point, so Run Tests can
+ *  show why a case failed without opening the runner. Read only.
+ */
+export type ResultFailureDetail = {
+	comment: string,
+	bug_ids: number[],
 };
 
 export type RunAttachment = {

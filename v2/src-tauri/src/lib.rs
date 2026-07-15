@@ -703,6 +703,30 @@ async fn list_test_points(
         .await
 }
 
+/// The last run's comment + linked bugs for one test point, so Run Tests can
+/// show why a case failed without opening the runner. Read only.
+#[derive(serde::Serialize, specta::Type)]
+pub struct ResultFailureDetail {
+    pub comment: String,
+    pub bug_ids: Vec<i32>,
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn result_failure_detail(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: i32,
+    result_id: i32,
+) -> Result<ResultFailureDetail, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let (comment, bug_ids) = ado::AdoClient::new(token)
+        .get_result_report_info(&organization, &project, run_id, result_id)
+        .await?;
+    Ok(ResultFailureDetail { comment, bug_ids })
+}
+
 #[derive(Clone, serde::Deserialize, specta::Type)]
 pub struct RunAttachment {
     pub file_name: String,
@@ -1146,6 +1170,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         submit_queue,
         ensure_pbi_suite,
         list_test_points,
+        result_failure_detail,
         submit_test_run,
         fetch_board,
         move_board_item,
