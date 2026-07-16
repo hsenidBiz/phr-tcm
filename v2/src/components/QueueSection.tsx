@@ -475,7 +475,17 @@ export default function QueueSection({
               disabled={queue.length === 0 || hasBlockers || submit.isPending}
               onClick={() => submit.mutate()}
             >
-              {submit.isPending ? "Creating" : `Confirm & create ${queue.length}`}
+              {(() => {
+                if (submit.isPending) return "Processing";
+                // Say exactly what will happen: creates, updates, or both.
+                const updates = queue.filter((tc) => tc.update_id != null).length;
+                const creates = queue.length - updates;
+                const parts = [
+                  creates > 0 && `create ${creates}`,
+                  updates > 0 && `update ${updates}`,
+                ].filter(Boolean);
+                return `Confirm & ${parts.join(" · ") || "create 0"}`;
+              })()}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
               Back
