@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type TestCase, type TestCaseFull } from "../bindings";
 import BulkEditDialog from "../components/BulkEditDialog";
+import CountUp from "../components/CountUp";
 import ModuleField from "../components/ModuleField";
 import StepsEditor from "../components/StepsEditor";
 import TagsField from "../components/TagsField";
@@ -255,11 +256,15 @@ export default function ExistingCases({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
-          {label
-            ? `${label} (${q ? `${visible.length}/${list.length}` : list.length})`
-            : q
-              ? `${visible.length} of ${list.length} Test Cases`
-              : `${list.length} Total Test Cases`}
+          {label ? (
+            `${label} (${q ? `${visible.length}/${list.length}` : list.length})`
+          ) : q ? (
+            `${visible.length} of ${list.length} Test Cases`
+          ) : (
+            <>
+              <CountUp to={list.length} duration={0.8} /> Total Test Cases
+            </>
+          )}
         </h2>
         <button
           aria-label="Refresh"

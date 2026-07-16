@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
+import AnimatedContent from "./components/AnimatedContent";
 import AnimatedFlask from "./components/AnimatedFlask";
+import ShinyText from "./components/ShinyText";
 import SplitText from "./components/SplitText";
 import Threads from "./components/Threads";
 import CommandPalette from "./components/CommandPalette";
@@ -366,7 +368,16 @@ export default function App() {
                   cases, runs, and work items.
                 </p>
                 <Button disabled={signIn.isPending} onClick={() => signIn.mutate()}>
-                  {signIn.isPending ? "Waiting for browser" : "Sign in with Microsoft"}
+                  {signIn.isPending ? (
+                    "Waiting for browser"
+                  ) : (
+                    <ShinyText
+                      text="Sign in with Microsoft"
+                      speed={3}
+                      color="rgba(255, 255, 255, 0.85)"
+                      shineColor="#ffffff"
+                    />
+                  )}
                 </Button>
               </div>
             </div>
@@ -378,7 +389,9 @@ export default function App() {
               </div>
             </>
           ) : (
-            <>
+            // key={section} remounts the wrapper on tab switch, so every
+            // screen fades up briefly instead of snapping in.
+            <AnimatedContent key={section} distance={14} duration={0.3} threshold={0}>
               <h1 className="mb-4 text-lg font-semibold">{TITLES[section]}</h1>
               {section === "manual" && (
                 <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
@@ -418,7 +431,7 @@ export default function App() {
                 />
               )}
               {section === "settings" && <Settings org={org} project={project} />}
-            </>
+            </AnimatedContent>
           )}
         </main>
       </div>

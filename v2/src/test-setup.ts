@@ -18,6 +18,18 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
+// jsdom has no IntersectionObserver; motion's useInView (CountUp) needs one.
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  globalThis.IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+}
+
 // jsdom implements no FontFaceSet; SplitText waits on document.fonts before
 // it will split, so report fonts as already loaded.
 if (typeof document !== "undefined" && !document.fonts) {

@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, MessageSquare, MessageSquarePlus, RefreshCw,
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit, type TestCase, type TestCaseFull } from "../bindings";
+import CountUp from "../components/CountUp";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
@@ -403,7 +404,13 @@ export default function ViewCases({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
-          {q ? `${visible.length} of ${list.length} Test Cases` : `${list.length} Total Test Cases`}
+          {q ? (
+            `${visible.length} of ${list.length} Test Cases`
+          ) : (
+            <>
+              <CountUp to={list.length} duration={0.8} /> Total Test Cases
+            </>
+          )}
         </h2>
         <button
           aria-label="Refresh"
