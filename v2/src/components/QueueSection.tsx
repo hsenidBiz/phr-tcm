@@ -102,6 +102,12 @@ export default function QueueSection({
   const [areaPath, setAreaPath] = useState("");
   const [iterationPath, setIterationPath] = useState("");
 
+  // An emptied queue (Remove all, removing the last item) has nothing to
+  // review - leave review mode so the confirm controls disappear too.
+  useEffect(() => {
+    if (queue.length === 0) setReviewing(false);
+  }, [queue.length]);
+
   // Classification trees load lazily, only once the review gate opens.
   const areas = useQuery({
     queryKey: ["classification", org, project, "areas"],
