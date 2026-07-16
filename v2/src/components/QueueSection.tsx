@@ -6,7 +6,8 @@ import { commands, events, type SubmitItemResult, type TestCase } from "../bindi
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary, type StepDiff } from "../lib/caseDiff";
 import { loadNotes } from "../lib/caseNotes";
-import { wordDiff, type DiffToken } from "../lib/wordDiff";
+import { cn } from "../lib/cn";
+import { inlineWordDiff, type InlineSegment } from "../lib/wordDiff";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import { Badge } from "./ui/badge";
@@ -16,67 +17,65 @@ import { Select } from "./ui/select";
 /** The shared pending-creation queue with the review gate, live progress and
  * exports. Manual Entry and Import File both render this under their own
  * input areas (v1: every tab feeds one queue). */
-/** Words with the changed ones highlighted (git word-diff within a line). */
-function Tokens({ tokens, markCls }: { tokens: DiffToken[]; markCls: string }) {
+/** Inline word-diff segments: unchanged text plain, insertions green,
+ * deletions red-struck - exactly where they sit in the sentence. */
+function Segments({ segments }: { segments: InlineSegment[] }) {
   return (
     <>
-      {tokens.map((t, i) => (
-        <span key={i} className={t.changed ? `rounded-sm px-0.5 font-semibold ${markCls}` : undefined}>
+      {segments.map((s, i) => (
+        <span
+          key={i}
+          className={
+            s.kind === "added"
+              ? "rounded-sm bg-success/25 px-0.5 font-medium text-success"
+              : s.kind === "removed"
+                ? "rounded-sm bg-danger/20 px-0.5 text-danger line-through"
+                : undefined
+          }
+        >
           {i > 0 ? " " : ""}
-          {t.text}
+          {s.text}
         </span>
       ))}
     </>
   );
 }
 
-/** One step's -/+ diff lines. Changed steps highlight only the differing
- * words; pure adds/removes are whole-line by nature. */
+/** A changed step is ONE neutral line with only the differing words marked
+ * (green = inserted, red struck = deleted). Whole-step adds/removes keep
+ * their +/- tinted line, since the entire step is new or gone. */
 function StepDiffLines({ d }: { d: StepDiff }) {
-  const action =
-    d.kind === "changed" ? wordDiff(d.old!.action, d.new!.action) : null;
-  const expected =
-    d.kind === "changed" ? wordDiff(d.old!.expected, d.new!.expected) : null;
+  if (d.kind === "changed") {
+    return (
+      <div className="flex gap-2 rounded bg-surface-2/60 px-2 py-1 text-text">
+        <span className="select-none font-semibold text-faint">±</span>
+        <span className="whitespace-pre-wrap">
+          <span className="id-mono text-faint">#{d.index + 1}</span>{" "}
+          <Segments segments={inlineWordDiff(d.old!.action, d.new!.action)} />
+          {(d.old!.expected || d.new!.expected) && (
+            <span className="text-muted">
+              {" ⇒ "}
+              <Segments segments={inlineWordDiff(d.old!.expected, d.new!.expected)} />
+            </span>
+          )}
+        </span>
+      </div>
+    );
+  }
+  const step = (d.new ?? d.old)!;
+  const added = d.kind === "added";
   return (
-    <div className="space-y-0.5">
-      {d.old && (
-        <div className="flex gap-2 rounded bg-danger/10 px-2 py-1 text-danger">
-          <span className="select-none font-semibold">-</span>
-          <span className="whitespace-pre-wrap">
-            <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
-            {action ? <Tokens tokens={action.old} markCls="bg-danger/25" /> : d.old.action}
-            {d.old.expected && (
-              <span className="opacity-80">
-                {" ⇒ "}
-                {expected ? (
-                  <Tokens tokens={expected.old} markCls="bg-danger/25" />
-                ) : (
-                  d.old.expected
-                )}
-              </span>
-            )}
-          </span>
-        </div>
+    <div
+      className={cn(
+        "flex gap-2 rounded px-2 py-1",
+        added ? "bg-success/10 text-success" : "bg-danger/10 text-danger",
       )}
-      {d.new && (
-        <div className="flex gap-2 rounded bg-success/10 px-2 py-1 text-success">
-          <span className="select-none font-semibold">+</span>
-          <span className="whitespace-pre-wrap">
-            <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
-            {action ? <Tokens tokens={action.new} markCls="bg-success/25" /> : d.new.action}
-            {d.new.expected && (
-              <span className="opacity-80">
-                {" ⇒ "}
-                {expected ? (
-                  <Tokens tokens={expected.new} markCls="bg-success/25" />
-                ) : (
-                  d.new.expected
-                )}
-              </span>
-            )}
-          </span>
-        </div>
-      )}
+    >
+      <span className="select-none font-semibold">{added ? "+" : "-"}</span>
+      <span className="whitespace-pre-wrap">
+        <span className="id-mono opacity-70">#{d.index + 1}</span> {step.action}
+        {step.expected && <span className="opacity-80"> ⇒ {step.expected}</span>}
+      </span>
     </div>
   );
 }

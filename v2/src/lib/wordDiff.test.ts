@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { wordDiff } from "./wordDiff";
+import { inlineWordDiff, wordDiff } from "./wordDiff";
 
 test("an insertion highlights only the added words", () => {
   const d = wordDiff(
@@ -30,5 +30,27 @@ test("adjacent same-flag words merge into one token", () => {
     { text: "a", changed: false },
     { text: "x y", changed: true },
     { text: "c", changed: false },
+  ]);
+});
+
+test("inline diff: insertion yields plain text with one green segment", () => {
+  const d = inlineWordDiff(
+    'Click the card on the "Create Cycle" page (Step 1 of 9).',
+    'Click the card on the "Create Cycle" page in PMS Module (Step 1 of 9).',
+  );
+  expect(d).toEqual([
+    { text: 'Click the card on the "Create Cycle" page', kind: "same" },
+    { text: "in PMS Module", kind: "added" },
+    { text: "(Step 1 of 9).", kind: "same" },
+  ]);
+});
+
+test("inline diff: replacement shows the deletion struck in place", () => {
+  const d = inlineWordDiff("Open the login page", "Open the dashboard page");
+  expect(d).toEqual([
+    { text: "Open the", kind: "same" },
+    { text: "dashboard", kind: "added" },
+    { text: "login", kind: "removed" },
+    { text: "page", kind: "same" },
   ]);
 });
