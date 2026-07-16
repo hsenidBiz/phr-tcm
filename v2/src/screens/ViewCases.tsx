@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, MessageSquare, MessageSquarePlus, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, MessageSquare, MessageSquarePlus, RefreshCw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit, type TestCase, type TestCaseFull } from "../bindings";
@@ -155,6 +155,102 @@ function CaseDetail({
   );
 }
 
+/** A small dialog for reading (and editing) one case's local comment,
+ * opened from the row's Comment chip - no need to expand the whole case. */
+function CommentModal({
+  c,
+  note,
+  onSave,
+  onClose,
+}: {
+  c: TestCaseFull;
+  note: string;
+  onSave: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Comment for #${c.id}`}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+    >
+      <div className="modal-in w-full max-w-md rounded-lg border border-border bg-surface shadow-2xl">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <MessageSquare size={14} className="shrink-0 text-accent" />
+          <span className="truncate text-sm font-semibold text-text">
+            <span className="id-mono text-faint">#{c.id}</span> {c.title}
+          </span>
+          <button
+            aria-label="Close comment"
+            className="ml-auto rounded p-1 text-muted hover:text-text"
+            onClick={onClose}
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="space-y-2 p-4">
+          {editing ? (
+            <>
+              <Textarea
+                aria-label={`Comment for #${c.id} (edit)`}
+                className="h-24 w-full"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+              />
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    onSave(draft);
+                    setEditing(false);
+                  }}
+                >
+                  Save comment
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setDraft(note);
+                    setEditing(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="whitespace-pre-wrap text-sm text-text">{note}</p>
+              <div className="flex items-center gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <span className="text-[11px] text-faint">
+                  Saved on this device only — never sent to Azure DevOps.
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The View Test Cases tab, laid out like Edit Test Cases: compact rows
  * (chevron/double-click expands a read-only detail), Group by Title,
  * click/ctrl/shift selection - and View in browser renders the selection
@@ -174,6 +270,7 @@ export default function ViewCases({
   const { prefs } = useFieldRefs(org, project);
   const [search, setSearch] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
+  const [commentCase, setCommentCase] = useState<TestCaseFull | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes(org));
@@ -419,10 +516,10 @@ export default function ViewCases({
                         title={notes[String(c.id)]}
                         className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent-soft/80"
                         onClick={(e) => {
-                          // Open the detail right at the comment instead of
-                          // making the reader hover for a tooltip.
+                          // A focused dialog for the comment - no need to
+                          // expand the whole case.
                           e.stopPropagation();
-                          setOpenId((o) => (o === c.id ? null : c.id));
+                          setCommentCase(c);
                         }}
                       >
                         <MessageSquare size={11} />
@@ -446,6 +543,15 @@ export default function ViewCases({
           )}
         </div>
       ))}
+
+      {commentCase && (
+        <CommentModal
+          c={commentCase}
+          note={notes[String(commentCase.id)] ?? ""}
+          onSave={(text) => setNotes(saveNote(org, commentCase.id, text))}
+          onClose={() => setCommentCase(null)}
+        />
+      )}
     </section>
   );
 }

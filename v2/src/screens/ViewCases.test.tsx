@@ -74,12 +74,26 @@ test("rows start compact; the chevron expands steps, tags and the comment editor
   expect(chip).toHaveTextContent("Comment");
   expect(chip).toHaveAttribute("title", "Step 2 needs the new MFA prompt");
 
-  // Clicking the chip opens the detail showing the comment (collapse
-  // first via the chevron so we prove the chip re-opens it).
+  // Clicking the chip opens a focused dialog with the comment (collapse
+  // the row first so we prove the dialog is what shows it).
   fireEvent.click(screen.getByLabelText("Expand #201"));
   expect(screen.queryByText("Step 2 needs the new MFA prompt")).not.toBeInTheDocument();
   fireEvent.click(chip);
-  expect(screen.getByText("Step 2 needs the new MFA prompt")).toBeInTheDocument();
+  const dialog = screen.getByRole("dialog", { name: "Comment for #201" });
+  expect(dialog).toHaveTextContent("Step 2 needs the new MFA prompt");
+
+  // Editing inside the dialog persists to the store.
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(screen.getByLabelText("Comment for #201 (edit)"), {
+    target: { value: "Updated from the dialog" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save comment" }));
+  expect(JSON.parse(localStorage.getItem("tcm-v2-case-notes:acme")!)["201"]).toBe(
+    "Updated from the dialog",
+  );
+
+  fireEvent.click(screen.getByLabelText("Close comment"));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
 test("selection drives View in browser; nothing selected sends all visible", async () => {
