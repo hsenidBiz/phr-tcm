@@ -15,6 +15,7 @@ import EditCases from "./screens/EditCases";
 import ImportFile from "./screens/ImportFile";
 import ManualEntry from "./screens/ManualEntry";
 import RunTests from "./screens/RunTests";
+import ViewCases from "./screens/ViewCases";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
@@ -64,6 +65,7 @@ const TITLES: Record<Section, string> = {
   manual: "Manual Entry",
   import: "Import File",
   edit: "Edit Test Cases",
+  view: "View Test Cases",
   run: "Run Tests",
   suites: "Test Suites",
   settings: "Settings",
@@ -87,7 +89,7 @@ export default function App() {
   // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
-    const order: Section[] = ["manual", "import", "edit", "run", "suites"];
+    const order: Section[] = ["manual", "import", "edit", "view", "run", "suites"];
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.shiftKey && e.key.toLowerCase() === "m") {
@@ -334,6 +336,9 @@ export default function App() {
                   onClearSelection={() => setCaseSelection(null)}
                   onPickPbi={setPbiRaw}
                 />
+              )}
+              {section === "view" && (
+                <ViewCases org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
               )}
               {section === "run" && (
                 <RunTests org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />

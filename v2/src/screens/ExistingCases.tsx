@@ -245,19 +245,6 @@ export default function ExistingCases({
     onError: (e) => toast.error(`Export failed: ${e.message}`),
   });
 
-  const viewHtml = useMutation({
-    mutationFn: async () => {
-      // Selection wins; otherwise export what the search currently shows.
-      const chosen = selectedCases.length > 0 ? selectedCases : visible;
-      const r = await commands.viewQueueHtml(
-        chosen.map(toTestCase),
-        label ?? (pbiId != null ? `PBI #${pbiId}` : ""),
-      );
-      if (r.status === "error") throw new Error(r.error);
-    },
-    onError: (e) => toast.error(`Could not open the report: ${e.message}`),
-  });
-
   const refresh = () => {
     qc.invalidateQueries({ queryKey });
     qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, pbiId] });
@@ -281,11 +268,8 @@ export default function ExistingCases({
         >
           <RefreshCw size={14} />
         </button>
-        <div className="ml-auto">
-          <Button variant="outline" size="sm" disabled={list.length === 0} onClick={() => viewHtml.mutate()}>
-            View in browser
-          </Button>
-        </div>
+        {/* Viewing (incl. the browser report) lives in the View Test Cases
+            tab now - this screen stays focused on editing. */}
       </div>
 
       {list.length > 0 && (

@@ -1,6 +1,7 @@
 import {
   ChevronsLeft,
   ChevronsRight,
+  Eye,
   FileUp,
   FolderTree,
   PenLine,
@@ -13,12 +14,13 @@ import { cn } from "../lib/cn";
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
  * in the context bar - the sidebar stays reserved for test-case workflows
  * so new tabs can be added over time. Collapsible to an icon rail. */
-export type Section = "manual" | "import" | "edit" | "run" | "suites" | "settings";
+export type Section = "manual" | "import" | "edit" | "view" | "run" | "suites" | "settings";
 
 const ITEMS: { id: Section; label: string; icon: typeof PenLine }[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine },
   { id: "import", label: "Import File", icon: FileUp },
   { id: "edit", label: "Edit Test Cases", icon: Pencil },
+  { id: "view", label: "View Test Cases", icon: Eye },
   { id: "run", label: "Run Tests", icon: PlayCircle },
   { id: "suites", label: "Test Suites", icon: FolderTree },
 ];
