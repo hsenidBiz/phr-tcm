@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { KanbanSquare, Settings as SettingsIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
+import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
+import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -33,6 +36,15 @@ export default function ContextBar({
   onOpenSettings: () => void;
   settingsOpen?: boolean;
 }) {
+  // The review gate's final confirmation spotlights the PBI chip so the
+  // user verifies the target before an irreversible create.
+  const [pbiGlow, setPbiGlow] = useState(false);
+  useEffect(() => {
+    const onGlow = (e: Event) => setPbiGlow(Boolean((e as CustomEvent).detail));
+    window.addEventListener(PBI_GLOW_EVENT, onGlow);
+    return () => window.removeEventListener(PBI_GLOW_EVENT, onGlow);
+  }, []);
+
   const orgs = useQuery({
     queryKey: ["orgs"],
     queryFn: () => unwrap(commands.listOrgs()),
@@ -85,7 +97,7 @@ export default function ContextBar({
       </Select>
       {/* The PBI chip gets all remaining width so long titles stay readable;
           min-w keeps it usable and forces a wrap instead of a squeeze. */}
-      <div className="min-w-56 flex-1" data-tour="pbi">
+      <div className={cn("min-w-56 flex-1", pbiGlow && "pbi-glow")} data-tour="pbi">
         <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
       </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}

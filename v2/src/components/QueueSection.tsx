@@ -8,6 +8,7 @@ import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary, type StepDiff } from "../lib/caseDiff";
 import { loadNotes } from "../lib/caseNotes";
 import { cn } from "../lib/cn";
+import { setPbiGlow } from "../lib/pbiGlow";
 import { inlineWordDiff, type InlineSegment } from "../lib/wordDiff";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
@@ -101,6 +102,16 @@ export default function QueueSection({
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [areaPath, setAreaPath] = useState("");
   const [iterationPath, setIterationPath] = useState("");
+
+  // Final confirmation stage: the first Confirm click arms the submit and
+  // spotlights the PBI chip; only the explicit second click writes.
+  const [armed, setArmed] = useState(false);
+  const arm = (on: boolean) => {
+    setArmed(on);
+    setPbiGlow(on);
+  };
+  // Never leave the chip glowing if this screen unmounts mid-confirmation.
+  useEffect(() => () => setPbiGlow(false), []);
 
   // An emptied queue (Remove all, removing the last item) has nothing to
   // review - leave review mode so the confirm controls disappear too.
@@ -470,30 +481,57 @@ export default function QueueSection({
             Review {queue.length} test case{queue.length === 1 ? "" : "s"}
           </Button>
         ) : (
-          <>
-            <Button
-              disabled={queue.length === 0 || hasBlockers || submit.isPending}
-              onClick={() => submit.mutate()}
-            >
-              {(() => {
-                if (submit.isPending) return "Processing";
-                // Say exactly what will happen: creates, updates, or both.
-                const updates = queue.filter((tc) => tc.update_id != null).length;
-                const creates = queue.length - updates;
-                const parts = [
-                  creates > 0 && `create ${creates}`,
-                  updates > 0 && `update ${updates}`,
-                ].filter(Boolean);
-                return `Confirm & ${parts.join(" · ") || "create 0"}`;
-              })()}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
-              Back
-            </Button>
-            {hasBlockers && (
-              <span className="text-xs text-danger">Fix the flagged items first.</span>
-            )}
-          </>
+          (() => {
+            const updates = queue.filter((tc) => tc.update_id != null).length;
+            const creates = queue.length - updates;
+            const label = [
+              creates > 0 && `create ${creates}`,
+              updates > 0 && `update ${updates}`,
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            if (!armed) {
+              return (
+                <>
+                  <Button
+                    disabled={queue.length === 0 || hasBlockers || submit.isPending}
+                    onClick={() => arm(true)}
+                  >
+                    {submit.isPending ? "Processing" : `Confirm & ${label || "create 0"}`}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
+                    Back
+                  </Button>
+                  {hasBlockers && (
+                    <span className="text-xs text-danger">Fix the flagged items first.</span>
+                  )}
+                </>
+              );
+            }
+            return (
+              <div className="w-full space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3">
+                <p className="text-sm text-text">
+                  Check the highlighted PBI above — everything here will be written to{" "}
+                  <span className="font-semibold">PBI #{pbiId}</span>. Created test cases{" "}
+                  <span className="font-semibold">cannot be deleted</span>.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    disabled={submit.isPending}
+                    onClick={() => {
+                      arm(false);
+                      submit.mutate();
+                    }}
+                  >
+                    {submit.isPending ? "Processing" : `Yes — ${label}`}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => arm(false)}>
+                    Back
+                  </Button>
+                </div>
+              </div>
+            );
+          })()
         )}
       </div>
 

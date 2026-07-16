@@ -218,6 +218,12 @@ async fn submit_queue(
     area_path: Option<String>,
     iteration_path: Option<String>,
 ) -> Result<Vec<SubmitItemResult>, String> {
+    // Arm the cancel flag BEFORE any awaits: the suite-resolution phase
+    // below can take seconds, and a Cancel clicked during it must stick
+    // (resetting later would silently swallow it and run the whole queue).
+    let cancel = app.state::<SubmitCancel>();
+    cancel.0.store(false, std::sync::atomic::Ordering::SeqCst);
+
     // Best-effort board visibility (ported from v1 CreationWorker._ensure_suite):
     // make sure the PBI's requirement-based suite exists before creating, so
     // linked cases surface on the board's test count. Failures never block
@@ -242,9 +248,6 @@ async fn submit_queue(
     let effective_iteration = iteration_path
         .filter(|s| !s.is_empty())
         .unwrap_or(pbi_iteration);
-
-    let cancel = app.state::<SubmitCancel>();
-    cancel.0.store(false, std::sync::atomic::Ordering::SeqCst);
 
     let total = queue.len() as u32;
     let mut results: Vec<SubmitItemResult> = vec![];

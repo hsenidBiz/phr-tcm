@@ -55,6 +55,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
   fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 2/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Yes — create 2/ }));
   expect(await screen.findByText(/Failed: Bad - boom/)).toBeInTheDocument();
   expect(screen.getByText(/1 queued/)).toBeInTheDocument();
 });

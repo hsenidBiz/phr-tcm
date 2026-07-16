@@ -74,7 +74,11 @@ test("manual add, review gate, submit reports results", async () => {
   expect(await screen.findByText("Login works")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  // Two-stage confirm: arming shows the check-the-PBI warning, then the
+  // explicit Yes actually writes.
   fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
+  expect(screen.getByText(/cannot be deleted/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
   expect(await screen.findByText(/Created #900: Login works/)).toBeInTheDocument();
 });
 
