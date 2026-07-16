@@ -536,15 +536,21 @@ export default function QueueSection({
       </div>
 
       {results && (
-        <ul className="space-y-0.5 text-sm">
-          {results.map((r) => (
-            <li key={r.index} className={r.action === "failed" ? "text-danger" : "text-success"}>
-              {r.action === "created" && `Created #${r.id}: ${r.title}`}
-              {r.action === "updated" && `Updated #${r.id}: ${r.title}`}
-              {r.action === "failed" && `Failed: ${r.title} - ${r.error}`}
-            </li>
-          ))}
-        </ul>
+        <div className="space-y-2">
+          <ul className="space-y-0.5 text-sm">
+            {results.map((r) => (
+              <li key={r.index} className={r.action === "failed" ? "text-danger" : "text-success"}>
+                {r.action === "created" && `Created #${r.id}: ${r.title}`}
+                {r.action === "updated" && `Updated #${r.id}: ${r.title}`}
+                {r.action === "failed" && `Failed: ${r.title} - ${r.error}`}
+              </li>
+            ))}
+          </ul>
+          {/* Dismiss the results once read - the button goes with them. */}
+          <Button variant="outline" size="sm" onClick={() => setResults(null)}>
+            Clear results
+          </Button>
+        </div>
       )}
     </section>
   );

@@ -80,6 +80,11 @@ test("manual add, review gate, submit reports results", async () => {
   expect(screen.getByText(/cannot be deleted/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
   expect(await screen.findByText(/Created #900: Login works/)).toBeInTheDocument();
+
+  // Clear results returns the screen to normal and removes itself.
+  fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+  expect(screen.queryByText(/Created #900/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Clear results" })).not.toBeInTheDocument();
 });
 
 test("duplicate titles warn in review but do not block", async () => {
