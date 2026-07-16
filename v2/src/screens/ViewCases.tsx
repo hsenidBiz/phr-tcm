@@ -414,14 +414,20 @@ export default function ViewCases({
                     <span className="id-mono text-faint">#{c.id}</span>
                     <span className="text-text">{c.title}</span>
                     {notes[String(c.id)] && (
-                      <span
+                      <button
                         aria-label="Has a local comment"
                         title={notes[String(c.id)]}
-                        className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent"
+                        className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent-soft/80"
+                        onClick={(e) => {
+                          // Open the detail right at the comment instead of
+                          // making the reader hover for a tooltip.
+                          e.stopPropagation();
+                          setOpenId((o) => (o === c.id ? null : c.id));
+                        }}
                       >
                         <MessageSquare size={11} />
                         Comment
-                      </span>
+                      </button>
                     )}
                     <span className="ml-auto text-xs text-faint">
                       {c.steps.length} steps · {c.automation_status}

@@ -73,6 +73,13 @@ test("rows start compact; the chevron expands steps, tags and the comment editor
   const chip = screen.getByLabelText("Has a local comment");
   expect(chip).toHaveTextContent("Comment");
   expect(chip).toHaveAttribute("title", "Step 2 needs the new MFA prompt");
+
+  // Clicking the chip opens the detail showing the comment (collapse
+  // first via the chevron so we prove the chip re-opens it).
+  fireEvent.click(screen.getByLabelText("Expand #201"));
+  expect(screen.queryByText("Step 2 needs the new MFA prompt")).not.toBeInTheDocument();
+  fireEvent.click(chip);
+  expect(screen.getByText("Step 2 needs the new MFA prompt")).toBeInTheDocument();
 });
 
 test("selection drives View in browser; nothing selected sends all visible", async () => {
