@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import ViewCases from "./ViewCases";
 
@@ -22,54 +22,89 @@ function renderView() {
   );
 }
 
-function mockCases() {
-  mockIPC((cmd) => {
+const caseA = {
+  id: 201,
+  title: "Login - valid",
+  tags: "smoke",
+  automation_status: "Planned",
+  steps: [
+    { action: "Open login page", expected: "Form shown" },
+    { action: "Submit valid creds", expected: "Dashboard opens" },
+  ],
+  step_ids: ["2", "3"],
+  module_value: "",
+  preconditions: "User exists",
+};
+const caseB = { ...caseA, id: 202, title: "Login - locked out", tags: "" };
+const caseC = { ...caseA, id: 203, title: "Checkout", tags: "" };
+
+function mockCases(onView?: (queue: Array<{ update_id: number | null }>) => void) {
+  mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
-    if (cmd === "pbi_test_cases_full")
-      return [
-        {
-          id: 201,
-          title: "Valid login",
-          tags: "smoke",
-          automation_status: "Planned",
-          steps: [
-            { action: "Open login page", expected: "Form shown" },
-            { action: "Submit valid creds", expected: "Dashboard opens" },
-          ],
-          step_ids: ["2", "3"],
-          module_value: "",
-          preconditions: "User exists",
-        },
-      ];
+    if (cmd === "pbi_test_cases_full") return [caseA, caseB, caseC];
+    if (cmd === "view_queue_html") {
+      onView?.((args as { queue: Array<{ update_id: number | null }> }).queue);
+      return null;
+    }
   });
 }
 
-test("shows every case fully expanded: steps, preconditions, tags", async () => {
+test("rows start compact; the chevron expands steps and the comment editor", async () => {
   mockCases();
   renderView();
 
-  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  await screen.findByText("Login - valid");
+  expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Expand #201"));
   expect(screen.getByText("Open login page")).toBeInTheDocument();
   expect(screen.getByText("Dashboard opens")).toBeInTheDocument();
   expect(screen.getByText(/User exists/)).toBeInTheDocument();
-  expect(screen.getByText(/2 steps · Planned · smoke/)).toBeInTheDocument();
-});
 
-test("a comment saves locally and survives a remount", async () => {
-  mockCases();
-  const first = renderView();
-
-  fireEvent.click(await screen.findByRole("button", { name: /Add comment/ }));
+  // Comment saves locally and survives a remount, with a row indicator.
+  fireEvent.click(screen.getByRole("button", { name: /Add comment/ }));
   fireEvent.change(screen.getByLabelText("Comment for #201"), {
     target: { value: "Step 2 needs the new MFA prompt" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save comment" }));
   expect(screen.getByText("Step 2 needs the new MFA prompt")).toBeInTheDocument();
+  expect(screen.getByLabelText("Has a local comment")).toBeInTheDocument();
+});
 
-  // Fresh mount (new session): the comment comes back from localStorage.
-  first.unmount();
+test("selection drives View in browser; nothing selected sends all visible", async () => {
+  const sent: number[][] = [];
+  mockCases((queue) => sent.push(queue.map((c) => c.update_id!)));
   renderView();
-  expect(await screen.findByText("Step 2 needs the new MFA prompt")).toBeInTheDocument();
-  // And it can be edited from the saved state.
-  expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+
+  // No selection: everything visible goes to the report.
+  await screen.findByText("Login - valid");
+  fireEvent.click(screen.getByRole("button", { name: "View in browser" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]).toEqual([201, 202, 203]);
+
+  // Click + shift-click selects a range; the button reflects the count.
+  fireEvent.click(screen.getByText("Login - valid"));
+  fireEvent.click(screen.getByText("Login - locked out"), { shiftKey: true });
+  fireEvent.click(screen.getByRole("button", { name: "View 2 in browser" }));
+  await waitFor(() => expect(sent).toHaveLength(2));
+  expect(sent[1]).toEqual([201, 202]);
+});
+
+test("Group by title folds cases under shared prefixes and persists collapse", async () => {
+  mockCases();
+  renderView();
+  await screen.findByText("Login - valid");
+
+  fireEvent.click(screen.getByRole("checkbox"));
+  const header = await screen.findByRole("button", { name: "Login (2)" });
+
+  // Header click selects the group.
+  fireEvent.click(header);
+  expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+  // Chevron collapses; state lands in localStorage for the next session.
+  fireEvent.click(screen.getByLabelText("Collapse group Login"));
+  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
+  expect(screen.getByText("Checkout")).toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("tcm-v2-view-collapsed-groups")!)).toEqual(["Login"]);
 });

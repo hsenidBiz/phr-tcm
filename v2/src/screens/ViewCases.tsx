@@ -1,16 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MessageSquarePlus, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, MessageSquare, MessageSquarePlus, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit, type TestCase, type TestCaseFull } from "../bindings";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
 import { Input, Textarea } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { loadNotes, saveNote } from "../lib/caseNotes";
-import { unwrapStr } from "../lib/ipc";
-import { unwrap } from "../lib/ipc";
+import { cn } from "../lib/cn";
+import { usePersistedStringSet } from "../lib/collapsedGroups";
+import { groupIndices } from "../lib/grouping";
+import { unwrap, unwrapStr } from "../lib/ipc";
 
 function toTestCase(c: TestCaseFull): TestCase {
   return {
@@ -24,10 +27,10 @@ function toTestCase(c: TestCaseFull): TestCase {
   };
 }
 
-/** One case, fully spelled out (steps always visible), plus the personal
- * local comment: a scratchpad note saved on this machine only, never
- * written to Azure DevOps. */
-function CaseCard({
+/** The expanded (read-only) detail: preconditions, steps, and the personal
+ * local comment - a scratchpad saved on this machine only, never written
+ * to Azure DevOps. */
+function CaseDetail({
   c,
   note,
   onSaveNote,
@@ -40,16 +43,7 @@ function CaseCard({
   const [draft, setDraft] = useState(note);
 
   return (
-    <li className="rounded-md border border-border bg-surface">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2">
-        <span className="id-mono text-faint">#{c.id}</span>
-        <span className="text-sm font-medium text-text">{c.title}</span>
-        <span className="ml-auto text-xs text-faint">
-          {c.steps.length} steps · {c.automation_status}
-          {c.tags && <> · {c.tags}</>}
-        </span>
-      </div>
-
+    <div className="border-t border-border" onClick={(e) => e.stopPropagation()}>
       {c.preconditions && (
         <p className="whitespace-pre-wrap border-b border-border/60 px-3 py-2 text-xs text-muted">
           <span className="font-semibold">Preconditions: </span>
@@ -57,7 +51,7 @@ function CaseCard({
         </p>
       )}
 
-      {c.steps.length > 0 && (
+      {c.steps.length > 0 ? (
         <table className="w-full border-collapse text-xs">
           <thead>
             <tr className="text-left text-faint">
@@ -76,6 +70,8 @@ function CaseCard({
             ))}
           </tbody>
         </table>
+      ) : (
+        <p className="px-3 py-2 text-xs text-muted">This test case has no steps.</p>
       )}
 
       <div className="border-t border-border/60 px-3 py-2">
@@ -139,13 +135,14 @@ function CaseCard({
           </button>
         )}
       </div>
-    </li>
+    </div>
   );
 }
 
-/** The View Test Cases tab: a read-only, everything-visible view of the
- * PBI's cases (the old "View in browser" home), plus personal local
- * comments for tracking needed changes. */
+/** The View Test Cases tab, laid out like Edit Test Cases: compact rows
+ * (chevron/double-click expands a read-only detail), Group by Title,
+ * click/ctrl/shift selection - and View in browser renders the selection
+ * (or everything the filter shows when nothing is selected). */
 export default function ViewCases({
   org,
   project,
@@ -160,7 +157,16 @@ export default function ViewCases({
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
   const [search, setSearch] = useState("");
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [anchor, setAnchor] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes(org));
+  const [grouped, setGrouped] = useState(
+    () => localStorage.getItem("tcm-v2-group-view") === "on",
+  );
+  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+    "tcm-v2-view-collapsed-groups",
+  );
 
   const pbiId = pbi?.id ?? null;
   // Same key as Edit Test Cases so tab switches reuse the cached fetch.
@@ -189,11 +195,58 @@ export default function ViewCases({
     [list, q],
   );
 
+  const ordered = useMemo(() => {
+    if (!grouped) return [{ group: "", items: visible }];
+    return groupIndices(visible.map((c) => c.title)).map(({ name, indices }) => ({
+      group: name || "Ungrouped",
+      items: indices.map((i) => visible[i]),
+    }));
+  }, [visible, grouped]);
+  const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
+
+  const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
+    const idx = flat.findIndex((x) => x.id === c.id);
+    if (e.shiftKey && anchor != null) {
+      const a = flat.findIndex((x) => x.id === anchor);
+      if (a >= 0 && idx >= 0) {
+        const [lo, hi] = a < idx ? [a, idx] : [idx, a];
+        const range = flat.slice(lo, hi + 1).map((x) => x.id);
+        setSelected((s) => (e.ctrlKey || e.metaKey ? new Set([...s, ...range]) : new Set(range)));
+        return;
+      }
+    }
+    if (e.ctrlKey || e.metaKey) {
+      setSelected((s) => {
+        const next = new Set(s);
+        if (next.has(c.id)) next.delete(c.id);
+        else next.add(c.id);
+        return next;
+      });
+    } else {
+      setSelected(new Set([c.id]));
+    }
+    setAnchor(c.id);
+  };
+
+  /** Header click: select every case in the group (click again to clear). */
+  const toggleGroup = (items: TestCaseFull[]) => {
+    const ids = items.map((c) => c.id);
+    setSelected((s) => {
+      const all = ids.every((id) => s.has(id));
+      const next = new Set(s);
+      if (all) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+    if (ids.length) setAnchor(ids[0]);
+  };
+
+  const chosen = selected.size > 0 ? visible.filter((c) => selected.has(c.id)) : visible;
   const viewHtml = useMutation({
     mutationFn: () =>
       unwrapStr(
         commands.viewQueueHtml(
-          visible.map(toTestCase),
+          chosen.map(toTestCase),
           pbiId != null ? `PBI #${pbiId}` : "",
         ),
       ),
@@ -229,10 +282,10 @@ export default function ViewCases({
           <Button
             variant="outline"
             size="sm"
-            disabled={visible.length === 0 || viewHtml.isPending}
+            disabled={chosen.length === 0 || viewHtml.isPending}
             onClick={() => viewHtml.mutate()}
           >
-            View in browser
+            {selected.size > 0 ? `View ${selected.size} in browser` : "View in browser"}
           </Button>
         </div>
       </div>
@@ -246,6 +299,30 @@ export default function ViewCases({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+          <label className="flex items-center gap-1.5 text-xs text-muted">
+            <Checkbox
+              checked={grouped}
+              onCheckedChange={(v) => {
+                setGrouped(v);
+                try {
+                  localStorage.setItem("tcm-v2-group-view", v ? "on" : "off");
+                } catch {
+                  // session-only
+                }
+              }}
+            />
+            Group by title
+          </label>
+        </div>
+      )}
+
+      {selected.size > 0 && (
+        <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
+          <span className="font-medium text-accent">{selected.size} selected</span>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+          <span className="ml-auto text-xs text-faint">Ctrl+click to toggle · Shift+click for range</span>
         </div>
       )}
 
@@ -258,16 +335,83 @@ export default function ViewCases({
         <p className="text-sm text-muted">No test cases match "{search.trim()}".</p>
       )}
 
-      <ul className="space-y-2">
-        {visible.map((c) => (
-          <CaseCard
-            key={c.id}
-            c={c}
-            note={notes[String(c.id)] ?? ""}
-            onSaveNote={(text) => setNotes(saveNote(org, c.id, text))}
-          />
-        ))}
-      </ul>
+      {ordered.map(({ group, items }) => (
+        <div key={group || "__all"} className="space-y-1">
+          {group && (
+            <div className="flex w-full items-center gap-3 pb-1 pt-2">
+              <span aria-hidden className="h-px flex-1 bg-border" />
+              <button
+                aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
+                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                className="text-muted transition-colors hover:text-accent"
+                onClick={() => toggleCollapsed(group)}
+              >
+                {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+              </button>
+              <button
+                className="group"
+                title="Select all test cases in this group"
+                onClick={() => toggleGroup(items)}
+              >
+                <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                  {group} ({items.length})
+                </span>
+              </button>
+              <span aria-hidden className="h-px flex-1 bg-border" />
+            </div>
+          )}
+          {group && collapsedGroups.has(group) ? null : (
+            <ul className="space-y-1">
+              {items.map((c) => (
+                <li
+                  key={c.id}
+                  className={cn(
+                    "cursor-pointer select-none rounded-md border transition-colors",
+                    selected.has(c.id)
+                      ? "border-accent bg-accent-soft"
+                      : "border-border hover:border-border-strong",
+                  )}
+                  onClick={(e) => handleCardClick(c, e)}
+                  onDoubleClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
+                >
+                  <div className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <button
+                      aria-label={`Expand #${c.id}`}
+                      className="text-muted hover:text-accent"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenId((o) => (o === c.id ? null : c.id));
+                      }}
+                    >
+                      {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    <span className="id-mono text-faint">#{c.id}</span>
+                    <span className="text-text">{c.title}</span>
+                    {notes[String(c.id)] && (
+                      <MessageSquare
+                        size={13}
+                        className="shrink-0 text-accent"
+                        aria-label="Has a local comment"
+                      />
+                    )}
+                    <span className="ml-auto text-xs text-faint">
+                      {c.steps.length} steps · {c.automation_status}
+                      {c.tags && <> · {c.tags}</>}
+                    </span>
+                  </div>
+                  {openId === c.id && (
+                    <CaseDetail
+                      c={c}
+                      note={notes[String(c.id)] ?? ""}
+                      onSaveNote={(text) => setNotes(saveNote(org, c.id, text))}
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
     </section>
   );
 }
