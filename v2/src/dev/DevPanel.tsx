@@ -6,6 +6,7 @@ import type { PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { Button } from "../components/ui/button";
 import { setPbiGlow } from "../lib/pbiGlow";
+import { isDemoMode, toggleDemoMode } from "./demo";
 
 /**
  * DEVELOPER PANEL - dev builds only. The mount site in App.tsx gates on
@@ -54,6 +55,18 @@ export default function DevPanel({
 
       {open && (
         <div className="space-y-3 border-t border-border p-3">
+          <div className="space-y-1">
+            <p className="font-semibold text-text">Demo data</p>
+            <p className="text-muted">
+              {isDemoMode()
+                ? "ON — every screen serves the fake DemoOrg; writes land in memory only."
+                : "OFF — the app talks to real Azure DevOps."}
+            </p>
+            <Button size="sm" variant={isDemoMode() ? "danger" : "outline"} onClick={toggleDemoMode}>
+              {isDemoMode() ? "Disable demo data (reloads)" : "Enable demo data (reloads)"}
+            </Button>
+          </div>
+
           <div className="space-y-0.5 text-muted">
             <p className="font-semibold text-text">Context</p>
             <p>org: {org || "—"} · project: {project || "—"}</p>

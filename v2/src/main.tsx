@@ -17,6 +17,14 @@ window.addEventListener("contextmenu", (e) => {
   if (!t?.closest?.('input, textarea, [contenteditable="true"]')) e.preventDefault();
 });
 
+// Dev builds only: demo-data mode patches every ADO command with an
+// in-memory fake org BEFORE anything fetches. The dynamic import inside a
+// statically-false branch keeps the module out of release bundles.
+if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
+  const { maybeEnableDemoMode } = await import("./dev/demo");
+  maybeEnableDemoMode();
+}
+
 // The compact always-on-top runner opens as a second webview window on the
 // same bundle, routed by hash (see RunTests -> openRunnerWindow).
 const Root = window.location.hash === "#runner" ? RunnerWindow : App;
