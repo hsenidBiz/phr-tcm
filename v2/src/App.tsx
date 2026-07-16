@@ -4,8 +4,8 @@ import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
 import AnimatedFlask from "./components/AnimatedFlask";
-import Aurora from "./components/Aurora";
 import SplitText from "./components/SplitText";
+import Threads from "./components/Threads";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
@@ -96,15 +96,18 @@ export default function App() {
 
   useEffect(() => initTheme(), []);
 
-  // Sign-in Aurora backdrop, tinted to the accent the theme resolved above.
+  // Sign-in Threads backdrop, tinted to the accent the theme resolved above.
   // Stays null without WebGL, which is the signal not to render it at all.
-  const [auroraStops, setAuroraStops] = useState<string[] | null>(null);
+  const [threadsColor, setThreadsColor] = useState<[number, number, number] | null>(null);
   useEffect(() => {
     if (!hasWebGL()) return;
-    const css = getComputedStyle(document.documentElement);
-    const accent = css.getPropertyValue("--color-accent").trim();
-    const hover = css.getPropertyValue("--color-accent-hover").trim();
-    if (accent) setAuroraStops([accent, hover || accent, accent]);
+    const accent = getComputedStyle(document.documentElement)
+      .getPropertyValue("--color-accent")
+      .trim();
+    const m = /^#([0-9a-f]{6})$/i.exec(accent);
+    if (!m) return;
+    const int = parseInt(m[1], 16);
+    setThreadsColor([((int >> 16) & 255) / 255, ((int >> 8) & 255) / 255, (int & 255) / 255]);
   }, []);
 
   // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
@@ -335,15 +338,16 @@ export default function App() {
         >
           {!signedIn ? (
             <div className="relative flex h-full flex-col items-center justify-center">
-              {/* React Bits Aurora backdrop, tinted to the active accent.
-                  Gated on WebGL so sign-in still renders where there is
-                  no GPU context (RDP, software-rendered VDI). */}
-              {auroraStops && (
+              {/* React Bits Threads backdrop: slow accent-tinted lines, kept
+                  subtle (low amplitude, no mouse tracking, faded). Gated on
+                  WebGL so sign-in still renders where there is no GPU
+                  context (RDP, software-rendered VDI). */}
+              {threadsColor && (
                 <div
                   aria-hidden
-                  className="pointer-events-none absolute inset-0 overflow-hidden opacity-70"
+                  className="pointer-events-none absolute inset-0 overflow-hidden opacity-40"
                 >
-                  <Aurora colorStops={auroraStops} amplitude={1} blend={0.5} speed={0.5} />
+                  <Threads color={threadsColor} amplitude={0.8} distance={0} />
                 </div>
               )}
               <div className="relative flex flex-col items-center gap-4">
