@@ -342,10 +342,12 @@ export default function App() {
                   subtle (low amplitude, no mouse tracking, faded). Gated on
                   WebGL so sign-in still renders where there is no GPU
                   context (RDP, software-rendered VDI). */}
+              {/* -inset-6 cancels <main>'s p-6 so the lines run edge to edge
+                  instead of stopping at the content padding. */}
               {threadsColor && (
                 <div
                   aria-hidden
-                  className="pointer-events-none absolute inset-0 overflow-hidden opacity-40"
+                  className="pointer-events-none absolute -inset-6 overflow-hidden opacity-40"
                 >
                   <Threads color={threadsColor} amplitude={0.8} distance={0} />
                 </div>
