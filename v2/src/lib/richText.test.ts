@@ -24,6 +24,19 @@ test("markdown source pasted into ADO keeps tokens and line breaks", () => {
   expect(md).toMatch(/\n- no validation/);
 });
 
+test("HTML tables convert to GFM pipe tables (not stacked cells)", () => {
+  const html =
+    "<table><thead><tr><th>Task</th><th>Hours</th></tr></thead>" +
+    "<tbody><tr><td>Spec review</td><td>0.5</td></tr>" +
+    "<tr><td>TC Seed</td><td>0.75</td></tr></tbody></table>";
+  const md = htmlToMd(html);
+  expect(md).toContain("| Task | Hours |");
+  expect(md).toMatch(/\| ?-+ ?\| ?-+ ?\|/); // header separator row
+  expect(md).toContain("| Spec review | 0.5 |");
+  // Cells stay on their table row, not one-per-line.
+  expect(md).not.toMatch(/^Task$/m);
+});
+
 test("empty and whitespace html is empty markdown", () => {
   expect(htmlToMd("")).toBe("");
   expect(htmlToMd("  <div> </div> ")).toBe("");
