@@ -523,13 +523,10 @@ body {
 }
 
 /* Final-confirmation spotlight on the PBI chip: a comet of accent light
-   runs around the border while a soft glow pulses, so the user checks the
-   target PBI before an irreversible create. */
-@property --pbi-angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
-}
+   travels the chip's border at a CONSTANT speed (offset-path follows the
+   border-box perimeter, unlike a conic sweep which sprints along the long
+   edges), plus a soft steady glow - so the user checks the target PBI
+   before an irreversible create. */
 .pbi-glow {
   position: relative;
   border-radius: 8px;
@@ -538,32 +535,28 @@ body {
 .pbi-glow::after {
   content: "";
   position: absolute;
-  inset: -3px;
-  border-radius: 10px;
-  padding: 2px;
-  background: conic-gradient(
-    from var(--pbi-angle),
-    transparent 0deg 290deg,
-    var(--color-accent) 325deg,
-    transparent 360deg
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  animation: pbi-rotate 1.4s linear infinite;
+  width: 30px;
+  height: 4px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, transparent, var(--color-accent));
+  box-shadow: 0 0 10px var(--color-accent);
+  offset-path: border-box;
+  animation: pbi-travel 7s linear infinite;
   pointer-events: none;
 }
-@keyframes pbi-rotate {
+@keyframes pbi-travel {
   to {
-    --pbi-angle: 360deg;
+    offset-distance: 100%;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .pbi-glow::after {
-    animation: none;
-    background: var(--color-accent);
-    opacity: 0.6;
+    display: none;
+  }
+  .pbi-glow {
+    box-shadow:
+      0 0 0 2px var(--color-accent),
+      0 0 14px var(--color-accent-soft);
   }
 }
 
