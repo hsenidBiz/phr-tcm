@@ -120,6 +120,12 @@ test("selection drives View in browser; nothing selected sends all visible", asy
   fireEvent.click(screen.getByRole("button", { name: "View 2 in browser" }));
   await waitFor(() => expect(sent).toHaveLength(2));
   expect(sent[1]).toEqual([201, 202]);
+
+  // Clicking the sole highlighted case again deselects it.
+  fireEvent.click(screen.getByText("Checkout"));
+  expect(screen.getByText("1 selected")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Checkout"));
+  expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
 });
 
 test("Group by title folds cases under shared prefixes and persists collapse", async () => {

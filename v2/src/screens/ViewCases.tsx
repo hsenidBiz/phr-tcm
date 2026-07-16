@@ -347,7 +347,8 @@ export default function ViewCases({
         return next;
       });
     } else {
-      setSelected(new Set([c.id]));
+      // Clicking the sole highlighted case again deselects it.
+      setSelected((s) => (s.size === 1 && s.has(c.id) ? new Set() : new Set([c.id])));
     }
     setAnchor(c.id);
   };

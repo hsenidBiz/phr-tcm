@@ -99,6 +99,25 @@ export default function ContextBar({
           min-w keeps it usable and forces a wrap instead of a squeeze. */}
       <div className={cn("min-w-56 flex-1", pbiGlow && "pbi-glow")} data-tour="pbi">
         <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+        {/* Comet trail: dots staggered across half a 7s lap = a tail
+            covering half the perimeter, fading toward its end. */}
+        {pbiGlow &&
+          Array.from({ length: 22 }, (_, i) => {
+            const t = i / 21; // 0 = head, 1 = tail end
+            return (
+              <span
+                key={i}
+                aria-hidden
+                className="pbi-comet"
+                style={{
+                  width: 7 - t * 4.5,
+                  height: 7 - t * 4.5,
+                  opacity: 1 - t * 0.95,
+                  animationDelay: `${-t * 3.5}s`,
+                }}
+              />
+            );
+          })}
       </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 

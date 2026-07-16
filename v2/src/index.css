@@ -532,14 +532,14 @@ body {
   border-radius: 8px;
   box-shadow: 0 0 14px var(--color-accent-soft);
 }
-.pbi-glow::after {
-  content: "";
+/* The comet is a chain of dots on the same border path, staggered by
+   negative delays spanning half a lap - a tail that is always half the
+   perimeter, bending around corners (per-dot size/opacity set inline). */
+.pbi-comet {
   position: absolute;
-  width: 30px;
-  height: 4px;
-  border-radius: 4px;
-  background: linear-gradient(90deg, transparent, var(--color-accent));
-  box-shadow: 0 0 10px var(--color-accent);
+  border-radius: 9999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 8px var(--color-accent);
   offset-path: border-box;
   animation: pbi-travel 7s linear infinite;
   pointer-events: none;
@@ -550,7 +550,7 @@ body {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pbi-glow::after {
+  .pbi-comet {
     display: none;
   }
   .pbi-glow {
