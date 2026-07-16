@@ -4,8 +4,9 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
-import { diffCase, diffSummary } from "../lib/caseDiff";
+import { diffCase, diffSummary, type StepDiff } from "../lib/caseDiff";
 import { loadNotes } from "../lib/caseNotes";
+import { wordDiff, type DiffToken } from "../lib/wordDiff";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import { Badge } from "./ui/badge";
@@ -15,6 +16,71 @@ import { Select } from "./ui/select";
 /** The shared pending-creation queue with the review gate, live progress and
  * exports. Manual Entry and Import File both render this under their own
  * input areas (v1: every tab feeds one queue). */
+/** Words with the changed ones highlighted (git word-diff within a line). */
+function Tokens({ tokens, markCls }: { tokens: DiffToken[]; markCls: string }) {
+  return (
+    <>
+      {tokens.map((t, i) => (
+        <span key={i} className={t.changed ? `rounded-sm px-0.5 font-semibold ${markCls}` : undefined}>
+          {i > 0 ? " " : ""}
+          {t.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** One step's -/+ diff lines. Changed steps highlight only the differing
+ * words; pure adds/removes are whole-line by nature. */
+function StepDiffLines({ d }: { d: StepDiff }) {
+  const action =
+    d.kind === "changed" ? wordDiff(d.old!.action, d.new!.action) : null;
+  const expected =
+    d.kind === "changed" ? wordDiff(d.old!.expected, d.new!.expected) : null;
+  return (
+    <div className="space-y-0.5">
+      {d.old && (
+        <div className="flex gap-2 rounded bg-danger/10 px-2 py-1 text-danger">
+          <span className="select-none font-semibold">-</span>
+          <span className="whitespace-pre-wrap">
+            <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
+            {action ? <Tokens tokens={action.old} markCls="bg-danger/25" /> : d.old.action}
+            {d.old.expected && (
+              <span className="opacity-80">
+                {" ⇒ "}
+                {expected ? (
+                  <Tokens tokens={expected.old} markCls="bg-danger/25" />
+                ) : (
+                  d.old.expected
+                )}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+      {d.new && (
+        <div className="flex gap-2 rounded bg-success/10 px-2 py-1 text-success">
+          <span className="select-none font-semibold">+</span>
+          <span className="whitespace-pre-wrap">
+            <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
+            {action ? <Tokens tokens={action.new} markCls="bg-success/25" /> : d.new.action}
+            {d.new.expected && (
+              <span className="opacity-80">
+                {" ⇒ "}
+                {expected ? (
+                  <Tokens tokens={expected.new} markCls="bg-success/25" />
+                ) : (
+                  d.new.expected
+                )}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function QueueSection({
   org,
   project,
@@ -259,35 +325,10 @@ export default function QueueSection({
                     {diff.steps.detail.length > 0 && (
                       <div className="space-y-1">
                         <span className="font-medium text-muted">Steps:</span>
-                        {/* git-style: the server's line as "-", the queued
-                            line as "+", so before/after reads at a glance. */}
+                        {/* git word-diff style: -/+ lines with only the
+                            actually-changed words highlighted. */}
                         {diff.steps.detail.map((d) => (
-                          <div key={d.index} className="space-y-0.5">
-                            {d.old && (
-                              <div className="flex gap-2 rounded bg-danger/10 px-2 py-1 text-danger">
-                                <span className="select-none font-semibold">-</span>
-                                <span className="whitespace-pre-wrap">
-                                  <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
-                                  {d.old.action}
-                                  {d.old.expected && (
-                                    <span className="opacity-80"> ⇒ {d.old.expected}</span>
-                                  )}
-                                </span>
-                              </div>
-                            )}
-                            {d.new && (
-                              <div className="flex gap-2 rounded bg-success/10 px-2 py-1 text-success">
-                                <span className="select-none font-semibold">+</span>
-                                <span className="whitespace-pre-wrap">
-                                  <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
-                                  {d.new.action}
-                                  {d.new.expected && (
-                                    <span className="opacity-80"> ⇒ {d.new.expected}</span>
-                                  )}
-                                </span>
-                              </div>
-                            )}
-                          </div>
+                          <StepDiffLines key={d.index} d={d} />
                         ))}
                       </div>
                     )}
