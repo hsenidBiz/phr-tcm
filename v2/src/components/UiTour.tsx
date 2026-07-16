@@ -52,9 +52,14 @@ const STEPS: Step[] = [
     body: "Browse the PBI's linked cases: click to select, ctrl/shift for many, bulk edit fields, group by title, or export.",
   },
   {
+    target: '[data-tour="nav-view"]',
+    title: "View Test Cases",
+    body: "A read-only view of the PBI's cases: expand for steps, jot local comments on cases that need changes, and open a selection as a browser report.",
+  },
+  {
     target: '[data-tour="nav-run"]',
     title: "Run Tests",
-    body: "Record outcomes inline, or open the always-on-top runner for step-by-step execution with screenshots and bug filing.",
+    body: "See each case's last outcome and history, pick a set, and run them in the always-on-top runner with screenshots and bug filing.",
   },
   {
     target: '[data-tour="nav-suites"]',
@@ -64,12 +69,12 @@ const STEPS: Step[] = [
   {
     target: '[data-tour="work"]',
     title: "Work Manager",
-    body: "A lightweight board of your work items - drag between To Do / In Progress / Done and edit details in the side drawer.",
+    body: "A lightweight board of your work items - drag between To Do / In Progress / Done and open any card for full details.",
   },
   {
     target: '[data-tour="settings"]',
     title: "Settings",
-    body: "Themes and accents, test-case field mapping, updates - and you can replay this tour from here anytime.",
+    body: "Themes and accents, updates - and you can replay this tour from here anytime.",
   },
 ];
 
