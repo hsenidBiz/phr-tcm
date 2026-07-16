@@ -522,14 +522,6 @@ body {
   color: var(--color-muted);
 }
 
-/* Final-confirmation spotlight on the PBI chip: the ElectricBorder canvas
-   (noise-displaced lightning filaments) draws the crackle; this class only
-   anchors it and adds the soft ambient glow. */
-.pbi-glow {
-  position: relative;
-  border-radius: 8px;
-  box-shadow: 0 0 14px var(--color-accent-soft);
-}
 
 /* Work Manager detail modal scales in gently instead of popping. */
 @keyframes modal-in {

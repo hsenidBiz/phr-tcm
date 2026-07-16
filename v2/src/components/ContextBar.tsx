@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { KanbanSquare, Settings as SettingsIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
-import { cn } from "../lib/cn";
 import ElectricBorder from "./ElectricBorder";
 import { unwrap } from "../lib/ipc";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
@@ -98,11 +97,23 @@ export default function ContextBar({
       </Select>
       {/* The PBI chip gets all remaining width so long titles stay readable;
           min-w keeps it usable and forces a wrap instead of a squeeze. */}
-      <div className={cn("min-w-56 flex-1", pbiGlow && "pbi-glow")} data-tour="pbi">
-        <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
-        {/* Electric border (reactbits-style): noise-displaced lightning
-            filaments crackling around the chip while confirmation is armed. */}
-        {pbiGlow && <ElectricBorder />}
+      <div className="min-w-56 flex-1" data-tour="pbi">
+        {/* React Bits ElectricBorder wraps the chip while confirmation is
+            armed, in the theme accent so it follows light/dark and presets. */}
+        {pbiGlow ? (
+          <ElectricBorder
+            color={getComputedStyle(document.documentElement)
+              .getPropertyValue("--color-accent")
+              .trim()}
+            speed={1}
+            chaos={0.12}
+            borderRadius={8}
+          >
+            <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+          </ElectricBorder>
+        ) : (
+          <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
+        )}
       </div>
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 
