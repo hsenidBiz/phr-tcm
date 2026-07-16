@@ -44,6 +44,22 @@ function CaseDetail({
 
   return (
     <div className="border-t border-border" onClick={(e) => e.stopPropagation()}>
+      {c.tags && (
+        <div className="flex flex-wrap items-center gap-1 border-b border-border/60 px-3 py-2">
+          {c.tags
+            .split(";")
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .map((t) => (
+              <span
+                key={t}
+                className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted"
+              >
+                {t}
+              </span>
+            ))}
+        </div>
+      )}
       {c.preconditions && (
         <p className="whitespace-pre-wrap border-b border-border/60 px-3 py-2 text-xs text-muted">
           <span className="font-semibold">Preconditions: </span>
@@ -398,15 +414,17 @@ export default function ViewCases({
                     <span className="id-mono text-faint">#{c.id}</span>
                     <span className="text-text">{c.title}</span>
                     {notes[String(c.id)] && (
-                      <MessageSquare
-                        size={13}
-                        className="shrink-0 text-accent"
+                      <span
                         aria-label="Has a local comment"
-                      />
+                        title={notes[String(c.id)]}
+                        className="flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent"
+                      >
+                        <MessageSquare size={11} />
+                        Comment
+                      </span>
                     )}
                     <span className="ml-auto text-xs text-faint">
                       {c.steps.length} steps · {c.automation_status}
-                      {c.tags && <> · {c.tags}</>}
                     </span>
                   </div>
                   {openId === c.id && (

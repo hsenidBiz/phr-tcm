@@ -49,26 +49,30 @@ function mockCases(onView?: (queue: Array<{ update_id: number | null }>) => void
   });
 }
 
-test("rows start compact; the chevron expands steps and the comment editor", async () => {
+test("rows start compact; the chevron expands steps, tags and the comment editor", async () => {
   mockCases();
   renderView();
 
   await screen.findByText("Login - valid");
   expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
+  // Tags stay out of the compact row - they only show in the detail.
+  expect(screen.queryByText("smoke")).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByLabelText("Expand #201"));
   expect(screen.getByText("Open login page")).toBeInTheDocument();
   expect(screen.getByText("Dashboard opens")).toBeInTheDocument();
   expect(screen.getByText(/User exists/)).toBeInTheDocument();
+  expect(screen.getByText("smoke")).toBeInTheDocument();
 
-  // Comment saves locally and survives a remount, with a row indicator.
+  // Comment saves locally with a visible "Comment" chip on the row.
   fireEvent.click(screen.getByRole("button", { name: /Add comment/ }));
   fireEvent.change(screen.getByLabelText("Comment for #201"), {
     target: { value: "Step 2 needs the new MFA prompt" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Save comment" }));
-  expect(screen.getByText("Step 2 needs the new MFA prompt")).toBeInTheDocument();
-  expect(screen.getByLabelText("Has a local comment")).toBeInTheDocument();
+  const chip = screen.getByLabelText("Has a local comment");
+  expect(chip).toHaveTextContent("Comment");
+  expect(chip).toHaveAttribute("title", "Step 2 needs the new MFA prompt");
 });
 
 test("selection drives View in browser; nothing selected sends all visible", async () => {
