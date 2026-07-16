@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
@@ -146,6 +147,16 @@ export default function QueueSection({
       else next.add(i);
       return next;
     });
+  // Per-row steps preview (collapsed by default): check what will actually
+  // be written before submitting, for creates and updates alike.
+  const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
+  const toggleSteps = (i: number) =>
+    setExpandedSteps((s) => {
+      const next = new Set(s);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
 
   const unlistenRef = useRef<(() => void) | null>(null);
   useEffect(() => () => unlistenRef.current?.(), []);
@@ -272,6 +283,20 @@ export default function QueueSection({
               <li key={i} className="rounded-md border border-border text-sm">
                 <div className="flex items-center justify-between px-3 py-1.5">
                   <span className="text-text">
+                    <button
+                      aria-label={
+                        expandedSteps.has(i) ? `Collapse steps of ${tc.title}` : `Expand steps of ${tc.title}`
+                      }
+                      title={expandedSteps.has(i) ? "Hide steps" : "Check the steps before submitting"}
+                      className="mr-2 align-middle text-muted hover:text-accent"
+                      onClick={() => toggleSteps(i)}
+                    >
+                      {expandedSteps.has(i) ? (
+                        <ChevronDown size={14} />
+                      ) : (
+                        <ChevronRight size={14} />
+                      )}
+                    </button>
                     {tc.update_id != null ? (
                       <Badge className="mr-2 bg-warning/20 text-warning">
                         UPDATE #{tc.update_id}
@@ -311,6 +336,38 @@ export default function QueueSection({
                     Remove
                   </button>
                 </div>
+                {expandedSteps.has(i) && (
+                  <div className="border-t border-border">
+                    {tc.preconditions && (
+                      <p className="whitespace-pre-wrap border-b border-border/60 px-3 py-2 text-xs text-muted">
+                        <span className="font-semibold">Preconditions: </span>
+                        {tc.preconditions}
+                      </p>
+                    )}
+                    {tc.steps.length > 0 ? (
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="text-left text-faint">
+                            <th className="w-8 px-3 py-1 font-medium">#</th>
+                            <th className="px-3 py-1 font-medium">Action</th>
+                            <th className="px-3 py-1 font-medium">Expected</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tc.steps.map((s, si) => (
+                            <tr key={si} className="border-t border-border/40 align-top">
+                              <td className="px-3 py-1 text-faint">{si + 1}</td>
+                              <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
+                              <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p className="px-3 py-2 text-xs text-muted">This test case has no steps.</p>
+                    )}
+                  </div>
+                )}
                 {diff && !diff.noop && expandedDiffs.has(i) && (
                   <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
                     {diff.fields.map((f) => (
