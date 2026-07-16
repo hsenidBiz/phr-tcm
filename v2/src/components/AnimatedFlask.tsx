@@ -1,10 +1,10 @@
 import EqRing from "./EqRing";
 
 /** The sign-in screen's animated flask mark: the outline draws itself on,
- * then floats with a breathing glow, two counter-rotating comet orbits and
- * bubbles rising out of the neck. Pure CSS (see .login-flask in index.css),
- * theme-accent tinted, stilled under prefers-reduced-motion. When system
- * audio is playing, the outer ring doubles as a circular equalizer. */
+ * then floats with a breathing glow and bubbles rising out of the neck.
+ * Pure CSS (see .login-flask in index.css), theme-accent tinted, stilled
+ * under prefers-reduced-motion. When system audio is playing, the outer
+ * ring doubles as a circular equalizer. */
 export default function AnimatedFlask({ size = 112 }: { size?: number }) {
   return (
     <div
@@ -13,8 +13,6 @@ export default function AnimatedFlask({ size = 112 }: { size?: number }) {
       style={{ width: size * 1.9, height: size * 1.9 }}
     >
       <span className="glow" />
-      <span className="orbit" />
-      <span className="orbit orbit2" />
       <EqRing radius={size * 0.75} maxLen={size * 0.18} />
       <svg
         viewBox="0 0 24 24"

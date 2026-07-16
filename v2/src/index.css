@@ -340,20 +340,6 @@ body {
   background: radial-gradient(circle, var(--color-accent-soft), transparent 65%);
   animation: lf-glow 3.2s ease-in-out infinite;
 }
-.login-flask .orbit {
-  position: absolute;
-  inset: 3%;
-  border-radius: 9999px;
-  border: 1px dashed color-mix(in srgb, var(--color-accent) 40%, transparent);
-  animation: lf-spin 16s linear infinite;
-  transition: opacity 0.5s ease;
-}
-/* While the equalizer ring is dancing (EqRing sets data-eq-active on its
-   host) the orbit/halo circles yield the stage to the bars. */
-.login-flask[data-eq-active="true"] .orbit,
-.login-flask[data-eq-active="true"] .orbit2 {
-  opacity: 0;
-}
 /* The empty-state scene goes further: while audio plays only the circular
    equalizer stays - flask, halos and bubbles all step aside, and return
    as soon as the music stops. */
@@ -366,23 +352,6 @@ body {
 .empty-art[data-eq-active="true"] .halo,
 .empty-art[data-eq-active="true"] .bubble {
   visibility: hidden;
-}
-.login-flask .orbit::before {
-  content: "";
-  position: absolute;
-  top: -3px;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--color-accent);
-  box-shadow: 0 0 10px var(--color-accent);
-}
-.login-flask .orbit2 {
-  inset: 13%;
-  opacity: 0.6;
-  animation-duration: 10s;
-  animation-direction: reverse;
 }
 .login-flask .bubble {
   position: absolute;
@@ -436,11 +405,6 @@ body {
     transform: scale(1.06);
   }
 }
-@keyframes lf-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .login-flask svg,
   .login-flask .glow {
@@ -455,7 +419,6 @@ body {
     animation: none;
     opacity: 1;
   }
-  .login-flask .orbit,
   .login-flask .bubble {
     display: none;
   }
