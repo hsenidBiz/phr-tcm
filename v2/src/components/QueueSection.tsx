@@ -207,10 +207,12 @@ export default function QueueSection({
               <li key={i} className="rounded-md border border-border text-sm">
                 <div className="flex items-center justify-between px-3 py-1.5">
                   <span className="text-text">
-                    {tc.update_id != null && (
+                    {tc.update_id != null ? (
                       <Badge className="mr-2 bg-warning/20 text-warning">
                         UPDATE #{tc.update_id}
                       </Badge>
+                    ) : (
+                      <Badge className="mr-2 bg-success/20 text-success">NEW</Badge>
                     )}
                     {tc.title}
                     <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
@@ -255,11 +257,38 @@ export default function QueueSection({
                       </div>
                     ))}
                     {diff.steps.detail.length > 0 && (
-                      <div className="text-muted">
-                        <span className="font-medium">Steps:</span>{" "}
-                        {diff.steps.detail
-                          .map((d) => `#${d.index + 1} ${d.kind}`)
-                          .join(", ")}
+                      <div className="space-y-1">
+                        <span className="font-medium text-muted">Steps:</span>
+                        {/* git-style: the server's line as "-", the queued
+                            line as "+", so before/after reads at a glance. */}
+                        {diff.steps.detail.map((d) => (
+                          <div key={d.index} className="space-y-0.5">
+                            {d.old && (
+                              <div className="flex gap-2 rounded bg-danger/10 px-2 py-1 text-danger">
+                                <span className="select-none font-semibold">-</span>
+                                <span className="whitespace-pre-wrap">
+                                  <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
+                                  {d.old.action}
+                                  {d.old.expected && (
+                                    <span className="opacity-80"> ⇒ {d.old.expected}</span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
+                            {d.new && (
+                              <div className="flex gap-2 rounded bg-success/10 px-2 py-1 text-success">
+                                <span className="select-none font-semibold">+</span>
+                                <span className="whitespace-pre-wrap">
+                                  <span className="id-mono opacity-70">#{d.index + 1}</span>{" "}
+                                  {d.new.action}
+                                  {d.new.expected && (
+                                    <span className="opacity-80"> ⇒ {d.new.expected}</span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
                     {diff.blankSkipped.length > 0 && (

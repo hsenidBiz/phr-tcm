@@ -78,6 +78,13 @@ test("steps diff positionally: changed, added, removed", () => {
   );
   expect(changed.steps.changed).toBe(1);
   expect(changed.noop).toBe(false);
+  // Detail carries both sides so the review can render a -/+ diff.
+  expect(changed.steps.detail[0]).toEqual({
+    index: 0,
+    kind: "changed",
+    old: { action: "Open", expected: "Shown" },
+    new: { action: "Open page", expected: "Shown" },
+  });
 
   const added = diffCase(
     queued({
