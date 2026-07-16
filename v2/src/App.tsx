@@ -4,6 +4,8 @@ import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
 import AnimatedFlask from "./components/AnimatedFlask";
+import Aurora from "./components/Aurora";
+import SplitText from "./components/SplitText";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
@@ -12,6 +14,7 @@ import UiTour, { START_TOUR_EVENT, tourDone } from "./components/UiTour";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
 import { getTheme, initTheme } from "./lib/theme";
+import { hasWebGL } from "./lib/webgl";
 import EditCases from "./screens/EditCases";
 import ImportFile from "./screens/ImportFile";
 import ManualEntry from "./screens/ManualEntry";
@@ -92,6 +95,17 @@ export default function App() {
   );
 
   useEffect(() => initTheme(), []);
+
+  // Sign-in Aurora backdrop, tinted to the accent the theme resolved above.
+  // Stays null without WebGL, which is the signal not to render it at all.
+  const [auroraStops, setAuroraStops] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!hasWebGL()) return;
+    const css = getComputedStyle(document.documentElement);
+    const accent = css.getPropertyValue("--color-accent").trim();
+    const hover = css.getPropertyValue("--color-accent-hover").trim();
+    if (accent) setAuroraStops([accent, hover || accent, accent]);
+  }, []);
 
   // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
@@ -320,16 +334,35 @@ export default function App() {
           }
         >
           {!signedIn ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4">
-              <AnimatedFlask />
-              <h1 className="text-xl font-semibold">Test Case Manager</h1>
-              <p className="max-w-sm text-center text-sm text-muted">
-                Sign in with your Microsoft account to manage Azure DevOps test
-                cases, runs, and work items.
-              </p>
-              <Button disabled={signIn.isPending} onClick={() => signIn.mutate()}>
-                {signIn.isPending ? "Waiting for browser" : "Sign in with Microsoft"}
-              </Button>
+            <div className="relative flex h-full flex-col items-center justify-center">
+              {/* React Bits Aurora backdrop, tinted to the active accent.
+                  Gated on WebGL so sign-in still renders where there is
+                  no GPU context (RDP, software-rendered VDI). */}
+              {auroraStops && (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 overflow-hidden opacity-70"
+                >
+                  <Aurora colorStops={auroraStops} amplitude={1} blend={0.5} speed={0.5} />
+                </div>
+              )}
+              <div className="relative flex flex-col items-center gap-4">
+                <AnimatedFlask />
+                <SplitText
+                  text="Test Case Manager"
+                  tag="h1"
+                  className="text-xl font-semibold"
+                  delay={40}
+                  duration={0.8}
+                />
+                <p className="max-w-sm text-center text-sm text-muted">
+                  Sign in with your Microsoft account to manage Azure DevOps test
+                  cases, runs, and work items.
+                </p>
+                <Button disabled={signIn.isPending} onClick={() => signIn.mutate()}>
+                  {signIn.isPending ? "Waiting for browser" : "Sign in with Microsoft"}
+                </Button>
+              </div>
             </div>
           ) : workMode ? (
             <>

@@ -17,3 +17,34 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
+
+// jsdom implements no FontFaceSet; SplitText waits on document.fonts before
+// it will split, so report fonts as already loaded.
+if (typeof document !== "undefined" && !document.fonts) {
+  Object.defineProperty(document, "fonts", {
+    configurable: true,
+    value: {
+      status: "loaded",
+      ready: Promise.resolve(),
+      check: () => true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    },
+  });
+}
+
+// jsdom never implemented matchMedia, and GSAP's ScrollTrigger calls it
+// unguarded when SplitText registers its plugins at import time.
+if (typeof window !== "undefined" && !window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
