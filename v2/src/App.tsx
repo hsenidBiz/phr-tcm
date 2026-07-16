@@ -17,6 +17,12 @@ import ImportFile from "./screens/ImportFile";
 import ManualEntry from "./screens/ManualEntry";
 import RunTests from "./screens/RunTests";
 import ViewCases from "./screens/ViewCases";
+import DevPanel from "./dev/DevPanel";
+
+/** Compile-time dev gate: statically false in `tauri build`, so everything
+ * behind it (and the dev/ module itself) is dead-code-eliminated from
+ * released builds. Test mode opts out so vitest sees the plain app. */
+const DEV_TOOLS = import.meta.env.DEV && import.meta.env.MODE !== "test";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
@@ -270,7 +276,9 @@ export default function App() {
         onToggleWork={() => setWorkMode((w) => !w)}
       />
 
-      <TitleBar title={workMode ? "Work Manager" : "Test Case Manager"} />
+      <TitleBar
+        title={(workMode ? "Work Manager" : "Test Case Manager") + (DEV_TOOLS ? " — DEV" : "")}
+      />
       {tourOpen && signedIn && <UiTour onClose={() => setTourOpen(false)} />}
 
       <div className="flex min-h-0 flex-1">
@@ -376,6 +384,10 @@ export default function App() {
         </main>
       </div>
       </div>
+
+      {DEV_TOOLS && signedIn && (
+        <DevPanel org={org} project={project} pbi={pbi} section={section} workMode={workMode} />
+      )}
     </div>
   );
 }

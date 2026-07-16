@@ -138,6 +138,18 @@ npm run build            # type-check + Vite build
 cargo test               # Rust (run inside src-tauri/)
 ```
 
+### Dev-only features
+
+`npm run tauri dev` runs the developer version: the title bar shows
+"— DEV" and a **Developer Panel** (bottom-left) offers debugging tools
+(context dump, query-cache refetch/drop, storage clearing, UI triggers).
+Dev-only code gates on `import.meta.env.DEV` (frontend, see
+`src/dev/DevPanel.tsx` and the `DEV_TOOLS` const in App.tsx) or
+`#[cfg(debug_assertions)]` (Rust) - both are compile-time constants, so
+`tauri build` (what the release script ships) dead-code-eliminates them:
+released binaries carry no trace. Put new debugging/testing tools behind
+the same gates and they can never leak into a client build.
+
 Rust tests live in `src-tauri/tests/` (integration targets) because a Windows
 manifest quirk crashes tauri-linked unit-test binaries.
 
