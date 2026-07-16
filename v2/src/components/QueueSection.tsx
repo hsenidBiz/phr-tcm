@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
+import { loadNotes } from "../lib/caseNotes";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import { Badge } from "./ui/badge";
@@ -101,7 +102,7 @@ export default function QueueSection({
   // v1's "View": render to a temp file and open the browser - no download.
   const viewHtml = useMutation({
     mutationFn: async () => {
-      const r = await commands.viewQueueHtml(queue, `PBI #${pbiId}`);
+      const r = await commands.viewQueueHtml(queue, `PBI #${pbiId}`, org, loadNotes(org));
       if (r.status === "error") throw new Error(r.error);
     },
     onError: (e) => toast.error(`Could not open the report: ${e.message}`),

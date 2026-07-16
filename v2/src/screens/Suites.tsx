@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
+import { loadNotes } from "../lib/caseNotes";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { outcomeLabel } from "./RunPanel";
@@ -191,7 +192,7 @@ export default function Suites({
         preconditions: c.preconditions,
         update_id: c.id,
       }));
-      await unwrapStr(commands.viewQueueHtml(queue, label));
+      await unwrapStr(commands.viewQueueHtml(queue, label, org, loadNotes(org)));
     },
     onError: (e) => toast.error(e.message),
   });

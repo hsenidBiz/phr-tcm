@@ -681,9 +681,19 @@ td.num { width: 34px; text-align: center; color: #7c8698; }
 .no-match { color: #5c6675; font-size: 14px; text-align: center;
             padding: 28px 0; border: 1px dashed #c9d3e2; border-radius: 10px; }
 .hidden { display: none !important; }
+.note { margin-top: 12px; border-top: 1px dashed #c9d3e2; padding-top: 10px; }
+.note label { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px;
+              font-weight: 600; color: #3c4657; margin-bottom: 4px; }
+.note-status { font-weight: 400; font-size: 12px; color: #2a7ab8; }
+.note-box { width: 100%; min-height: 44px; resize: vertical; font: inherit;
+            font-size: 13px; color: inherit; background: #f7f9fc;
+            border: 1px solid #c9d3e2; border-radius: 8px; padding: 8px 10px;
+            outline: none; }
+.note-box:focus { border-color: #2a7ab8; box-shadow: 0 0 0 3px rgba(42,122,184,.15); }
 @media print { body { background: #fff; padding: 0; }
                .case { box-shadow: none; border-color: #ccc; }
-               .searchbar { display: none; } }
+               .searchbar { display: none; }
+               .note { display: none; } }
 "#;
 
 const HTML_JS: &str = r#"
@@ -717,9 +727,53 @@ const HTML_JS: &str = r#"
 })();
 "#;
 
+/// Autosaving comment boxes in the report: debounce each textarea and POST
+/// to the app's loopback note listener. mode:'no-cors' keeps the file://
+/// page happy; a network error means the app was closed.
+const NOTE_JS: &str = r#"
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.note-box'));
+  boxes.forEach(function (box) {
+    var status = document.getElementById('ns-' + box.dataset.id);
+    var timer = null;
+    box.addEventListener('input', function () {
+      status.textContent = 'Saving…';
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({ org: NOTE_ORG, case_id: Number(box.dataset.id), text: box.value })
+        }).then(function () {
+          status.textContent = 'Saved ✓';
+        }).catch(function () {
+          status.textContent = 'Not saved — the app is closed';
+        });
+      }, 600);
+    });
+  });
+})();
+"#;
+
+/// Context for the report's autosaving comment boxes.
+pub struct NoteCtx {
+    pub port: u16,
+    pub org: String,
+    /// Existing notes to prefill, keyed by work item id (as a string).
+    pub notes: std::collections::HashMap<String, String>,
+}
+
 /// Standalone, print-friendly HTML report, ported from v1
-/// export_records_to_html (same cards, chips, sticky search filter).
-pub fn export_queue_to_html(queue: &[TestCase], path: &str, subtitle: &str) -> Result<(), String> {
+/// export_records_to_html (same cards, chips, sticky search filter). With a
+/// NoteCtx, every case that has a work item id also gets a comment box that
+/// autosaves to the app's local notes over the loopback listener.
+pub fn export_queue_to_html(
+    queue: &[TestCase],
+    path: &str,
+    subtitle: &str,
+    note_ctx: Option<&NoteCtx>,
+) -> Result<(), String> {
     let mut parts: Vec<String> = vec![
         "<!DOCTYPE html>".into(),
         "<html lang=\"en\"><head><meta charset=\"utf-8\">".into(),
@@ -786,9 +840,28 @@ pub fn export_queue_to_html(queue: &[TestCase], path: &str, subtitle: &str) -> R
             }
             parts.push("</table>".into());
         }
+        if let (Some(ctx), Some(id)) = (note_ctx, tc.update_id) {
+            let existing = ctx.notes.get(&id.to_string()).map(String::as_str).unwrap_or("");
+            parts.push(format!(
+                "<div class='note'><label for='nb-{id}'>My comment \
+                 <span class='note-status' id='ns-{id}'></span></label>\
+                 <textarea class='note-box' id='nb-{id}' data-id='{id}' \
+                 placeholder='e.g. Step 3 needs the new confirmation dialog \
+                 (saved in the app, on this device only)'>{}</textarea></div>",
+                esc(existing)
+            ));
+        }
         parts.push("</div>".into());
     }
-    parts.push(format!("</div><script>{HTML_JS}</script></body></html>"));
+    parts.push(format!("</div><script>{HTML_JS}</script>"));
+    if let Some(ctx) = note_ctx {
+        parts.push(format!(
+            "<script>var NOTE_PORT={};var NOTE_ORG={};{NOTE_JS}</script>",
+            ctx.port,
+            serde_json::to_string(&ctx.org).unwrap_or_else(|_| "\"\"".into())
+        ));
+    }
+    parts.push("</body></html>".into());
     std::fs::write(path, parts.join("\n")).map_err(|e| e.to_string())
 }
 

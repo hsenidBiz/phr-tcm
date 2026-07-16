@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
-import { commands, type PbiHit } from "./bindings";
+import { commands, events, type PbiHit } from "./bindings";
+import { saveNote } from "./lib/caseNotes";
 import AnimatedFlask from "./components/AnimatedFlask";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
@@ -106,6 +107,17 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Comments typed in the "View in browser" report autosave here over the
+  // loopback note listener - persist them into the local notes store.
+  useEffect(() => {
+    const un = events.caseNoteSaved.listen((e) =>
+      saveNote(e.payload.org, e.payload.case_id, e.payload.text),
+    );
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
   }, []);
 
   // One writer for all prefs so no path forgets to persist.

@@ -88,9 +88,11 @@ export const commands = {
 	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),
 	/**
 	 *  Render the queue's HTML report to a temp file and open it in the
-	 *  default browser - v1's "View" behaviour, no save dialog.
+	 *  default browser - v1's "View" behaviour, no save dialog. Cases with a
+	 *  work item id get a comment box that autosaves back into the app via
+	 *  the loopback note listener.
 	 */
-	viewQueueHtml: (queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle })),
+	viewQueueHtml: (queue: TestCase[], subtitle: string, organization: string, notes: { [key in string]: string }) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
@@ -130,6 +132,7 @@ export const commands = {
 /** Events */
 export const events = {
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
+	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 };
@@ -175,6 +178,16 @@ export type BoardItem = {
 export type CaseHistory = {
 	test_case_id: number,
 	outcomes: RunOutcome[],
+};
+
+/**
+ *  Emitted when the HTML report's comment box autosaves a note back over
+ *  the loopback listener - the frontend writes it into local storage.
+ */
+export type CaseNoteSaved = {
+	org: string,
+	case_id: number,
+	text: string,
 };
 
 export type EnsuredSuite = {

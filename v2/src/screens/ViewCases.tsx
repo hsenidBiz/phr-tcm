@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, MessageSquarePlus, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit, type TestCase, type TestCaseFull } from "../bindings";
 import PickPbiEmpty from "../components/PickPbiEmpty";
@@ -248,10 +248,20 @@ export default function ViewCases({
         commands.viewQueueHtml(
           chosen.map(toTestCase),
           pbiId != null ? `PBI #${pbiId}` : "",
+          org,
+          notes,
         ),
       ),
     onError: (e) => toast.error(`Could not open the report: ${e.message ?? e}`),
   });
+
+  // Comments typed in the browser report autosave into localStorage via the
+  // App-level listener - re-read them when the user comes back to the app.
+  useEffect(() => {
+    const refresh = () => setNotes(loadNotes(org));
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [org]);
 
   if (!org || !project || !pbi) {
     return (

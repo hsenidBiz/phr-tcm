@@ -5,6 +5,7 @@ pub mod auth;
 pub mod capture;
 pub mod import_parser;
 pub mod model;
+pub mod note_server;
 pub mod steps_xml;
 pub mod report;
 pub mod updater;
@@ -37,6 +38,15 @@ pub struct SubmitProgress {
 pub struct SuiteScanProgress {
     pub done: u32,
     pub total: u32,
+}
+
+/// Emitted when the HTML report's comment box autosaves a note back over
+/// the loopback listener - the frontend writes it into local storage.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct CaseNoteSaved {
+    pub org: String,
+    pub case_id: i32,
+    pub text: String,
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -393,18 +403,43 @@ fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), St
     import_parser::export_queue_to_json(&queue, &path)
 }
 
+/// One note listener per app run, started lazily on the first report.
+fn ensure_note_server(app: &tauri::AppHandle) -> Option<u16> {
+    use tauri_specta::Event;
+    static PORT: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
+    *PORT.get_or_init(|| {
+        let app = app.clone();
+        note_server::start(move |n| {
+            let _ = CaseNoteSaved { org: n.org, case_id: n.case_id, text: n.text }.emit(&app);
+        })
+        .ok() // no listener -> report still opens, comments just can't save
+    })
+}
+
 /// Render the queue's HTML report to a temp file and open it in the
-/// default browser - v1's "View" behaviour, no save dialog.
+/// default browser - v1's "View" behaviour, no save dialog. Cases with a
+/// work item id get a comment box that autosaves back into the app via
+/// the loopback note listener.
 #[tauri::command]
 #[specta::specta]
-fn view_queue_html(queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
+fn view_queue_html(
+    app: tauri::AppHandle,
+    queue: Vec<model::TestCase>,
+    subtitle: String,
+    organization: String,
+    notes: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
     let path = std::env::temp_dir().join(format!(
         "test-cases-{}-{}.html",
         std::process::id(),
         queue.len()
     ));
     let path_str = path.to_string_lossy().to_string();
-    import_parser::export_queue_to_html(&queue, &path_str, &subtitle)?;
+    let note_ctx = (!organization.is_empty())
+        .then(|| ensure_note_server(&app))
+        .flatten()
+        .map(|port| import_parser::NoteCtx { port, org: organization, notes });
+    import_parser::export_queue_to_html(&queue, &path_str, &subtitle, note_ctx.as_ref())?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -496,7 +531,8 @@ fn cancel_submit(state: tauri::State<'_, SubmitCancel>) {
 #[tauri::command]
 #[specta::specta]
 fn export_queue_html(path: String, queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
-    import_parser::export_queue_to_html(&queue, &path, &subtitle)
+    // A saved-to-disk export is shared/archived - no autosaving note boxes.
+    import_parser::export_queue_to_html(&queue, &path, &subtitle, None)
 }
 
 #[tauri::command]
@@ -1155,7 +1191,12 @@ async fn move_board_item(
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
-        .events(collect_events![SubmitProgress, SuiteScanProgress, audio::AudioSpectrum])
+        .events(collect_events![
+            SubmitProgress,
+            SuiteScanProgress,
+            audio::AudioSpectrum,
+            CaseNoteSaved
+        ])
         .commands(collect_commands![
         ping,
         auth_status,

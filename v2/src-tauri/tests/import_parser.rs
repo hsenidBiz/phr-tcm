@@ -267,7 +267,7 @@ fn html_export_carries_cases_and_search() {
         update_id: Some(42),
     }];
     let path = tmp_path("report.html");
-    v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7").unwrap();
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("Login &lt;works&gt;")); // escaped
     assert!(html.contains("Open &amp; go"));
@@ -276,6 +276,44 @@ fn html_export_carries_cases_and_search() {
     assert!(html.contains("tc-search")); // client-side filter
     assert!(html.contains("None")); // empty prerequisites block still shown
     assert!(html.contains("PBI #7")); // subtitle
+    assert!(!html.contains("class='note-box'")); // no note ctx -> no comment boxes
+}
+
+#[test]
+fn html_export_with_note_ctx_adds_autosaving_comment_boxes() {
+    let queue = vec![
+        TestCase {
+            title: "Existing case".into(),
+            steps: vec![],
+            automation_status: "Planned".into(),
+            update_id: Some(42),
+            ..Default::default()
+        },
+        TestCase {
+            title: "New case (no id yet)".into(),
+            steps: vec![],
+            automation_status: "Planned".into(),
+            update_id: None,
+            ..Default::default()
+        },
+    ];
+    let mut notes = std::collections::HashMap::new();
+    notes.insert("42".to_string(), "Needs the <new> dialog".to_string());
+    let ctx = v2_lib::import_parser::NoteCtx { port: 4711, org: "acme".into(), notes };
+
+    let path = tmp_path("report-notes.html");
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", Some(&ctx)).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    // The identified case gets a prefilled (escaped) comment box...
+    assert!(html.contains("data-id='42'"));
+    assert!(html.contains("Needs the &lt;new&gt; dialog"));
+    // ...wired to the loopback listener with the org baked in.
+    assert!(html.contains("var NOTE_PORT=4711"));
+    assert!(html.contains("var NOTE_ORG=\"acme\""));
+    assert!(html.contains("/note"));
+    // Cases without a work item id get no box (nowhere to attach the note).
+    assert_eq!(html.matches("note-box' id=").count(), 1);
 }
 
 #[test]
