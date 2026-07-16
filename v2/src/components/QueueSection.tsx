@@ -415,12 +415,12 @@ export default function QueueSection({
               style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }}
             />
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <p className="text-xs text-muted">
               Processing {progress.done}/{progress.total}
             </p>
             <Button
-              variant="ghost"
+              variant="danger"
               size="sm"
               onClick={() => {
                 commands.cancelSubmit();
