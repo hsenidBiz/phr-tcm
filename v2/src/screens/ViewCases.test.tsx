@@ -94,6 +94,13 @@ test("rows start compact; the chevron expands steps, tags and the comment editor
 
   fireEvent.click(screen.getByLabelText("Close comment"));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  // Remove deletes the note (dialog closes, chip disappears, store empty).
+  fireEvent.click(screen.getByLabelText("Has a local comment"));
+  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Has a local comment")).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("tcm-v2-case-notes:acme")!)).toEqual({});
 });
 
 test("selection drives View in browser; nothing selected sends all visible", async () => {

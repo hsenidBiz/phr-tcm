@@ -239,6 +239,17 @@ function CommentModal({
                 <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
                   Edit
                 </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => {
+                    // Saving empty deletes the note; the chip disappears too.
+                    onSave("");
+                    onClose();
+                  }}
+                >
+                  Remove
+                </Button>
                 <span className="text-[11px] text-faint">
                   Saved on this device only — never sent to Azure DevOps.
                 </span>
