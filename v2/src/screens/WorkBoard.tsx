@@ -298,7 +298,12 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           // two columns glide wider. Same easing as the drawer/modal.
           <div
             className="grid gap-3 transition-[grid-template-columns] duration-300 ease-out"
-            style={{ gridTemplateColumns: hideDone ? "1fr 1fr 0fr" : "1fr 1fr 1fr" }}
+            style={{
+              gridTemplateColumns: hideDone ? "1fr 1fr 0fr" : "1fr 1fr 1fr",
+              // Hide: fade the cards out first, THEN collapse the track (and
+              // the reverse when showing) so text never squishes mid-shrink.
+              transitionDelay: hideDone ? "140ms" : "0ms",
+            }}
           >
             {COLUMNS.map((col) => {
               const collapsed = hideDone && col === "Done";
@@ -309,11 +314,12 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                   data-testid={`col-${col}`}
                   aria-hidden={collapsed}
                   className={cn(
-                    "min-w-0 rounded-md border border-border bg-bg transition-[opacity,padding] duration-300 ease-out",
+                    "min-w-0 rounded-md border border-border bg-bg transition-[opacity,padding] duration-150 ease-out",
                     collapsed
                       ? "pointer-events-none overflow-hidden border-transparent p-0 opacity-0"
                       : "space-y-2 p-2",
                   )}
+                  style={{ transitionDelay: collapsed ? "0ms" : "280ms" }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => {
                     if (!collapsed && dragging && dragging.column !== col) {

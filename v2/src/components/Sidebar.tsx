@@ -49,12 +49,22 @@ export default function Sidebar({
     });
   };
 
+  /** Labels stay mounted and never wrap: collapsing fades them out FIRST,
+   * then the width animates (reversed when expanding), so text is clipped
+   * behind an invisible curtain instead of squishing as the rail narrows. */
+  const labelCls = cn(
+    "overflow-hidden whitespace-nowrap transition-[opacity,max-width,margin-left] duration-200",
+    collapsed ? "ml-0 max-w-0 opacity-0" : "ml-2.5 max-w-40 opacity-100",
+  );
+  const labelDelay = { transitionDelay: collapsed ? "0ms" : "120ms" };
+
   return (
     <nav
       className={cn(
         "flex h-full shrink-0 flex-col gap-1 border-r border-border bg-surface p-2 transition-[width] duration-200",
         collapsed ? "w-14" : "w-52",
       )}
+      style={{ transitionDelay: collapsed ? "120ms" : "0ms" }}
     >
       {ITEMS.map(({ id, label, icon: Icon }) => (
         <button
@@ -64,7 +74,7 @@ export default function Sidebar({
           aria-current={section === id ? "page" : undefined}
           title={label}
           className={cn(
-            "flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
+            "flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors",
             collapsed && "justify-center px-0",
             section === id
               ? "bg-accent-soft font-medium text-accent"
@@ -72,24 +82,34 @@ export default function Sidebar({
           )}
         >
           <Icon size={16} className="shrink-0" />
-          {!collapsed && label}
+          <span className={labelCls} style={labelDelay}>
+            {label}
+          </span>
         </button>
       ))}
       <div className="mt-auto space-y-1">
-        {!collapsed && (
-          <div className="px-3 py-1 text-[10px] text-faint">Ctrl+K for commands</div>
-        )}
+        <div
+          className={cn(
+            "overflow-hidden whitespace-nowrap px-3 text-[10px] text-faint transition-[opacity,max-height,padding] duration-200",
+            collapsed ? "max-h-0 py-0 opacity-0" : "max-h-6 py-1 opacity-100",
+          )}
+          style={labelDelay}
+        >
+          Ctrl+K for commands
+        </div>
         <button
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           className={cn(
-            "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-faint hover:bg-surface-2 hover:text-text",
+            "flex w-full items-center overflow-hidden rounded-md px-3 py-2 text-sm text-faint hover:bg-surface-2 hover:text-text",
             collapsed && "justify-center px-0",
           )}
           onClick={toggle}
         >
-          {collapsed ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}
-          {!collapsed && "Collapse"}
+          {collapsed ? <ChevronsRight size={15} className="shrink-0" /> : <ChevronsLeft size={15} className="shrink-0" />}
+          <span className={labelCls} style={labelDelay}>
+            Collapse
+          </span>
         </button>
       </div>
     </nav>
