@@ -212,7 +212,7 @@ pub fn build_report_html(
 <div class="legend">{legend}</div>
 <table><thead><tr><th>Id</th><th>Test case</th><th>Last outcome</th></tr></thead><tbody>{rows}</tbody></table>
 {failures_section}
-<div class="footer">Generated {generated_at} by Test Case Manager V2</div>
+<div class="footer">Generated {generated_at} by Test Case Manager</div>
 </div></body></html>"#,
         t = esc(title),
         org = esc(org),

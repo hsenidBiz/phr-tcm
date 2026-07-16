@@ -302,7 +302,7 @@ export default function App() {
           {!signedIn ? (
             <div className="flex h-full flex-col items-center justify-center gap-4">
               <AnimatedFlask />
-              <h1 className="text-xl font-semibold">Test Case Manager V2</h1>
+              <h1 className="text-xl font-semibold">Test Case Manager</h1>
               <p className="max-w-sm text-center text-sm text-muted">
                 Sign in with your Microsoft account to manage Azure DevOps test
                 cases, runs, and work items.
