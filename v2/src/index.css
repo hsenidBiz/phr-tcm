@@ -522,42 +522,13 @@ body {
   color: var(--color-muted);
 }
 
-/* Final-confirmation spotlight on the PBI chip: a comet of accent light
-   travels the chip's border at a CONSTANT speed (offset-path follows the
-   border-box perimeter, unlike a conic sweep which sprints along the long
-   edges), plus a soft steady glow - so the user checks the target PBI
-   before an irreversible create. */
+/* Final-confirmation spotlight on the PBI chip: the ElectricBorder canvas
+   (noise-displaced lightning filaments) draws the crackle; this class only
+   anchors it and adds the soft ambient glow. */
 .pbi-glow {
   position: relative;
   border-radius: 8px;
   box-shadow: 0 0 14px var(--color-accent-soft);
-}
-/* The comet is a chain of dots on the same border path, staggered by
-   negative delays spanning half a lap - a tail that is always half the
-   perimeter, bending around corners (per-dot size/opacity set inline). */
-.pbi-comet {
-  position: absolute;
-  border-radius: 9999px;
-  background: var(--color-accent);
-  box-shadow: 0 0 8px var(--color-accent);
-  offset-path: border-box;
-  animation: pbi-travel 7s linear infinite;
-  pointer-events: none;
-}
-@keyframes pbi-travel {
-  to {
-    offset-distance: 100%;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .pbi-comet {
-    display: none;
-  }
-  .pbi-glow {
-    box-shadow:
-      0 0 0 2px var(--color-accent),
-      0 0 14px var(--color-accent-soft);
-  }
 }
 
 /* Work Manager detail modal scales in gently instead of popping. */
