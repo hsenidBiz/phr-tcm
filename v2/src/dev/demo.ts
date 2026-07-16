@@ -24,6 +24,8 @@ import {
 } from "../bindings";
 
 const DEMO_KEY = "tcm-v2-dev-demo";
+const PREFS_KEY = "tcm-v2-prefs";
+const PREFS_BACKUP_KEY = "tcm-v2-dev-demo-prefs-backup";
 
 export function isDemoMode(): boolean {
   try {
@@ -33,10 +35,39 @@ export function isDemoMode(): boolean {
   }
 }
 
-/** Flip the flag and reload - patches only apply at boot. */
+/** Flip the flag and reload - patches only apply at boot. Entering demo
+ * swaps the persisted context to the fake org with the demo PBI already
+ * selected (the real prefs are backed up); leaving restores them, so the
+ * user lands exactly where they were. */
 export function toggleDemoMode() {
   try {
-    localStorage.setItem(DEMO_KEY, isDemoMode() ? "off" : "on");
+    const entering = !isDemoMode();
+    if (entering) {
+      localStorage.setItem(PREFS_BACKUP_KEY, localStorage.getItem(PREFS_KEY) ?? "");
+      localStorage.setItem(
+        PREFS_KEY,
+        JSON.stringify({
+          org: "DemoOrg",
+          project: "Demo Project",
+          section: "manual",
+          pbi: PBIS[0],
+          workMode: false,
+        }),
+      );
+      // Recents for the demo project so the pick-a-PBI empty states and
+      // the picker have something to offer.
+      localStorage.setItem("tcm-v2-recent-pbis:DemoOrg/Demo Project", JSON.stringify(PBIS));
+    } else {
+      const backup = localStorage.getItem(PREFS_BACKUP_KEY);
+      if (backup) localStorage.setItem(PREFS_KEY, backup);
+      else localStorage.removeItem(PREFS_KEY);
+      localStorage.removeItem(PREFS_BACKUP_KEY);
+      // Drop demo-scoped caches so nothing fake lingers in real use.
+      for (const k of Object.keys(localStorage)) {
+        if (k.includes(":DemoOrg")) localStorage.removeItem(k);
+      }
+    }
+    localStorage.setItem(DEMO_KEY, entering ? "on" : "off");
   } catch {
     // storage unavailable
   }
