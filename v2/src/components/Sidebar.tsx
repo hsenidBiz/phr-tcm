@@ -74,8 +74,10 @@ export default function Sidebar({
           aria-current={section === id ? "page" : undefined}
           title={label}
           className={cn(
+            // px-3 keeps the icon at the exact same x whether the rail is
+            // wide or collapsed (8px nav pad + 12px = centered in w-14), so
+            // icons stay perfectly still while the width animates.
             "flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors",
-            collapsed && "justify-center px-0",
             section === id
               ? "bg-accent-soft font-medium text-accent"
               : "text-muted hover:bg-surface-2 hover:text-text",
@@ -100,10 +102,7 @@ export default function Sidebar({
         <button
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className={cn(
-            "flex w-full items-center overflow-hidden rounded-md px-3 py-2 text-sm text-faint hover:bg-surface-2 hover:text-text",
-            collapsed && "justify-center px-0",
-          )}
+          className="flex w-full items-center overflow-hidden rounded-md px-3 py-2 text-sm text-faint hover:bg-surface-2 hover:text-text"
           onClick={toggle}
         >
           {collapsed ? <ChevronsRight size={15} className="shrink-0" /> : <ChevronsLeft size={15} className="shrink-0" />}
