@@ -7,7 +7,7 @@ DevOps test cases against a Product Backlog Item (PBI), plus a lightweight
 Built with **Tauri 2 + Rust + React/TypeScript**. Signs in with your own
 Microsoft account; ships and auto-updates via Velopack.
 
-> Internal tool. Current version: **1.5.0**. This is the **primary product**
+> Internal tool. Current version: **1.7.1**. This is the **primary product**
 > since the 2026-07-12 cutover; the PyQt5 v1 (repo root) is in feature freeze
 > and prompts its users to upgrade.
 
@@ -32,9 +32,16 @@ test count.
   creates a new case.
 - Queue cases before writing: **View in browser** (an HTML report opened
   directly), **Export JSON**, **Remove all**, or remove individually.
-- The review gate shows a **diff preview** for every queued update — field
-  old → new, step add/change/remove counts, blank-skipped fields — and flags
-  **no-op** updates that would change nothing.
+- The review gate shows a **git-style diff preview** for every queued item:
+  creates carry a **NEW** badge, updates show field old → new and per-step
+  **word-level diffs** (added words highlighted, removed words struck), steps
+  are expandable per row, and **no-op** updates are flagged.
+- Writing is **two-stage**: the confirm button spells out *create X · update
+  Y*, then a final warning spotlights the target PBI in the context bar (an
+  animated border runs around the chip) before anything is sent — created
+  cases can't be deleted, so the target gets one last check. A red **Cancel**
+  stops the batch mid-run, and a **Clear results** button resets the screen
+  afterwards.
 
 ### Edit Test Cases
 - Pull a PBI's linked cases; click to select, **ctrl/⌘+click** to toggle,
@@ -44,7 +51,20 @@ test count.
 - **Bulk edit** selected cases (status, module, tags add/replace,
   preconditions) — titles and steps are never touched.
 - **Group by title** (v1 smart grouping — shared delimiter/word prefixes),
-  refresh, and view/export the selection.
+  refresh, and view/export the selection. Clicking a selected case again
+  deselects it, and expanded/collapsed groups are remembered across sessions.
+
+### View Test Cases
+- A read-focused tab: the PBI's cases in the same compact grouped list, with
+  selection, search, and **View in browser** for the chosen subset.
+- **Per-case comments, saved locally** (per organization — nothing is written
+  to Azure DevOps): add one from the row or the expanded view; a chip marks
+  commented cases and opens the comment in a modal (edit / remove there).
+- The browser report includes a **comment box under each case** that
+  autosaves back into the app while it's running — annotate during a review
+  walkthrough without switching windows.
+- Tags moved out of the list rows and into the expanded view to keep the
+  list scannable.
 
 ### Run Tests & the Runner
 - A **read-only overview** table tinted by last outcome, filterable by
@@ -52,6 +72,9 @@ test count.
   selection — outcomes are recorded only through the runner.
 - A **History** column shows each case's last five outcomes as colored dots
   (hover for date and run number), in both the table and the runner.
+- Rows **expand in place** to show the case's steps and, for failures, the
+  latest failure detail — result comment and linked bugs — so a fix can be
+  checked against the exact failure without opening the runner.
 - **Execution report**: one click builds a shareable HTML summary — pass rate
   over executed cases, outcome bar, failures-first table, and failure details
   with result comments and linked bugs — and opens it in the browser.
@@ -79,20 +102,34 @@ test count.
 - Moves are **verified against what Azure DevOps actually saved** — if rules
   (e.g. required dates) block a transition, the card rolls back and the rule
   message is shown; the board never displays a state the server rejected.
-- A **detail drawer** (slides in, drag-resizable from its left edge) to edit
-  state, assignee, activity, effort, dates, and a **markdown** description
-  (Write / Preview), plus comments and quick-create.
-- A **shadcn-style calendar** for the date fields (themes correctly).
+- Opening a card shows an **Azure-DevOps-style full-window modal** (resizes
+  with the window, draggable chrome): title, State / Assigned / Activity up
+  top, description and discussion on the left, Planning & Classification on
+  the right, Save writes only the fields you touched.
+- **Every process tab is fetched from the org's own process layout** — a Bug
+  shows its RCA / Preventive Measures pages and so on, each laid out in the
+  same section columns as DevOps, with text, HTML, and picklist fields all
+  editable.
+- Rich text renders properly: **markdown preview by default** (Write to
+  edit), **GFM tables**, and **attached images inline** (fetched with your
+  credentials, displayed in place).
+- A **shadcn-style calendar** for the date fields (themes correctly), and
+  **Hide Done** collapses its column smoothly.
 
 ### Appearance
 - Full **theme system** — the whole palette swaps via one setting: **Light,
   Slate, Midnight, Graphite, Ocean, OLED** (true-black), plus **System**.
 - **Accent** presets (or "Theme default") layered on top; app-matched
   scrollbars; a startup splash; collapsible icon sidebar; frameless window
-  chrome; a **Ctrl+K** command palette and **Ctrl+1..5 / Ctrl+Shift+M**
+  chrome; a **Ctrl+K** command palette and **Ctrl+1..6 / Ctrl+Shift+M**
   shortcuts.
 - The **app icon** is the splash's violet flask mark, and installs create a
   readable **"Test Case Manager"** shortcut.
+- An **animated sign-in screen** — the flask mark draws itself in over a
+  subtle accent-tinted moving backdrop (skipped automatically where no GPU
+  context exists, e.g. over RDP) — plus small touches everywhere: tab bodies
+  fade in on switch, case totals count up on load, and a **guided UI tour**
+  covers every tab.
 
 ---
 
@@ -185,8 +222,8 @@ src-tauri/                  Rust core
 src/                        React / TypeScript frontend
   App.tsx                   Shell: title bar, sidebar, context bar, routing
   bindings.ts               Generated typed IPC (tauri-specta)
-  screens/                  ManualEntry, ImportFile, ExistingCases, RunPanel,
-                            RunnerWindow, Suites, WorkBoard, Settings
+  screens/                  ManualEntry, ImportFile, ExistingCases, ViewCases,
+                            RunPanel, RunnerWindow, Suites, WorkBoard, Settings
   components/               TitleBar, Sidebar, PbiPicker, QueueSection,
                             WorkItemDrawer, BulkEditDialog, ui/ (calendar,
                             datefield, button, input, select, …)
