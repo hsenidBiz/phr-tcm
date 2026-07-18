@@ -328,10 +328,21 @@ body {
   stroke-dashoffset: 70;
   animation: lf-draw 1.4s ease-out forwards;
 }
+/* The two horizontal lines draw themselves in like the body outline does
+   (dash lengths match each path: top lip 6 units, liquid line 9), timed to
+   start as the body finishes forming. */
 .login-flask .fl-top,
 .login-flask .fl-line {
-  opacity: 0;
-  animation: lf-appear 0.5s ease-out 0.9s forwards;
+  animation: lf-draw 0.45s ease-out 0.9s forwards;
+}
+.login-flask .fl-top {
+  stroke-dasharray: 6;
+  stroke-dashoffset: 6;
+}
+.login-flask .fl-line {
+  stroke-dasharray: 9;
+  stroke-dashoffset: 9;
+  animation-delay: 1.05s;
 }
 .login-flask .glow {
   position: absolute;
@@ -389,11 +400,6 @@ body {
     stroke-dashoffset: 0;
   }
 }
-@keyframes lf-appear {
-  to {
-    opacity: 1;
-  }
-}
 @keyframes lf-glow {
   0%,
   100% {
@@ -417,7 +423,7 @@ body {
   .login-flask .fl-top,
   .login-flask .fl-line {
     animation: none;
-    opacity: 1;
+    stroke-dashoffset: 0;
   }
   .login-flask .bubble {
     display: none;
