@@ -348,11 +348,22 @@ async fn classification_paths_walk_names_not_path_field() {
 /// The tool must never destroy data: no DELETE requests, ever.
 #[test]
 fn client_source_has_no_delete_calls() {
-    let src = include_str!("../src/ado.rs");
-    assert!(
-        !src.contains(".delete(") && !src.contains("Method::DELETE"),
-        "AdoClient must never issue DELETE requests"
-    );
+    // Every file that builds HTTP requests or extends AdoClient — a new
+    // impl file must be added here (compile error via include_str! if one
+    // of these moves without the test following it).
+    let sources = [
+        include_str!("../src/ado/mod.rs"),
+        include_str!("../src/ado/transport.rs"),
+        include_str!("../src/ado/endpoints.rs"),
+        include_str!("../src/ado_testplan.rs"),
+        include_str!("../src/work_board.rs"),
+    ];
+    for src in sources {
+        assert!(
+            !src.contains(".delete(") && !src.contains("Method::DELETE"),
+            "AdoClient must never issue DELETE requests"
+        );
+    }
 }
 
 #[tokio::test]
