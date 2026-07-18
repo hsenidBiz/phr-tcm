@@ -208,15 +208,21 @@ everything user-facing.**
 ```
 src-tauri/                  Rust core
   src/
-    ado.rs                  Azure DevOps REST client (GET/POST/PATCH only)
-    ado_testplan.rs         Test plans, suites, points, runs; suite detection
+    lib.rs                  Crate root: module tree, specta builder, app wiring
+    commands/               The IPC surface - one thin module per domain
+                            (auth, discovery, queue, cases, testplan, runs,
+                            bugs, board, misc)
+    events.rs               Typed tauri-specta events
+    state.rs                Managed state + the shared token-refresh helper
+    ado/                    Azure DevOps REST client (GET/POST/PATCH only):
+                            transport (HTTP + error mapping) | endpoints
+    ado_testplan/           Test plans/suites | runs/results | run history
+    work_board/             Board pipeline | item detail | process layout
+    import_parser/          Parsing (golden-tested) | exports | HTML report
     auth.rs                 MSAL PKCE loopback sign-in + in-memory token
     steps_xml.rs            Steps XML build/parse (golden-tested)
-    import_parser.rs        Import parsing (golden-tested)
     model.rs                TestCase / Step domain types
-    work_board.rs           Work Manager board, details, comments, teams
     updater.rs              Velopack auto-update
-    lib.rs                  tauri-specta commands + typed events
   tests/                    Integration tests (wiremock + golden vectors)
 
 src/                        React / TypeScript frontend
