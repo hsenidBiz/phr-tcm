@@ -4,10 +4,6 @@ import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
 import AnimatedContent from "./components/AnimatedContent";
-import AnimatedFlask from "./components/AnimatedFlask";
-import ShinyText from "./components/ShinyText";
-import SplitText from "./components/SplitText";
-import Threads from "./components/Threads";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { type Section } from "./components/Sidebar";
@@ -15,12 +11,13 @@ import TitleBar from "./components/TitleBar";
 import UiTour, { START_TOUR_EVENT, tourDone } from "./components/UiTour";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
+import { loadPrefs, savePrefs } from "./lib/prefs";
 import { getTheme, initTheme } from "./lib/theme";
-import { hasWebGL } from "./lib/webgl";
 import EditCases from "./screens/EditCases";
 import ImportFile from "./screens/ImportFile";
 import ManualEntry from "./screens/ManualEntry";
 import RunTests from "./screens/RunTests";
+import SignIn from "./screens/SignIn";
 import ViewCases from "./screens/ViewCases";
 import DevPanel from "./dev/DevPanel";
 
@@ -31,47 +28,6 @@ const DEV_TOOLS = import.meta.env.DEV && import.meta.env.MODE !== "test";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
-
-const PREFS_KEY = "tcm-v2-prefs";
-
-type Prefs = {
-  org: string;
-  project: string;
-  section: Section;
-  pbi: PbiHit | null;
-  workMode: boolean;
-};
-
-const SECTIONS: Section[] = ["manual", "import", "edit", "run", "suites", "settings"];
-
-function loadPrefs(): Prefs {
-  const defaults: Prefs = {
-    org: "",
-    project: "",
-    section: "manual",
-    pbi: null,
-    workMode: false,
-  };
-  try {
-    const raw = localStorage.getItem(PREFS_KEY);
-    if (raw) {
-      const p = JSON.parse(raw);
-      return {
-        org: p.org ?? "",
-        project: p.project ?? "",
-        section: SECTIONS.includes(p.section) ? p.section : "manual",
-        pbi:
-          p.pbi && typeof p.pbi.id === "number" && typeof p.pbi.title === "string"
-            ? { id: p.pbi.id, title: p.pbi.title, work_item_type: p.pbi.work_item_type ?? "" }
-            : null,
-        workMode: Boolean(p.workMode),
-      };
-    }
-  } catch {
-    // corrupted prefs -> defaults
-  }
-  return defaults;
-}
 
 const TITLES: Record<Section, string> = {
   manual: "Manual Entry",
@@ -97,20 +53,6 @@ export default function App() {
   );
 
   useEffect(() => initTheme(), []);
-
-  // Sign-in Threads backdrop, tinted to the accent the theme resolved above.
-  // Stays null without WebGL, which is the signal not to render it at all.
-  const [threadsColor, setThreadsColor] = useState<[number, number, number] | null>(null);
-  useEffect(() => {
-    if (!hasWebGL()) return;
-    const accent = getComputedStyle(document.documentElement)
-      .getPropertyValue("--color-accent")
-      .trim();
-    const m = /^#([0-9a-f]{6})$/i.exec(accent);
-    if (!m) return;
-    const int = parseInt(m[1], 16);
-    setThreadsColor([((int >> 16) & 255) / 255, ((int >> 8) & 255) / 255, (int & 255) / 255]);
-  }, []);
 
   // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
@@ -147,14 +89,7 @@ export default function App() {
 
   // One writer for all prefs so no path forgets to persist.
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        PREFS_KEY,
-        JSON.stringify({ org, project, section, pbi, workMode }),
-      );
-    } catch {
-      // storage unavailable -> session-only
-    }
+    savePrefs({ org, project, section, pbi, workMode });
   }, [org, project, section, pbi, workMode]);
 
   const setOrg = (o: string) => {
@@ -345,56 +280,16 @@ export default function App() {
           }
         >
           {!signedIn ? (
-            <div className="relative flex h-full flex-col items-center justify-center">
-              {/* React Bits Threads backdrop: slow accent-tinted lines, kept
-                  subtle (low amplitude, no mouse tracking, faded). Gated on
-                  WebGL so sign-in still renders where there is no GPU
-                  context (RDP, software-rendered VDI). */}
-              {/* -inset-6 cancels <main>'s p-6 so the lines run edge to edge
-                  instead of stopping at the content padding. */}
-              {threadsColor && (
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute -inset-6 overflow-hidden opacity-40"
+            <SignIn signingIn={signIn.isPending} onSignIn={() => signIn.mutate()}>
+              {DEV_TOOLS && (
+                <button
+                  className="text-xs text-muted underline underline-offset-2 hover:text-text"
+                  onClick={() => setDevAuth("in")}
                 >
-                  <Threads color={threadsColor} amplitude={0.8} distance={0} />
-                </div>
+                  Skip sign-in — dev only (pair with demo data)
+                </button>
               )}
-              <div className="relative flex flex-col items-center gap-4">
-                <AnimatedFlask />
-                <SplitText
-                  text="Test Case Manager"
-                  tag="h1"
-                  className="text-xl font-semibold"
-                  delay={40}
-                  duration={0.8}
-                />
-                <p className="max-w-sm text-center text-sm text-muted">
-                  Sign in with your Microsoft account to manage Azure DevOps test
-                  cases, runs, and work items.
-                </p>
-                <Button disabled={signIn.isPending} onClick={() => signIn.mutate()}>
-                  {signIn.isPending ? (
-                    "Waiting for browser"
-                  ) : (
-                    <ShinyText
-                      text="Sign in with Microsoft"
-                      speed={3}
-                      color="rgba(255, 255, 255, 0.85)"
-                      shineColor="#ffffff"
-                    />
-                  )}
-                </Button>
-                {DEV_TOOLS && (
-                  <button
-                    className="text-xs text-muted underline underline-offset-2 hover:text-text"
-                    onClick={() => setDevAuth("in")}
-                  >
-                    Skip sign-in — dev only (pair with demo data)
-                  </button>
-                )}
-              </div>
-            </div>
+            </SignIn>
           ) : workMode ? (
             <>
               <h1 className="mb-4 text-lg font-semibold">Work Manager</h1>
