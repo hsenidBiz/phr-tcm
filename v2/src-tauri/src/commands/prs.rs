@@ -28,6 +28,19 @@ pub async fn pr_overview(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn board_pr_links(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<ado_git::PrLink>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .board_pr_links(&organization, &project)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn repo_pull_requests(
     app: tauri::AppHandle,
     organization: String,

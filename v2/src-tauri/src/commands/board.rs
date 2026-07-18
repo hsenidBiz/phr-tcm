@@ -14,10 +14,11 @@ pub async fn fetch_board(
     project: String,
     area: Option<String>,
     pbi_id: Option<i32>,
+    current_sprint: bool,
 ) -> Result<work_board::BoardData, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token)
-        .fetch_board(&organization, &project, area.as_deref(), pbi_id)
+        .fetch_board(&organization, &project, area.as_deref(), pbi_id, current_sprint)
         .await
 }
 

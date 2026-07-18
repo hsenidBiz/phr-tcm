@@ -31,7 +31,7 @@ export const commands = {
 	 *  PATCH outcomes, complete the run. Returns the run's web URL.
 	 */
 	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
-	fetchBoard: (organization: string, project: string, area: string | null, pbiId: number | null) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, area, pbiId })),
+	fetchBoard: (organization: string, project: string, area: string | null, pbiId: number | null, currentSprint: boolean) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, area, pbiId, currentSprint })),
 	/**
 	 *  Move a board item into a column: resolves the target state exactly like
 	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
@@ -132,6 +132,7 @@ export const commands = {
 	listRepos: (organization: string, project: string) => typedError<RepoRef[], AdoError>(__TAURI_INVOKE("list_repos", { organization, project })),
 	prOverview: (organization: string, project: string) => typedError<PrOverview, AdoError>(__TAURI_INVOKE("pr_overview", { organization, project })),
 	repoPullRequests: (organization: string, project: string, repoId: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId })),
+	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 };
 
 /** Events */
@@ -287,6 +288,16 @@ export type PointOutcome = {
 	attachments: RunAttachment[] | null,
 	/**  Bug work-item ids to associate with this result. */
 	bug_ids: number[] | null,
+};
+
+/**  One work-item -> pull-request association, for the board's PR chips. */
+export type PrLink = {
+	work_item_id: number,
+	pr_id: number,
+	/**  "active" | "completed" | "abandoned". */
+	status: string,
+	title: string,
+	web_url: string,
 };
 
 /**  The actionable slices for the PR panel's top groups. */

@@ -20,9 +20,25 @@ impl AdoClient {
         wiql: &str,
         top: u32,
     ) -> Result<Vec<i32>, AdoError> {
+        self.query_work_items_ctx(org, project, None, wiql, top).await
+    }
+
+    /// Same, optionally running in a TEAM context - required for WIQL
+    /// macros like @CurrentIteration, which have no meaning project-wide.
+    pub async fn query_work_items_ctx(
+        &self,
+        org: &str,
+        project: &str,
+        team: Option<&str>,
+        wiql: &str,
+        top: u32,
+    ) -> Result<Vec<i32>, AdoError> {
+        let team_seg = team
+            .map(|t| format!("/{}", urlencoding::encode(t)))
+            .unwrap_or_default();
         let url = format!(
-            "{}/{}/{}/_apis/wit/wiql?$top={}&api-version=7.1",
-            self.base_url, org, project, top
+            "{}/{}/{}{}/_apis/wit/wiql?$top={}&api-version=7.1",
+            self.base_url, org, project, team_seg, top
         );
         let body = self
             .post_json_query(url, &serde_json::json!({ "query": wiql }))
@@ -34,6 +50,19 @@ impl AdoClient {
             .iter()
             .filter_map(|w| w["id"].as_i64().map(|i| i as i32))
             .collect())
+    }
+
+    /// The project's default team name (every project has one) - the team
+    /// context @CurrentIteration resolves against. Read only.
+    pub async fn default_team(&self, org: &str, project: &str) -> Result<String, AdoError> {
+        let url = format!(
+            "{}/{}/_apis/projects/{}?api-version=7.1",
+            self.base_url,
+            org,
+            urlencoding::encode(project)
+        );
+        let data = self.get_json(url).await?;
+        Ok(data["defaultTeam"]["name"].as_str().unwrap_or_default().to_string())
     }
 
     /// States defined for a work-item type on this project's process. Read only.
@@ -198,14 +227,17 @@ impl AdoClient {
     /// whoever it's assigned to - areas are the classification tree the
     /// user actually sees, unlike the project's often-stale team list),
     /// or a PBI (everything parented under it, plus the PBI itself - PBI
-    /// wins when both arrive). Test artifacts excluded in every mode.
-    /// Read only.
+    /// wins when both arrive). `current_sprint` adds an
+    /// @CurrentIteration clause, run in the project's default-team
+    /// context (the macro needs a team to resolve against). Test
+    /// artifacts excluded in every mode. Read only.
     pub async fn fetch_board(
         &self,
         org: &str,
         project: &str,
         area: Option<&str>,
         pbi_id: Option<i32>,
+        current_sprint: bool,
     ) -> Result<BoardData, AdoError> {
         let excluded = EXCLUDED_TYPES
             .iter()
@@ -231,11 +263,19 @@ impl AdoClient {
             }
             (None, None) => where_clauses.push("[System.AssignedTo] = @Me".to_string()),
         }
+        let team_ctx = if current_sprint {
+            where_clauses.push("[System.IterationPath] = @CurrentIteration".to_string());
+            Some(self.default_team(org, project).await?)
+        } else {
+            None
+        };
         let wiql = format!(
             "SELECT [System.Id] FROM workitems WHERE {} ORDER BY [System.ChangedDate] DESC",
             where_clauses.join(" AND ")
         );
-        let ids = self.query_work_items(org, project, &wiql, MAX_ITEMS).await?;
+        let ids = self
+            .query_work_items_ctx(org, project, team_ctx.as_deref(), &wiql, MAX_ITEMS)
+            .await?;
 
         let mut raw_items: Vec<serde_json::Value> = vec![];
         for chunk in ids.chunks(200) {

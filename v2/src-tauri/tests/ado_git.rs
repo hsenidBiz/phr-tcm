@@ -105,3 +105,54 @@ async fn repo_pull_requests_flags_conflicts_and_lists_repos_sorted() {
         vec!["Alpha", "zeta"]
     );
 }
+
+#[tokio::test]
+async fn board_pr_links_map_work_items_across_statuses() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/pullrequests"))
+        .and(query_param("searchCriteria.status", "active"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "pullRequestId": 7, "title": "Fix login",
+                "repository": {"id": "r1", "name": "web"}
+            }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/pullrequests"))
+        .and(query_param("searchCriteria.status", "completed"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "pullRequestId": 5, "title": "Old work",
+                "repository": {"id": "r1", "name": "web"}
+            }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/r1/pullRequests/7/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": "101"}, {"id": "102"}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/r1/pullRequests/5/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": "101"}]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let links = client.board_pr_links("org", "proj").await.unwrap();
+    assert_eq!(links.len(), 3);
+    // Work item 101 carries both an active and a completed PR.
+    let for_101: Vec<_> = links.iter().filter(|l| l.work_item_id == 101).collect();
+    assert_eq!(for_101.len(), 2);
+    assert!(for_101.iter().any(|l| l.status == "active" && l.pr_id == 7));
+    assert!(for_101.iter().any(|l| l.status == "completed" && l.pr_id == 5));
+    assert!(links[0].web_url.contains("/_git/web/pullrequest/"));
+}

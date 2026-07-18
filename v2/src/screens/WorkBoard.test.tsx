@@ -286,3 +286,62 @@ test("PBI scope waits for a pick, then fetches with pbiId", async () => {
   expect(last.pbiId).toBe(4242);
   expect(last.area).toBeNull();
 });
+
+test("stale cards get the warning edge; Done cards never do", async () => {
+  const staleDate = new Date(Date.now() - 12 * 86_400_000).toISOString();
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board")
+      return {
+        items: [
+          { ...boardData.items[0], changed_date: staleDate }, // To Do, stale
+          { ...boardData.items[1], changed_date: staleDate }, // Done, stale age but exempt
+        ],
+        states_by_type: boardData.states_by_type,
+      };
+    if (cmd === "classification_paths") return [];
+    if (cmd === "board_pr_links") return [];
+  });
+  renderBoard();
+  const staleCard = (await screen.findByText("Write docs")).closest("[draggable]")!;
+  expect(staleCard).toHaveAttribute("title", "No changes in 12 days");
+  const doneCard = screen.getByText("Fix bug").closest("[draggable]")!;
+  expect(doneCard).not.toHaveAttribute("title");
+});
+
+test("PR chips render from board links and active outranks completed", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+    if (cmd === "board_pr_links")
+      return [
+        { work_item_id: 11, pr_id: 9, status: "completed", title: "Old", web_url: "https://x/9" },
+        { work_item_id: 11, pr_id: 12, status: "active", title: "New", web_url: "https://x/12" },
+      ];
+  });
+  renderBoard();
+  const card = (await screen.findByText("Write docs")).closest("[draggable]")!;
+  const chips = await within(card as HTMLElement).findAllByText(/PR [●✓]/);
+  expect(chips.map((c) => c.textContent)).toEqual(["PR ●", "PR ✓"]);
+});
+
+test("This sprint toggle refetches with currentSprint=true", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "fetch_board") {
+      calls.push(args as Record<string, unknown>);
+      return boardData;
+    }
+    if (cmd === "classification_paths") return [];
+    if (cmd === "board_pr_links") return [];
+  });
+  renderBoard();
+  await screen.findByText("Write docs");
+  expect(calls[calls.length - 1].currentSprint).toBe(false);
+
+  fireEvent.click(screen.getByRole("checkbox", { name: /This sprint/ }));
+  await vi.waitFor(() =>
+    expect(calls[calls.length - 1].currentSprint).toBe(true),
+  );
+  expect(localStorage.getItem("tcm-v2-this-sprint")).toBe("on");
+  localStorage.removeItem("tcm-v2-this-sprint");
+});

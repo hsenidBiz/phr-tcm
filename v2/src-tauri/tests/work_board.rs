@@ -226,7 +226,7 @@ async fn fetch_board_pipeline() {
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let board = client.fetch_board("org", "proj", None, None).await.unwrap();
+    let board = client.fetch_board("org", "proj", None, None, false).await.unwrap();
     assert_eq!(board.items.len(), 2);
     // WIQL order preserved: 11 first.
     assert_eq!(board.items[0].id, 11);
@@ -255,12 +255,12 @@ async fn fetch_board_pbi_scope_queries_parent_or_self() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     // Area AND pbi supplied: pbi wins (the mock only matches the pbi WIQL).
     let board = client
-        .fetch_board("org", "proj", Some("HRM\\Gamma Guardians"), Some(4242))
+        .fetch_board("org", "proj", Some("HRM\\Gamma Guardians"), Some(4242), false)
         .await
         .unwrap();
     assert!(board.items.is_empty());
 
-    let me_only = client.fetch_board("org", "proj", None, None).await;
+    let me_only = client.fetch_board("org", "proj", None, None, false).await;
     // Default scope generates @Me WIQL, which this mock does not match ->
     // 404 from wiremock, proving the pbi clause is really scope-dependent.
     assert!(me_only.is_err());
@@ -287,7 +287,7 @@ async fn fetch_board_area_scope_queries_under_with_escaping() {
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let board = client
-        .fetch_board("org", "proj", Some("HRM\\Gamma's Guardians"), None)
+        .fetch_board("org", "proj", Some("HRM\\Gamma's Guardians"), None, false)
         .await
         .unwrap();
     assert!(board.items.is_empty());
@@ -467,4 +467,35 @@ async fn rich_text_attachment_images_are_downloaded_for_preview() {
     assert_eq!(d.inline_images.len(), 1);
     assert!(d.inline_images[0].url.contains("fileName=shot.png&download=true"));
     assert!(d.inline_images[0].data.starts_with("data:image/png;base64,"));
+}
+
+#[tokio::test]
+async fn fetch_board_current_sprint_runs_in_default_team_context() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/projects/proj"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "defaultTeam": {"id": "t1", "name": "Proj Team"}
+        })))
+        .mount(&server)
+        .await;
+    // The WIQL must POST to the TEAM-scoped route (the @CurrentIteration
+    // macro has no meaning project-wide) and carry the macro clause.
+    Mock::given(method("POST"))
+        .and(path("/org/proj/Proj%20Team/_apis/wit/wiql"))
+        .and(wiremock::matchers::body_string_contains(
+            "[System.IterationPath] = @CurrentIteration",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "workItems": []
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let board = client
+        .fetch_board("org", "proj", None, None, true)
+        .await
+        .unwrap();
+    assert!(board.items.is_empty());
 }

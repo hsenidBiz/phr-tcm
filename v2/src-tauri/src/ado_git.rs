@@ -46,6 +46,17 @@ pub struct PrOverview {
     pub mine: Vec<PullRequest>,
 }
 
+/// One work-item -> pull-request association, for the board's PR chips.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PrLink {
+    pub work_item_id: i32,
+    pub pr_id: i32,
+    /// "active" | "completed" | "abandoned".
+    pub status: String,
+    pub title: String,
+    pub web_url: String,
+}
+
 fn branch(refname: &str) -> String {
     refname.strip_prefix("refs/heads/").unwrap_or(refname).to_string()
 }
@@ -173,6 +184,71 @@ impl AdoClient {
             .pull_requests_where(org, project, &format!("searchCriteria.creatorId={me}"), &me)
             .await?;
         Ok(PrOverview { awaiting, mine })
+    }
+
+    /// Work-item -> PR associations for the board's chips. The workitems
+    /// batch-GET can't expand relations, so this goes the other way: one
+    /// project-wide list of active (+ recently completed) PRs, then each
+    /// PR's linked work items - a handful of small GETs instead of one
+    /// per board card. Best-effort per PR; failures just mean no chip.
+    /// Read only.
+    pub async fn board_pr_links(&self, org: &str, project: &str) -> Result<Vec<PrLink>, AdoError> {
+        let mut prs: Vec<(i32, String, String, String, String)> = vec![]; // id, status, title, repo_id, repo_name
+        for (status, extra) in [("active", ""), ("completed", "&$top=25")] {
+            let url = format!(
+                "{}/{}/{}/_apis/git/pullrequests?searchCriteria.status={}{}&api-version=7.1",
+                self.base_url, org, project, status, extra
+            );
+            // Completed-PR history is a nice-to-have - ignore its failure.
+            let data = match self.get_json(url).await {
+                Ok(d) => d,
+                Err(e) if status == "active" => return Err(e),
+                Err(_) => continue,
+            };
+            for v in data["value"].as_array().cloned().unwrap_or_default() {
+                prs.push((
+                    v["pullRequestId"].as_i64().unwrap_or_default() as i32,
+                    status.to_string(),
+                    v["title"].as_str().unwrap_or_default().to_string(),
+                    v["repository"]["id"].as_str().unwrap_or_default().to_string(),
+                    v["repository"]["name"].as_str().unwrap_or_default().to_string(),
+                ));
+            }
+        }
+
+        let mut links = vec![];
+        for (pr_id, status, title, repo_id, repo_name) in prs {
+            let url = format!(
+                "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.1",
+                self.base_url,
+                org,
+                project,
+                urlencoding::encode(&repo_id),
+                pr_id
+            );
+            let Ok(data) = self.get_json(url).await else { continue };
+            for r in data["value"].as_array().cloned().unwrap_or_default() {
+                // ResourceRef ids arrive as strings.
+                let Some(wi) = r["id"].as_str().and_then(|s| s.parse::<i32>().ok()) else {
+                    continue;
+                };
+                links.push(PrLink {
+                    work_item_id: wi,
+                    pr_id,
+                    status: status.clone(),
+                    title: title.clone(),
+                    web_url: format!(
+                        "{}/{}/{}/_git/{}/pullrequest/{}",
+                        self.base_url,
+                        org,
+                        project,
+                        urlencoding::encode(&repo_name),
+                        pr_id
+                    ),
+                });
+            }
+        }
+        Ok(links)
     }
 
     /// All active PRs on one repository. Read only.

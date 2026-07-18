@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { GitPullRequest, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { commands, type BoardData, type BoardItem, type PbiHit } from "../bindings";
+import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
 import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
@@ -27,21 +28,38 @@ const typeColor: Record<string, string> = {
   Epic: "#e0873c",
 };
 
+/** Cards untouched for this long get the amber "stale" edge. */
+const STALE_DAYS = 7;
+
+function staleDays(changed: string): number {
+  const t = Date.parse(changed);
+  if (Number.isNaN(t)) return 0;
+  return Math.floor((Date.now() - t) / 86_400_000);
+}
+
 function Card({
   item,
+  prLinks = [],
   onDragStart,
   onOpen,
 }: {
   item: BoardItem;
+  prLinks?: PrLink[];
   onDragStart: () => void;
   onOpen: () => void;
 }) {
+  const stale = staleDays(item.changed_date);
+  const isStale = stale >= STALE_DAYS && item.column !== "Done";
   return (
     <div
       draggable
       onDragStart={onDragStart}
       onClick={onOpen}
-      className="cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent"
+      title={isStale ? `No changes in ${stale} days` : undefined}
+      className={cn(
+        "cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent",
+        isStale && "border-l-2 border-l-warning",
+      )}
     >
       <div className="flex items-center gap-2">
         <Badge color={typeColor[item.work_item_type] ?? "#9ca3af"}>
@@ -60,6 +78,28 @@ function Card({
         />
         {item.state}
         {item.tags && <span className="text-faint">{item.tags}</span>}
+        {/* PR chips: the item's linked pull requests, most useful signal
+            first (an active PR outranks a completed one). Click opens the
+            PR without opening the card. */}
+        {prLinks.map((l) => (
+          <button
+            key={l.pr_id}
+            className={cn(
+              "ml-auto flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+              l.status === "active"
+                ? "bg-accent-soft text-accent"
+                : "bg-surface-2 text-muted",
+            )}
+            title={`${l.status === "active" ? "Active" : "Completed"} PR !${l.pr_id}: ${l.title}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              openUrl(l.web_url).catch(() => toast.error("Could not open the browser."));
+            }}
+          >
+            <GitPullRequest size={10} />
+            {l.status === "active" ? "PR ●" : "PR ✓"}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -95,11 +135,22 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const [hideDone, setHideDone] = useState(
     () => localStorage.getItem("tcm-v2-hide-done") === "on",
   );
+  // Server-side @CurrentIteration filter (default-team context), persisted.
+  const [thisSprint, setThisSprint] = useState(
+    () => localStorage.getItem("tcm-v2-this-sprint") === "on",
+  );
   const [openItem, setOpenItem] = useState<number | null>(null);
   const [quickTitle, setQuickTitle] = useState("");
   const [quickType, setQuickType] = useState("Task");
 
-  const boardKey = ["board", org, project, scope, pbiMode ? (pbiScope?.id ?? "none") : ""];
+  const boardKey = [
+    "board",
+    org,
+    project,
+    scope,
+    pbiMode ? (pbiScope?.id ?? "none") : "",
+    thisSprint,
+  ];
 
   // Areas (the classification tree) instead of the project's team list:
   // teams accumulate forever in ADO project settings, while areas are what
@@ -120,11 +171,35 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           project,
           pbiMode ? null : scope || null,
           pbiMode && pbiScope ? pbiScope.id : null,
+          thisSprint,
         ),
       ),
     enabled: Boolean(org && project) && (!pbiMode || pbiScope !== null),
     retry: false,
   });
+
+  // Work-item -> PR chips, resolved PR-side (one list + one small call per
+  // PR). Best-effort decoration: failures just mean no chips.
+  const prLinks = useQuery({
+    queryKey: ["board-prs", org, project],
+    queryFn: () => unwrap(commands.boardPrLinks(org, project)),
+    enabled: Boolean(org && project),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const prByItem = useMemo(() => {
+    const m = new Map<number, PrLink[]>();
+    for (const l of prLinks.data ?? []) {
+      const list = m.get(l.work_item_id) ?? [];
+      list.push(l);
+      m.set(l.work_item_id, list);
+    }
+    // Active PRs outrank completed ones on the card.
+    for (const list of m.values()) {
+      list.sort((a, b) => (a.status === b.status ? a.pr_id - b.pr_id : a.status === "active" ? -1 : 1));
+    }
+    return m;
+  }, [prLinks.data]);
 
   const move = useMutation({
     mutationFn: async ({ item, column }: { item: BoardItem; column: string }) => {
@@ -270,6 +345,20 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             />
             Hide Done
           </label>
+          <label className="flex items-center gap-1.5 text-xs text-muted" title="Only items in the current sprint (project default team's iteration)">
+            <Checkbox
+              checked={thisSprint}
+              onCheckedChange={(v) => {
+                setThisSprint(v);
+                try {
+                  localStorage.setItem("tcm-v2-this-sprint", v ? "on" : "off");
+                } catch {
+                  // session-only
+                }
+              }}
+            />
+            This sprint
+          </label>
 
           <div className="ml-auto flex items-center gap-2">
             <Select
@@ -383,6 +472,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                     <Card
                       key={item.id}
                       item={item}
+                      prLinks={prByItem.get(item.id)}
                       onDragStart={() => setDragging(item)}
                       onOpen={() => setOpenItem(item.id)}
                     />

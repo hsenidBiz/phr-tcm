@@ -93,7 +93,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             bugs::open_snip,
             prs::list_repos,
             prs::pr_overview,
-            prs::repo_pull_requests
+            prs::repo_pull_requests,
+            prs::board_pr_links
         ])
 }
 

@@ -361,6 +361,18 @@ function applyPatches() {
           },
         ],
       }),
+    boardPrLinks: () =>
+      ok([
+        {
+          work_item_id: 2001, pr_id: 501, status: "active",
+          title: "Add PBI scope to the board",
+          web_url: "https://example.invalid/demo-pr/501",
+        },
+        {
+          work_item_id: 2001, pr_id: 499, status: "completed",
+          title: "Earlier slice", web_url: "https://example.invalid/demo-pr/499",
+        },
+      ]),
     repoPullRequests: () =>
       ok([
         {
