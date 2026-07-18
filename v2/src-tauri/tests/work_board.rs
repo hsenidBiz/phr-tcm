@@ -226,7 +226,7 @@ async fn fetch_board_pipeline() {
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let board = client.fetch_board("org", "proj", None).await.unwrap();
+    let board = client.fetch_board("org", "proj", None, None).await.unwrap();
     assert_eq!(board.items.len(), 2);
     // WIQL order preserved: 11 first.
     assert_eq!(board.items[0].id, 11);
@@ -234,6 +234,37 @@ async fn fetch_board_pipeline() {
     assert_eq!(board.items[1].column, Some("In Progress".into()));
     assert_eq!(board.items[1].state_color, "007acc");
     assert_eq!(board.states_by_type["Bug"].len(), 2);
+}
+
+#[tokio::test]
+async fn fetch_board_pbi_scope_queries_parent_or_self() {
+    let server = MockServer::start().await;
+    // The WIQL must scope to the PBI's children plus the PBI itself, and
+    // must NOT carry the @Me clause the default scope uses.
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/wiql"))
+        .and(wiremock::matchers::body_string_contains(
+            "([System.Parent] = 4242 OR [System.Id] = 4242)",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "workItems": []
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    // Team AND pbi supplied: pbi wins (the mock only matches the pbi WIQL,
+    // and no teamsettings mock exists - a team-scope call would error).
+    let board = client
+        .fetch_board("org", "proj", Some("Team X"), Some(4242))
+        .await
+        .unwrap();
+    assert!(board.items.is_empty());
+
+    let me_only = client.fetch_board("org", "proj", None, None).await;
+    // Default scope generates @Me WIQL, which this mock does not match ->
+    // 404 from wiremock, proving the pbi clause is really scope-dependent.
+    assert!(me_only.is_err());
 }
 
 #[tokio::test]

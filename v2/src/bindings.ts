@@ -31,7 +31,7 @@ export const commands = {
 	 *  PATCH outcomes, complete the run. Returns the run's web URL.
 	 */
 	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
-	fetchBoard: (organization: string, project: string, team: string | null) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, team })),
+	fetchBoard: (organization: string, project: string, team: string | null, pbiId: number | null) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, team, pbiId })),
 	/**
 	 *  Move a board item into a column: resolves the target state exactly like
 	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.

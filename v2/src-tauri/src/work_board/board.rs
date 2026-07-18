@@ -194,13 +194,16 @@ impl AdoClient {
     }
 
     /// The board in one call, ported from v1 _fetch_work: scope is "me"
-    /// (AssignedTo = @Me) or a team (everything under the team's area(s),
-    /// whoever it's assigned to). Test artifacts excluded in both. Read only.
+    /// (AssignedTo = @Me), a team (everything under the team's area(s),
+    /// whoever it's assigned to), or a PBI (everything parented under it,
+    /// plus the PBI itself - PBI wins when both arrive). Test artifacts
+    /// excluded in every mode. Read only.
     pub async fn fetch_board(
         &self,
         org: &str,
         project: &str,
         team: Option<&str>,
+        pbi_id: Option<i32>,
     ) -> Result<BoardData, AdoError> {
         let excluded = EXCLUDED_TYPES
             .iter()
@@ -211,15 +214,21 @@ impl AdoClient {
             "[System.TeamProject] = @project".to_string(),
             format!("[System.WorkItemType] NOT IN ({excluded})"),
         ];
-        match team {
-            Some(team) => {
+        match (pbi_id, team) {
+            (Some(id), _) => {
+                // Parent links only catch properly-parented items - the UI
+                // shows the resulting count so a sparse board is visibly
+                // "few children", not silently broken.
+                where_clauses.push(format!("([System.Parent] = {id} OR [System.Id] = {id})"));
+            }
+            (None, Some(team)) => {
                 let (field_ref, values) = self.get_team_scope(org, project, team).await?;
                 let clause = team_area_clause(&field_ref, &values);
                 if !clause.is_empty() {
                     where_clauses.push(format!("({clause})"));
                 }
             }
-            None => where_clauses.push("[System.AssignedTo] = @Me".to_string()),
+            (None, None) => where_clauses.push("[System.AssignedTo] = @Me".to_string()),
         }
         let wiql = format!(
             "SELECT [System.Id] FROM workitems WHERE {} ORDER BY [System.ChangedDate] DESC",

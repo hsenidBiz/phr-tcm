@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { commands, type BoardData, type BoardItem } from "../bindings";
+import { commands, type BoardData, type BoardItem, type PbiHit } from "../bindings";
+import PbiPicker from "../components/PbiPicker";
 import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -68,6 +69,10 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const qc = useQueryClient();
   const [dragging, setDragging] = useState<BoardItem | null>(null);
   const [scope, setScope] = useState(""); // "" = my work, else team name
+  // Third scope mode: everything parented under one PBI (plus the PBI
+  // itself). pbiMode without a picked PBI shows the picker and waits.
+  const [pbiMode, setPbiMode] = useState(false);
+  const [pbiScope, setPbiScope] = useState<PbiHit | null>(null);
   const [filterText, setFilterText] = useState("");
   // Multi-select type filter (empty = all), persisted across sessions.
   const [typeFilter, setTypeFilter] = useState<string[]>(() => {
@@ -94,7 +99,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const [quickTitle, setQuickTitle] = useState("");
   const [quickType, setQuickType] = useState("Task");
 
-  const boardKey = ["board", org, project, scope];
+  const boardKey = ["board", org, project, scope, pbiMode ? (pbiScope?.id ?? "none") : ""];
 
   const teams = useQuery({
     queryKey: ["teams", org, project],
@@ -105,8 +110,16 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
 
   const board = useQuery({
     queryKey: boardKey,
-    queryFn: () => unwrap(commands.fetchBoard(org, project, scope || null)),
-    enabled: Boolean(org && project),
+    queryFn: () =>
+      unwrap(
+        commands.fetchBoard(
+          org,
+          project,
+          pbiMode ? null : scope || null,
+          pbiMode && pbiScope ? pbiScope.id : null,
+        ),
+      ),
+    enabled: Boolean(org && project) && (!pbiMode || pbiScope !== null),
     retry: false,
   });
 
@@ -197,10 +210,26 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             ariaLabel="Board scope"
             className="w-56"
             placeholder="My work"
-            value={scope ? `Team: ${scope}` : "My work"}
-            options={["My work", ...(teams.data ?? []).map((t) => `Team: ${t.name}`)]}
-            onChange={(v) => setScope(!v || v === "My work" ? "" : v.replace(/^Team: /, ""))}
+            value={pbiMode ? "By PBI…" : scope ? `Team: ${scope}` : "My work"}
+            options={[
+              "My work",
+              "By PBI…",
+              ...(teams.data ?? []).map((t) => `Team: ${t.name}`),
+            ]}
+            onChange={(v) => {
+              if (v === "By PBI…") {
+                setPbiMode(true);
+                return;
+              }
+              setPbiMode(false);
+              setScope(!v || v === "My work" ? "" : v.replace(/^Team: /, ""));
+            }}
           />
+          {pbiMode && (
+            <div className="w-72">
+              <PbiPicker org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
+            </div>
+          )}
           <Input
             aria-label="Filter items"
             className="w-56 py-1.5"
@@ -284,7 +313,23 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           </div>
         )}
 
-        {board.data && board.data.items.length === 0 && (
+        {pbiMode && !pbiScope && (
+          <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
+            Pick a PBI above to see everything parented under it.
+          </p>
+        )}
+
+        {/* Parent links are how items land here - say so when the result is
+            sparse, instead of looking silently broken. */}
+        {pbiMode && pbiScope && board.data && (
+          <p className="text-xs text-muted">
+            {board.data.items.length} item{board.data.items.length === 1 ? "" : "s"} under{" "}
+            <span className="id-mono">#{pbiScope.id}</span> (items must have this PBI as their
+            parent to appear)
+          </p>
+        )}
+
+        {board.data && board.data.items.length === 0 && !pbiMode && (
           <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
             {scope
               ? `Nothing on Team ${scope}'s board yet.`

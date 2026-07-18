@@ -256,3 +256,33 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
   expect(patched.patches![2].reference_name).toBe("Custom.LessonsLearned");
   expect(patched.patches![2].value).toContain("add a guard test");
 });
+
+test("PBI scope waits for a pick, then fetches with pbiId", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "fetch_board") {
+      calls.push(args as Record<string, unknown>);
+      return boardData;
+    }
+    if (cmd === "list_teams") return [];
+    if (cmd === "search_pbis")
+      return [{ id: 4242, title: "Login flow", work_item_type: "Product Backlog Item" }];
+  });
+  renderBoard();
+  await screen.findByTestId("col-To Do");
+
+  // Switch scope to By PBI: the board stops fetching and prompts instead.
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  fireEvent.click(await screen.findByText("By PBI…"));
+  expect(await screen.findByText(/Pick a PBI above/)).toBeInTheDocument();
+
+  // Pick one via the search picker: the fetch carries its id.
+  const find = screen.getByLabelText("Find PBI");
+  fireEvent.change(find, { target: { value: "Login" } });
+  fireEvent.keyDown(find, { key: "Enter" });
+  fireEvent.click(await screen.findByText(/Login flow/));
+  await screen.findByText(/items? under/);
+  const last = calls[calls.length - 1];
+  expect(last.pbiId).toBe(4242);
+  expect(last.team).toBeNull();
+});
