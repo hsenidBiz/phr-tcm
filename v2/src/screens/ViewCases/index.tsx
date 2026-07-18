@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { commands, type PbiHit, type TestCase, type TestCaseFull } from "../../bindings";
+import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
 import CountUp from "../../components/CountUp";
 import PickPbiEmpty from "../../components/PickPbiEmpty";
 import { Button } from "../../components/ui/button";
@@ -15,20 +15,11 @@ import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap, unwrapStr } from "../../lib/ipc";
+import { toTestCase } from "../../lib/testCaseConvert";
 import CaseDetail from "./CaseDetail";
 import CommentModal from "./CommentModal";
 
-function toTestCase(c: TestCaseFull): TestCase {
-  return {
-    title: c.title,
-    steps: c.steps,
-    tags: c.tags,
-    automation_status: c.automation_status,
-    module_value: c.module_value,
-    preconditions: c.preconditions,
-    update_id: c.id,
-  };
-}
+
 
 /** The View Test Cases tab, laid out like Edit Test Cases: compact rows
  * (chevron/double-click expands a read-only detail), Group by Title,
