@@ -94,34 +94,89 @@ pub fn stop() {
     }
 }
 
+/// One all-zero frame: the ring reads it as silence, so the bars drop and
+/// the ambient art returns instead of freezing on the last spectrum.
+fn emit_silence(app: &tauri::AppHandle) {
+    let _ = AudioSpectrum { bands: vec![0.0; BAND_COUNT] }.emit(app);
+}
+
+/// Sleep `ms` in FRAME_MS steps so stop() stays responsive; true = stopped.
+fn sleep_unless_stopped(stop: &AtomicBool, ms: u64) -> bool {
+    let mut left = ms;
+    while left > 0 && !stop.load(Ordering::Relaxed) {
+        let step = left.min(FRAME_MS);
+        std::thread::sleep(std::time::Duration::from_millis(step));
+        left -= step;
+    }
+    stop.load(Ordering::Relaxed)
+}
+
 fn capture_loop(app: tauri::AppHandle, stop: Arc<AtomicBool>) {
+    use cpal::traits::HostTrait;
+
+    // Rebuild the stream whenever the default output device changes or the
+    // stream dies: switching outputs used to strand the loop on a stream
+    // that never delivers again, freezing the ring until an app relaunch.
+    // The thread exits only on stop(); "no device right now" just retries.
+    let host = cpal::default_host();
+    while !stop.load(Ordering::Relaxed) {
+        let Some(device) = host.default_output_device() else {
+            emit_silence(&app);
+            if sleep_unless_stopped(&stop, 1000) {
+                break;
+            }
+            continue;
+        };
+        // Device identity via Display (this cpal has no name()); good
+        // enough to notice the default moving somewhere else.
+        let device_name = device.to_string();
+        stream_session(&app, &stop, &host, device, &device_name);
+    }
+    // Free the slot so a later start() spawns a fresh thread.
+    slot().lock().unwrap().take();
+}
+
+/// Capture on ONE device until stop, stream death or a default-device
+/// change; the stream drops on return and capture_loop rebuilds. The cpal
+/// Stream is !Send, so everything stays on this thread.
+fn stream_session(
+    app: &tauri::AppHandle,
+    stop: &Arc<AtomicBool>,
+    host: &cpal::Host,
+    device: cpal::Device,
+    device_name: &str,
+) {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    let clear = || {
-        // Whatever way we exit, free the slot so a later start() can retry
-        // (e.g. after the user plugs in a device).
-        slot().lock().unwrap().take();
-    };
+    /// Poll cadence for the default-device check (~1 s of frames): cheap
+    /// enough at 1 Hz, and it also catches the switch WASAPI doesn't error
+    /// on (old device still present, merely no longer the default).
+    const DEVICE_CHECK_FRAMES: u32 = 30;
 
-    let host = cpal::default_host();
-    let Some(device) = host.default_output_device() else {
-        return clear();
+    let bail = |app: &tauri::AppHandle, stop: &Arc<AtomicBool>| {
+        emit_silence(app);
+        sleep_unless_stopped(stop, 1000);
     };
     let Ok(config) = device.default_output_config() else {
-        return clear();
+        return bail(app, stop);
     };
     let sample_rate = config.sample_rate() as f32;
     let channels = (config.channels() as usize).max(1);
 
     let ring: Arc<Mutex<VecDeque<f32>>> = Arc::new(Mutex::new(VecDeque::new()));
     let ring_cb = ring.clone();
-    let on_err = |_e: cpal::Error| {};
+    // A device unplug/switch surfaces as a stream error - flag it so the
+    // poll loop tears down and rebuilds on the new default.
+    let dead = Arc::new(AtomicBool::new(false));
     // Loopback: an INPUT stream on the OUTPUT device (WASAPI). Mix to mono.
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             config.into(),
             move |data: &[f32], _: &_| push_mono(&ring_cb, data, channels),
-            on_err,
+            {
+                let dead = dead.clone();
+                move |_e: cpal::Error| dead.store(true, Ordering::Relaxed)
+            },
             None,
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
@@ -130,23 +185,41 @@ fn capture_loop(app: tauri::AppHandle, stop: Arc<AtomicBool>) {
                 let f: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                 push_mono(&ring_cb, &f, channels);
             },
-            on_err,
+            {
+                let dead = dead.clone();
+                move |_e: cpal::Error| dead.store(true, Ordering::Relaxed)
+            },
             None,
         ),
-        _ => return clear(),
+        _ => return bail(app, stop),
     };
     let Ok(stream) = stream else {
-        return clear();
+        return bail(app, stop);
     };
     if stream.play().is_err() {
-        return clear();
+        return bail(app, stop);
     }
 
     // Auto-gain: normalize by a slowly-decaying running peak so the ring
     // looks alive at any playback volume.
     let mut peak = 1e-4f32;
+    let mut frames_since_check = 0u32;
     while !stop.load(Ordering::Relaxed) {
         std::thread::sleep(std::time::Duration::from_millis(FRAME_MS));
+        if dead.load(Ordering::Relaxed) {
+            return emit_silence(app); // rebuild on the current default
+        }
+        frames_since_check += 1;
+        if frames_since_check >= DEVICE_CHECK_FRAMES {
+            frames_since_check = 0;
+            let current = host
+                .default_output_device()
+                .map(|d| d.to_string())
+                .unwrap_or_default();
+            if current != device_name {
+                return emit_silence(app); // default moved - follow it
+            }
+        }
         let samples: Vec<f32> = {
             let mut r = ring.lock().unwrap();
             while r.len() > FFT_SIZE {
@@ -163,10 +236,8 @@ fn capture_loop(app: tauri::AppHandle, stop: Arc<AtomicBool>) {
         for b in &mut bands {
             *b = (*b / peak).clamp(0.0, 1.0);
         }
-        let _ = AudioSpectrum { bands }.emit(&app);
+        let _ = AudioSpectrum { bands }.emit(app);
     }
-    drop(stream);
-    clear();
 }
 
 fn push_mono(ring: &Mutex<VecDeque<f32>>, data: &[f32], channels: usize) {
