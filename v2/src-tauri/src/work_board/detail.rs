@@ -1,0 +1,224 @@
+//! Work-item detail loading, comments and avatars.
+
+use super::{InlineImage, WorkComment, WorkItemDetail};
+use crate::ado::{AdoClient, AdoError};
+
+impl AdoClient {
+    /// One work item, fully loaded for the detail drawer. Read only.
+    pub async fn get_work_item_detail(
+        &self,
+        org: &str,
+        project: &str,
+        id: i32,
+    ) -> Result<WorkItemDetail, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+            self.base_url, org, project, id
+        );
+        let data = self.get_json(url).await?;
+        let f = &data["fields"];
+        let s = |key: &str| f[key].as_str().unwrap_or_default().to_string();
+        let wi_type = s("System.WorkItemType");
+        let description_field = if wi_type == "Bug" && f["Microsoft.VSTS.TCM.ReproSteps"].is_string()
+        {
+            "Microsoft.VSTS.TCM.ReproSteps"
+        } else {
+            "System.Description"
+        };
+        // The process can put extra form pages on a type (Bug: RCA,
+        // Preventive Measures). Discover them from the type's layout so
+        // every field on those tabs is shown, whatever the org calls them.
+        // A failed lookup means no extra tabs, with the reason surfaced.
+        let (extra_pages, extra_pages_error) =
+            match self.extra_pages_for(org, project, &wi_type, f).await {
+                Ok(pages) => (pages, None),
+                Err(e) => (Vec::new(), Some(e)),
+            };
+        // Attachment images need auth the WebView can't send. Field values
+        // stay byte-faithful (edits must round-trip the URLs, not megabytes
+        // of base64) - the preview applies this url -> data-uri map instead.
+        let mut rich_htmls: Vec<&str> = vec![];
+        let desc_html = s(description_field);
+        rich_htmls.push(&desc_html);
+        for page in &extra_pages {
+            for field in &page.fields {
+                if field.kind == "html" {
+                    rich_htmls.push(&field.value);
+                }
+            }
+        }
+        let inline_images = self.collect_attachment_images(&rich_htmls).await;
+        Ok(WorkItemDetail {
+            id,
+            title: s("System.Title"),
+            state: s("System.State"),
+            assigned_to: f["System.AssignedTo"]["displayName"].as_str().unwrap_or_default().to_string(),
+            assigned_to_unique: f["System.AssignedTo"]["uniqueName"].as_str().unwrap_or_default().to_string(),
+            activity: s("Microsoft.VSTS.Common.Activity"),
+            tags: s("System.Tags"),
+            area_path: s("System.AreaPath"),
+            iteration_path: s("System.IterationPath"),
+            remaining_work: f["Microsoft.VSTS.Scheduling.RemainingWork"].as_f64(),
+            completed_work: f["Microsoft.VSTS.Scheduling.CompletedWork"].as_f64(),
+            original_estimate: f["Microsoft.VSTS.Scheduling.OriginalEstimate"].as_f64(),
+            start_date: s("Microsoft.VSTS.Scheduling.StartDate"),
+            finish_date: s("Microsoft.VSTS.Scheduling.FinishDate"),
+            description_text: crate::steps_xml::html_to_text(&desc_html),
+            description_html: desc_html,
+            description_field: description_field.to_string(),
+            inline_images,
+            work_item_type: wi_type,
+            extra_pages,
+            extra_pages_error,
+        })
+    }
+
+    /// A work item's comments, newest first, ported from v1
+    /// get_work_item_comments incl. the avatar fallback chain
+    /// (_links.avatar.href -> imageUrl -> empty = initials disc). Read only.
+    pub async fn get_work_item_comments(
+        &self,
+        org: &str,
+        project: &str,
+        wi_id: i32,
+    ) -> Result<Vec<WorkComment>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workItems/{}/comments?order=desc&api-version=7.1-preview.4",
+            self.base_url, org, project, wi_id
+        );
+        let data = self.get_json(url).await?;
+        Ok(data["comments"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|c| {
+                let cb = &c["createdBy"];
+                let avatar = cb["_links"]["avatar"]["href"]
+                    .as_str()
+                    .or_else(|| cb["imageUrl"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                WorkComment {
+                    id: c["id"].as_i64().unwrap_or_default() as i32,
+                    text: crate::steps_xml::html_to_text(c["text"].as_str().unwrap_or_default()),
+                    created_by: cb["displayName"].as_str().unwrap_or_default().to_string(),
+                    created_date: c["createdDate"].as_str().unwrap_or_default().to_string(),
+                    avatar_url: avatar,
+                }
+            })
+            .collect())
+    }
+
+    /// POST a comment; no DELETE.
+    pub async fn add_work_item_comment(
+        &self,
+        org: &str,
+        project: &str,
+        wi_id: i32,
+        text: &str,
+    ) -> Result<(), AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workItems/{}/comments?api-version=7.1-preview.4",
+            self.base_url, org, project, wi_id
+        );
+        self.post_json(url, &serde_json::json!({"text": text})).await?;
+        Ok(())
+    }
+
+    /// Download the attachment images referenced by rich-text HTML (a plain
+    /// <img> gets 401 - the WebView sends no bearer header) and return
+    /// url -> data-uri pairs for the preview to apply. Best-effort per
+    /// image; caps guard pathological fields.
+    pub async fn collect_attachment_images(&self, htmls: &[&str]) -> Vec<InlineImage> {
+        use base64::Engine;
+        let re = regex::Regex::new(r#"src=["']([^"']+)["']"#).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for html in htmls {
+            if !html.contains("<img") {
+                continue;
+            }
+            for cap in re.captures_iter(html) {
+                if out.len() >= 12 {
+                    return out;
+                }
+                // The src sits in an HTML attribute, so & is entity-encoded.
+                let url = cap[1].replace("&amp;", "&");
+                if !url.contains("/_apis/wit/attachments/") || !seen.insert(url.clone()) {
+                    continue;
+                }
+                let Ok(resp) = self
+                    .http
+                    .get(&url)
+                    .bearer_auth(&self.token)
+                    .header("Accept", "application/octet-stream")
+                    .send()
+                    .await
+                else {
+                    continue;
+                };
+                if !resp.status().is_success() {
+                    continue;
+                }
+                let mime = resp
+                    .headers()
+                    .get("Content-Type")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|c| c.split(';').next())
+                    .filter(|m| m.starts_with("image/"))
+                    .unwrap_or("image/png")
+                    .to_string();
+                let Ok(bytes) = resp.bytes().await else { continue };
+                if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+                    continue; // keep the broken link rather than a 10MB blob
+                }
+                out.push(InlineImage {
+                    url,
+                    data: format!(
+                        "data:{};base64,{}",
+                        mime,
+                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                    ),
+                });
+            }
+        }
+        out
+    }
+
+    /// Fetch an avatar as base64 PNG-ish bytes. Best-effort like v1
+    /// get_avatar_image: any problem -> None so the UI falls back to
+    /// initials. Handles the Graph endpoint's base64-JSON body variant.
+    pub async fn get_avatar_b64(&self, url: &str) -> Option<String> {
+        use base64::Engine;
+        if url.is_empty() {
+            return None;
+        }
+        let resp = self
+            .http
+            .get(url)
+            .bearer_auth(&self.token)
+            .header("Accept", "image/png,image/*;q=0.8")
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let is_json = resp
+            .headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .map(|c| c.contains("application/json"))
+            .unwrap_or(false);
+        let bytes = resp.bytes().await.ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        if is_json {
+            let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+            return v["value"].as_str().map(String::from);
+        }
+        Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
+    }
+}

@@ -359,7 +359,10 @@ fn client_source_has_no_delete_calls() {
         include_str!("../src/ado_testplan/plans.rs"),
         include_str!("../src/ado_testplan/runs.rs"),
         include_str!("../src/ado_testplan/history.rs"),
-        include_str!("../src/work_board.rs"),
+        include_str!("../src/work_board/mod.rs"),
+        include_str!("../src/work_board/board.rs"),
+        include_str!("../src/work_board/detail.rs"),
+        include_str!("../src/work_board/layout.rs"),
     ];
     for src in sources {
         assert!(
