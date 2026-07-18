@@ -21,12 +21,16 @@ export default function DevPanel({
   pbi,
   section,
   workMode,
+  onShowSignIn,
 }: {
   org: string;
   project: string;
   pbi: PbiHit | null;
   section: string;
   workMode: boolean;
+  /// Force the sign-in screen (the panel unmounts with it; the screen's
+  /// dev-only "Skip sign-in" link is the way back).
+  onShowSignIn: () => void;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -144,6 +148,9 @@ export default function DevPanel({
                 }}
               >
                 PBI glow 3s
+              </Button>
+              <Button size="sm" variant="outline" onClick={onShowSignIn}>
+                Sign-in screen
               </Button>
             </div>
           </div>

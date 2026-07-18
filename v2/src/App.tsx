@@ -217,7 +217,13 @@ export default function App() {
     onError: (e) => toast.error(`Sign-in failed: ${e.message}`),
   });
 
-  const signedIn = Boolean(status.data?.signed_in);
+  // Dev-only auth override: "out" shows the sign-in screen from a signed-in
+  // app (to iterate on it), "in" proceeds without any real session (demo
+  // data needs none). DEV_TOOLS is compile-time false in releases, so this
+  // state and every branch on it is dead-code-eliminated from client builds.
+  const [devAuth, setDevAuth] = useState<"real" | "out" | "in">("real");
+  const signedIn =
+    DEV_TOOLS && devAuth !== "real" ? devAuth === "in" : Boolean(status.data?.signed_in);
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings fires the start-tour event.
@@ -379,6 +385,14 @@ export default function App() {
                     />
                   )}
                 </Button>
+                {DEV_TOOLS && (
+                  <button
+                    className="text-xs text-muted underline underline-offset-2 hover:text-text"
+                    onClick={() => setDevAuth("in")}
+                  >
+                    Skip sign-in — dev only (pair with demo data)
+                  </button>
+                )}
               </div>
             </div>
           ) : workMode ? (
@@ -438,7 +452,14 @@ export default function App() {
       </div>
 
       {DEV_TOOLS && signedIn && (
-        <DevPanel org={org} project={project} pbi={pbi} section={section} workMode={workMode} />
+        <DevPanel
+          org={org}
+          project={project}
+          pbi={pbi}
+          section={section}
+          workMode={workMode}
+          onShowSignIn={() => setDevAuth("out")}
+        />
       )}
     </div>
   );
