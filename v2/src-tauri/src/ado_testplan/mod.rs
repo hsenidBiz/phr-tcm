@@ -1,0 +1,190 @@
+//! Test plans, requirement suites, test points and test runs - ported from
+//! the v1 devops_client.py testplan/test-execution sections. Requirement
+//! suites auto-populate from the PBI's "Tested By" links, which is what makes
+//! created tests show on the board's test count. Only GET/POST/PATCH here -
+//! no DELETE anywhere, same as the rest of the client.
+//!
+//! Layout: this file owns the shared types, pure helpers and the plan URL
+//! base; `plans` owns plan/suite discovery and find-or-create; `runs` owns
+//! points, runs, results and attachments; `history` owns the recent-runs
+//! outcome sweep.
+
+mod history;
+mod plans;
+mod runs;
+
+use crate::ado::AdoClient;
+use serde::Serialize;
+
+/// How many per-plan suite requests run concurrently while scanning. These
+/// are cheap GETs; the write budget (2/s) is unaffected.
+const SUITE_SCAN_CONCURRENCY: usize = 8;
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct TestPlan {
+    pub id: i32,
+    pub name: String,
+    pub area_path: String,
+    pub root_suite_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct SuiteRef {
+    pub id: i32,
+    pub name: String,
+    pub suite_type: String,
+    pub requirement_id: Option<i32>,
+    /// Parent suite id so the browser can render the real folder tree
+    /// (None = direct child of the plan's stripped root).
+    pub parent_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct TestPoint {
+    pub point_id: i32,
+    pub test_case_id: Option<i32>,
+    pub test_case_name: String,
+    pub config_name: String,
+    pub tester: String,
+    pub last_outcome: String,
+    pub last_run_id: Option<i32>,
+    pub last_result_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct RunCreated {
+    pub run_id: i32,
+    pub web_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct RunResultRef {
+    pub result_id: i32,
+    pub test_case_id: Option<i32>,
+    pub point_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct OutcomeUpdate {
+    pub id: i32,
+    /// Passed / Failed / Blocked / NotApplicable.
+    pub outcome: String,
+    pub comment: Option<String>,
+    pub duration_ms: Option<i32>,
+    /// Bug work-item ids to associate with this result.
+    pub bug_ids: Option<Vec<i32>>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ResultDetail {
+    pub outcome: String,
+    pub comment: String,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PlanWithSuites {
+    pub plan: TestPlan,
+    pub suites: Vec<SuiteRef>,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct EnsuredSuite {
+    pub plan_id: i32,
+    pub plan_name: String,
+    pub suite_id: i32,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct RunOutcome {
+    pub outcome: String,
+    pub completed_date: String,
+    pub run_id: i32,
+}
+
+/// One test case's recent outcomes (newest first, capped at 5).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct CaseHistory {
+    pub test_case_id: i32,
+    pub outcomes: Vec<RunOutcome>,
+}
+
+/// Build the ADO iterationDetails payload from per-step outcomes, ported
+/// from v1 _iteration_details: actionPath is the step id as 8-digit hex,
+/// only individually-marked steps are included, None when nothing marked.
+pub fn build_iteration_details(
+    step_ids: &[String],
+    step_outcomes: &[Option<String>],
+    overall: &str,
+) -> Option<serde_json::Value> {
+    let mut action_results = vec![];
+    for (idx, sid) in step_ids.iter().enumerate() {
+        let Some(Some(oc)) = step_outcomes.get(idx) else { continue };
+        if oc.is_empty() {
+            continue;
+        }
+        let action_path = match sid.parse::<i64>() {
+            Ok(n) => format!("{n:08X}"),
+            Err(_) => sid.clone(),
+        };
+        action_results.push(serde_json::json!({
+            "actionPath": action_path,
+            "iterationId": 1,
+            "stepIdentifier": sid,
+            "outcome": oc,
+        }));
+    }
+    if action_results.is_empty() {
+        return None;
+    }
+    let overall = if overall.is_empty() { "Failed" } else { overall };
+    Some(serde_json::json!([{
+        "id": 1,
+        "outcome": overall,
+        "actionResults": action_results,
+    }]))
+}
+
+/// True if the plan's area path equals or is an ancestor of the PBI's area
+/// path. ADO area paths use backslashes; tolerate slashes too.
+pub fn area_matches(plan_area: &str, pbi_area: &str) -> bool {
+    if plan_area.trim().is_empty() || pbi_area.trim().is_empty() {
+        return false;
+    }
+    let pa = plan_area.trim().to_lowercase().replace('/', "\\");
+    let ba = pbi_area.trim().to_lowercase().replace('/', "\\");
+    ba == pa || ba.starts_with(&format!("{pa}\\"))
+}
+
+pub fn default_plan_name(area_path: &str) -> String {
+    let leaf = area_path
+        .replace('/', "\\")
+        .split('\\')
+        .next_back()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if leaf.is_empty() {
+        "Test Plan".to_string()
+    } else {
+        format!("{leaf} - Test Plan")
+    }
+}
+
+/// ADO serializes some ids ("testCase.id", "testPoint.id") as strings in run
+/// results and as numbers elsewhere - accept either.
+fn id_i32(v: &serde_json::Value) -> Option<i32> {
+    v.as_str()
+        .and_then(|s| s.parse::<i32>().ok())
+        .or_else(|| v.as_i64().map(|i| i as i32))
+}
+
+/// Result comments are capped at 1000 chars, matching v1.
+fn cap_comment(c: &str) -> String {
+    c.chars().take(1000).collect()
+}
+
+impl AdoClient {
+    fn tp_base(&self, org: &str, project: &str) -> String {
+        format!("{}/{}/{}/_apis", self.base_url, org, project)
+    }
+}

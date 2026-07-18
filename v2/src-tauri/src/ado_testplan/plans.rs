@@ -1,0 +1,408 @@
+//! Plan and suite discovery, and find-or-create of the PBI's
+//! requirement-based suite.
+
+use futures::stream::{self, StreamExt};
+
+use super::{
+    area_matches, default_plan_name, EnsuredSuite, PlanWithSuites, SuiteRef, TestPlan,
+    SUITE_SCAN_CONCURRENCY,
+};
+use crate::ado::{AdoClient, AdoError};
+
+impl AdoClient {
+    /// All test plans in the project (paginated). Read only.
+    pub async fn get_test_plans(&self, org: &str, project: &str) -> Result<Vec<TestPlan>, AdoError> {
+        let mut plans = vec![];
+        let mut continuation: Option<String> = None;
+        loop {
+            let mut url = format!("{}/testplan/plans?api-version=7.1", self.tp_base(org, project));
+            if let Some(c) = &continuation {
+                url.push_str(&format!("&continuationToken={c}"));
+            }
+            let (data, cont) = self.get_json_with_continuation(url).await?;
+            for p in data["value"].as_array().cloned().unwrap_or_default() {
+                plans.push(TestPlan {
+                    id: p["id"].as_i64().unwrap_or_default() as i32,
+                    name: p["name"].as_str().unwrap_or_default().to_string(),
+                    area_path: p["areaPath"].as_str().unwrap_or_default().to_string(),
+                    root_suite_id: p["rootSuite"]["id"].as_i64().map(|i| i as i32),
+                });
+            }
+            continuation = cont;
+            if continuation.is_none() {
+                break;
+            }
+        }
+        Ok(plans)
+    }
+
+    /// A single plan including its root suite id. Read only.
+    pub async fn get_test_plan(&self, org: &str, project: &str, plan_id: i32) -> Result<TestPlan, AdoError> {
+        let url = format!(
+            "{}/testplan/plans/{}?api-version=7.1",
+            self.tp_base(org, project),
+            plan_id
+        );
+        let data = self.get_json(url).await?;
+        Ok(TestPlan {
+            id: data["id"].as_i64().unwrap_or_default() as i32,
+            name: data["name"].as_str().unwrap_or_default().to_string(),
+            area_path: data["areaPath"].as_str().unwrap_or_default().to_string(),
+            root_suite_id: data["rootSuite"]["id"].as_i64().map(|i| i as i32),
+        })
+    }
+
+    /// The requirement-based suite bound to `pbi_id` within `plan_id`, or
+    /// None. Stops paging as soon as it matches. Read only.
+    pub async fn find_requirement_suite(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+        pbi_id: i32,
+    ) -> Result<Option<SuiteRef>, AdoError> {
+        let mut continuation: Option<String> = None;
+        loop {
+            let mut url = format!(
+                "{}/testplan/Plans/{}/suites?api-version=7.1",
+                self.tp_base(org, project),
+                plan_id
+            );
+            if let Some(c) = &continuation {
+                url.push_str(&format!("&continuationToken={c}"));
+            }
+            let (data, cont) = self.get_json_with_continuation(url).await?;
+            for s in data["value"].as_array().cloned().unwrap_or_default() {
+                if s["requirementId"].as_i64() == Some(pbi_id as i64)
+                    && s["suiteType"].as_str() == Some("requirementTestSuite")
+                {
+                    return Ok(Some(SuiteRef {
+                        id: s["id"].as_i64().unwrap_or_default() as i32,
+                        name: s["name"].as_str().unwrap_or_default().to_string(),
+                        suite_type: "requirementTestSuite".to_string(),
+                        requirement_id: Some(pbi_id),
+                        parent_id: s["parentSuite"]["id"].as_i64().map(|i| i as i32),
+                    }));
+                }
+            }
+            continuation = cont;
+            if continuation.is_none() {
+                return Ok(None);
+            }
+        }
+    }
+
+    /// Every suite in a plan, flat (parent links let callers rebuild the
+    /// tree). Read only.
+    pub async fn get_all_suites(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+    ) -> Result<Vec<SuiteRef>, AdoError> {
+        let mut suites = vec![];
+        let mut continuation: Option<String> = None;
+        loop {
+            let mut url = format!(
+                "{}/testplan/Plans/{}/suites?api-version=7.1",
+                self.tp_base(org, project),
+                plan_id
+            );
+            if let Some(c) = &continuation {
+                url.push_str(&format!("&continuationToken={c}"));
+            }
+            let (data, cont) = self.get_json_with_continuation(url).await?;
+            for s in data["value"].as_array().cloned().unwrap_or_default() {
+                suites.push(SuiteRef {
+                    id: s["id"].as_i64().unwrap_or_default() as i32,
+                    name: s["name"].as_str().unwrap_or_default().to_string(),
+                    suite_type: s["suiteType"].as_str().unwrap_or_default().to_string(),
+                    requirement_id: s["requirementId"].as_i64().map(|i| i as i32),
+                    parent_id: s["parentSuite"]["id"].as_i64().map(|i| i as i32),
+                });
+            }
+            continuation = cont;
+            if continuation.is_none() {
+                break;
+            }
+        }
+        Ok(suites)
+    }
+
+    /// Every plan with its suites, for the Test Suites browser. Plans whose
+    /// suites can't be read (permissions) are skipped, and - the v1 rule the
+    /// suite browser shipped with - plans containing no suites beyond their
+    /// root are hidden entirely. Read only.
+    pub async fn list_plans_with_suites(
+        &self,
+        org: &str,
+        project: &str,
+    ) -> Result<Vec<PlanWithSuites>, AdoError> {
+        self.list_plans_with_suites_cb(org, project, |_, _| {}).await
+    }
+
+    /// Same, reporting (done, total) after each plan scanned so the UI can
+    /// show "Scanning plans X of Y".
+    pub async fn list_plans_with_suites_cb(
+        &self,
+        org: &str,
+        project: &str,
+        mut progress: impl FnMut(u32, u32),
+    ) -> Result<Vec<PlanWithSuites>, AdoError> {
+        let plans = self.get_test_plans(org, project).await?;
+        let total = plans.len() as u32;
+        let mut done = 0u32;
+
+        // One suites request per plan, run SUITE_SCAN_CONCURRENCY at a time
+        // (serial scanning made big projects take minutes). Results are put
+        // back in plan order so the browser output is stable.
+        let mut fetched: Vec<Option<Result<Vec<SuiteRef>, AdoError>>> =
+            plans.iter().map(|_| None).collect();
+        {
+            // Futures are created eagerly (concrete lifetimes keep the tauri
+            // command macro happy); the async block only owns (index, future).
+            let futs: Vec<_> = plans
+                .iter()
+                .enumerate()
+                .map(|(i, plan)| {
+                    let fut = self.get_all_suites(org, project, plan.id);
+                    async move { (i, fut.await) }
+                })
+                .collect();
+            let mut in_flight = stream::iter(futs).buffer_unordered(SUITE_SCAN_CONCURRENCY);
+            while let Some((i, res)) = in_flight.next().await {
+                done += 1;
+                progress(done, total);
+                fetched[i] = Some(res);
+            }
+        }
+
+        let mut out = vec![];
+        for (plan, res) in plans.into_iter().zip(fetched) {
+            let suites = match res.expect("every plan index was filled") {
+                Ok(s) => s,
+                Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                Err(e) => return Err(e),
+            };
+            // The root suite is structural, not user content: a plan whose
+            // only suite is its root has no suites worth browsing.
+            let non_root: Vec<SuiteRef> = suites
+                .into_iter()
+                .filter(|s| Some(s.id) != plan.root_suite_id && s.suite_type != "")
+                .collect();
+            let non_root: Vec<SuiteRef> = if plan.root_suite_id.is_some() {
+                non_root
+            } else {
+                // Root id unknown from the list endpoint: drop the first
+                // suite only when it is the conventional "<plan name>" root.
+                non_root
+                    .into_iter()
+                    .filter(|s| !(s.suite_type == "staticTestSuite" && s.name == plan.name))
+                    .collect()
+            };
+            if non_root.is_empty() {
+                continue;
+            }
+            // Children of the stripped root become top-level in the tree.
+            let root_id = plan.root_suite_id;
+            let non_root: Vec<SuiteRef> = non_root
+                .into_iter()
+                .map(|mut s| {
+                    if s.parent_id == root_id {
+                        s.parent_id = None;
+                    }
+                    s
+                })
+                .collect();
+            out.push(PlanWithSuites { plan, suites: non_root });
+        }
+        Ok(out)
+    }
+
+    /// POST a new test plan (creating one also creates its root suite).
+    pub async fn create_test_plan(
+        &self,
+        org: &str,
+        project: &str,
+        name: &str,
+        area_path: &str,
+        iteration: &str,
+    ) -> Result<TestPlan, AdoError> {
+        let mut body = serde_json::json!({ "name": name });
+        if !area_path.is_empty() {
+            body["areaPath"] = serde_json::json!(area_path);
+        }
+        if !iteration.is_empty() {
+            body["iteration"] = serde_json::json!(iteration);
+        }
+        let url = format!("{}/testplan/plans?api-version=7.1", self.tp_base(org, project));
+        let data = self.post_json(url, &body).await?;
+        Ok(TestPlan {
+            id: data["id"].as_i64().unwrap_or_default() as i32,
+            name: data["name"].as_str().unwrap_or(name).to_string(),
+            area_path: data["areaPath"].as_str().unwrap_or(area_path).to_string(),
+            root_suite_id: data["rootSuite"]["id"].as_i64().map(|i| i as i32),
+        })
+    }
+
+    /// POST a requirement-based suite bound to the PBI under the plan's root
+    /// suite. ADO auto-populates it from the PBI's Tested By links.
+    pub async fn create_requirement_suite(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+        root_suite_id: i32,
+        pbi_id: i32,
+    ) -> Result<i32, AdoError> {
+        let body = serde_json::json!({
+            "suiteType": "requirementTestSuite",
+            "requirementId": pbi_id,
+            "parentSuite": {"id": root_suite_id},
+        });
+        let url = format!(
+            "{}/testplan/Plans/{}/suites?api-version=7.1",
+            self.tp_base(org, project),
+            plan_id
+        );
+        let data = self.post_json(url, &body).await?;
+        Ok(data["id"].as_i64().unwrap_or_default() as i32)
+    }
+
+    /// Scan `plans` for the PBI's requirement suite - area-matched plans
+    /// first (the common case finds it quickly), probed in concurrent
+    /// batches; join_all keeps plan order within a batch so the FIRST plan
+    /// holding the suite wins and the scan stops early. Read only.
+    async fn scan_plans_for_suite(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        plans: &[TestPlan],
+        progress: &mut impl FnMut(u32, u32),
+    ) -> Result<Option<EnsuredSuite>, AdoError> {
+        let mut ordered: Vec<&TestPlan> = plans.iter().collect();
+        ordered.sort_by_key(|p| if area_matches(&p.area_path, area_path) { 0 } else { 1 });
+        let total = ordered.len() as u32;
+        let mut done = 0u32;
+        for batch in ordered.chunks(SUITE_SCAN_CONCURRENCY) {
+            let results = futures::future::join_all(
+                batch
+                    .iter()
+                    .map(|plan| self.find_requirement_suite(org, project, plan.id, pbi_id)),
+            )
+            .await;
+            done += batch.len() as u32;
+            progress(done, total);
+            for (plan, res) in batch.iter().zip(results) {
+                // A plan whose suites can't be listed (permissions) is
+                // skipped rather than aborting the search; auth/rate-limit
+                // errors still propagate so callers can re-auth / back off.
+                match res {
+                    Ok(Some(suite)) => {
+                        return Ok(Some(EnsuredSuite {
+                            plan_id: plan.id,
+                            plan_name: plan.name.clone(),
+                            suite_id: suite.id,
+                        }))
+                    }
+                    Ok(None) => {}
+                    Err(AdoError::Forbidden) | Err(AdoError::NotFound) => continue,
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Read-only lookup of the PBI's requirement suite across every plan -
+    /// the background-prefetch variant of ensure: it NEVER creates a plan
+    /// or suite, so it is safe to run without the user asking to run tests.
+    pub async fn find_pbi_requirement_suite(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+    ) -> Result<Option<EnsuredSuite>, AdoError> {
+        let plans = self.get_test_plans(org, project).await?;
+        self.scan_plans_for_suite(org, project, pbi_id, area_path, &plans, &mut |_, _| {})
+            .await
+    }
+
+    /// Find-or-create the area-matched plan and the PBI's requirement suite,
+    /// ported from v1 ensure_requirement_suite. Reuses any existing suite so
+    /// nothing is duplicated. May POST; never DELETEs.
+    pub async fn ensure_requirement_suite(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        iteration: &str,
+    ) -> Result<EnsuredSuite, AdoError> {
+        self.ensure_requirement_suite_cb(org, project, pbi_id, area_path, iteration, |_, _| {})
+            .await
+    }
+
+    /// Same, reporting (done, total) per plan scanned.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn ensure_requirement_suite_cb(
+        &self,
+        org: &str,
+        project: &str,
+        pbi_id: i32,
+        area_path: &str,
+        iteration: &str,
+        mut progress: impl FnMut(u32, u32),
+    ) -> Result<EnsuredSuite, AdoError> {
+        let plans = self.get_test_plans(org, project).await?;
+        if let Some(found) = self
+            .scan_plans_for_suite(org, project, pbi_id, area_path, &plans, &mut progress)
+            .await?
+        {
+            return Ok(found);
+        }
+
+        // No suite anywhere: find the most specific area-matched plan, or
+        // create one, then create the requirement suite under its root.
+        let mut best: Option<&TestPlan> = None;
+        for p in &plans {
+            if area_matches(&p.area_path, area_path) {
+                let better = match best {
+                    None => true,
+                    Some(b) => p.area_path.len() > b.area_path.len(),
+                };
+                if better {
+                    best = Some(p);
+                }
+            }
+        }
+        let plan = match best {
+            Some(p) => {
+                if p.root_suite_id.is_some() {
+                    p.clone()
+                } else {
+                    self.get_test_plan(org, project, p.id).await?
+                }
+            }
+            None => {
+                self.create_test_plan(org, project, &default_plan_name(area_path), area_path, iteration)
+                    .await?
+            }
+        };
+        let root = plan.root_suite_id.ok_or(AdoError::Http {
+            status: 0,
+            body: "plan has no root suite".into(),
+        })?;
+        let suite_id = self
+            .create_requirement_suite(org, project, plan.id, root, pbi_id)
+            .await?;
+        Ok(EnsuredSuite {
+            plan_id: plan.id,
+            plan_name: plan.name,
+            suite_id,
+        })
+    }
+}
