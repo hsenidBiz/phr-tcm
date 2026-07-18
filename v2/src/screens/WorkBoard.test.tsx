@@ -54,7 +54,7 @@ const boardData = {
 test("items land in their columns", async () => {
   mockIPC((cmd) => {
     if (cmd === "fetch_board") return boardData;
-    if (cmd === "list_teams") return [];
+    if (cmd === "classification_paths") return [];
   });
   renderBoard();
   const todo = await screen.findByTestId("col-To Do");
@@ -67,7 +67,7 @@ test("drop moves card and applies the returned state", async () => {
   let moved: unknown = null;
   mockIPC((cmd, args) => {
     if (cmd === "fetch_board") return boardData;
-    if (cmd === "list_teams") return [];
+    if (cmd === "classification_paths") return [];
     if (cmd === "move_board_item") {
       moved = args;
       return "In Progress";
@@ -89,7 +89,7 @@ test("drop moves card and applies the returned state", async () => {
 test("text filter narrows visible cards", async () => {
   mockIPC((cmd) => {
     if (cmd === "fetch_board") return boardData;
-    if (cmd === "list_teams") return [];
+    if (cmd === "classification_paths") return [];
   });
   renderBoard();
   await screen.findByText("Write docs");
@@ -102,7 +102,7 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
   let patched: { patches?: Array<{ reference_name: string; value: string }> } = {};
   mockIPC((cmd, args) => {
     if (cmd === "fetch_board") return boardData;
-    if (cmd === "list_teams") return [];
+    if (cmd === "classification_paths") return [];
     if (cmd === "work_item_detail")
       return {
         id: 11,
@@ -153,7 +153,7 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
   let patched: { patches?: Array<{ reference_name: string; value: string }> } = {};
   mockIPC((cmd, args) => {
     if (cmd === "fetch_board") return boardData;
-    if (cmd === "list_teams") return [];
+    if (cmd === "classification_paths") return [];
     if (cmd === "work_item_detail")
       return {
         id: 12,
@@ -264,7 +264,7 @@ test("PBI scope waits for a pick, then fetches with pbiId", async () => {
       calls.push(args as Record<string, unknown>);
       return boardData;
     }
-    if (cmd === "list_teams") return [];
+    if (cmd === "classification_paths") return [];
     if (cmd === "search_pbis")
       return [{ id: 4242, title: "Login flow", work_item_type: "Product Backlog Item" }];
   });
@@ -284,5 +284,5 @@ test("PBI scope waits for a pick, then fetches with pbiId", async () => {
   await screen.findByText(/items? under/);
   const last = calls[calls.length - 1];
   expect(last.pbiId).toBe(4242);
-  expect(last.team).toBeNull();
+  expect(last.area).toBeNull();
 });

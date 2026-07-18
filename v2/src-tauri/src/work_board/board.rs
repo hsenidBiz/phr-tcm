@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use super::{
-    team_area_clause, BoardData, BoardItem, Member, StateInfo, TeamRef, BOARD_FIELDS,
+    wiql_str, BoardData, BoardItem, Member, StateInfo, TeamRef, BOARD_FIELDS,
     EXCLUDED_TYPES, MAX_ITEMS,
 };
 use crate::ado::{AdoClient, AdoError};
@@ -194,15 +194,17 @@ impl AdoClient {
     }
 
     /// The board in one call, ported from v1 _fetch_work: scope is "me"
-    /// (AssignedTo = @Me), a team (everything under the team's area(s),
-    /// whoever it's assigned to), or a PBI (everything parented under it,
-    /// plus the PBI itself - PBI wins when both arrive). Test artifacts
-    /// excluded in every mode. Read only.
+    /// (AssignedTo = @Me), an area (everything UNDER that area path,
+    /// whoever it's assigned to - areas are the classification tree the
+    /// user actually sees, unlike the project's often-stale team list),
+    /// or a PBI (everything parented under it, plus the PBI itself - PBI
+    /// wins when both arrive). Test artifacts excluded in every mode.
+    /// Read only.
     pub async fn fetch_board(
         &self,
         org: &str,
         project: &str,
-        team: Option<&str>,
+        area: Option<&str>,
         pbi_id: Option<i32>,
     ) -> Result<BoardData, AdoError> {
         let excluded = EXCLUDED_TYPES
@@ -214,19 +216,18 @@ impl AdoClient {
             "[System.TeamProject] = @project".to_string(),
             format!("[System.WorkItemType] NOT IN ({excluded})"),
         ];
-        match (pbi_id, team) {
+        match (pbi_id, area) {
             (Some(id), _) => {
                 // Parent links only catch properly-parented items - the UI
                 // shows the resulting count so a sparse board is visibly
                 // "few children", not silently broken.
                 where_clauses.push(format!("([System.Parent] = {id} OR [System.Id] = {id})"));
             }
-            (None, Some(team)) => {
-                let (field_ref, values) = self.get_team_scope(org, project, team).await?;
-                let clause = team_area_clause(&field_ref, &values);
-                if !clause.is_empty() {
-                    where_clauses.push(format!("({clause})"));
-                }
+            (None, Some(area)) => {
+                // UNDER includes the area's whole subtree; the path comes
+                // from the project's own classification list, quoted via
+                // wiql_str like every interpolated string.
+                where_clauses.push(format!("[System.AreaPath] UNDER {}", wiql_str(area)));
             }
             (None, None) => where_clauses.push("[System.AssignedTo] = @Me".to_string()),
         }

@@ -68,7 +68,7 @@ function Card({
 export default function WorkBoard({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   const [dragging, setDragging] = useState<BoardItem | null>(null);
-  const [scope, setScope] = useState(""); // "" = my work, else team name
+  const [scope, setScope] = useState(""); // "" = my work, else an area path
   // Third scope mode: everything parented under one PBI (plus the PBI
   // itself). pbiMode without a picked PBI shows the picker and waits.
   const [pbiMode, setPbiMode] = useState(false);
@@ -101,9 +101,12 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
 
   const boardKey = ["board", org, project, scope, pbiMode ? (pbiScope?.id ?? "none") : ""];
 
-  const teams = useQuery({
-    queryKey: ["teams", org, project],
-    queryFn: () => unwrap(commands.listTeams(org, project)),
+  // Areas (the classification tree) instead of the project's team list:
+  // teams accumulate forever in ADO project settings, while areas are what
+  // boards actually scope by - and what users recognize.
+  const areas = useQuery({
+    queryKey: ["areas", org, project],
+    queryFn: () => unwrap(commands.classificationPaths(org, project, "areas")),
     enabled: Boolean(org && project),
     staleTime: 60 * 60_000,
   });
@@ -210,11 +213,11 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             ariaLabel="Board scope"
             className="w-56"
             placeholder="My work"
-            value={pbiMode ? "By PBI…" : scope ? `Team: ${scope}` : "My work"}
+            value={pbiMode ? "By PBI…" : scope ? `Area: ${scope}` : "My work"}
             options={[
               "My work",
               "By PBI…",
-              ...(teams.data ?? []).map((t) => `Team: ${t.name}`),
+              ...(areas.data ?? []).map((a) => `Area: ${a}`),
             ]}
             onChange={(v) => {
               if (v === "By PBI…") {
@@ -222,7 +225,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                 return;
               }
               setPbiMode(false);
-              setScope(!v || v === "My work" ? "" : v.replace(/^Team: /, ""));
+              setScope(!v || v === "My work" ? "" : v.replace(/^Area: /, ""));
             }}
           />
           {pbiMode && (
@@ -332,8 +335,8 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
         {board.data && board.data.items.length === 0 && !pbiMode && (
           <p className="rounded-md border border-border p-6 text-center text-sm text-muted">
             {scope
-              ? `Nothing on Team ${scope}'s board yet.`
-              : "Nothing assigned to you in this project - quick create one above, or switch to a team board."}
+              ? `Nothing under the ${scope} area yet.`
+              : "Nothing assigned to you in this project - quick create one above, or switch to an area board."}
           </p>
         )}
 

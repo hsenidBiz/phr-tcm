@@ -253,10 +253,9 @@ async fn fetch_board_pbi_scope_queries_parent_or_self() {
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    // Team AND pbi supplied: pbi wins (the mock only matches the pbi WIQL,
-    // and no teamsettings mock exists - a team-scope call would error).
+    // Area AND pbi supplied: pbi wins (the mock only matches the pbi WIQL).
     let board = client
-        .fetch_board("org", "proj", Some("Team X"), Some(4242))
+        .fetch_board("org", "proj", Some("HRM\\Gamma Guardians"), Some(4242))
         .await
         .unwrap();
     assert!(board.items.is_empty());
@@ -265,6 +264,33 @@ async fn fetch_board_pbi_scope_queries_parent_or_self() {
     // Default scope generates @Me WIQL, which this mock does not match ->
     // 404 from wiremock, proving the pbi clause is really scope-dependent.
     assert!(me_only.is_err());
+}
+
+#[tokio::test]
+async fn fetch_board_area_scope_queries_under_with_escaping() {
+    let server = MockServer::start().await;
+    // UNDER the picked area subtree, quotes escaped WIQL-style, and no @Me.
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/wiql"))
+        // The JSON body escapes the path's backslash, so assert around it:
+        // the UNDER clause opens with the quoted root, and the single quote
+        // in the name arrives WIQL-doubled.
+        .and(wiremock::matchers::body_string_contains(
+            "[System.AreaPath] UNDER 'HRM",
+        ))
+        .and(wiremock::matchers::body_string_contains("Gamma''s Guardians'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "workItems": []
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let board = client
+        .fetch_board("org", "proj", Some("HRM\\Gamma's Guardians"), None)
+        .await
+        .unwrap();
+    assert!(board.items.is_empty());
 }
 
 #[tokio::test]
