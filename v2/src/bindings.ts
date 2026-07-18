@@ -32,10 +32,12 @@ export const commands = {
 	 */
 	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
 	fetchBoard: (organization: string, project: string, team: string | null) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, team })),
-	/**  v1 (_state_for_column) and PATCHes System.State. Returns the state set. */
-	moveBoardItem: (organization: string, project: string, itemId: number, workItemType: string, column: string) => typedError<string, AdoError>(__TAURI_INVOKE("move_board_item", { organization, project, itemId, workItemType, column })),
 	/**
 	 *  Move a board item into a column: resolves the target state exactly like
+	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
+	 */
+	moveBoardItem: (organization: string, project: string, itemId: number, workItemType: string, column: string) => typedError<string, AdoError>(__TAURI_INVOKE("move_board_item", { organization, project, itemId, workItemType, column })),
+	/**
 	 *  Start streaming AudioSpectrum events from system-audio loopback (the
 	 *  flask equalizer rings). No-op if already running; failures are silent by
 	 *  design - the feature is decorative.
