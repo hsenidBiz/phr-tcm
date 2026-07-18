@@ -341,7 +341,8 @@ function applyPatches() {
           {
             id: 501, title: "Add PBI scope to the board", repo: "demo-web",
             author: "Sam Rivera", source_branch: "feature/pbi-scope", target_branch: "main",
-            created: "2026-07-17T09:00:00Z", is_draft: false, has_conflicts: false,
+            created: "2026-07-17T09:00:00Z",
+            description: "Demo description: what changed and why.", is_draft: false, has_conflicts: false,
             my_vote: 0,
             reviewers: [
               { display_name: "Demo User", vote: 0 },
@@ -354,7 +355,8 @@ function applyPatches() {
           {
             id: 502, title: "Electric border for the PBI chip", repo: "demo-web",
             author: "Demo User", source_branch: "feature/electric-border", target_branch: "main",
-            created: "2026-07-16T14:00:00Z", is_draft: true, has_conflicts: true,
+            created: "2026-07-16T14:00:00Z",
+            description: "Demo description: what changed and why.", is_draft: true, has_conflicts: true,
             my_vote: 0,
             reviewers: [{ display_name: "Sam Rivera", vote: -5 }],
             web_url: "https://example.invalid/demo-pr/502",
@@ -365,12 +367,12 @@ function applyPatches() {
       ok([
         {
           work_item_id: 2001, pr_id: 501, status: "active",
-          title: "Add PBI scope to the board",
+          title: "Add PBI scope to the board", repo: "demo-web",
           web_url: "https://example.invalid/demo-pr/501",
         },
         {
           work_item_id: 2001, pr_id: 499, status: "completed",
-          title: "Earlier slice", web_url: "https://example.invalid/demo-pr/499",
+          title: "Earlier slice", repo: "demo-db", web_url: "https://example.invalid/demo-pr/499",
         },
       ]),
     repoPullRequests: () =>
@@ -378,7 +380,8 @@ function applyPatches() {
         {
           id: 503, title: "Bump dependencies", repo: "demo-web",
           author: "Alex Kim", source_branch: "chore/deps", target_branch: "main",
-          created: "2026-07-15T08:00:00Z", is_draft: false, has_conflicts: false,
+          created: "2026-07-15T08:00:00Z",
+            description: "Demo description: what changed and why.", is_draft: false, has_conflicts: false,
           my_vote: 10,
           reviewers: [{ display_name: "Demo User", vote: 10 }],
           web_url: "https://example.invalid/demo-pr/503",

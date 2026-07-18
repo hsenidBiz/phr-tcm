@@ -9,6 +9,7 @@ fn pr_json(id: i32, my_vote: i32) -> serde_json::Value {
         "isDraft": false,
         "creationDate": "2026-07-18T01:00:00Z",
         "mergeStatus": "succeeded",
+        "description": "What and why",
         "createdBy": {"displayName": "Someone"},
         "sourceRefName": "refs/heads/feature/x",
         "targetRefName": "refs/heads/main",
@@ -63,6 +64,7 @@ async fn pr_overview_filters_awaiting_to_unvoted_and_parses_fields() {
     assert_eq!(pr.source_branch, "feature/x");
     assert_eq!(pr.target_branch, "main");
     assert_eq!(pr.my_vote, -5);
+    assert_eq!(pr.description, "What and why");
     assert_eq!(pr.reviewers.len(), 2);
     assert!(!pr.has_conflicts);
     // Deterministic web URL, repo name encoded.
@@ -154,5 +156,6 @@ async fn board_pr_links_map_work_items_across_statuses() {
     assert_eq!(for_101.len(), 2);
     assert!(for_101.iter().any(|l| l.status == "active" && l.pr_id == 7));
     assert!(for_101.iter().any(|l| l.status == "completed" && l.pr_id == 5));
+    assert!(links.iter().all(|l| l.repo == "web"));
     assert!(links[0].web_url.contains("/_git/web/pullrequest/"));
 }

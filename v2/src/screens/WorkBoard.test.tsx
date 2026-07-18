@@ -314,14 +314,20 @@ test("PR chips render from board links and active outranks completed", async () 
     if (cmd === "classification_paths") return [];
     if (cmd === "board_pr_links")
       return [
-        { work_item_id: 11, pr_id: 9, status: "completed", title: "Old", web_url: "https://x/9" },
-        { work_item_id: 11, pr_id: 12, status: "active", title: "New", web_url: "https://x/12" },
+        { work_item_id: 11, pr_id: 9, status: "completed", title: "Old", repo: "database", web_url: "https://x/9" },
+        { work_item_id: 11, pr_id: 12, status: "active", title: "New", repo: "web", web_url: "https://x/12" },
       ];
   });
   renderBoard();
   const card = (await screen.findByText("Write docs")).closest("[draggable]")!;
-  const chips = await within(card as HTMLElement).findAllByText(/PR [●✓]/);
-  expect(chips.map((c) => c.textContent)).toEqual(["PR ●", "PR ✓"]);
+  // Chips are labelled by REPO (active first) so multi-repo items read apart.
+  const active = await within(card as HTMLElement).findByTitle("Active PR !12 in web: New");
+  const done = within(card as HTMLElement).getByTitle("Completed PR !9 in database: Old");
+  expect(active.textContent).toContain("web");
+  expect(done.textContent).toContain("database");
+  expect(
+    active.compareDocumentPosition(done) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
 });
 
 test("This sprint toggle refetches with currentSprint=true", async () => {

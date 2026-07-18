@@ -78,28 +78,34 @@ function Card({
         />
         {item.state}
         {item.tags && <span className="text-faint">{item.tags}</span>}
-        {/* PR chips: the item's linked pull requests, most useful signal
-            first (an active PR outranks a completed one). Click opens the
-            PR without opening the card. */}
-        {prLinks.map((l) => (
-          <button
-            key={l.pr_id}
-            className={cn(
-              "ml-auto flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
-              l.status === "active"
-                ? "bg-accent-soft text-accent"
-                : "bg-surface-2 text-muted",
-            )}
-            title={`${l.status === "active" ? "Active" : "Completed"} PR !${l.pr_id}: ${l.title}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              openUrl(l.web_url).catch(() => toast.error("Could not open the browser."));
-            }}
-          >
-            <GitPullRequest size={10} />
-            {l.status === "active" ? "PR ●" : "PR ✓"}
-          </button>
-        ))}
+        {/* PR chips: the item's linked pull requests, labelled by REPO so
+            "database ●" and "web ✓" read apart when one item carries PRs
+            in several repos; active outranks completed. Click opens the PR
+            without opening the card. */}
+        {prLinks.length > 0 && (
+          <span className="ml-auto flex flex-wrap items-center justify-end gap-1">
+            {prLinks.map((l) => (
+              <button
+                key={l.pr_id}
+                className={cn(
+                  "flex max-w-32 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                  l.status === "active"
+                    ? "bg-accent-soft text-accent"
+                    : "bg-surface-2 text-muted",
+                )}
+                title={`${l.status === "active" ? "Active" : "Completed"} PR !${l.pr_id} in ${l.repo}: ${l.title}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openUrl(l.web_url).catch(() => toast.error("Could not open the browser."));
+                }}
+              >
+                <GitPullRequest size={10} className="shrink-0" />
+                <span className="truncate">{l.repo}</span>
+                {l.status === "active" ? "●" : "✓"}
+              </button>
+            ))}
+          </span>
+        )}
       </div>
     </div>
   );

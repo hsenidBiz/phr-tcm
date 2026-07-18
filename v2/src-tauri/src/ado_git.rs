@@ -29,6 +29,8 @@ pub struct PullRequest {
     pub source_branch: String,
     pub target_branch: String,
     pub created: String,
+    /// The PR description (ADO truncates long ones in list responses).
+    pub description: String,
     pub is_draft: bool,
     pub has_conflicts: bool,
     /// The signed-in user's vote on this PR (0 when not a reviewer).
@@ -54,6 +56,9 @@ pub struct PrLink {
     /// "active" | "completed" | "abandoned".
     pub status: String,
     pub title: String,
+    /// Repository name - the chip label, so "database ●" and "web ✓" read
+    /// apart when one item carries PRs in several repos.
+    pub repo: String,
     pub web_url: String,
 }
 
@@ -94,6 +99,7 @@ fn parse_pr(
         source_branch: branch(&s(&v["sourceRefName"])),
         target_branch: branch(&s(&v["targetRefName"])),
         created: s(&v["creationDate"]),
+        description: s(&v["description"]),
         is_draft: v["isDraft"].as_bool().unwrap_or(false),
         has_conflicts: v["mergeStatus"].as_str() == Some("conflicts"),
         my_vote,
@@ -237,6 +243,7 @@ impl AdoClient {
                     pr_id,
                     status: status.clone(),
                     title: title.clone(),
+                    repo: repo_name.clone(),
                     web_url: format!(
                         "{}/{}/{}/_git/{}/pullrequest/{}",
                         self.base_url,

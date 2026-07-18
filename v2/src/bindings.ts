@@ -297,6 +297,11 @@ export type PrLink = {
 	/**  "active" | "completed" | "abandoned". */
 	status: string,
 	title: string,
+	/**
+	 *  Repository name - the chip label, so "database ●" and "web ✓" read
+	 *  apart when one item carries PRs in several repos.
+	 */
+	repo: string,
 	web_url: string,
 };
 
@@ -330,6 +335,8 @@ export type PullRequest = {
 	source_branch: string,
 	target_branch: string,
 	created: string,
+	/**  The PR description (ADO truncates long ones in list responses). */
+	description: string,
 	is_draft: boolean,
 	has_conflicts: boolean,
 	/**  The signed-in user's vote on this PR (0 when not a reviewer). */

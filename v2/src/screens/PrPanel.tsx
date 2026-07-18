@@ -5,7 +5,14 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { GitBranch, GitPullRequest, RefreshCw } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  GitBranch,
+  GitPullRequest,
+  RefreshCw,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type PullRequest } from "../bindings";
@@ -24,52 +31,97 @@ function voteDot(vote: number): { cls: string; label: string } {
 }
 
 function PrRow({ pr }: { pr: PullRequest }) {
+  const [open, setOpen] = useState(false);
+  const created = pr.created ? new Date(pr.created).toLocaleDateString() : "";
   return (
-    <button
-      className="flex w-full items-start gap-3 rounded-md border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-border-strong hover:bg-surface-2"
-      onClick={() => openUrl(pr.web_url).catch(() => toast.error("Could not open the browser."))}
-      title="Open in Azure DevOps"
-    >
-      <GitPullRequest size={15} className="mt-0.5 shrink-0 text-accent" />
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-sm font-medium text-text">
-            <span className="id-mono text-faint">!{pr.id}</span> {pr.title}
-          </span>
-          {pr.is_draft && (
-            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted">
-              Draft
+    <div className="rounded-md border border-border bg-surface transition-colors hover:border-border-strong">
+      {/* Clicking the row expands the detail; the external-link button is
+          the way out to Azure DevOps. */}
+      <button
+        className="flex w-full items-start gap-3 px-3 py-2 text-left"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? (
+          <ChevronDown size={14} className="mt-1 shrink-0 text-muted" />
+        ) : (
+          <ChevronRight size={14} className="mt-1 shrink-0 text-muted" />
+        )}
+        <GitPullRequest size={15} className="mt-0.5 shrink-0 text-accent" />
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-sm font-medium text-text">
+              <span className="id-mono text-faint">!{pr.id}</span> {pr.title}
             </span>
-          )}
-          {pr.has_conflicts && (
-            <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
-              Conflicts
-            </span>
-          )}
-        </span>
-        <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-          <span>{pr.repo}</span>
-          <span className="flex items-center gap-1">
-            <GitBranch size={11} />
-            {pr.source_branch} → {pr.target_branch}
+            {pr.is_draft && (
+              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted">
+                Draft
+              </span>
+            )}
+            {pr.has_conflicts && (
+              <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
+                Conflicts
+              </span>
+            )}
           </span>
-          <span>{pr.author}</span>
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+            <span>{pr.repo}</span>
+            <span className="flex items-center gap-1">
+              <GitBranch size={11} />
+              {pr.source_branch} → {pr.target_branch}
+            </span>
+            <span>{pr.author}</span>
+          </span>
         </span>
-      </span>
-      {/* Reviewer pips: one dot per reviewer, tinted by vote. */}
-      <span className="mt-1 flex shrink-0 items-center gap-1">
-        {pr.reviewers.map((r, i) => {
-          const d = voteDot(r.vote);
-          return (
-            <span
-              key={i}
-              className={cn("inline-block h-2 w-2 rounded-full", d.cls)}
-              title={`${r.display_name}: ${d.label}`}
-            />
-          );
-        })}
-      </span>
-    </button>
+        {/* Reviewer pips: one dot per reviewer, tinted by vote. */}
+        <span className="mt-1 flex shrink-0 items-center gap-1">
+          {pr.reviewers.map((r, i) => {
+            const d = voteDot(r.vote);
+            return (
+              <span
+                key={i}
+                className={cn("inline-block h-2 w-2 rounded-full", d.cls)}
+                title={`${r.display_name}: ${d.label}`}
+              />
+            );
+          })}
+        </span>
+        <span
+          role="button"
+          aria-label={`Open !${pr.id} in Azure DevOps`}
+          title="Open in Azure DevOps"
+          className="mt-0.5 shrink-0 rounded p-1 text-muted hover:text-accent"
+          onClick={(e) => {
+            e.stopPropagation();
+            openUrl(pr.web_url).catch(() => toast.error("Could not open the browser."));
+          }}
+        >
+          <ExternalLink size={13} />
+        </span>
+      </button>
+
+      {open && (
+        <div className="space-y-2 border-t border-border/60 px-9 py-2 text-xs">
+          <p className="whitespace-pre-wrap text-text">
+            {pr.description.trim() || <span className="text-faint">No description.</span>}
+          </p>
+          <div className="space-y-1">
+            {pr.reviewers.length === 0 && <p className="text-faint">No reviewers assigned.</p>}
+            {pr.reviewers.map((r, i) => {
+              const d = voteDot(r.vote);
+              return (
+                <p key={i} className="flex items-center gap-2 text-muted">
+                  <span className={cn("inline-block h-2 w-2 rounded-full", d.cls)} />
+                  {r.display_name}
+                  <span className="text-faint">— {d.label}</span>
+                </p>
+              );
+            })}
+          </div>
+          {created && <p className="text-faint">Created {created}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 

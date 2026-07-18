@@ -26,6 +26,7 @@ const pr = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   source_branch: "feature/x",
   target_branch: "main",
   created: "2026-07-18T01:00:00Z",
+  description: "Why this change exists",
   is_draft: false,
   has_conflicts: false,
   my_vote: 0,
@@ -85,4 +86,22 @@ test("picking a repo fetches its active PRs and persists the choice", async () =
   expect(await screen.findByText("!9")).toBeInTheDocument();
   expect(asked).toBe("r2");
   expect(localStorage.getItem("tcm-v2-pr-repo:acme/Web")).toBe("r2");
+});
+
+test("a row expands to description and named reviewer votes", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(4)], mine: [] };
+    if (cmd === "list_repos") return [];
+  });
+  renderPanel();
+  const row = (await screen.findByText("!4")).closest("[aria-expanded]")!;
+  expect(row).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("Why this change exists")).not.toBeInTheDocument();
+
+  fireEvent.click(row);
+  expect(await screen.findByText("Why this change exists")).toBeInTheDocument();
+  expect(screen.getByText("Kim")).toBeInTheDocument();
+  expect(screen.getByText(/— approved/)).toBeInTheDocument();
+  // The external-link control sits on the row for the browser hop.
+  expect(screen.getByRole("button", { name: "Open !4 in Azure DevOps" })).toBeInTheDocument();
 });
