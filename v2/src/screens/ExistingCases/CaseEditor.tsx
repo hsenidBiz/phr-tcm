@@ -101,7 +101,3 @@ export default function CaseEditor({
     </div>
   );
 }
-
-/** The Edit tab: click selects a card, ctrl+click toggles, shift+click
- * ranges; the chevron (or double-click) expands the editor. Selection
- * unlocks the bulk toolbar. Grouping by module is the v1 smart grouping. */

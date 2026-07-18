@@ -18,6 +18,9 @@ import { groupIndices } from "../../lib/grouping";
 import { unwrap } from "../../lib/ipc";
 import { toTestCase } from "../../lib/testCaseConvert";
 
+/** The Edit tab: click selects a card, ctrl+click toggles, shift+click
+ * ranges; the chevron (or double-click) expands the editor. Selection
+ * unlocks the bulk toolbar. Grouping by module is the v1 smart grouping. */
 export default function ExistingCases({
   org,
   project,
