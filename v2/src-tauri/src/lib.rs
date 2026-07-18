@@ -3,6 +3,7 @@
 //! grouped by domain; domain logic lives in the modules they call into.
 
 pub mod ado;
+pub mod ado_git;
 pub mod ado_testplan;
 pub mod audio;
 pub mod auth;
@@ -30,7 +31,7 @@ pub use events::{CaseNoteSaved, SubmitProgress, SuiteScanProgress};
 pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{auth, board, bugs, cases, discovery, misc, queue, runs, testplan};
+    use commands::{auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
@@ -89,7 +90,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             runs::run_history,
             runs::view_execution_report,
             bugs::read_file_b64,
-            bugs::open_snip
+            bugs::open_snip,
+            prs::list_repos,
+            prs::pr_overview,
+            prs::repo_pull_requests
         ])
 }
 

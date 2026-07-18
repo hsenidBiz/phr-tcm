@@ -4,6 +4,8 @@ import {
   Eye,
   FileUp,
   FolderTree,
+  GitPullRequest,
+  KanbanSquare,
   PenLine,
   Pencil,
   PlayCircle,
@@ -12,11 +14,14 @@ import { useState } from "react";
 import { cn } from "../lib/cn";
 
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
- * in the context bar - the sidebar stays reserved for test-case workflows
- * so new tabs can be added over time. Collapsible to an icon rail. */
+ * in the context bar. Collapsible to an icon rail. In Work Manager mode the
+ * same rail shows WORK_ITEMS instead (PRs first, then the board). */
 export type Section = "manual" | "import" | "edit" | "view" | "run" | "suites" | "settings";
+export type WorkSection = "prs" | "board";
 
-const ITEMS: { id: Section; label: string; icon: typeof PenLine }[] = [
+type Item<T extends string> = { id: T; label: string; icon: typeof PenLine };
+
+const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine },
   { id: "import", label: "Import File", icon: FileUp },
   { id: "edit", label: "Edit Test Cases", icon: Pencil },
@@ -25,15 +30,24 @@ const ITEMS: { id: Section; label: string; icon: typeof PenLine }[] = [
   { id: "suites", label: "Test Suites", icon: FolderTree },
 ];
 
+export const WORK_ITEMS: Item<WorkSection>[] = [
+  { id: "prs", label: "Pull Requests", icon: GitPullRequest },
+  { id: "board", label: "Board", icon: KanbanSquare },
+];
+
 const COLLAPSE_KEY = "tcm-v2-sidebar";
 
-export default function Sidebar({
+export default function Sidebar<T extends string = Section>({
   section,
   onSelect,
+  items,
 }: {
-  section: Section;
-  onSelect: (s: Section) => void;
+  section: T;
+  onSelect: (s: T) => void;
+  /** Defaults to the test-case tabs; Work Manager passes WORK_ITEMS. */
+  items?: Item<T>[];
 }) {
+  const list = items ?? (CASE_ITEMS as unknown as Item<T>[]);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(COLLAPSE_KEY) === "collapsed",
   );
@@ -66,7 +80,7 @@ export default function Sidebar({
       )}
       style={{ transitionDelay: collapsed ? "120ms" : "0ms" }}
     >
-      {ITEMS.map(({ id, label, icon: Icon }) => (
+      {list.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           data-tour={`nav-${id}`}

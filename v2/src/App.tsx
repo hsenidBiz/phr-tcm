@@ -6,7 +6,7 @@ import { saveNote } from "./lib/caseNotes";
 import AnimatedContent from "./components/AnimatedContent";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
-import Sidebar, { type Section } from "./components/Sidebar";
+import Sidebar, { WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
 import UiTour, { START_TOUR_EVENT, tourDone } from "./components/UiTour";
 import { Button } from "./components/ui/button";
@@ -16,6 +16,7 @@ import { getTheme, initTheme } from "./lib/theme";
 import EditCases from "./screens/EditCases";
 import ImportFile from "./screens/ImportFile";
 import ManualEntry from "./screens/ManualEntry";
+import PrPanel from "./screens/PrPanel";
 import RunTests from "./screens/RunTests";
 import SignIn from "./screens/SignIn";
 import ViewCases from "./screens/ViewCases";
@@ -47,6 +48,8 @@ export default function App() {
   const [project, setProjectRaw] = useState(initial.project);
   const [pbi, setPbiRaw] = useState<PbiHit | null>(initial.pbi);
   const [workMode, setWorkMode] = useState(initial.workMode);
+  // Work Manager's own rail section; the board stays the landing view.
+  const [workSection, setWorkSection] = useState<WorkSection>("board");
   // Suite-browser handoff: edit an arbitrary set of cases (not persisted).
   const [caseSelection, setCaseSelection] = useState<{ label: string; caseIds: number[] } | null>(
     null,
@@ -242,7 +245,14 @@ export default function App() {
       {tourOpen && signedIn && <UiTour onClose={() => setTourOpen(false)} />}
 
       <div className="flex min-h-0 flex-1">
-      {signedIn && <Sidebar section={section} onSelect={goToSection} />}
+      {/* Work Manager swaps the rail's contents: its own sections (Pull
+          Requests first, then the board) instead of the test-case tabs. */}
+      {signedIn &&
+        (workMode ? (
+          <Sidebar section={workSection} onSelect={setWorkSection} items={WORK_ITEMS} />
+        ) : (
+          <Sidebar section={section} onSelect={goToSection} />
+        ))}
 
       <div className="flex min-w-0 flex-1 flex-col">
         {signedIn && (
@@ -291,12 +301,21 @@ export default function App() {
               )}
             </SignIn>
           ) : workMode ? (
-            <>
-              <h1 className="mb-4 text-lg font-semibold">Work Manager</h1>
-              <div className="min-h-0 flex-1">
-                <WorkBoard org={org} project={project} />
-              </div>
-            </>
+            workSection === "board" ? (
+              <>
+                <h1 className="mb-4 text-lg font-semibold">Board</h1>
+                <div className="min-h-0 flex-1">
+                  <WorkBoard org={org} project={project} />
+                </div>
+              </>
+            ) : (
+              <>
+                <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <PrPanel org={org} project={project} />
+                </div>
+              </>
+            )
           ) : (
             // key={section} remounts the wrapper on tab switch, so every
             // screen fades up briefly instead of snapping in.

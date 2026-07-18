@@ -75,16 +75,25 @@ test("settings opens from the gear, not the sidebar", async () => {
 test("work pill toggles the board and a tab click returns", async () => {
   signedInMocks((cmd) => {
     if (cmd === "fetch_board") return { items: [], states_by_type: {} };
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
   });
   renderApp();
   await screen.findByText("a@b.com");
 
   fireEvent.click(screen.getByRole("button", { name: /Work Manager \(Beta\)/ }));
-  expect(screen.getByRole("heading", { name: "Work Manager" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Test Case Manager/ })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Board" })).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Run Tests" }));
-  expect(screen.getByRole("heading", { name: "Run Tests" })).toBeInTheDocument();
+  // Work Manager swaps the rail: its own sections, no test-case tabs.
+  expect(screen.getByRole("button", { name: "Pull Requests" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Run Tests" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Pull Requests" }));
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+
+  // The pill is the way back, and it lands on the case tabs again.
+  fireEvent.click(screen.getByRole("button", { name: /Test Case Manager/ }));
+  expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Run Tests" })).toBeInTheDocument();
 });
 
 test("prefs restore section, scope and selected PBI", async () => {
@@ -120,7 +129,7 @@ test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () 
   expect(screen.getByRole("heading", { name: "Import File" })).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
-  expect(screen.getByRole("heading", { name: "Work Manager" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Board" })).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
   expect(screen.getByRole("heading", { name: "Import File" })).toBeInTheDocument();

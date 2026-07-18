@@ -353,6 +353,7 @@ fn client_source_has_no_delete_calls() {
     // of these moves without the test following it).
     let sources = [
         include_str!("../src/auth.rs"),
+        include_str!("../src/ado_git.rs"),
         include_str!("../src/ado/mod.rs"),
         include_str!("../src/ado/transport.rs"),
         include_str!("../src/ado/endpoints.rs"),

@@ -8,6 +8,7 @@ pub mod bugs;
 pub mod cases;
 pub mod discovery;
 pub mod misc;
+pub mod prs;
 pub mod queue;
 pub mod runs;
 pub mod testplan;

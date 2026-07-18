@@ -129,6 +129,9 @@ export const commands = {
 	 *  runner polls and attaches it).
 	 */
 	openSnip: () => typedError<null, string>(__TAURI_INVOKE("open_snip")),
+	listRepos: (organization: string, project: string) => typedError<RepoRef[], AdoError>(__TAURI_INVOKE("list_repos", { organization, project })),
+	prOverview: (organization: string, project: string) => typedError<PrOverview, AdoError>(__TAURI_INVOKE("pr_overview", { organization, project })),
+	repoPullRequests: (organization: string, project: string, repoId: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId })),
 };
 
 /** Events */
@@ -286,7 +289,45 @@ export type PointOutcome = {
 	bug_ids: number[] | null,
 };
 
+/**  The actionable slices for the PR panel's top groups. */
+export type PrOverview = {
+	/**  Active PRs where the user is a reviewer and has not voted yet. */
+	awaiting: PullRequest[],
+	/**  Active PRs the user created. */
+	mine: PullRequest[],
+};
+
+export type PrReviewer = {
+	display_name: string,
+	/**
+	 *  ADO vote: 10 approved, 5 approved w/ suggestions, 0 no vote,
+	 *  -5 waiting for author, -10 rejected.
+	 */
+	vote: number,
+};
+
 export type Project = {
+	id: string,
+	name: string,
+};
+
+export type PullRequest = {
+	id: number,
+	title: string,
+	repo: string,
+	author: string,
+	source_branch: string,
+	target_branch: string,
+	created: string,
+	is_draft: boolean,
+	has_conflicts: boolean,
+	/**  The signed-in user's vote on this PR (0 when not a reviewer). */
+	my_vote: number,
+	reviewers: PrReviewer[],
+	web_url: string,
+};
+
+export type RepoRef = {
 	id: string,
 	name: string,
 };
