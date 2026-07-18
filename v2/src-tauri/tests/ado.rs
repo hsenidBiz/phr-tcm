@@ -352,6 +352,7 @@ fn client_source_has_no_delete_calls() {
     // impl file must be added here (compile error via include_str! if one
     // of these moves without the test following it).
     let sources = [
+        include_str!("../src/auth.rs"),
         include_str!("../src/ado/mod.rs"),
         include_str!("../src/ado/transport.rs"),
         include_str!("../src/ado/endpoints.rs"),
