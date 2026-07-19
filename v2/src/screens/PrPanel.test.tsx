@@ -130,6 +130,33 @@ test("a row expands to description and named reviewer votes", async () => {
   expect(screen.getByRole("button", { name: "Open !4 in Azure DevOps" })).toBeInTheDocument();
 });
 
+test("expanding a PR shows its linked work items as DevOps-style chips", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(8)], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_work_items")
+      return [
+        {
+          id: 143783,
+          work_item_type: "Bug",
+          title: "Participants - department inconsistencies",
+          state: "In Progress",
+          state_color: "007acc",
+          url: "https://example.invalid/wi/143783",
+        },
+      ];
+  });
+  renderPanel();
+  // Work items load lazily - not requested until the row is expanded.
+  expect(screen.queryByText(/143783/)).not.toBeInTheDocument();
+  fireEvent.click((await screen.findByText("!8")).closest("[aria-expanded]")!);
+
+  expect(await screen.findByText("Related work items")).toBeInTheDocument();
+  const chip = screen.getByText("143783").closest("button")!;
+  expect(chip).toHaveTextContent("Participants - department inconsistencies");
+  expect(chip).toHaveTextContent("In Progress");
+});
+
 test("the description renders markdown like Azure DevOps", async () => {
   mockIPC((cmd) => {
     if (cmd === "pr_overview")

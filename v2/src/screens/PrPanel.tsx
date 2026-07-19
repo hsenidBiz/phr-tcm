@@ -6,6 +6,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  Bug,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { commands, type PullRequest } from "../bindings";
+import { commands, type PullRequest, type PrWorkItem } from "../bindings";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
@@ -31,9 +32,58 @@ function voteDot(vote: number): { cls: string; label: string } {
   return { cls: "bg-border-strong", label: "no vote yet" };
 }
 
-function PrRow({ pr }: { pr: PullRequest }) {
+/** Work-item type colour, matching the board's swatches. */
+const wiTypeColor: Record<string, string> = {
+  Bug: "#e15b64",
+  Task: "#d99e2b",
+  "Product Backlog Item": "#2aa5e0",
+  "User Story": "#2aa5e0",
+  Feature: "#9a74d8",
+  Epic: "#e0873c",
+};
+
+/** One linked work item as a DevOps-style chip: type-coloured icon, id,
+ * title, and a state dot. Opens the work item in the browser. */
+function WorkItemChip({ wi }: { wi: PrWorkItem }) {
+  const color = wiTypeColor[wi.work_item_type] ?? "#9ca3af";
+  return (
+    <button
+      className="flex w-full items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong hover:bg-surface-2"
+      title={`Open ${wi.work_item_type} ${wi.id} in Azure DevOps`}
+      onClick={() => openUrl(wi.url).catch(() => toast.error("Could not open the browser."))}
+    >
+      {wi.work_item_type === "Bug" ? (
+        <Bug size={13} className="shrink-0" style={{ color }} />
+      ) : (
+        <span
+          className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+          style={{ backgroundColor: color }}
+        />
+      )}
+      <span className="id-mono shrink-0 text-faint">{wi.id}</span>
+      <span className="truncate text-text">{wi.title}</span>
+      <span className="ml-auto flex shrink-0 items-center gap-1 text-muted">
+        <span
+          className="inline-block h-2 w-2 rounded-full"
+          style={{ backgroundColor: wi.state_color ? `#${wi.state_color}` : "#9ca3af" }}
+        />
+        {wi.state}
+      </span>
+    </button>
+  );
+}
+
+function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: string }) {
   const [open, setOpen] = useState(false);
   const created = pr.created ? new Date(pr.created).toLocaleDateString() : "";
+  // Linked work items load lazily, only when the row is expanded.
+  const workItems = useQuery({
+    queryKey: ["pr-work-items", org, project, pr.repo, pr.id],
+    queryFn: () => unwrap(commands.prWorkItems(org, project, pr.repo, pr.id)),
+    enabled: open && Boolean(org && project),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
   return (
     <div className="rounded-md border border-border bg-surface transition-colors hover:border-border-strong">
       {/* Clicking the row expands the detail; the external-link button is
@@ -111,6 +161,16 @@ function PrRow({ pr }: { pr: PullRequest }) {
           ) : (
             <p className="text-faint">No description.</p>
           )}
+          {/* Related work items, rendered as DevOps-style chips (icon + id +
+              title + state) from the PR's real linkage, not the description. */}
+          {(workItems.data?.length ?? 0) > 0 && (
+            <div className="space-y-1 pt-1">
+              <p className="font-semibold text-muted">Related work items</p>
+              {workItems.data!.map((wi) => (
+                <WorkItemChip key={wi.id} wi={wi} />
+              ))}
+            </div>
+          )}
           <div className="space-y-1">
             {pr.reviewers.length === 0 && <p className="text-faint">No reviewers assigned.</p>}
             {pr.reviewers.map((r, i) => {
@@ -136,11 +196,15 @@ function PrGroup({
   prs,
   emphasize = false,
   empty,
+  org,
+  project,
 }: {
   title: string;
   prs: PullRequest[];
   emphasize?: boolean;
   empty: string;
+  org: string;
+  project: string;
 }) {
   return (
     <section className="space-y-2">
@@ -160,7 +224,7 @@ function PrGroup({
       ) : (
         <div className="space-y-1.5">
           {prs.map((pr) => (
-            <PrRow key={`${pr.repo}-${pr.id}`} pr={pr} />
+            <PrRow key={`${pr.repo}-${pr.id}`} pr={pr} org={org} project={project} />
           ))}
         </div>
       )}
@@ -260,11 +324,15 @@ export default function PrPanel({ org, project }: { org: string; project: string
             prs={overview.data.awaiting}
             emphasize
             empty="Nothing waiting on you."
+            org={org}
+            project={project}
           />
           <PrGroup
             title="Your pull requests"
             prs={overview.data.mine}
             empty="You have no active pull requests."
+            org={org}
+            project={project}
           />
         </>
       )}
@@ -281,6 +349,8 @@ export default function PrPanel({ org, project }: { org: string; project: string
                 ? "Loading…"
                 : "No other active pull requests on this repository."
             }
+            org={org}
+            project={project}
           />
         ))}
     </div>

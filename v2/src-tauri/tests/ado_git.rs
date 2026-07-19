@@ -159,3 +159,46 @@ async fn board_pr_links_map_work_items_across_statuses() {
     assert!(links.iter().all(|l| l.repo == "web"));
     assert!(links[0].web_url.contains("/_git/web/pullrequest/"));
 }
+
+#[tokio::test]
+async fn pr_work_items_render_like_devops() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/web/pullRequests/20/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": "143783"}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "id": 143783,
+                "fields": {
+                    "System.Title": "Participants - department inconsistencies",
+                    "System.WorkItemType": "Bug",
+                    "System.State": "In Progress"
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workitemtypes/Bug/states"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"name": "In Progress", "color": "007acc", "category": "InProgress"}]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let items = client.pr_work_items("org", "proj", "web", 20).await.unwrap();
+    assert_eq!(items.len(), 1);
+    let wi = &items[0];
+    assert_eq!(wi.id, 143783);
+    assert_eq!(wi.work_item_type, "Bug");
+    assert_eq!(wi.state, "In Progress");
+    assert_eq!(wi.state_color, "007acc"); // resolved from the type's states
+    assert!(wi.url.ends_with("/org/proj/_workitems/edit/143783"));
+}

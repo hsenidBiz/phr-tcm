@@ -133,6 +133,7 @@ export const commands = {
 	prOverview: (organization: string, project: string) => typedError<PrOverview, AdoError>(__TAURI_INVOKE("pr_overview", { organization, project })),
 	repoPullRequests: (organization: string, project: string, repoId: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
+	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
 };
 
 /** Events */
@@ -320,6 +321,20 @@ export type PrReviewer = {
 	 *  -5 waiting for author, -10 rejected.
 	 */
 	vote: number,
+};
+
+/**
+ *  A work item linked to a PR, shown as a rich chip in the PR detail the
+ *  way Azure DevOps renders "Related Work Items": type + id + title + state.
+ */
+export type PrWorkItem = {
+	id: number,
+	work_item_type: string,
+	title: string,
+	state: string,
+	/**  Hex (no '#') for the state dot, from the type's process states. */
+	state_color: string,
+	url: string,
 };
 
 export type Project = {

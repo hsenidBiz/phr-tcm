@@ -375,6 +375,15 @@ function applyPatches() {
           title: "Earlier slice", repo: "demo-db", web_url: "https://example.invalid/demo-pr/499",
         },
       ]),
+    prWorkItems: () =>
+      ok([
+        {
+          id: 143783, work_item_type: "Bug",
+          title: "Participants - Selected employees and department inconsistencies",
+          state: "In Progress", state_color: "007acc",
+          url: "https://example.invalid/demo-wi/143783",
+        },
+      ]),
     repoPullRequests: () =>
       ok([
         {

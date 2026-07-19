@@ -48,6 +48,19 @@ pub struct PrOverview {
     pub mine: Vec<PullRequest>,
 }
 
+/// A work item linked to a PR, shown as a rich chip in the PR detail the
+/// way Azure DevOps renders "Related Work Items": type + id + title + state.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PrWorkItem {
+    pub id: i32,
+    pub work_item_type: String,
+    pub title: String,
+    pub state: String,
+    /// Hex (no '#') for the state dot, from the type's process states.
+    pub state_color: String,
+    pub url: String,
+}
+
 /// One work-item -> pull-request association, for the board's PR chips.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PrLink {
@@ -256,6 +269,83 @@ impl AdoClient {
             }
         }
         Ok(links)
+    }
+
+    /// The work items linked to one PR, with the fields DevOps shows on its
+    /// "Related Work Items" chips (type, title, state + state colour).
+    /// `repo` is the repository name or id (ADO git endpoints accept
+    /// either). Read only.
+    pub async fn pr_work_items(
+        &self,
+        org: &str,
+        project: &str,
+        repo: &str,
+        pr_id: i32,
+    ) -> Result<Vec<PrWorkItem>, AdoError> {
+        let refs_url = format!(
+            "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.1",
+            self.base_url,
+            org,
+            project,
+            urlencoding::encode(repo),
+            pr_id
+        );
+        let refs = self.get_json(refs_url).await?;
+        let ids: Vec<i32> = refs["value"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|r| r["id"].as_str().and_then(|s| s.parse().ok()))
+            .collect();
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let ids_csv = ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        let items_url = format!(
+            "{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.Title,System.WorkItemType,System.State&api-version=7.1",
+            self.base_url, org, ids_csv
+        );
+        let fetched = self.get_json(items_url).await?;
+
+        // State colours come from each type's process states (one call per
+        // distinct type - usually just Bug). Best-effort: a failed lookup
+        // just leaves the dot uncoloured.
+        let mut colors: std::collections::HashMap<(String, String), String> =
+            std::collections::HashMap::new();
+        let mut seen_types = std::collections::HashSet::new();
+        let raw: Vec<serde_json::Value> =
+            fetched["value"].as_array().cloned().unwrap_or_default();
+        for w in &raw {
+            let wtype = w["fields"]["System.WorkItemType"].as_str().unwrap_or_default().to_string();
+            if wtype.is_empty() || !seen_types.insert(wtype.clone()) {
+                continue;
+            }
+            if let Ok(states) = self.get_work_item_states(org, project, &wtype).await {
+                for s in states {
+                    colors.insert((wtype.clone(), s.name), s.color);
+                }
+            }
+        }
+
+        Ok(raw
+            .iter()
+            .map(|w| {
+                let f = &w["fields"];
+                let id = w["id"].as_i64().unwrap_or_default() as i32;
+                let wtype = f["System.WorkItemType"].as_str().unwrap_or_default().to_string();
+                let state = f["System.State"].as_str().unwrap_or_default().to_string();
+                PrWorkItem {
+                    state_color: colors.get(&(wtype.clone(), state.clone())).cloned().unwrap_or_default(),
+                    id,
+                    work_item_type: wtype,
+                    title: f["System.Title"].as_str().unwrap_or_default().to_string(),
+                    state,
+                    url: format!("{}/{}/{}/_workitems/edit/{}", self.base_url, org, project, id),
+                }
+            })
+            .collect())
     }
 
     /// All active PRs on one repository. Read only.
