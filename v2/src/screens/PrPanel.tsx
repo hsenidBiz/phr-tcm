@@ -13,7 +13,7 @@ import {
   GitPullRequest,
   RefreshCw,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PullRequest } from "../bindings";
 import { Select } from "../components/ui/select";
@@ -202,6 +202,16 @@ export default function PrPanel({ org, project }: { org: string; project: string
 
   const repoName = repos.data?.find((r) => r.id === repoId)?.name;
 
+  // "Active on <repo>" drops any PR already shown above (awaiting/yours), so
+  // your own PRs in the selected repo appear once, under Your pull requests.
+  const shownAbove = useMemo(() => {
+    const ids = new Set<number>();
+    for (const pr of overview.data?.awaiting ?? []) ids.add(pr.id);
+    for (const pr of overview.data?.mine ?? []) ids.add(pr.id);
+    return ids;
+  }, [overview.data]);
+  const activeOnRepo = (active.data ?? []).filter((pr) => !shownAbove.has(pr.id));
+
   return (
     <div className="max-w-3xl space-y-6">
       <div className="flex items-center gap-2">
@@ -265,8 +275,12 @@ export default function PrPanel({ org, project }: { org: string; project: string
         ) : (
           <PrGroup
             title={`Active on ${repoName ?? "repository"}`}
-            prs={active.data ?? []}
-            empty={active.isLoading ? "Loading…" : "No active pull requests on this repository."}
+            prs={activeOnRepo}
+            empty={
+              active.isLoading
+                ? "Loading…"
+                : "No other active pull requests on this repository."
+            }
           />
         ))}
     </div>

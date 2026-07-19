@@ -88,6 +88,30 @@ test("picking a repo fetches its active PRs and persists the choice", async () =
   expect(localStorage.getItem("tcm-v2-pr-repo:acme/Web")).toBe("r2");
 });
 
+test("your own PR in the selected repo is not duplicated under Active on X", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [pr(20, { repo: "web" })] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    // The repo's active list contains your PR (20) plus a stranger's (21).
+    if (cmd === "repo_pull_requests")
+      return [pr(20, { repo: "web" }), pr(21, { repo: "web", author: "Kim" })];
+  });
+  renderPanel();
+  await screen.findByText("!20"); // your PR loads first (overview)
+  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r1" } });
+  // Wait for the repo's active list to load (the stranger's PR appears).
+  await screen.findByText("!21");
+
+  // !20 appears exactly once (under Your pull requests), !21 once under Active.
+  expect(screen.getAllByText("!20")).toHaveLength(1);
+  // The single !20 sits above the Active heading (i.e. in the mine group).
+  const mine = screen.getByText("!20");
+  const activeHeading = screen.getByText("Active on web");
+  expect(
+    mine.compareDocumentPosition(activeHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
+
 test("a row expands to description and named reviewer votes", async () => {
   mockIPC((cmd) => {
     if (cmd === "pr_overview") return { awaiting: [pr(4)], mine: [] };
