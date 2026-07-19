@@ -105,3 +105,23 @@ test("a row expands to description and named reviewer votes", async () => {
   // The external-link control sits on the row for the browser hop.
   expect(screen.getByRole("button", { name: "Open !4 in Azure DevOps" })).toBeInTheDocument();
 });
+
+test("the description renders markdown like Azure DevOps", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview")
+      return {
+        awaiting: [
+          pr(6, { description: "**Issue Summary**\nEmployee Repository was wrong\n\n- one\n- two" }),
+        ],
+        mine: [],
+      };
+    if (cmd === "list_repos") return [];
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!6")).closest("[aria-expanded]")!);
+
+  // Bold survives as <strong>, and the list becomes real bullets.
+  const summary = await screen.findByText("Issue Summary");
+  expect(summary.tagName).toBe("STRONG");
+  expect(screen.getByText("one").closest("li")).toBeInTheDocument();
+});

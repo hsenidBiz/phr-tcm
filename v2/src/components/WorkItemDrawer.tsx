@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { unwrap } from "../lib/ipc";
+import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
 import DateField from "./ui/datefield";
@@ -135,9 +136,7 @@ export default function WorkItemDrawer({
     return out;
   };
   const renderMd = (md: string) =>
-    withInlineImages(
-      marked.parse(md || "*Nothing to preview*", { async: false, breaks: true }) as string,
-    );
+    withInlineImages(renderMarkdown(md || "*Nothing to preview*"));
 
   const save = useMutation({
     mutationFn: async () => {

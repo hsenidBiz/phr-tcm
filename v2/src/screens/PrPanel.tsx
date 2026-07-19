@@ -20,6 +20,7 @@ import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
+import { renderMarkdown } from "../lib/markdown";
 
 /** ADO reviewer votes: 10 approved, 5 approved w/ suggestions, 0 waiting,
  * -5 waiting for author, -10 rejected. */
@@ -102,9 +103,14 @@ function PrRow({ pr }: { pr: PullRequest }) {
 
       {open && (
         <div className="space-y-2 border-t border-border/60 px-9 py-2 text-xs">
-          <p className="whitespace-pre-wrap text-text">
-            {pr.description.trim() || <span className="text-faint">No description.</span>}
-          </p>
+          {pr.description.trim() ? (
+            <div
+              className="md-preview text-text"
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(pr.description) }}
+            />
+          ) : (
+            <p className="text-faint">No description.</p>
+          )}
           <div className="space-y-1">
             {pr.reviewers.length === 0 && <p className="text-faint">No reviewers assigned.</p>}
             {pr.reviewers.map((r, i) => {
