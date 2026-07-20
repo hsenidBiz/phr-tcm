@@ -169,6 +169,38 @@ pub fn build_guide_body(o: &GuideOptions) -> String {
     s
 }
 
+/// Thin packaging around the single-source body — flavors never fork the
+/// content, only wrap it. Returned paths are relative to the chosen repo root.
+pub fn flavor_files(body: &str, flavors: &[GuideFlavor]) -> Vec<(String, String)> {
+    flavors
+        .iter()
+        .map(|f| match f {
+            GuideFlavor::Generic => ("AI_TEST_CASES.md".to_string(), body.to_string()),
+            GuideFlavor::ClaudeSkill => (
+                ".claude/skills/generate-test-cases/SKILL.md".to_string(),
+                format!(
+                    "---\nname: generate-test-cases\ndescription: Write Azure DevOps \
+                    test cases as JSON importable by Test Case Manager. Use when asked \
+                    to create, write, or generate test cases for this project.\n---\n\n{body}"
+                ),
+            ),
+            GuideFlavor::CursorRules => (
+                ".cursor/rules/test-cases.mdc".to_string(),
+                format!(
+                    "---\ndescription: Writing test cases importable by Test Case Manager\nalwaysApply: false\n---\n\n{body}"
+                ),
+            ),
+            GuideFlavor::AgentsSnippet => (
+                "AGENTS-test-cases.md".to_string(),
+                format!(
+                    "<!-- Snippet: append this section to your existing AGENTS.md -->\n\n\
+                    ## Writing test cases for Test Case Manager\n\n{body}"
+                ),
+            ),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +365,39 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn flavor_files_wrap_one_body_per_selected_flavor() {
+        let body = "# body\ncontent";
+        let all = [
+            GuideFlavor::Generic,
+            GuideFlavor::ClaudeSkill,
+            GuideFlavor::CursorRules,
+            GuideFlavor::AgentsSnippet,
+        ];
+        let files = flavor_files(body, &all);
+        let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "AI_TEST_CASES.md",
+                ".claude/skills/generate-test-cases/SKILL.md",
+                ".cursor/rules/test-cases.mdc",
+                "AGENTS-test-cases.md",
+            ]
+        );
+        // Generic is the body verbatim; wrappers contain the body unchanged.
+        assert_eq!(files[0].1, body);
+        assert!(files[1].1.starts_with("---\nname: generate-test-cases\n"));
+        assert!(files.iter().all(|(_, c)| c.contains("content")));
+        // Cursor frontmatter + Agents append note
+        assert!(files[2].1.starts_with("---\ndescription:"));
+        assert!(files[3].1.contains("append"));
+    }
+
+    #[test]
+    fn no_flavors_yields_no_files() {
+        assert!(flavor_files("x", &[]).is_empty());
     }
 }
