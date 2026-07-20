@@ -390,7 +390,10 @@ mod tests {
         // Generic is the body verbatim; wrappers contain the body unchanged.
         assert_eq!(files[0].1, body);
         assert!(files[1].1.starts_with("---\nname: generate-test-cases\n"));
-        assert!(files.iter().all(|(_, c)| c.contains("content")));
+        assert!(
+            files.iter().all(|(_, c)| c.ends_with(body)),
+            "every flavor must embed the guide body verbatim and unmodified"
+        );
         // Cursor frontmatter + Agents append note
         assert!(files[2].1.starts_with("---\ndescription:"));
         assert!(files[3].1.contains("append"));
