@@ -5,6 +5,7 @@
 pub mod ado;
 pub mod ado_git;
 pub mod ado_testplan;
+pub mod ai_guide;
 pub mod audio;
 pub mod auth;
 pub mod capture;
