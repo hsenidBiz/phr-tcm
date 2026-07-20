@@ -226,4 +226,32 @@ mod tests {
     fn body_is_deterministic() {
         assert_eq!(build_guide_body(&opts()), build_guide_body(&opts()));
     }
+
+    /// THE drift gate: the guide's own worked example must parse through
+    /// the real importer. If the import format changes without updating
+    /// the guide (or vice versa), this fails the build.
+    #[test]
+    fn worked_example_round_trips_through_the_importer() {
+        let dir = std::env::temp_dir().join("tcm_ai_guide_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("example.json");
+        std::fs::write(&path, WORKED_EXAMPLE_JSON).unwrap();
+
+        let (cases, warnings) =
+            crate::import_parser::parse_file(path.to_str().unwrap()).unwrap();
+
+        assert_eq!(warnings, Vec::<String>::new(), "example must import warning-free");
+        assert_eq!(cases.len(), 2);
+        // Create vs update semantics
+        assert_eq!(cases[0].update_id, None);
+        assert_eq!(cases[1].update_id, Some(143001));
+        // Fields survive the trip
+        assert_eq!(cases[0].steps.len(), 2);
+        assert_eq!(cases[0].steps[0].expected, "Sign-in form is shown");
+        assert_eq!(cases[0].module_value, "Login");
+        assert_eq!(cases[1].automation_status, "Planned");
+        // Both must be submit-ready
+        assert!(cases[0].is_valid().is_ok() && cases[1].is_valid().is_ok());
+        let _ = std::fs::remove_file(&path);
+    }
 }
