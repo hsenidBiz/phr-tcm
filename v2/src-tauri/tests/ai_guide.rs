@@ -84,8 +84,8 @@ fn discovered_but_empty_modules_get_the_no_modules_note() {
     o.modules_discovered = true;
     let body = build_guide_body(&o);
     assert!(
-        body.contains("No Module values are defined for this project"),
-        "discovered-but-empty modules must render the new note"
+        body.contains("No Module values were included in this guide"),
+        "empty modules (none defined, or none added in the wizard) must render the neutral note"
     );
     assert!(
         !body.contains("could not be discovered"),

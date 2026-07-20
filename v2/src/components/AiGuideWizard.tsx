@@ -12,6 +12,7 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Textarea } from "./ui/input";
 import { Select } from "./ui/select";
+import TagField, { splitTags } from "./ui/tagfield";
 
 const FLAVORS: { id: GuideFlavor; label: string }[] = [
   { id: "Generic", label: "Generic markdown (AI_TEST_CASES.md)" },
@@ -67,9 +68,10 @@ export default function AiGuideWizard({
     retry: false,
   });
 
-  // Pruning state: every discovered value starts checked (included); an
-  // unticked box excludes that value from the generated options.
-  const [pruned, setPruned] = useState<Set<string>>(new Set());
+  // Modules are explicitly ADDED (search-and-add, like tags elsewhere) -
+  // a 100+-value org made a default-all-checked prune list unusable.
+  // Semicolon-joined string because that's TagField's value contract.
+  const [moduleSel, setModuleSel] = useState("");
   const [pickedDocs, setPickedDocs] = useState<string[]>([]);
   const [docPathsText, setDocPathsText] = useState("");
   const [conventions, setConventions] = useState("");
@@ -86,7 +88,7 @@ export default function AiGuideWizard({
     organization: org,
     project,
     area,
-    modules: (modules.data ?? []).filter((m) => !pruned.has(m)),
+    modules: splitTags(moduleSel),
     modules_discovered: modulesDiscovered,
     doc_paths: [
       ...pickedDocs,
@@ -166,23 +168,20 @@ export default function AiGuideWizard({
                 </p>
               ) : modules.isLoading ? (
                 <p className="text-xs text-faint">Loading modules…</p>
-              ) : (modules.data ?? []).length === 0 ? (
-                <p className="text-xs text-faint">No modules in use yet.</p>
               ) : (
-                <div className="max-h-52 overflow-y-auto rounded-md border border-border p-2">
-                  <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                    {modules.data!.map((m) => (
-                      <label key={m} className="flex items-center gap-1.5 text-xs text-text">
-                        <Checkbox
-                          ariaLabel={m}
-                          checked={!pruned.has(m)}
-                          onCheckedChange={(checked) => setPruned((p) => toggled(p, m, !checked))}
-                        />
-                        {m}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                <>
+                  <TagField
+                    ariaLabel="Modules"
+                    placeholder="Search and add modules…"
+                    value={moduleSel}
+                    onChange={setModuleSel}
+                    suggestions={modules.data ?? []}
+                  />
+                  <p className="text-xs text-faint">
+                    Add the Module values this repo's test cases use - the guide tells AI tools
+                    to pick from exactly these.
+                  </p>
+                </>
               )}
             </div>
 

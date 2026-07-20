@@ -27,18 +27,21 @@ function renderWizard(onClose = vi.fn()) {
   return onClose;
 }
 
-test("step 1 shows discovered modules as checked boxes; unticking prunes", async () => {
+test("step 1 offers modules as search-and-add; picking a suggestion makes a chip", async () => {
   mockIPC((cmd) => {
-    if (cmd === "test_case_field_values") return ["Login", "Checkout"];
+    if (cmd === "test_case_field_values") return ["Login", "Checkout", "Payroll India"];
     if (cmd === "list_repos") return [];
   });
   renderWizard();
-  expect(await screen.findByLabelText("Login")).toBeChecked();
-  expect(screen.getByLabelText("Checkout")).toBeChecked();
+  const input = await screen.findByLabelText("Modules");
+  // Typing filters the 100+-value picklist instead of rendering it whole.
+  fireEvent.change(input, { target: { value: "log" } });
+  expect(screen.getByRole("button", { name: "Login" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Payroll India" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Login" }));
+  expect(screen.getByRole("button", { name: "Remove Login" })).toBeInTheDocument(); // chip
   // Tags are deliberately NOT offered - large orgs have hundreds.
   expect(screen.queryByText("Tags")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByLabelText("Checkout")); // prune it
-  expect(screen.getByLabelText("Checkout")).not.toBeChecked();
 });
 
 test("discovery failure degrades with a note, not a blocked wizard", async () => {
@@ -104,7 +107,9 @@ test("full walk-through: manual doc paths + flavors reach writeAiGuide with the 
   });
   const onClose = renderWizard();
 
-  fireEvent.click(await screen.findByLabelText("Checkout")); // prune
+  const input = await screen.findByLabelText("Modules");
+  fireEvent.focus(input);
+  fireEvent.click(await screen.findByRole("button", { name: "Login" })); // add just Login
   fireEvent.click(screen.getByRole("button", { name: "Next" })); // -> repo knowledge
   fireEvent.change(screen.getByLabelText("Documentation paths"), {
     target: { value: "docs/screens/**\nREADME.md" },
@@ -117,7 +122,7 @@ test("full walk-through: manual doc paths + flavors reach writeAiGuide with the 
 
   await waitFor(() => expect(writeArgs).not.toBeNull());
   const opts = (writeArgs as unknown as { options: Record<string, unknown> }).options;
-  expect(opts.modules).toEqual(["Login"]); // pruned
+  expect(opts.modules).toEqual(["Login"]); // only the explicitly added module
   expect(opts.doc_paths).toEqual(["docs/screens/**", "README.md"]);
   expect((opts.flavors as string[]).length).toBe(2);
   await screen.findByText(/AI_TEST_CASES\.md/); // success summary

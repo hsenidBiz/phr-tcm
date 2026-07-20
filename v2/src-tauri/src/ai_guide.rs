@@ -131,7 +131,7 @@ pub fn build_guide_body(o: &GuideOptions) -> String {
         s.push('\n');
     } else if o.modules_discovered {
         s.push_str(
-            "No Module values are defined for this project. Leave `module` empty unless \
+            "No Module values were included in this guide. Leave `module` empty unless \
             the developer tells you otherwise.\n\n",
         );
     } else {
