@@ -32,7 +32,7 @@ pub use events::{CaseNoteSaved, SubmitProgress, SuiteScanProgress};
 pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
+    use commands::{ai_guide, auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
@@ -96,7 +96,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             prs::pr_overview,
             prs::repo_pull_requests,
             prs::board_pr_links,
-            prs::pr_work_items
+            prs::pr_work_items,
+            ai_guide::preview_ai_guide,
+            ai_guide::write_ai_guide
         ])
 }
 
