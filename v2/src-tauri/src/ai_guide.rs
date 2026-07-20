@@ -234,24 +234,96 @@ mod tests {
     fn worked_example_round_trips_through_the_importer() {
         let dir = std::env::temp_dir().join("tcm_ai_guide_test");
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("example.json");
+        let path = dir.join(format!("example-{}.json", std::process::id()));
         std::fs::write(&path, WORKED_EXAMPLE_JSON).unwrap();
 
         let (cases, warnings) =
             crate::import_parser::parse_file(path.to_str().unwrap()).unwrap();
 
         assert_eq!(warnings, Vec::<String>::new(), "example must import warning-free");
-        assert_eq!(cases.len(), 2);
+        assert_eq!(cases.len(), 2, "guide's worked example must contain exactly 2 cases");
+
         // Create vs update semantics
-        assert_eq!(cases[0].update_id, None);
-        assert_eq!(cases[1].update_id, Some(143001));
-        // Fields survive the trip
-        assert_eq!(cases[0].steps.len(), 2);
-        assert_eq!(cases[0].steps[0].expected, "Sign-in form is shown");
-        assert_eq!(cases[0].module_value, "Login");
-        assert_eq!(cases[1].automation_status, "Planned");
+        assert_eq!(cases[0].update_id, None, "case 0 has no `id` in the guide's example - it must round-trip as a CREATE");
+        assert_eq!(
+            cases[1].update_id,
+            Some(143001),
+            "case 1's `id` must round-trip as an UPDATE of that exact work item"
+        );
+
+        // Case 0 ("Login") - every field the guide's worked example advertises
+        // must survive the trip through the real importer.
+        assert_eq!(cases[0].steps.len(), 2, "case 0 must keep both of its steps");
+        assert_eq!(
+            cases[0].steps[0].action, "Open the sign-in page",
+            "case 0 step 1 action drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[0].steps[0].expected, "Sign-in form is shown",
+            "case 0 step 1 expected drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[0].steps[1].action,
+            "Enter a valid username and password and submit",
+            "case 0 step 2 action drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[0].steps[1].expected,
+            "The dashboard loads and shows the signed-in user's name",
+            "case 0 step 2 expected drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[0].tags, "smoke; login",
+            "case 0 tags must round-trip as the semicolon-separated string the guide shows"
+        );
+        assert_eq!(
+            cases[0].automation_status, "Not Automated",
+            "case 0 automation_status drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[0].module_value, "Login",
+            "case 0 module_value drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[0].preconditions, "A test account exists",
+            "case 0 preconditions drifted from the guide's worked example - preconditions has no warning path in the importer, so this assertion is the only thing that would catch silent drift"
+        );
+
+        // Case 1 ("Checkout") - same coverage, including the update path.
+        assert_eq!(cases[1].steps.len(), 1, "case 1 must keep its single step");
+        assert_eq!(
+            cases[1].steps[0].action, "Pay with an expired card",
+            "case 1 step 1 action drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[1].steps[0].expected,
+            "An 'expired card' error is shown; no order is created",
+            "case 1 step 1 expected drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[1].tags, "regression; checkout",
+            "case 1 tags must round-trip as the semicolon-separated string the guide shows"
+        );
+        assert_eq!(
+            cases[1].automation_status, "Planned",
+            "case 1 automation_status drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[1].module_value, "Checkout",
+            "case 1 module_value drifted from the guide's worked example"
+        );
+        assert_eq!(
+            cases[1].preconditions, "",
+            "case 1 preconditions must round-trip as empty, matching the guide's worked example"
+        );
+
         // Both must be submit-ready
-        assert!(cases[0].is_valid().is_ok() && cases[1].is_valid().is_ok());
+        assert!(
+            cases[0].is_valid().is_ok() && cases[1].is_valid().is_ok(),
+            "both cases from the guide's worked example must pass TestCase::is_valid()"
+        );
+
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }
