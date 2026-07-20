@@ -131,16 +131,20 @@ export default function AiGuideWizard({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface p-5 shadow-2xl"
+        className="flex max-h-[85vh] w-full max-w-md flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div>
+        <div className="shrink-0">
           <h2 className="text-sm font-semibold text-text">AI test-case guide</h2>
           <p className="text-xs text-muted">
             Step {step + 1} of {STEP_TITLES.length} - {STEP_TITLES[step]}
           </p>
         </div>
 
+        {/* Only the step body scrolls - the header and the Back/Next footer
+            stay pinned, so the dialog never grows past the viewport no
+            matter how long a picklist is. */}
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         {step === 0 && (
           <div className="space-y-4">
             <p className="text-xs text-muted">
@@ -165,17 +169,19 @@ export default function AiGuideWizard({
               ) : (modules.data ?? []).length === 0 ? (
                 <p className="text-xs text-faint">No modules in use yet.</p>
               ) : (
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                  {modules.data!.map((m) => (
-                    <label key={m} className="flex items-center gap-1.5 text-xs text-text">
-                      <Checkbox
-                        ariaLabel={m}
-                        checked={!pruned.has(m)}
-                        onCheckedChange={(checked) => setPruned((p) => toggled(p, m, !checked))}
-                      />
-                      {m}
-                    </label>
-                  ))}
+                <div className="max-h-52 overflow-y-auto rounded-md border border-border p-2">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                    {modules.data!.map((m) => (
+                      <label key={m} className="flex items-center gap-1.5 text-xs text-text">
+                        <Checkbox
+                          ariaLabel={m}
+                          checked={!pruned.has(m)}
+                          onCheckedChange={(checked) => setPruned((p) => toggled(p, m, !checked))}
+                        />
+                        {m}
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -346,8 +352,9 @@ export default function AiGuideWizard({
               </div>
             </div>
           ))}
+        </div>
 
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex shrink-0 justify-end gap-2 pt-1">
           {written ? (
             <Button size="sm" onClick={onClose}>
               Done
