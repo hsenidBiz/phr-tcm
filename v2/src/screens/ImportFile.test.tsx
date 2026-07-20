@@ -67,5 +67,5 @@ test("Generate AI guide opens the wizard", async () => {
   });
   renderScreen();
   fireEvent.click(screen.getByRole("button", { name: "Generate AI guide…" }));
-  expect(await screen.findByText(/AI guide/)).toBeInTheDocument();
+  expect(await screen.findByText("AI test-case guide")).toBeInTheDocument();
 });
