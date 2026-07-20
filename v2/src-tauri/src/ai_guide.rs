@@ -130,6 +130,11 @@ pub fn build_guide_body(o: &GuideOptions) -> String {
             s.push_str(&format!("- `{m}`\n"));
         }
         s.push('\n');
+    } else if o.modules_discovered {
+        s.push_str(
+            "No Module values are defined for this project. Leave `module` empty unless \
+            the developer tells you otherwise.\n\n",
+        );
     } else {
         s.push_str(
             "Module values could not be discovered from Azure DevOps when this guide \

@@ -81,6 +81,106 @@ fn body_is_deterministic() {
     assert_eq!(build_guide_body(&opts()), build_guide_body(&opts()));
 }
 
+#[test]
+fn discovered_but_empty_modules_get_the_no_modules_note() {
+    let mut o = opts();
+    o.modules.clear();
+    o.modules_discovered = true;
+    let body = build_guide_body(&o);
+    assert!(
+        body.contains("No Module values are defined for this project"),
+        "discovered-but-empty modules must render the new note"
+    );
+    assert!(
+        !body.contains("could not be discovered"),
+        "discovered-but-empty modules must NOT claim discovery failed"
+    );
+}
+
+/// Builds a JSON case using ONLY alias keys the guide's schema table
+/// advertises, so a dropped alias in the importer fails this test instead
+/// of silently drifting from the guide. Two cases are needed because
+/// `title` has two mutually exclusive aliases (`name` vs `test_case_name`).
+#[test]
+fn advertised_aliases_are_accepted_by_the_importer() {
+    let json = r#"[
+      {
+        "test_case_name": "Alias case one - title/id/steps/module/preconditions aliases",
+        "work_item_id": 55000,
+        "steps": [
+          { "step": "Do the thing", "expected_result": "Result A" },
+          { "step": "Do another thing", "result": "Result B" }
+        ],
+        "module_value": "Billing",
+        "prerequisites": "Some precondition"
+      },
+      {
+        "name": "Alias case two - name alias for title",
+        "steps": [
+          { "step": "Do X", "result": "Y" }
+        ]
+      }
+    ]"#;
+
+    let dir = std::env::temp_dir().join("tcm_ai_guide_alias_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("aliases-{}.json", std::process::id()));
+    std::fs::write(&path, json).unwrap();
+
+    let (cases, warnings) =
+        v2_lib::import_parser::parse_file(path.to_str().unwrap()).unwrap();
+
+    assert_eq!(warnings, Vec::<String>::new(), "alias-only JSON must import warning-free");
+    assert_eq!(cases.len(), 2, "both alias cases must survive parsing");
+
+    // Case 0: test_case_name, work_item_id, step/expected_result, step/result,
+    // module_value, prerequisites.
+    assert_eq!(
+        cases[0].title,
+        "Alias case one - title/id/steps/module/preconditions aliases",
+        "`test_case_name` alias must land in `title`"
+    );
+    assert_eq!(
+        cases[0].update_id,
+        Some(55000),
+        "`work_item_id` alias must land in `update_id`"
+    );
+    assert_eq!(cases[0].steps.len(), 2);
+    assert_eq!(
+        cases[0].steps[0].action, "Do the thing",
+        "`step` alias must land in step action"
+    );
+    assert_eq!(
+        cases[0].steps[0].expected, "Result A",
+        "`expected_result` alias must land in step expected"
+    );
+    assert_eq!(
+        cases[0].steps[1].action, "Do another thing",
+        "`step` alias must land in step action"
+    );
+    assert_eq!(
+        cases[0].steps[1].expected, "Result B",
+        "`result` alias must land in step expected"
+    );
+    assert_eq!(
+        cases[0].module_value, "Billing",
+        "`module_value` alias must land in `module_value`"
+    );
+    assert_eq!(
+        cases[0].preconditions, "Some precondition",
+        "`prerequisites` alias must land in `preconditions`"
+    );
+
+    // Case 1: `name` alias for title.
+    assert_eq!(
+        cases[1].title, "Alias case two - name alias for title",
+        "`name` alias must land in `title`"
+    );
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(&dir);
+}
+
 /// THE drift gate: the guide's own worked example must parse through
 /// the real importer. If the import format changes without updating
 /// the guide (or vice versa), this fails the build.
