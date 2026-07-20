@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit } from "../bindings";
+import AiGuideWizard from "../components/AiGuideWizard";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import QueueSection from "../components/QueueSection";
 import { Button } from "../components/ui/button";
@@ -21,6 +22,7 @@ export default function ImportFile({
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const importFile = useMutation({
     mutationFn: async () => {
@@ -69,6 +71,9 @@ export default function ImportFile({
           <Button disabled={importFile.isPending} onClick={() => importFile.mutate()}>
             {importFile.isPending ? "Importing" : "Import JSON"}
           </Button>
+          <Button variant="outline" onClick={() => setGuideOpen(true)}>
+            Generate AI guide…
+          </Button>
         </div>
         {warnings.length > 0 && (
           <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-warning">
@@ -80,6 +85,10 @@ export default function ImportFile({
       </section>
 
       <QueueSection org={org} project={project} pbiId={pbi.id} queue={queue} setQueue={setQueue} />
+
+      {guideOpen && (
+        <AiGuideWizard org={org} project={project} area={null} onClose={() => setGuideOpen(false)} />
+      )}
     </div>
   );
 }

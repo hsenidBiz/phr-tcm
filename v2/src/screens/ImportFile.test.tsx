@@ -59,3 +59,13 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   expect(await screen.findByText(/Failed: Bad - boom/)).toBeInTheDocument();
   expect(screen.getByText(/1 queued/)).toBeInTheDocument();
 });
+
+test("Generate AI guide opens the wizard", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "list_project_tags") return [];
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Generate AI guide…" }));
+  expect(await screen.findByText(/AI guide/)).toBeInTheDocument();
+});
