@@ -1,8 +1,27 @@
-//! AI-guide generation commands. Pure/local-file-write only - no ADO calls,
-//! no DELETE surface. Discovery values arrive from the frontend's existing
-//! queries; these commands never touch the network.
+//! AI-guide generation commands. Generation is pure/local-file-write only;
+//! `list_repo_folders` is the wizard's one ADO read (GET only). No DELETE
+//! surface anywhere.
 
+use crate::ado;
 use crate::ai_guide::{build_guide_body, flavor_files, GuideOptions};
+use crate::state::get_fresh_token;
+
+/// Immediate subfolders of `path` in a project repo - drives the wizard's
+/// docs-folder drill-down picker.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_repo_folders(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    repo_id: String,
+    path: String,
+) -> Result<Vec<String>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .repo_folders(&organization, &project, &repo_id, &path)
+        .await
+}
 
 #[tauri::command]
 #[specta::specta]

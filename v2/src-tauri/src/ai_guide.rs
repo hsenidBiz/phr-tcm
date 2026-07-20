@@ -22,7 +22,6 @@ pub struct GuideOptions {
     pub area: Option<String>,
     /// Pruned Module picklist (empty + !modules_discovered => discovery failed).
     pub modules: Vec<String>,
-    pub tags: Vec<String>,
     /// False when picklist discovery failed — the guide then carries a
     /// visible degradation note instead of silently omitting the list.
     pub modules_discovered: bool,
@@ -140,13 +139,6 @@ pub fn build_guide_body(o: &GuideOptions) -> String {
             "Module values could not be discovered from Azure DevOps when this guide \
             was generated. Ask the developer for the allowed Module values before using any.\n\n",
         );
-    }
-    if !o.tags.is_empty() {
-        s.push_str("**Tags in use** (prefer these; new tags are allowed):\n");
-        for t in &o.tags {
-            s.push_str(&format!("- `{t}`\n"));
-        }
-        s.push('\n');
     }
 
     // 6. Repo documentation (omitted when none given)

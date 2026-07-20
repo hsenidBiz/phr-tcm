@@ -27,7 +27,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "plugin:dialog|open") return "C:\\cases.json";
-    if (cmd === "list_project_tags") return [];
+    if (cmd === "list_repos") return [];
     if (cmd === "test_case_field_values") return [];
     if (cmd === "parse_import_file")
       return {
@@ -63,7 +63,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
 test("Generate AI guide opens the wizard", async () => {
   mockIPC((cmd) => {
     if (cmd === "test_case_field_values") return [];
-    if (cmd === "list_project_tags") return [];
+    if (cmd === "list_repos") return [];
   });
   renderScreen();
   fireEvent.click(screen.getByRole("button", { name: "Generate AI guide…" }));

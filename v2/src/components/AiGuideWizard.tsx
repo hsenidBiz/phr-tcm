@@ -11,6 +11,7 @@ import { unwrap, unwrapStr } from "../lib/ipc";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Textarea } from "./ui/input";
+import { Select } from "./ui/select";
 
 const FLAVORS: { id: GuideFlavor; label: string }[] = [
   { id: "Generic", label: "Generic markdown (AI_TEST_CASES.md)" },
@@ -49,16 +50,27 @@ export default function AiGuideWizard({
     enabled: Boolean(moduleRef),
     retry: false,
   });
-  const tags = useQuery({
-    queryKey: ["ai-guide-tags", org, project],
-    queryFn: () => unwrap(commands.listProjectTags(org, project)),
+  // Repo + folder browsing for the docs-folder picker (step 2). Repos share
+  // the PR panel's cache key; folders re-fetch per drill-down path.
+  const [repoId, setRepoId] = useState("");
+  const [folderPath, setFolderPath] = useState("/");
+  const repos = useQuery({
+    queryKey: ["repos", org, project],
+    queryFn: () => unwrap(commands.listRepos(org, project)),
+    staleTime: 60 * 60_000,
+    retry: false,
+  });
+  const folders = useQuery({
+    queryKey: ["ai-guide-folders", org, project, repoId, folderPath],
+    queryFn: () => unwrap(commands.listRepoFolders(org, project, repoId, folderPath)),
+    enabled: Boolean(repoId),
     retry: false,
   });
 
   // Pruning state: every discovered value starts checked (included); an
   // unticked box excludes that value from the generated options.
   const [pruned, setPruned] = useState<Set<string>>(new Set());
-  const [prunedTags, setPrunedTags] = useState<Set<string>>(new Set());
+  const [pickedDocs, setPickedDocs] = useState<string[]>([]);
   const [docPathsText, setDocPathsText] = useState("");
   const [conventions, setConventions] = useState("");
   const [flavors, setFlavors] = useState<Set<GuideFlavor>>(new Set(["Generic"]));
@@ -75,12 +87,14 @@ export default function AiGuideWizard({
     project,
     area,
     modules: (modules.data ?? []).filter((m) => !pruned.has(m)),
-    tags: (tags.data ?? []).filter((t) => !prunedTags.has(t)),
     modules_discovered: modulesDiscovered,
-    doc_paths: docPathsText
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean),
+    doc_paths: [
+      ...pickedDocs,
+      ...docPathsText
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ],
     conventions,
     flavors: [...flavors],
     generated_on: new Date().toISOString().slice(0, 10),
@@ -166,50 +180,121 @@ export default function AiGuideWizard({
               )}
             </div>
 
-            <div className="space-y-1.5">
-              <p className="text-xs font-semibold text-muted">Tags</p>
-              {tags.isError ? (
-                <p className="text-xs text-faint">Tags could not be discovered for this project.</p>
-              ) : tags.isLoading ? (
-                <p className="text-xs text-faint">Loading tags…</p>
-              ) : (tags.data ?? []).length === 0 ? (
-                <p className="text-xs text-faint">No tags in use yet.</p>
-              ) : (
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                  {tags.data!.map((t) => (
-                    <label key={t} className="flex items-center gap-1.5 text-xs text-text">
-                      <Checkbox
-                        ariaLabel={t}
-                        checked={!prunedTags.has(t)}
-                        onCheckedChange={(checked) => setPrunedTags((p) => toggled(p, t, !checked))}
-                      />
-                      {t}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
         )}
 
         {step === 1 && (
           <div className="space-y-3">
+            <div className="space-y-1.5">
+              <p className="text-xs font-semibold text-muted">Documentation folder</p>
+              <p className="text-xs text-faint">
+                Pick the repo you are working in, then browse to its docs/prototype folder.
+              </p>
+              <Select
+                aria-label="Repository"
+                className="w-full py-1.5 text-xs"
+                value={repoId}
+                onChange={(e) => {
+                  setRepoId(e.target.value);
+                  setFolderPath("/");
+                }}
+              >
+                <option value="">Pick a repository…</option>
+                {(repos.data ?? []).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </Select>
+              {repoId &&
+                (folders.isError ? (
+                  <p className="text-xs text-faint">
+                    Could not browse this repository - add the folder manually below.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 rounded-md border border-border p-2">
+                    {/* The header row stays put while a drill-down loads, so
+                        "Use this folder" never jumps out from under the mouse. */}
+                    <div className="flex items-center gap-2">
+                      <span className="id-mono flex-1 truncate text-xs text-muted">{folderPath}</span>
+                      {folderPath !== "/" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            setFolderPath(folderPath.slice(0, folderPath.lastIndexOf("/")) || "/")
+                          }
+                        >
+                          Up
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={folderPath === "/"}
+                        onClick={() => {
+                          const glob = `${folderPath.replace(/^\//, "")}/**`;
+                          setPickedDocs((p) => (p.includes(glob) ? p : [...p, glob]));
+                        }}
+                      >
+                        Use this folder
+                      </Button>
+                    </div>
+                    {folders.isLoading ? (
+                      <p className="text-xs text-faint">Loading folders…</p>
+                    ) : (folders.data ?? []).length === 0 ? (
+                      <p className="text-xs text-faint">No subfolders here.</p>
+                    ) : (
+                      <div className="max-h-28 space-y-0.5 overflow-y-auto">
+                        {folders.data!.map((f) => (
+                          <button
+                            key={f}
+                            className="block w-full truncate rounded px-1.5 py-0.5 text-left text-xs text-text hover:bg-surface-2"
+                            onClick={() => setFolderPath(f)}
+                          >
+                            {f.slice(f.lastIndexOf("/") + 1)}/
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              {pickedDocs.length > 0 && (
+                <ul className="space-y-0.5">
+                  {pickedDocs.map((p) => (
+                    <li key={p} className="flex items-center gap-2 text-xs text-text">
+                      <span className="id-mono flex-1 truncate">{p}</span>
+                      <button
+                        aria-label={`Remove ${p}`}
+                        className="text-faint hover:text-danger"
+                        onClick={() => setPickedDocs((d) => d.filter((x) => x !== p))}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <label className="block text-xs text-muted">
-              Documentation paths
+              Documentation paths (manual)
               <Textarea
                 aria-label="Documentation paths"
-                className="mt-1 h-20 w-full font-mono text-xs"
+                className="mt-1 h-14 w-full font-mono text-xs"
                 placeholder={"docs/screens/**\nREADME.md"}
                 value={docPathsText}
                 onChange={(e) => setDocPathsText(e.target.value)}
               />
-              <span className="mt-1 block text-faint">One glob or path per line, relative to the repo root.</span>
+              <span className="mt-1 block text-faint">
+                One glob or path per line, relative to the repo root - use this when the folder
+                isn't in the repo yet.
+              </span>
             </label>
             <label className="block text-xs text-muted">
               Team conventions
               <Textarea
                 aria-label="Team conventions"
-                className="mt-1 h-20 w-full"
+                className="mt-1 h-14 w-full"
                 placeholder="Anything AI tools should know about how your team writes test cases…"
                 value={conventions}
                 onChange={(e) => setConventions(e.target.value)}

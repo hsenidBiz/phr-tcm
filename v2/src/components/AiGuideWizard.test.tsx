@@ -27,15 +27,16 @@ function renderWizard(onClose = vi.fn()) {
   return onClose;
 }
 
-test("step 1 shows discovered modules and tags as checked boxes; unticking prunes", async () => {
+test("step 1 shows discovered modules as checked boxes; unticking prunes", async () => {
   mockIPC((cmd) => {
     if (cmd === "test_case_field_values") return ["Login", "Checkout"];
-    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "list_repos") return [];
   });
   renderWizard();
   expect(await screen.findByLabelText("Login")).toBeChecked();
   expect(screen.getByLabelText("Checkout")).toBeChecked();
-  expect(screen.getByLabelText("smoke")).toBeChecked();
+  // Tags are deliberately NOT offered - large orgs have hundreds.
+  expect(screen.queryByText("Tags")).not.toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("Checkout")); // prune it
   expect(screen.getByLabelText("Checkout")).not.toBeChecked();
 });
@@ -43,18 +44,59 @@ test("step 1 shows discovered modules and tags as checked boxes; unticking prune
 test("discovery failure degrades with a note, not a blocked wizard", async () => {
   mockIPC((cmd) => {
     if (cmd === "test_case_field_values") throw "boom";
-    if (cmd === "list_project_tags") return [];
+    if (cmd === "list_repos") return [];
   });
   renderWizard();
   expect(await screen.findByText(/could not be discovered/i)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 });
 
-test("full walk-through: doc paths + flavors reach writeAiGuide with the pruned payload", async () => {
+test("the docs step browses a repo's folders and picks one as a doc path", async () => {
+  let writeArgs: Record<string, unknown> | null = null;
+  const folderCalls: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "list_repos")
+      return [
+        { id: "r1", name: "web" },
+        { id: "r2", name: "api" },
+      ];
+    if (cmd === "list_repo_folders") {
+      const path = (args as { path: string }).path;
+      folderCalls.push(path);
+      if (path === "/") return ["/Prototype", "/src"];
+      if (path === "/Prototype") return [];
+      return [];
+    }
+    if (cmd === "write_ai_guide") {
+      writeArgs = args as Record<string, unknown>;
+      return ["AI_TEST_CASES.md"];
+    }
+  });
+  renderWizard();
+  fireEvent.click(await screen.findByRole("button", { name: "Next" })); // -> docs step
+
+  // Pick a repo -> its root folders load.
+  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r1" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Prototype/" })); // descend
+  await waitFor(() => expect(folderCalls).toContain("/Prototype"));
+  fireEvent.click(screen.getByRole("button", { name: "Use this folder" }));
+  expect(screen.getByText("Prototype/**")).toBeInTheDocument(); // picked list
+
+  // Finish the wizard and confirm the picked folder reaches the payload.
+  fireEvent.click(screen.getByRole("button", { name: "Next" })); // -> flavors
+  fireEvent.click(screen.getByRole("button", { name: "Next" })); // -> output
+  fireEvent.click(screen.getByRole("button", { name: "Save to folder…" }));
+  await waitFor(() => expect(writeArgs).not.toBeNull());
+  const opts = (writeArgs as unknown as { options: Record<string, unknown> }).options;
+  expect(opts.doc_paths).toEqual(["Prototype/**"]);
+});
+
+test("full walk-through: manual doc paths + flavors reach writeAiGuide with the pruned payload", async () => {
   let writeArgs: Record<string, unknown> | null = null;
   mockIPC((cmd, args) => {
     if (cmd === "test_case_field_values") return ["Login", "Checkout"];
-    if (cmd === "list_project_tags") return [];
+    if (cmd === "list_repos") return [];
     if (cmd === "write_ai_guide") {
       writeArgs = args as Record<string, unknown>;
       return ["AI_TEST_CASES.md"];
@@ -76,7 +118,7 @@ test("full walk-through: doc paths + flavors reach writeAiGuide with the pruned 
   await waitFor(() => expect(writeArgs).not.toBeNull());
   const opts = (writeArgs as unknown as { options: Record<string, unknown> }).options;
   expect(opts.modules).toEqual(["Login"]); // pruned
-  expect(opts.docPaths ?? opts.doc_paths).toEqual(["docs/screens/**", "README.md"]);
+  expect(opts.doc_paths).toEqual(["docs/screens/**", "README.md"]);
   expect((opts.flavors as string[]).length).toBe(2);
   await screen.findByText(/AI_TEST_CASES\.md/); // success summary
   fireEvent.click(screen.getByRole("button", { name: "Done" }));

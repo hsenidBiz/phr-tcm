@@ -167,6 +167,40 @@ impl AdoClient {
         Ok(repos)
     }
 
+    /// Immediate subfolders of `scope_path` in a repo (one drill-down level),
+    /// for the AI-guide wizard's docs-folder picker. GET only. Returns
+    /// repo-root-relative folder paths like "/docs/screens", sorted.
+    pub async fn repo_folders(
+        &self,
+        org: &str,
+        project: &str,
+        repo_id: &str,
+        scope_path: &str,
+    ) -> Result<Vec<String>, AdoError> {
+        let scope = if scope_path.is_empty() { "/" } else { scope_path };
+        let url = format!(
+            "{}/{}/{}/_apis/git/repositories/{}/items?scopePath={}&recursionLevel=OneLevel&api-version=7.1",
+            self.base_url,
+            org,
+            project,
+            repo_id,
+            urlencoding::encode(scope)
+        );
+        let data = self.get_json(url).await?;
+        let mut folders: Vec<String> = data["value"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|item| item["isFolder"].as_bool().unwrap_or(false))
+            .filter_map(|item| item["path"].as_str().map(str::to_string))
+            // The listing includes the scope folder itself - only descend.
+            .filter(|p| p != scope && p != "/")
+            .collect();
+        folders.sort_by_key(|p| p.to_lowercase());
+        Ok(folders)
+    }
+
     async fn pull_requests_where(
         &self,
         org: &str,

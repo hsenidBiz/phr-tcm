@@ -18,7 +18,6 @@ fn opts() -> GuideOptions {
         project: "Web".into(),
         area: Some("Web\\Gamma Guardians".into()),
         modules: vec!["Login".into(), "Checkout".into()],
-        tags: vec!["smoke".into(), "regression".into()],
         modules_discovered: true,
         doc_paths: vec!["docs/screens/**".into(), "README.md".into()],
         conventions: "Tag UI cases with 'ui'.".into(),
@@ -33,7 +32,6 @@ fn command_opts(flavors: Vec<GuideFlavor>) -> GuideOptions {
         project: "Web".into(),
         area: None,
         modules: vec!["Login".into()],
-        tags: vec![],
         modules_discovered: true,
         doc_paths: vec![],
         conventions: String::new(),
@@ -54,7 +52,6 @@ fn body_contains_fixed_sections_and_custom_values() {
     assert!(body.contains("semicolon")); // tag separator rule
     // Custom layer
     assert!(body.contains("Login") && body.contains("Checkout"));
-    assert!(body.contains("smoke"));
     assert!(body.contains("docs/screens/**"));
     assert!(body.contains("Tag UI cases with 'ui'."));
     assert!(body.contains("2026-07-20")); // snapshot stamp
@@ -68,7 +65,6 @@ fn empty_custom_inputs_omit_their_sections() {
     o.conventions = String::new();
     o.modules.clear();
     o.modules_discovered = false;
-    o.tags.clear();
     let body = build_guide_body(&o);
     assert!(!body.contains("## Repository documentation"));
     assert!(!body.contains("## Team conventions"));

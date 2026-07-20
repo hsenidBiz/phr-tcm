@@ -98,7 +98,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             prs::board_pr_links,
             prs::pr_work_items,
             ai_guide::preview_ai_guide,
-            ai_guide::write_ai_guide
+            ai_guide::write_ai_guide,
+            ai_guide::list_repo_folders
         ])
 }
 

@@ -341,6 +341,8 @@ function applyPatches() {
         { id: "demo-repo-1", name: "demo-web" },
         { id: "demo-repo-2", name: "demo-api" },
       ]),
+    listRepoFolders: (_org: string, _project: string, _repoId: string, path: string) =>
+      ok(path === "/" ? ["/Prototype", "/docs", "/src"] : path === "/docs" ? ["/docs/screens"] : []),
     prOverview: () =>
       ok({
         awaiting: [

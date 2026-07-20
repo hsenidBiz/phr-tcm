@@ -136,6 +136,11 @@ export const commands = {
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
 	previewAiGuide: (options: GuideOptions) => __TAURI_INVOKE<string>("preview_ai_guide", { options }),
 	writeAiGuide: (dir: string, options: GuideOptions) => typedError<string[], string>(__TAURI_INVOKE("write_ai_guide", { dir, options })),
+	/**
+	 *  Immediate subfolders of `path` in a project repo - drives the wizard's
+	 *  docs-folder drill-down picker.
+	 */
+	listRepoFolders: (organization: string, project: string, repoId: string, path: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_repo_folders", { organization, project, repoId, path })),
 };
 
 /** Events */
@@ -248,7 +253,6 @@ export type GuideOptions = {
 	area: string | null,
 	/**  Pruned Module picklist (empty + !modules_discovered => discovery failed). */
 	modules: string[],
-	tags: string[],
 	/**
 	 *  False when picklist discovery failed — the guide then carries a
 	 *  visible degradation note instead of silently omitting the list.

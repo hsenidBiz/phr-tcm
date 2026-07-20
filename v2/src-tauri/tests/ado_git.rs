@@ -202,3 +202,27 @@ async fn pr_work_items_render_like_devops() {
     assert_eq!(wi.state_color, "007acc"); // resolved from the type's states
     assert!(wi.url.ends_with("/org/proj/_workitems/edit/143783"));
 }
+
+#[tokio::test]
+async fn repo_folders_lists_one_level_excluding_the_scope_itself() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/repo-guid/items"))
+        .and(query_param("scopePath", "/"))
+        .and(query_param("recursionLevel", "OneLevel"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"path": "/", "isFolder": true, "gitObjectType": "tree"},
+                {"path": "/src", "isFolder": true, "gitObjectType": "tree"},
+                {"path": "/Prototype", "isFolder": true, "gitObjectType": "tree"},
+                {"path": "/README.md", "gitObjectType": "blob"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let folders = client.repo_folders("org", "proj", "repo-guid", "").await.unwrap();
+    // Files and the scope folder itself are excluded; results sort case-insensitively.
+    assert_eq!(folders, vec!["/Prototype".to_string(), "/src".to_string()]);
+}
