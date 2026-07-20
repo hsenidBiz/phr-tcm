@@ -253,6 +253,10 @@ mod tests {
 
         // Case 0 ("Login") - every field the guide's worked example advertises
         // must survive the trip through the real importer.
+        assert_eq!(
+            cases[0].title, "Login - valid credentials reach the dashboard",
+            "case 0 title drifted from the guide's worked example"
+        );
         assert_eq!(cases[0].steps.len(), 2, "case 0 must keep both of its steps");
         assert_eq!(
             cases[0].steps[0].action, "Open the sign-in page",
@@ -290,6 +294,10 @@ mod tests {
         );
 
         // Case 1 ("Checkout") - same coverage, including the update path.
+        assert_eq!(
+            cases[1].title, "Checkout - expired card is rejected with a clear error",
+            "case 1 title drifted from the guide's worked example"
+        );
         assert_eq!(cases[1].steps.len(), 1, "case 1 must keep its single step");
         assert_eq!(
             cases[1].steps[0].action, "Pay with an expired card",
