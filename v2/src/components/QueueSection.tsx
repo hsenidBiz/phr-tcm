@@ -10,6 +10,7 @@ import { loadNotes } from "../lib/caseNotes";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
+import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -100,6 +101,13 @@ export default function QueueSection({
       else next.add(i);
       return next;
     });
+  // One row at a time is editable in place; queue-length changes (remove,
+  // import, submit) shift indices, so any of them closes the editor.
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  useEffect(() => {
+    setEditingIdx(null);
+  }, [queue.length]);
+
   // Per-row steps preview (collapsed by default): check what will actually
   // be written before submitting, for creates and updates alike.
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
@@ -282,13 +290,36 @@ export default function QueueSection({
                       <span className="ml-2 text-xs text-warning">{duplicates[i]}</span>
                     )}
                   </span>
-                  <button
-                    className="text-xs text-faint hover:text-danger"
-                    onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}
-                  >
-                    Remove
-                  </button>
+                  <span className="flex items-center gap-3">
+                    <button
+                      className="text-xs text-faint hover:text-accent disabled:opacity-50"
+                      disabled={submit.isPending}
+                      onClick={() => setEditingIdx((cur) => (cur === i ? null : i))}
+                    >
+                      {editingIdx === i ? "Close" : "Edit"}
+                    </button>
+                    <button
+                      className="text-xs text-faint hover:text-danger disabled:opacity-50"
+                      disabled={submit.isPending}
+                      onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  </span>
                 </div>
+                {editingIdx === i && (
+                  <QueueCaseEditor
+                    original={tc}
+                    org={org}
+                    project={project}
+                    onSave={(next) => {
+                      setQueue((q) => q.map((t, j) => (j === i ? next : t)));
+                      setEditingIdx(null);
+                      toast.success("Queued case updated.");
+                    }}
+                    onCancel={() => setEditingIdx(null)}
+                  />
+                )}
                 {expandedSteps.has(i) && (
                   <div className="border-t border-border">
                     {tc.preconditions && (

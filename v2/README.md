@@ -32,6 +32,10 @@ test count.
   creates a new case.
 - Queue cases before writing: **View in browser** (an HTML report opened
   directly), **Export JSON**, **Remove all**, or remove individually.
+- **Edit queued cases in place**: every queued row (imported or manual) has an
+  **Edit** action opening the same form as the case editor — title, tags,
+  status, module, preconditions, and the step grid — saving back into the
+  queue; a kept `id` still updates that work item on submit.
 - The review gate shows a **git-style diff preview** for every queued item:
   creates carry a **NEW** badge, updates show field old → new and per-step
   **word-level diffs** (added words highlighted, removed words struck), steps
