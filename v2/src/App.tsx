@@ -4,7 +4,13 @@ import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from 
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
-import { markChangelogSeen, pendingChangelog, type ChangelogEntry } from "./lib/changelog";
+import {
+  CHANGELOG,
+  markChangelogSeen,
+  pendingChangelog,
+  SHOW_CHANGELOG_EVENT,
+  type ChangelogEntry,
+} from "./lib/changelog";
 import AnimatedContent from "./components/AnimatedContent";
 import ChangelogModal from "./components/ChangelogModal";
 import CommandPalette from "./components/CommandPalette";
@@ -201,6 +207,14 @@ export default function App() {
       .catch(() => {});
     setChangelog(null);
   };
+  // Dev-only preview trigger (DevPanel -> window event). Two entries so the
+  // multi-version stacking is visible. Compile-time eliminated in releases.
+  useEffect(() => {
+    if (!DEV_TOOLS) return;
+    const fire = () => setChangelog(CHANGELOG.slice(0, 2));
+    window.addEventListener(SHOW_CHANGELOG_EVENT, fire);
+    return () => window.removeEventListener(SHOW_CHANGELOG_EVENT, fire);
+  }, []);
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings fires the start-tour event.

@@ -1,12 +1,28 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Bug, ChevronDown, ChevronUp } from "lucide-react";
-import { useState } from "react";
+import { Bug, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import type { PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { Button } from "../components/ui/button";
+import { SHOW_CHANGELOG_EVENT } from "../lib/changelog";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { isDemoMode, toggleDemoMode } from "./demo";
+
+/** Remembered panel position - by default it sits bottom-left, which covers
+ * the sidebar's collapse button, so it is draggable by the grip handle. */
+const POS_KEY = "tcm-v2-dev-panel-pos";
+
+function loadPos(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(POS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    return typeof p?.x === "number" && typeof p?.y === "number" ? p : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * DEVELOPER PANEL - dev builds only. The mount site in App.tsx gates on
@@ -35,6 +51,36 @@ export default function DevPanel({
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
 
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(loadPos);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragOffset = useRef<{ dx: number; dy: number } | null>(null);
+
+  const onGripDown = (e: React.PointerEvent) => {
+    const r = panelRef.current?.getBoundingClientRect();
+    if (!r) return;
+    dragOffset.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    (e.target as Element).setPointerCapture(e.pointerId);
+  };
+  const onGripMove = (e: React.PointerEvent) => {
+    if (!dragOffset.current || !panelRef.current) return;
+    const { offsetWidth: w, offsetHeight: h } = panelRef.current;
+    setPos({
+      x: Math.min(Math.max(0, e.clientX - dragOffset.current.dx), window.innerWidth - w),
+      y: Math.min(Math.max(0, e.clientY - dragOffset.current.dy), window.innerHeight - h),
+    });
+  };
+  const onGripUp = () => {
+    dragOffset.current = null;
+    setPos((p) => {
+      try {
+        if (p) localStorage.setItem(POS_KEY, JSON.stringify(p));
+      } catch {
+        // session-only
+      }
+      return p;
+    });
+  };
+
   const appKeys = () =>
     Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!).filter((k) =>
       k.startsWith("tcm-v2-"),
@@ -47,15 +93,31 @@ export default function DevPanel({
   };
 
   return (
-    <div className="fixed bottom-4 left-4 z-50 w-72 rounded-lg border border-warning/60 bg-surface text-xs shadow-2xl">
-      <button
-        className="flex w-full items-center gap-2 px-3 py-2 font-semibold text-warning"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Bug size={13} />
-        DEV BUILD
-        <span className="ml-auto">{open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}</span>
-      </button>
+    <div
+      ref={panelRef}
+      className="fixed z-50 w-72 rounded-lg border border-warning/60 bg-surface text-xs shadow-2xl"
+      style={pos ? { left: pos.x, top: pos.y } : { left: 16, bottom: 16 }}
+    >
+      <div className="flex items-center">
+        <span
+          aria-label="Drag the dev panel"
+          title="Drag to move"
+          className="cursor-move py-2 pl-2 text-warning/70 hover:text-warning"
+          onPointerDown={onGripDown}
+          onPointerMove={onGripMove}
+          onPointerUp={onGripUp}
+        >
+          <GripVertical size={13} />
+        </span>
+        <button
+          className="flex flex-1 items-center gap-2 py-2 pl-1 pr-3 font-semibold text-warning"
+          onClick={() => setOpen((o) => !o)}
+        >
+          <Bug size={13} />
+          DEV BUILD
+          <span className="ml-auto">{open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}</span>
+        </button>
+      </div>
 
       {open && (
         <div className="space-y-3 border-t border-border p-3">
@@ -151,6 +213,13 @@ export default function DevPanel({
               </Button>
               <Button size="sm" variant="outline" onClick={onShowSignIn}>
                 Sign-in screen
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => window.dispatchEvent(new Event(SHOW_CHANGELOG_EVENT))}
+              >
+                Changelog
               </Button>
             </div>
           </div>

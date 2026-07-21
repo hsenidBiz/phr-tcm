@@ -78,6 +78,11 @@ export function entriesSince(seen: string, current: string): ChangelogEntry[] {
   );
 }
 
+/** Dev-only trigger: the DevPanel dispatches this window event to preview
+ * the post-update modal; App's DEV-gated listener responds. Lives here (not
+ * in dev/) so App can import it without statically pulling the dev module. */
+export const SHOW_CHANGELOG_EVENT = "tcm-v2-dev-show-changelog";
+
 const SEEN_KEY = "tcm-v2-changelog-seen";
 
 /** What the post-update check should do for this launch:
