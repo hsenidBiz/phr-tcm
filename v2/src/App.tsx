@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
@@ -20,12 +20,24 @@ import PrPanel from "./screens/PrPanel";
 import RunTests from "./screens/RunTests";
 import SignIn from "./screens/SignIn";
 import ViewCases from "./screens/ViewCases";
-import DevPanel from "./dev/DevPanel";
-
 /** Compile-time dev gate: statically false in `tauri build`, so everything
  * behind it (and the dev/ module itself) is dead-code-eliminated from
  * released builds. Test mode opts out so vitest sees the plain app. */
 const DEV_TOOLS = import.meta.env.DEV && import.meta.env.MODE !== "test";
+
+/** DevPanel must be a DYNAMIC import behind the gate: a static
+ * `import DevPanel from "./dev/DevPanel"` bundles dev/demo's module-level
+ * dataset into the release even though the render below is gated (the JSX
+ * gets shaken, module side effects don't). Lazy inside the statically-false
+ * branch drops the whole dev/ chunk from `tauri build`. */
+const DevPanel: ComponentType<{
+  org: string;
+  project: string;
+  pbi: PbiHit | null;
+  section: string;
+  workMode: boolean;
+  onShowSignIn: () => void;
+}> = DEV_TOOLS ? lazy(() => import("./dev/DevPanel")) : () => null;
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
@@ -366,14 +378,16 @@ export default function App() {
       </div>
 
       {DEV_TOOLS && signedIn && (
-        <DevPanel
-          org={org}
-          project={project}
-          pbi={pbi}
-          section={section}
-          workMode={workMode}
-          onShowSignIn={() => setDevAuth("out")}
-        />
+        <Suspense fallback={null}>
+          <DevPanel
+            org={org}
+            project={project}
+            pbi={pbi}
+            section={section}
+            workMode={workMode}
+            onShowSignIn={() => setDevAuth("out")}
+          />
+        </Suspense>
       )}
     </div>
   );
