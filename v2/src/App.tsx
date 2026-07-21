@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getVersion } from "@tauri-apps/api/app";
 import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
+import { markChangelogSeen, pendingChangelog, type ChangelogEntry } from "./lib/changelog";
 import AnimatedContent from "./components/AnimatedContent";
+import ChangelogModal from "./components/ChangelogModal";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
@@ -175,6 +178,30 @@ export default function App() {
   const signedIn =
     DEV_TOOLS && devAuth !== "real" ? devAuth === "in" : Boolean(status.data?.signed_in);
 
+  // Post-update "What's new": once per version change, after sign-in (so it
+  // never covers the sign-in screen). Fresh installs record the version
+  // silently - see lib/changelog.ts for the rules.
+  const [changelog, setChangelog] = useState<ChangelogEntry[] | null>(null);
+  const shownChangelogRef = useRef(false);
+  useEffect(() => {
+    if (!signedIn || shownChangelogRef.current) return;
+    shownChangelogRef.current = true;
+    getVersion()
+      .then((v) => {
+        const pending = pendingChangelog(v);
+        if (pending.length > 0) setChangelog(pending);
+      })
+      .catch(() => {
+        // version unavailable (tests) - skip quietly
+      });
+  }, [signedIn]);
+  const dismissChangelog = () => {
+    getVersion()
+      .then(markChangelogSeen)
+      .catch(() => {});
+    setChangelog(null);
+  };
+
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings fires the start-tour event.
   const [tourOpen, setTourOpen] = useState(false);
@@ -313,21 +340,32 @@ export default function App() {
               )}
             </SignIn>
           ) : workMode ? (
-            workSection === "board" ? (
-              <>
-                <h1 className="mb-4 text-lg font-semibold">Board</h1>
-                <div className="min-h-0 flex-1">
-                  <WorkBoard org={org} project={project} />
-                </div>
-              </>
-            ) : (
-              <>
-                <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  <PrPanel org={org} project={project} />
-                </div>
-              </>
-            )
+            // Same fade-up as the Test Case Manager tabs below: key remounts
+            // on section switch; the flex classes keep the board's height
+            // chain intact (the wrapper sits inside a flex-col main).
+            <AnimatedContent
+              key={workSection}
+              distance={14}
+              duration={0.3}
+              threshold={0}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              {workSection === "board" ? (
+                <>
+                  <h1 className="mb-4 text-lg font-semibold">Board</h1>
+                  <div className="min-h-0 flex-1">
+                    <WorkBoard org={org} project={project} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    <PrPanel org={org} project={project} />
+                  </div>
+                </>
+              )}
+            </AnimatedContent>
           ) : (
             // key={section} remounts the wrapper on tab switch, so every
             // screen fades up briefly instead of snapping in.
@@ -376,6 +414,8 @@ export default function App() {
         </main>
       </div>
       </div>
+
+      {changelog && <ChangelogModal entries={changelog} onClose={dismissChangelog} />}
 
       {DEV_TOOLS && signedIn && (
         <Suspense fallback={null}>

@@ -40,3 +40,12 @@ test("up-to-date check clears any stale banner state", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Check for updates/ }));
   await waitFor(() => expect(qc.getQueryData(["update"])).toBeNull());
 });
+
+test("the changelog history section lists released versions", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  expect(await screen.findByText("Changelog")).toBeInTheDocument();
+  expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
+  expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
+});

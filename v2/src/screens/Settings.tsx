@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
+import { CHANGELOG } from "../lib/changelog";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands } from "../bindings";
@@ -175,6 +176,28 @@ export default function Settings(_props: { org: string; project: string }) {
         <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
           {check.isPending ? "Checking" : "Check for updates"}
         </Button>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Changelog</h2>
+        <p className="text-sm text-muted">
+          What changed in each version - the same notes the post-update popup shows.
+        </p>
+        <div className="max-h-72 space-y-4 overflow-y-auto rounded-md border border-border p-3">
+          {CHANGELOG.map((e) => (
+            <div key={e.version} className="space-y-1.5">
+              <h3 className="text-xs font-semibold text-text">
+                Version {e.version}
+                <span className="ml-2 font-normal text-faint">{e.date}</span>
+              </h3>
+              <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
+                {e.items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );
