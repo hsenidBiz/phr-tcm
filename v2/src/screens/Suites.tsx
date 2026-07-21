@@ -104,7 +104,7 @@ type SuiteAction = { planId: number; suiteIds: number[]; label: string };
 /** The v1 Test Suites browser: plan -> multi-level suite tree (plans with
  * no suites are hidden - the v1 rule). Folders collapse; a suite click
  * shows its points; folders and suites can be viewed in the browser or
- * handed to Edit Test Cases; requirement suites also jump to Run. */
+ * handed to Update Test Cases; requirement suites also jump to Run. */
 export default function Suites({
   org,
   project,

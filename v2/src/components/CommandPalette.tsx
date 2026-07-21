@@ -63,7 +63,7 @@ export default function CommandPalette({
         <Command.Group heading="Go to" className="px-1 text-[10px] uppercase tracking-wide text-faint">
           <Item onSelect={() => run(() => onNavigate("manual"))}>Manual Entry</Item>
           <Item onSelect={() => run(() => onNavigate("import"))}>Import File</Item>
-          <Item onSelect={() => run(() => onNavigate("edit"))}>Edit Test Cases</Item>
+          <Item onSelect={() => run(() => onNavigate("edit"))}>Update Test Cases</Item>
           <Item onSelect={() => run(() => onNavigate("run"))}>Run Tests</Item>
           <Item onSelect={() => run(() => onNavigate("suites"))}>Test Suites</Item>
           <Item onSelect={() => run(() => onNavigate("settings"))}>Settings</Item>

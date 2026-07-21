@@ -33,7 +33,7 @@ import WorkBoard from "./screens/WorkBoard";
 const TITLES: Record<Section, string> = {
   manual: "Manual Entry",
   import: "Import File",
-  edit: "Edit Test Cases",
+  edit: "Update Test Cases",
   view: "View Test Cases",
   run: "Run Tests",
   suites: "Test Suites",

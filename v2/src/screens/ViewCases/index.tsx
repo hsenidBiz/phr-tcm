@@ -21,7 +21,7 @@ import CommentModal from "./CommentModal";
 
 
 
-/** The View Test Cases tab, laid out like Edit Test Cases: compact rows
+/** The View Test Cases tab, laid out like Update Test Cases: compact rows
  * (chevron/double-click expands a read-only detail), Group by Title,
  * click/ctrl/shift selection - and View in browser renders the selection
  * (or everything the filter shows when nothing is selected). */
@@ -52,7 +52,7 @@ export default function ViewCases({
   );
 
   const pbiId = pbi?.id ?? null;
-  // Same key as Edit Test Cases so tab switches reuse the cached fetch.
+  // Same key as Update Test Cases so tab switches reuse the cached fetch.
   const queryKey = ["pbi-tcs", org, pbiId, prefs.moduleRef, prefs.preconditionsRef];
   const cases = useQuery({
     queryKey,

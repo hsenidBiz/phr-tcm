@@ -24,7 +24,7 @@ type Item<T extends string> = { id: T; label: string; icon: typeof PenLine };
 const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine },
   { id: "import", label: "Import File", icon: FileUp },
-  { id: "edit", label: "Edit Test Cases", icon: Pencil },
+  { id: "edit", label: "Update Test Cases", icon: Pencil },
   { id: "view", label: "View Test Cases", icon: Eye },
   { id: "run", label: "Run Tests", icon: PlayCircle },
   { id: "suites", label: "Test Suites", icon: FolderTree },

@@ -48,7 +48,7 @@ const STEPS: Step[] = [
   },
   {
     target: '[data-tour="nav-edit"]',
-    title: "Edit Test Cases",
+    title: "Update Test Cases",
     body: "Browse the PBI's linked cases: click to select, ctrl/shift for many, bulk edit fields, group by title, or export.",
   },
   {

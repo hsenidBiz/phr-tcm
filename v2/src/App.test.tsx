@@ -49,7 +49,7 @@ test("sidebar shows the v1 tabs and switches screens", async () => {
   expect(await screen.findByText("a@b.com")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
 
-  for (const tab of ["Import File", "Edit Test Cases", "Run Tests", "Test Suites"]) {
+  for (const tab of ["Import File", "Update Test Cases", "Run Tests", "Test Suites"]) {
     fireEvent.click(screen.getByRole("button", { name: tab }));
     expect(screen.getByRole("heading", { name: tab })).toBeInTheDocument();
   }
