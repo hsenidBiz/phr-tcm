@@ -13,6 +13,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.10.0",
+    date: "2026-07-21",
+    items: [
+      "What's new popup after updates (you're looking at it) plus a full changelog history in Settings.",
+      "Queued test cases can carry comments - saved in the exported JSON and shown in the queue, never sent to Azure DevOps.",
+      "If a PBI has no test plan when you submit, one is created automatically - and the app now tells you.",
+      "\"Edit Test Cases\" is now \"Update Test Cases\".",
+      "Pull Requests: descriptions render as rich text, expanded PRs list their linked work items, and your own PRs no longer appear twice.",
+      "Work Manager screens now glide in when switching, like the rest of the app.",
+      "Internal: release builds no longer bundle development demo data.",
+    ],
+  },
+  {
     version: "1.9.0",
     date: "2026-07-20",
     items: [
