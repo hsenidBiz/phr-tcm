@@ -112,6 +112,12 @@ export const commands = {
 	plan_id: number,
 	plan_name: string,
 	suite_id: number,
+	/**
+	 *  True when NO area-matched test plan existed and one was created on
+	 *  the fly - callers surface this to the user (plans appearing out of
+	 *  nowhere would otherwise be a mystery).
+	 */
+	created_plan: boolean,
 } | null, AdoError>(__TAURI_INVOKE("find_pbi_suite", { organization, project, pbiId })),
 	/**  Recent outcome history per test case for a plan (last 5, newest first). */
 	runHistory: (organization: string, project: string, planId: number) => typedError<CaseHistory[], AdoError>(__TAURI_INVOKE("run_history", { organization, project, planId })),
@@ -147,6 +153,7 @@ export const commands = {
 export const events = {
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
+	planCreated: makeEvent<PlanCreated>("plan-created"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 };
@@ -208,6 +215,12 @@ export type EnsuredSuite = {
 	plan_id: number,
 	plan_name: string,
 	suite_id: number,
+	/**
+	 *  True when NO area-matched test plan existed and one was created on
+	 *  the fly - callers surface this to the user (plans appearing out of
+	 *  nowhere would otherwise be a mystery).
+	 */
+	created_plan: boolean,
 };
 
 /**  A single field on an extra page. */
@@ -293,6 +306,15 @@ export type PbiHit = {
 	id: number,
 	title: string,
 	work_item_type: string,
+};
+
+/**
+ *  Emitted by submit_queue when the PBI had NO area-matched test plan and
+ *  one was created on the fly, before the upload proceeds - the frontend
+ *  tells the user so plans never appear out of nowhere.
+ */
+export type PlanCreated = {
+	plan_name: string,
 };
 
 export type PlanWithSuites = {

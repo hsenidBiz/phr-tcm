@@ -305,6 +305,7 @@ impl AdoClient {
                             plan_id: plan.id,
                             plan_name: plan.name.clone(),
                             suite_id: suite.id,
+                            created_plan: false,
                         }))
                     }
                     Ok(None) => {}
@@ -379,6 +380,7 @@ impl AdoClient {
                 }
             }
         }
+        let created_plan = best.is_none();
         let plan = match best {
             Some(p) => {
                 if p.root_suite_id.is_some() {
@@ -403,6 +405,7 @@ impl AdoClient {
             plan_id: plan.id,
             plan_name: plan.name,
             suite_id,
+            created_plan,
         })
     }
 }

@@ -148,9 +148,20 @@ export default function QueueSection({
   const submit = useMutation({
     mutationFn: async () => {
       setProgress({ done: 0, total: queue.length });
-      unlistenRef.current = await events.submitProgress.listen((e) => {
+      const unProgress = await events.submitProgress.listen((e) => {
         setProgress({ done: e.payload.index + 1, total: e.payload.total });
       });
+      // Fired before the upload loop when the PBI had no test plan and one
+      // was created on the fly - surface it so plans never appear silently.
+      const unPlan = await events.planCreated.listen((e) => {
+        toast.info(
+          `This PBI had no test plan - created "${e.payload.plan_name}" first, now uploading the test cases.`,
+        );
+      });
+      unlistenRef.current = () => {
+        unProgress();
+        unPlan();
+      };
       const r = await commands.submitQueue(
         org,
         project,

@@ -38,7 +38,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::SubmitProgress,
             events::SuiteScanProgress,
             audio::AudioSpectrum,
-            events::CaseNoteSaved
+            events::CaseNoteSaved,
+            events::PlanCreated
         ])
         .commands(collect_commands![
             misc::ping,

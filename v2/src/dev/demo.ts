@@ -154,8 +154,8 @@ const historyByCase = new Map<number, RunOutcome[]>([
 let nextRunId = 701;
 
 const SUITE_BY_PBI = new Map<number, EnsuredSuite>([
-  [1001, { plan_id: 90, plan_name: "Demo Test Plan", suite_id: 91 }],
-  [1002, { plan_id: 90, plan_name: "Demo Test Plan", suite_id: 93 }],
+  [1001, { plan_id: 90, plan_name: "Demo Test Plan", suite_id: 91, created_plan: false }],
+  [1002, { plan_id: 90, plan_name: "Demo Test Plan", suite_id: 93, created_plan: false }],
 ]);
 const PBI_BY_SUITE = new Map([...SUITE_BY_PBI].map(([pbi, s]) => [s.suite_id, pbi]));
 
@@ -282,7 +282,7 @@ function applyPatches() {
     },
 
     ensurePbiSuite: (_o: string, _p: string, pbiId: number) =>
-      ok(SUITE_BY_PBI.get(pbiId) ?? { plan_id: 90, plan_name: "Demo Test Plan", suite_id: 91 }),
+      ok(SUITE_BY_PBI.get(pbiId) ?? { plan_id: 90, plan_name: "Demo Test Plan", suite_id: 91, created_plan: false }),
     findPbiSuite: (_o: string, _p: string, pbiId: number) => ok(SUITE_BY_PBI.get(pbiId) ?? null),
     listPlansWithSuites: () =>
       ok([

@@ -12,6 +12,14 @@ pub struct SubmitProgress {
     pub action: String,
 }
 
+/// Emitted by submit_queue when the PBI had NO area-matched test plan and
+/// one was created on the fly, before the upload proceeds - the frontend
+/// tells the user so plans never appear out of nowhere.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct PlanCreated {
+    pub plan_name: String,
+}
+
 /// Emitted while test plans are being scanned for suites, so Run Tests and
 /// the Suites browser can show "Scanning plans X of Y" instead of a bare
 /// skeleton.

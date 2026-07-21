@@ -4,7 +4,7 @@
 use tauri::Manager;
 use tauri_specta::Event;
 
-use crate::events::{CaseNoteSaved, SubmitProgress};
+use crate::events::{CaseNoteSaved, PlanCreated, SubmitProgress};
 use crate::state::{get_fresh_token, SubmitCancel};
 use crate::{ado, import_parser, model, note_server};
 
@@ -130,9 +130,17 @@ pub async fn submit_queue(
             .get_work_item_paths(&organization, &project, pbi_id)
             .await
         {
-            let _ = client
+            // Still best-effort (a failure never blocks creation), but when
+            // the PBI had no test plan at all, the plan gets created FIRST
+            // and the user is told before the upload proceeds.
+            if let Ok(ensured) = client
                 .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
-                .await;
+                .await
+            {
+                if ensured.created_plan {
+                    let _ = PlanCreated { plan_name: ensured.plan_name }.emit(&app);
+                }
+            }
             pbi_area = area;
             pbi_iteration = iteration;
         }

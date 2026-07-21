@@ -105,6 +105,7 @@ async fn ensure_suite_reuses_existing_requirement_suite() {
         .unwrap();
     assert_eq!(ensured.plan_id, 9);
     assert_eq!(ensured.suite_id, 91);
+    assert!(!ensured.created_plan, "reusing a found suite must not claim plan creation");
     // Nothing was POSTed - reuse only.
     let posts = server
         .received_requests()
@@ -145,6 +146,47 @@ async fn ensure_suite_creates_plan_and_suite_when_none_exist() {
         .unwrap();
     assert_eq!(ensured.plan_id, 50);
     assert_eq!(ensured.suite_id, 501);
+    assert!(
+        ensured.created_plan,
+        "no plan existed - the caller must be able to tell the user one was created"
+    );
+    assert_eq!(ensured.plan_name, "Auth - Test Plan");
+}
+
+#[tokio::test]
+async fn existing_plan_missing_suite_creates_suite_but_not_plan() {
+    // An area-matched plan exists; only the PBI's requirement suite is
+    // missing. created_plan must stay false - the user is only told about
+    // PLAN creation, suite creation is routine.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": 9, "name": "Area Plan", "areaPath": "Proj\\Auth", "rootSuite": {"id": 90}}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{"id": 90, "name": "root", "suiteType": "staticTestSuite"}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 95})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let ensured = client
+        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "")
+        .await
+        .unwrap();
+    assert_eq!(ensured.plan_id, 9);
+    assert_eq!(ensured.suite_id, 95);
+    assert!(!ensured.created_plan, "the plan already existed - only the suite was created");
 }
 
 #[tokio::test]

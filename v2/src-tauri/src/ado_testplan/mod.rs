@@ -92,6 +92,10 @@ pub struct EnsuredSuite {
     pub plan_id: i32,
     pub plan_name: String,
     pub suite_id: i32,
+    /// True when NO area-matched test plan existed and one was created on
+    /// the fly - callers surface this to the user (plans appearing out of
+    /// nowhere would otherwise be a mystery).
+    pub created_plan: bool,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
