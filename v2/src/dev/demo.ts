@@ -13,7 +13,6 @@ import {
   type BoardData,
   type CaseHistory,
   type EnsuredSuite,
-  type GuideOptions,
   type PbiHit,
   type RunOutcome,
   type SubmitItemResult,
@@ -232,11 +231,6 @@ function applyPatches() {
     listTestCaseFields: () => ok([]),
     testCaseFieldValues: () => ok([]),
     listProjectTags: () => ok(["demo", "smoke", "regression"]),
-    // previewAiGuide isn't Result-wrapped (bindings.ts has no typedError here) -
-    // its fake must resolve a plain string, not ok(...).
-    previewAiGuide: (_options: GuideOptions) =>
-      Promise.resolve("# AI guide: writing test cases for Test Case Manager\n\n(demo preview)"),
-    writeAiGuide: (_dir: string, _options: GuideOptions) => ok(["AI_TEST_CASES.md"]),
     classificationPaths: () => ok(["Demo Project", "Demo Project\\Demo Team"]),
     activityValues: () => ok(["Development", "Testing"]),
 
@@ -341,8 +335,6 @@ function applyPatches() {
         { id: "demo-repo-1", name: "demo-web" },
         { id: "demo-repo-2", name: "demo-api" },
       ]),
-    listRepoFolders: (_org: string, _project: string, _repoId: string, path: string) =>
-      ok(path === "/" ? ["/Prototype", "/docs", "/src"] : path === "/docs" ? ["/docs/screens"] : []),
     prOverview: () =>
       ok({
         awaiting: [
