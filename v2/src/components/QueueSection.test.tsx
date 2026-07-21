@@ -119,3 +119,20 @@ test("removing a row closes any open editor (indices shift)", async () => {
   expect(screen.queryByLabelText("Case title")).not.toBeInTheDocument();
   expect(screen.getByText("Second case")).toBeInTheDocument();
 });
+
+test("a case's in-app comment shows on the row and is editable in the editor", async () => {
+  baseMocks();
+  renderQueue([makeCase({ comment: "Imported from sprint 12 sheet" })]);
+
+  // The note from the JSON file renders on the queue row.
+  expect(screen.getByText("Imported from sprint 12 sheet")).toBeInTheDocument();
+
+  // The inline editor exposes it as an in-app-only field.
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  const comment = await screen.findByLabelText("Comment (in-app only)");
+  fireEvent.change(comment, { target: { value: "Re-check with QA" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  expect(await screen.findByText("Re-check with QA")).toBeInTheDocument();
+  expect(screen.queryByText("Imported from sprint 12 sheet")).not.toBeInTheDocument();
+});

@@ -500,6 +500,11 @@ export type TestCase = {
 	preconditions: string,
 	/**  When set, update this existing work item instead of creating a new one. */
 	update_id: number | null,
+	/**
+	 *  In-app note that round-trips through the JSON export/import but is
+	 *  NEVER sent to Azure DevOps (no ADO field mapping reads it).
+	 */
+	comment?: string,
 };
 
 /**

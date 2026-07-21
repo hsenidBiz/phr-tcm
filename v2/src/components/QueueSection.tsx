@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
@@ -307,6 +307,13 @@ export default function QueueSection({
                     </button>
                   </span>
                 </div>
+                {/* In-app note from the JSON file - never sent to ADO. */}
+                {(tc.comment ?? "").trim() !== "" && (
+                  <p className="flex items-start gap-1.5 border-t border-border/60 px-3 py-1 text-xs text-muted">
+                    <MessageSquare size={12} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0 flex-1 whitespace-pre-wrap">{tc.comment}</span>
+                  </p>
+                )}
                 {editingIdx === i && (
                   <QueueCaseEditor
                     original={tc}

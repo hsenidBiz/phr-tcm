@@ -174,6 +174,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         module_value: "Auth".into(),
         preconditions: "Logged out".into(),
         update_id: None,
+        comment: String::new(),
     }
 }
 
@@ -186,15 +187,28 @@ async fn create_test_case_posts_json_patch() {
         .and(wiremock::matchers::body_partial_json(serde_json::json!([
             {"op": "add", "path": "/fields/System.Title", "value": "My case"}
         ])))
+        // The in-app comment must NEVER be sent to ADO in any form.
+        .and(NoCommentInBody)
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 777})))
         .mount(&server)
         .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let mut tc = sample_tc();
+    tc.comment = "IN-APP-ONLY sentinel".into();
     let id = client
-        .create_test_case("org", "proj", &sample_tc(), Some("Custom.Module"), "Area\\Sub", "It\\1", Some("Custom.Prec"))
+        .create_test_case("org", "proj", &tc, Some("Custom.Module"), "Area\\Sub", "It\\1", Some("Custom.Prec"))
         .await
         .unwrap();
     assert_eq!(id, 777);
+}
+
+/// Matcher rejecting any request whose body carries the in-app comment
+/// sentinel - the guard that `TestCase.comment` stays out of ADO payloads.
+struct NoCommentInBody;
+impl wiremock::Match for NoCommentInBody {
+    fn matches(&self, request: &wiremock::Request) -> bool {
+        !String::from_utf8_lossy(&request.body).contains("IN-APP-ONLY sentinel")
+    }
 }
 
 #[tokio::test]

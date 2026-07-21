@@ -319,6 +319,8 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             module_value,
             preconditions,
             update_id,
+            // The spreadsheet format has no comment column - JSON only.
+            comment: String::new(),
         });
     }
 
@@ -450,6 +452,12 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             .unwrap_or_default()
             .trim()
             .to_string();
+        // In-app note (round-trips through the JSON export; never sent to ADO).
+        let comment = json_value(&raw_v, &["comment", "notes"])
+            .map(value_to_string)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         let raw_steps = match obj.get("steps") {
             None | Some(serde_json::Value::Null) => vec![],
@@ -511,6 +519,7 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             module_value,
             preconditions,
             update_id,
+            comment,
         });
     }
 

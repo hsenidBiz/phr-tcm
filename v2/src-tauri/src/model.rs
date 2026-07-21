@@ -20,6 +20,10 @@ pub struct TestCase {
     pub preconditions: String,
     /// When set, update this existing work item instead of creating a new one.
     pub update_id: Option<i32>,
+    /// In-app note that round-trips through the JSON export/import but is
+    /// NEVER sent to Azure DevOps (no ADO field mapping reads it).
+    #[serde(default)]
+    pub comment: String,
 }
 
 impl TestCase {

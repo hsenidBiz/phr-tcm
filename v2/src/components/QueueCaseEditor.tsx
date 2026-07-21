@@ -70,6 +70,14 @@ export default function QueueCaseEditor({
         value={tc.preconditions}
         onChange={(e) => setTc((t) => ({ ...t, preconditions: e.target.value }))}
       />
+      {/* In-app note: round-trips through the JSON export, never sent to ADO. */}
+      <Textarea
+        aria-label="Comment (in-app only)"
+        className="h-12 w-full"
+        placeholder="Comment (in-app only - saved in the JSON file, never sent to Azure DevOps)"
+        value={tc.comment ?? ""}
+        onChange={(e) => setTc((t) => ({ ...t, comment: e.target.value }))}
+      />
 
       <StepsEditor steps={tc.steps} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
 

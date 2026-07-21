@@ -170,6 +170,7 @@ fn excel_round_trip_preserves_update_id_and_steps() {
             module_value: "Auth".into(),
             preconditions: "Logged out".into(),
             update_id: Some(4242),
+            comment: String::new(),
         },
         TestCase {
             title: "New case".into(),
@@ -228,6 +229,7 @@ fn json_export_round_trips_through_the_importer() {
             module_value: "Auth".into(),
             preconditions: "Logged out".into(),
             update_id: Some(77),
+            comment: "Flaky on Fridays - re-check with QA".into(),
         },
         TestCase {
             title: "New one".into(),
@@ -252,6 +254,10 @@ fn json_export_round_trips_through_the_importer() {
     assert_eq!(cases[0].update_id, Some(77));
     assert_eq!(cases[0].module_value, "Auth");
     assert_eq!(cases[0].preconditions, "Logged out");
+    // The in-app comment survives the JSON round trip (and only that -
+    // it is never mapped to an ADO field).
+    assert_eq!(cases[0].comment, "Flaky on Fridays - re-check with QA");
+    assert_eq!(cases[1].comment, "");
     assert_eq!(cases[1].update_id, None);
 }
 
@@ -265,6 +271,7 @@ fn html_export_carries_cases_and_search() {
         module_value: "Auth".into(),
         preconditions: "".into(),
         update_id: Some(42),
+        comment: String::new(),
     }];
     let path = tmp_path("report.html");
     v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None).unwrap();

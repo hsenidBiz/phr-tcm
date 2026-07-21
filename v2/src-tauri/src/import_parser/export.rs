@@ -116,6 +116,8 @@ pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String
                 "automation_status": tc.automation_status,
                 "module": tc.module_value,
                 "preconditions": tc.preconditions,
+                // In-app note: round-trips through this file, never sent to ADO.
+                "comment": tc.comment,
                 "steps": tc.steps.iter().map(|s| serde_json::json!({
                     "action": s.action, "expected": s.expected
                 })).collect::<Vec<_>>(),
