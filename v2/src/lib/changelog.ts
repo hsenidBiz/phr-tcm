@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.10.1",
+    date: "2026-07-22",
+    items: [
+      "Board: \"This sprint\" now works on area boards - it reads that team's own sprint (each team has its own here), and falls back to the previous sprint when a new one hasn't been created yet.",
+      "Board: hiding Done no longer leaves a long empty scroll, and area boards gained a filter by assignee.",
+      "Board: retired teams parked under \"Scrum Archive\" no longer clutter the area picker.",
+      "Refreshed styling on pull-request descriptions, empty states, and screenshot previews (now open fullscreen with zoom).",
+      "Dialogs now always cover the screen and stay centered, even with a long list behind them.",
+    ],
+  },
+  {
     version: "1.10.0",
     date: "2026-07-21",
     items: [
