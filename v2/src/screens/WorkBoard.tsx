@@ -148,6 +148,8 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const [openItem, setOpenItem] = useState<number | null>(null);
   const [quickTitle, setQuickTitle] = useState("");
   const [quickType, setQuickType] = useState("Task");
+  // Per-area, session-only (an assignee list rarely transfers between areas).
+  const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
 
   const boardKey = [
     "board",
@@ -263,8 +265,26 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     [board.data],
   );
 
+  // Assignee filter, offered on area boards only (My work is already one
+  // person; a PBI board is small). Options come from the items themselves -
+  // no team-membership API, so it always matches what's actually shown.
+  const UNASSIGNED = "Unassigned";
+  const assignees = useMemo(() => {
+    const names = new Set((board.data?.items ?? []).map((i) => i.assigned_to || UNASSIGNED));
+    return [...names].sort((a, b) =>
+      a === UNASSIGNED ? 1 : b === UNASSIGNED ? -1 : a.localeCompare(b),
+    );
+  }, [board.data]);
+
   const visible = (board.data?.items ?? []).filter((i) => {
     if (typeFilter.length > 0 && !typeFilter.includes(i.work_item_type)) return false;
+    if (
+      scope &&
+      !pbiMode &&
+      assigneeFilter.length > 0 &&
+      !assigneeFilter.includes(i.assigned_to || UNASSIGNED)
+    )
+      return false;
     if (filterText) {
       const t = filterText.toLowerCase();
       if (
@@ -298,7 +318,11 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             options={[
               "My work",
               "By PBI…",
-              ...(areas.data ?? []).map((a) => `Area: ${a}`),
+              // Retired teams get parked under a "Scrum Archive" area node in
+              // this org - hide that whole subtree from the picker.
+              ...(areas.data ?? [])
+                .filter((a) => !a.split("\\").some((seg) => seg.trim().toLowerCase() === "scrum archive"))
+                .map((a) => `Area: ${a}`),
             ]}
             onChange={(v) => {
               if (v === "By PBI…") {
@@ -307,8 +331,19 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
               }
               setPbiMode(false);
               setScope(!v || v === "My work" ? "" : v.replace(/^Area: /, ""));
+              setAssigneeFilter([]); // a different area means different people
             }}
           />
+          {scope && !pbiMode && (
+            <MultiSelect
+              ariaLabel="Filter assignee"
+              className="w-48"
+              allLabel="All assignees"
+              options={assignees}
+              selected={assigneeFilter}
+              onChange={setAssigneeFilter}
+            />
+          )}
           {pbiMode && (
             <div className="w-72">
               <PbiPicker org={org} project={project} pbi={pbiScope} onChange={setPbiScope} />
@@ -459,7 +494,10 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                   className={cn(
                     "min-w-0 rounded-md border border-border bg-bg transition-[opacity,padding] duration-150 ease-out",
                     collapsed
-                      ? "pointer-events-none overflow-hidden border-transparent p-0 opacity-0"
+                      ? // max-h-0 matters: a 0fr-wide column still sets the grid
+                        // row's height, and its cards wrapping at ~0px width made
+                        // the board scroll far past the visible items.
+                        "pointer-events-none max-h-0 overflow-hidden border-transparent p-0 opacity-0"
                       : "space-y-2 p-2",
                   )}
                   style={{ transitionDelay: collapsed ? "0ms" : "280ms" }}

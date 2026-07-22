@@ -351,3 +351,71 @@ test("This sprint toggle refetches with currentSprint=true", async () => {
   expect(localStorage.getItem("tcm-v2-this-sprint")).toBe("on");
   localStorage.removeItem("tcm-v2-this-sprint");
 });
+
+test("hidden Done column contributes no height (max-h-0), so the board doesn't scroll past visible items", async () => {
+  localStorage.setItem("tcm-v2-hide-done", "on");
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  const done = await screen.findByTestId("col-Done");
+  expect(done.className).toContain("max-h-0");
+  expect(done.className).toContain("overflow-hidden");
+  localStorage.removeItem("tcm-v2-hide-done");
+});
+
+test("areas under a Scrum Archive node are hidden from the scope picker", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths")
+      return ["HRM", "HRM\\Gamma Guardians", "HRM\\Scrum Archive\\Old Team"];
+  });
+  renderBoard();
+  await screen.findByTestId("col-To Do");
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  expect(await screen.findByText("Area: HRM\\Gamma Guardians")).toBeInTheDocument();
+  expect(screen.queryByText(/Scrum Archive/)).not.toBeInTheDocument();
+});
+
+test("area boards get an assignee filter built from the items; My work does not", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board")
+      return {
+        items: [
+          boardData.items[0], // Avin
+          { ...boardData.items[1], id: 13, column: "To Do", state: "To Do", assigned_to: "Kim", title: "Kim's task" },
+          { ...boardData.items[1], id: 14, column: "To Do", state: "To Do", assigned_to: "", title: "Nobody's task" },
+        ],
+        states_by_type: boardData.states_by_type,
+      };
+    if (cmd === "classification_paths") return ["HRM\\Gamma Guardians"];
+  });
+  renderBoard();
+  await screen.findByTestId("col-To Do");
+  // My work: no assignee filter offered.
+  expect(screen.queryByLabelText("Filter assignee")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  fireEvent.click(await screen.findByText("Area: HRM\\Gamma Guardians"));
+  // The scope switch refetches (new query key) - wait for the area board's
+  // items before opening the picker, or its options are still empty.
+  await screen.findByText("Kim's task");
+  const picker = await screen.findByLabelText("Filter assignee");
+  fireEvent.click(picker);
+  // "Kim" also appears on the board card - target the dropdown's option row.
+  const optionFor = (name: string) =>
+    screen.getAllByText(name).find((el) => el.closest("label"))!;
+  fireEvent.click(optionFor("Kim"));
+
+  // Only Kim's card stays; Avin's and the unassigned one filter out.
+  expect(screen.getByText("Kim's task")).toBeInTheDocument();
+  expect(screen.queryByText("Write docs")).not.toBeInTheDocument();
+  expect(screen.queryByText("Nobody's task")).not.toBeInTheDocument();
+
+  // Unassigned is a first-class option.
+  fireEvent.click(optionFor("Kim")); // untick
+  fireEvent.click(optionFor("Unassigned"));
+  expect(screen.getByText("Nobody's task")).toBeInTheDocument();
+  expect(screen.queryByText("Kim's task")).not.toBeInTheDocument();
+});
