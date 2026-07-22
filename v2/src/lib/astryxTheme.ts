@@ -1,4 +1,4 @@
-import { defineTheme } from "@astryxdesign/core/theme";
+import { defineTheme, tokenDefaults } from "@astryxdesign/core/theme";
 
 /**
  * Astryx theme built at runtime from the app's LIVE CSS tokens, so Astryx
@@ -17,6 +17,11 @@ export function buildAstryxTheme() {
   return defineTheme({
     name: "tcm",
     tokens: {
+      // The COMPLETE Astryx default token set first (spacing, shadows,
+      // durations, type scale...). Without it, components sized by theme
+      // variables collapse - e.g. EmptyState/Markdown padding needs
+      // --spacing-*. Our identity overrides layer on top.
+      ...tokenDefaults,
       "--color-accent": v("--color-accent", "#22c55e"),
       "--color-accent-muted": v("--color-accent-soft", "rgba(34, 197, 94, 0.15)"),
       "--color-on-accent": v("--color-on-accent", "#052e16"),

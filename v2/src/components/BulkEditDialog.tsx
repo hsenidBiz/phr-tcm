@@ -1,16 +1,14 @@
-import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
-import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
-import AstryxIsland from "./AstryxIsland";
 import ModuleField from "./ModuleField";
 import TagsField from "./TagsField";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Textarea } from "./ui/input";
+import { Modal } from "./ui/modal";
 import { Select } from "./ui/select";
 
 /** Bulk edit for the selected cases: every field defaults to "leave
@@ -90,20 +88,17 @@ export default function BulkEditDialog({
   });
 
   return (
-    <AstryxIsland>
-    {/* purpose="form": a backdrop misclick must not discard chosen edits. */}
-    <Dialog isOpen onOpenChange={(open) => !open && onClose()} width={440} purpose="form">
-      <Layout
-        header={
-          <DialogHeader
-            title={`Bulk edit ${cases.length} test case${cases.length === 1 ? "" : "s"}`}
-            subtitle="Only the fields you set here change - titles and steps are never touched."
-            onOpenChange={(open) => !open && onClose()}
-          />
-        }
-        content={
-          <LayoutContent>
-          <div className="space-y-4">
+    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-md flex-col gap-4 p-5">
+      <div className="shrink-0">
+        <h2 className="text-sm font-semibold text-text">
+          Bulk edit {cases.length} test case{cases.length === 1 ? "" : "s"}
+        </h2>
+        <p className="text-xs text-muted">
+          Only the fields you set here change - titles and steps are never touched.
+        </p>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         <label className="block text-xs text-muted">
           Automation status
           <Select className="mt-1 w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -174,21 +169,16 @@ export default function BulkEditDialog({
             Updating {progress.done} of {progress.total}
           </p>
         )}
-          </div>
-          </LayoutContent>
-        }
-        footer={
-          <LayoutFooter hasDivider>
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button size="sm" disabled={nothingChosen || apply.isPending} onClick={() => apply.mutate()}>
-              {apply.isPending ? "Applying" : `Apply to ${cases.length}`}
-            </Button>
-          </LayoutFooter>
-        }
-      />
-    </Dialog>
-    </AstryxIsland>
+      </div>
+
+      <div className="flex shrink-0 justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button size="sm" disabled={nothingChosen || apply.isPending} onClick={() => apply.mutate()}>
+          {apply.isPending ? "Applying" : `Apply to ${cases.length}`}
+        </Button>
+      </div>
+    </Modal>
   );
 }
