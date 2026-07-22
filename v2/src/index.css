@@ -1,3 +1,11 @@
+/* Astryx layers are declared FIRST so they sit below Tailwind's - our
+   utility classes always win a className override on Astryx components.
+   Only reset + component styles load; theming comes from a runtime
+   defineTheme() built from our own tokens (lib/astryxTheme.ts), so no
+   Meta palette ever leaks in and our --color-* names never collide. */
+@layer reset, astryx-base, astryx-theme;
+@import "@astryxdesign/core/reset.css";
+@import "@astryxdesign/core/astryx.css";
 @import "tailwindcss";
 @import "@fontsource/fira-sans/400.css";
 @import "@fontsource/fira-sans/500.css";

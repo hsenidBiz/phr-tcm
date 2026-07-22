@@ -60,3 +60,20 @@ if (typeof window !== "undefined" && !window.matchMedia) {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
 }
+
+// jsdom's HTMLDialogElement has no showModal/close (Astryx Dialog uses the
+// native element). Minimal polyfill: track open state and fire the "close"
+// event dismissal logic listens for.
+if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute("open", "");
+  };
+  HTMLDialogElement.prototype.show = function (this: HTMLDialogElement) {
+    this.setAttribute("open", "");
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement, returnValue?: string) {
+    if (returnValue !== undefined) this.returnValue = returnValue;
+    this.removeAttribute("open");
+    this.dispatchEvent(new Event("close", { bubbles: false }));
+  };
+}
