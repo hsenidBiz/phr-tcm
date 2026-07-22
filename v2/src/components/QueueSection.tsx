@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -10,6 +11,7 @@ import { loadNotes } from "../lib/caseNotes";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
+import AstryxIsland from "./AstryxIsland";
 import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
@@ -241,7 +243,12 @@ export default function QueueSection({
       </div>
 
       {queue.length === 0 && (
-        <p className="text-sm text-muted">Nothing queued yet - add cases above.</p>
+        <AstryxIsland>
+          <EmptyState
+            title="Nothing queued yet"
+            description="Add test cases above - they gather here for review before anything is created in Azure DevOps."
+          />
+        </AstryxIsland>
       )}
 
       {queue.length > 0 && (

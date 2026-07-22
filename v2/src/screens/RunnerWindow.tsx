@@ -1,3 +1,4 @@
+import { useLightbox } from "@astryxdesign/core/Lightbox";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -5,6 +6,7 @@ import { ClipboardPaste, Paperclip, Pin, PinOff, Scissors, X } from "lucide-reac
 import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
+import AstryxIsland from "../components/AstryxIsland";
 import BugDialog from "../components/BugDialog";
 import HistoryDots from "../components/HistoryDots";
 import { Button } from "../components/ui/button";
@@ -149,6 +151,14 @@ export default function RunnerWindow() {
     staleTime: Infinity,
     retry: false,
   });
+
+  // Fullscreen viewer for the uploaded-screenshot thumbnails (zoom/pan +
+  // prev/next). Media rebuilds with the query, so triggers stay in sync.
+  const shots = (uploaded.data ?? []).map((b64, i) => ({
+    src: `data:image/png;base64,${b64}`,
+    alt: `Uploaded screenshot ${i + 1}`,
+  }));
+  const lightbox = useLightbox({ media: shots });
 
   // Per-case timer -> duration_ms. Reset on case switch.
   useEffect(() => {
@@ -462,11 +472,13 @@ export default function RunnerWindow() {
                   <img
                     key={i}
                     alt={`Uploaded screenshot ${i + 1}`}
-                    className="h-16 rounded border border-border object-cover"
+                    className="h-16 cursor-zoom-in rounded border border-border object-cover"
                     src={`data:image/png;base64,${b64}`}
+                    {...lightbox.getTriggerProps(i)}
                   />
                 ))}
               </div>
+              <AstryxIsland>{lightbox.element}</AstryxIsland>
             </div>
           )}
 

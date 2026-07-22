@@ -21,7 +21,8 @@ import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
-import { renderMarkdown } from "../lib/markdown";
+import AstryxIsland from "../components/AstryxIsland";
+import { Markdown } from "@astryxdesign/core/Markdown";
 
 /** ADO reviewer votes: 10 approved, 5 approved w/ suggestions, 0 waiting,
  * -5 waiting for author, -10 rejected. */
@@ -154,10 +155,23 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
       {open && (
         <div className="space-y-2 border-t border-border/60 px-9 py-2 text-xs">
           {pr.description.trim() ? (
-            <div
-              className="md-preview text-text"
-              dangerouslySetInnerHTML={{ __html: renderMarkdown(pr.description) }}
-            />
+            // Astryx Markdown renders remote-authored text as React (no
+            // dangerouslySetInnerHTML - PR descriptions are an XSS surface).
+            // Links open in the system browser via the opener plugin.
+            <AstryxIsland>
+              <Markdown
+                density="compact"
+                autolink="gfm"
+                contentWidth="100%"
+                className="text-text"
+                onLinkClick={(href) => {
+                  openUrl(href).catch(() => toast.error("Could not open the browser."));
+                  return false;
+                }}
+              >
+                {pr.description}
+              </Markdown>
+            </AstryxIsland>
           ) : (
             <p className="text-faint">No description.</p>
           )}

@@ -1,8 +1,11 @@
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
+import AstryxIsland from "./AstryxIsland";
 import ModuleField from "./ModuleField";
 import TagsField from "./TagsField";
 import { Button } from "./ui/button";
@@ -87,18 +90,20 @@ export default function BulkEditDialog({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-md space-y-4 rounded-lg border border-border bg-surface p-5 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-sm font-semibold text-text">
-          Bulk edit {cases.length} test case{cases.length === 1 ? "" : "s"}
-        </h2>
-        <p className="text-xs text-muted">
-          Only the fields you set here change - titles and steps are never touched.
-        </p>
-
+    <AstryxIsland>
+    {/* purpose="form": a backdrop misclick must not discard chosen edits. */}
+    <Dialog isOpen onOpenChange={(open) => !open && onClose()} width={440} purpose="form">
+      <Layout
+        header={
+          <DialogHeader
+            title={`Bulk edit ${cases.length} test case${cases.length === 1 ? "" : "s"}`}
+            subtitle="Only the fields you set here change - titles and steps are never touched."
+            onOpenChange={(open) => !open && onClose()}
+          />
+        }
+        content={
+          <LayoutContent>
+          <div className="space-y-4">
         <label className="block text-xs text-muted">
           Automation status
           <Select className="mt-1 w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -169,16 +174,21 @@ export default function BulkEditDialog({
             Updating {progress.done} of {progress.total}
           </p>
         )}
-
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button size="sm" disabled={nothingChosen || apply.isPending} onClick={() => apply.mutate()}>
-            {apply.isPending ? "Applying" : `Apply to ${cases.length}`}
-          </Button>
-        </div>
-      </div>
-    </div>
+          </div>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter hasDivider>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={nothingChosen || apply.isPending} onClick={() => apply.mutate()}>
+              {apply.isPending ? "Applying" : `Apply to ${cases.length}`}
+            </Button>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
+    </AstryxIsland>
   );
 }

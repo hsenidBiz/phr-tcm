@@ -1,8 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Kbd } from "@astryxdesign/core/Kbd";
 import { Command } from "cmdk";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { commands } from "../bindings";
+import AstryxIsland from "./AstryxIsland";
 import { unwrap } from "../lib/ipc";
 import { getTheme, setTheme } from "../lib/theme";
 import type { Section } from "./Sidebar";
@@ -51,6 +53,8 @@ export default function CommandPalette({
       className="fixed left-1/2 top-24 z-50 w-[520px] -translate-x-1/2 overflow-hidden rounded-lg border border-border bg-surface shadow-2xl"
       overlayClassName="fixed inset-0 z-40 bg-black/40"
     >
+      {/* Island so the Kbd badges pick up the app-token Astryx theme. */}
+      <AstryxIsland>
       <Command.Input
         placeholder="Type a command or search"
         className="w-full border-b border-border bg-transparent px-4 py-3 text-sm text-text outline-none placeholder:text-faint"
@@ -61,16 +65,16 @@ export default function CommandPalette({
         </Command.Empty>
 
         <Command.Group heading="Go to" className="px-1 text-[10px] uppercase tracking-wide text-faint">
-          <Item onSelect={() => run(() => onNavigate("manual"))}>Manual Entry</Item>
-          <Item onSelect={() => run(() => onNavigate("import"))}>Import File</Item>
-          <Item onSelect={() => run(() => onNavigate("edit"))}>Update Test Cases</Item>
-          <Item onSelect={() => run(() => onNavigate("run"))}>Run Tests</Item>
-          <Item onSelect={() => run(() => onNavigate("suites"))}>Test Suites</Item>
+          <Item keys="mod+1" onSelect={() => run(() => onNavigate("manual"))}>Manual Entry</Item>
+          <Item keys="mod+2" onSelect={() => run(() => onNavigate("import"))}>Import File</Item>
+          <Item keys="mod+3" onSelect={() => run(() => onNavigate("edit"))}>Update Test Cases</Item>
+          <Item keys="mod+4" onSelect={() => run(() => onNavigate("run"))}>Run Tests</Item>
+          <Item keys="mod+5" onSelect={() => run(() => onNavigate("suites"))}>Test Suites</Item>
           <Item onSelect={() => run(() => onNavigate("settings"))}>Settings</Item>
         </Command.Group>
 
         <Command.Group heading="Actions" className="px-1 text-[10px] uppercase tracking-wide text-faint">
-          <Item onSelect={() => run(onToggleWork)}>Toggle Work Manager</Item>
+          <Item keys="mod+shift+m" onSelect={() => run(onToggleWork)}>Toggle Work Manager</Item>
           <Item
             onSelect={() =>
               run(() => setTheme(getTheme() === "light" ? "dark" : "light"))
@@ -103,6 +107,7 @@ export default function CommandPalette({
           </Command.Group>
         )}
       </Command.List>
+      </AstryxIsland>
     </Command.Dialog>
   );
 }
@@ -110,16 +115,20 @@ export default function CommandPalette({
 function Item({
   children,
   onSelect,
+  keys,
 }: {
   children: React.ReactNode;
   onSelect: () => void;
+  /** Astryx Kbd shortcut string, e.g. "mod+1" - shown right-aligned. */
+  keys?: string;
 }) {
   return (
     <Command.Item
       onSelect={onSelect}
-      className="cursor-pointer rounded-md px-3 py-2 text-sm text-text aria-selected:bg-accent-soft aria-selected:text-accent"
+      className="flex cursor-pointer items-center justify-between rounded-md px-3 py-2 text-sm text-text aria-selected:bg-accent-soft aria-selected:text-accent"
     >
       {children}
+      {keys && <Kbd keys={keys} />}
     </Command.Item>
   );
 }
