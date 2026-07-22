@@ -7,6 +7,14 @@
 @import "@astryxdesign/core/reset.css";
 @import "@astryxdesign/core/astryx.css";
 @import "tailwindcss";
+
+/* Tailwind v4's preflight zeroes EVERY margin, which silently kills the
+   native <dialog> UA centering (margin: auto) that Astryx Dialog relies
+   on - modals rendered pinned to the top-left. Unlayered on purpose so
+   no cascade layer can override it. */
+dialog:modal {
+  margin: auto;
+}
 @import "@fontsource/fira-sans/400.css";
 @import "@fontsource/fira-sans/500.css";
 @import "@fontsource/fira-sans/600.css";
