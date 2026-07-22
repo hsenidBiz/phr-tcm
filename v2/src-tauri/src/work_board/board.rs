@@ -65,6 +65,48 @@ impl AdoClient {
         Ok(data["defaultTeam"]["name"].as_str().unwrap_or_default().to_string())
     }
 
+    /// The iteration path a team-scoped "this sprint" filter should use.
+    /// This org gives every team its own sprints, so @CurrentIteration in
+    /// the default-team context matches nothing - instead, read the TEAM's
+    /// subscribed iterations: prefer the one ADO marks `current`; when the
+    /// next sprint hasn't been created yet, fall back to the most recently
+    /// finished one (user rule: show the previous sprint until the new one
+    /// exists). Ok(None) when the team doesn't exist under this name or has
+    /// no dated iterations - callers then use the old default-team clause.
+    pub async fn team_sprint_path(
+        &self,
+        org: &str,
+        project: &str,
+        team: &str,
+    ) -> Result<Option<String>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/{}/_apis/work/teamsettings/iterations?api-version=7.1",
+            self.base_url,
+            org,
+            urlencoding::encode(project),
+            urlencoding::encode(team)
+        );
+        let data = match self.get_json(url).await {
+            Ok(d) => d,
+            // Area name that isn't a team name - not an error, just no info.
+            Err(AdoError::NotFound) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let iterations = data["value"].as_array().cloned().unwrap_or_default();
+        if let Some(current) = iterations
+            .iter()
+            .find(|it| it["attributes"]["timeFrame"].as_str() == Some("current"))
+        {
+            return Ok(current["path"].as_str().map(str::to_string));
+        }
+        // No current sprint (not created in time): latest finished one wins.
+        let latest_past = iterations
+            .iter()
+            .filter(|it| it["attributes"]["timeFrame"].as_str() == Some("past"))
+            .max_by_key(|it| it["attributes"]["finishDate"].as_str().unwrap_or("").to_string());
+        Ok(latest_past.and_then(|it| it["path"].as_str().map(str::to_string)))
+    }
+
     /// States defined for a work-item type on this project's process. Read only.
     pub async fn get_work_item_states(
         &self,
@@ -264,8 +306,30 @@ impl AdoClient {
             (None, None) => where_clauses.push("[System.AssignedTo] = @Me".to_string()),
         }
         let team_ctx = if current_sprint {
-            where_clauses.push("[System.IterationPath] = @CurrentIteration".to_string());
-            Some(self.default_team(org, project).await?)
+            // Area boards resolve the sprint from THAT team's iterations
+            // (teams here have their own sprints; the default team's
+            // @CurrentIteration matches none of them). The team is the
+            // area's last segment - this org's convention. Anything that
+            // can't resolve falls back to the old default-team clause.
+            let area_team = if pbi_id.is_none() {
+                area.and_then(|a| a.rsplit('\\').next()).filter(|s| !s.is_empty())
+            } else {
+                None
+            };
+            let team_sprint = match area_team {
+                Some(team) => self.team_sprint_path(org, project, team).await?,
+                None => None,
+            };
+            match team_sprint {
+                Some(path) => {
+                    where_clauses.push(format!("[System.IterationPath] UNDER {}", wiql_str(&path)));
+                    None
+                }
+                None => {
+                    where_clauses.push("[System.IterationPath] = @CurrentIteration".to_string());
+                    Some(self.default_team(org, project).await?)
+                }
+            }
         } else {
             None
         };

@@ -499,3 +499,98 @@ async fn fetch_board_current_sprint_runs_in_default_team_context() {
         .unwrap();
     assert!(board.items.is_empty());
 }
+
+#[tokio::test]
+async fn area_sprint_uses_that_teams_current_iteration() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/Gamma%20Guardians/_apis/work/teamsettings/iterations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"name": "SP10", "path": "proj\\26R1_SP10_Gamma_Guardians",
+                 "attributes": {"startDate": "2026-07-06T00:00:00Z", "finishDate": "2026-07-17T00:00:00Z", "timeFrame": "past"}},
+                {"name": "SP01", "path": "proj\\26R2_SP01_Gamma_Guardians",
+                 "attributes": {"startDate": "2026-07-20T00:00:00Z", "finishDate": "2026-07-31T00:00:00Z", "timeFrame": "current"}}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    // Project-scoped WIQL (no team context needed once the path is explicit),
+    // carrying the team's CURRENT sprint path. The backslash is asserted in
+    // two parts - JSON escapes it in the request body.
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/wiql"))
+        .and(wiremock::matchers::body_string_contains("[System.IterationPath] UNDER 'proj"))
+        .and(wiremock::matchers::body_string_contains("26R2_SP01_Gamma_Guardians'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"workItems": []})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let board = client
+        .fetch_board("org", "proj", Some("HRM\\Gamma Guardians"), None, true)
+        .await
+        .unwrap();
+    assert!(board.items.is_empty());
+}
+
+#[tokio::test]
+async fn area_sprint_without_a_current_falls_back_to_latest_past() {
+    // The next sprint wasn't created in time: show the previous one until
+    // it exists (owner rule). Two past sprints - the LATER finish wins.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/Gamma%20Guardians/_apis/work/teamsettings/iterations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"name": "SP09", "path": "proj\\26R1_SP09_Gamma_Guardians",
+                 "attributes": {"startDate": "2026-06-22T00:00:00Z", "finishDate": "2026-07-03T00:00:00Z", "timeFrame": "past"}},
+                {"name": "SP10", "path": "proj\\26R1_SP10_Gamma_Guardians",
+                 "attributes": {"startDate": "2026-07-06T00:00:00Z", "finishDate": "2026-07-17T00:00:00Z", "timeFrame": "past"}}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/wiql"))
+        .and(wiremock::matchers::body_string_contains("26R1_SP10_Gamma_Guardians'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"workItems": []})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let board = client
+        .fetch_board("org", "proj", Some("HRM\\Gamma Guardians"), None, true)
+        .await
+        .unwrap();
+    assert!(board.items.is_empty());
+}
+
+#[tokio::test]
+async fn area_sprint_with_unknown_team_falls_back_to_default_team_macro() {
+    // The area's last segment isn't a team name (404) - the old
+    // default-team @CurrentIteration behavior takes over.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/projects/proj"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "defaultTeam": {"id": "t1", "name": "Proj Team"}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/Proj%20Team/_apis/wit/wiql"))
+        .and(wiremock::matchers::body_string_contains(
+            "[System.IterationPath] = @CurrentIteration",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"workItems": []})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let board = client
+        .fetch_board("org", "proj", Some("HRM\\Not A Team"), None, true)
+        .await
+        .unwrap();
+    assert!(board.items.is_empty());
+}
