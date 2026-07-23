@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.10.2",
+    date: "2026-07-23",
+    items: [
+      "Fixed: your chosen theme (OLED, Midnight, ...) no longer reverts to Slate when switching screens.",
+    ],
+  },
+  {
     version: "1.10.1",
     date: "2026-07-22",
     items: [
