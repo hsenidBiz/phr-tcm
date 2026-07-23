@@ -79,8 +79,8 @@ export const commands = {
 	addComment: (organization: string, project: string, id: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("add_comment", { organization, project, id, text })),
 	/**  Best-effort avatar fetch (None -> initials disc in the UI). */
 	avatarB64: (url: string) => __TAURI_INVOKE<string | null>("avatar_b64", { url }),
-	/**  Quick create a Task/Bug from the board, optionally assigned to me. */
-	quickCreateItem: (organization: string, project: string, wiType: string, title: string, assignToMe: boolean) => typedError<number, AdoError>(__TAURI_INVOKE("quick_create_item", { organization, project, wiType, title, assignToMe })),
+	/**  Full-form work item creation (the New Work Item screen). POST only. */
+	createWorkItem: (organization: string, project: string, item: NewWorkItem) => typedError<CreatedItem, AdoError>(__TAURI_INVOKE("create_work_item", { organization, project, item })),
 	/**  The project's Area or Iteration paths for the create pickers. */
 	classificationPaths: (organization: string, project: string, structure: string) => typedError<string[], AdoError>(__TAURI_INVOKE("classification_paths", { organization, project, structure })),
 	/**  Stop the running submit loop after the in-flight item finishes. */
@@ -204,6 +204,11 @@ export type CaseNoteSaved = {
 	text: string,
 };
 
+export type CreatedItem = {
+	id: number,
+	url: string,
+};
+
 export type EnsuredSuite = {
 	plan_id: number,
 	plan_name: string,
@@ -268,6 +273,23 @@ export type InlineImage = {
 export type Member = {
 	display_name: string,
 	unique_name: string,
+};
+
+/**
+ *  Everything the New Work Item screen collects. Empty optional fields
+ *  are skipped; `parent_id` nests the item under its PBI/Feature via a
+ *  Hierarchy-Reverse relation.
+ */
+export type NewWorkItem = {
+	wi_type: string,
+	title: string,
+	assigned_to: string | null,
+	area_path: string | null,
+	iteration_path: string | null,
+	tags: string | null,
+	priority: number | null,
+	description: string | null,
+	parent_id: number | null,
 };
 
 export type Org = {

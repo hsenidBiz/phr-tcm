@@ -13,6 +13,7 @@ import {
   type BoardData,
   type CaseHistory,
   type EnsuredSuite,
+  type NewWorkItem,
   type PbiHit,
   type RunOutcome,
   type SubmitItemResult,
@@ -445,10 +446,10 @@ function applyPatches() {
     },
     listTeamMembers: () => ok([{ display_name: "Demo User", unique_name: "demo@local" }]),
     listTeams: () => ok(["Demo Team"]),
-    quickCreateItem: (_o: string, _p: string, wiType: string, title: string) => {
+    createWorkItem: (_o: string, _p: string, item: NewWorkItem) => {
       const id = nextId++;
-      boardItems.push({ id, title, work_item_type: wiType, state: "To Do", state_color: "b2b2b2", column: "To Do", assigned_to: "Demo User", tags: "", priority: 2, changed_date: new Date().toISOString() });
-      return ok(id);
+      boardItems.push({ id, title: item.title, work_item_type: item.wi_type, state: "To Do", state_color: "b2b2b2", column: "To Do", assigned_to: item.assigned_to ?? "", tags: item.tags ?? "", priority: item.priority ?? 2, changed_date: new Date().toISOString() });
+      return ok({ id, url: "https://example.invalid/demo-wi" });
     },
   });
 }

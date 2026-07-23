@@ -7,12 +7,10 @@ import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } fr
 import PbiPicker from "../components/PbiPicker";
 import WorkItemDrawer from "../components/WorkItemDrawer";
 import { Badge } from "../components/ui/badge";
-import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import Combobox from "../components/ui/combobox";
 import { Input } from "../components/ui/input";
 import MultiSelect from "../components/ui/multiselect";
-import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
@@ -146,8 +144,6 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     () => localStorage.getItem("tcm-v2-this-sprint") === "on",
   );
   const [openItem, setOpenItem] = useState<number | null>(null);
-  const [quickTitle, setQuickTitle] = useState("");
-  const [quickType, setQuickType] = useState("Task");
   // Per-area, session-only (an assignee list rarely transfers between areas).
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
 
@@ -249,16 +245,6 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     },
   });
 
-  const quickCreate = useMutation({
-    mutationFn: () =>
-      unwrap(commands.quickCreateItem(org, project, quickType, quickTitle.trim(), true)),
-    onSuccess: (id) => {
-      toast.success(`Created ${quickType} #${id}`);
-      setQuickTitle("");
-      qc.invalidateQueries({ queryKey: boardKey });
-    },
-    onError: (e) => toast.error(`Create failed: ${e.message}`),
-  });
 
   const types = useMemo(
     () => [...new Set((board.data?.items ?? []).map((i) => i.work_item_type))].sort(),
@@ -400,36 +386,8 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             />
             This sprint
           </label>
-
-          <div className="ml-auto flex items-center gap-2">
-            <Select
-              aria-label="New item type"
-              className="py-1.5"
-              value={quickType}
-              onChange={(e) => setQuickType(e.target.value)}
-            >
-              <option>Task</option>
-              <option>Bug</option>
-            </Select>
-            <Input
-              aria-label="New item title"
-              className="w-56 py-1.5"
-              placeholder="Quick create title"
-              value={quickTitle}
-              onChange={(e) => setQuickTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && quickTitle.trim()) quickCreate.mutate();
-              }}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!quickTitle.trim() || quickCreate.isPending}
-              onClick={() => quickCreate.mutate()}
-            >
-              Create
-            </Button>
-          </div>
+          {/* Creation moved to the sidebar's "New Work Item" screen - the
+              board stays a read-and-move surface. */}
         </div>
 
         {board.isError && <p className="text-sm text-danger">{board.error.message}</p>}

@@ -45,7 +45,7 @@ pub async fn file_bug(
         (info.repro_field.clone(), repro_html),
     ];
     let (id, url) = client
-        .create_work_item(&organization, &project, &info.wi_type, &fields, &[test_case_id, pbi_id])
+        .create_work_item(&organization, &project, &info.wi_type, &fields, &[test_case_id, pbi_id], None)
         .await
         .map_err(|e| e.to_string())?;
     for (i, b64) in screenshots_b64.iter().enumerate() {

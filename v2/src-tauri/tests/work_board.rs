@@ -501,6 +501,38 @@ async fn fetch_board_current_sprint_runs_in_default_team_context() {
 }
 
 #[tokio::test]
+async fn create_work_item_carries_fields_and_parent_relation() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/workitems/$Task"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!([
+            {"op": "add", "path": "/fields/System.Title", "value": "Wire the login flow"}
+        ])))
+        .and(wiremock::matchers::body_string_contains("Microsoft.VSTS.Common.Priority"))
+        // Parent nesting: Hierarchy-Reverse pointing at the PBI.
+        .and(wiremock::matchers::body_string_contains("System.LinkTypes.Hierarchy-Reverse"))
+        .and(wiremock::matchers::body_string_contains("/workitems/4242"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 9001,
+            "_links": {"html": {"href": "https://example.invalid/wi/9001"}}
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let fields = vec![
+        ("System.Title".to_string(), "Wire the login flow".to_string()),
+        ("Microsoft.VSTS.Common.Priority".to_string(), "1".to_string()),
+    ];
+    let (id, url) = client
+        .create_work_item("org", "proj", "Task", &fields, &[], Some(4242))
+        .await
+        .unwrap();
+    assert_eq!(id, 9001);
+    assert!(url.contains("/wi/9001"));
+}
+
+#[tokio::test]
 async fn area_sprint_uses_that_teams_current_iteration() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

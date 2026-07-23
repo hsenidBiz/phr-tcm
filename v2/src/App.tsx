@@ -25,6 +25,7 @@ import { getTheme, initTheme } from "./lib/theme";
 import EditCases from "./screens/EditCases";
 import ImportFile from "./screens/ImportFile";
 import ManualEntry from "./screens/ManualEntry";
+import CreateWorkItem from "./screens/CreateWorkItem";
 import PrPanel from "./screens/PrPanel";
 import RunTests from "./screens/RunTests";
 import SignIn from "./screens/SignIn";
@@ -369,6 +370,13 @@ export default function App() {
                   <h1 className="mb-4 text-lg font-semibold">Board</h1>
                   <div className="min-h-0 flex-1">
                     <WorkBoard org={org} project={project} />
+                  </div>
+                </>
+              ) : workSection === "create" ? (
+                <>
+                  <h1 className="mb-4 text-lg font-semibold">New Work Item</h1>
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    <CreateWorkItem org={org} project={project} />
                   </div>
                 </>
               ) : (

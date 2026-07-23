@@ -2,6 +2,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Eye,
+  FilePlus2,
   FileUp,
   FolderTree,
   GitPullRequest,
@@ -17,7 +18,7 @@ import { cn } from "../lib/cn";
  * in the context bar. Collapsible to an icon rail. In Work Manager mode the
  * same rail shows WORK_ITEMS instead (PRs first, then the board). */
 export type Section = "manual" | "import" | "edit" | "view" | "run" | "suites" | "settings";
-export type WorkSection = "prs" | "board";
+export type WorkSection = "prs" | "board" | "create";
 
 type Item<T extends string> = { id: T; label: string; icon: typeof PenLine };
 
@@ -33,6 +34,7 @@ const CASE_ITEMS: Item<Section>[] = [
 export const WORK_ITEMS: Item<WorkSection>[] = [
   { id: "prs", label: "Pull Requests", icon: GitPullRequest },
   { id: "board", label: "Board", icon: KanbanSquare },
+  { id: "create", label: "New Work Item", icon: FilePlus2 },
 ];
 
 const COLLAPSE_KEY = "tcm-v2-sidebar";

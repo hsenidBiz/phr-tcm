@@ -1,10 +1,7 @@
-//! Work Manager board: columns, items, details, comments, quick create.
-
-use std::sync::Mutex;
-use tauri::Manager;
+//! Work Manager board: columns, items, details, comments, creation.
 
 use crate::state::get_fresh_token;
-use crate::{ado, auth, work_board};
+use crate::{ado, work_board};
 
 #[tauri::command]
 #[specta::specta]
@@ -181,31 +178,52 @@ pub async fn avatar_b64(app: tauri::AppHandle, url: String) -> Option<String> {
     ado::AdoClient::new(token).get_avatar_b64(&url).await
 }
 
-/// Quick create a Task/Bug from the board, optionally assigned to me.
+#[derive(serde::Serialize, specta::Type)]
+pub struct CreatedItem {
+    pub id: i32,
+    pub url: String,
+}
+
+/// Everything the New Work Item screen collects. Empty optional fields
+/// are skipped; `parent_id` nests the item under its PBI/Feature via a
+/// Hierarchy-Reverse relation.
+#[derive(serde::Deserialize, specta::Type)]
+pub struct NewWorkItem {
+    pub wi_type: String,
+    pub title: String,
+    pub assigned_to: Option<String>,
+    pub area_path: Option<String>,
+    pub iteration_path: Option<String>,
+    pub tags: Option<String>,
+    pub priority: Option<i32>,
+    pub description: Option<String>,
+    pub parent_id: Option<i32>,
+}
+
+/// Full-form work item creation (the New Work Item screen). POST only.
 #[tauri::command]
 #[specta::specta]
-pub async fn quick_create_item(
+pub async fn create_work_item(
     app: tauri::AppHandle,
     organization: String,
     project: String,
-    wi_type: String,
-    title: String,
-    assign_to_me: bool,
-) -> Result<i32, ado::AdoError> {
+    item: NewWorkItem,
+) -> Result<CreatedItem, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    let mut fields = vec![("System.Title".to_string(), title)];
-    if assign_to_me {
-        let account = {
-            let state = app.state::<Mutex<auth::AuthState>>();
-            let s = state.lock().unwrap();
-            s.tokens.as_ref().and_then(|t| t.account.clone())
-        };
-        if let Some(upn) = account {
-            fields.push(("System.AssignedTo".to_string(), upn));
+    let mut fields = vec![("System.Title".to_string(), item.title)];
+    let mut push = |name: &str, val: Option<String>| {
+        if let Some(v) = val.filter(|s| !s.trim().is_empty()) {
+            fields.push((name.to_string(), v));
         }
-    }
-    let (id, _url) = ado::AdoClient::new(token)
-        .create_work_item(&organization, &project, &wi_type, &fields, &[])
+    };
+    push("System.AssignedTo", item.assigned_to);
+    push("System.AreaPath", item.area_path);
+    push("System.IterationPath", item.iteration_path);
+    push("System.Tags", item.tags);
+    push("Microsoft.VSTS.Common.Priority", item.priority.map(|p| p.to_string()));
+    push("System.Description", item.description);
+    let (id, url) = ado::AdoClient::new(token)
+        .create_work_item(&organization, &project, &item.wi_type, &fields, &[], item.parent_id)
         .await?;
-    Ok(id)
+    Ok(CreatedItem { id, url })
 }

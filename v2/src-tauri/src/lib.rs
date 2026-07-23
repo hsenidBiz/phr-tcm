@@ -78,7 +78,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             board::work_item_comments,
             board::add_comment,
             board::avatar_b64,
-            board::quick_create_item,
+            board::create_work_item,
             discovery::classification_paths,
             queue::cancel_submit,
             queue::export_queue_html,

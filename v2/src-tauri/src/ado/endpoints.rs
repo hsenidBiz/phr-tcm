@@ -621,6 +621,7 @@ impl AdoClient {
         wi_type: &str,
         fields: &[(String, String)],
         related_ids: &[i32],
+        parent_id: Option<i32>,
     ) -> Result<(i32, String), AdoError> {
         let mut patch: Vec<serde_json::Value> = fields
             .iter()
@@ -633,6 +634,18 @@ impl AdoClient {
                 "value": {
                     "rel": "System.LinkTypes.Related",
                     "url": format!("{}/{}/{}/_apis/wit/workitems/{}", self.base_url, organization, project, rel_id),
+                },
+            }));
+        }
+        // Hierarchy-Reverse = "my parent is" - lands the new item under its
+        // PBI/Feature so boards and backlogs nest it correctly.
+        if let Some(pid) = parent_id {
+            patch.push(serde_json::json!({
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "System.LinkTypes.Hierarchy-Reverse",
+                    "url": format!("{}/{}/{}/_apis/wit/workitems/{}", self.base_url, organization, project, pid),
                 },
             }));
         }
