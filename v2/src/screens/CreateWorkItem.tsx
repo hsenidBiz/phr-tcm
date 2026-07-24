@@ -120,10 +120,10 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
     <div className="max-w-xl space-y-4">
       <div className="flex gap-2">
         <label className="block text-xs text-muted">
-          Type
+          <span className="mb-1 block">Type</span>
           <Select
             aria-label="Work item type"
-            className="mt-1 w-48"
+            className="w-48"
             value={wiType}
             onChange={(e) => setWiType(e.target.value)}
           >
@@ -133,10 +133,10 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
           </Select>
         </label>
         <label className="block flex-1 text-xs text-muted">
-          Title
+          <span className="mb-1 block">Title</span>
           <Input
             aria-label="Title"
-            className="mt-1 w-full"
+            className="w-full"
             placeholder="What needs doing?"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -146,10 +146,10 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
 
       <div className="flex gap-2">
         <label className="block flex-1 text-xs text-muted">
-          Assign to
+          <span className="mb-1 block">Assign to</span>
           <Select
             aria-label="Assign to"
-            className="mt-1 w-full"
+            className="w-full"
             value={assignee}
             onChange={(e) => setAssignee(e.target.value)}
           >
@@ -162,10 +162,10 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
           </Select>
         </label>
         <label className="block w-32 text-xs text-muted">
-          Priority
+          <span className="mb-1 block">Priority</span>
           <Select
             aria-label="Priority"
-            className="mt-1 w-full"
+            className="w-full"
             value={priority}
             onChange={(e) => setPriority(e.target.value)}
           >
@@ -181,10 +181,10 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
 
       <div className="flex gap-2">
         <label className="block flex-1 text-xs text-muted">
-          Area
+          <span className="mb-1 block">Area</span>
           <Combobox
             ariaLabel="Area"
-            className="mt-1 w-full"
+            className="w-full"
             placeholder="Same as project root"
             value={area}
             options={areas.data ?? []}
@@ -192,10 +192,10 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
           />
         </label>
         <label className="block flex-1 text-xs text-muted">
-          Iteration
+          <span className="mb-1 block">Iteration</span>
           <Combobox
             ariaLabel="Iteration"
-            className="mt-1 w-full"
+            className="w-full"
             placeholder="Backlog (none)"
             value={iteration}
             options={iterations.data ?? []}
@@ -205,15 +205,15 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
       </div>
 
       <label className="block text-xs text-muted">
-        Tags
-        <TagsField org={org} project={project} className="mt-1 w-full" value={tags} onChange={setTags} />
+        <span className="mb-1 block">Tags</span>
+        <TagsField org={org} project={project} className="w-full" value={tags} onChange={setTags} />
       </label>
 
       <label className="block text-xs text-muted">
-        Description
+        <span className="mb-1 block">Description</span>
         <Textarea
           aria-label="Description"
-          className="mt-1 h-28 w-full"
+          className="h-28 w-full"
           placeholder="Context, acceptance criteria, links…"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
