@@ -449,3 +449,46 @@ test("area boards get an assignee filter built from the items; My work does not"
   expect(screen.getByText("Nobody's task")).toBeInTheDocument();
   expect(screen.queryByText("Kim's task")).not.toBeInTheDocument();
 });
+
+test("a move blocked by required fields opens the item with those fields named", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+    if (cmd === "move_board_item")
+      // The REAL shape: an AdoError::Http whose body carries ADO's rule
+      // message - describeAdoError must surface it, the parser must mine it.
+      throw {
+        kind: "Http",
+        detail: {
+          status: 400,
+          body: JSON.stringify({
+            message:
+              "TF401320: Rule Error for field Remaining Work. Error code: Required, InvalidEmpty.",
+          }),
+        },
+      };
+    if (cmd === "work_item_detail")
+      return {
+        id: 11, title: "Write docs", work_item_type: "Task", state: "To Do",
+        assigned_to: "Avin", assigned_to_unique: "a@x.com", activity: "", tags: "",
+        area_path: "P", iteration_path: "P\S1",
+        remaining_work: null, completed_work: null, original_estimate: null,
+        start_date: "", finish_date: "",
+        description_text: "", description_html: "", description_field: "System.Description",
+        extra_pages: [], extra_pages_error: null, inline_images: [],
+      };
+    if (cmd === "list_team_members") return [];
+    if (cmd === "activity_values") return [];
+    if (cmd === "work_item_comments") return [];
+  });
+  renderBoard();
+  const card = await screen.findByText("Write docs");
+  fireEvent.dragStart(card.closest("[draggable]")!);
+  fireEvent.drop(screen.getByTestId("col-In Progress"));
+
+  // The drawer opens with the blocking field called out in the banner.
+  expect(
+    await screen.findByText(/requires these fields before the state can change/),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Remaining Work")).toBeInTheDocument();
+});

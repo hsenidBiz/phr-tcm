@@ -14,6 +14,7 @@ export default function Combobox({
   className,
   allowCustom = false,
   loading = false,
+  details,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -23,6 +24,9 @@ export default function Combobox({
   className?: string;
   allowCustom?: boolean;
   loading?: boolean;
+  /** Right-aligned faint annotation per option (e.g. a sprint's date
+   * range, like Azure DevOps's iteration dropdown). */
+  details?: Record<string, string>;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -131,7 +135,12 @@ export default function Combobox({
                   onClick={() => commit(o)}
                 >
                   <span className="truncate">{o}</span>
-                  {o === value && <Check size={13} className="shrink-0 text-accent" />}
+                  <span className="ml-2 flex shrink-0 items-center gap-1.5">
+                    {details?.[o] && (
+                      <span className="whitespace-nowrap text-xs text-faint">{details[o]}</span>
+                    )}
+                    {o === value && <Check size={13} className="shrink-0 text-accent" />}
+                  </span>
                 </button>
               </li>
             ))}

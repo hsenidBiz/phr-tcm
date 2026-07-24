@@ -140,6 +140,8 @@ export const commands = {
 	repoPullRequests: (organization: string, project: string, repoId: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
+	/**  Iteration paths with sprint dates, for DevOps-style iteration pickers. */
+	listIterations: (organization: string, project: string) => typedError<IterationRef[], AdoError>(__TAURI_INVOKE("list_iterations", { organization, project })),
 };
 
 /** Events */
@@ -268,6 +270,13 @@ export type ImportResult = {
 export type InlineImage = {
 	url: string,
 	data: string,
+};
+
+/**  An iteration path plus its sprint window, for DevOps-style pickers. */
+export type IterationRef = {
+	path: string,
+	start_date: string | null,
+	finish_date: string | null,
 };
 
 export type Member = {

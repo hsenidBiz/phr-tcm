@@ -16,6 +16,7 @@ import Combobox from "../components/ui/combobox";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { unwrap } from "../lib/ipc";
+import { iterationDetails } from "../lib/iterations";
 
 const TYPES = ["Task", "Bug", "Product Backlog Item"];
 
@@ -46,8 +47,8 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
     staleTime: 60 * 60_000,
   });
   const iterations = useQuery({
-    queryKey: ["classification", org, project, "iterations"],
-    queryFn: () => unwrap(commands.classificationPaths(org, project, "iterations")),
+    queryKey: ["iterations-dated", org, project],
+    queryFn: () => unwrap(commands.listIterations(org, project)),
     enabled: Boolean(org && project),
     staleTime: 60 * 60_000,
   });
@@ -198,7 +199,8 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
             className="w-full"
             placeholder="Backlog (none)"
             value={iteration}
-            options={iterations.data ?? []}
+            options={(iterations.data ?? []).map((i) => i.path)}
+            details={iterationDetails(iterations.data ?? [])}
             onChange={setIteration}
           />
         </label>

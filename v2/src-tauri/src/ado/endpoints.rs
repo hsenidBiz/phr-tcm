@@ -768,6 +768,44 @@ impl AdoClient {
         Ok(paths)
     }
 
+    /// Iteration paths WITH their sprint dates (classificationnodes carries
+    /// startDate/finishDate in `attributes`), so pickers can render like
+    /// Azure DevOps's own iteration dropdown. Non-sprint nodes (the project
+    /// root, grouping folders) have no dates. Failure -> empty. Read only.
+    pub async fn get_iterations_dated(
+        &self,
+        organization: &str,
+        project: &str,
+    ) -> Result<Vec<crate::work_board::IterationRef>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/classificationnodes/iterations?$depth=14&api-version=7.1",
+            self.base_url, organization, project
+        );
+        let root = match self.get_json(url).await {
+            Ok(v) => v,
+            Err(_) => return Ok(vec![]),
+        };
+        fn walk(node: &serde_json::Value, prefix: &str, out: &mut Vec<crate::work_board::IterationRef>) {
+            let name = node["name"].as_str().unwrap_or_default();
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}\\{name}")
+            };
+            out.push(crate::work_board::IterationRef {
+                path: path.clone(),
+                start_date: node["attributes"]["startDate"].as_str().map(str::to_string),
+                finish_date: node["attributes"]["finishDate"].as_str().map(str::to_string),
+            });
+            for child in node["children"].as_array().cloned().unwrap_or_default() {
+                walk(&child, &path, out);
+            }
+        }
+        let mut out = vec![];
+        walk(&root, "", &mut out);
+        Ok(out)
+    }
+
     /// A work item's area + iteration path (used to home the PBI's test
     /// plan). Read only.
     pub async fn get_work_item_paths(

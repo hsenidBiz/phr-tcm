@@ -5,6 +5,7 @@ import { marked } from "marked";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
+import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
 import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
@@ -66,6 +67,7 @@ export default function WorkItemDrawer({
   project,
   itemId,
   states,
+  highlightFields = [],
   onClose,
   onSaved,
 }: {
@@ -73,10 +75,21 @@ export default function WorkItemDrawer({
   project: string;
   itemId: number;
   states: string[];
+  /** Fields ADO named in a rule error (e.g. a blocked board move) -
+   * shown in a banner and ringed on their editors. */
+  highlightFields?: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const qc = useQueryClient();
+  // Loose two-way match: ADO says "Remaining Work", our label says
+  // "Remaining"; either containing the other counts.
+  const isFlagged = (label: string) =>
+    highlightFields.some((f) => {
+      const a = f.toLowerCase();
+      const b = label.toLowerCase();
+      return a.includes(b) || b.includes(a);
+    });
   const detail = useQuery({
     queryKey: ["wi-detail", org, project, itemId],
     queryFn: () => unwrap(commands.workItemDetail(org, project, itemId)),
@@ -231,6 +244,14 @@ export default function WorkItemDrawer({
             </button>
           </span>
         </header>
+
+        {highlightFields.length > 0 && (
+          <p className="border-b border-danger/40 bg-danger/10 px-5 py-2 text-xs text-danger">
+            Azure DevOps requires these fields before the state can change:{" "}
+            <span className="font-semibold">{highlightFields.join(", ")}</span> - they're
+            highlighted below.
+          </p>
+        )}
 
         {(detail.isLoading || detail.isError) && (
           <div className="space-y-3 p-5">
@@ -411,7 +432,12 @@ export default function WorkItemDrawer({
                         return (
                           <label key={f.reference_name} className="flex flex-col gap-1">
                             {f.label}
-                            <Select value={value} onChange={(e) => setValue(e.target.value)} aria-label={f.label}>
+                            <Select
+                              value={value}
+                              onChange={(e) => setValue(e.target.value)}
+                              aria-label={f.label}
+                              className={cn(isFlagged(f.label) && "ring-2 ring-danger")}
+                            >
                               <option value="">(none)</option>
                               {!f.allowed.includes(value) && value && <option>{value}</option>}
                               {f.allowed.map((a) => (
@@ -427,6 +453,7 @@ export default function WorkItemDrawer({
                             {f.label}
                             <Input
                               aria-label={f.label}
+                              className={cn(isFlagged(f.label) && "ring-2 ring-danger")}
                               value={value}
                               onChange={(e) => setValue(e.target.value)}
                             />
@@ -476,7 +503,11 @@ export default function WorkItemDrawer({
                   <label key={key} className="block text-xs text-muted">
                     {label}
                     <Input
-                      className="mt-1 w-full px-2"
+                      className={cn(
+                        "mt-1 w-full px-2",
+                        // "Remaining" flags for ADO's "Remaining Work" etc.
+                        isFlagged(`${label} Work`) && "ring-2 ring-danger",
+                      )}
                       type="number"
                       min="0"
                       step="0.5"

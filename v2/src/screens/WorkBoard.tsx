@@ -13,6 +13,7 @@ import { Input } from "../components/ui/input";
 import MultiSelect from "../components/ui/multiselect";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
+import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
@@ -175,6 +176,8 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     () => localStorage.getItem("tcm-v2-this-sprint") === "on",
   );
   const [openItem, setOpenItem] = useState<number | null>(null);
+  // Fields ADO said were blocking a move - the drawer rings them.
+  const [highlightFields, setHighlightFields] = useState<string[]>([]);
   // Per-area, session-only (an assignee list rarely transfers between areas).
   const [assigneeFilter, setAssigneeFilter] = useState<string[]>([]);
 
@@ -254,11 +257,22 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       }
       return { prev };
     },
-    onError: (e, { item }, ctx) => {
+    onError: (e, { item, column }, ctx) => {
       if (ctx?.prev) qc.setQueryData(boardKey, ctx.prev);
       // Re-sync with the server: the snapshot may itself be stale by now.
       qc.invalidateQueries({ queryKey: boardKey });
-      toast.error(`Could not move #${item.id}: ${e.message}`);
+      // ADO rule errors name the fields blocking the transition - say so,
+      // open the item, and highlight them instead of a generic failure.
+      const fields = requiredFieldsFromError(e.message);
+      if (fields.length > 0) {
+        toast.error(
+          `#${item.id} can't move to ${column}: fill ${fields.join(", ")} first - opening the item.`,
+        );
+        setHighlightFields(fields);
+        setOpenItem(item.id);
+      } else {
+        toast.error(`Could not move #${item.id}: ${e.message}`);
+      }
     },
     onSuccess: ({ item, state }) => {
       const data = qc.getQueryData<BoardData>(boardKey);
@@ -544,7 +558,11 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
               board.data.items.find((i) => i.id === openItem)?.work_item_type ?? ""
             ] ?? []
           ).map((s) => s.name)}
-          onClose={() => setOpenItem(null)}
+          highlightFields={highlightFields}
+          onClose={() => {
+            setOpenItem(null);
+            setHighlightFields([]);
+          }}
           onSaved={() => qc.invalidateQueries({ queryKey: boardKey })}
         />
       )}

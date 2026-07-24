@@ -10,8 +10,18 @@ export function describeAdoError(e: AdoError): string {
       return "You don't have permission for this resource.";
     case "NotFound":
       return "Not found.";
-    case "Http":
+    case "Http": {
+      // The body usually carries ADO's real explanation ("Rule Error for
+      // field Remaining Work...") - surface it instead of a bare status,
+      // so callers (and users) see WHICH rule failed.
+      try {
+        const m = JSON.parse(e.detail.body)?.message;
+        if (typeof m === "string" && m.trim()) return m;
+      } catch {
+        // body wasn't JSON - fall through to the generic line
+      }
       return `Azure DevOps returned HTTP ${e.detail.status}.`;
+    }
     case "Network":
       return `Network error: ${e.detail}`;
   }

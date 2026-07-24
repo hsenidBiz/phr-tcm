@@ -626,3 +626,28 @@ async fn area_sprint_with_unknown_team_falls_back_to_default_team_macro() {
         .unwrap();
     assert!(board.items.is_empty());
 }
+
+#[tokio::test]
+async fn dated_iterations_carry_sprint_windows() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/classificationnodes/iterations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "name": "proj",
+            "children": [
+                {"name": "Sprint 1", "attributes": {"startDate": "2026-07-20T00:00:00Z", "finishDate": "2026-07-31T00:00:00Z"}},
+                {"name": "Future folder"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let its = client.get_iterations_dated("org", "proj").await.unwrap();
+    assert_eq!(its.len(), 3); // root + two children
+    let sprint = its.iter().find(|i| i.path.ends_with("Sprint 1")).unwrap();
+    assert_eq!(sprint.start_date.as_deref(), Some("2026-07-20T00:00:00Z"));
+    assert_eq!(sprint.finish_date.as_deref(), Some("2026-07-31T00:00:00Z"));
+    // Nodes without dates (root, folders) stay date-less rather than erroring.
+    assert!(its.iter().find(|i| i.path == "proj").unwrap().start_date.is_none());
+}

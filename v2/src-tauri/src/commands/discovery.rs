@@ -2,6 +2,7 @@
 
 use crate::ado;
 use crate::state::get_fresh_token;
+use crate::work_board;
 
 #[tauri::command]
 #[specta::specta]
@@ -58,4 +59,18 @@ pub async fn list_project_tags(
 ) -> Result<Vec<String>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token).get_tags(&organization, &project).await
+}
+
+/// Iteration paths with sprint dates, for DevOps-style iteration pickers.
+#[tauri::command]
+#[specta::specta]
+pub async fn list_iterations(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<work_board::IterationRef>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_iterations_dated(&organization, &project)
+        .await
 }

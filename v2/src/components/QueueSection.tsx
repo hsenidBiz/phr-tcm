@@ -8,10 +8,12 @@ import { commands, events, type SubmitItemResult, type TestCase } from "../bindi
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { loadNotes } from "../lib/caseNotes";
+import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import AstryxIsland from "./AstryxIsland";
+import Combobox from "./ui/combobox";
 import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
@@ -66,8 +68,8 @@ export default function QueueSection({
     staleTime: 60 * 60_000,
   });
   const iterations = useQuery({
-    queryKey: ["classification", org, project, "iterations"],
-    queryFn: () => unwrap(commands.classificationPaths(org, project, "iterations")),
+    queryKey: ["iterations-dated", org, project],
+    queryFn: () => unwrap(commands.listIterations(org, project)),
     enabled: reviewing,
     staleTime: 60 * 60_000,
   });
@@ -453,16 +455,15 @@ export default function QueueSection({
           </label>
           <label className="flex flex-col gap-1 text-xs text-muted">
             Iteration for new cases
-            <Select
-              className="w-64 py-1.5"
+            <Combobox
+              ariaLabel="Iteration for new cases"
+              className="w-72"
+              placeholder="Same as PBI"
               value={iterationPath}
-              onChange={(e) => setIterationPath(e.target.value)}
-            >
-              <option value="">Same as PBI</option>
-              {(iterations.data ?? []).map((p) => (
-                <option key={p}>{p}</option>
-              ))}
-            </Select>
+              options={(iterations.data ?? []).map((i) => i.path)}
+              details={iterationDetails(iterations.data ?? [])}
+              onChange={setIterationPath}
+            />
           </label>
         </div>
       )}

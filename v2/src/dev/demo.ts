@@ -233,6 +233,12 @@ function applyPatches() {
     testCaseFieldValues: () => ok([]),
     listProjectTags: () => ok(["demo", "smoke", "regression"]),
     classificationPaths: () => ok(["Demo Project", "Demo Project\\Demo Team"]),
+    listIterations: () =>
+      ok([
+        { path: "Demo Project", start_date: null, finish_date: null },
+        { path: "Demo Project\\Sprint 1", start_date: "2026-07-06T00:00:00Z", finish_date: "2026-07-17T00:00:00Z" },
+        { path: "Demo Project\\Sprint 2", start_date: "2026-07-20T00:00:00Z", finish_date: "2026-07-31T00:00:00Z" },
+      ]),
     activityValues: () => ok(["Development", "Testing"]),
 
     pbiTestCases: (_o: string, pbiId: number) =>

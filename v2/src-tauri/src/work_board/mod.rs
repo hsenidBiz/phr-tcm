@@ -129,6 +129,14 @@ pub struct ExtraField {
     pub value: String,
 }
 
+/// An iteration path plus its sprint window, for DevOps-style pickers.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct IterationRef {
+    pub path: String,
+    pub start_date: Option<String>,
+    pub finish_date: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct Member {
     pub display_name: String,
