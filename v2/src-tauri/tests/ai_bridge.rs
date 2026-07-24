@@ -68,3 +68,92 @@ fn query_parsing_survives_valueless_pairs() {
     assert_eq!(q("/x?a=1", "b"), None);
     assert_eq!(q("/noquery", "a"), None);
 }
+
+use v2_lib::ado::AdoClient;
+use wiremock::matchers::{method as wm_method, path as wm_path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// Wiremock host standing in for ADO; the routes hit the same endpoints
+/// the app's own screens use.
+async fn ado_stub() -> (MockServer, AdoClient) {
+    let server = MockServer::start().await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    (server, client)
+}
+
+#[tokio::test]
+async fn guide_carries_format_rules_and_live_modules() {
+    let (server, client) = ado_stub().await;
+    // Module picklist: allowedValues empty -> falls back to values-in-use,
+    // exactly like the app's own module picker.
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "allowedValues": ["Login", "Payroll"]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "").await;
+    assert_eq!(status, 200);
+    assert!(body.contains("Not Automated"), "statuses come from VALID_STATUSES");
+    assert!(body.contains("Planned"));
+    assert!(body.contains("semicolon"), "tag separator rule");
+    assert!(body.contains("Login") && body.contains("Payroll"), "live modules");
+    assert!(body.contains("validate_cases"), "guide tells the AI to validate");
+}
+
+#[tokio::test]
+async fn examples_return_real_cases_in_import_shape() {
+    let (server, client) = ado_stub().await;
+    // The same two calls the runner/edit screens make: ids-for-PBI, then
+    // batch details. Match loosely on path; the client's own tests pin the
+    // exact query strings.
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems/42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 42,
+            "relations": [
+                {"rel": "Microsoft.VSTS.Common.TestedBy-Forward",
+                 "url": format!("{}/acme/Web/_apis/wit/workitems/201", server.uri())}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "id": 201,
+                "fields": {
+                    "System.Title": "Login - valid credentials",
+                    "System.Tags": "smoke",
+                    "Microsoft.VSTS.TCM.AutomationStatus": "Planned",
+                    "Custom.Module": "Login",
+                    "Custom.Preconditions": "Account exists",
+                    "Microsoft.VSTS.TCM.Steps": "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Open page</parameterizedString><parameterizedString isformatted=\"true\">Shown</parameterizedString><description/></step></steps>"
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/examples?pbi=42&limit=5", "").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let cases = v["test_cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 1);
+    assert_eq!(cases[0]["id"], 201);
+    assert_eq!(cases[0]["title"], "Login - valid credentials");
+    assert_eq!(cases[0]["module"], "Login");
+    assert_eq!(cases[0]["steps"][0]["action"], "Open page");
+}
+
+#[tokio::test]
+async fn examples_without_pbi_400_with_guidance() {
+    let (_server, client) = ado_stub().await;
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/examples", "").await;
+    assert_eq!(status, 400);
+    assert!(body.contains("pbi"));
+}
