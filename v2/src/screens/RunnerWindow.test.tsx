@@ -131,15 +131,28 @@ test("File bug appears only after a failure", async () => {
 });
 
 test("the case's preconditions show above the steps; absent ones render nothing", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "pbi_test_cases_full")
+  // Preconditions live in an org-specific CUSTOM field: the runner must
+  // pass the detected reference name or ADO returns them empty (the bug
+  // where the block never showed). Seed the shared field-prefs cache and
+  // assert the ref reaches the fetch.
+  localStorage.setItem(
+    "tcm-v2-fields:acme/Web",
+    JSON.stringify({ moduleRef: "Custom.Module", preconditionsRef: "Custom.Preconditions" }),
+  );
+  let fetchArgs: Record<string, unknown> | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "pbi_test_cases_full") {
+      fetchArgs = args as Record<string, unknown>;
       return [{ ...fullCase, preconditions: "A demo account exists and is unlocked" }];
+    }
     if (cmd === "list_test_points") return [];
     if (cmd === "run_history") return [];
+    if (cmd === "list_test_case_fields") return [];
   });
   renderRunner();
   expect(await screen.findByText("Preconditions")).toBeInTheDocument();
   expect(screen.getByText("A demo account exists and is unlocked")).toBeInTheDocument();
+  expect(fetchArgs).toMatchObject({ preconditionsRef: "Custom.Preconditions" });
 });
 
 test("no preconditions - no block", async () => {

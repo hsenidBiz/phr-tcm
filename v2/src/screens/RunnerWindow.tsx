@@ -12,6 +12,7 @@ import HistoryDots from "../components/HistoryDots";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
+import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { loadRunnerSession } from "../lib/runnerSession";
 import { getTheme } from "../lib/theme";
@@ -72,9 +73,29 @@ export default function RunnerWindow() {
   const startRef = useRef<number>(Date.now());
   const snipToken = useRef(0);
 
+  // Preconditions (and Module) live in org-specific CUSTOM fields - without
+  // their reference names the fetch returns them empty, which is why the
+  // preconditions block never showed. Same detection as the main window
+  // (shared localStorage cache, auto-picked from the field list otherwise).
+  const { prefs } = useFieldRefs(session?.org ?? "", session?.project ?? "");
+
   const cases = useQuery({
-    queryKey: ["runner-cases", session?.org, session?.pbi.id],
-    queryFn: () => unwrap(commands.pbiTestCasesFull(session!.org, session!.pbi.id, null, null)),
+    queryKey: [
+      "runner-cases",
+      session?.org,
+      session?.pbi.id,
+      prefs.moduleRef,
+      prefs.preconditionsRef,
+    ],
+    queryFn: () =>
+      unwrap(
+        commands.pbiTestCasesFull(
+          session!.org,
+          session!.pbi.id,
+          prefs.moduleRef,
+          prefs.preconditionsRef,
+        ),
+      ),
     enabled: Boolean(session),
     retry: false,
   });
