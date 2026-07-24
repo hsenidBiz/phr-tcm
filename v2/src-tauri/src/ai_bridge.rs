@@ -26,10 +26,13 @@ pub fn new_token() -> String {
 
 /// Query-string value by key from "a=1&b=2" (no percent-decoding beyond
 /// what the tiny value space needs: %20 and '+' become spaces, %5C -> \).
-fn q(target: &str, key: &str) -> Option<String> {
+/// `pub` so `tests/ai_bridge.rs` can exercise it directly.
+pub fn q(target: &str, key: &str) -> Option<String> {
     let qs = target.split_once('?')?.1;
     for pair in qs.split('&') {
-        let (k, v) = pair.split_once('=')?;
+        let Some((k, v)) = pair.split_once('=') else {
+            continue;
+        };
         if k == key {
             return Some(v.replace('+', " ").replace("%20", " ").replace("%5C", "\\"));
         }
@@ -76,12 +79,17 @@ pub async fn route(
     }
 }
 
+/// Process-wide counter so concurrent /validate calls never share a temp
+/// file (the pid alone is constant for the app's lifetime).
+static VALIDATE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Run the REAL importer on the draft: write to a temp file (parse_file
 /// dispatches on extension) and report cases/warnings/error.
 fn validate_json(body: &str) -> String {
     let dir = std::env::temp_dir().join("tcm-v2-bridge");
     let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join(format!("validate-{}.json", std::process::id()));
+    let seq = VALIDATE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("validate-{}-{}.json", std::process::id(), seq));
     if std::fs::write(&path, body).is_err() {
         return serde_json::json!({"error": "could not stage the draft"}).to_string();
     }
@@ -115,11 +123,4 @@ async fn search_pbis(
     _target: &str,
 ) -> (u16, String) {
     (404, String::new())
-}
-
-// `q` is used by Task 2's routes; referenced here so Task 1 compiles
-// without dead-code warnings.
-#[allow(dead_code)]
-fn _keep(target: &str) -> Option<String> {
-    q(target, "pbi")
 }

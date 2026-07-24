@@ -2,7 +2,7 @@
 //! the ADO-backed routes (Task 2) via wiremock. The TCP loop (Task 3) is
 //! deliberately thin - everything interesting lives in `route`.
 
-use v2_lib::ai_bridge::{new_token, route, BridgeContext};
+use v2_lib::ai_bridge::{new_token, q, route, BridgeContext};
 
 fn ctx() -> BridgeContext {
     BridgeContext {
@@ -59,4 +59,12 @@ async fn validate_runs_the_real_importer() {
     let (_, body) = route(&ctx(), None, "POST", "/validate", r#"{"not": "a wrapper"}"#).await;
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["cases"], 0, "foreign objects must never count as cases");
+}
+
+#[test]
+fn query_parsing_survives_valueless_pairs() {
+    assert_eq!(q("/examples?flag&pbi=42", "pbi").as_deref(), Some("42"));
+    assert_eq!(q("/x?module=Pay+roll%20HR", "module").as_deref(), Some("Pay roll HR"));
+    assert_eq!(q("/x?a=1", "b"), None);
+    assert_eq!(q("/noquery", "a"), None);
 }
