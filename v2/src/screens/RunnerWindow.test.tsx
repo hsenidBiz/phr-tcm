@@ -4,9 +4,16 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import RunnerWindow from "./RunnerWindow";
 
-// getCurrentWindow().close() must be a no-op in jsdom.
+// getCurrentWindow() must be a no-op in jsdom - and its methods must
+// return PROMISES: the component chains .catch() on them, and a bare
+// vi.fn() (undefined) threw an unhandled error that failed the release
+// gate even with every assertion green.
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ close: vi.fn(), setFocus: vi.fn(), setAlwaysOnTop: vi.fn() }),
+  getCurrentWindow: () => ({
+    close: vi.fn(() => Promise.resolve()),
+    setFocus: vi.fn(() => Promise.resolve()),
+    setAlwaysOnTop: vi.fn(() => Promise.resolve()),
+  }),
 }));
 
 beforeEach(() => {
