@@ -14,6 +14,11 @@ name = "v2"
 path = "src/main.rs"
 test = false
 
+[[bin]]
+name = "tcm-mcp"
+path = "src/bin/tcm_mcp.rs"
+test = false
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -38,7 +43,7 @@ specta-typescript = "0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 thiserror = "2.0.18"
-reqwest = { version = "0.13.4", features = ["form", "json", "native-tls"], default-features = false }
+reqwest = { version = "0.13.4", features = ["form", "json", "native-tls", "blocking"], default-features = false }
 sha2 = "0.11.0"
 base64 = "0.22.1"
 rand = "0.10.2"

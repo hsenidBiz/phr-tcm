@@ -12,6 +12,7 @@ pub mod capture;
 pub mod commands;
 pub mod events;
 pub mod import_parser;
+pub mod mcp;
 pub mod model;
 pub mod note_server;
 pub mod report;
