@@ -457,6 +457,8 @@ function applyPatches() {
       boardItems.push({ id, title: item.title, work_item_type: item.wi_type, state: "To Do", state_color: "b2b2b2", column: "To Do", assigned_to: item.assigned_to ?? "", tags: item.tags ?? "", priority: item.priority ?? 2, changed_date: new Date().toISOString() });
       return ok({ id, url: "https://example.invalid/demo-wi" });
     },
+    bridgeStatus: () => ok({ port: 51999, mcp_exe: "C:\\demo\\tcm-mcp.exe" }),
+    setBridgeContext: () => ok(null),
   });
 }
 

@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 
 afterEach(() => {
@@ -133,6 +133,32 @@ test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () 
 
   fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
   expect(screen.getByRole("heading", { name: "Import File" })).toBeInTheDocument();
+});
+
+test("the app pushes org/project context to the AI bridge", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "manual",
+      pbi: null,
+      workMode: false,
+    }),
+  );
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  expect(pushes[pushes.length - 1]).toMatchObject({ organization: "acme", project: "Web" });
 });
 
 test("update banner appears when a newer version exists", async () => {

@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from 
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
 import { saveNote } from "./lib/caseNotes";
+import { useFieldRefs } from "./hooks/useFieldRefs";
 import {
   CHANGELOG,
   markChangelogSeen,
@@ -202,6 +203,21 @@ export default function App() {
         // version unavailable (tests) - skip quietly
       });
   }, [signedIn]);
+
+  // Keep the AI bridge's defaults in sync with what the user is looking at:
+  // org/project + the detected custom-field refs. Fire-and-forget; the
+  // bridge simply serves stale context until the next push.
+  const { prefs: bridgePrefs } = useFieldRefs(org, project);
+  useEffect(() => {
+    if (!signedIn || !org || !project) return;
+    commands
+      .bridgeStatus()
+      .then(() =>
+        commands.setBridgeContext(org, project, bridgePrefs.moduleRef, bridgePrefs.preconditionsRef),
+      )
+      .catch(() => {});
+  }, [signedIn, org, project, bridgePrefs.moduleRef, bridgePrefs.preconditionsRef]);
+
   const dismissChangelog = () => {
     getVersion()
       .then(markChangelogSeen)
