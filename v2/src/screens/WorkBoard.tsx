@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { GitPullRequest, RefreshCw } from "lucide-react";
+import { Eye, EyeOff, GitPullRequest, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
@@ -135,10 +135,41 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       // session-only
     }
   };
-  // Hiding Done frees a third of the board for the detail drawer.
-  const [hideDone, setHideDone] = useState(
-    () => localStorage.getItem("tcm-v2-hide-done") === "on",
-  );
+  // Per-column visibility: any column can hide (collapsing to a slim rail
+  // that restores it), but at least ONE must stay visible - the eye on the
+  // last open column disables once two are hidden. Persisted; migrates the
+  // old "Hide Done" checkbox's key.
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("tcm-v2-hidden-cols");
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return new Set(arr.filter((c) => typeof c === "string"));
+      }
+      if (localStorage.getItem("tcm-v2-hide-done") === "on") {
+        localStorage.removeItem("tcm-v2-hide-done");
+        localStorage.setItem("tcm-v2-hidden-cols", JSON.stringify(["Done"]));
+        return new Set(["Done"]);
+      }
+    } catch {
+      // session-only
+    }
+    return new Set();
+  });
+  const toggleCol = (col: string) => {
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(col)) next.delete(col);
+      else if (next.size < COLUMNS.length - 1) next.add(col);
+      else return prev; // never allow hiding the last visible column
+      try {
+        localStorage.setItem("tcm-v2-hidden-cols", JSON.stringify([...next]));
+      } catch {
+        // session-only
+      }
+      return next;
+    });
+  };
   // Server-side @CurrentIteration filter (default-team context), persisted.
   const [thisSprint, setThisSprint] = useState(
     () => localStorage.getItem("tcm-v2-this-sprint") === "on",
@@ -358,20 +389,6 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           >
             <RefreshCw size={14} className={board.isFetching ? "animate-spin" : undefined} />
           </button>
-          <label className="flex items-center gap-1.5 text-xs text-muted">
-            <Checkbox
-              checked={hideDone}
-              onCheckedChange={(v) => {
-                setHideDone(v);
-                try {
-                  localStorage.setItem("tcm-v2-hide-done", v ? "on" : "off");
-                } catch {
-                  // session-only
-                }
-              }}
-            />
-            Hide Done
-          </label>
           <label className="flex items-center gap-1.5 text-xs text-muted" title="Only items in the current sprint (project default team's iteration)">
             <Checkbox
               checked={thisSprint}
@@ -429,46 +446,77 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
         )}
 
         {board.data && (
-          // The Done column stays mounted and collapses smoothly (animating
-          // grid-template-columns + fade) instead of vanishing, so the other
-          // two columns glide wider. Same easing as the drawer/modal.
+          // Hidden columns collapse to a slim rail (never to nothing) so the
+          // control that restores them stays visible; the track animation
+          // glides the open columns wider. Cards aren't rendered while
+          // collapsed - a 0-width column's wrapped cards once made the board
+          // scroll far past the visible items.
           <div
             className="grid gap-3 transition-[grid-template-columns] duration-300 ease-out"
             style={{
-              gridTemplateColumns: hideDone ? "1fr 1fr 0fr" : "1fr 1fr 1fr",
-              // Hide: fade the cards out first, THEN collapse the track (and
-              // the reverse when showing) so text never squishes mid-shrink.
-              transitionDelay: hideDone ? "140ms" : "0ms",
+              // All-fr on purpose: Chromium can't interpolate fr<->px track
+              // lists and leaves the transition STUCK at the start value.
+              // A 0fr track still floors at its content's min size - the
+              // rail's fixed w-9 - so hidden columns settle at 36px.
+              gridTemplateColumns: COLUMNS.map((c) => (hiddenCols.has(c) ? "0fr" : "1fr")).join(" "),
             }}
           >
             {COLUMNS.map((col) => {
-              const collapsed = hideDone && col === "Done";
+              const collapsed = hiddenCols.has(col);
               const items = visible.filter((i) => i.column === col);
+              if (collapsed) {
+                return (
+                  <div
+                    key={col}
+                    data-testid={`col-${col}`}
+                    // Fixed w-9 (no min-w-0): this is the 0fr track's floor.
+                    className="flex w-9 flex-col items-center gap-2 rounded-md border border-border bg-bg py-2"
+                  >
+                    <button
+                      aria-label={`Show ${col}`}
+                      title={`Show ${col}`}
+                      className="text-muted hover:text-accent"
+                      onClick={() => toggleCol(col)}
+                    >
+                      <EyeOff size={14} />
+                    </button>
+                    <span
+                      className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-faint"
+                      style={{ writingMode: "vertical-rl" }}
+                    >
+                      {col} · {items.length}
+                    </span>
+                  </div>
+                );
+              }
               return (
                 <div
                   key={col}
                   data-testid={`col-${col}`}
-                  aria-hidden={collapsed}
-                  className={cn(
-                    "min-w-0 rounded-md border border-border bg-bg transition-[opacity,padding] duration-150 ease-out",
-                    collapsed
-                      ? // max-h-0 matters: a 0fr-wide column still sets the grid
-                        // row's height, and its cards wrapping at ~0px width made
-                        // the board scroll far past the visible items.
-                        "pointer-events-none max-h-0 overflow-hidden border-transparent p-0 opacity-0"
-                      : "space-y-2 p-2",
-                  )}
-                  style={{ transitionDelay: collapsed ? "0ms" : "280ms" }}
+                  className="min-w-0 space-y-2 rounded-md border border-border bg-bg p-2"
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => {
-                    if (!collapsed && dragging && dragging.column !== col) {
+                    if (dragging && dragging.column !== col) {
                       move.mutate({ item: dragging, column: col });
                     }
                     setDragging(null);
                   }}
                 >
-                  <h3 className="whitespace-nowrap px-1 text-xs font-semibold uppercase tracking-wide text-muted">
-                    {col} <span className="text-faint">{items.length}</span>
+                  <h3 className="flex items-center whitespace-nowrap px-1 text-xs font-semibold uppercase tracking-wide text-muted">
+                    {col} <span className="ml-1 text-faint">{items.length}</span>
+                    <button
+                      aria-label={`Hide ${col}`}
+                      title={
+                        hiddenCols.size >= COLUMNS.length - 1
+                          ? "At least one column must stay visible"
+                          : `Hide ${col}`
+                      }
+                      disabled={hiddenCols.size >= COLUMNS.length - 1}
+                      className="ml-auto text-muted transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={() => toggleCol(col)}
+                    >
+                      <Eye size={13} />
+                    </button>
                   </h3>
                   {items.map((item) => (
                     <Card

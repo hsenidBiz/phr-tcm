@@ -2,7 +2,7 @@ import { useLightbox } from "@astryxdesign/core/Lightbox";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ClipboardPaste, Paperclip, Pin, PinOff, Scissors, X } from "lucide-react";
+import { ClipboardPaste, Paperclip, Pin, PinOff, Scissors, Video, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
@@ -67,6 +67,8 @@ export default function RunnerWindow() {
   const [bugFor, setBugFor] = useState<TestCaseFull | null>(null);
   const [pinned, setPinned] = useState(true); // window is created alwaysOnTop
   const [snipping, setSnipping] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const startRef = useRef<number>(Date.now());
   const snipToken = useRef(0);
 
@@ -189,6 +191,53 @@ export default function RunnerWindow() {
         [caseId]: { ...prev, attachments: prev.attachments.filter((_, i) => i !== index) },
       };
     });
+
+  /** Screen recording, like Azure DevOps's own runner: pick a screen or
+   * window, record, and the .webm lands as an attachment on THIS case's
+   * result (captured at start, so switching cases mid-recording still
+   * files it correctly). Stopping works from our button or the browser's
+   * own "stop sharing" bar. */
+  async function toggleRecord() {
+    if (recorderRef.current) {
+      recorderRef.current.stop();
+      return;
+    }
+    if (!current) return;
+    const caseId = current.id;
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const rec = MediaRecorder.isTypeSupported?.("video/webm")
+        ? new MediaRecorder(stream, { mimeType: "video/webm" })
+        : new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      rec.onstop = async () => {
+        recorderRef.current = null;
+        setRecording(false);
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: "video/webm" });
+        if (blob.size === 0) {
+          toast.info("Recording was empty - nothing attached.");
+          return;
+        }
+        const b64 = await blobToB64(blob);
+        addAttachment(caseId, { file_name: `recording-${caseId}-${Date.now()}.webm`, b64 });
+        toast.success("Recording attached");
+      };
+      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+        if (rec.state !== "inactive") rec.stop();
+      });
+      rec.start();
+      recorderRef.current = rec;
+      setRecording(true);
+    } catch {
+      toast.error(
+        "Screen recording unavailable - record with Win+Alt+R (Game Bar) and use Attach file.",
+      );
+    }
+  }
 
   const togglePin = () => {
     const next = !pinned;
@@ -381,6 +430,13 @@ export default function RunnerWindow() {
             </div>
           </div>
 
+          {current.preconditions.trim() !== "" && (
+            <div className="rounded-md border border-accent/40 bg-accent-soft/30 p-2 text-sm">
+              <div className="mb-0.5 text-xs font-semibold text-accent">Preconditions</div>
+              <div className="whitespace-pre-wrap text-text">{current.preconditions}</div>
+            </div>
+          )}
+
           <ol className="space-y-1.5">
             {current.steps.map((step, i) => (
               <li key={i} className="rounded-md border border-border p-2 text-sm">
@@ -425,6 +481,14 @@ export default function RunnerWindow() {
           />
 
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant={recording ? "danger" : "outline"}
+              size="sm"
+              onClick={toggleRecord}
+              title="Record the screen; the video attaches to this result"
+            >
+              <Video size={14} /> {recording ? "Stop recording" : "Record"}
+            </Button>
             <Button variant="outline" size="sm" disabled={snipping} onClick={snip}>
               <Scissors size={14} /> {snipping ? "Waiting for snip" : "Snip"}
             </Button>

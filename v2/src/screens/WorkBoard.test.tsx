@@ -352,7 +352,7 @@ test("This sprint toggle refetches with currentSprint=true", async () => {
   localStorage.removeItem("tcm-v2-this-sprint");
 });
 
-test("hidden Done column contributes no height (max-h-0), so the board doesn't scroll past visible items", async () => {
+test("the legacy Hide Done preference migrates to a collapsed Done rail (no cards rendered)", async () => {
   localStorage.setItem("tcm-v2-hide-done", "on");
   mockIPC((cmd) => {
     if (cmd === "fetch_board") return boardData;
@@ -360,9 +360,39 @@ test("hidden Done column contributes no height (max-h-0), so the board doesn't s
   });
   renderBoard();
   const done = await screen.findByTestId("col-Done");
-  expect(done.className).toContain("max-h-0");
-  expect(done.className).toContain("overflow-hidden");
-  localStorage.removeItem("tcm-v2-hide-done");
+  // Rail: a restore control, no cards - so it can't stretch the board.
+  expect(within(done).getByLabelText("Show Done")).toBeInTheDocument();
+  expect(within(done).queryByText("Fix bug")).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-hidden-cols")).toBe(JSON.stringify(["Done"]));
+  expect(localStorage.getItem("tcm-v2-hide-done")).toBeNull();
+  localStorage.removeItem("tcm-v2-hidden-cols");
+});
+
+test("any column can hide via its eye, but the last visible one is protected", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+  });
+  renderBoard();
+  await screen.findByTestId("col-To Do");
+
+  // Hide two columns.
+  fireEvent.click(screen.getByLabelText("Hide To Do"));
+  fireEvent.click(screen.getByLabelText("Hide In Progress"));
+  expect(screen.getByLabelText("Show To Do")).toBeInTheDocument();
+  expect(screen.getByLabelText("Show In Progress")).toBeInTheDocument();
+
+  // The third column's eye is disabled - all three can never hide at once.
+  const lastEye = screen.getByLabelText("Hide Done");
+  expect(lastEye).toBeDisabled();
+  fireEvent.click(lastEye);
+  expect(screen.queryByLabelText("Show Done")).not.toBeInTheDocument();
+
+  // Restoring one re-enables hiding the rest.
+  fireEvent.click(screen.getByLabelText("Show To Do"));
+  expect(screen.getByLabelText("Hide Done")).toBeEnabled();
+  expect(localStorage.getItem("tcm-v2-hidden-cols")).toBe(JSON.stringify(["In Progress"]));
+  localStorage.removeItem("tcm-v2-hidden-cols");
 });
 
 test("areas under a Scrum Archive node are hidden from the scope picker", async () => {

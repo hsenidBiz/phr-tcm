@@ -129,3 +129,26 @@ test("File bug appears only after a failure", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Failed" }));
   expect(screen.getByRole("button", { name: "File bug" })).toBeInTheDocument();
 });
+
+test("the case's preconditions show above the steps; absent ones render nothing", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pbi_test_cases_full")
+      return [{ ...fullCase, preconditions: "A demo account exists and is unlocked" }];
+    if (cmd === "list_test_points") return [];
+    if (cmd === "run_history") return [];
+  });
+  renderRunner();
+  expect(await screen.findByText("Preconditions")).toBeInTheDocument();
+  expect(screen.getByText("A demo account exists and is unlocked")).toBeInTheDocument();
+});
+
+test("no preconditions - no block", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pbi_test_cases_full") return [fullCase]; // preconditions: ""
+    if (cmd === "list_test_points") return [];
+    if (cmd === "run_history") return [];
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  expect(screen.queryByText("Preconditions")).not.toBeInTheDocument();
+});
