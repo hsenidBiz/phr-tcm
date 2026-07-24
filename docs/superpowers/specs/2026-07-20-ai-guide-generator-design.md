@@ -1,3 +1,7 @@
+> **SUPERSEDED (2026-07-24)** by the AI MCP bridge:
+> `docs/superpowers/plans/2026-07-24-ai-mcp-bridge.md`. Kept for the
+> format/drift-gate reasoning the bridge's /guide and /validate reuse.
+
 # AI Test-Case Guide generator — design spec
 
 **Date:** 2026-07-20
