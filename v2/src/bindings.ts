@@ -142,6 +142,12 @@ export const commands = {
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
 	/**  Iteration paths with sprint dates, for DevOps-style iteration pickers. */
 	listIterations: (organization: string, project: string) => typedError<IterationRef[], AdoError>(__TAURI_INVOKE("list_iterations", { organization, project })),
+	bridgeStatus: () => typedError<BridgeStatus, string>(__TAURI_INVOKE("bridge_status")),
+	/**
+	 *  The frontend pushes its current org/project + detected field refs so
+	 *  bridge routes have defaults the AI never has to guess.
+	 */
+	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef }),
 };
 
 /** Events */
@@ -188,6 +194,15 @@ export type BoardItem = {
 	tags: string,
 	priority: number | null,
 	changed_date: string,
+};
+
+export type BridgeStatus = {
+	port: number,
+	/**
+	 *  Absolute path to tcm-mcp.exe next to the app binary (what the user
+	 *  registers in their AI tool).
+	 */
+	mcp_exe: string,
 };
 
 /**  One test case's recent outcomes (newest first, capped at 5). */

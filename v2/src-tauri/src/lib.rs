@@ -32,7 +32,7 @@ pub use events::{CaseNoteSaved, SubmitProgress, SuiteScanProgress};
 pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
+    use commands::{ai_bridge, auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
@@ -98,7 +98,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             prs::repo_pull_requests,
             prs::board_pr_links,
             prs::pr_work_items,
-            discovery::list_iterations
+            discovery::list_iterations,
+            ai_bridge::bridge_status,
+            ai_bridge::set_bridge_context
         ])
 }
 
@@ -111,6 +113,7 @@ pub fn run() {
         .manage(Mutex::new(auth::AuthState::default()))
         .manage(updater::UpdateState::default())
         .manage(SubmitCancel::default())
+        .manage(commands::ai_bridge::BridgeHandle::default())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             // Registers the typed-event registry in Tauri state; without

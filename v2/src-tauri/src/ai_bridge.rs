@@ -226,3 +226,109 @@ async fn search_pbis(
         Err(e) => (502, format!("Azure DevOps error: {e:?}")),
     }
 }
+
+// ---------------------------------------------------------------- server
+
+use std::sync::{Arc, Mutex as StdMutex};
+
+/// Context shared between the TCP loop and the set_bridge_context command.
+pub struct BridgeState {
+    pub ctx: StdMutex<BridgeContext>,
+    pub token: String,
+}
+pub type SharedBridge = Arc<BridgeState>;
+
+impl BridgeState {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(ctx: BridgeContext) -> SharedBridge {
+        Arc::new(BridgeState { ctx: StdMutex::new(ctx), token: new_token() })
+    }
+}
+
+/// Optional per-request ADO client factory: the Tauri layer passes one
+/// that mints a fresh token; tests pass None (ping/validate only).
+pub type ClientFactory =
+    Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<crate::ado::AdoClient>> + Send>> + Send + Sync>;
+
+/// Bind 127.0.0.1:0, write the handshake file, serve forever on the tokio
+/// runtime. Returns (port, token). Requests: tiny HTTP/1.1, one request
+/// per connection, 64 KiB body cap.
+pub async fn start_listener(
+    state: SharedBridge,
+    make_client: Option<ClientFactory>,
+) -> Result<(u16, String), String> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let token = state.token.clone();
+    std::fs::write(
+        std::env::temp_dir().join("tcm-v2-mcp-bridge.json"),
+        serde_json::json!({ "port": port, "token": token }).to_string(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else { continue };
+            let state = Arc::clone(&state);
+            let make_client = make_client.clone();
+            tauri::async_runtime::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 65536];
+                let mut used = 0usize;
+                // Read until headers+body are complete (or the cap).
+                let (method, target, tok, body) = loop {
+                    let Ok(n) = sock.read(&mut buf[used..]).await else { return };
+                    if n == 0 { return; }
+                    used += n;
+                    if let Some(parsed) = parse_http(&buf[..used]) {
+                        break parsed;
+                    }
+                    if used >= buf.len() { return; }
+                };
+                let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
+                    (401, String::new())
+                } else {
+                    let ctx = state.ctx.lock().unwrap().clone();
+                    let client = match &make_client {
+                        Some(f) => f().await,
+                        None => None,
+                    };
+                    route(&ctx, client.as_ref(), &method, &target, &body).await
+                };
+                let reason = match status { 200 => "OK", 400 => "Bad Request", 401 => "Unauthorized", 503 => "Unavailable", _ => "Not Found" };
+                let resp = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    payload.len(),
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+    Ok((port, token))
+}
+
+/// Returns Some((method, target, token-header, body)) once the request is
+/// fully buffered; None while incomplete or on garbage.
+fn parse_http(raw: &[u8]) -> Option<(String, String, Option<String>, String)> {
+    let text = String::from_utf8_lossy(raw);
+    let head_end = text.find("\r\n\r\n")?;
+    let head = &text[..head_end];
+    let mut lines = head.lines();
+    let mut req = lines.next()?.split_whitespace();
+    let method = req.next()?.to_string();
+    let target = req.next()?.to_string();
+    let mut token = None;
+    let mut content_len = 0usize;
+    for line in lines {
+        let (k, v) = line.split_once(':')?;
+        let v = v.trim();
+        if k.eq_ignore_ascii_case("x-bridge-token") { token = Some(v.to_string()); }
+        if k.eq_ignore_ascii_case("content-length") { content_len = v.parse().ok()?; }
+    }
+    let body_start = head_end + 4;
+    if raw.len() < body_start + content_len { return None; }
+    let body = String::from_utf8_lossy(&raw[body_start..body_start + content_len]).to_string();
+    Some((method, target, token, body))
+}

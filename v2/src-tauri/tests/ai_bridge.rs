@@ -157,3 +157,48 @@ async fn examples_without_pbi_400_with_guidance() {
     assert_eq!(status, 400);
     assert!(body.contains("pbi"));
 }
+
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[tokio::test]
+async fn tcp_server_guards_with_token_and_serves_ping() {
+    let shared = v2_lib::ai_bridge::BridgeState::new(ctx());
+    let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None)
+        .await
+        .unwrap();
+
+    async fn send(port: u16, req: String) -> String {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        s.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        s.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).to_string()
+    }
+
+    // Wrong token -> 401, no body.
+    let resp = send(
+        port,
+        "GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: wrong\r\nConnection: close\r\n\r\n".into(),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 401"), "got: {resp}");
+    assert!(!resp.contains("tcm"));
+
+    // Right token -> 200 with the ping payload.
+    let resp = send(
+        port,
+        format!("GET /ping HTTP/1.1\r\nHost: x\r\nx-bridge-token: {token}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200"), "got: {resp}");
+    assert!(resp.contains("\"app\":\"tcm\""));
+
+    // The handshake file exists and matches.
+    let hs: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(std::env::temp_dir().join("tcm-v2-mcp-bridge.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(hs["port"].as_u64().unwrap() as u16, port);
+    assert_eq!(hs["token"].as_str().unwrap(), token);
+}

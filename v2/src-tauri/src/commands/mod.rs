@@ -2,6 +2,7 @@
 //! Handlers stay thin — token via `state::get_fresh_token`, then a call into
 //! the matching domain module. Command fn names are frozen (bindings.ts).
 
+pub mod ai_bridge;
 pub mod auth;
 pub mod board;
 pub mod bugs;
