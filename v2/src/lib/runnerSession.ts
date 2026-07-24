@@ -26,3 +26,24 @@ export function loadRunnerSession(): RunnerSession | null {
     return null;
   }
 }
+
+const PIN_KEY = "tcm-v2-runner-pinned";
+
+/** The runner's remembered always-on-top preference (default: pinned).
+ * Read at window creation AND by the runner's own toggle state, so a new
+ * run opens the way the user last left it. */
+export function loadRunnerPinned(): boolean {
+  try {
+    return localStorage.getItem(PIN_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function saveRunnerPinned(pinned: boolean): void {
+  try {
+    localStorage.setItem(PIN_KEY, pinned ? "on" : "off");
+  } catch {
+    // session-only
+  }
+}

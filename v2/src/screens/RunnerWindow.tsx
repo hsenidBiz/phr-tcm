@@ -14,7 +14,7 @@ import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
-import { loadRunnerSession } from "../lib/runnerSession";
+import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
 import { getTheme } from "../lib/theme";
 import { outcomeLabel } from "./RunPanel";
 
@@ -66,7 +66,9 @@ export default function RunnerWindow() {
   const [idx, setIdx] = useState(0);
   const [states, setStates] = useState<Record<number, CaseState>>({});
   const [bugFor, setBugFor] = useState<TestCaseFull | null>(null);
-  const [pinned, setPinned] = useState(true); // window is created alwaysOnTop
+  // The window is created with the remembered pin preference (openRunner
+  // reads the same key), so state and reality start in sync.
+  const [pinned, setPinned] = useState(loadRunnerPinned);
   const [snipping, setSnipping] = useState(false);
   const [recording, setRecording] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -263,6 +265,7 @@ export default function RunnerWindow() {
   const togglePin = () => {
     const next = !pinned;
     setPinned(next);
+    saveRunnerPinned(next); // the next run opens the way you left it
     getCurrentWindow()
       .setAlwaysOnTop(next)
       .catch(() => toast.error("Could not change always-on-top."));

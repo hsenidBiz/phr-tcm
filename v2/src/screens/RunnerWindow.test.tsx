@@ -165,3 +165,20 @@ test("no preconditions - no block", async () => {
   await screen.findByText("Valid login");
   expect(screen.queryByText("Preconditions")).not.toBeInTheDocument();
 });
+
+test("the pin toggle is remembered, and a stored 'off' starts unpinned", async () => {
+  localStorage.setItem("tcm-v2-runner-pinned", "off");
+  mockIPC((cmd) => {
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points") return [];
+    if (cmd === "run_history") return [];
+    if (cmd === "list_test_case_fields") return [];
+  });
+  renderRunner();
+  // Stored preference wins over the old always-pinned default.
+  const pin = await screen.findByLabelText("Pin on top");
+  fireEvent.click(pin);
+  // Toggling back on persists for the NEXT run.
+  expect(localStorage.getItem("tcm-v2-runner-pinned")).toBe("on");
+  expect(screen.getByLabelText("Unpin (allow other windows on top)")).toBeInTheDocument();
+});

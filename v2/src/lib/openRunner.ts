@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { saveRunnerSession, type RunnerSession } from "./runnerSession";
+import { loadRunnerPinned, saveRunnerSession, type RunnerSession } from "./runnerSession";
 
 /** Open (or focus) the compact always-on-top runner window on the #runner
  * hash route. Dynamically imports the webview API so vitest never touches it. */
@@ -18,7 +18,8 @@ export async function openRunnerWindow(session: RunnerSession) {
     title: "Test Runner",
     width: 460,
     height: 720,
-    alwaysOnTop: true,
+    // Honour the user's last pin toggle instead of forcing on-top.
+    alwaysOnTop: loadRunnerPinned(),
     resizable: true,
     focus: true,
     decorations: false,
