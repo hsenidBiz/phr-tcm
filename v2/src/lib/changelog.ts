@@ -13,6 +13,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.10.3",
+    date: "2026-07-24",
+    items: [
+      "Work Manager: new \"New Work Item\" tab - a full creation form (type, title, assignee, area, iteration, priority, tags, description, optional parent PBI) replaces the board's quick-create row.",
+      "Runner: screen recording like Azure DevOps's runner - Record, pick a screen, and the video attaches to the result.",
+      "Runner: the test case's preconditions now show above the steps, and the pin (always-on-top) toggle is remembered between runs.",
+      "Board: each column has its own eye to hide it (at least one always stays visible), replacing the Hide Done checkbox.",
+      "Board: when a move is blocked by required fields, the app names them, opens the item, and highlights exactly what to fill.",
+      "Iteration pickers show each sprint's dates, like Azure DevOps.",
+      "Azure DevOps errors now show the server's real explanation instead of a bare HTTP status.",
+    ],
+  },
+  {
     version: "1.10.2",
     date: "2026-07-23",
     items: [
