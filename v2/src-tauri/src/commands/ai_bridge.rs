@@ -30,7 +30,7 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
             return Ok(BridgeStatus { port: *port, mcp_exe: mcp_exe_path() });
         }
     }
-    let shared = BridgeState::new(BridgeContext::default());
+    let shared = BridgeState::new(BridgeContext::default(), app.package_info().version.to_string());
     let app_for_client = app.clone();
     let factory: crate::ai_bridge::ClientFactory = Arc::new(move || {
         let app = app_for_client.clone();

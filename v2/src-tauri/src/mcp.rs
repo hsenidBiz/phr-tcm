@@ -6,7 +6,7 @@
 
 type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
 
-pub fn handle_message(msg: &str, call: BridgeCall) -> Option<String> {
+pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(msg).ok()?;
     let method = v["method"].as_str()?;
     let id = v.get("id").cloned();
@@ -18,7 +18,7 @@ pub fn handle_message(msg: &str, call: BridgeCall) -> Option<String> {
         "initialize" => serde_json::json!({
             "protocolVersion": v["params"]["protocolVersion"].as_str().unwrap_or("2024-11-05"),
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "tcm-testcases", "version": env!("CARGO_PKG_VERSION") },
+            "serverInfo": { "name": "tcm-testcases", "version": version },
         }),
         "tools/list" => tools_list(),
         "tools/call" => tools_call(&v["params"], call),
@@ -33,6 +33,22 @@ pub fn handle_message(msg: &str, call: BridgeCall) -> Option<String> {
         }
     };
     Some(serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string())
+}
+
+/// RFC 3986 percent-encoding for query values: keep ALPHA / DIGIT / `-._~`,
+/// escape everything else (spaces, `&`, `%`, unicode bytes, ...). Used for
+/// free-text search so ai_bridge::q's naive `&`/`=` splitter can't be
+/// confused by separator characters embedded in the search text itself.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -84,7 +100,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "validate_cases" => call("POST", "/validate", args["json"].as_str().unwrap_or("")),
         "search_pbis" => {
             let q = args["query"].as_str().unwrap_or("");
-            call("GET", &format!("/search-pbis?q={}", q.replace(' ', "%20")), "")
+            call("GET", &format!("/search-pbis?q={}", percent_encode(q)), "")
         }
         other => Err(format!("unknown tool {other}")),
     };

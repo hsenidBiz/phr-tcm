@@ -24,9 +24,9 @@ pub fn new_token() -> String {
         .collect()
 }
 
-/// Query-string value by key from "a=1&b=2" (no percent-decoding beyond
-/// what the tiny value space needs: %20 and '+' become spaces, %5C -> \).
-/// `pub` so `tests/ai_bridge.rs` can exercise it directly.
+/// Query-string value by key from "a=1&b=2", percent-decoded ('+' -> space,
+/// arbitrary %XX -> the raw byte). `pub` so `tests/ai_bridge.rs` can
+/// exercise it directly.
 pub fn q(target: &str, key: &str) -> Option<String> {
     let qs = target.split_once('?')?.1;
     for pair in qs.split('&') {
@@ -34,10 +34,43 @@ pub fn q(target: &str, key: &str) -> Option<String> {
             continue;
         };
         if k == key {
-            return Some(v.replace('+', " ").replace("%20", " ").replace("%5C", "\\"));
+            return Some(percent_decode(v));
         }
     }
     None
+}
+
+/// Minimal RFC 3986 percent-decoder: '+' -> space (form convention), %XX ->
+/// the decoded byte, invalid/truncated escapes pass through literally.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 3 <= bytes.len() && s.is_char_boundary(i + 3) => {
+                match u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                    Ok(byte) => {
+                        out.push(byte);
+                        i += 3;
+                    }
+                    Err(_) => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Dispatch one request. `client` is None only in tests and before sign-in;
@@ -49,6 +82,7 @@ pub async fn route(
     method: &str,
     target: &str,
     body: &str,
+    version: &str,
 ) -> (u16, String) {
     let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
     match (method, path) {
@@ -56,7 +90,7 @@ pub async fn route(
             200,
             serde_json::json!({
                 "app": "tcm",
-                "version": env!("CARGO_PKG_VERSION"),
+                "version": version,
                 "org": ctx.org,
                 "project": ctx.project,
             })
@@ -235,13 +269,18 @@ use std::sync::{Arc, Mutex as StdMutex};
 pub struct BridgeState {
     pub ctx: StdMutex<BridgeContext>,
     pub token: String,
+    /// The running app's version (from tauri.conf.json via
+    /// `AppHandle::package_info`), reported on `/ping` and in the handshake
+    /// file so tcm-mcp can echo the real version without its own Cargo.toml
+    /// needing to stay in sync.
+    pub version: String,
 }
 pub type SharedBridge = Arc<BridgeState>;
 
 impl BridgeState {
     #[allow(clippy::new_ret_no_self)]
-    pub fn new(ctx: BridgeContext) -> SharedBridge {
-        Arc::new(BridgeState { ctx: StdMutex::new(ctx), token: new_token() })
+    pub fn new(ctx: BridgeContext, version: String) -> SharedBridge {
+        Arc::new(BridgeState { ctx: StdMutex::new(ctx), token: new_token(), version })
     }
 }
 
@@ -264,7 +303,7 @@ pub async fn start_listener(
     let token = state.token.clone();
     std::fs::write(
         std::env::temp_dir().join("tcm-v2-mcp-bridge.json"),
-        serde_json::json!({ "port": port, "token": token }).to_string(),
+        serde_json::json!({ "port": port, "token": token, "version": state.version }).to_string(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -295,7 +334,7 @@ pub async fn start_listener(
                         Some(f) => f().await,
                         None => None,
                     };
-                    route(&ctx, client.as_ref(), &method, &target, &body).await
+                    route(&ctx, client.as_ref(), &method, &target, &body, &state.version).await
                 };
                 let reason = match status { 200 => "OK", 400 => "Bad Request", 401 => "Unauthorized", 503 => "Unavailable", _ => "Not Found" };
                 let resp = format!(

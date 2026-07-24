@@ -24,25 +24,26 @@ fn tokens_are_32_hex_and_unique() {
 
 #[tokio::test]
 async fn ping_answers_without_a_client() {
-    let (status, body) = route(&ctx(), None, "GET", "/ping", "").await;
+    let (status, body) = route(&ctx(), None, "GET", "/ping", "", "1.10.3").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["app"], "tcm");
     assert_eq!(v["org"], "acme");
+    assert_eq!(v["version"], "1.10.3", "reports the real app version, not this crate's");
 }
 
 #[tokio::test]
 async fn unknown_routes_404() {
-    let (status, _) = route(&ctx(), None, "GET", "/secrets", "").await;
+    let (status, _) = route(&ctx(), None, "GET", "/secrets", "", "1.10.3").await;
     assert_eq!(status, 404);
-    let (status, _) = route(&ctx(), None, "DELETE", "/ping", "").await;
+    let (status, _) = route(&ctx(), None, "DELETE", "/ping", "", "1.10.3").await;
     assert_eq!(status, 404);
 }
 
 #[tokio::test]
 async fn validate_runs_the_real_importer() {
     let good = r#"[{"title": "Login works", "steps": [{"action": "Open", "expected": "Shown"}]}]"#;
-    let (status, body) = route(&ctx(), None, "POST", "/validate", good).await;
+    let (status, body) = route(&ctx(), None, "POST", "/validate", good, "1.10.3").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["cases"], 1);
@@ -51,12 +52,12 @@ async fn validate_runs_the_real_importer() {
     // Not-JSON is a hard importer error; an empty/foreign wrapper is a
     // lenient zero-case parse - both must be visible to the AI, never a
     // silent success with cases > 0.
-    let (status, body) = route(&ctx(), None, "POST", "/validate", "not json at all").await;
+    let (status, body) = route(&ctx(), None, "POST", "/validate", "not json at all", "1.10.3").await;
     assert_eq!(status, 200); // validation RESULTS are a 200; only transport errors aren't
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(v["error"].as_str().is_some(), "hard parse failure must carry an error");
 
-    let (_, body) = route(&ctx(), None, "POST", "/validate", r#"{"not": "a wrapper"}"#).await;
+    let (_, body) = route(&ctx(), None, "POST", "/validate", r#"{"not": "a wrapper"}"#, "1.10.3").await;
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["cases"], 0, "foreign objects must never count as cases");
 }
@@ -67,6 +68,18 @@ fn query_parsing_survives_valueless_pairs() {
     assert_eq!(q("/x?module=Pay+roll%20HR", "module").as_deref(), Some("Pay roll HR"));
     assert_eq!(q("/x?a=1", "b"), None);
     assert_eq!(q("/noquery", "a"), None);
+}
+
+#[test]
+fn query_parsing_decodes_arbitrary_percent_escapes() {
+    // mcp.rs percent-encodes search text with a generic RFC 3986 encoder
+    // (not just spaces) so literal '&'/'='/etc. in the query text survive
+    // the naive '&'-split in `q`. The decoder here must be the matching
+    // generic counterpart, not a %20-only special case.
+    assert_eq!(
+        q("/search-pbis?q=Search%20%26%20Filter", "q").as_deref(),
+        Some("Search & Filter")
+    );
 }
 
 use v2_lib::ado::AdoClient;
@@ -94,7 +107,7 @@ async fn guide_carries_format_rules_and_live_modules() {
         .mount(&server)
         .await;
 
-    let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "").await;
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.10.3").await;
     assert_eq!(status, 200);
     assert!(body.contains("Not Automated"), "statuses come from VALID_STATUSES");
     assert!(body.contains("Planned"));
@@ -139,7 +152,7 @@ async fn examples_return_real_cases_in_import_shape() {
         .await;
 
     let (status, body) =
-        route(&ctx(), Some(&client), "GET", "/examples?pbi=42&limit=5", "").await;
+        route(&ctx(), Some(&client), "GET", "/examples?pbi=42&limit=5", "", "1.10.3").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     let cases = v["test_cases"].as_array().unwrap();
@@ -153,7 +166,7 @@ async fn examples_return_real_cases_in_import_shape() {
 #[tokio::test]
 async fn examples_without_pbi_400_with_guidance() {
     let (_server, client) = ado_stub().await;
-    let (status, body) = route(&ctx(), Some(&client), "GET", "/examples", "").await;
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/examples", "", "1.10.3").await;
     assert_eq!(status, 400);
     assert!(body.contains("pbi"));
 }
@@ -163,7 +176,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 async fn tcp_server_guards_with_token_and_serves_ping() {
-    let shared = v2_lib::ai_bridge::BridgeState::new(ctx());
+    let shared = v2_lib::ai_bridge::BridgeState::new(ctx(), "0.0.0-test".into());
     let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None)
         .await
         .unwrap();
@@ -194,11 +207,13 @@ async fn tcp_server_guards_with_token_and_serves_ping() {
     assert!(resp.starts_with("HTTP/1.1 200"), "got: {resp}");
     assert!(resp.contains("\"app\":\"tcm\""));
 
-    // The handshake file exists and matches.
+    // The handshake file exists and matches, including the version tcm-mcp
+    // reads for its own serverInfo.version.
     let hs: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(std::env::temp_dir().join("tcm-v2-mcp-bridge.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(hs["port"].as_u64().unwrap() as u16, port);
     assert_eq!(hs["token"].as_str().unwrap(), token);
+    assert_eq!(hs["version"].as_str().unwrap(), "0.0.0-test");
 }

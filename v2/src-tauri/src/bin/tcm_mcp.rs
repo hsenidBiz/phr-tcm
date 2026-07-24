@@ -30,7 +30,20 @@ fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), St
     Ok((status, text))
 }
 
+/// The running app's version from the handshake file it already writes for
+/// port/token, so `serverInfo.version` matches the real app - not this
+/// binary's own (unrelated) Cargo.toml version. "unknown" when the app
+/// isn't running yet; the binary must still answer `initialize`.
+fn read_version() -> String {
+    std::fs::read_to_string(std::env::temp_dir().join("tcm-v2-mcp-bridge.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["version"].as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 fn main() {
+    let version = read_version();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
@@ -38,7 +51,7 @@ fn main() {
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(resp) = v2_lib::mcp::handle_message(&line, &bridge_call) {
+        if let Some(resp) = v2_lib::mcp::handle_message(&line, &version, &bridge_call) {
             let _ = writeln!(stdout, "{resp}");
             let _ = stdout.flush();
         }
