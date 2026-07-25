@@ -165,6 +165,13 @@ export const commands = {
 	 *  shows. Polled by the dialog while a step is running.
 	 */
 	buildLog: (organization: string, project: string, buildId: number, logId: number) => typedError<string, AdoError>(__TAURI_INVOKE("build_log", { organization, project, buildId, logId })),
+	/**
+	 *  Fresh deployments for known builds - the cache-revalidation half of the
+	 *  pipeline view. Stages/logs of finished builds are immutable and served
+	 *  from the local cache; deployments can appear later, so only they get
+	 *  re-asked.
+	 */
+	prDeployments: (organization: string, project: string, buildIds: number[]) => typedError<BuildDeployments[], AdoError>(__TAURI_INVOKE("pr_deployments", { organization, project, buildIds })),
 	/**  Iteration paths with sprint dates, for DevOps-style iteration pickers. */
 	listIterations: (organization: string, project: string) => typedError<IterationRef[], AdoError>(__TAURI_INVOKE("list_iterations", { organization, project })),
 	bridgeStatus: () => typedError<BridgeStatus, string>(__TAURI_INVOKE("bridge_status")),
@@ -237,6 +244,12 @@ export type BridgeStatus = {
 	 *  binary, not a separate file).
 	 */
 	mcp_exe: string,
+};
+
+/**  Deployments for one build, for the cache-revalidation command. */
+export type BuildDeployments = {
+	build_id: number,
+	deployments: Deployment[],
 };
 
 /**  A job inside a stage, holding the steps. */

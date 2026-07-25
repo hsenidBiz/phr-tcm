@@ -75,6 +75,13 @@ pub struct Deployment {
     pub web_url: String,
 }
 
+/// Deployments for one build, for the cache-revalidation command.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct BuildDeployments {
+    pub build_id: i32,
+    pub deployments: Vec<Deployment>,
+}
+
 /// A build run tied to a pull request, with its stages and deployments.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PrBuild {
@@ -204,6 +211,27 @@ impl AdoClient {
         );
         let data = self.get_json(url).await?;
         Ok(build_stage_tree(&data))
+    }
+
+    /// Fresh deployments for a set of already-known builds. This is the
+    /// cache-revalidation path: a finished build's runs/stages/logs are
+    /// immutable and stay cached, but a Classic release can be created
+    /// against it LATER - so the frontend re-asks only this cheap question
+    /// on top of its cached history and folds the answer in. Read only.
+    pub async fn builds_deployments(
+        &self,
+        org: &str,
+        project: &str,
+        build_ids: &[i32],
+    ) -> Result<Vec<BuildDeployments>, AdoError> {
+        let mut out = vec![];
+        for &id in build_ids {
+            out.push(BuildDeployments {
+                build_id: id,
+                deployments: self.build_deployments(org, project, id).await.unwrap_or_default(),
+            });
+        }
+        Ok(out)
     }
 
     /// Classic releases that consumed this build as their artifact, with

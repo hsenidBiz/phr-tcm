@@ -603,6 +603,7 @@ function applyPatches() {
     registerAiTool: () => ok(null),
     unregisterAiTool: () => ok(null),
     setAdoRateLevel: () => Promise.resolve(200),
+    prDeployments: () => ok([]),
     buildLog: () =>
       ok(
         [

@@ -266,3 +266,35 @@ async fn repo_pull_requests_pages_with_skip() {
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].id, 7);
 }
+
+/// The revalidation path: known build ids in, current deployments out -
+/// including a release created long after the build finished. A build with
+/// no Release Management data degrades to an empty list, never an error.
+#[tokio::test]
+async fn builds_deployments_picks_up_late_releases() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/release/releases"))
+        .and(query_param("artifactVersionId", "901"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "name": "Release-500",
+                "_links": { "web": { "href": "https://x/release/500" } },
+                "environments": [
+                    { "name": "Production", "status": "succeeded", "modifiedOn": "2026-07-26T10:00:00Z" }
+                ]
+            }]
+        })))
+        .mount(&server)
+        .await;
+    // 902 has no mock at all -> 404 -> empty, not an error.
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let fresh = client.builds_deployments("o", "p", &[901, 902]).await.unwrap();
+    assert_eq!(fresh.len(), 2);
+    assert_eq!(fresh[0].build_id, 901);
+    assert_eq!(fresh[0].deployments[0].environment, "Production");
+    assert_eq!(fresh[0].deployments[0].release, "Release-500");
+    assert_eq!(fresh[1].build_id, 902);
+    assert!(fresh[1].deployments.is_empty());
+}

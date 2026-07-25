@@ -72,6 +72,24 @@ pub async fn pr_pipeline(
         .await
 }
 
+/// Fresh deployments for known builds - the cache-revalidation half of the
+/// pipeline view. Stages/logs of finished builds are immutable and served
+/// from the local cache; deployments can appear later, so only they get
+/// re-asked.
+#[tauri::command]
+#[specta::specta]
+pub async fn pr_deployments(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    build_ids: Vec<i32>,
+) -> Result<Vec<crate::pipelines::BuildDeployments>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .builds_deployments(&organization, &project, &build_ids)
+        .await
+}
+
 /// Plain-text output for one build step - the same content ADO's log pane
 /// shows. Polled by the dialog while a step is running.
 #[tauri::command]

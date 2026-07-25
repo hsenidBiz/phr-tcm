@@ -23,6 +23,9 @@ const pr = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   title: `PR ${id}`,
   repo: "web",
   repo_id: "repo-guid-1",
+  status: "active",
+  closed: "",
+  merge_commit: "",
   author: "Sam",
   source_branch: "feature/x",
   target_branch: "main",
@@ -396,4 +399,55 @@ test("a step's log opens in its own wide dialog with coloured lines", async () =
   expect(screen.getByText(/3 tests failed/).className).toContain("text-danger");
   expect(screen.getByText(/Failed: 0, Passed: 203/).className).toContain("text-success");
   expect(screen.getByText("Starting: Run Unit Test").className).toContain("text-accent");
+});
+
+test("a cached closed PR re-asks only the deployments and folds them in", async () => {
+  // Seed the local cache: a completed PR whose CI build finished with no
+  // deployments (nothing had been released when it was cached).
+  const cachedBuild = {
+    id: 901, name: "HRM-PMS-NET", number: "1", status: "completed",
+    result: "succeeded", is_validation: false,
+    started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:00Z", web_url: "",
+    stages: [], deployments: [],
+  };
+  localStorage.setItem(
+    "tcm-v2-cache:pipe:acme/Web:42:abc",
+    JSON.stringify({ at: Date.now(), data: [cachedBuild] }),
+  );
+
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    calls.push(cmd as string);
+    if (cmd === "pr_overview")
+      return {
+        awaiting: [pr(42, { status: "completed", merge_commit: "abc" })],
+        mine: [],
+      };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_work_items") return [];
+    if (cmd === "pr_deployments") {
+      expect((args as { buildIds: number[] }).buildIds).toEqual([901]);
+      // A release created AFTER the history was cached.
+      return [
+        {
+          build_id: 901,
+          deployments: [
+            { release: "Release-500", environment: "Production", status: "succeeded",
+              on: "2026-07-26T10:00:00Z", web_url: "" },
+          ],
+        },
+      ];
+    }
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!42")).closest("[aria-expanded]")!);
+
+  // The late release shows up even though the pipeline came from cache...
+  expect(await screen.findByText("Production")).toBeInTheDocument();
+  // ...the expensive full-chain fetch never ran...
+  expect(calls).not.toContain("pr_pipeline");
+  expect(calls).toContain("pr_deployments");
+  // ...and the cache itself was rebuilt with the new deployment.
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-cache:pipe:acme/Web:42:abc")!);
+  expect(stored.data[0].deployments[0].release).toBe("Release-500");
 });

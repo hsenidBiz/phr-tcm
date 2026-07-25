@@ -107,6 +107,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             prs::pr_work_items,
             prs::pr_pipeline,
             prs::build_log,
+            prs::pr_deployments,
             discovery::list_iterations,
             ai_bridge::bridge_status,
             ai_bridge::set_bridge_context,

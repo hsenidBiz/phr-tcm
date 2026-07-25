@@ -168,17 +168,37 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
     retry: false,
   });
   // Builds + deployments, also lazy: several ADO calls per PR, so only for
-  // the row the user actually opened. A closed PR's history is immutable,
-  // so once every run has finished it is served from the local cache and
-  // never asked of ADO again.
-  const finalized = pr.status !== "" && pr.status !== "active";
+  // the row the user actually opened. A closed PR's builds/stages/logs are
+  // immutable, so they come from the local cache - but a release can be
+  // created against an old build LATER, so on every cache hit the
+  // deployments (and only them: one cheap call instead of the full chain)
+  // are re-asked and folded back into the cache. The cache stays, and it
+  // can never show a deployment picture ADO has since moved past.
+  const finalized = pr.status === "completed" || pr.status === "abandoned";
   const pipeline = useQuery({
     queryKey: ["pr-pipeline", org, project, pr.repo_id, pr.id, pr.merge_commit],
     queryFn: async () => {
       const key = `pipe:${org}/${project}:${pr.id}:${pr.merge_commit}`;
       if (finalized) {
         const hit = cacheRead<PrBuild[]>(key, 30 * 24 * 60 * 60_000);
-        if (hit) return hit;
+        if (hit) {
+          // Validation builds never deploy - only CI builds need re-asking.
+          const ids = hit.filter((b) => !b.is_validation).map((b) => b.id);
+          if (ids.length === 0) return hit;
+          try {
+            const fresh = await unwrap(commands.prDeployments(org, project, ids));
+            const byId = new Map(fresh.map((f) => [f.build_id, f.deployments]));
+            const merged = hit.map((b) =>
+              byId.has(b.id) ? { ...b, deployments: byId.get(b.id)! } : b,
+            );
+            cacheWrite(key, merged);
+            return merged;
+          } catch {
+            // Offline or throttled: the cached history is still the truth
+            // about the builds themselves.
+            return hit;
+          }
+        }
       }
       // repo_id, not repo: the Build API filters by repository GUID.
       const data = await unwrap(commands.prPipeline(org, project, pr.repo_id, pr.id, pr.merge_commit));
