@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Bug, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../components/UiTour";
@@ -81,6 +81,27 @@ export default function DevPanel({
     });
   };
 
+  // A shrinking window (or a stale saved position from a bigger one) must
+  // never strand the panel off-screen - re-clamp on mount and every resize.
+  useEffect(() => {
+    const clamp = () => {
+      setPos((p) => {
+        if (!p) return p;
+        // ceil of the fractional rect - offsetWidth/Height round DOWN and
+        // leave a sub-pixel sliver hanging past the viewport edge.
+        const r = panelRef.current?.getBoundingClientRect();
+        const w = Math.ceil(r?.width ?? 288);
+        const h = Math.ceil(r?.height ?? 36);
+        const x = Math.min(Math.max(0, p.x), Math.max(0, window.innerWidth - w));
+        const y = Math.min(Math.max(0, p.y), Math.max(0, window.innerHeight - h));
+        return x === p.x && y === p.y ? p : { x, y };
+      });
+    };
+    clamp();
+    window.addEventListener("resize", clamp);
+    return () => window.removeEventListener("resize", clamp);
+  }, []);
+
   const appKeys = () =>
     Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!).filter((k) =>
       k.startsWith("tcm-v2-"),
@@ -98,24 +119,25 @@ export default function DevPanel({
       className="fixed z-50 w-72 rounded-lg border border-warning/60 bg-surface text-xs shadow-2xl"
       style={pos ? { left: pos.x, top: pos.y } : { left: 16, bottom: 16 }}
     >
-      <div className="flex items-center">
-        <span
-          aria-label="Drag the dev panel"
-          title="Drag to move"
-          className="cursor-move py-2 pl-2 text-warning/70 hover:text-warning"
-          onPointerDown={onGripDown}
-          onPointerMove={onGripMove}
-          onPointerUp={onGripUp}
-        >
-          <GripVertical size={13} />
-        </span>
+      {/* The whole strip drags; only the chevron toggles open/closed. */}
+      <div
+        aria-label="Drag the dev panel"
+        title="Drag to move"
+        className="flex cursor-move select-none items-center gap-2 py-2 pl-2 pr-1 font-semibold text-warning"
+        onPointerDown={onGripDown}
+        onPointerMove={onGripMove}
+        onPointerUp={onGripUp}
+      >
+        <GripVertical size={13} className="text-warning/70" />
+        <Bug size={13} />
+        DEV BUILD
         <button
-          className="flex flex-1 items-center gap-2 py-2 pl-1 pr-3 font-semibold text-warning"
+          aria-label={open ? "Collapse dev panel" : "Expand dev panel"}
+          className="ml-auto cursor-pointer rounded px-2 py-0.5 hover:bg-surface-2"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={() => setOpen((o) => !o)}
         >
-          <Bug size={13} />
-          DEV BUILD
-          <span className="ml-auto">{open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}</span>
+          {open ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
         </button>
       </div>
 
