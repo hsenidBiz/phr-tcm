@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.12.1",
+    date: "2026-07-26",
+    items: [
+      "Pull Requests load a page at a time with a Load more button, instead of everything at once.",
+      "The app makes far fewer Azure DevOps requests: org, project and team lists are remembered for a day, finished pipeline histories are kept locally forever, and switching back to the app window no longer re-fetches everything.",
+      "Step logs open in a wide viewer with coloring - errors red, warnings yellow, passes green - and pressing Escape steps back one view at a time.",
+      "Pipeline history polish: the search box no longer cuts off its text, long titles wrap, and the Azure DevOps link is a proper button.",
+    ],
+  },
+  {
     version: "1.12.0",
     date: "2026-07-26",
     items: [
