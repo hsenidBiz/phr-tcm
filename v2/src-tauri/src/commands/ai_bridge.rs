@@ -13,8 +13,9 @@ pub struct BridgeHandle(pub std::sync::Mutex<Option<(SharedBridge, u16)>>);
 #[derive(serde::Serialize, specta::Type)]
 pub struct BridgeStatus {
     pub port: u16,
-    /// Absolute path to tcm-mcp.exe next to the app binary (what the user
-    /// registers in their AI tool).
+    /// Absolute path to this app's own exe, run with `--mcp` (what the user
+    /// registers in their AI tool - the MCP proxy is folded into the main
+    /// binary, not a separate file).
     pub mcp_exe: String,
 }
 
@@ -72,7 +73,6 @@ pub fn set_bridge_context(
 fn mcp_exe_path() -> String {
     std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("tcm-mcp.exe")))
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default()
 }

@@ -4,8 +4,6 @@ version = "1.4.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
-# Two [[bin]] targets exist (v2 + tcm-mcp); `cargo run` (tauri dev) needs this.
-default-run = "v2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -14,11 +12,6 @@ default-run = "v2"
 [[bin]]
 name = "v2"
 path = "src/main.rs"
-test = false
-
-[[bin]]
-name = "tcm-mcp"
-path = "src/bin/tcm_mcp.rs"
 test = false
 
 [lib]

@@ -14,11 +14,6 @@ $stage = Join-Path $env:TEMP "tcm-v2-pack"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item $exe.FullName $stage
-# The MCP bridge binary ships beside the app (Settings shows its path for
-# registration in AI tools). Fail loudly if the build didn't produce it.
-$mcp = Join-Path $exeDir "tcm-mcp.exe"
-if (-not (Test-Path $mcp)) { throw "tcm-mcp.exe not found in $exeDir - the [[bin]] target did not build." }
-Copy-Item $mcp $stage
 # packId is the app identity - never change it (existing installs update by
 # it). packTitle is the human-readable name used for shortcuts / Add-Remove.
 vpk pack --packId "AzureDevOpsTestCaseManager.V2" --packTitle "Test Case Manager" --packVersion $Version --packDir $stage --mainExe $exe.Name --outputDir (Join-Path $root "Releases")

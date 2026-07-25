@@ -199,8 +199,9 @@ export type BoardItem = {
 export type BridgeStatus = {
 	port: number,
 	/**
-	 *  Absolute path to tcm-mcp.exe next to the app binary (what the user
-	 *  registers in their AI tool).
+	 *  Absolute path to this app's own exe, run with `--mcp` (what the user
+	 *  registers in their AI tool - the MCP proxy is folded into the main
+	 *  binary, not a separate file).
 	 */
 	mcp_exe: string,
 };
