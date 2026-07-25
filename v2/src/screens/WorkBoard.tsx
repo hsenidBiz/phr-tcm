@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Eye, EyeOff, GitPullRequest, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
@@ -157,12 +157,39 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     }
     return new Set();
   });
+  // Two-phase hide/show so card text never visibly squishes mid-resize:
+  // hiding fades the content out FIRST (column still full width), then the
+  // empty column shrinks; showing widens the empty column first, then the
+  // content fades in. `colAnim` holds the transient phase per column.
+  const [colAnim, setColAnim] = useState<Record<string, "fadeOut" | "grow" | "fadeIn">>({});
+  const animTimers = useRef<Record<string, number[]>>({});
+  const setAnim = (col: string, phase: "fadeOut" | "grow" | "fadeIn" | null) =>
+    setColAnim((prev) => {
+      const next = { ...prev };
+      if (phase) next[col] = phase;
+      else delete next[col];
+      return next;
+    });
+  const clearAnimTimers = (col: string) => {
+    (animTimers.current[col] ?? []).forEach(clearTimeout);
+    animTimers.current[col] = [];
+  };
+  const after = (col: string, ms: number, run: () => void) => {
+    animTimers.current[col] = [...(animTimers.current[col] ?? []), window.setTimeout(run, ms)];
+  };
+
+  const FADE_MS = 150;
+  const SLIDE_MS = 300;
+
   const toggleCol = (col: string) => {
+    const hiding = !hiddenCols.has(col);
+    if (hiding && hiddenCols.size >= COLUMNS.length - 1) return; // keep one visible
+    clearAnimTimers(col);
+
     setHiddenCols((prev) => {
       const next = new Set(prev);
-      if (next.has(col)) next.delete(col);
-      else if (next.size < COLUMNS.length - 1) next.add(col);
-      else return prev; // never allow hiding the last visible column
+      if (hiding) next.add(col);
+      else next.delete(col);
       try {
         localStorage.setItem("tcm-v2-hidden-cols", JSON.stringify([...next]));
       } catch {
@@ -170,6 +197,17 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       }
       return next;
     });
+
+    if (hiding) {
+      // Full width + invisible content, then the shrink runs against the rail.
+      setAnim(col, "fadeOut");
+      after(col, FADE_MS, () => setAnim(col, null));
+    } else {
+      // Widen with content invisible, then fade it in.
+      setAnim(col, "grow");
+      after(col, SLIDE_MS, () => setAnim(col, "fadeIn"));
+      after(col, SLIDE_MS + FADE_MS, () => setAnim(col, null));
+    }
   };
   // Server-side @CurrentIteration filter (default-team context), persisted.
   const [thisSprint, setThisSprint] = useState(
@@ -472,11 +510,16 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
               // lists and leaves the transition STUCK at the start value.
               // A 0fr track still floors at its content's min size - the
               // rail's fixed w-9 - so hidden columns settle at 36px.
-              gridTemplateColumns: COLUMNS.map((c) => (hiddenCols.has(c) ? "0fr" : "1fr")).join(" "),
+              // A hiding column keeps its full track while its content
+              // fades ("fadeOut"); only then does the track collapse.
+              gridTemplateColumns: COLUMNS.map((c) =>
+                hiddenCols.has(c) && colAnim[c] !== "fadeOut" ? "0fr" : "1fr",
+              ).join(" "),
             }}
           >
             {COLUMNS.map((col) => {
-              const collapsed = hiddenCols.has(col);
+              const collapsed = hiddenCols.has(col) && colAnim[col] !== "fadeOut";
+              const contentInvisible = colAnim[col] === "fadeOut" || colAnim[col] === "grow";
               const items = visible.filter((i) => i.column === col);
               if (collapsed) {
                 return (
@@ -507,7 +550,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                 <div
                   key={col}
                   data-testid={`col-${col}`}
-                  className="min-w-0 space-y-2 rounded-md border border-border bg-bg p-2"
+                  className="min-w-0 overflow-hidden rounded-md border border-border bg-bg p-2"
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={() => {
                     if (dragging && dragging.column !== col) {
@@ -516,6 +559,15 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                     setDragging(null);
                   }}
                 >
+                  {/* Fades as one unit: out before the column shrinks, in
+                      after it finishes widening - card text never visibly
+                      re-wraps while the width animates. */}
+                  <div
+                    className={cn(
+                      "space-y-2 transition-opacity duration-150",
+                      contentInvisible ? "opacity-0" : "opacity-100",
+                    )}
+                  >
                   <h3 className="flex items-center whitespace-nowrap px-1 text-xs font-semibold uppercase tracking-wide text-muted">
                     {col} <span className="ml-1 text-faint">{items.length}</span>
                     <button
@@ -541,6 +593,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                       onOpen={() => setOpenItem(item.id)}
                     />
                   ))}
+                  </div>
                 </div>
               );
             })}

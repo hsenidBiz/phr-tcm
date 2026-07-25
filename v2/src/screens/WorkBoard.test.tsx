@@ -376,11 +376,12 @@ test("any column can hide via its eye, but the last visible one is protected", a
   renderBoard();
   await screen.findByTestId("col-To Do");
 
-  // Hide two columns.
+  // Hide two columns. The rail only appears after the content's fade-out
+  // phase (the column shrinks empty, so card text never squishes) - await it.
   fireEvent.click(screen.getByLabelText("Hide To Do"));
   fireEvent.click(screen.getByLabelText("Hide In Progress"));
-  expect(screen.getByLabelText("Show To Do")).toBeInTheDocument();
-  expect(screen.getByLabelText("Show In Progress")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Show To Do")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Show In Progress")).toBeInTheDocument();
 
   // The third column's eye is disabled - all three can never hide at once.
   const lastEye = screen.getByLabelText("Hide Done");
