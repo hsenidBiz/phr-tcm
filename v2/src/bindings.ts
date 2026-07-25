@@ -481,6 +481,12 @@ export type PullRequest = {
 	id: number,
 	title: string,
 	repo: string,
+	/**
+	 *  Repository GUID. The git APIs accept the name in their URL path, but
+	 *  the Build API's `repositoryId=` query param demands the id - passing
+	 *  a name there 400s, which is what broke the pipeline lookup.
+	 */
+	repo_id: string,
 	author: string,
 	source_branch: string,
 	target_branch: string,

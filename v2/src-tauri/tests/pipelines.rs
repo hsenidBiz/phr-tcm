@@ -166,7 +166,10 @@ async fn repo_pull_requests_completed_is_capped_and_status_is_whitelisted() {
                 "pullRequestId": 20620, "title": "Merged thing", "status": "completed",
                 "closedDate": "2026-07-24T08:00:00Z",
                 "lastMergeCommit": { "commitId": "abc123" },
-                "repository": { "name": "HRM-PMS-NET" },
+                "repository": {
+                    "name": "HRM-PMS-NET",
+                    "id": "11111111-2222-3333-4444-555555555555"
+                },
                 "createdBy": { "displayName": "Dev" }
             }]
         })))
@@ -185,6 +188,10 @@ async fn repo_pull_requests_completed_is_capped_and_status_is_whitelisted() {
     assert_eq!(done[0].status, "completed");
     assert_eq!(done[0].closed, "2026-07-24T08:00:00Z");
     assert_eq!(done[0].merge_commit, "abc123", "the pipeline lookup needs this");
+    assert_eq!(
+        done[0].repo_id, "11111111-2222-3333-4444-555555555555",
+        "the Build API filters by repository GUID, not the name"
+    );
 
     // Anything unrecognised falls back to active rather than being injected.
     let fallback = client.repo_pull_requests("o", "p", "r1", "bogus&x=1").await.unwrap();

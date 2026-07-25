@@ -346,7 +346,7 @@ function applyPatches() {
       ok({
         awaiting: [
           {
-            id: 501, title: "Add PBI scope to the board", repo: "demo-web",
+            id: 501, title: "Add PBI scope to the board", repo: "demo-web", repo_id: "demo-repo-1",
             author: "Sam Rivera", source_branch: "feature/pbi-scope", target_branch: "main",
             created: "2026-07-17T09:00:00Z",
             description: "Demo description: what changed and why.", is_draft: false, has_conflicts: false,
@@ -360,7 +360,7 @@ function applyPatches() {
         ],
         mine: [
           {
-            id: 502, title: "Electric border for the PBI chip", repo: "demo-web",
+            id: 502, title: "Electric border for the PBI chip", repo: "demo-web", repo_id: "demo-repo-1",
             author: "Demo User", source_branch: "feature/electric-border", target_branch: "main",
             created: "2026-07-16T14:00:00Z",
             description: "Demo description: what changed and why.", is_draft: true, has_conflicts: true,
@@ -374,7 +374,7 @@ function applyPatches() {
       ok([
         {
           work_item_id: 2001, pr_id: 501, status: "active",
-          title: "Add PBI scope to the board", repo: "demo-web",
+          title: "Add PBI scope to the board", repo: "demo-web", repo_id: "demo-repo-1",
           web_url: "https://example.invalid/demo-pr/501",
         },
         {
@@ -394,7 +394,7 @@ function applyPatches() {
     repoPullRequests: () =>
       ok([
         {
-          id: 503, title: "Bump dependencies", repo: "demo-web",
+          id: 503, title: "Bump dependencies", repo: "demo-web", repo_id: "demo-repo-1",
           author: "Alex Kim", source_branch: "chore/deps", target_branch: "main",
           created: "2026-07-15T08:00:00Z",
             description: "Demo description: what changed and why.", is_draft: false, has_conflicts: false,

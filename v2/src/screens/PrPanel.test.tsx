@@ -22,6 +22,7 @@ const pr = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   id,
   title: `PR ${id}`,
   repo: "web",
+  repo_id: "repo-guid-1",
   author: "Sam",
   source_branch: "feature/x",
   target_branch: "main",

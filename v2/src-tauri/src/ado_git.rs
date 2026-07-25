@@ -25,6 +25,10 @@ pub struct PullRequest {
     pub id: i32,
     pub title: String,
     pub repo: String,
+    /// Repository GUID. The git APIs accept the name in their URL path, but
+    /// the Build API's `repositoryId=` query param demands the id - passing
+    /// a name there 400s, which is what broke the pipeline lookup.
+    pub repo_id: String,
     pub author: String,
     pub source_branch: String,
     pub target_branch: String,
@@ -95,6 +99,7 @@ fn parse_pr(
 ) -> PullRequest {
     let s = |val: &serde_json::Value| val.as_str().unwrap_or_default().to_string();
     let repo = s(&v["repository"]["name"]);
+    let repo_id = s(&v["repository"]["id"]);
     let id = v["pullRequestId"].as_i64().unwrap_or_default() as i32;
     let reviewers: Vec<PrReviewer> = v["reviewers"]
         .as_array()
@@ -125,6 +130,7 @@ fn parse_pr(
         status: s(&v["status"]),
         closed: s(&v["closedDate"]),
         merge_commit: s(&v["lastMergeCommit"]["commitId"]),
+        repo_id,
         my_vote,
         reviewers,
         // The list responses carry no web link - ADO's PR URLs are fully

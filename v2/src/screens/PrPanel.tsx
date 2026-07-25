@@ -181,8 +181,9 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
   // Builds + deployments, also lazy: several ADO calls per PR, so only for
   // the row the user actually opened.
   const pipeline = useQuery({
-    queryKey: ["pr-pipeline", org, project, pr.repo, pr.id, pr.merge_commit],
-    queryFn: () => unwrap(commands.prPipeline(org, project, pr.repo, pr.id, pr.merge_commit)),
+    queryKey: ["pr-pipeline", org, project, pr.repo_id, pr.id, pr.merge_commit],
+    // repo_id, not repo: the Build API filters by repository GUID.
+    queryFn: () => unwrap(commands.prPipeline(org, project, pr.repo_id, pr.id, pr.merge_commit)),
     enabled: open && Boolean(org && project),
     staleTime: 60_000,
     retry: false,
@@ -310,7 +311,9 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
             {pipeline.isPending ? (
               <Skeleton className="h-10" />
             ) : pipeline.isError ? (
-              <p className="text-faint">Could not read pipeline runs.</p>
+              // Show what Azure DevOps actually said - a bare "could not
+              // read" hid a 400 from a bad repositoryId for a whole release.
+              <p className="text-danger">{pipeline.error.message}</p>
             ) : (pipeline.data?.length ?? 0) === 0 ? (
               <p className="text-faint">No builds found for this pull request.</p>
             ) : (
