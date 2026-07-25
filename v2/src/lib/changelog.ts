@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.12.2",
+    date: "2026-07-26",
+    items: [
+      "Cached pipeline histories now refresh their deployments automatically - a release created against an older build shows up instead of the cache going stale.",
+      "AI Bridge: validate_cases now warns when a Module value is not in your organization's allowed list (needs a signed-in session).",
+      "The AI bridge is confirmed to start as soon as you sign in - no need to open the AI Bridge tab first.",
+      "Internal: a visual regression suite (screenshots of every screen, diffed per release), plus UI consistency and accessibility gates in the test run.",
+    ],
+  },
+  {
     version: "1.12.1",
     date: "2026-07-26",
     items: [
