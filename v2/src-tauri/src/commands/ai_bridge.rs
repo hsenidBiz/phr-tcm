@@ -39,8 +39,12 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
             get_fresh_token(&app).await.ok().map(crate::ado::AdoClient::new)
         })
     });
-    let (port, _token) = crate::ai_bridge::start_listener(Arc::clone(&shared), Some(factory))
-        .await?;
+    let (port, _token) = crate::ai_bridge::start_listener(
+        Arc::clone(&shared),
+        Some(factory),
+        Some(crate::ai_bridge::handshake_path()),
+    )
+    .await?;
     let handle = app.state::<BridgeHandle>();
     *handle.0.lock().unwrap() = Some((shared, port));
     Ok(BridgeStatus { port, mcp_exe: mcp_exe_path() })

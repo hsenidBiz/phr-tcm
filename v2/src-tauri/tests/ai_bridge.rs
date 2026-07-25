@@ -243,9 +243,14 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[tokio::test]
 async fn tcp_server_guards_with_token_and_serves_ping() {
     let shared = v2_lib::ai_bridge::BridgeState::new(ctx(), "0.0.0-test".into());
-    let (port, token) = v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None)
-        .await
-        .unwrap();
+    // Test-specific handshake path: the real handshake_path() location belongs
+    // to a live app - a test run must never clobber it (it did once: proxies
+    // then saw a dead port + test token until Settings was reopened).
+    let hs_path = std::env::temp_dir().join(format!("tcm-v2-hs-test-{}.json", std::process::id()));
+    let (port, token) =
+        v2_lib::ai_bridge::start_listener(Arc::clone(&shared), None, Some(hs_path.clone()))
+            .await
+            .unwrap();
 
     async fn send(port: u16, req: String) -> String {
         let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
@@ -275,10 +280,9 @@ async fn tcp_server_guards_with_token_and_serves_ping() {
 
     // The handshake file exists and matches, including the version tcm-mcp
     // reads for its own serverInfo.version.
-    let hs: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(std::env::temp_dir().join("tcm-v2-mcp-bridge.json")).unwrap(),
-    )
-    .unwrap();
+    let hs: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&hs_path).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&hs_path);
     assert_eq!(hs["port"].as_u64().unwrap() as u16, port);
     assert_eq!(hs["token"].as_str().unwrap(), token);
     assert_eq!(hs["version"].as_str().unwrap(), "0.0.0-test");

@@ -158,7 +158,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
 
 fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), String> {
     let hs: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(std::env::temp_dir().join("tcm-v2-mcp-bridge.json"))
+        &std::fs::read_to_string(crate::ai_bridge::handshake_path())
             .map_err(|_| "handshake file missing - is the app running?".to_string())?,
     )
     .map_err(|e| e.to_string())?;
@@ -186,7 +186,7 @@ fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), St
 /// process's own (unrelated) Cargo.toml version. "unknown" when the app
 /// isn't running yet; the proxy must still answer `initialize`.
 fn read_version() -> String {
-    std::fs::read_to_string(std::env::temp_dir().join("tcm-v2-mcp-bridge.json"))
+    std::fs::read_to_string(crate::ai_bridge::handshake_path())
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v["version"].as_str().map(str::to_string))

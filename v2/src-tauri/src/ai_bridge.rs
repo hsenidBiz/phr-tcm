@@ -351,23 +351,33 @@ impl BridgeState {
 pub type ClientFactory =
     Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<crate::ado::AdoClient>> + Send>> + Send + Sync>;
 
-/// Bind 127.0.0.1:0, write the handshake file, serve forever on the tokio
-/// runtime. Returns (port, token). Requests: tiny HTTP/1.1, one request
-/// per connection, 64 KiB body cap.
+/// Where the app announces the running bridge to `v2.exe --mcp` proxies.
+pub fn handshake_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("tcm-v2-mcp-bridge.json")
+}
+
+/// Bind 127.0.0.1:0, optionally write the handshake file, serve forever on
+/// the tokio runtime. Returns (port, token). Requests: tiny HTTP/1.1, one
+/// request per connection, 64 KiB body cap. `handshake` is Some in the real
+/// app and None in tests - a test run must never clobber a live app's
+/// handshake file (it did once: proxies then saw a dead port + test token).
 pub async fn start_listener(
     state: SharedBridge,
     make_client: Option<ClientFactory>,
+    handshake: Option<std::path::PathBuf>,
 ) -> Result<(u16, String), String> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let token = state.token.clone();
-    std::fs::write(
-        std::env::temp_dir().join("tcm-v2-mcp-bridge.json"),
-        serde_json::json!({ "port": port, "token": token, "version": state.version }).to_string(),
-    )
-    .map_err(|e| e.to_string())?;
+    if let Some(path) = handshake {
+        std::fs::write(
+            path,
+            serde_json::json!({ "port": port, "token": token, "version": state.version }).to_string(),
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
     tauri::async_runtime::spawn(async move {
         loop {
