@@ -188,7 +188,8 @@ async fn repo_pull_requests_completed_is_capped_and_status_is_whitelisted() {
     Mock::given(method("GET"))
         .and(path("/o/p/_apis/git/repositories/r1/pullrequests"))
         .and(query_param("searchCriteria.status", "completed"))
-        .and(query_param("$top", "50"))
+        .and(query_param("$top", "25"))
+        .and(query_param("$skip", "0"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "value": [{
                 "pullRequestId": 20620, "title": "Merged thing", "status": "completed",
@@ -211,7 +212,7 @@ async fn repo_pull_requests_completed_is_capped_and_status_is_whitelisted() {
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let done = client.repo_pull_requests("o", "p", "r1", "completed").await.unwrap();
+    let done = client.repo_pull_requests("o", "p", "r1", "completed", 0).await.unwrap();
     assert_eq!(done.len(), 1);
     assert_eq!(done[0].status, "completed");
     assert_eq!(done[0].closed, "2026-07-24T08:00:00Z");
@@ -222,7 +223,7 @@ async fn repo_pull_requests_completed_is_capped_and_status_is_whitelisted() {
     );
 
     // Anything unrecognised falls back to active rather than being injected.
-    let fallback = client.repo_pull_requests("o", "p", "r1", "bogus&x=1").await.unwrap();
+    let fallback = client.repo_pull_requests("o", "p", "r1", "bogus&x=1", 0).await.unwrap();
     assert!(fallback.is_empty());
 }
 
@@ -243,4 +244,25 @@ async fn build_log_returns_plain_text() {
     let log = client.build_log("o", "p", 901, 42).await.unwrap();
     assert!(log.contains("Starting: Run Unit Test"));
     assert!(log.lines().count() >= 2);
+}
+
+/// The skip offset reaches ADO untouched - page 2 asks for $skip=25.
+#[tokio::test]
+async fn repo_pull_requests_pages_with_skip() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/git/repositories/r1/pullrequests"))
+        .and(query_param("$top", "25"))
+        .and(query_param("$skip", "25"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "pullRequestId": 7, "title": "Page two", "status": "completed",
+                        "repository": { "name": "r", "id": "g" },
+                        "createdBy": { "displayName": "Dev" } }]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let page = client.repo_pull_requests("o", "p", "r1", "completed", 25).await.unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].id, 7);
 }

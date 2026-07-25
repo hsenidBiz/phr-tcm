@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { commands } from "../bindings";
 import AstryxIsland from "./AstryxIsland";
 import { unwrap } from "../lib/ipc";
+import { cached } from "../lib/localCache";
 import { getTheme, setTheme } from "../lib/theme";
 import type { Section } from "./Sidebar";
 
@@ -34,10 +35,14 @@ export default function CommandPalette({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Same key + cache as ContextBar, so the palette never refetches what
+  // the bar already has.
   const projects = useQuery({
     queryKey: ["projects", org],
-    queryFn: () => unwrap(commands.listProjects(org)),
+    queryFn: () =>
+      cached(`projects:${org}`, 24 * 60 * 60_000, () => unwrap(commands.listProjects(org))),
     enabled: open && Boolean(org),
+    staleTime: 60 * 60_000,
   });
 
   const run = (fn: () => void) => {

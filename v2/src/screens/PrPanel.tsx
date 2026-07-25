@@ -3,7 +3,7 @@
 // on a chosen repo. Rows open the PR in the browser; voting/completing
 // stays in Azure DevOps (this panel never writes).
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Bug,
@@ -23,8 +23,12 @@ import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
+import { cacheRead, cacheWrite } from "../lib/localCache";
 import AstryxIsland from "../components/AstryxIsland";
 import { Markdown } from "@astryxdesign/core/Markdown";
+
+/** Mirrors AdoClient::PR_PAGE_SIZE - a full page implies a next page. */
+const PR_PAGE = 25;
 
 /** ADO reviewer votes: 10 approved, 5 approved w/ suggestions, 0 waiting,
  * -5 waiting for author, -10 rejected. */
@@ -160,17 +164,31 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
     queryKey: ["pr-work-items", org, project, pr.repo, pr.id],
     queryFn: () => unwrap(commands.prWorkItems(org, project, pr.repo, pr.id)),
     enabled: open && Boolean(org && project),
-    staleTime: 5 * 60_000,
+    staleTime: (pr.status !== "active" ? 60 : 5) * 60_000,
     retry: false,
   });
   // Builds + deployments, also lazy: several ADO calls per PR, so only for
-  // the row the user actually opened.
+  // the row the user actually opened. A closed PR's history is immutable,
+  // so once every run has finished it is served from the local cache and
+  // never asked of ADO again.
+  const finalized = pr.status !== "" && pr.status !== "active";
   const pipeline = useQuery({
     queryKey: ["pr-pipeline", org, project, pr.repo_id, pr.id, pr.merge_commit],
-    // repo_id, not repo: the Build API filters by repository GUID.
-    queryFn: () => unwrap(commands.prPipeline(org, project, pr.repo_id, pr.id, pr.merge_commit)),
+    queryFn: async () => {
+      const key = `pipe:${org}/${project}:${pr.id}:${pr.merge_commit}`;
+      if (finalized) {
+        const hit = cacheRead<PrBuild[]>(key, 30 * 24 * 60 * 60_000);
+        if (hit) return hit;
+      }
+      // repo_id, not repo: the Build API filters by repository GUID.
+      const data = await unwrap(commands.prPipeline(org, project, pr.repo_id, pr.id, pr.merge_commit));
+      if (finalized && data.length > 0 && data.every((b) => b.status === "completed")) {
+        cacheWrite(key, data);
+      }
+      return data;
+    },
     enabled: open && Boolean(org && project),
-    staleTime: 60_000,
+    staleTime: finalized ? Infinity : 60_000,
     retry: false,
   });
   return (
@@ -417,12 +435,22 @@ export default function PrPanel({ org, project }: { org: string; project: string
       // session-only
     }
   };
-  const active = useQuery({
+  // One page at a time (PAGE mirrors Rust's PR_PAGE_SIZE); a full page
+  // means there may be another behind it.
+  const active = useInfiniteQuery({
     queryKey: ["repo-prs", org, project, repoId, prStatus],
-    queryFn: () => unwrap(commands.repoPullRequests(org, project, repoId, prStatus)),
+    queryFn: ({ pageParam }) =>
+      unwrap(commands.repoPullRequests(org, project, repoId, prStatus, pageParam)),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) =>
+      last.length === PR_PAGE ? all.reduce((n, p) => n + p.length, 0) : undefined,
     enabled: Boolean(org && project && repoId),
+    // Completed history only ever gains newer entries - no need to refetch
+    // the pages themselves for 10 minutes.
+    staleTime: prStatus === "completed" ? 10 * 60_000 : 60_000,
     retry: false,
   });
+  const fetched = useMemo(() => active.data?.pages.flat() ?? [], [active.data]);
 
   const repoName = repos.data?.find((r) => r.id === repoId)?.name;
 
@@ -437,9 +465,7 @@ export default function PrPanel({ org, project }: { org: string; project: string
   // Only the active list can collide with the groups above; completed PRs
   // are never shown there, so they must not be de-duplicated away.
   const repoPrs =
-    prStatus === "active"
-      ? (active.data ?? []).filter((pr) => !shownAbove.has(pr.id))
-      : (active.data ?? []);
+    prStatus === "active" ? fetched.filter((pr) => !shownAbove.has(pr.id)) : fetched;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -538,6 +564,17 @@ export default function PrPanel({ org, project }: { org: string; project: string
             project={project}
           />
         ))}
+      {repoId && active.hasNextPage && (
+        <div className="flex justify-center">
+          <button
+            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:border-border-strong hover:text-text disabled:opacity-50"
+            disabled={active.isFetchingNextPage}
+            onClick={() => active.fetchNextPage()}
+          >
+            {active.isFetchingNextPage ? "Loading…" : "Load more"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

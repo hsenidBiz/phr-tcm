@@ -16,6 +16,7 @@ import Combobox from "../components/ui/combobox";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { unwrap } from "../lib/ipc";
+import { cached } from "../lib/localCache";
 import { iterationDetails } from "../lib/iterations";
 
 const TYPES = ["Task", "Bug", "Product Backlog Item"];
@@ -34,10 +35,14 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
   const [created, setCreated] = useState<CreatedItem | null>(null);
 
   const members = useQuery({
-    queryKey: ["team-members", org, project],
-    queryFn: () => unwrap(commands.listTeamMembers(org, project)),
+    // Same key + cache as the drawer: one members fetch serves both.
+    queryKey: ["members", org, project],
+    queryFn: () =>
+      cached(`members:${org}/${project}`, 24 * 60 * 60_000, () =>
+        unwrap(commands.listTeamMembers(org, project)),
+      ),
     enabled: Boolean(org && project),
-    staleTime: 60 * 60_000,
+    staleTime: 24 * 60 * 60_000,
     retry: false,
   });
   const areas = useQuery({

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
 import { unwrap } from "../lib/ipc";
+import { cached } from "../lib/localCache";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
 import { Button } from "./ui/button";
@@ -45,15 +46,20 @@ export default function ContextBar({
     return () => window.removeEventListener(PBI_GLOW_EVENT, onGlow);
   }, []);
 
+  // Org/project lists barely change - served from the local cache for a
+  // day, so most app starts cost zero ADO requests here.
   const orgs = useQuery({
     queryKey: ["orgs"],
-    queryFn: () => unwrap(commands.listOrgs()),
+    queryFn: () => cached("orgs", 24 * 60 * 60_000, () => unwrap(commands.listOrgs())),
+    staleTime: 60 * 60_000,
   });
 
   const projects = useQuery({
     queryKey: ["projects", org],
-    queryFn: () => unwrap(commands.listProjects(org)),
+    queryFn: () =>
+      cached(`projects:${org}`, 24 * 60 * 60_000, () => unwrap(commands.listProjects(org))),
     enabled: Boolean(org),
+    staleTime: 60 * 60_000,
   });
 
   return (

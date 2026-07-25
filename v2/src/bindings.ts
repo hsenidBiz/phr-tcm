@@ -152,7 +152,7 @@ export const commands = {
 	openSnip: () => typedError<null, string>(__TAURI_INVOKE("open_snip")),
 	listRepos: (organization: string, project: string) => typedError<RepoRef[], AdoError>(__TAURI_INVOKE("list_repos", { organization, project })),
 	prOverview: (organization: string, project: string) => typedError<PrOverview, AdoError>(__TAURI_INVOKE("pr_overview", { organization, project })),
-	repoPullRequests: (organization: string, project: string, repoId: string, status: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status })),
+	repoPullRequests: (organization: string, project: string, repoId: string, status: string, skip: number) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status, skip })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
 	/**

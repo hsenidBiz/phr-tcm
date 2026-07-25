@@ -129,20 +129,46 @@ function Dot({ state, result }: { state: string; result: string }) {
 }
 
 
-/** One step's output, fetched on demand. While the step is still running
- * the log is polled, so it fills in the way ADO's pane does. */
-function LogPane({
+/** Colour for one log line, ADO-style: its ##[..] markers first, then
+ * outcome words. Success is checked before failure words so summary lines
+ * like "Passed! - Failed: 0" read green. */
+export function logLineTone(line: string): string {
+  const l = line.toLowerCase();
+  if (l.includes("##[error]")) return "text-danger";
+  if (l.includes("##[warning]")) return "text-warning";
+  if (l.includes("##[section]") || l.startsWith("starting:")) return "text-accent";
+  if (/\bpassed\b|\bsucceeded\b|\bsuccess\b/.test(l)) return "text-success";
+  if (/\berror\b|\bfailed\b|\bexception\b|\bfatal\b/.test(l)) return "text-danger";
+  if (/\bwarning\b|\bwarn\b/.test(l)) return "text-warning";
+  return "text-muted";
+}
+
+/** Splits a leading ISO timestamp off an ADO log line so it can render
+ * dimmed, the way ADO's own pane does. */
+function splitStamp(line: string): [string, string] {
+  const m = line.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)\s?(.*)$/);
+  return m ? [m[1], m[2]] : ["", line];
+}
+
+/** One step's output in its own wide dialog - the inline tree stays
+ * readable and the log gets the room it actually needs. Polled while the
+ * step is still running, so it fills in the way ADO's pane does. */
+function LogDialog({
   org,
   project,
   buildId,
+  title,
   logId,
   live,
+  onClose,
 }: {
   org: string;
   project: string;
   buildId: number;
+  title: string;
   logId: number;
   live: boolean;
+  onClose: () => void;
 }) {
   const log = useQuery({
     queryKey: ["build-log", org, project, buildId, logId],
@@ -153,21 +179,49 @@ function LogPane({
     retry: false,
   });
 
-  if (log.isPending) return <p className="ml-4 py-1 text-[11px] text-faint">Loading log…</p>;
-  if (log.isError)
-    return <p className="ml-4 py-1 text-[11px] text-danger">{log.error.message}</p>;
-
   const lines = (log.data ?? "").replace(/\s+$/, "").split("\n");
   return (
-    <pre className="ml-4 max-h-64 overflow-auto rounded bg-surface-2 p-2 text-[11px] leading-relaxed text-muted">
-      {lines.map((line, i) => (
-        <div key={i} className="flex gap-2">
-          <span className="w-8 shrink-0 select-none text-right text-faint">{i + 1}</span>
-          <span className="whitespace-pre-wrap break-all">{line}</span>
-        </div>
-      ))}
-      {live && <div className="pt-1 text-accent">● still running…</div>}
-    </pre>
+    <Modal onClose={onClose} className="flex max-h-[88vh] w-[90vw] max-w-5xl flex-col">
+      <header className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <ScrollText size={14} className="shrink-0 text-muted" />
+        <h3 className="min-w-0 flex-1 break-words text-sm font-semibold text-text">{title}</h3>
+        {live && (
+          <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
+            running
+          </span>
+        )}
+        <button
+          aria-label="Close log"
+          className="shrink-0 rounded p-1 text-muted hover:text-text"
+          onClick={onClose}
+        >
+          <X size={15} />
+        </button>
+      </header>
+      <div className="id-mono min-h-0 flex-1 overflow-auto bg-bg p-3 text-[12px] leading-relaxed">
+        {log.isPending ? (
+          <p className="text-faint">Loading log…</p>
+        ) : log.isError ? (
+          <p className="text-danger">{log.error.message}</p>
+        ) : (
+          <>
+            {lines.map((line, i) => {
+              const [stamp, rest] = splitStamp(line);
+              return (
+                <div key={i} className="flex gap-3">
+                  <span className="w-10 shrink-0 select-none text-right text-faint">{i + 1}</span>
+                  {stamp && <span className="shrink-0 select-none text-faint">{stamp}</span>}
+                  <span className={cn("whitespace-pre-wrap break-all", logLineTone(rest))}>
+                    {rest}
+                  </span>
+                </div>
+              );
+            })}
+            {live && <p className="pt-1 text-accent">● still running…</p>}
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -176,19 +230,13 @@ function StageTree({
   stages,
   query,
   failuresOnly,
-  org,
-  project,
-  buildId,
+  onShowLog,
 }: {
   stages: BuildStage[];
   query: string;
   failuresOnly: boolean;
-  org: string;
-  project: string;
-  buildId: number;
+  onShowLog: (view: { title: string; logId: number; live: boolean }) => void;
 }) {
-  // Which step's log is open. Only one at a time - these are long.
-  const [openLog, setOpenLog] = useState<string | null>(null);
   const q = query.trim().toLowerCase();
   const hit = (name: string) => !q || name.toLowerCase().includes(q);
 
@@ -242,7 +290,6 @@ function StageTree({
                   {j.tasks.map((t, ti) => {
                     const key = `${st.name}/${j.name}/${t.name}/${ti}`;
                     const hasLog = t.log_id > 0;
-                    const showLog = openLog === key;
                     return (
                     <li key={key} className="space-y-0.5">
                       <div
@@ -251,9 +298,15 @@ function StageTree({
                           hasLog && "cursor-pointer hover:bg-surface-2",
                         )}
                         role={hasLog ? "button" : undefined}
-                        aria-expanded={hasLog ? showLog : undefined}
                         title={hasLog ? "Show this step's log" : undefined}
-                        onClick={() => hasLog && setOpenLog(showLog ? null : key)}
+                        onClick={() =>
+                          hasLog &&
+                          onShowLog({
+                            title: `${j.name} › ${t.name}`,
+                            logId: t.log_id,
+                            live: isRunning(t.state),
+                          })
+                        }
                       >
                         <Dot state={t.state} result={t.result} />
                         <span
@@ -273,15 +326,7 @@ function StageTree({
                           </span>
                         )}
                       </div>
-                      {showLog && (
-                        <LogPane
-                          org={org}
-                          project={project}
-                          buildId={buildId}
-                          logId={t.log_id}
-                          live={isRunning(t.state)}
-                        />
-                      )}
+
                       {/* The actual reason, without opening Azure DevOps. */}
                       {t.issues.map((msg, mi) => (
                         <p
@@ -310,15 +355,13 @@ function RunNode({
   defaultOpen,
   query,
   failuresOnly,
-  org,
-  project,
+  onShowLog,
 }: {
   b: PrBuild;
   defaultOpen: boolean;
   query: string;
   failuresOnly: boolean;
-  org: string;
-  project: string;
+  onShowLog: (view: { buildId: number; title: string; logId: number; live: boolean }) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const failed = failurePath(b);
@@ -381,9 +424,7 @@ function RunNode({
                 stages={b.stages}
                 query={query}
                 failuresOnly={failuresOnly}
-                org={org}
-                project={project}
-                buildId={b.id}
+                onShowLog={(v) => onShowLog({ ...v, buildId: b.id })}
               />
             ) : (
               <p className="text-xs text-faint">No stage detail available for this run.</p>
@@ -427,9 +468,10 @@ function RunNode({
 
             {b.web_url && (
               <button
-                className="text-xs text-muted underline-offset-2 hover:text-accent hover:underline"
+                className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:border-accent"
                 onClick={() => openExternal(b.web_url)}
               >
+                <ExternalLink size={11} />
                 Open run in Azure DevOps
               </button>
             )}
@@ -459,6 +501,12 @@ export default function PipelineDialog({
 }) {
   const [query, setQuery] = useState("");
   const [failuresOnly, setFailuresOnly] = useState(false);
+  const [logView, setLogView] = useState<{
+    buildId: number;
+    title: string;
+    logId: number;
+    live: boolean;
+  } | null>(null);
 
   // Open the run that needs attention: the newest failing or running one,
   // else the newest. Anything else starts collapsed so the timeline reads.
@@ -470,10 +518,17 @@ export default function PipelineDialog({
   const anyFailures = builds.some((b) => failurePath(b) !== "");
 
   return (
-    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-2xl flex-col">
+    // While a log is open, Escape must close the log, not this dialog too -
+    // both modals listen on window, and this one registered first.
+    <Modal
+      onClose={() => {
+        if (!logView) onClose();
+      }}
+      className="flex max-h-[85vh] w-full max-w-2xl flex-col"
+    >
       <header className="flex items-start gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold text-text">
+          <h2 className="break-words text-sm font-semibold text-text">
             <span className="id-mono text-faint">!{prId}</span> {prTitle}
           </h2>
           <p className="mt-0.5 text-xs text-muted">
@@ -491,7 +546,7 @@ export default function PipelineDialog({
 
       {builds.length > 0 && (
         <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-          <div className="relative flex-1">
+          <div className="relative min-w-0 flex-1">
             <Search
               size={13}
               className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-faint"
@@ -499,7 +554,7 @@ export default function PipelineDialog({
             <Input
               aria-label="Search stages and steps"
               placeholder="Search stages, jobs and steps…"
-              className="py-1 pl-7 text-xs"
+              className="w-full py-1 pl-7 text-xs"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -534,13 +589,24 @@ export default function PipelineDialog({
                 defaultOpen={b.id === focusId}
                 query={query}
                 failuresOnly={failuresOnly}
-                org={org}
-                project={project}
+                onShowLog={setLogView}
               />
             ))}
           </ol>
         )}
       </div>
+
+      {logView && (
+        <LogDialog
+          org={org}
+          project={project}
+          buildId={logView.buildId}
+          title={logView.title}
+          logId={logView.logId}
+          live={logView.live}
+          onClose={() => setLogView(null)}
+        />
+      )}
     </Modal>
   );
 }

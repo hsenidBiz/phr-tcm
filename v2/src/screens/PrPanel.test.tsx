@@ -322,3 +322,78 @@ test("View history opens a readable pipeline dialog with environments", async ()
   fireEvent.click(within(dialog).getByRole("button", { name: "Close pipeline history" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+test("a full page offers Load more, which fetches the next skip", async () => {
+  const skips: number[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "repo_pull_requests") {
+      const skip = (args as { skip: number }).skip;
+      skips.push(skip);
+      // Page 1 is full (25) -> a next page may exist; page 2 is short.
+      return skip === 0
+        ? Array.from({ length: 25 }, (_, i) => pr(100 + i, { author: "Kim" }))
+        : [pr(200, { author: "Kim" })];
+    }
+  });
+  renderPanel();
+  await screen.findByRole("option", { name: "web" });
+  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r1" } });
+
+  expect(await screen.findByText("!100")).toBeInTheDocument();
+  const more = await screen.findByRole("button", { name: "Load more" });
+  fireEvent.click(more);
+  expect(await screen.findByText("!200")).toBeInTheDocument();
+  expect(skips).toEqual([0, 25]);
+  // The short second page means no further pages are offered.
+  expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+});
+
+test("a step's log opens in its own wide dialog with coloured lines", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(42, { merge_commit: "abc" })], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_work_items") return [];
+    if (cmd === "build_log")
+      return ["Starting: Run Unit Test", "##[error]3 tests failed", "Passed! - Failed: 0, Passed: 203"].join("\n");
+    if (cmd === "pr_pipeline")
+      return [
+        {
+          id: 901, name: "HRM-PMS-NET", number: "1", status: "completed",
+          result: "failed", is_validation: false,
+          started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:00Z", web_url: "",
+          stages: [
+            {
+              name: "Build", state: "completed", result: "failed",
+              started: "", finished: "",
+              jobs: [
+                {
+                  name: "Build_solution", state: "completed", result: "failed",
+                  started: "", finished: "",
+                  tasks: [
+                    { name: "Run Unit Test", state: "completed", result: "failed",
+                      started: "", finished: "", issues: [], log_id: 42 },
+                  ],
+                },
+              ],
+            },
+          ],
+          deployments: [],
+        },
+      ];
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!42")).closest("[aria-expanded]")!);
+  fireEvent.click(await screen.findByRole("button", { name: "View history" }));
+
+  // Click the failing step inside the history dialog to open its log.
+  const dialogs = await screen.findByRole("dialog");
+  fireEvent.click(within(dialogs).getByTitle("Show this step's log"));
+
+  expect(await screen.findByText(/3 tests failed/)).toBeInTheDocument();
+  // Colour heuristics: the ##[error] line is red, the summary line green.
+  expect(screen.getByText(/3 tests failed/).className).toContain("text-danger");
+  expect(screen.getByText(/Failed: 0, Passed: 203/).className).toContain("text-success");
+  expect(screen.getByText("Starting: Run Unit Test").className).toContain("text-accent");
+});

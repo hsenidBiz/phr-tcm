@@ -90,6 +90,12 @@ fn branch(refname: &str) -> String {
     refname.strip_prefix("refs/heads/").unwrap_or(refname).to_string()
 }
 
+impl AdoClient {
+    /// Page size for repo_pull_requests. The frontend mirrors this to know
+    /// when a page is full (i.e. a next page may exist).
+    pub const PR_PAGE_SIZE: u32 = 25;
+}
+
 fn parse_pr(
     v: &serde_json::Value,
     base_url: &str,
@@ -365,15 +371,18 @@ impl AdoClient {
             .collect())
     }
 
-    /// PRs on one repository, by ADO status ("active" | "completed" |
-    /// "abandoned" | "all"). Completed lists are capped - the history is
-    /// unbounded and the panel only ever shows recent ones. Read only.
+    /// One page (PR_PAGE_SIZE) of a repository's PRs, by ADO status
+    /// ("active" | "completed" | "abandoned" | "all") and `skip` offset.
+    /// Paged on purpose: completed history is unbounded, and even active
+    /// lists on a busy repo don't need to arrive all at once. A page
+    /// shorter than PR_PAGE_SIZE means there is no next page. Read only.
     pub async fn repo_pull_requests(
         &self,
         org: &str,
         project: &str,
         repo_id: &str,
         status: &str,
+        skip: u32,
     ) -> Result<Vec<PullRequest>, AdoError> {
         // Best-effort identity for my_vote highlighting; anonymous fallback
         // just means my_vote stays 0.
@@ -382,15 +391,15 @@ impl AdoClient {
             "completed" | "abandoned" | "all" => status,
             _ => "active",
         };
-        let top = if status == "active" { "" } else { "&$top=50" };
         let url = format!(
-            "{}/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.status={}{}&api-version=7.1",
+            "{}/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.status={}&$top={}&$skip={}&api-version=7.1",
             self.base_url,
             org,
             project,
             urlencoding::encode(repo_id),
             status,
-            top
+            Self::PR_PAGE_SIZE,
+            skip
         );
         let data = self.get_json(url).await?;
         Ok(data["value"]

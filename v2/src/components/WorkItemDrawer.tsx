@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
+import { cached } from "../lib/localCache";
 import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
@@ -98,8 +99,13 @@ export default function WorkItemDrawer({
 
   const members = useQuery({
     queryKey: ["members", org, project],
-    queryFn: () => unwrap(commands.listTeamMembers(org, project)),
-    staleTime: 24 * 60 * 60_000, // v1 cached members for 24h
+    // v1 cached members for 24h; the local cache carries that across
+    // restarts too (big orgs, slow endpoint).
+    queryFn: () =>
+      cached(`members:${org}/${project}`, 24 * 60 * 60_000, () =>
+        unwrap(commands.listTeamMembers(org, project)),
+      ),
+    staleTime: 24 * 60 * 60_000,
   });
 
   const activities = useQuery({

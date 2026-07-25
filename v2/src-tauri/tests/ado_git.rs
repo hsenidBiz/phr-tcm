@@ -97,7 +97,7 @@ async fn repo_pull_requests_flags_conflicts_and_lists_repos_sorted() {
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let prs = client.repo_pull_requests("org", "proj", "repo-guid", "active").await.unwrap();
+    let prs = client.repo_pull_requests("org", "proj", "repo-guid", "active", 0).await.unwrap();
     assert!(prs[0].has_conflicts);
     assert!(prs[0].is_draft);
 

@@ -97,9 +97,10 @@ pub async fn repo_pull_requests(
     project: String,
     repo_id: String,
     status: String,
+    skip: u32,
 ) -> Result<Vec<ado_git::PullRequest>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token)
-        .repo_pull_requests(&organization, &project, &repo_id, &status)
+        .repo_pull_requests(&organization, &project, &repo_id, &status, skip)
         .await
 }

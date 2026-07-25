@@ -6,7 +6,13 @@ import RunnerWindow from "./screens/RunnerWindow";
 import { initTheme } from "./lib/theme";
 import "./index.css";
 
-const queryClient = new QueryClient();
+// refetchOnWindowFocus off: a desktop app loses/regains focus constantly
+// (alt-tab to the browser and back), and the default would refire every
+// mounted ADO query each time - the app's single largest source of
+// silent API traffic. Screens that need freshness refetch explicitly.
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false } },
+});
 initTheme();
 
 // Suppress the browser context menu (back / refresh / inspect) everywhere
