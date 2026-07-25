@@ -255,3 +255,40 @@ test("a PR with no pipeline runs says so instead of looking broken", async () =>
   fireEvent.click((await screen.findByText("!5")).closest("[aria-expanded]")!);
   expect(await screen.findByText("No builds found for this pull request.")).toBeInTheDocument();
 });
+
+test("View history opens a readable pipeline dialog with environments", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(42, { merge_commit: "abc123" })], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_work_items") return [];
+    if (cmd === "pr_pipeline")
+      return [
+        {
+          id: 901, name: "HRM-PMS-NET", number: "2026.7.24-12", status: "completed",
+          result: "succeeded", is_validation: false,
+          started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:30Z",
+          web_url: "https://x/901",
+          stages: [{ name: "Stage", state: "completed", result: "succeeded" }],
+          deployments: [
+            { release: "Release-482", environment: "QA", status: "succeeded", on: "2026-07-24T10:00:00Z", web_url: "" },
+            { release: "Release-482", environment: "Production", status: "notStarted", on: "", web_url: "" },
+          ],
+        },
+      ];
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!42")).closest("[aria-expanded]")!);
+  fireEvent.click(await screen.findByRole("button", { name: "View history" }));
+
+  const dialog = await screen.findByRole("dialog");
+  // The headline answers "how far did this get?" without reading the detail.
+  expect(within(dialog).getByText(/Reached QA/)).toBeInTheDocument();
+  expect(within(dialog).getByText("CI after merge")).toBeInTheDocument();
+  // Duration is derived from start/finish.
+  expect(within(dialog).getByText(/5m 30s/)).toBeInTheDocument();
+  expect(within(dialog).getByText("Environments")).toBeInTheDocument();
+  expect(within(dialog).getByText("not started")).toBeInTheDocument();
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close pipeline history" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});

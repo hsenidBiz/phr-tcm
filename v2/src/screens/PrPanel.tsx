@@ -18,6 +18,7 @@ import {
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
+import PipelineDialog, { label, tone } from "../components/PipelineDialog";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
@@ -74,33 +75,6 @@ function WorkItemChip({ wi }: { wi: PrWorkItem }) {
     </button>
   );
 }
-
-/** Tone for a pipeline/environment outcome. Anything still moving reads as
- * accent so "in flight" is visually distinct from both pass and fail. */
-function tone(state: string, result?: string) {
-  const s = result && result !== "" ? result : state;
-  if (s === "succeeded") return "bg-success/15 text-success";
-  if (s === "partiallySucceeded") return "bg-warning/15 text-warning";
-  if (s === "failed" || s === "rejected") return "bg-danger/15 text-danger";
-  if (s === "inProgress" || s === "queued" || s === "scheduled") return "bg-accent-soft text-accent";
-  return "bg-surface-2 text-muted"; // notStarted, canceled, skipped, pending
-}
-
-/** Human labels for ADO's camelCase states. */
-const STATE_LABEL: Record<string, string> = {
-  succeeded: "succeeded",
-  partiallySucceeded: "partly succeeded",
-  failed: "failed",
-  rejected: "rejected",
-  canceled: "canceled",
-  inProgress: "in progress",
-  notStarted: "not started",
-  queued: "queued",
-  scheduled: "scheduled",
-  skipped: "skipped",
-  pending: "pending",
-};
-const label = (s: string) => STATE_LABEL[s] ?? s;
 
 function BuildCard({ b }: { b: PrBuild }) {
   const when = b.started ? new Date(b.started).toLocaleString() : "";
@@ -168,6 +142,7 @@ function BuildCard({ b }: { b: PrBuild }) {
 
 function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: string }) {
   const [open, setOpen] = useState(false);
+  const [showPipeline, setShowPipeline] = useState(false);
   const created = pr.created ? new Date(pr.created).toLocaleDateString() : "";
   const closed = pr.closed ? new Date(pr.closed).toLocaleDateString() : "";
   // Linked work items load lazily, only when the row is expanded.
@@ -307,7 +282,17 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
           {/* Pipeline: which builds ran for this PR and where they got
               deployed. Best-effort - a PR with no pipeline just says so. */}
           <div className="space-y-1 pt-1">
-            <p className="font-semibold text-muted">Pipeline</p>
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-muted">Pipeline</p>
+              {(pipeline.data?.length ?? 0) > 0 && (
+                <button
+                  className="ml-auto rounded border border-border px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-border-strong hover:text-text"
+                  onClick={() => setShowPipeline(true)}
+                >
+                  View history
+                </button>
+              )}
+            </div>
             {pipeline.isPending ? (
               <Skeleton className="h-10" />
             ) : pipeline.isError ? (
@@ -329,6 +314,16 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
             {closed && <p>Closed {closed}</p>}
           </div>
         </div>
+      )}
+
+      {showPipeline && (
+        <PipelineDialog
+          prId={pr.id}
+          prTitle={pr.title}
+          repo={pr.repo}
+          builds={pipeline.data ?? []}
+          onClose={() => setShowPipeline(false)}
+        />
       )}
     </div>
   );
