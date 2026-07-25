@@ -38,6 +38,15 @@ export default function AiBridge() {
     onError: (e) => toast.error(`Could not register: ${e.message}`),
   });
 
+  const unregister = useMutation({
+    mutationFn: (id: string) => unwrapStr(commands.unregisterAiTool(id)),
+    onSuccess: () => {
+      toast.success("Unregistered.");
+      qc.invalidateQueries({ queryKey: ["ai-tools"] });
+    },
+    onError: (e) => toast.error(`Could not unregister: ${e.message}`),
+  });
+
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
 
@@ -68,7 +77,19 @@ export default function AiBridge() {
               <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-text">{t.name}</span>
                 {t.registered ? (
-                  <span className="text-xs text-success">Registered ✓</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs text-success">Registered ✓</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={unregister.isPending && unregister.variables === t.id}
+                      onClick={() => unregister.mutate(t.id)}
+                    >
+                      {unregister.isPending && unregister.variables === t.id
+                        ? "Removing"
+                        : "Unregister"}
+                    </Button>
+                  </span>
                 ) : (
                   <Button
                     size="sm"
@@ -144,10 +165,37 @@ export default function AiBridge() {
         <h2 className="text-sm font-semibold text-text">How it works</h2>
         <p className="text-sm text-muted">
           Connected AI tools can call six read-only tools this app exposes:
-          the writing guide, real example test cases, PBI search, case
-          validation, and wiki search with full page reads for finding
-          documentation about the implementation.
         </p>
+        <ul className="space-y-1.5 text-xs text-muted">
+          <li>
+            <code className="id-mono text-text">get_writing_guide</code> — the live
+            guide for writing import JSON: format rules, your org's allowed Module
+            values, and the recommended workflow.
+          </li>
+          <li>
+            <code className="id-mono text-text">get_example_cases</code> — real test
+            cases already linked to a PBI, in the exact import shape, so the AI can
+            mimic their style and granularity.
+          </li>
+          <li>
+            <code className="id-mono text-text">validate_cases</code> — runs a draft
+            through this app's real importer and returns the case count, warnings,
+            and errors.
+          </li>
+          <li>
+            <code className="id-mono text-text">search_pbis</code> — finds the right
+            work item id by searching PBI titles in the current project.
+          </li>
+          <li>
+            <code className="id-mono text-text">search_wiki</code> — searches the
+            project's Azure DevOps wiki and returns page paths with snippet
+            highlights, for finding documentation about the implementation.
+          </li>
+          <li>
+            <code className="id-mono text-text">get_wiki_page</code> — fetches a wiki
+            page's full markdown content, for reading what search_wiki found.
+          </li>
+        </ul>
         <p className="text-sm text-muted">
           Recommended flow: ask the AI to read the writing guide and some
           example cases, have it draft cases for your PBI, validate them, then

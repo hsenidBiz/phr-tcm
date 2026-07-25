@@ -146,6 +146,24 @@ pub fn merge_entry(existing_json: &str, key: &str, exe: &str) -> Result<String, 
     serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize config: {e}"))
 }
 
+/// Removes our `tcm-testcases` entry from the tool's config, preserving
+/// everything else. `Ok(None)` = the entry wasn't there (nothing to write);
+/// `Ok(Some(json))` = write this back. Errors on unparseable input - never
+/// fabricate a config we couldn't read.
+pub fn remove_entry(existing_json: &str, key: &str) -> Result<Option<String>, String> {
+    let mut root: serde_json::Value = serde_json::from_str(existing_json)
+        .map_err(|e| format!("existing config is not valid JSON: {e}"))?;
+    let Some(entries) = root.get_mut(key).and_then(|v| v.as_object_mut()) else {
+        return Ok(None);
+    };
+    if entries.remove("tcm-testcases").is_none() {
+        return Ok(None);
+    }
+    serde_json::to_string_pretty(&root)
+        .map(Some)
+        .map_err(|e| format!("failed to serialize config: {e}"))
+}
+
 /// Writes `contents` to `path` atomically: write to a sibling temp file in
 /// the same directory (so the final `rename` stays on one volume - atomic
 /// on NTFS), then rename it over `path`. Cleans up the temp file if the

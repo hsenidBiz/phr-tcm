@@ -58,6 +58,45 @@ test("Register invokes register_ai_tool with the tool's id", async () => {
   await waitFor(() => expect(registeredId).toBe("vscode"));
 });
 
+test("Unregister invokes unregister_ai_tool for a registered tool", async () => {
+  let unregisteredId: string | undefined;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "claude-desktop", name: "Claude Desktop", installed: true, registered: true }];
+    if (cmd === "unregister_ai_tool") {
+      unregisteredId = (args as { id: string }).id;
+      return null;
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Unregister" }));
+  await waitFor(() => expect(unregisteredId).toBe("claude-desktop"));
+});
+
+test("the how-it-works card names all six MCP tools", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  await screen.findByText("How it works");
+  for (const name of [
+    "get_writing_guide",
+    "get_example_cases",
+    "validate_cases",
+    "search_pbis",
+    "search_wiki",
+    "get_wiki_page",
+  ]) {
+    expect(screen.getByText(name)).toBeInTheDocument();
+  }
+});
+
 test("the copy button writes the registration command to the clipboard", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };

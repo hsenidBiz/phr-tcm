@@ -104,7 +104,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_bridge::bridge_status,
             ai_bridge::set_bridge_context,
             ai_tools::detect_ai_tools,
-            ai_tools::register_ai_tool
+            ai_tools::register_ai_tool,
+            ai_tools::unregister_ai_tool
         ])
 }
 

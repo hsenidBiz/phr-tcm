@@ -66,7 +66,10 @@ export default function Settings(_props: { org: string; project: string }) {
 
 
   return (
-    <div className="max-w-lg space-y-8">
+    // Two columns on wide windows (Changelog fills the otherwise-empty right
+    // half); below lg everything stacks into the original single column.
+    <div className="grid max-w-lg gap-8 lg:max-w-4xl lg:grid-cols-2 lg:items-start">
+      <div className="space-y-8">
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Appearance</h2>
         <div>
@@ -177,13 +180,14 @@ export default function Settings(_props: { org: string; project: string }) {
           {check.isPending ? "Checking" : "Check for updates"}
         </Button>
       </section>
+      </div>
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Changelog</h2>
         <p className="text-sm text-muted">
           What changed in each version - the same notes the post-update popup shows.
         </p>
-        <div className="max-h-72 space-y-4 overflow-y-auto rounded-md border border-border p-3">
+        <div className="max-h-72 space-y-4 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[70vh]">
           {CHANGELOG.map((e) => (
             <div key={e.version} className="space-y-1.5">
               <h3 className="text-xs font-semibold text-text">
@@ -199,8 +203,6 @@ export default function Settings(_props: { org: string; project: string }) {
           ))}
         </div>
       </section>
-
-      <p className="text-sm text-muted">AI Bridge has moved to its own tab.</p>
     </div>
   );
 }

@@ -150,6 +150,12 @@ export const commands = {
 	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef }),
 	detectAiTools: () => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools"),
 	registerAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id })),
+	/**
+	 *  Removes our entry from the tool's config. No installed-guard: if a
+	 *  config still carries our entry after the tool was uninstalled, removing
+	 *  it is exactly what the user wants. Missing file/entry is a clean no-op.
+	 */
+	unregisterAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id })),
 };
 
 /** Events */

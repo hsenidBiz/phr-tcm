@@ -465,6 +465,7 @@ function applyPatches() {
         { id: "vscode", name: "VS Code", installed: true, registered: false },
       ]),
     registerAiTool: () => ok(null),
+    unregisterAiTool: () => ok(null),
   });
 }
 

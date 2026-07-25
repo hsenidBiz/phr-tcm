@@ -50,10 +50,14 @@ test("the changelog history section lists released versions", async () => {
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
 });
 
-test("AI Bridge has moved out of Settings into its own tab", async () => {
+test("Settings carries no AI Bridge content (it lives in its own tab)", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
-  expect(await screen.findByText("AI Bridge has moved to its own tab.")).toBeInTheDocument();
+  await screen.findByText("Changelog");
+  // The changelog history may mention "AI Bridge" in release notes - assert
+  // the section itself and the old moved-note are gone, not the words.
+  expect(screen.queryByText("AI Bridge has moved to its own tab.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "AI Bridge" })).not.toBeInTheDocument();
   expect(screen.queryByText("Registered in Claude Code:")).not.toBeInTheDocument();
 });

@@ -7,7 +7,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::ai_tools::{atomic_write, detect, is_installed, merge_entry, DetectedTool, TOOL_SPECS};
+use crate::ai_tools::{
+    atomic_write, detect, is_installed, merge_entry, remove_entry, DetectedTool, TOOL_SPECS,
+};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -74,6 +76,56 @@ pub fn register_ai_tool(id: String) -> Result<(), String> {
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     atomic_write(&config_path, &merged)
+}
+
+/// Removes our entry from the tool's config. No installed-guard: if a
+/// config still carries our entry after the tool was uninstalled, removing
+/// it is exactly what the user wants. Missing file/entry is a clean no-op.
+#[tauri::command]
+#[specta::specta]
+pub fn unregister_ai_tool(id: String) -> Result<(), String> {
+    let spec = TOOL_SPECS
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| format!("unknown AI tool id: {id}"))?;
+
+    if spec.id == "claude-code" {
+        return unregister_claude_code();
+    }
+
+    let config_path: PathBuf = (spec.config_path)(&home_dir(), &appdata_dir());
+    let existing = match std::fs::read_to_string(&config_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("failed to read {}: {e}", config_path.display())),
+    };
+    match remove_entry(&existing, spec.entry_key)? {
+        Some(updated) => atomic_write(&config_path, &updated),
+        None => Ok(()),
+    }
+}
+
+fn unregister_claude_code() -> Result<(), String> {
+    let mut command = Command::new("cmd");
+    command.args(["/C", "claude", "mcp", "remove", "--scope", "user", "tcm-testcases"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("failed to run `claude mcp remove`: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let msg = stderr.trim();
+        // Already gone = the state the user asked for.
+        if msg.contains("not found") || msg.contains("No MCP server") {
+            return Ok(());
+        }
+        return Err(format!("`claude mcp remove` failed: {msg}"));
+    }
+    Ok(())
 }
 
 /// Registers via `claude mcp add --scope user`, so it applies regardless

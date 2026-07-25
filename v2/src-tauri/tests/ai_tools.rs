@@ -2,7 +2,7 @@
 //! never clobbers unrelated JSON, and `detect` reads a fake temp-dir layout
 //! the same way it would read the real home/appdata dirs.
 
-use v2_lib::ai_tools::{detect, merge_entry};
+use v2_lib::ai_tools::{detect, merge_entry, remove_entry};
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
 /// dependency of this project). Unique per-call via time + an atomic
@@ -70,6 +70,35 @@ fn merge_entry_replaces_existing_tcm_testcases_entry() {
     assert_eq!(v["mcpServers"]["tcm-testcases"]["args"][0], "--mcp");
     // Only one entry under the key - no duplicate/stale leftover.
     assert_eq!(v["mcpServers"].as_object().unwrap().len(), 1);
+}
+
+#[test]
+fn remove_entry_deletes_ours_and_preserves_everything_else() {
+    let existing = r#"{
+        "otherTopLevel": true,
+        "mcpServers": {
+            "someone-else": { "command": "x.exe" },
+            "tcm-testcases": { "command": "C:/app/v2.exe", "args": ["--mcp"] }
+        }
+    }"#;
+    let out = remove_entry(existing, "mcpServers").unwrap().expect("entry was present");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["mcpServers"].get("tcm-testcases").is_none());
+    assert_eq!(v["mcpServers"]["someone-else"]["command"], "x.exe");
+    assert_eq!(v["otherTopLevel"], true);
+}
+
+#[test]
+fn remove_entry_is_a_no_op_when_absent() {
+    // No key at all, and key present but without our entry: both None.
+    assert_eq!(remove_entry("{}", "mcpServers").unwrap(), None);
+    let existing = r#"{ "mcpServers": { "someone-else": { "command": "x.exe" } } }"#;
+    assert_eq!(remove_entry(existing, "mcpServers").unwrap(), None);
+}
+
+#[test]
+fn remove_entry_errors_on_invalid_json_never_clobbers() {
+    assert!(remove_entry("{ not valid json", "mcpServers").is_err());
 }
 
 #[test]
