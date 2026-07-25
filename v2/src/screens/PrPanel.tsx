@@ -13,10 +13,11 @@ import {
   GitBranch,
   GitPullRequest,
   RefreshCw,
+  Rocket,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { commands, type PullRequest, type PrWorkItem } from "../bindings";
+import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
@@ -74,15 +75,116 @@ function WorkItemChip({ wi }: { wi: PrWorkItem }) {
   );
 }
 
+/** Tone for a pipeline/environment outcome. Anything still moving reads as
+ * accent so "in flight" is visually distinct from both pass and fail. */
+function tone(state: string, result?: string) {
+  const s = result && result !== "" ? result : state;
+  if (s === "succeeded") return "bg-success/15 text-success";
+  if (s === "partiallySucceeded") return "bg-warning/15 text-warning";
+  if (s === "failed" || s === "rejected") return "bg-danger/15 text-danger";
+  if (s === "inProgress" || s === "queued" || s === "scheduled") return "bg-accent-soft text-accent";
+  return "bg-surface-2 text-muted"; // notStarted, canceled, skipped, pending
+}
+
+/** Human labels for ADO's camelCase states. */
+const STATE_LABEL: Record<string, string> = {
+  succeeded: "succeeded",
+  partiallySucceeded: "partly succeeded",
+  failed: "failed",
+  rejected: "rejected",
+  canceled: "canceled",
+  inProgress: "in progress",
+  notStarted: "not started",
+  queued: "queued",
+  scheduled: "scheduled",
+  skipped: "skipped",
+  pending: "pending",
+};
+const label = (s: string) => STATE_LABEL[s] ?? s;
+
+function BuildCard({ b }: { b: PrBuild }) {
+  const when = b.started ? new Date(b.started).toLocaleString() : "";
+  return (
+    <div className="space-y-1.5 rounded-md border border-border bg-bg p-2">
+      <div className="flex items-center gap-2">
+        <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", tone(b.status, b.result))}>
+          {label(b.result || b.status)}
+        </span>
+        <span className="truncate text-text">{b.name}</span>
+        <span className="id-mono shrink-0 text-faint">{b.number}</span>
+        <span className="shrink-0 rounded bg-surface-2 px-1 py-0.5 text-[10px] text-muted">
+          {b.is_validation ? "PR validation" : "CI"}
+        </span>
+        {b.web_url && (
+          <span
+            role="button"
+            aria-label={`Open build ${b.number} in Azure DevOps`}
+            title="Open build in Azure DevOps"
+            className="ml-auto shrink-0 rounded p-0.5 text-muted hover:text-accent"
+            onClick={(e) => {
+              e.stopPropagation();
+              openUrl(b.web_url).catch(() => toast.error("Could not open the browser."));
+            }}
+          >
+            <ExternalLink size={12} />
+          </span>
+        )}
+      </div>
+      {b.stages.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {b.stages.map((s, i) => (
+            <span
+              key={i}
+              className={cn("rounded px-1.5 py-0.5 text-[10px]", tone(s.state, s.result))}
+              title={`Stage ${s.name}: ${label(s.result || s.state)}`}
+            >
+              {s.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Environments are the whole point of the feature - which of these
+          did this change actually reach, and how far did it get. */}
+      {b.deployments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <Rocket size={11} className="text-faint" />
+          {b.deployments.map((d, i) => (
+            <span
+              key={i}
+              className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", tone(d.status))}
+              title={`${d.release} → ${d.environment}: ${label(d.status)}${
+                d.on ? ` (${new Date(d.on).toLocaleString()})` : ""
+              }`}
+            >
+              {d.environment}
+            </span>
+          ))}
+        </div>
+      )}
+      {when && <p className="text-faint">{when}</p>}
+    </div>
+  );
+}
+
 function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: string }) {
   const [open, setOpen] = useState(false);
   const created = pr.created ? new Date(pr.created).toLocaleDateString() : "";
+  const closed = pr.closed ? new Date(pr.closed).toLocaleDateString() : "";
   // Linked work items load lazily, only when the row is expanded.
   const workItems = useQuery({
     queryKey: ["pr-work-items", org, project, pr.repo, pr.id],
     queryFn: () => unwrap(commands.prWorkItems(org, project, pr.repo, pr.id)),
     enabled: open && Boolean(org && project),
     staleTime: 5 * 60_000,
+    retry: false,
+  });
+  // Builds + deployments, also lazy: several ADO calls per PR, so only for
+  // the row the user actually opened.
+  const pipeline = useQuery({
+    queryKey: ["pr-pipeline", org, project, pr.repo, pr.id, pr.merge_commit],
+    queryFn: () => unwrap(commands.prPipeline(org, project, pr.repo, pr.id, pr.merge_commit)),
+    enabled: open && Boolean(org && project),
+    staleTime: 60_000,
     retry: false,
   });
   return (
@@ -201,7 +303,28 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
               );
             })}
           </div>
-          {created && <p className="text-faint">Created {created}</p>}
+          {/* Pipeline: which builds ran for this PR and where they got
+              deployed. Best-effort - a PR with no pipeline just says so. */}
+          <div className="space-y-1 pt-1">
+            <p className="font-semibold text-muted">Pipeline</p>
+            {pipeline.isPending ? (
+              <Skeleton className="h-10" />
+            ) : pipeline.isError ? (
+              <p className="text-faint">Could not read pipeline runs.</p>
+            ) : (pipeline.data?.length ?? 0) === 0 ? (
+              <p className="text-faint">No builds found for this pull request.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {pipeline.data!.map((b) => (
+                  <BuildCard key={b.id} b={b} />
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-x-3 text-faint">
+            {created && <p>Created {created}</p>}
+            {closed && <p>Closed {closed}</p>}
+          </div>
         </div>
       )}
     </div>
@@ -274,9 +397,23 @@ export default function PrPanel({ org, project }: { org: string; project: string
     enabled: Boolean(org && project),
     staleTime: 60 * 60_000,
   });
+  // Active vs completed on the chosen repo. Completed is a separate ADO
+  // query (capped server-side), not a client filter.
+  const statusKey = "tcm-v2-pr-status";
+  const [prStatus, setPrStatusRaw] = useState<"active" | "completed">(() =>
+    localStorage.getItem(statusKey) === "completed" ? "completed" : "active",
+  );
+  const setPrStatus = (s: "active" | "completed") => {
+    setPrStatusRaw(s);
+    try {
+      localStorage.setItem(statusKey, s);
+    } catch {
+      // session-only
+    }
+  };
   const active = useQuery({
-    queryKey: ["repo-prs", org, project, repoId],
-    queryFn: () => unwrap(commands.repoPullRequests(org, project, repoId)),
+    queryKey: ["repo-prs", org, project, repoId, prStatus],
+    queryFn: () => unwrap(commands.repoPullRequests(org, project, repoId, prStatus)),
     enabled: Boolean(org && project && repoId),
     retry: false,
   });
@@ -291,7 +428,12 @@ export default function PrPanel({ org, project }: { org: string; project: string
     for (const pr of overview.data?.mine ?? []) ids.add(pr.id);
     return ids;
   }, [overview.data]);
-  const activeOnRepo = (active.data ?? []).filter((pr) => !shownAbove.has(pr.id));
+  // Only the active list can collide with the groups above; completed PRs
+  // are never shown there, so they must not be de-duplicated away.
+  const repoPrs =
+    prStatus === "active"
+      ? (active.data ?? []).filter((pr) => !shownAbove.has(pr.id))
+      : (active.data ?? []);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -309,6 +451,22 @@ export default function PrPanel({ org, project }: { org: string; project: string
             </option>
           ))}
         </Select>
+        {/* Which slice of the repo's PRs the bottom group shows. */}
+        <div className="flex rounded-md border border-border p-0.5">
+          {(["active", "completed"] as const).map((s) => (
+            <button
+              key={s}
+              className={cn(
+                "rounded px-2 py-1 text-xs capitalize transition-colors",
+                prStatus === s ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
+              )}
+              aria-pressed={prStatus === s}
+              onClick={() => setPrStatus(s)}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
         <button
           aria-label="Refresh pull requests"
           title="Refresh pull requests"
@@ -359,12 +517,16 @@ export default function PrPanel({ org, project }: { org: string; project: string
           <p className="text-sm text-danger">{active.error.message}</p>
         ) : (
           <PrGroup
-            title={`Active on ${repoName ?? "repository"}`}
-            prs={activeOnRepo}
+            title={`${prStatus === "active" ? "Active" : "Completed"} on ${
+              repoName ?? "repository"
+            }`}
+            prs={repoPrs}
             empty={
               active.isLoading
                 ? "Loading…"
-                : "No other active pull requests on this repository."
+                : prStatus === "active"
+                  ? "No other active pull requests on this repository."
+                  : "No completed pull requests on this repository."
             }
             org={org}
             project={project}

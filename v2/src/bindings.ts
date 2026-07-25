@@ -137,9 +137,14 @@ export const commands = {
 	openSnip: () => typedError<null, string>(__TAURI_INVOKE("open_snip")),
 	listRepos: (organization: string, project: string) => typedError<RepoRef[], AdoError>(__TAURI_INVOKE("list_repos", { organization, project })),
 	prOverview: (organization: string, project: string) => typedError<PrOverview, AdoError>(__TAURI_INVOKE("pr_overview", { organization, project })),
-	repoPullRequests: (organization: string, project: string, repoId: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId })),
+	repoPullRequests: (organization: string, project: string, repoId: string, status: string) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
+	/**
+	 *  Build runs for one PR - validation + post-merge CI - each with its
+	 *  stages and the environments a release carried it to.
+	 */
+	prPipeline: (organization: string, project: string, repoId: string, prId: number, mergeCommit: string) => typedError<PrBuild[], AdoError>(__TAURI_INVOKE("pr_pipeline", { organization, project, repoId, prId, mergeCommit })),
 	/**  Iteration paths with sprint dates, for DevOps-style iteration pickers. */
 	listIterations: (organization: string, project: string) => typedError<IterationRef[], AdoError>(__TAURI_INVOKE("list_iterations", { organization, project })),
 	bridgeStatus: () => typedError<BridgeStatus, string>(__TAURI_INVOKE("bridge_status")),
@@ -214,6 +219,15 @@ export type BridgeStatus = {
 	mcp_exe: string,
 };
 
+/**  One stage inside a build run (the YAML `stages:` list). */
+export type BuildStage = {
+	name: string,
+	/**  "completed" | "inProgress" | "pending". */
+	state: string,
+	/**  "succeeded" | "failed" | "canceled" | "skipped" | "" while running. */
+	result: string,
+};
+
 /**  One test case's recent outcomes (newest first, capped at 5). */
 export type CaseHistory = {
 	test_case_id: number,
@@ -233,6 +247,22 @@ export type CaseNoteSaved = {
 export type CreatedItem = {
 	id: number,
 	url: string,
+};
+
+/**  One environment a release carried this build into. */
+export type Deployment = {
+	/**  Release name, e.g. "Release-482". */
+	release: string,
+	/**  Environment/stage name, e.g. "QA" or "Production". */
+	environment: string,
+	/**
+	 *  "succeeded" | "inProgress" | "notStarted" | "rejected" | "canceled"
+	 *  | "queued" | "scheduled" | "partiallySucceeded".
+	 */
+	status: string,
+	/**  When the environment last changed state (may be empty). */
+	on: string,
+	web_url: string,
 };
 
 /**  What the frontend needs to render one row of the AI-tools list. */
@@ -376,6 +406,26 @@ export type PointOutcome = {
 	bug_ids: number[] | null,
 };
 
+/**  A build run tied to a pull request, with its stages and deployments. */
+export type PrBuild = {
+	id: number,
+	/**  Pipeline definition name, e.g. "HRM-PMS-NET". */
+	name: string,
+	/**  Run number, e.g. "2026.7.24-12". */
+	number: string,
+	/**  "completed" | "inProgress" | "notStarted" | "cancelling". */
+	status: string,
+	/**  "succeeded" | "failed" | "canceled" | "partiallySucceeded" | "". */
+	result: string,
+	/**  True when this ran as PR validation, false for the post-merge CI run. */
+	is_validation: boolean,
+	started: string,
+	finished: string,
+	web_url: string,
+	stages: BuildStage[],
+	deployments: Deployment[],
+};
+
 /**  One work-item -> pull-request association, for the board's PR chips. */
 export type PrLink = {
 	work_item_id: number,
@@ -439,6 +489,15 @@ export type PullRequest = {
 	description: string,
 	is_draft: boolean,
 	has_conflicts: boolean,
+	/**  "active" | "completed" | "abandoned". */
+	status: string,
+	/**  When a completed/abandoned PR closed; empty while active. */
+	closed: string,
+	/**
+	 *  Merge commit on the target branch, once completed - the handle the
+	 *  pipeline lookup uses to find the post-merge CI build.
+	 */
+	merge_commit: string,
 	/**  The signed-in user's vote on this PR (0 when not a reviewer). */
 	my_vote: number,
 	reviewers: PrReviewer[],

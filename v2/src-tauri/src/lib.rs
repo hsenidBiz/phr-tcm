@@ -16,6 +16,7 @@ pub mod import_parser;
 pub mod mcp;
 pub mod model;
 pub mod note_server;
+pub mod pipelines;
 pub mod report;
 pub mod state;
 pub mod steps_xml;
@@ -100,6 +101,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             prs::repo_pull_requests,
             prs::board_pr_links,
             prs::pr_work_items,
+            prs::pr_pipeline,
             discovery::list_iterations,
             ai_bridge::bridge_status,
             ai_bridge::set_bridge_context,

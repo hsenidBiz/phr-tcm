@@ -176,3 +176,81 @@ test("the description renders markdown like Azure DevOps", async () => {
   expect(summary.tagName).toBe("STRONG");
   expect(screen.getByText("one").closest("li")).toBeInTheDocument();
 });
+
+test("the completed filter runs a separate query and titles the group", async () => {
+  const asked: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "repo_pull_requests") {
+      const status = (args as { status: string }).status;
+      asked.push(status);
+      return status === "completed"
+        ? [pr(20620, { title: "Merged thing", status: "completed", closed: "2026-07-24T08:00:00Z" })]
+        : [pr(9, { title: "Still open" })];
+    }
+  });
+  renderPanel();
+  // The repo list loads async - selecting before its <option> exists is a
+  // no-op, so wait for it.
+  await screen.findByRole("option", { name: "web" });
+  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r1" } });
+  // Titles render as "!<id> <title>" across sibling nodes, so match the id.
+  expect(await screen.findByText("!9")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "completed" }));
+  expect(await screen.findByText("!20620")).toBeInTheDocument();
+  expect(screen.getByText("Completed on web")).toBeInTheDocument();
+  expect(screen.queryByText("!9")).not.toBeInTheDocument();
+  // The status is a server-side query, not a client-side filter.
+  expect(asked).toContain("completed");
+});
+
+test("an expanded PR shows its builds, stages and deployed environments", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(42, { merge_commit: "abc123" })], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_work_items") return [];
+    if (cmd === "pr_pipeline") {
+      expect((args as { mergeCommit: string }).mergeCommit).toBe("abc123");
+      return [
+        {
+          id: 901, name: "HRM-PMS-NET", number: "2026.7.24-12", status: "completed",
+          result: "succeeded", is_validation: false,
+          started: "2026-07-24T09:00:00Z", finished: "", web_url: "https://x/901",
+          stages: [{ name: "Stage", state: "completed", result: "succeeded" }],
+          deployments: [
+            { release: "Release-482", environment: "QA", status: "succeeded", on: "", web_url: "" },
+            { release: "Release-482", environment: "Production", status: "notStarted", on: "", web_url: "" },
+          ],
+        },
+      ];
+    }
+  });
+  renderPanel();
+  // Pipeline data is lazy: nothing requested until the row opens.
+  expect(screen.queryByText("Pipeline")).not.toBeInTheDocument();
+  fireEvent.click((await screen.findByText("!42")).closest("[aria-expanded]")!);
+
+  expect(await screen.findByText("Pipeline")).toBeInTheDocument();
+  // The heading renders immediately; the builds arrive with the query.
+  expect(await screen.findByText("HRM-PMS-NET")).toBeInTheDocument();
+  expect(screen.getByText("CI")).toBeInTheDocument();
+  expect(screen.getByText("Stage")).toBeInTheDocument();
+  // The environments are the point: which ones it reached, and how far.
+  expect(screen.getByText("QA")).toBeInTheDocument();
+  expect(screen.getByText("Production")).toBeInTheDocument();
+  expect(screen.getByTitle(/Release-482 . Production: not started/)).toBeInTheDocument();
+});
+
+test("a PR with no pipeline runs says so instead of looking broken", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(5)], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_work_items") return [];
+    if (cmd === "pr_pipeline") return [];
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!5")).closest("[aria-expanded]")!);
+  expect(await screen.findByText("No builds found for this pull request.")).toBeInTheDocument();
+});

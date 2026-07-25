@@ -33,6 +33,13 @@ pub struct PullRequest {
     pub description: String,
     pub is_draft: bool,
     pub has_conflicts: bool,
+    /// "active" | "completed" | "abandoned".
+    pub status: String,
+    /// When a completed/abandoned PR closed; empty while active.
+    pub closed: String,
+    /// Merge commit on the target branch, once completed - the handle the
+    /// pipeline lookup uses to find the post-merge CI build.
+    pub merge_commit: String,
     /// The signed-in user's vote on this PR (0 when not a reviewer).
     pub my_vote: i32,
     pub reviewers: Vec<PrReviewer>,
@@ -115,6 +122,9 @@ fn parse_pr(
         description: s(&v["description"]),
         is_draft: v["isDraft"].as_bool().unwrap_or(false),
         has_conflicts: v["mergeStatus"].as_str() == Some("conflicts"),
+        status: s(&v["status"]),
+        closed: s(&v["closedDate"]),
+        merge_commit: s(&v["lastMergeCommit"]["commitId"]),
         my_vote,
         reviewers,
         // The list responses carry no web link - ADO's PR URLs are fully
@@ -349,22 +359,32 @@ impl AdoClient {
             .collect())
     }
 
-    /// All active PRs on one repository. Read only.
+    /// PRs on one repository, by ADO status ("active" | "completed" |
+    /// "abandoned" | "all"). Completed lists are capped - the history is
+    /// unbounded and the panel only ever shows recent ones. Read only.
     pub async fn repo_pull_requests(
         &self,
         org: &str,
         project: &str,
         repo_id: &str,
+        status: &str,
     ) -> Result<Vec<PullRequest>, AdoError> {
         // Best-effort identity for my_vote highlighting; anonymous fallback
         // just means my_vote stays 0.
         let me = self.my_identity_id(org).await.unwrap_or_default();
+        let status = match status {
+            "completed" | "abandoned" | "all" => status,
+            _ => "active",
+        };
+        let top = if status == "active" { "" } else { "&$top=50" };
         let url = format!(
-            "{}/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.status=active&api-version=7.1",
+            "{}/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.status={}{}&api-version=7.1",
             self.base_url,
             org,
             project,
-            urlencoding::encode(repo_id)
+            urlencoding::encode(repo_id),
+            status,
+            top
         );
         let data = self.get_json(url).await?;
         Ok(data["value"]

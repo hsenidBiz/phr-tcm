@@ -401,6 +401,38 @@ function applyPatches() {
           my_vote: 10,
           reviewers: [{ display_name: "Demo User", vote: 10 }],
           web_url: "https://example.invalid/demo-pr/503",
+          status: "active", closed: "", merge_commit: "",
+        },
+      ]),
+    prPipeline: () =>
+      ok([
+        {
+          id: 901, name: "demo-web", number: "2026.7.24-12", status: "completed",
+          result: "succeeded", is_validation: false,
+          started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:06:00Z",
+          web_url: "https://example.invalid/demo-build/901",
+          stages: [
+            { name: "Build", state: "completed", result: "succeeded" },
+            { name: "Package", state: "completed", result: "succeeded" },
+          ],
+          deployments: [
+            {
+              release: "Release-482", environment: "QA", status: "succeeded",
+              on: "2026-07-24T10:00:00Z", web_url: "https://example.invalid/demo-release/482",
+            },
+            {
+              release: "Release-482", environment: "Production", status: "notStarted",
+              on: "", web_url: "https://example.invalid/demo-release/482",
+            },
+          ],
+        },
+        {
+          id: 900, name: "demo-web (Build)", number: "20260724.1", status: "completed",
+          result: "succeeded", is_validation: true,
+          started: "2026-07-24T08:00:00Z", finished: "2026-07-24T08:04:00Z",
+          web_url: "https://example.invalid/demo-build/900",
+          stages: [{ name: "Build", state: "completed", result: "succeeded" }],
+          deployments: [],
         },
       ]),
 

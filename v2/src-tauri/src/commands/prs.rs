@@ -54,6 +54,24 @@ pub async fn board_pr_links(
         .await
 }
 
+/// Build runs for one PR - validation + post-merge CI - each with its
+/// stages and the environments a release carried it to.
+#[tauri::command]
+#[specta::specta]
+pub async fn pr_pipeline(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    repo_id: String,
+    pr_id: i32,
+    merge_commit: String,
+) -> Result<Vec<crate::pipelines::PrBuild>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .pr_builds(&organization, &project, &repo_id, pr_id, &merge_commit)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_pull_requests(
@@ -61,9 +79,10 @@ pub async fn repo_pull_requests(
     organization: String,
     project: String,
     repo_id: String,
+    status: String,
 ) -> Result<Vec<ado_git::PullRequest>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token)
-        .repo_pull_requests(&organization, &project, &repo_id)
+        .repo_pull_requests(&organization, &project, &repo_id, &status)
         .await
 }
