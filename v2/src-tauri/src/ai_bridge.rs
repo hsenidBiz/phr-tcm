@@ -109,6 +109,14 @@ pub async fn route(
             Some(c) => search_pbis(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
+        ("GET", "/search-wiki") => match client {
+            Some(c) => search_wiki(ctx, c, target).await,
+            None => (503, "sign in to Test Case Manager first".into()),
+        },
+        ("GET", "/wiki-page") => match client {
+            Some(c) => wiki_page(ctx, c, target).await,
+            None => (503, "sign in to Test Case Manager first".into()),
+        },
         _ => (404, String::new()),
     }
 }
@@ -256,6 +264,60 @@ async fn search_pbis(
                 })).collect::<Vec<_>>()
             })
             .to_string(),
+        ),
+        Err(e) => (502, format!("Azure DevOps error: {e:?}")),
+    }
+}
+
+/// Wiki documentation search, so the AI can ground its output in the
+/// project's own docs instead of guessing.
+async fn search_wiki(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    target: &str,
+) -> (u16, String) {
+    let Some(query) = q(target, "q").filter(|s| !s.trim().is_empty()) else {
+        return (400, "pass ?q=<search text>".into());
+    };
+    let top = q(target, "top")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(10)
+        .min(25);
+    match client.search_wiki(&ctx.org, &ctx.project, &query, top).await {
+        Ok(hits) => (
+            200,
+            serde_json::json!({
+                "results": hits.iter().map(|h| serde_json::json!({
+                    "file_name": h.file_name,
+                    "path": h.path,
+                    "wiki_name": h.wiki_name,
+                    "wiki_id": h.wiki_id,
+                    "highlights": h.highlights,
+                })).collect::<Vec<_>>()
+            })
+            .to_string(),
+        ),
+        Err(e) => (502, format!("Azure DevOps error: {e:?}")),
+    }
+}
+
+/// Full markdown content of one wiki page - call after `search_wiki` finds
+/// the right `wiki_id` + `path`.
+async fn wiki_page(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    target: &str,
+) -> (u16, String) {
+    let Some(wiki_id) = q(target, "wiki").filter(|s| !s.trim().is_empty()) else {
+        return (400, "pass ?wiki=<wiki id>&path=<page path>".into());
+    };
+    let Some(path) = q(target, "path").filter(|s| !s.trim().is_empty()) else {
+        return (400, "pass ?wiki=<wiki id>&path=<page path>".into());
+    };
+    match client.get_wiki_page(&ctx.org, &ctx.project, &wiki_id, &path).await {
+        Ok(page) => (
+            200,
+            serde_json::json!({ "path": page.path, "content": page.content }).to_string(),
         ),
         Err(e) => (502, format!("Azure DevOps error: {e:?}")),
     }

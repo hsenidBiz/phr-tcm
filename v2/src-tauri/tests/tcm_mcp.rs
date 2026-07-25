@@ -31,7 +31,7 @@ fn notifications_get_no_response() {
 }
 
 #[test]
-fn tools_list_names_all_four() {
+fn tools_list_names_all_six() {
     let resp = handle_message(
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
         "1.10.3",
@@ -47,7 +47,14 @@ fn tools_list_names_all_four() {
         .collect();
     assert_eq!(
         names,
-        vec!["get_writing_guide", "get_example_cases", "validate_cases", "search_pbis"]
+        vec![
+            "get_writing_guide",
+            "get_example_cases",
+            "validate_cases",
+            "search_pbis",
+            "search_wiki",
+            "get_wiki_page"
+        ]
     );
     // Every tool must carry an inputSchema (clients reject tools without one).
     for t in v["result"]["tools"].as_array().unwrap() {
@@ -97,4 +104,34 @@ fn search_pbis_percent_encodes_special_query_chars() {
     handle_message(req, "1.10.3", &call).unwrap();
     let recorded = calls.borrow();
     assert_eq!(recorded[0].1, "/search-pbis?q=Search%20%26%20Filter");
+}
+
+#[test]
+fn search_wiki_percent_encodes_special_query_chars() {
+    let req = r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"search_wiki","arguments":{"query":"auth & login"}}}"#;
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, r#"{"results":[]}"#.to_string()))
+    };
+    handle_message(req, "1.10.3", &call).unwrap();
+    let recorded = calls.borrow();
+    assert_eq!(recorded[0].0, "GET");
+    assert_eq!(recorded[0].1, "/search-wiki?q=auth%20%26%20login");
+}
+
+#[test]
+fn get_wiki_page_percent_encodes_wiki_id_and_path() {
+    // Path has both spaces and slashes - both must survive as percent
+    // escapes through ai_bridge::q's naive '&'/'='' splitter.
+    let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"get_wiki_page","arguments":{"wiki_id":"wiki-1","path":"/Docs/API Guide"}}}"#;
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, r#"{"path":"/Docs/API Guide","content":""}"#.to_string()))
+    };
+    handle_message(req, "1.10.3", &call).unwrap();
+    let recorded = calls.borrow();
+    assert_eq!(recorded[0].0, "GET");
+    assert_eq!(recorded[0].1, "/wiki-page?wiki=wiki-1&path=%2FDocs%2FAPI%20Guide");
 }

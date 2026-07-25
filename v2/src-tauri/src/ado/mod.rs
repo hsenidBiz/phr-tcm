@@ -47,6 +47,25 @@ pub struct FieldRef {
     pub reference_name: String,
 }
 
+/// One wiki-search hit: enough to let the AI pick a page, then call
+/// `get_wiki_page` with `wiki_id` + `path` for the full content.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct WikiHit {
+    pub file_name: String,
+    pub path: String,
+    pub wiki_name: String,
+    pub wiki_id: String,
+    /// Joined highlight fragments from all matched fields (may be empty).
+    pub highlights: String,
+}
+
+/// A wiki page's full content, fetched after a `WikiHit` narrows the path.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct WikiPage {
+    pub path: String,
+    pub content: String,
+}
+
 /// A fully-loaded Test Case for the editor: steps parsed from the XML blob,
 /// preconditions flattened to plain text. `id` doubles as update_id when the
 /// editor saves.

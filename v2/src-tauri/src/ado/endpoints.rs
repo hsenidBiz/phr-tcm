@@ -4,7 +4,7 @@
 
 use super::{
     tc_ids_i32, AdoClient, AdoError, BugTypeInfo, FieldRef, Org, PbiHit, Project,
-    TestCaseFull, TestCaseSummary,
+    TestCaseFull, TestCaseSummary, WikiHit, WikiPage,
 };
 
 impl AdoClient {
@@ -111,6 +111,77 @@ impl AdoClient {
                 })
             })
             .collect())
+    }
+
+    /// Documentation search over the project's Azure DevOps Wiki. Uses the
+    /// search-index host (almsearch.dev.azure.com in prod), derived from
+    /// `base_url` by substring-swap so wiremock's mock-server override
+    /// (which has no "dev.azure.com" substring) still lands on the same
+    /// stub server untouched. This POST is a read-only query - same
+    /// precedent as the WIQL search in `search_pbis` above - it does NOT
+    /// violate the no-writes invariant.
+    pub async fn search_wiki(
+        &self,
+        organization: &str,
+        project: &str,
+        query: &str,
+        top: u32,
+    ) -> Result<Vec<WikiHit>, AdoError> {
+        let search_base = self.base_url.replacen("dev.azure.com", "almsearch.dev.azure.com", 1);
+        let url = format!(
+            "{search_base}/{organization}/{project}/_apis/search/wikisearchresults?api-version=7.1"
+        );
+        let body = self
+            .post_json_query(url, &serde_json::json!({ "searchText": query, "$top": top }))
+            .await?;
+        Ok(body["results"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|hit| {
+                let highlights = hit["hits"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .flat_map(|h| h["highlights"].as_array().cloned().unwrap_or_default())
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+                    .join(" ... ");
+                WikiHit {
+                    file_name: hit["fileName"].as_str().unwrap_or_default().to_string(),
+                    path: hit["path"].as_str().unwrap_or_default().to_string(),
+                    wiki_name: hit["wiki"]["name"].as_str().unwrap_or_default().to_string(),
+                    wiki_id: hit["wiki"]["id"].as_str().unwrap_or_default().to_string(),
+                    highlights,
+                }
+            })
+            .collect())
+    }
+
+    /// Full content of one wiki page (read-only GET), fetched after
+    /// `search_wiki` narrows down a `wiki_id` + `path`.
+    pub async fn get_wiki_page(
+        &self,
+        organization: &str,
+        project: &str,
+        wiki_id: &str,
+        path: &str,
+    ) -> Result<WikiPage, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wiki/wikis/{}/pages?path={}&includeContent=true&api-version=7.1",
+            self.base_url,
+            organization,
+            project,
+            wiki_id,
+            percent_encode_path(path)
+        );
+        let body = self.get_json(url).await?;
+        Ok(WikiPage {
+            path: body["path"].as_str().unwrap_or(path).to_string(),
+            content: body["content"].as_str().unwrap_or_default().to_string(),
+        })
     }
 
     /// Distinct values of `field_ref` actually used on the project's Test
@@ -840,4 +911,19 @@ impl AdoClient {
             .collect();
         Ok(projects)
     }
+}
+
+/// RFC 3986 percent-encoding for the wiki page `path` query value: keeps
+/// `/` unescaped (wiki paths are slash-separated segments) plus ALPHA /
+/// DIGIT / `-._~`; escapes everything else (notably spaces).
+fn percent_encode_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }

@@ -87,6 +87,21 @@ fn tools_list() -> serde_json::Value {
                 "query": { "type": "string" },
             }), &["query"]),
         },
+        {
+            "name": "search_wiki",
+            "description": "Search the project's Azure DevOps wiki for documentation; returns page paths and snippet highlights.",
+            "inputSchema": schema(serde_json::json!({
+                "query": { "type": "string" },
+            }), &["query"]),
+        },
+        {
+            "name": "get_wiki_page",
+            "description": "Fetch a wiki page's full markdown content - use after search_wiki.",
+            "inputSchema": schema(serde_json::json!({
+                "wiki_id": { "type": "string" },
+                "path": { "type": "string" },
+            }), &["wiki_id", "path"]),
+        },
     ]})
 }
 
@@ -104,6 +119,23 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "search_pbis" => {
             let q = args["query"].as_str().unwrap_or("");
             call("GET", &format!("/search-pbis?q={}", percent_encode(q)), "")
+        }
+        "search_wiki" => {
+            let q = args["query"].as_str().unwrap_or("");
+            call("GET", &format!("/search-wiki?q={}", percent_encode(q)), "")
+        }
+        "get_wiki_page" => {
+            let wiki_id = args["wiki_id"].as_str().unwrap_or("");
+            let path = args["path"].as_str().unwrap_or("");
+            call(
+                "GET",
+                &format!(
+                    "/wiki-page?wiki={}&path={}",
+                    percent_encode(wiki_id),
+                    percent_encode(path)
+                ),
+                "",
+            )
         }
         other => Err(format!("unknown tool {other}")),
     };

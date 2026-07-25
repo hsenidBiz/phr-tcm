@@ -126,6 +126,88 @@ async fn search_pbis_escapes_single_quotes() {
 }
 
 #[tokio::test]
+async fn search_wiki_posts_search_text_and_maps_hits() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/myorg/proj/_apis/search/wikisearchresults"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "searchText": "auth flow",
+            "$top": 10
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "count": 1,
+            "results": [{
+                "fileName": "Auth-Flow.md",
+                "path": "/Docs/Auth Flow",
+                "wiki": {"id": "wiki-1", "name": "Project.wiki"},
+                "hits": [
+                    {"fieldReferenceName": "content", "highlights": ["...the <hl>auth flow</hl> starts..."]},
+                    {"fieldReferenceName": "path", "highlights": ["Auth <hl>Flow</hl>"]}
+                ]
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    // With base_url = the mock server's plain http://127.0.0.1:PORT (no
+    // "dev.azure.com" substring), the almsearch-host derivation is a no-op
+    // and the request still lands on this same stub server.
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let hits = client.search_wiki("myorg", "proj", "auth flow", 10).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].file_name, "Auth-Flow.md");
+    assert_eq!(hits[0].path, "/Docs/Auth Flow");
+    assert_eq!(hits[0].wiki_id, "wiki-1");
+    assert_eq!(hits[0].wiki_name, "Project.wiki");
+    assert!(hits[0].highlights.contains("auth flow"));
+    assert!(hits[0].highlights.contains("Flow"));
+}
+
+#[tokio::test]
+async fn search_wiki_defensive_on_missing_fields() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/search/wikisearchresults"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "results": [{ "fileName": "Bare.md" }]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let hits = client.search_wiki("o", "p", "x", 5).await.unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, "");
+    assert_eq!(hits[0].wiki_id, "");
+    assert_eq!(hits[0].highlights, "");
+}
+
+#[tokio::test]
+async fn get_wiki_page_encodes_path_and_returns_content() {
+    let server = MockServer::start().await;
+    // wiremock's query_param matcher compares against the DECODED value
+    // (it decodes the request's raw query itself); the encoding this test
+    // is really pinning is that get_wiki_page's URL is valid enough for
+    // wiremock/reqwest to decode the space back correctly at all.
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wiki/wikis/wiki-1/pages"))
+        .and(wiremock::matchers::query_param("path", "/Docs/API Guide"))
+        .and(wiremock::matchers::query_param("includeContent", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Docs/API Guide",
+            "content": "# API Guide\nfull markdown here"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let page = client
+        .get_wiki_page("o", "p", "wiki-1", "/Docs/API Guide")
+        .await
+        .unwrap();
+    assert_eq!(page.path, "/Docs/API Guide");
+    assert!(page.content.contains("full markdown here"));
+}
+
+#[tokio::test]
 async fn pbi_test_cases_follow_testedby_relations() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

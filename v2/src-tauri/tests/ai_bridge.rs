@@ -164,6 +164,72 @@ async fn examples_return_real_cases_in_import_shape() {
 }
 
 #[tokio::test]
+async fn search_wiki_503_without_a_client() {
+    let (status, body) = route(&ctx(), None, "GET", "/search-wiki?q=auth", "", "1.10.3").await;
+    assert_eq!(status, 503);
+    assert!(body.contains("sign in"));
+}
+
+#[tokio::test]
+async fn wiki_page_503_without_a_client() {
+    let (status, body) =
+        route(&ctx(), None, "GET", "/wiki-page?wiki=w1&path=/Docs/Guide", "", "1.10.3").await;
+    assert_eq!(status, 503);
+    assert!(body.contains("sign in"));
+}
+
+#[tokio::test]
+async fn search_wiki_returns_hits_via_wiremock() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("POST"))
+        .and(wm_path("/acme/Web/_apis/search/wikisearchresults"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "results": [{
+                "fileName": "Auth.md",
+                "path": "/Docs/Auth",
+                "wiki": {"id": "w1", "name": "Team.wiki"},
+                "hits": [{"highlights": ["snippet"]}]
+            }]
+        })))
+        .mount(&server)
+        .await;
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/search-wiki?q=auth", "", "1.10.3").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let results = v["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["wiki_id"], "w1");
+    assert_eq!(results[0]["highlights"], "snippet");
+}
+
+#[tokio::test]
+async fn wiki_page_returns_content_via_wiremock() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wiki/wikis/w1/pages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Docs/Auth",
+            "content": "# Auth\nfull text"
+        })))
+        .mount(&server)
+        .await;
+    let (status, body) = route(
+        &ctx(),
+        Some(&client),
+        "GET",
+        "/wiki-page?wiki=w1&path=/Docs/Auth",
+        "",
+        "1.10.3",
+    )
+    .await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["path"], "/Docs/Auth");
+    assert!(v["content"].as_str().unwrap().contains("full text"));
+}
+
+#[tokio::test]
 async fn examples_without_pbi_400_with_guidance() {
     let (_server, client) = ado_stub().await;
     let (status, body) = route(&ctx(), Some(&client), "GET", "/examples", "", "1.10.3").await;
