@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::ai_tools::{detect, merge_entry, DetectedTool, TOOL_SPECS};
+use crate::ai_tools::{atomic_write, detect, is_installed, merge_entry, DetectedTool, TOOL_SPECS};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -49,6 +49,10 @@ pub fn register_ai_tool(id: String) -> Result<(), String> {
         .find(|s| s.id == id)
         .ok_or_else(|| format!("unknown AI tool id: {id}"))?;
 
+    if !is_installed(spec, &home_dir(), &appdata_dir(), &is_on_path) {
+        return Err(format!("{} is not installed", spec.name));
+    }
+
     let exe = std::env::current_exe()
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
@@ -69,8 +73,7 @@ pub fn register_ai_tool(id: String) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    std::fs::write(&config_path, merged)
-        .map_err(|e| format!("failed to write {}: {e}", config_path.display()))
+    atomic_write(&config_path, &merged)
 }
 
 /// Registers via `claude mcp add --scope user`, so it applies regardless
