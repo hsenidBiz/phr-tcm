@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
 import { useState } from "react";
 import { toast } from "sonner";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { commands } from "../bindings";
 import { Button } from "../components/ui/button";
 import { START_TOUR_EVENT } from "../components/UiTour";
@@ -44,6 +45,24 @@ export default function Settings(_props: { org: string; project: string }) {
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
   const [rate, setRate] = useState<RateLevel>(getRateLevel());
+  // The right column shows one panel at a time - the changelog, or the
+  // app's own log for when something needs reporting.
+  const [rightPanel, setRightPanel] = useState<"changelog" | "logs">("changelog");
+
+  const logs = useQuery({
+    queryKey: ["app-logs"],
+    queryFn: () => commands.appLogs(500),
+    enabled: rightPanel === "logs",
+    // Ongoing: refresh while the panel is open so it reads live.
+    refetchInterval: rightPanel === "logs" ? 2000 : false,
+  });
+  const logDir = useQuery({
+    queryKey: ["app-log-dir"],
+    queryFn: () => commands.appLogDir(),
+    enabled: rightPanel === "logs",
+    staleTime: Infinity,
+  });
+
 
   const version = useQuery({
     queryKey: ["app-version"],
@@ -218,7 +237,89 @@ export default function Settings(_props: { org: string; project: string }) {
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Changelog</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-text">
+            {rightPanel === "changelog" ? "Changelog" : "App log"}
+          </h2>
+          <div className="ml-auto flex rounded-md border border-border p-0.5">
+            {(["changelog", "logs"] as const).map((p) => (
+              <button
+                key={p}
+                aria-pressed={rightPanel === p}
+                className={cn(
+                  "rounded px-2 py-1 text-xs transition-colors",
+                  rightPanel === p ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
+                )}
+                onClick={() => setRightPanel(p)}
+              >
+                {p === "changelog" ? "Changelog" : "Logs"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {rightPanel === "logs" ? (
+          <>
+            <p className="text-sm text-muted">
+              What the app has been doing - include this when reporting a bug.
+              Daily files are kept for a week.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const text = (logs.data ?? [])
+                    .map((l) => `${l.at} [${l.level.toUpperCase()}] ${l.message}`)
+                    .join("\n");
+                  navigator.clipboard
+                    .writeText(text)
+                    .then(() => toast.success("Log copied."))
+                    .catch(() => toast.error("Could not copy to clipboard."));
+                }}
+              >
+                Copy log
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!logDir.data}
+                onClick={() => {
+                  const dir = logDir.data;
+                  if (!dir) return;
+                  openPath(dir).catch(() => toast.error("Could not open the log folder."));
+                }}
+              >
+                Open log folder
+              </Button>
+            </div>
+            <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[70vh]">
+              {(logs.data?.length ?? 0) === 0 ? (
+                <p className="text-xs text-faint">Nothing logged yet this session.</p>
+              ) : (
+                logs.data!.map((l, i) => (
+                  <p key={i} className="id-mono flex gap-2 text-[11px] leading-relaxed">
+                    <span className="shrink-0 text-faint">{l.at}</span>
+                    <span
+                      className={cn(
+                        "shrink-0 uppercase",
+                        l.level === "error"
+                          ? "text-danger"
+                          : l.level === "warn"
+                            ? "text-warning"
+                            : "text-muted",
+                      )}
+                    >
+                      {l.level}
+                    </span>
+                    <span className="break-words text-text">{l.message}</span>
+                  </p>
+                ))
+              )}
+            </div>
+          </>
+        ) : (
+          <>
         <p className="text-sm text-muted">
           What changed in each version - the same notes the post-update popup shows.
         </p>
@@ -237,6 +338,8 @@ export default function Settings(_props: { org: string; project: string }) {
             </div>
           ))}
         </div>
+          </>
+        )}
       </section>
     </div>
   );

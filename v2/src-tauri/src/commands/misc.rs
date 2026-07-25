@@ -19,7 +19,24 @@ pub fn ping(msg: String) -> String {
 /// Returns the resulting gap in ms (u32: specta forbids u64 across IPC).
 pub fn set_ado_rate_level(level: String) -> u32 {
     crate::ado::throttle::set_level(&level);
-    crate::ado::throttle::current_interval_ms() as u32
+    let ms = crate::ado::throttle::current_interval_ms();
+    crate::applog::info(format!("Azure DevOps request rate set to '{level}' ({ms} ms gap)"));
+    ms as u32
+}
+
+/// The app's own recent log lines, newest last - shown in Settings so a
+/// bug report can carry what the app actually did.
+#[tauri::command]
+#[specta::specta]
+pub fn app_logs(limit: u32) -> Vec<crate::applog::LogLine> {
+    crate::applog::recent(limit.clamp(1, 2000) as usize)
+}
+
+/// Folder holding the daily log files, for "Open log folder".
+#[tauri::command]
+#[specta::specta]
+pub fn app_log_dir() -> String {
+    crate::applog::directory()
 }
 
 /// Non-blocking update check; Some(version) when a newer build is published.

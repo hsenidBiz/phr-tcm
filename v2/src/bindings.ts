@@ -55,6 +55,13 @@ export const commands = {
 	 *  Returns the resulting gap in ms (u32: specta forbids u64 across IPC).
 	 */
 	setAdoRateLevel: (level: string) => __TAURI_INVOKE<number>("set_ado_rate_level", { level }),
+	/**
+	 *  The app's own recent log lines, newest last - shown in Settings so a
+	 *  bug report can carry what the app actually did.
+	 */
+	appLogs: (limit: number) => __TAURI_INVOKE<LogLine[]>("app_logs", { limit }),
+	/**  Folder holding the daily log files, for "Open log folder". */
+	appLogDir: () => __TAURI_INVOKE<string>("app_log_dir"),
 	/**  Download the pending update and restart into it. */
 	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
@@ -365,6 +372,15 @@ export type IterationRef = {
 	path: string,
 	start_date: string | null,
 	finish_date: string | null,
+};
+
+/**  One line, as the viewer renders it. */
+export type LogLine = {
+	/**  "YYYY-MM-DD HH:MM:SS" in UTC. */
+	at: string,
+	/**  "info" | "warn" | "error". */
+	level: string,
+	message: string,
 };
 
 export type Member = {

@@ -151,6 +151,9 @@ pub async fn submit_queue(
         .unwrap_or(pbi_iteration);
 
     let total = queue.len() as u32;
+    crate::applog::info(format!(
+        "Submitting {total} test case(s) to {organization}/{project} PBI #{pbi_id}"
+    ));
     let mut results: Vec<SubmitItemResult> = vec![];
     for (i, tc) in queue.iter().enumerate() {
         if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
@@ -184,8 +187,20 @@ pub async fn submit_queue(
             action: item.action.clone(),
         }
         .emit(&app);
+        if item.action == "failed" {
+            crate::applog::error(format!(
+                "Submit failed for '{}': {}",
+                item.title,
+                item.error.as_deref().unwrap_or("unknown error")
+            ));
+        }
         results.push(item);
     }
+    let failed = results.iter().filter(|r| r.action == "failed").count();
+    crate::applog::info(format!(
+        "Submit finished: {} of {total} processed, {failed} failed",
+        results.len()
+    ));
     Ok(results)
 }
 

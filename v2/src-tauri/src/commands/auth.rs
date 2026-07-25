@@ -30,7 +30,9 @@ pub async fn sign_in(app: tauri::AppHandle) -> Result<AuthStatus, String> {
     let tokens = auth::sign_in_interactive(|url| {
         let _ = tauri_plugin_opener::open_url(url, None::<&str>);
     })
-    .await?;
+    .await
+    .inspect_err(|e| crate::applog::error(format!("Sign-in failed: {e}")))?;
+    crate::applog::info("Signed in to Azure DevOps");
     let state = app.state::<Mutex<auth::AuthState>>();
     let mut s = state.lock().unwrap();
     s.tokens = Some(tokens);

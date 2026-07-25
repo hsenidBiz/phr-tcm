@@ -4,6 +4,7 @@
 
 pub mod ado;
 pub mod ado_git;
+pub mod applog;
 pub mod ado_testplan;
 pub mod ai_bridge;
 pub mod ai_tools;
@@ -66,6 +67,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::audio_capture_stop,
             misc::check_update,
             misc::set_ado_rate_level,
+            misc::app_logs,
+            misc::app_log_dir,
             misc::apply_update,
             cases::list_test_case_fields,
             cases::pbi_test_cases_full,
@@ -129,6 +132,23 @@ pub fn run() {
             // this every specta Event::emit panics with "EventRegistry not
             // found in Tauri state".
             builder.mount_events(app);
+
+            // App log: file per day next to the OS's other app logs, plus
+            // an in-memory tail Settings can show for bug reports.
+            use tauri::Manager;
+            if let Ok(dir) = app.path().app_log_dir() {
+                applog::init(dir);
+            }
+            applog::info(format!(
+                "Test Case Manager {} started",
+                app.package_info().version
+            ));
+            // A panic would otherwise vanish in a windowed release build.
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                applog::error(format!("panic: {info}"));
+                previous(info);
+            }));
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -602,6 +602,17 @@ function applyPatches() {
       ]),
     registerAiTool: () => ok(null),
     unregisterAiTool: () => ok(null),
+    setAdoRateLevel: () => Promise.resolve(200),
+    appLogDir: () => Promise.resolve("C:\demo\logs"),
+    appLogs: () =>
+      Promise.resolve([
+        { at: "2026-07-26 09:00:01", level: "info", message: "Test Case Manager 1.11.2 started" },
+        { at: "2026-07-26 09:00:04", level: "info", message: "Signed in to Azure DevOps" },
+        { at: "2026-07-26 09:02:10", level: "info", message: "Submitting 3 test case(s) to DemoOrg/Demo Project PBI #1001" },
+        { at: "2026-07-26 09:02:14", level: "warn", message: "Retrying after rate limit (5s)" },
+        { at: "2026-07-26 09:02:20", level: "error", message: "Submit failed for 'Checkout - guest can pay': field 'Module' is required" },
+        { at: "2026-07-26 09:02:21", level: "info", message: "Submit finished: 3 of 3 processed, 1 failed" },
+      ]),
   });
 }
 
