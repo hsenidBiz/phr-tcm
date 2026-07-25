@@ -95,12 +95,14 @@ export default function AiBridge() {
               <p className="mb-1 text-faint">Command-line registration:</p>
               <div className="flex items-center gap-2">
                 <code className="id-mono flex-1 truncate rounded bg-surface-2 px-2 py-1 text-xs text-text">
-                  claude mcp add tcm-testcases -- "{exe}" --mcp
+                  claude mcp add --scope user tcm-testcases -- "{exe}" --mcp
                 </code>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => copy(`claude mcp add tcm-testcases -- "${exe}" --mcp`, "Command")}
+                  onClick={() =>
+                    copy(`claude mcp add --scope user tcm-testcases -- "${exe}" --mcp`, "Command")
+                  }
                 >
                   Copy
                 </Button>
@@ -141,9 +143,10 @@ export default function AiBridge() {
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">How it works</h2>
         <p className="text-sm text-muted">
-          Connected AI tools can call four read-only tools this app exposes:
-          the writing guide, real example test cases, PBI search, and case
-          validation.
+          Connected AI tools can call six read-only tools this app exposes:
+          the writing guide, real example test cases, PBI search, case
+          validation, and wiki search with full page reads for finding
+          documentation about the implementation.
         </p>
         <p className="text-sm text-muted">
           Recommended flow: ask the AI to read the writing guide and some

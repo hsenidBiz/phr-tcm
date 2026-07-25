@@ -24,7 +24,7 @@ function renderBridge(qc: QueryClient) {
 
 test("lists installed AI tools with their registered state", async () => {
   mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\tcm-mcp.exe" };
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [
         { id: "claude-code", name: "Claude Code", installed: true, registered: true },
@@ -43,7 +43,7 @@ test("lists installed AI tools with their registered state", async () => {
 test("Register invokes register_ai_tool with the tool's id", async () => {
   let registeredId: string | undefined;
   mockIPC((cmd, args) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\tcm-mcp.exe" };
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [{ id: "vscode", name: "VS Code", installed: true, registered: false }];
     if (cmd === "register_ai_tool") {
@@ -60,7 +60,7 @@ test("Register invokes register_ai_tool with the tool's id", async () => {
 
 test("the copy button writes the registration command to the clipboard", async () => {
   mockIPC((cmd) => {
-    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\tcm-mcp.exe" };
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -73,14 +73,14 @@ test("the copy button writes the registration command to the clipboard", async (
   // match on the element's full textContent rather than a single node.)
   await waitFor(() =>
     expect(
-      document.querySelector("code")?.textContent?.includes("tcm-mcp.exe"),
+      document.querySelector("code")?.textContent?.includes("v2.exe"),
     ).toBe(true),
   );
   fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[0]);
 
   await waitFor(() =>
     expect(writeText).toHaveBeenCalledWith(
-      'claude mcp add tcm-testcases -- "C:\\apps\\tcm\\tcm-mcp.exe" --mcp',
+      'claude mcp add --scope user tcm-testcases -- "C:\\apps\\tcm\\v2.exe" --mcp',
     ),
   );
 });
