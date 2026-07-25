@@ -18,7 +18,7 @@ import {
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
-import PipelineDialog, { label, tone } from "../components/PipelineDialog";
+import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
@@ -76,8 +76,12 @@ function WorkItemChip({ wi }: { wi: PrWorkItem }) {
   );
 }
 
-function BuildCard({ b }: { b: PrBuild }) {
+/** The latest run only - a summary, not a history. The dialog behind
+ * "View history" is where the older runs and the step detail live. */
+function BuildCard({ b, total }: { b: PrBuild; total: number }) {
   const when = b.started ? new Date(b.started).toLocaleString() : "";
+  const failed = failurePath(b);
+  const took = duration(b.started, b.finished);
   return (
     <div className="space-y-1.5 rounded-md border border-border bg-bg p-2">
       <div className="flex items-center gap-2">
@@ -135,7 +139,13 @@ function BuildCard({ b }: { b: PrBuild }) {
           ))}
         </div>
       )}
-      {when && <p className="text-faint">{when}</p>}
+      {/* If it went red, say where without making the user open anything. */}
+      {failed && <p className="text-danger">Failed at {failed}</p>}
+      <p className="text-faint">
+        {when}
+        {took && ` · ${took}`}
+        {total > 1 && ` · ${total - 1} earlier run${total === 2 ? "" : "s"}`}
+      </p>
     </div>
   );
 }
@@ -283,7 +293,7 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
               deployed. Best-effort - a PR with no pipeline just says so. */}
           <div className="space-y-1 pt-1">
             <div className="flex items-center gap-2">
-              <p className="font-semibold text-muted">Pipeline</p>
+              <p className="font-semibold text-muted">Last Run Pipeline</p>
               {(pipeline.data?.length ?? 0) > 0 && (
                 <button
                   className="ml-auto rounded border border-border px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-border-strong hover:text-text"
@@ -302,11 +312,7 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
             ) : (pipeline.data?.length ?? 0) === 0 ? (
               <p className="text-faint">No builds found for this pull request.</p>
             ) : (
-              <div className="space-y-1.5">
-                {pipeline.data!.map((b) => (
-                  <BuildCard key={b.id} b={b} />
-                ))}
-              </div>
+              <BuildCard b={pipeline.data![0]} total={pipeline.data!.length} />
             )}
           </div>
           <div className="flex flex-wrap gap-x-3 text-faint">

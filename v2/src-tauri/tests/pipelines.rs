@@ -49,12 +49,24 @@ async fn pr_builds_collects_validation_ci_stages_and_environments() {
         .and(path("/o/p/_apis/build/builds/901/timeline"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "records": [
-                { "type": "Job", "name": "Build_solution", "state": "completed",
-                  "result": "succeeded", "order": 1 },
-                { "type": "Stage", "name": "Deploy", "state": "inProgress",
+                // Deliberately out of order, and jobs hang off a PHASE - the
+                // real ADO shape, which is why jobs are matched by walking
+                // ancestors rather than by a direct parentId == stage.
+                { "id": "t2", "parentId": "j1", "type": "Task", "name": "Run Unit Test",
+                  "state": "completed", "result": "failed", "order": 2,
+                  "startTime": "2026-07-24T09:03:00Z", "finishTime": "2026-07-24T09:04:00Z",
+                  "issues": [{ "type": "error", "message": "3 tests failed" }] },
+                { "id": "j1", "parentId": "ph1", "type": "Job", "name": "Build_solution",
+                  "state": "completed", "result": "failed", "order": 1 },
+                { "id": "ph1", "parentId": "st1", "type": "Phase", "name": "Phase 1", "order": 1 },
+                { "id": "t1", "parentId": "j1", "type": "Task", "name": "Restore The Solution",
+                  "state": "completed", "result": "succeeded", "order": 1 },
+                { "id": "st2", "type": "Stage", "name": "Deploy", "state": "inProgress",
                   "result": null, "order": 2 },
-                { "type": "Stage", "name": "Stage", "state": "completed",
-                  "result": "succeeded", "order": 1 }
+                { "id": "st1", "type": "Stage", "name": "Stage", "state": "completed",
+                  "result": "succeeded", "order": 1 },
+                // Orphan: its stage record is absent, so it is dropped.
+                { "id": "j9", "parentId": "missing", "type": "Job", "name": "Ghost", "order": 9 }
             ]
         })))
         .mount(&server)
@@ -103,6 +115,19 @@ async fn pr_builds_collects_validation_ci_stages_and_environments() {
         vec!["Stage", "Deploy"]
     );
     assert_eq!(ci.stages[1].state, "inProgress");
+    // Jobs nest under their stage through the intermediate Phase record,
+    // and their tasks come back in `order` - this is what the dialog needs
+    // to point at the step that actually failed.
+    let jobs = &ci.stages[0].jobs;
+    assert_eq!(jobs.len(), 1, "the orphaned job is dropped, not guessed at");
+    assert_eq!(jobs[0].name, "Build_solution");
+    assert_eq!(
+        jobs[0].tasks.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        vec!["Restore The Solution", "Run Unit Test"]
+    );
+    assert_eq!(jobs[0].tasks[1].result, "failed");
+    assert_eq!(jobs[0].tasks[1].issues, vec!["3 tests failed"]);
+    assert!(ci.stages[1].jobs.is_empty(), "the in-progress stage has no jobs yet");
     assert_eq!(
         ci.deployments
             .iter()

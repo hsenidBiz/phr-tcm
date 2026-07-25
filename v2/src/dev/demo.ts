@@ -78,6 +78,9 @@ export function toggleDemoMode() {
 const ok = <T,>(data: T) => Promise.resolve({ status: "ok" as const, data });
 const err = <E,>(error: E) => Promise.resolve({ status: "error" as const, error });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Timestamp N seconds ago - keeps the "in progress" demo run looking
+ * genuinely live (elapsed times grow) instead of frozen in the past. */
+const nowMinus = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString();
 
 // ---------------------------------------------------------------- dataset
 
@@ -404,16 +407,97 @@ function applyPatches() {
           status: "active", closed: "", merge_commit: "",
         },
       ]),
+    // Three runs so the pipeline views have one of each kind to show: one
+    // still building (newest), one green that deployed, and the failed
+    // PR-validation run - including the failing step message.
     prPipeline: () =>
       ok([
+        {
+          id: 902, name: "demo-web", number: "2026.7.25-03", status: "inProgress",
+          result: "", is_validation: false,
+          started: nowMinus(6 * 60), finished: "",
+          web_url: "https://example.invalid/demo-build/902",
+          stages: [
+            {
+              name: "Build", state: "completed", result: "succeeded",
+              started: nowMinus(6 * 60), finished: nowMinus(2 * 60),
+              jobs: [
+                {
+                  name: "Build_solution", state: "completed", result: "succeeded",
+                  started: nowMinus(6 * 60), finished: nowMinus(2 * 60),
+                  tasks: [
+                    { name: "Restore The Solution", state: "completed", result: "succeeded",
+                      started: nowMinus(6 * 60), finished: nowMinus(330), issues: [] },
+                    { name: "Build The Solution", state: "completed", result: "succeeded",
+                      started: nowMinus(330), finished: nowMinus(180), issues: [] },
+                    { name: "Run Unit Test", state: "completed", result: "succeeded",
+                      started: nowMinus(180), finished: nowMinus(120), issues: [] },
+                  ],
+                },
+              ],
+            },
+            {
+              name: "Package", state: "inProgress", result: "",
+              started: nowMinus(120), finished: "",
+              jobs: [
+                {
+                  name: "Build Docker App", state: "inProgress", result: "",
+                  started: nowMinus(120), finished: "",
+                  tasks: [
+                    { name: "Initialize job", state: "completed", result: "succeeded",
+                      started: nowMinus(120), finished: nowMinus(110), issues: [] },
+                    { name: "Build The Image", state: "inProgress", result: "",
+                      started: nowMinus(110), finished: "", issues: [] },
+                    { name: "Push The Image", state: "pending", result: "",
+                      started: "", finished: "", issues: [] },
+                  ],
+                },
+              ],
+            },
+            { name: "Deploy", state: "pending", result: "", started: "", finished: "", jobs: [] },
+          ],
+          deployments: [],
+        },
         {
           id: 901, name: "demo-web", number: "2026.7.24-12", status: "completed",
           result: "succeeded", is_validation: false,
           started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:06:00Z",
           web_url: "https://example.invalid/demo-build/901",
           stages: [
-            { name: "Build", state: "completed", result: "succeeded" },
-            { name: "Package", state: "completed", result: "succeeded" },
+            {
+              name: "Build", state: "completed", result: "succeeded",
+              started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:04:00Z",
+              jobs: [
+                {
+                  name: "Build_solution", state: "completed", result: "succeeded",
+                  started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:04:00Z",
+                  tasks: [
+                    { name: "Restore The Solution", state: "completed", result: "succeeded",
+                      started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:00:20Z", issues: [] },
+                    { name: "Build The Solution", state: "completed", result: "succeeded",
+                      started: "2026-07-24T09:00:20Z", finished: "2026-07-24T09:03:00Z", issues: [] },
+                    { name: "Run Unit Test", state: "completed", result: "succeeded",
+                      started: "2026-07-24T09:03:00Z", finished: "2026-07-24T09:04:00Z", issues: [] },
+                  ],
+                },
+              ],
+            },
+            {
+              name: "Package", state: "completed", result: "succeeded",
+              started: "2026-07-24T09:04:00Z", finished: "2026-07-24T09:06:00Z",
+              jobs: [
+                {
+                  name: "Build Docker App", state: "completed", result: "succeeded",
+                  started: "2026-07-24T09:04:00Z", finished: "2026-07-24T09:06:00Z",
+                  tasks: [
+                    { name: "Build The Image", state: "completed", result: "succeeded",
+                      started: "2026-07-24T09:04:00Z", finished: "2026-07-24T09:05:40Z", issues: [] },
+                    { name: "Push The Image", state: "completed", result: "succeeded",
+                      started: "2026-07-24T09:05:40Z", finished: "2026-07-24T09:06:00Z", issues: [] },
+                  ],
+                },
+              ],
+            },
           ],
           deployments: [
             {
@@ -428,10 +512,30 @@ function applyPatches() {
         },
         {
           id: 900, name: "demo-web (Build)", number: "20260724.1", status: "completed",
-          result: "succeeded", is_validation: true,
+          result: "failed", is_validation: true,
           started: "2026-07-24T08:00:00Z", finished: "2026-07-24T08:04:00Z",
           web_url: "https://example.invalid/demo-build/900",
-          stages: [{ name: "Build", state: "completed", result: "succeeded" }],
+          stages: [
+            {
+              name: "Build", state: "completed", result: "failed",
+              started: "2026-07-24T08:00:00Z", finished: "2026-07-24T08:04:00Z",
+              jobs: [
+                {
+                  name: "Build_solution", state: "completed", result: "failed",
+                  started: "2026-07-24T08:00:00Z", finished: "2026-07-24T08:04:00Z",
+                  tasks: [
+                    { name: "Restore The Solution", state: "completed", result: "succeeded",
+                      started: "2026-07-24T08:00:00Z", finished: "2026-07-24T08:00:30Z", issues: [] },
+                    { name: "Run Unit Test", state: "completed", result: "failed",
+                      started: "2026-07-24T08:00:30Z", finished: "2026-07-24T08:04:00Z",
+                      issues: ["3 tests failed in PeoplesHR.PMS.Infrastructure.Tests"] },
+                    { name: "Publish Test Results", state: "completed", result: "skipped",
+                      started: "", finished: "", issues: [] },
+                  ],
+                },
+              ],
+            },
+          ],
           deployments: [],
         },
       ]),

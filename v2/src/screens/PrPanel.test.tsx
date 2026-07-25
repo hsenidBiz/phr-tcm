@@ -219,7 +219,22 @@ test("an expanded PR shows its builds, stages and deployed environments", async 
           id: 901, name: "HRM-PMS-NET", number: "2026.7.24-12", status: "completed",
           result: "succeeded", is_validation: false,
           started: "2026-07-24T09:00:00Z", finished: "", web_url: "https://x/901",
-          stages: [{ name: "Stage", state: "completed", result: "succeeded" }],
+          stages: [
+            {
+              name: "Stage", state: "completed", result: "succeeded",
+              started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:00Z",
+              jobs: [
+                {
+                  name: "Build_solution", state: "completed", result: "succeeded",
+                  started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:00Z",
+                  tasks: [
+                    { name: "Run Unit Test", state: "completed", result: "succeeded",
+                      started: "2026-07-24T09:04:00Z", finished: "2026-07-24T09:05:00Z", issues: [] },
+                  ],
+                },
+              ],
+            },
+          ],
           deployments: [
             { release: "Release-482", environment: "QA", status: "succeeded", on: "", web_url: "" },
             { release: "Release-482", environment: "Production", status: "notStarted", on: "", web_url: "" },
@@ -230,10 +245,10 @@ test("an expanded PR shows its builds, stages and deployed environments", async 
   });
   renderPanel();
   // Pipeline data is lazy: nothing requested until the row opens.
-  expect(screen.queryByText("Pipeline")).not.toBeInTheDocument();
+  expect(screen.queryByText("Last Run Pipeline")).not.toBeInTheDocument();
   fireEvent.click((await screen.findByText("!42")).closest("[aria-expanded]")!);
 
-  expect(await screen.findByText("Pipeline")).toBeInTheDocument();
+  expect(await screen.findByText("Last Run Pipeline")).toBeInTheDocument();
   // The heading renders immediately; the builds arrive with the query.
   expect(await screen.findByText("HRM-PMS-NET")).toBeInTheDocument();
   expect(screen.getByText("CI")).toBeInTheDocument();
@@ -268,7 +283,22 @@ test("View history opens a readable pipeline dialog with environments", async ()
           result: "succeeded", is_validation: false,
           started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:30Z",
           web_url: "https://x/901",
-          stages: [{ name: "Stage", state: "completed", result: "succeeded" }],
+          stages: [
+            {
+              name: "Stage", state: "completed", result: "succeeded",
+              started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:00Z",
+              jobs: [
+                {
+                  name: "Build_solution", state: "completed", result: "succeeded",
+                  started: "2026-07-24T09:00:00Z", finished: "2026-07-24T09:05:00Z",
+                  tasks: [
+                    { name: "Run Unit Test", state: "completed", result: "succeeded",
+                      started: "2026-07-24T09:04:00Z", finished: "2026-07-24T09:05:00Z", issues: [] },
+                  ],
+                },
+              ],
+            },
+          ],
           deployments: [
             { release: "Release-482", environment: "QA", status: "succeeded", on: "2026-07-24T10:00:00Z", web_url: "" },
             { release: "Release-482", environment: "Production", status: "notStarted", on: "", web_url: "" },

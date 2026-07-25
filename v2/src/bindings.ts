@@ -219,6 +219,16 @@ export type BridgeStatus = {
 	mcp_exe: string,
 };
 
+/**  A job inside a stage, holding the steps. */
+export type BuildJob = {
+	name: string,
+	state: string,
+	result: string,
+	started: string,
+	finished: string,
+	tasks: TimelineTask[],
+};
+
 /**  One stage inside a build run (the YAML `stages:` list). */
 export type BuildStage = {
 	name: string,
@@ -226,6 +236,9 @@ export type BuildStage = {
 	state: string,
 	/**  "succeeded" | "failed" | "canceled" | "skipped" | "" while running. */
 	result: string,
+	started: string,
+	finished: string,
+	jobs: BuildJob[],
 };
 
 /**  One test case's recent outcomes (newest first, capped at 5). */
@@ -673,6 +686,25 @@ export type TestPoint = {
 	last_outcome: string,
 	last_run_id: number | null,
 	last_result_id: number | null,
+};
+
+/**
+ *  A single step inside a job - the level ADO's log view shows, and the
+ *  level a failure is actually pinned to.
+ */
+export type TimelineTask = {
+	name: string,
+	/**  "completed" | "inProgress" | "pending". */
+	state: string,
+	/**  "succeeded" | "failed" | "skipped" | "abandoned" | "" while running. */
+	result: string,
+	started: string,
+	finished: string,
+	/**
+	 *  Error/warning text ADO attached to this step - what you would open
+	 *  the log to read.
+	 */
+	issues: string[],
 };
 
 export type WorkComment = {

@@ -17,6 +17,33 @@
 use crate::ado::{AdoClient, AdoError};
 use serde::Serialize;
 
+/// A single step inside a job - the level ADO's log view shows, and the
+/// level a failure is actually pinned to.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct TimelineTask {
+    pub name: String,
+    /// "completed" | "inProgress" | "pending".
+    pub state: String,
+    /// "succeeded" | "failed" | "skipped" | "abandoned" | "" while running.
+    pub result: String,
+    pub started: String,
+    pub finished: String,
+    /// Error/warning text ADO attached to this step - what you would open
+    /// the log to read.
+    pub issues: Vec<String>,
+}
+
+/// A job inside a stage, holding the steps.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct BuildJob {
+    pub name: String,
+    pub state: String,
+    pub result: String,
+    pub started: String,
+    pub finished: String,
+    pub tasks: Vec<TimelineTask>,
+}
+
 /// One stage inside a build run (the YAML `stages:` list).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct BuildStage {
@@ -25,6 +52,9 @@ pub struct BuildStage {
     pub state: String,
     /// "succeeded" | "failed" | "canceled" | "skipped" | "" while running.
     pub result: String,
+    pub started: String,
+    pub finished: String,
+    pub jobs: Vec<BuildJob>,
 }
 
 /// One environment a release carried this build into.
@@ -170,25 +200,7 @@ impl AdoClient {
             self.base_url, org, project, build_id
         );
         let data = self.get_json(url).await?;
-        let mut stages: Vec<(i32, BuildStage)> = data["records"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .filter(|r| r["type"].as_str() == Some("Stage"))
-            .map(|r| {
-                (
-                    r["order"].as_i64().unwrap_or(0) as i32,
-                    BuildStage {
-                        name: s(&r["name"]),
-                        state: s(&r["state"]),
-                        result: s(&r["result"]),
-                    },
-                )
-            })
-            .collect();
-        stages.sort_by_key(|(order, _)| *order);
-        Ok(stages.into_iter().map(|(_, st)| st).collect())
+        Ok(build_stage_tree(&data))
     }
 
     /// Classic releases that consumed this build as their artifact, with
@@ -232,6 +244,115 @@ impl AdoClient {
         }
         Ok(out)
     }
+}
+
+/// Rebuilds the timeline's Stage -> Job -> Task tree.
+///
+/// ADO returns one flat record list linked by `parentId`, and the real
+/// hierarchy is Stage -> Phase -> Job -> Task: a job's parent is a *phase*,
+/// not the stage, so jobs are attached by walking parents up to the nearest
+/// Stage rather than by a direct id match. Everything is ordered by the
+/// records' own `order`, and orphans (a job whose stage record is missing)
+/// are dropped rather than guessed at.
+pub fn build_stage_tree(data: &serde_json::Value) -> Vec<BuildStage> {
+    use std::collections::HashMap;
+
+    let records = data["records"].as_array().cloned().unwrap_or_default();
+    let by_id: HashMap<String, &serde_json::Value> = records
+        .iter()
+        .filter_map(|r| r["id"].as_str().map(|id| (id.to_string(), r)))
+        .collect();
+
+    // Walk up parents until a record of `want` is found.
+    let ancestor = |rec: &serde_json::Value, want: &str| -> Option<String> {
+        let mut cur = rec["parentId"].as_str().map(str::to_string);
+        // Timelines are shallow; the bound just guarantees termination if
+        // ADO ever hands back a cycle.
+        for _ in 0..10 {
+            let id = cur?;
+            let parent = by_id.get(&id)?;
+            if parent["type"].as_str() == Some(want) {
+                return Some(id);
+            }
+            cur = parent["parentId"].as_str().map(str::to_string);
+        }
+        None
+    };
+
+    let order_of = |r: &serde_json::Value| r["order"].as_i64().unwrap_or(0);
+    let issues_of = |r: &serde_json::Value| -> Vec<String> {
+        r["issues"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|i| i["message"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    // Tasks grouped under their job id.
+    let mut tasks_by_job: HashMap<String, Vec<(i64, TimelineTask)>> = HashMap::new();
+    for r in records.iter().filter(|r| r["type"].as_str() == Some("Task")) {
+        let Some(job_id) = r["parentId"].as_str() else { continue };
+        tasks_by_job.entry(job_id.to_string()).or_default().push((
+            order_of(r),
+            TimelineTask {
+                name: s(&r["name"]),
+                state: s(&r["state"]),
+                result: s(&r["result"]),
+                started: s(&r["startTime"]),
+                finished: s(&r["finishTime"]),
+                issues: issues_of(r),
+            },
+        ));
+    }
+
+    // Jobs grouped under the stage they ultimately belong to.
+    let mut jobs_by_stage: HashMap<String, Vec<(i64, BuildJob)>> = HashMap::new();
+    for r in records.iter().filter(|r| r["type"].as_str() == Some("Job")) {
+        let Some(stage_id) = ancestor(r, "Stage") else { continue };
+        let mut tasks = r["id"]
+            .as_str()
+            .and_then(|id| tasks_by_job.remove(id))
+            .unwrap_or_default();
+        tasks.sort_by_key(|(o, _)| *o);
+        jobs_by_stage.entry(stage_id).or_default().push((
+            order_of(r),
+            BuildJob {
+                name: s(&r["name"]),
+                state: s(&r["state"]),
+                result: s(&r["result"]),
+                started: s(&r["startTime"]),
+                finished: s(&r["finishTime"]),
+                tasks: tasks.into_iter().map(|(_, t)| t).collect(),
+            },
+        ));
+    }
+
+    let mut stages: Vec<(i64, BuildStage)> = records
+        .iter()
+        .filter(|r| r["type"].as_str() == Some("Stage"))
+        .map(|r| {
+            let mut jobs = r["id"]
+                .as_str()
+                .and_then(|id| jobs_by_stage.remove(id))
+                .unwrap_or_default();
+            jobs.sort_by_key(|(o, _)| *o);
+            (
+                order_of(r),
+                BuildStage {
+                    name: s(&r["name"]),
+                    state: s(&r["state"]),
+                    result: s(&r["result"]),
+                    started: s(&r["startTime"]),
+                    finished: s(&r["finishTime"]),
+                    jobs: jobs.into_iter().map(|(_, j)| j).collect(),
+                },
+            )
+        })
+        .collect();
+    stages.sort_by_key(|(o, _)| *o);
+    stages.into_iter().map(|(_, st)| st).collect()
 }
 
 fn parse_builds(data: &serde_json::Value, is_validation: bool) -> Vec<PrBuild> {
