@@ -117,7 +117,10 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
             )}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-            <span>{pr.repo}</span>
+            {/* Same repo-pill treatment as the board's PR chips. */}
+            <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
+              {pr.repo}
+            </span>
             <span className="flex items-center gap-1">
               <GitBranch size={11} />
               {pr.source_branch} → {pr.target_branch}

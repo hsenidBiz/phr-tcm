@@ -303,7 +303,13 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
-      <Toaster theme={getTheme() === "light" ? "light" : "dark"} richColors position="bottom-right" />
+      {/* select-none: dragging a toast to dismiss must not highlight its text. */}
+      <Toaster
+        theme={getTheme() === "light" ? "light" : "dark"}
+        richColors
+        position="bottom-right"
+        toastOptions={{ className: "select-none" }}
+      />
       <CommandPalette
         onNavigate={goToSection}
         org={org}
