@@ -287,3 +287,58 @@ async fn tcp_server_guards_with_token_and_serves_ping() {
     assert_eq!(hs["token"].as_str().unwrap(), token);
     assert_eq!(hs["version"].as_str().unwrap(), "0.0.0-test");
 }
+
+/// With a signed-in client, /validate cross-checks Module values against
+/// the org picklist - the guide says "ONLY from this list", and this
+/// closes that loop. Matching is case-insensitive; empty modules and
+/// offline validation stay silent.
+#[tokio::test]
+async fn validate_warns_on_modules_outside_the_org_picklist() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "allowedValues": ["Login", "Payroll"]
+        })))
+        .mount(&server)
+        .await;
+
+    let draft = serde_json::json!([
+        { "title": "Good", "module": "payroll",
+          "steps": [{ "action": "a", "expected": "b" }] },
+        { "title": "Bad", "module": "Nonexistent Module",
+          "steps": [{ "action": "a", "expected": "b" }] },
+        { "title": "None", "steps": [{ "action": "a", "expected": "b" }] }
+    ])
+    .to_string();
+
+    let (status, body) = route(&ctx(), Some(&client), "POST", "/validate", &draft, "1.0.0").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["cases"], 3);
+    let warnings: Vec<String> = v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap().to_string())
+        .collect();
+    let module_warnings: Vec<&String> =
+        warnings.iter().filter(|w| w.contains("not an allowed value")).collect();
+    assert_eq!(module_warnings.len(), 1, "only the bad module warns: {warnings:?}");
+    assert!(module_warnings[0].contains("'Bad'"));
+    assert!(module_warnings[0].contains("Nonexistent Module"));
+
+    // Offline (no client): same draft, no module warnings - validation
+    // still runs and the AI is not blocked by being signed out.
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.0.0").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["cases"], 3);
+    assert!(
+        !v["warnings"].as_array().unwrap().iter().any(|w| w
+            .as_str()
+            .unwrap()
+            .contains("not an allowed value")),
+        "no picklist check without a client"
+    );
+}

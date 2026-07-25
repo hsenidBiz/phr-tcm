@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright visual-regression artifacts (goldens in visual/ ARE committed)
+test-results/
+playwright-report/

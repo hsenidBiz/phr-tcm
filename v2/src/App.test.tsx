@@ -135,8 +135,9 @@ test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () 
   expect(screen.getByRole("heading", { name: "Import File" })).toBeInTheDocument();
 });
 
-test("the app pushes org/project context to the AI bridge", async () => {
+test("signing in starts the AI bridge and pushes org/project context", async () => {
   const pushes: Array<Record<string, unknown>> = [];
+  let bridgeStarted = 0;
   localStorage.setItem(
     "tcm-v2-prefs",
     JSON.stringify({
@@ -153,12 +154,18 @@ test("the app pushes org/project context to the AI bridge", async () => {
       pushes.push(args as Record<string, unknown>);
       return null;
     }
-    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+    if (cmd === "bridge_status") {
+      bridgeStarted += 1;
+      return { port: 1, mcp_exe: "x" };
+    }
   });
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
   expect(pushes[pushes.length - 1]).toMatchObject({ organization: "acme", project: "Web" });
+  // The bridge must come up WITHOUT visiting the AI Bridge tab - an AI
+  // tool connecting right after sign-in gets a live listener.
+  expect(bridgeStarted).toBeGreaterThan(0);
 });
 
 test("update banner appears when a newer version exists", async () => {

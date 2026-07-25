@@ -96,7 +96,7 @@ pub async fn route(
             })
             .to_string(),
         ),
-        ("POST", "/validate") => (200, validate_json(body)),
+        ("POST", "/validate") => (200, validate_json(body, ctx, client).await),
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
             None => (503, "sign in to Test Case Manager first".into()),
@@ -126,8 +126,15 @@ pub async fn route(
 static VALIDATE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Run the REAL importer on the draft: write to a temp file (parse_file
-/// dispatches on extension) and report cases/warnings/error.
-fn validate_json(body: &str) -> String {
+/// dispatches on extension) and report cases/warnings/error. With a
+/// signed-in client the Module values are also checked against the org's
+/// picklist - the guide says "ONLY from this list", so validation closes
+/// that loop. Offline validation still works; it just skips the check.
+async fn validate_json(
+    body: &str,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+) -> String {
     let dir = std::env::temp_dir().join("tcm-v2-bridge");
     let _ = std::fs::create_dir_all(&dir);
     let seq = VALIDATE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -136,26 +143,40 @@ fn validate_json(body: &str) -> String {
         return serde_json::json!({"error": "could not stage the draft"}).to_string();
     }
     let out = match crate::import_parser::parse_file(path.to_str().unwrap_or_default()) {
-        Ok((cases, warnings)) => serde_json::json!({
-            "cases": cases.len(),
-            "warnings": warnings,
-            "error": serde_json::Value::Null,
-        }),
+        Ok((cases, mut warnings)) => {
+            if let Some(c) = client {
+                let allowed = allowed_modules(ctx, c).await;
+                if !allowed.is_empty() {
+                    for (i, tc) in cases.iter().enumerate() {
+                        let m = tc.module_value.trim();
+                        if !m.is_empty() && !allowed.iter().any(|a| a.eq_ignore_ascii_case(m)) {
+                            warnings.push(format!(
+                                "Test case {} ('{}'): Module '{}' is not an allowed value in \
+                                 this organization - pick one from get_writing_guide.",
+                                i + 1,
+                                tc.title,
+                                m
+                            ));
+                        }
+                    }
+                }
+            }
+            serde_json::json!({
+                "cases": cases.len(),
+                "warnings": warnings,
+                "error": serde_json::Value::Null,
+            })
+        }
         Err(e) => serde_json::json!({"cases": 0, "warnings": [], "error": e}),
     };
     let _ = std::fs::remove_file(&path);
     out.to_string()
 }
 
-/// Live writing guide: format rules from the importer's own constants +
-/// the org's Module values, fetched fresh (no snapshot staleness).
-async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
-    let statuses = crate::model::VALID_STATUSES
-        .iter()
-        .map(|v| format!("\"{v}\""))
-        .collect::<Vec<_>>()
-        .join(" or ");
-    let modules = match &ctx.module_ref {
+/// The org's Module values: configured picklist first, observed values as
+/// the fallback - the same discovery the app's own module picker uses.
+async fn allowed_modules(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> Vec<String> {
+    match &ctx.module_ref {
         Some(fref) => {
             let picklist = client
                 .get_field_allowed_values(&ctx.org, &ctx.project, "Test Case", fref)
@@ -171,7 +192,18 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
             }
         }
         None => vec![],
-    };
+    }
+}
+
+/// Live writing guide: format rules from the importer's own constants +
+/// the org's Module values, fetched fresh (no snapshot staleness).
+async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
+    let statuses = crate::model::VALID_STATUSES
+        .iter()
+        .map(|v| format!("\"{v}\""))
+        .collect::<Vec<_>>()
+        .join(" or ");
+    let modules = allowed_modules(ctx, client).await;
     let module_lines = if modules.is_empty() {
         "Module values could not be discovered - ask the developer.".to_string()
     } else {
