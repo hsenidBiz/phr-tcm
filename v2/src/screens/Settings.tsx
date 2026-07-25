@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { commands } from "../bindings";
 import { Button } from "../components/ui/button";
 import { START_TOUR_EVENT } from "../components/UiTour";
-import { unwrapStr } from "../lib/ipc";
 import {
   ACCENTS,
   THEMES,
@@ -47,12 +46,6 @@ export default function Settings(_props: { org: string; project: string }) {
     queryKey: ["app-version"],
     queryFn: () => getVersion().catch(() => "dev"),
     staleTime: Infinity,
-  });
-
-  const bridge = useQuery({
-    queryKey: ["bridge-status"],
-    queryFn: () => unwrapStr(commands.bridgeStatus()),
-    retry: false,
   });
 
   const check = useMutation({
@@ -207,40 +200,7 @@ export default function Settings(_props: { org: string; project: string }) {
         </div>
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">AI Bridge</h2>
-        <p className="text-sm text-muted">
-          Lets AI tools (Claude Code, Cursor...) fetch the writing guide, real
-          example test cases, and validation from this app while it runs.
-          Read-only - AI can never create or change anything in Azure DevOps.
-        </p>
-        {bridge.data ? (
-          <>
-            <p className="text-xs text-success">
-              Running on 127.0.0.1:{bridge.data.port}
-            </p>
-            <p className="text-xs text-muted">Register in Claude Code:</p>
-            <div className="flex items-center gap-2">
-              <code className="id-mono flex-1 truncate rounded bg-surface-2 px-2 py-1 text-xs text-text">
-                claude mcp add tcm-testcases -- "{bridge.data.mcp_exe}"
-              </code>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  navigator.clipboard
-                    .writeText(`claude mcp add tcm-testcases -- "${bridge.data!.mcp_exe}"`)
-                    .then(() => toast.success("Copied."));
-                }}
-              >
-                Copy
-              </Button>
-            </div>
-          </>
-        ) : (
-          <p className="text-xs text-faint">Bridge not running.</p>
-        )}
-      </section>
+      <p className="text-sm text-muted">AI Bridge has moved to its own tab.</p>
     </div>
   );
 }

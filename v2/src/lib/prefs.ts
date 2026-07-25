@@ -14,7 +14,7 @@ export type Prefs = {
   workMode: boolean;
 };
 
-const SECTIONS: Section[] = ["manual", "import", "edit", "view", "run", "suites", "settings"];
+const SECTIONS: Section[] = ["manual", "import", "edit", "view", "run", "suites", "ai", "settings"];
 
 export function loadPrefs(): Prefs {
   const defaults: Prefs = {

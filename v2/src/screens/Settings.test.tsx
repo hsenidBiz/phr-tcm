@@ -50,17 +50,10 @@ test("the changelog history section lists released versions", async () => {
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
 });
 
-test("the AI Bridge section shows the registration command with the shipped exe path", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "bridge_status")
-      return { port: 51234, mcp_exe: "C:\\apps\\tcm\\tcm-mcp.exe" };
-  });
+test("AI Bridge has moved out of Settings into its own tab", async () => {
+  mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
-  expect(await screen.findByText("AI Bridge")).toBeInTheDocument();
-  // The static heading renders before the async bridge_status query
-  // resolves - wait for the port text rather than asserting synchronously.
-  expect(await screen.findByText(/51234/)).toBeInTheDocument();
-  // The copy-able registration one-liner embeds the exe path.
-  expect(screen.getByText(/tcm-mcp\.exe/)).toBeInTheDocument();
+  expect(await screen.findByText("AI Bridge has moved to its own tab.")).toBeInTheDocument();
+  expect(screen.queryByText("Registered in Claude Code:")).not.toBeInTheDocument();
 });

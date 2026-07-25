@@ -1,4 +1,5 @@
 import {
+  Bot,
   ChevronsLeft,
   ChevronsRight,
   Eye,
@@ -17,7 +18,7 @@ import { cn } from "../lib/cn";
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
  * in the context bar. Collapsible to an icon rail. In Work Manager mode the
  * same rail shows WORK_ITEMS instead (PRs first, then the board). */
-export type Section = "manual" | "import" | "edit" | "view" | "run" | "suites" | "settings";
+export type Section = "manual" | "import" | "edit" | "view" | "run" | "suites" | "ai" | "settings";
 export type WorkSection = "prs" | "board" | "create";
 
 type Item<T extends string> = { id: T; label: string; icon: typeof PenLine };
@@ -29,6 +30,7 @@ const CASE_ITEMS: Item<Section>[] = [
   { id: "view", label: "View Test Cases", icon: Eye },
   { id: "run", label: "Run Tests", icon: PlayCircle },
   { id: "suites", label: "Test Suites", icon: FolderTree },
+  { id: "ai", label: "AI Bridge", icon: Bot },
 ];
 
 export const WORK_ITEMS: Item<WorkSection>[] = [

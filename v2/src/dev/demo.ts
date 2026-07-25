@@ -459,6 +459,12 @@ function applyPatches() {
     },
     bridgeStatus: () => ok({ port: 51999, mcp_exe: "C:\\demo\\tcm-mcp.exe" }),
     setBridgeContext: () => ok(null),
+    detectAiTools: () =>
+      Promise.resolve([
+        { id: "claude-code", name: "Claude Code", installed: true, registered: true },
+        { id: "vscode", name: "VS Code", installed: true, registered: false },
+      ]),
+    registerAiTool: () => ok(null),
   });
 }
 
