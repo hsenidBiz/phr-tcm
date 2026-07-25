@@ -6,6 +6,7 @@ pub mod ado;
 pub mod ado_git;
 pub mod ado_testplan;
 pub mod ai_bridge;
+pub mod ai_tools;
 pub mod audio;
 pub mod auth;
 pub mod capture;
@@ -33,7 +34,7 @@ pub use events::{CaseNoteSaved, SubmitProgress, SuiteScanProgress};
 pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{ai_bridge, auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
+    use commands::{ai_bridge, ai_tools, auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
@@ -101,7 +102,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             prs::pr_work_items,
             discovery::list_iterations,
             ai_bridge::bridge_status,
-            ai_bridge::set_bridge_context
+            ai_bridge::set_bridge_context,
+            ai_tools::detect_ai_tools,
+            ai_tools::register_ai_tool
         ])
 }
 

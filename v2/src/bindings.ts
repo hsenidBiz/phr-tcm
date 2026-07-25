@@ -148,6 +148,8 @@ export const commands = {
 	 *  bridge routes have defaults the AI never has to guess.
 	 */
 	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef }),
+	detectAiTools: () => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools"),
+	registerAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id })),
 };
 
 /** Events */
@@ -225,6 +227,14 @@ export type CaseNoteSaved = {
 export type CreatedItem = {
 	id: number,
 	url: string,
+};
+
+/**  What the frontend needs to render one row of the AI-tools list. */
+export type DetectedTool = {
+	id: string,
+	name: string,
+	installed: boolean,
+	registered: boolean,
 };
 
 export type EnsuredSuite = {

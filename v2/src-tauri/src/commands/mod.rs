@@ -3,6 +3,7 @@
 //! the matching domain module. Command fn names are frozen (bindings.ts).
 
 pub mod ai_bridge;
+pub mod ai_tools;
 pub mod auth;
 pub mod board;
 pub mod bugs;
