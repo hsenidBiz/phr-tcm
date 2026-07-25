@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.11.2",
+    date: "2026-07-25",
+    items: [
+      "AI Bridge: a Rescan button re-checks which AI tools are installed, so a newly installed one shows up without restarting the app.",
+      "AI Bridge: the tool list now says it is scanning instead of briefly claiming no tools were found.",
+    ],
+  },
+  {
     version: "1.11.1",
     date: "2026-07-25",
     items: [
