@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { commands } from "../bindings";
 import { Button } from "../components/ui/button";
+import { cn } from "../lib/cn";
 import { unwrapStr } from "../lib/ipc";
 
 /** Clipboard copies are fire-and-forget from the UI's perspective, but the
@@ -68,8 +70,33 @@ export default function AiBridge() {
       </section>
 
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">Connect your AI tools</h2>
-        {installed.length === 0 ? (
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-text">Connect your AI tools</h2>
+          {/* Detection runs once on mount - rescan after installing a tool
+              (or registering one outside the app) without a restart. */}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={tools.isFetching}
+            onClick={() => {
+              tools
+                .refetch()
+                .then((r) => {
+                  const n = (r.data ?? []).filter((t) => t.installed).length;
+                  toast.success(`Found ${n} installed AI tool${n === 1 ? "" : "s"}.`);
+                })
+                .catch(() => toast.error("Could not scan for AI tools."));
+            }}
+          >
+            <RefreshCw size={12} className={cn("mr-1", tools.isFetching && "animate-spin")} />
+            {tools.isFetching ? "Scanning" : "Rescan"}
+          </Button>
+        </div>
+        {tools.isPending ? (
+          // "None detected" while the scan is still running reads as a
+          // verdict - say what's actually happening instead.
+          <p className="text-xs text-faint">Scanning for installed AI tools...</p>
+        ) : installed.length === 0 ? (
           <p className="text-xs text-muted">No supported AI tools detected on this machine.</p>
         ) : (
           <ul className="space-y-2">

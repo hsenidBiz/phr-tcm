@@ -76,6 +76,32 @@ test("Unregister invokes unregister_ai_tool for a registered tool", async () => 
   await waitFor(() => expect(unregisteredId).toBe("claude-desktop"));
 });
 
+test("Rescan re-runs detection and picks up a newly installed tool", async () => {
+  let scans = 0;
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") {
+      scans += 1;
+      // Second scan sees a tool that wasn't installed at mount.
+      return scans === 1
+        ? [{ id: "vscode", name: "VS Code", installed: false, registered: false }]
+        : [{ id: "vscode", name: "VS Code", installed: true, registered: false }];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  // The button reads "Scanning" mid-fetch, so its "Rescan" label is the
+  // signal that the first scan finished.
+  expect(
+    await screen.findByText("No supported AI tools detected on this machine."),
+  ).toBeInTheDocument();
+
+  fireEvent.click(await screen.findByRole("button", { name: /Rescan/ }));
+  expect(await screen.findByText("VS Code")).toBeInTheDocument();
+  expect(scans).toBe(2);
+});
+
 test("the how-it-works card names all six MCP tools", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
