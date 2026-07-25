@@ -10,6 +10,7 @@
 //! the same client from `ado_testplan` / `work_board`.
 
 mod endpoints;
+pub mod throttle;
 mod transport;
 
 use serde::{Deserialize, Serialize};

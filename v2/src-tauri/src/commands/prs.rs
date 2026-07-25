@@ -72,6 +72,23 @@ pub async fn pr_pipeline(
         .await
 }
 
+/// Plain-text output for one build step - the same content ADO's log pane
+/// shows. Polled by the dialog while a step is running.
+#[tauri::command]
+#[specta::specta]
+pub async fn build_log(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    build_id: i32,
+    log_id: i32,
+) -> Result<String, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .build_log(&organization, &project, build_id, log_id)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn repo_pull_requests(

@@ -12,13 +12,16 @@ import {
   ChevronRight,
   ExternalLink,
   Rocket,
+  ScrollText,
   Search,
   X,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { BuildStage, PrBuild } from "../bindings";
+import { commands, type BuildStage, type PrBuild } from "../bindings";
 import { cn } from "../lib/cn";
+import { unwrap } from "../lib/ipc";
 import { Input } from "./ui/input";
 import { Modal } from "./ui/modal";
 
@@ -125,16 +128,67 @@ function Dot({ state, result }: { state: string; result: string }) {
   );
 }
 
+
+/** One step's output, fetched on demand. While the step is still running
+ * the log is polled, so it fills in the way ADO's pane does. */
+function LogPane({
+  org,
+  project,
+  buildId,
+  logId,
+  live,
+}: {
+  org: string;
+  project: string;
+  buildId: number;
+  logId: number;
+  live: boolean;
+}) {
+  const log = useQuery({
+    queryKey: ["build-log", org, project, buildId, logId],
+    queryFn: () => unwrap(commands.buildLog(org, project, buildId, logId)),
+    // A running step keeps producing output; a finished one never changes.
+    refetchInterval: live ? 5000 : false,
+    staleTime: live ? 0 : Infinity,
+    retry: false,
+  });
+
+  if (log.isPending) return <p className="ml-4 py-1 text-[11px] text-faint">Loading log…</p>;
+  if (log.isError)
+    return <p className="ml-4 py-1 text-[11px] text-danger">{log.error.message}</p>;
+
+  const lines = (log.data ?? "").replace(/\s+$/, "").split("\n");
+  return (
+    <pre className="ml-4 max-h-64 overflow-auto rounded bg-surface-2 p-2 text-[11px] leading-relaxed text-muted">
+      {lines.map((line, i) => (
+        <div key={i} className="flex gap-2">
+          <span className="w-8 shrink-0 select-none text-right text-faint">{i + 1}</span>
+          <span className="whitespace-pre-wrap break-all">{line}</span>
+        </div>
+      ))}
+      {live && <div className="pt-1 text-accent">● still running…</div>}
+    </pre>
+  );
+}
+
 /** Stage -> job -> step tree for one run, filtered by the search box. */
 function StageTree({
   stages,
   query,
   failuresOnly,
+  org,
+  project,
+  buildId,
 }: {
   stages: BuildStage[];
   query: string;
   failuresOnly: boolean;
+  org: string;
+  project: string;
+  buildId: number;
 }) {
+  // Which step's log is open. Only one at a time - these are long.
+  const [openLog, setOpenLog] = useState<string | null>(null);
   const q = query.trim().toLowerCase();
   const hit = (name: string) => !q || name.toLowerCase().includes(q);
 
@@ -185,9 +239,22 @@ function StageTree({
               </div>
               {j.tasks.length > 0 && (
                 <ul className="ml-3 space-y-0.5 border-l border-border pl-3">
-                  {j.tasks.map((t, ti) => (
-                    <li key={`${t.name}-${ti}`} className="space-y-0.5">
-                      <div className="flex items-center gap-2 text-xs">
+                  {j.tasks.map((t, ti) => {
+                    const key = `${st.name}/${j.name}/${t.name}/${ti}`;
+                    const hasLog = t.log_id > 0;
+                    const showLog = openLog === key;
+                    return (
+                    <li key={key} className="space-y-0.5">
+                      <div
+                        className={cn(
+                          "flex items-center gap-2 rounded px-1 py-0.5 text-xs",
+                          hasLog && "cursor-pointer hover:bg-surface-2",
+                        )}
+                        role={hasLog ? "button" : undefined}
+                        aria-expanded={hasLog ? showLog : undefined}
+                        title={hasLog ? "Show this step's log" : undefined}
+                        onClick={() => hasLog && setOpenLog(showLog ? null : key)}
+                      >
                         <Dot state={t.state} result={t.result} />
                         <span
                           className={cn(
@@ -197,12 +264,24 @@ function StageTree({
                         >
                           {t.name}
                         </span>
+                        {hasLog && (
+                          <ScrollText size={11} className="shrink-0 text-faint" />
+                        )}
                         {duration(t.started, t.finished) && (
                           <span className="ml-auto shrink-0 text-faint">
                             {duration(t.started, t.finished)}
                           </span>
                         )}
                       </div>
+                      {showLog && (
+                        <LogPane
+                          org={org}
+                          project={project}
+                          buildId={buildId}
+                          logId={t.log_id}
+                          live={isRunning(t.state)}
+                        />
+                      )}
                       {/* The actual reason, without opening Azure DevOps. */}
                       {t.issues.map((msg, mi) => (
                         <p
@@ -214,7 +293,8 @@ function StageTree({
                         </p>
                       ))}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -230,11 +310,15 @@ function RunNode({
   defaultOpen,
   query,
   failuresOnly,
+  org,
+  project,
 }: {
   b: PrBuild;
   defaultOpen: boolean;
   query: string;
   failuresOnly: boolean;
+  org: string;
+  project: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const failed = failurePath(b);
@@ -293,7 +377,14 @@ function RunNode({
         {expanded && (
           <>
             {b.stages.length > 0 ? (
-              <StageTree stages={b.stages} query={query} failuresOnly={failuresOnly} />
+              <StageTree
+                stages={b.stages}
+                query={query}
+                failuresOnly={failuresOnly}
+                org={org}
+                project={project}
+                buildId={b.id}
+              />
             ) : (
               <p className="text-xs text-faint">No stage detail available for this run.</p>
             )}
@@ -354,12 +445,16 @@ export default function PipelineDialog({
   prTitle,
   repo,
   builds,
+  org,
+  project,
   onClose,
 }: {
   prId: number;
   prTitle: string;
   repo: string;
   builds: PrBuild[];
+  org: string;
+  project: string;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -439,6 +534,8 @@ export default function PipelineDialog({
                 defaultOpen={b.id === focusId}
                 query={query}
                 failuresOnly={failuresOnly}
+                org={org}
+                project={project}
               />
             ))}
           </ol>

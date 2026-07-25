@@ -328,6 +328,8 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
           prTitle={pr.title}
           repo={pr.repo}
           builds={pipeline.data ?? []}
+          org={org}
+          project={project}
           onClose={() => setShowPipeline(false)}
         />
       )}

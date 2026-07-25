@@ -9,6 +9,7 @@ impl AdoClient {
     pub(crate) const WORKITEM_BATCH_SIZE: usize = 200;
 
     pub(crate) async fn get_json(&self, url: String) -> Result<serde_json::Value, AdoError> {
+        super::throttle::pace().await;
         let resp = self
             .http
             .get(&url)
@@ -20,12 +21,46 @@ impl AdoClient {
         Self::handle_json(resp).await
     }
 
+    /// GET returning the raw body as text - build logs are plain text, not
+    /// JSON. Same status handling as the JSON path.
+    pub(crate) async fn get_text(&self, url: String) -> Result<String, AdoError> {
+        super::throttle::pace().await;
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.token)
+            .header("Accept", "text/plain")
+            .send()
+            .await
+            .map_err(|e| AdoError::Network(e.to_string()))?;
+        match resp.status().as_u16() {
+            200..=299 => resp.text().await.map_err(|e| AdoError::Network(e.to_string())),
+            401 => Err(AdoError::Unauthorized),
+            403 => Err(AdoError::Forbidden),
+            404 => Err(AdoError::NotFound),
+            429 => {
+                let retry = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(5);
+                Err(AdoError::RateLimited { retry_after_secs: retry })
+            }
+            s => Err(AdoError::Http {
+                status: s,
+                body: resp.text().await.unwrap_or_default(),
+            }),
+        }
+    }
+
     /// GET returning (body, x-ms-continuationtoken) for ADO's paginated
     /// testplan endpoints.
     pub(crate) async fn get_json_with_continuation(
         &self,
         url: String,
     ) -> Result<(serde_json::Value, Option<String>), AdoError> {
+        super::throttle::pace().await;
         let resp = self
             .http
             .get(&url)
@@ -50,6 +85,7 @@ impl AdoClient {
         url: String,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
+        super::throttle::pace().await;
         let resp = self
             .http
             .post(&url)
@@ -69,6 +105,7 @@ impl AdoClient {
         url: String,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
+        super::throttle::pace().await;
         let resp = self
             .http
             .post(&url)
@@ -87,6 +124,7 @@ impl AdoClient {
         url: String,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
+        super::throttle::pace().await;
         let resp = self
             .http
             .patch(&url)
@@ -107,6 +145,7 @@ impl AdoClient {
         url: String,
         patch: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
+        super::throttle::pace().await;
         let resp = self
             .http
             .request(method, &url)

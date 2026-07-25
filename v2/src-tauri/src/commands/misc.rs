@@ -10,6 +10,18 @@ pub fn ping(msg: String) -> String {
     format!("pong: {msg}")
 }
 
+/// How hard the app is allowed to hit Azure DevOps: "full" | "balanced" |
+/// "gentle". The limit ADO enforces is per USER, so the app shares one
+/// budget with the same person's browser - this lets them hand some back.
+/// Applied process-wide; the frontend calls it at startup and on change.
+#[tauri::command]
+#[specta::specta]
+/// Returns the resulting gap in ms (u32: specta forbids u64 across IPC).
+pub fn set_ado_rate_level(level: String) -> u32 {
+    crate::ado::throttle::set_level(&level);
+    crate::ado::throttle::current_interval_ms() as u32
+}
+
 /// Non-blocking update check; Some(version) when a newer build is published.
 #[tauri::command]
 #[specta::specta]

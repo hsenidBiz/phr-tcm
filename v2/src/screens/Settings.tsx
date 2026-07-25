@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { commands } from "../bindings";
 import { Button } from "../components/ui/button";
 import { START_TOUR_EVENT } from "../components/UiTour";
+import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
+import { cn } from "../lib/cn";
 import {
   ACCENTS,
   THEMES,
@@ -41,6 +43,7 @@ export default function Settings(_props: { org: string; project: string }) {
   const qc = useQueryClient();
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
+  const [rate, setRate] = useState<RateLevel>(getRateLevel());
 
   const version = useQuery({
     queryKey: ["app-version"],
@@ -148,6 +151,38 @@ export default function Settings(_props: { org: string; project: string }) {
               </button>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Azure DevOps request rate</h2>
+        <p className="text-sm text-muted">
+          Azure DevOps limits requests per user, not per app - so this app
+          shares your budget with your browser. Slow it down if Azure DevOps
+          starts warning you about usage.
+        </p>
+        <div className="space-y-1.5">
+          {RATE_LEVELS.map((l) => (
+            <button
+              key={l.id}
+              aria-pressed={rate === l.id}
+              className={cn(
+                "flex w-full flex-col items-start rounded-md border px-3 py-2 text-left transition-colors",
+                rate === l.id
+                  ? "border-accent bg-accent-soft"
+                  : "border-border hover:border-border-strong",
+              )}
+              onClick={() => {
+                setRate(l.id);
+                setRateLevel(l.id);
+              }}
+            >
+              <span className={cn("text-sm", rate === l.id ? "text-accent" : "text-text")}>
+                {l.label}
+              </span>
+              <span className="text-xs text-muted">{l.hint}</span>
+            </button>
+          ))}
         </div>
       </section>
 

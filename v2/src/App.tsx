@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit } from "./bindings";
+import { applyRateLevel } from "./lib/adoRate";
 import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
 import {
@@ -81,6 +82,8 @@ export default function App() {
   );
 
   useEffect(() => initTheme(), []);
+  // Push the saved ADO pacing into the Rust limiter before anything fetches.
+  useEffect(() => applyRateLevel(), []);
 
   // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.

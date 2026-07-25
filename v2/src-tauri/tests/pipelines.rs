@@ -55,6 +55,7 @@ async fn pr_builds_collects_validation_ci_stages_and_environments() {
                 { "id": "t2", "parentId": "j1", "type": "Task", "name": "Run Unit Test",
                   "state": "completed", "result": "failed", "order": 2,
                   "startTime": "2026-07-24T09:03:00Z", "finishTime": "2026-07-24T09:04:00Z",
+                  "log": { "id": 42, "url": "https://x/logs/42" },
                   "issues": [{ "type": "error", "message": "3 tests failed" }] },
                 { "id": "j1", "parentId": "ph1", "type": "Job", "name": "Build_solution",
                   "state": "completed", "result": "failed", "order": 1 },
@@ -127,6 +128,8 @@ async fn pr_builds_collects_validation_ci_stages_and_environments() {
     );
     assert_eq!(jobs[0].tasks[1].result, "failed");
     assert_eq!(jobs[0].tasks[1].issues, vec!["3 tests failed"]);
+    assert_eq!(jobs[0].tasks[1].log_id, 42, "the step's log is fetchable on demand");
+    assert_eq!(jobs[0].tasks[0].log_id, 0, "no log record -> 0, not a panic");
     assert!(ci.stages[1].jobs.is_empty(), "the in-progress stage has no jobs yet");
     assert_eq!(
         ci.deployments
@@ -221,4 +224,23 @@ async fn repo_pull_requests_completed_is_capped_and_status_is_whitelisted() {
     // Anything unrecognised falls back to active rather than being injected.
     let fallback = client.repo_pull_requests("o", "p", "r1", "bogus&x=1").await.unwrap();
     assert!(fallback.is_empty());
+}
+
+/// Build logs come back as plain text, not JSON - the dialog streams them
+/// into its log pane while a step is still running.
+#[tokio::test]
+async fn build_log_returns_plain_text() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/build/builds/901/logs/42"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("Starting: Run Unit Test\nPassed! - Failed: 0, Passed: 203\n"),
+        )
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let log = client.build_log("o", "p", 901, 42).await.unwrap();
+    assert!(log.contains("Starting: Run Unit Test"));
+    assert!(log.lines().count() >= 2);
 }

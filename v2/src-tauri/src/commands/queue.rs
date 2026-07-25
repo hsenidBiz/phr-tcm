@@ -157,7 +157,12 @@ pub async fn submit_queue(
             break; // unprocessed items stay in the client's queue
         }
         if i > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Per-item spacing on top of the global pacer: bulk creation is
+            // the app's heaviest burst, so it stays the most deferential
+            // thing it does. Never below 500 ms (v1's proven spacing), and
+            // wider when the user has asked for a gentler rate.
+            let gap = std::cmp::max(500, crate::ado::throttle::current_interval_ms());
+            tokio::time::sleep(std::time::Duration::from_millis(gap)).await;
         }
         let item = process_queue_item(
             &app,

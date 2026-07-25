@@ -28,9 +28,12 @@ pub struct TimelineTask {
     pub result: String,
     pub started: String,
     pub finished: String,
-    /// Error/warning text ADO attached to this step - what you would open
-    /// the log to read.
+    /// Error/warning text ADO attached to this step - the summary you get
+    /// without fetching anything.
     pub issues: Vec<String>,
+    /// Timeline log id, when this step produced output. 0 = none yet (a
+    /// pending step, or one whose logs have been cleaned up).
+    pub log_id: i32,
 }
 
 /// A job inside a stage, holding the steps.
@@ -303,6 +306,7 @@ pub fn build_stage_tree(data: &serde_json::Value) -> Vec<BuildStage> {
                 started: s(&r["startTime"]),
                 finished: s(&r["finishTime"]),
                 issues: issues_of(r),
+                log_id: r["log"]["id"].as_i64().unwrap_or(0) as i32,
             },
         ));
     }
@@ -353,6 +357,26 @@ pub fn build_stage_tree(data: &serde_json::Value) -> Vec<BuildStage> {
         .collect();
     stages.sort_by_key(|(o, _)| *o);
     stages.into_iter().map(|(_, st)| st).collect()
+}
+
+impl AdoClient {
+    /// Plain-text output for one step of a build, the same content ADO's
+    /// log pane shows. Safe to poll while a build runs: ADO returns the
+    /// log as it stands, so a running step just returns fewer lines each
+    /// time. Read only.
+    pub async fn build_log(
+        &self,
+        org: &str,
+        project: &str,
+        build_id: i32,
+        log_id: i32,
+    ) -> Result<String, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/build/builds/{}/logs/{}?api-version=7.1",
+            self.base_url, org, project, build_id, log_id
+        );
+        self.get_text(url).await
+    }
 }
 
 fn parse_builds(data: &serde_json::Value, is_validation: bool) -> Vec<PrBuild> {

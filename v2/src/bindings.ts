@@ -47,6 +47,14 @@ export const commands = {
 	audioCaptureStop: () => __TAURI_INVOKE<void>("audio_capture_stop"),
 	/**  Non-blocking update check; Some(version) when a newer build is published. */
 	checkUpdate: () => __TAURI_INVOKE<string | null>("check_update"),
+	/**
+	 *  How hard the app is allowed to hit Azure DevOps: "full" | "balanced" |
+	 *  "gentle". The limit ADO enforces is per USER, so the app shares one
+	 *  budget with the same person's browser - this lets them hand some back.
+	 *  Applied process-wide; the frontend calls it at startup and on change.
+	 *  Returns the resulting gap in ms (u32: specta forbids u64 across IPC).
+	 */
+	setAdoRateLevel: (level: string) => __TAURI_INVOKE<number>("set_ado_rate_level", { level }),
 	/**  Download the pending update and restart into it. */
 	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
@@ -145,6 +153,11 @@ export const commands = {
 	 *  stages and the environments a release carried it to.
 	 */
 	prPipeline: (organization: string, project: string, repoId: string, prId: number, mergeCommit: string) => typedError<PrBuild[], AdoError>(__TAURI_INVOKE("pr_pipeline", { organization, project, repoId, prId, mergeCommit })),
+	/**
+	 *  Plain-text output for one build step - the same content ADO's log pane
+	 *  shows. Polled by the dialog while a step is running.
+	 */
+	buildLog: (organization: string, project: string, buildId: number, logId: number) => typedError<string, AdoError>(__TAURI_INVOKE("build_log", { organization, project, buildId, logId })),
 	/**  Iteration paths with sprint dates, for DevOps-style iteration pickers. */
 	listIterations: (organization: string, project: string) => typedError<IterationRef[], AdoError>(__TAURI_INVOKE("list_iterations", { organization, project })),
 	bridgeStatus: () => typedError<BridgeStatus, string>(__TAURI_INVOKE("bridge_status")),
@@ -701,10 +714,15 @@ export type TimelineTask = {
 	started: string,
 	finished: string,
 	/**
-	 *  Error/warning text ADO attached to this step - what you would open
-	 *  the log to read.
+	 *  Error/warning text ADO attached to this step - the summary you get
+	 *  without fetching anything.
 	 */
 	issues: string[],
+	/**
+	 *  Timeline log id, when this step produced output. 0 = none yet (a
+	 *  pending step, or one whose logs have been cleaned up).
+	 */
+	log_id: number,
 };
 
 export type WorkComment = {
