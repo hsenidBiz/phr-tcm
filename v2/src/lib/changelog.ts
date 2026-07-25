@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.11.1",
+    date: "2026-07-25",
+    items: [
+      "AI Bridge: an Unregister button beside each connected tool, so a registration can be removed from the app instead of by hand.",
+      "AI Bridge: the six tools AI assistants can use are now listed with what each one does.",
+      "Settings: the changelog moves into its own column on wide windows, and stacks as before on narrow ones.",
+      "Board: hiding or showing a column now fades its cards out before it collapses (and in after it widens), so card text no longer squishes mid-animation.",
+    ],
+  },
+  {
     version: "1.11.0",
     date: "2026-07-25",
     items: [
