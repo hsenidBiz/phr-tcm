@@ -526,3 +526,53 @@ table {
   font-variant-numeric: tabular-nums;
   font-size: 0.92em;
 }
+
+/* Test-plan scan progress: a glowing accent bar. The glow pulses so the
+   bar reads as live even while a determinate width sits still between
+   plan callbacks; the sweep covers the phase before ADO reports counts. */
+@keyframes scan-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 4px 0 var(--color-accent);
+    opacity: 0.85;
+  }
+  50% {
+    box-shadow: 0 0 12px 2px var(--color-accent);
+    opacity: 1;
+  }
+}
+
+@keyframes scan-sweep {
+  0% {
+    margin-left: -40%;
+    width: 40%;
+  }
+  100% {
+    margin-left: 100%;
+    width: 40%;
+  }
+}
+
+.scan-glow {
+  animation: scan-glow 1.6s ease-in-out infinite;
+}
+
+.scan-sweep {
+  animation:
+    scan-glow 1.6s ease-in-out infinite,
+    scan-sweep 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the bar and its position; drop the motion and the pulsing. */
+  .scan-glow,
+  .scan-sweep {
+    animation: none;
+    box-shadow: 0 0 6px 0 var(--color-accent);
+  }
+  .scan-sweep {
+    width: 100%;
+    margin-left: 0;
+    opacity: 0.6;
+  }
+}

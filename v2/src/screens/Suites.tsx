@@ -3,9 +3,11 @@ import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderTree, RefreshCw } 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
+import ScanProgress from "../components/ScanProgress";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { loadNotes } from "../lib/caseNotes";
+import { CACHE, persistentQuery } from "../lib/persistentQuery";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { outcomeLabel } from "./RunPanel";
@@ -61,9 +63,15 @@ function SuitePoints({
   planId: number;
   suite: SuiteRef;
 }) {
+  // Outcomes DO move (a run changes them), so the disk seed only avoids
+  // the empty-flash: it paints, then revalidates immediately.
   const points = useQuery({
     queryKey: ["points", org, project, planId, suite.id],
-    queryFn: () => unwrap(commands.listTestPoints(org, project, planId, suite.id)),
+    ...persistentQuery({
+      key: `points:${org}/${project}/${planId}/${suite.id}`,
+      fetcher: () => unwrap(commands.listTestPoints(org, project, planId, suite.id)),
+      ...CACHE.outcomes,
+    }),
     retry: false,
   });
 
@@ -129,13 +137,20 @@ export default function Suites({
 
   // Scanning every plan is the expensive part - cache the result for the
   // session and re-scan only on explicit Refresh.
+  // Scanning every plan is the expensive call in the app, and the suite
+  // TREE barely changes - so it is cached on DISK, not just in memory.
+  // React Query's cache is per-process: before this, every app start (and
+  // every dev reload) re-scanned from scratch. Now the seed paints
+  // instantly and only revalidates once it is hours old; Refresh still
+  // forces a true re-scan.
   const plans = useQuery({
     queryKey: ["plans-suites", org, project],
-    queryFn: () => unwrap(commands.listPlansWithSuites(org, project)),
+    ...persistentQuery({
+      key: `plans-suites:${org}/${project}`,
+      fetcher: () => unwrap(commands.listPlansWithSuites(org, project)),
+      ...CACHE.structure,
+    }),
     enabled: Boolean(org && project),
-    staleTime: Infinity,
-    // Long gcTime keeps the background-prefetched scan alive even while
-    // no screen is observing it (default 5min gc dropped it).
     gcTime: 60 * 60_000,
     retry: false,
   });
@@ -338,9 +353,11 @@ export default function Suites({
       </div>
 
       {plans.isFetching && (
-        <p className="text-sm text-muted">
-          {scan ? `Scanning test plans ${scan.done} of ${scan.total}` : "Loading test plans"}
-        </p>
+        <ScanProgress
+          label={scan ? "Scanning test plans" : "Loading test plans"}
+          done={scan?.done}
+          total={scan?.total}
+        />
       )}
       {plans.isError && <p className="text-sm text-danger">{plans.error.message}</p>}
       {plans.data && plans.data.length === 0 && (

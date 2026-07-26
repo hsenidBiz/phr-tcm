@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from "react";
 import { Toaster, toast } from "sonner";
-import { commands, events, type PbiHit } from "./bindings";
+import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { applyRateLevel } from "./lib/adoRate";
+import { cacheEntry } from "./lib/localCache";
+import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
 import {
@@ -257,10 +259,21 @@ export default function App() {
   // when the user navigates there (same key/staleTime as the screen).
   useEffect(() => {
     if (!signedIn || !org || !project) return;
+    const key = `plans-suites:${org}/${project}`;
+    // A fresh disk seed means the screen already has its data - warming
+    // over the network would spend an expensive scan for nothing.
+    const seed = cacheEntry<PlanWithSuites[]>(key, CACHE.structure.ttlMs);
+    if (seed && Date.now() - seed.at < CACHE.structure.staleMs) {
+      qc.setQueryData(["plans-suites", org, project], seed.data, { updatedAt: seed.at });
+      return;
+    }
     qc.prefetchQuery({
       queryKey: ["plans-suites", org, project],
-      queryFn: () => unwrap(commands.listPlansWithSuites(org, project)),
-      staleTime: Infinity,
+      ...persistentQuery({
+        key,
+        fetcher: () => unwrap(commands.listPlansWithSuites(org, project)),
+        ...CACHE.structure,
+      }),
       // Without a long gcTime the unobserved prefetch is garbage-collected
       // after 5 minutes and the screen loads from scratch again.
       gcTime: 60 * 60_000,

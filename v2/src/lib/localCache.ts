@@ -25,7 +25,9 @@ function demoMode(): boolean {
   }
 }
 
-export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
+/** The entry WITH its age, for callers that need to tell React Query how
+ * old the seed is (so it can decide whether to revalidate). */
+export function cacheEntry<T>(key: string, maxAgeMs: number): { data: T; at: number } | null {
   if (demoMode()) return null;
   try {
     const raw = localStorage.getItem(PREFIX + key);
@@ -33,10 +35,14 @@ export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
     const entry = JSON.parse(raw) as Entry<T>;
     if (typeof entry?.at !== "number") return null;
     if (Date.now() - entry.at > maxAgeMs) return null;
-    return entry.data;
+    return entry;
   } catch {
     return null;
   }
+}
+
+export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
+  return cacheEntry<T>(key, maxAgeMs)?.data ?? null;
 }
 
 export function cacheWrite<T>(key: string, data: T): void {

@@ -8,7 +8,9 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import HistoryDots from "../../components/HistoryDots";
+import ScanProgress from "../../components/ScanProgress";
 import { cn } from "../../lib/cn";
+import { CACHE, persistentQuery } from "../../lib/persistentQuery";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap, unwrapStr } from "../../lib/ipc";
@@ -113,9 +115,12 @@ export default function RunPanel({
   // Last-5 outcome history per case (spec: Execution Depth & Trust, A).
   const history = useQuery({
     queryKey: ["run-history", org, project, suite.data?.plan_id],
-    queryFn: () => unwrap(commands.runHistory(org, project, suite.data!.plan_id)),
+    ...persistentQuery({
+      key: `run-history:${org}/${project}/${suite.data?.plan_id}`,
+      fetcher: () => unwrap(commands.runHistory(org, project, suite.data!.plan_id)),
+      ...CACHE.outcomes,
+    }),
     enabled: Boolean(suite.data),
-    staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
     retry: false,
   });
@@ -124,10 +129,17 @@ export default function RunPanel({
     [history.data],
   );
 
+  // Seeded from disk so opening Run Tests paints immediately, then
+  // revalidates - outcomes change with every run, so they are never
+  // served stale for longer than the refetch takes.
   const points = useQuery({
     queryKey: ["points", org, project, suite.data?.plan_id, suite.data?.suite_id],
-    queryFn: () =>
-      unwrap(commands.listTestPoints(org, project, suite.data!.plan_id, suite.data!.suite_id)),
+    ...persistentQuery({
+      key: `points:${org}/${project}/${suite.data?.plan_id}/${suite.data?.suite_id}`,
+      fetcher: () =>
+        unwrap(commands.listTestPoints(org, project, suite.data!.plan_id, suite.data!.suite_id)),
+      ...CACHE.outcomes,
+    }),
     enabled: Boolean(suite.data),
     gcTime: 30 * 60_000, // keep the background prefetch alive while unobserved
     retry: false,
@@ -257,9 +269,11 @@ export default function RunPanel({
       </p>
 
       {suite.isFetching && !suite.data && (
-        <p className="text-sm text-muted">
-          {scan ? `Scanning test plans ${scan.done} of ${scan.total}` : "Resolving test suite"}
-        </p>
+        <ScanProgress
+          label={scan ? "Scanning test plans" : "Resolving test suite"}
+          done={scan?.done}
+          total={scan?.total}
+        />
       )}
       {suite.isError && <p className="text-sm text-danger">{suite.error.message}</p>}
       {suite.data && (
