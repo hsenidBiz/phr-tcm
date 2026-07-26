@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.12.3",
+    date: "2026-07-26",
+    items: [
+      "Share a draft for review: \"Share for review\" in the queue creates a one-time link a teammate can paste into their Import File tab. They see your test cases in their own review screen before anything is created in Azure DevOps.",
+      "Share links travel through Azure DevOps itself (a file on the PBI), so whoever can see the PBI can review the draft - no extra accounts, nothing public.",
+      "Links are one-time use: importing revokes the link and removes the draft file from the PBI automatically.",
+    ],
+  },
+  {
     version: "1.12.2",
     date: "2026-07-26",
     items: [
