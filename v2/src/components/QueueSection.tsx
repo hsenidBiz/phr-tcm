@@ -126,6 +126,24 @@ export default function QueueSection({
   const unlistenRef = useRef<(() => void) | null>(null);
   useEffect(() => () => unlistenRef.current?.(), []);
 
+  // Share-for-review: the draft travels through ADO as a PBI attachment
+  // (one-time-use link; nothing is created in ADO). The link lands on the
+  // clipboard, ready for Teams.
+  const share = useMutation({
+    mutationFn: async () => {
+      const r = await commands.shareQueue(org, project, pbiId, queue);
+      if (r.status === "error") throw new Error(r.error);
+      return r.data;
+    },
+    onSuccess: (link) => {
+      navigator.clipboard
+        .writeText(link)
+        .then(() => toast.success("Share link copied - send it to your reviewer."))
+        .catch(() => toast.success(`Share link ready: ${link}`));
+    },
+    onError: (e) => toast.error(`Could not share: ${e.message}`),
+  });
+
   const exportJson = useMutation({
     mutationFn: async () => {
       const path = await save({
@@ -220,6 +238,15 @@ export default function QueueSection({
             onClick={() => viewHtml.mutate()}
           >
             View in browser
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queue.length === 0 || share.isPending}
+            title="Upload the draft as a one-time share link a teammate can import for review"
+            onClick={() => share.mutate()}
+          >
+            {share.isPending ? "Sharing" : "Share for review"}
           </Button>
           <Button
             variant="outline"

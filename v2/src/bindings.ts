@@ -100,6 +100,18 @@ export const commands = {
 	classificationPaths: (organization: string, project: string, structure: string) => typedError<string[], AdoError>(__TAURI_INVOKE("classification_paths", { organization, project, structure })),
 	/**  Stop the running submit loop after the in-flight item finishes. */
 	cancelSubmit: () => __TAURI_INVOKE<void>("cancel_submit"),
+	/**
+	 *  Uploads the draft queue as an ADO attachment on the PBI and returns a
+	 *  pasteable share link. Review-before-upload sharing: the cases do NOT
+	 *  exist in ADO - only this JSON file does.
+	 */
+	shareQueue: (organization: string, project: string, pbiId: number, queue: TestCase[]) => typedError<string, string>(__TAURI_INVOKE("share_queue", { organization, project, pbiId, queue })),
+	/**
+	 *  Consumes a shared draft by its link (with the CALLER's own sign-in) and
+	 *  runs it through the real importer, exactly like a file import. Links
+	 *  are one-time use: a successful import revokes the share.
+	 */
+	fetchSharedQueue: (link: string) => typedError<SharedQueue, string>(__TAURI_INVOKE("fetch_shared_queue", { link })),
 	exportQueueHtml: (path: string, queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	listProjectTags: (organization: string, project: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_project_tags", { organization, project })),
 	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),
@@ -609,6 +621,18 @@ export type ScreenShot = {
 	name: string,
 	/**  PNG, base64 (no data: prefix) - the shape add_result_attachment wants. */
 	b64_png: string,
+};
+
+export type SharedQueue = {
+	/**
+	 *  The PBI the sender drafted against - the frontend warns when it
+	 *  differs from the recipient's current selection.
+	 */
+	pbi_id: number,
+	organization: string,
+	project: string,
+	cases: TestCase[],
+	warnings: string[],
 };
 
 export type StateInfo = {

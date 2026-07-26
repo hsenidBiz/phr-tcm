@@ -118,6 +118,27 @@ impl AdoClient {
         Self::handle_json(resp).await
     }
 
+    /// Raw-body POST (application/octet-stream) - the attachment upload
+    /// endpoint takes file bytes, not JSON. Still no DELETE anywhere.
+    pub(crate) async fn post_octet(
+        &self,
+        url: String,
+        body: String,
+    ) -> Result<serde_json::Value, AdoError> {
+        super::throttle::pace().await;
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/octet-stream")
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| AdoError::Network(e.to_string()))?;
+        Self::handle_json(resp).await
+    }
+
     /// Plain-JSON PATCH (application/json, not json-patch).
     pub(crate) async fn patch_plain_json(
         &self,

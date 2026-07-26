@@ -14,7 +14,7 @@
 mod export;
 mod html;
 
-pub use export::{export_queue_to_excel, export_queue_to_json, generate_template};
+pub use export::{export_queue_to_excel, export_queue_to_json, generate_template, queue_to_json_string};
 pub use html::{export_queue_to_html, NoteCtx};
 
 use crate::model::{TestCase, MAX_TITLE_LEN, VALID_STATUSES};

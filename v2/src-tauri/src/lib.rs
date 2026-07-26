@@ -4,6 +4,7 @@
 
 pub mod ado;
 pub mod ado_git;
+pub mod ado_share;
 pub mod applog;
 pub mod ado_testplan;
 pub mod ai_bridge;
@@ -89,6 +90,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             board::create_work_item,
             discovery::classification_paths,
             queue::cancel_submit,
+            queue::share_queue,
+            queue::fetch_shared_queue,
             queue::export_queue_html,
             discovery::list_project_tags,
             runs::result_screenshots,

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import ImportFile from "./ImportFile";
+import { Toaster } from "sonner";
 
 afterEach(() => {
   clearMocks();
@@ -58,4 +59,53 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Yes — create 2/ }));
   expect(await screen.findByText(/Failed: Bad - boom/)).toBeInTheDocument();
   expect(screen.getByText(/1 queued/)).toBeInTheDocument();
+});
+
+test("a pasted share link imports the draft and surfaces a PBI mismatch", async () => {
+  let asked = "";
+  mockIPC((cmd, args) => {
+    if (cmd === "fetch_shared_queue") {
+      asked = (args as { link: string }).link;
+      return {
+        pbi_id: 9999, // shared for a DIFFERENT PBI than the one selected
+        organization: "acme",
+        project: "Web",
+        cases: [
+          {
+            update_id: null, title: "Shared case", tags: "", automation_status: "Not Automated",
+            module_value: "", preconditions: "", comment: "",
+            steps: [{ action: "a", expected: "b" }],
+          },
+        ],
+        warnings: [],
+      };
+    }
+  });
+  renderScreen();
+
+  fireEvent.change(screen.getByLabelText("Share link"), {
+    target: { value: "  tcm-share:acme/Web/9999/aaaa-1111  " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import shared" }));
+
+  expect(await screen.findByText("Shared case")).toBeInTheDocument();
+  expect(asked).toBe("tcm-share:acme/Web/9999/aaaa-1111");
+  // The mismatch warning names both PBIs so the reviewer checks first.
+  expect(screen.getByText(/shared for PBI #9999/)).toBeInTheDocument();
+});
+
+test("a spent share link shows the one-time-use explanation", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_shared_queue")
+      throw "This share link has already been used, or was revoked by the sender.";
+  });
+  // The error surfaces as a toast - mount a Toaster alongside the screen.
+  renderScreen();
+  render(<Toaster />);
+  fireEvent.change(screen.getByLabelText("Share link"), {
+    target: { value: "tcm-share:acme/Web/1/aaaa" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import shared" }));
+  // Surfaced via toast; the queue stays empty.
+  expect(await screen.findByText(/already been used/)).toBeInTheDocument();
 });

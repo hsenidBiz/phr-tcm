@@ -103,9 +103,9 @@ to null to CREATE a new test case. 'title' is required (max 255 chars). \
 string - commas are not allowed in tags. 'module' and 'preconditions' \
 are free text and may be empty strings.";
 
-/// Export the queue in the v1 AI round-trip JSON format
-/// (export_formats.export_records_to_json) - re-importable via parse_file.
-pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String> {
+/// The queue as the v1 AI round-trip JSON document (re-importable via
+/// parse_file). Shared by the file export and the share-for-review upload.
+pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
     let records: Vec<serde_json::Value> = queue
         .iter()
         .map(|tc| {
@@ -132,7 +132,13 @@ pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String
     });
     let mut text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     text.push('\n');
-    std::fs::write(path, text).map_err(|e| e.to_string())
+    Ok(text)
+}
+
+/// Export the queue in the v1 AI round-trip JSON format
+/// (export_formats.export_records_to_json) - re-importable via parse_file.
+pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String> {
+    std::fs::write(path, queue_to_json_string(queue)?).map_err(|e| e.to_string())
 }
 
 /// Write a blank Excel template with the example rows from v1.

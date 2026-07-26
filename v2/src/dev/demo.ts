@@ -604,6 +604,20 @@ function applyPatches() {
     unregisterAiTool: () => ok(null),
     setAdoRateLevel: () => Promise.resolve(200),
     prDeployments: () => ok([]),
+    shareQueue: () => ok("tcm-share:DemoOrg/Demo Project/1001/demo-aaaa-1111"),
+    fetchSharedQueue: () =>
+      ok({
+        pbi_id: 1001, organization: "DemoOrg", project: "Demo Project",
+        cases: [
+          {
+            update_id: null, title: "Shared - reviewer sanity check", tags: "demo; shared",
+            automation_status: "Not Automated", module_value: "", preconditions: "",
+            comment: "Shared by a teammate for review.",
+            steps: [{ action: "Open the app", expected: "It opens" }],
+          },
+        ],
+        warnings: [],
+      }),
     buildLog: () =>
       ok(
         [

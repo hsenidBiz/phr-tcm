@@ -56,6 +56,85 @@ pub fn write_template(path: String) -> Result<(), String> {
     import_parser::generate_template(&path)
 }
 
+#[derive(serde::Serialize, specta::Type)]
+pub struct SharedQueue {
+    /// The PBI the sender drafted against - the frontend warns when it
+    /// differs from the recipient's current selection.
+    pub pbi_id: i32,
+    pub organization: String,
+    pub project: String,
+    pub cases: Vec<model::TestCase>,
+    pub warnings: Vec<String>,
+}
+
+/// Uploads the draft queue as an ADO attachment on the PBI and returns a
+/// pasteable share link. Review-before-upload sharing: the cases do NOT
+/// exist in ADO - only this JSON file does.
+#[tauri::command]
+#[specta::specta]
+pub async fn share_queue(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    pbi_id: i32,
+    queue: Vec<model::TestCase>,
+) -> Result<String, String> {
+    if queue.is_empty() {
+        return Err("nothing to share - the queue is empty".into());
+    }
+    let json = import_parser::queue_to_json_string(&queue)?;
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    let link = ado::AdoClient::new(token)
+        .share_draft(&organization, &project, pbi_id, &json)
+        .await
+        .map_err(|e| e.to_string())?;
+    crate::applog::info(format!(
+        "Shared a draft of {} case(s) for review on PBI #{pbi_id}",
+        queue.len()
+    ));
+    Ok(link)
+}
+
+/// Consumes a shared draft by its link (with the CALLER's own sign-in) and
+/// runs it through the real importer, exactly like a file import. Links
+/// are one-time use: a successful import revokes the share.
+#[tauri::command]
+#[specta::specta]
+pub async fn fetch_shared_queue(
+    app: tauri::AppHandle,
+    link: String,
+) -> Result<SharedQueue, String> {
+    let share = crate::ado_share::parse_share_link(&link)?;
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    let (json, revoke_warning) = ado::AdoClient::new(token).take_shared_draft(&share).await?;
+    // Through the same temp-file + parse_file path as every other import,
+    // so shared drafts get identical validation and warnings.
+    let path = std::env::temp_dir().join(format!(
+        "tcm-shared-{}-{}.json",
+        std::process::id(),
+        share.attachment_id
+    ));
+    std::fs::write(&path, &json).map_err(|e| e.to_string())?;
+    let parsed = import_parser::parse_file(path.to_str().unwrap_or_default());
+    let _ = std::fs::remove_file(&path);
+    let (cases, mut warnings) = parsed?;
+    if let Some(w) = revoke_warning {
+        warnings.push(w);
+    }
+    crate::applog::info(format!(
+        "Imported a shared draft: {} case(s) for PBI #{} (link revoked)",
+        cases.len(),
+        share.pbi_id
+    ));
+    Ok(SharedQueue {
+        pbi_id: share.pbi_id,
+        organization: share.org,
+        project: share.project,
+        cases,
+        warnings,
+    })
+}
+
 /// One note listener per app run, started lazily on the first report.
 fn ensure_note_server(app: &tauri::AppHandle) -> Option<u16> {
     static PORT: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();

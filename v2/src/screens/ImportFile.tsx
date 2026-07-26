@@ -6,6 +6,7 @@ import { commands, type PbiHit } from "../bindings";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import QueueSection from "../components/QueueSection";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { useQueue } from "../hooks/useQueue";
 
 export default function ImportFile({
@@ -21,6 +22,32 @@ export default function ImportFile({
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [shareLink, setShareLink] = useState("");
+
+  // A pasted share link (see ado_share.rs): one-time use - a successful
+  // import revokes it, so a second paste tells the user it's spent.
+  const importShared = useMutation({
+    mutationFn: async () => {
+      const r = await commands.fetchSharedQueue(shareLink.trim());
+      if (r.status === "error") throw new Error(r.error);
+      return r.data;
+    },
+    onSuccess: (data) => {
+      const extra =
+        pbi && data.pbi_id !== pbi.id
+          ? [
+              `This draft was shared for PBI #${data.pbi_id}, but you have #${pbi.id} selected - check before creating.`,
+            ]
+          : [];
+      setQueue((q) => [...q, ...data.cases]);
+      setWarnings([...extra, ...data.warnings]);
+      setShareLink("");
+      toast.success(
+        `Imported ${data.cases.length} shared case${data.cases.length === 1 ? "" : "s"} for review.`,
+      );
+    },
+    onError: (e) => toast.error(`Shared import failed: ${e.message}`),
+  });
 
   const importFile = useMutation({
     mutationFn: async () => {
@@ -69,6 +96,27 @@ export default function ImportFile({
           <Button disabled={importFile.isPending} onClick={() => importFile.mutate()}>
             {importFile.isPending ? "Importing" : "Import JSON"}
           </Button>
+        </div>
+        <div className="space-y-1 border-t border-border/60 pt-3">
+          <p className="text-xs text-muted">
+            Or paste a share link a teammate sent you (one-time use - importing it revokes the link):
+          </p>
+          <div className="flex gap-2">
+            <Input
+              aria-label="Share link"
+              placeholder="tcm-share:…"
+              className="id-mono flex-1 py-1.5 text-xs"
+              value={shareLink}
+              onChange={(e) => setShareLink(e.target.value)}
+            />
+            <Button
+              variant="outline"
+              disabled={!shareLink.trim() || importShared.isPending}
+              onClick={() => importShared.mutate()}
+            >
+              {importShared.isPending ? "Fetching" : "Import shared"}
+            </Button>
+          </div>
         </div>
         {warnings.length > 0 && (
           <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-warning">
