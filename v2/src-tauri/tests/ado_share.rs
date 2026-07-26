@@ -112,6 +112,10 @@ async fn take_downloads_then_revokes_only_our_relation() {
         .and(path("/acme/Web/_apis/wit/workitems/144714"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": 144714, "rev": 7,
+            "fields": {
+                "System.Title": "Timeline - split weight",
+                "System.WorkItemType": "Product Backlog Item"
+            },
             "relations": [
                 { "rel": "Microsoft.VSTS.Common.TestedBy-Reverse", "url": "https://x/wi/5" },
                 { "rel": "AttachedFile",
@@ -137,9 +141,13 @@ async fn take_downloads_then_revokes_only_our_relation() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let share =
         parse_share_link("tcm-share:acme/Web/144714/aaaa1111-2222-3333-4444-555566667777").unwrap();
-    let (json, warning) = client.take_shared_draft(&share).await.unwrap();
-    assert!(json.contains("test_cases"));
-    assert!(warning.is_none(), "revoke succeeded - no warning");
+    let taken = client.take_shared_draft(&share).await.unwrap();
+    assert!(taken.json.contains("test_cases"));
+    assert!(taken.revoke_warning.is_none(), "revoke succeeded - no warning");
+    // The same work-item read supplies the PBI identity, so the recipient
+    // can be offered a switch without another lookup.
+    assert_eq!(taken.pbi_title, "Timeline - split weight");
+    assert_eq!(taken.pbi_work_item_type, "Product Backlog Item");
 }
 
 /// A link whose relation is gone is spent - the fetch refuses BEFORE
@@ -196,9 +204,9 @@ async fn take_still_imports_when_the_revoke_is_forbidden() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let share =
         parse_share_link("tcm-share:acme/Web/144714/aaaa1111-2222-3333-4444-555566667777").unwrap();
-    let (json, warning) = client.take_shared_draft(&share).await.unwrap();
-    assert!(json.contains("test_cases"));
-    assert!(warning.unwrap().contains("could not be revoked"));
+    let taken = client.take_shared_draft(&share).await.unwrap();
+    assert!(taken.json.contains("test_cases"));
+    assert!(taken.revoke_warning.unwrap().contains("could not be revoked"));
 }
 
 

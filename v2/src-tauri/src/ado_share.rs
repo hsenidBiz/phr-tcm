@@ -183,14 +183,12 @@ impl AdoClient {
     }
 
     /// One-time-use consumption: check the share relation is still live,
-    /// download the draft, then revoke the relation. Returns the JSON plus
-    /// an optional warning when the revoke could not be performed (e.g.
-    /// the recipient lacks edit permission on the PBI) - the import still
-    /// succeeded, the link just stays live.
-    pub async fn take_shared_draft(
-        &self,
-        share: &ShareRef,
-    ) -> Result<(String, Option<String>), String> {
+    /// download the draft, then revoke the relation. Returns the JSON, the
+    /// PBI's identity (so the recipient can be offered a switch when they
+    /// are on a different PBI), and an optional warning when the revoke
+    /// could not be performed (e.g. the recipient lacks edit permission on
+    /// the PBI) - the import still succeeded, the link just stays live.
+    pub async fn take_shared_draft(&self, share: &ShareRef) -> Result<TakenDraft, String> {
         // 1) Liveness: the relation IS the link's validity.
         let wi_url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
@@ -198,6 +196,12 @@ impl AdoClient {
         );
         let wi = self.get_json(wi_url).await.map_err(|e| e.to_string())?;
         let rev = wi["rev"].as_i64().unwrap_or(0);
+        // Same response carries the PBI's identity - no extra request.
+        let pbi_title = wi["fields"]["System.Title"].as_str().unwrap_or_default().to_string();
+        let pbi_work_item_type = wi["fields"]["System.WorkItemType"]
+            .as_str()
+            .unwrap_or("Product Backlog Item")
+            .to_string();
         let relations = wi["relations"].as_array().cloned().unwrap_or_default();
         let idx = relations.iter().position(|r| {
             r["rel"].as_str() == Some("AttachedFile")
@@ -227,7 +231,7 @@ impl AdoClient {
             { "op": "test", "path": "/rev", "value": rev },
             { "op": "remove", "path": format!("/relations/{idx}") }
         ]);
-        let warning = match self
+        let revoke_warning = match self
             .send_json_patch(reqwest::Method::PATCH, patch_url, &patch)
             .await
         {
@@ -236,8 +240,17 @@ impl AdoClient {
                 "Imported, but the share link could not be revoked (it stays usable): {e}"
             )),
         };
-        Ok((json, warning))
+        Ok(TakenDraft { json, revoke_warning, pbi_title, pbi_work_item_type })
     }
+}
+
+/// What a consumed share yields: the draft plus the PBI it belongs to.
+#[derive(Debug, Clone)]
+pub struct TakenDraft {
+    pub json: String,
+    pub revoke_warning: Option<String>,
+    pub pbi_title: String,
+    pub pbi_work_item_type: String,
 }
 
 #[cfg(test)]

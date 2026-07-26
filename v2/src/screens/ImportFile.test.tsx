@@ -1,6 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import ImportFile from "./ImportFile";
 import { Toaster } from "sonner";
@@ -20,6 +21,43 @@ function renderScreen() {
     </QueryClientProvider>,
   );
 }
+
+/** Mirrors App: the PBI lives above ImportFile, so onPickPbi genuinely
+ * re-keys useQueue - the condition the switch path has to survive. */
+function StatefulHost({ initial }: { initial: typeof pbi }) {
+  const [current, setCurrent] = useState(initial);
+  return (
+    <>
+      <span data-testid="current-pbi">{current.id}</span>
+      <ImportFile org="acme" project="Web" pbi={current} onPickPbi={setCurrent} />
+    </>
+  );
+}
+
+function renderHosted(initial = pbi) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <StatefulHost initial={initial} />
+    </QueryClientProvider>,
+  );
+}
+
+const sharedFor = (pbiId: number) => ({
+  pbi_id: pbiId,
+  pbi_title: "Timeline - split weight",
+  pbi_work_item_type: "Product Backlog Item",
+  organization: "acme",
+  project: "Web",
+  cases: [
+    {
+      update_id: null, title: "Shared case", tags: "", automation_status: "Not Automated",
+      module_value: "", preconditions: "", comment: "",
+      steps: [{ action: "a", expected: "b" }],
+    },
+  ],
+  warnings: [],
+});
 
 test("import feeds the shared queue; failed items stay queued", async () => {
   mockIPC((cmd, args) => {
@@ -61,37 +99,77 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   expect(screen.getByText(/1 queued/)).toBeInTheDocument();
 });
 
-test("a pasted share link imports the draft and surfaces a PBI mismatch", async () => {
-  let asked = "";
-  mockIPC((cmd, args) => {
-    if (cmd === "fetch_shared_queue") {
-      asked = (args as { link: string }).link;
-      return {
-        pbi_id: 9999, // shared for a DIFFERENT PBI than the one selected
-        organization: "acme",
-        project: "Web",
-        cases: [
-          {
-            update_id: null, title: "Shared case", tags: "", automation_status: "Not Automated",
-            module_value: "", preconditions: "", comment: "",
-            steps: [{ action: "a", expected: "b" }],
-          },
-        ],
-        warnings: [],
-      };
-    }
+test("a matching PBI imports straight into the queue", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_shared_queue") return sharedFor(42); // same as selected
   });
-  renderScreen();
-
+  renderHosted();
   fireEvent.change(screen.getByLabelText("Share link"), {
-    target: { value: "  tcm-share:acme/Web/9999/aaaa-1111  " },
+    target: { value: "tcm-share:acme/Web/42/aaaa-1111" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Import shared" }));
 
   expect(await screen.findByText("Shared case")).toBeInTheDocument();
-  expect(asked).toBe("tcm-share:acme/Web/9999/aaaa-1111");
-  // The mismatch warning names both PBIs so the reviewer checks first.
+  // No question asked when there is nothing to choose between.
+  expect(screen.queryByText("This draft is for a different PBI")).not.toBeInTheDocument();
+});
+
+test("a different PBI asks first, and Switch loads into THAT PBI's queue", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_shared_queue") return sharedFor(9999); // not the selected 42
+  });
+  renderHosted();
+  fireEvent.change(screen.getByLabelText("Share link"), {
+    target: { value: "tcm-share:acme/Web/9999/aaaa-1111" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import shared" }));
+
+  // Nothing is loaded until the user chooses.
+  expect(await screen.findByText("This draft is for a different PBI")).toBeInTheDocument();
+  expect(screen.queryByText("Shared case")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Switch to #9999" }));
+
+  // The PBI actually changed, and the cases landed AFTER the switch - so
+  // they live in 9999's queue and survive being there (the reported bug
+  // was them vanishing on switch because they went to the old queue).
+  expect(await screen.findByText("Shared case")).toBeInTheDocument();
+  expect(screen.getByTestId("current-pbi")).toHaveTextContent("9999");
+  expect(localStorage.getItem("tcm-v2-draft:acme/9999")).toContain("Shared case");
+  expect(localStorage.getItem("tcm-v2-draft:acme/42")).toBeNull();
+});
+
+test("Stay keeps the current PBI and warns about the mismatch", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_shared_queue") return sharedFor(9999);
+  });
+  renderHosted();
+  fireEvent.change(screen.getByLabelText("Share link"), {
+    target: { value: "tcm-share:acme/Web/9999/aaaa-1111" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import shared" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Stay on #42" }));
+
+  expect(await screen.findByText("Shared case")).toBeInTheDocument();
+  expect(screen.getByTestId("current-pbi")).toHaveTextContent("42");
   expect(screen.getByText(/shared for PBI #9999/)).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-draft:acme/42")).toContain("Shared case");
+});
+
+test("Cancel loads nothing anywhere", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_shared_queue") return sharedFor(9999);
+  });
+  renderHosted();
+  fireEvent.change(screen.getByLabelText("Share link"), {
+    target: { value: "tcm-share:acme/Web/9999/aaaa-1111" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import shared" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByText("Shared case")).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-draft:acme/42")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-draft:acme/9999")).toBeNull();
 });
 
 test("a spent share link shows the one-time-use explanation", async () => {

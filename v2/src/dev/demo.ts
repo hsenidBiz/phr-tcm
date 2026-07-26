@@ -607,7 +607,9 @@ function applyPatches() {
     shareQueue: () => ok("tcm-share:DemoOrg/Demo Project/1001/demo-aaaa-1111"),
     fetchSharedQueue: () =>
       ok({
-        pbi_id: 1001, organization: "DemoOrg", project: "Demo Project",
+        pbi_id: 1002, pbi_title: "Demo - Checkout redesign",
+        pbi_work_item_type: "Product Backlog Item",
+        organization: "DemoOrg", project: "Demo Project",
         cases: [
           {
             update_id: null, title: "Shared - reviewer sanity check", tags: "demo; shared",

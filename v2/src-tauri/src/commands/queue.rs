@@ -58,9 +58,14 @@ pub fn write_template(path: String) -> Result<(), String> {
 
 #[derive(serde::Serialize, specta::Type)]
 pub struct SharedQueue {
-    /// The PBI the sender drafted against - the frontend warns when it
-    /// differs from the recipient's current selection.
+    /// The PBI the sender drafted against. When it differs from the
+    /// recipient's current selection the frontend asks which one to load
+    /// into - the queue is stored PER PBI, so loading into the wrong one
+    /// hides the cases behind a PBI switch.
     pub pbi_id: i32,
+    /// Enough to select that PBI without another lookup.
+    pub pbi_title: String,
+    pub pbi_work_item_type: String,
     pub organization: String,
     pub project: String,
     pub cases: Vec<model::TestCase>,
@@ -106,7 +111,8 @@ pub async fn fetch_shared_queue(
 ) -> Result<SharedQueue, String> {
     let share = crate::ado_share::parse_share_link(&link)?;
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
-    let (json, revoke_warning) = ado::AdoClient::new(token).take_shared_draft(&share).await?;
+    let taken = ado::AdoClient::new(token).take_shared_draft(&share).await?;
+    let json = taken.json;
     // Through the same temp-file + parse_file path as every other import,
     // so shared drafts get identical validation and warnings.
     let path = std::env::temp_dir().join(format!(
@@ -118,7 +124,7 @@ pub async fn fetch_shared_queue(
     let parsed = import_parser::parse_file(path.to_str().unwrap_or_default());
     let _ = std::fs::remove_file(&path);
     let (cases, mut warnings) = parsed?;
-    if let Some(w) = revoke_warning {
+    if let Some(w) = taken.revoke_warning {
         warnings.push(w);
     }
     crate::applog::info(format!(
@@ -128,6 +134,8 @@ pub async fn fetch_shared_queue(
     ));
     Ok(SharedQueue {
         pbi_id: share.pbi_id,
+        pbi_title: taken.pbi_title,
+        pbi_work_item_type: taken.pbi_work_item_type,
         organization: share.org,
         project: share.project,
         cases,

@@ -625,10 +625,15 @@ export type ScreenShot = {
 
 export type SharedQueue = {
 	/**
-	 *  The PBI the sender drafted against - the frontend warns when it
-	 *  differs from the recipient's current selection.
+	 *  The PBI the sender drafted against. When it differs from the
+	 *  recipient's current selection the frontend asks which one to load
+	 *  into - the queue is stored PER PBI, so loading into the wrong one
+	 *  hides the cases behind a PBI switch.
 	 */
 	pbi_id: number,
+	/**  Enough to select that PBI without another lookup. */
+	pbi_title: string,
+	pbi_work_item_type: string,
 	organization: string,
 	project: string,
 	cases: TestCase[],

@@ -1,12 +1,13 @@
 import { useMutation } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { commands, type PbiHit } from "../bindings";
+import { commands, type PbiHit, type SharedQueue } from "../bindings";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import QueueSection from "../components/QueueSection";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Modal } from "../components/ui/modal";
 import { useQueue } from "../hooks/useQueue";
 
 export default function ImportFile({
@@ -23,6 +24,30 @@ export default function ImportFile({
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [shareLink, setShareLink] = useState("");
+  // A fetched draft whose PBI differs from the current selection: the
+  // queue is stored PER PBI, so loading it here would hide the cases the
+  // moment the user switches. Ask first.
+  const [choice, setChoice] = useState<SharedQueue | null>(null);
+  // Cases waiting for a specific PBI to become current. Switching PBI is
+  // async (App owns it, useQueue re-keys on the new id), so the load is
+  // deferred until `pbi` actually matches - writing immediately would put
+  // them in the OLD PBI's queue, which is the bug this fixes.
+  const [pendingFor, setPendingFor] = useState<{
+    pbiId: number;
+    data: SharedQueue;
+    extraWarnings: string[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!pendingFor || pbi?.id !== pendingFor.pbiId) return;
+    const { data, extraWarnings } = pendingFor;
+    setQueue((q) => [...q, ...data.cases]);
+    setWarnings([...extraWarnings, ...data.warnings]);
+    setPendingFor(null);
+    toast.success(
+      `Imported ${data.cases.length} shared case${data.cases.length === 1 ? "" : "s"} for review.`,
+    );
+  }, [pendingFor, pbi?.id, setQueue]);
 
   // A pasted share link (see ado_share.rs): one-time use - a successful
   // import revokes it, so a second paste tells the user it's spent.
@@ -33,18 +58,12 @@ export default function ImportFile({
       return r.data;
     },
     onSuccess: (data) => {
-      const extra =
-        pbi && data.pbi_id !== pbi.id
-          ? [
-              `This draft was shared for PBI #${data.pbi_id}, but you have #${pbi.id} selected - check before creating.`,
-            ]
-          : [];
-      setQueue((q) => [...q, ...data.cases]);
-      setWarnings([...extra, ...data.warnings]);
       setShareLink("");
-      toast.success(
-        `Imported ${data.cases.length} shared case${data.cases.length === 1 ? "" : "s"} for review.`,
-      );
+      if (pbi && data.pbi_id !== pbi.id) {
+        setChoice(data); // ask which PBI's queue to load into
+        return;
+      }
+      setPendingFor({ pbiId: data.pbi_id, data, extraWarnings: [] });
     },
     onError: (e) => toast.error(`Shared import failed: ${e.message}`),
   });
@@ -128,6 +147,60 @@ export default function ImportFile({
       </section>
 
       <QueueSection org={org} project={project} pbiId={pbi.id} queue={queue} setQueue={setQueue} />
+
+      {choice && (
+        <Modal onClose={() => setChoice(null)} className="w-full max-w-md p-4">
+          <h2 className="text-sm font-semibold text-text">This draft is for a different PBI</h2>
+          <p className="mt-2 text-sm text-muted">
+            It was shared for{" "}
+            <span className="text-text">
+              #{choice.pbi_id}
+              {choice.pbi_title ? ` ${choice.pbi_title}` : ""}
+            </span>
+            , but you have <span className="text-text">#{pbi.id} {pbi.title}</span> selected.
+          </p>
+          <p className="mt-2 text-xs text-faint">
+            Queued cases are kept per PBI, so they will appear under whichever you choose.
+          </p>
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setChoice(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setPendingFor({
+                  pbiId: pbi.id,
+                  data: choice,
+                  extraWarnings: [
+                    `This draft was shared for PBI #${choice.pbi_id}, but you loaded it under #${pbi.id} - check before creating.`,
+                  ],
+                });
+                setChoice(null);
+              }}
+            >
+              Stay on #{pbi.id}
+            </Button>
+            <Button
+              size="sm"
+              disabled={!onPickPbi}
+              title={onPickPbi ? undefined : "Switching is unavailable here"}
+              onClick={() => {
+                setPendingFor({ pbiId: choice.pbi_id, data: choice, extraWarnings: [] });
+                onPickPbi?.({
+                  id: choice.pbi_id,
+                  title: choice.pbi_title,
+                  work_item_type: choice.pbi_work_item_type,
+                });
+                setChoice(null);
+              }}
+            >
+              Switch to #{choice.pbi_id}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
