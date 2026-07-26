@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.12.4",
+    date: "2026-07-26",
+    items: [
+      "Share links now land on your clipboard reliably (every Copy button in the app got the same fix).",
+      "Sharing the same unchanged draft twice reuses the existing file on the PBI instead of uploading a duplicate - editing the draft and resharing still creates a fresh link.",
+      "The shared draft's filename now shows properly on the PBI's Attachments tab in Azure DevOps.",
+    ],
+  },
+  {
     version: "1.12.3",
     date: "2026-07-26",
     items: [
