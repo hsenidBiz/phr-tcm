@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.12.5",
+    date: "2026-07-26",
+    items: [
+      "Importing a shared draft that belongs to a different PBI now asks whether to switch to that PBI or stay on yours, and loads the cases into whichever you pick.",
+      "Fixed: shared cases could look like they vanished after switching PBI. Queued cases are kept per PBI, so they were sitting under the PBI you imported them on - the new prompt puts them where you expect.",
+    ],
+  },
+  {
     version: "1.12.4",
     date: "2026-07-26",
     items: [
