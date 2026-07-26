@@ -244,7 +244,7 @@ export default function Suites({
     <span
       role="button"
       className={cn(
-        "rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors",
+        "whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors",
         "hover:border-accent hover:bg-accent-soft hover:text-accent",
         busy && "pointer-events-none opacity-50",
       )}
@@ -296,11 +296,14 @@ export default function Suites({
           ) : (
             <ChevronRight size={14} />
           )}
-          {s.name}
+          {/* min-w-0 lets a long name wrap instead of forcing the row
+              wider; centred while the window is narrow (where it wraps),
+              left-aligned once there is room, like a tree label. */}
+          <span className="min-w-0 flex-1 break-words text-center lg:text-left">{s.name}</span>
           {s.suite_type === "requirementTestSuite" && (
-            <Badge className="bg-accent-soft text-accent">PBI {s.requirement_id}</Badge>
+            <Badge className="shrink-0 bg-accent-soft text-accent">PBI {s.requirement_id}</Badge>
           )}
-          <span className="ml-auto flex gap-1">
+          <span className="flex shrink-0 flex-wrap justify-end gap-1">
             {chip("View", () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
             {onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? (
               <>
