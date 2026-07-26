@@ -124,9 +124,16 @@ test("the how-it-works card names all six MCP tools", async () => {
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {
-  mockIPC((cmd) => {
+  // copyText goes through the Tauri clipboard plugin first - capture that
+  // invoke rather than the navigator fallback.
+  let copied = "";
+  mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
+    if (String(cmd).startsWith("plugin:clipboard-manager|")) {
+      copied = JSON.stringify(args);
+      return null;
+    }
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
@@ -144,8 +151,8 @@ test("the copy button writes the registration command to the clipboard", async (
   fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[0]);
 
   await waitFor(() =>
-    expect(writeText).toHaveBeenCalledWith(
-      'claude mcp add --scope user tcm-testcases -- "C:\\apps\\tcm\\v2.exe" --mcp',
+    expect(copied).toContain(
+      'claude mcp add --scope user tcm-testcases -- \\"C:\\\\apps\\\\tcm\\\\v2.exe\\" --mcp',
     ),
   );
 });

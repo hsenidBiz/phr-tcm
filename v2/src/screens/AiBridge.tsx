@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { commands } from "../bindings";
+import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/cn";
 import { unwrapStr } from "../lib/ipc";
@@ -11,8 +12,7 @@ import { unwrapStr } from "../lib/ipc";
  * (permission denied, no clipboard API) as unhandled rejections that fail
  * the test/release gate even though the app looks fine. */
 function copy(text: string, label: string) {
-  navigator.clipboard
-    .writeText(text)
+  copyText(text)
     .then(() => toast.success(`${label} copied.`))
     .catch(() => toast.error("Could not copy to clipboard."));
 }

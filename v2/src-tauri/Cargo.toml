@@ -55,6 +55,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures = { version = "0.3.32", default-features = false, features = ["std", "async-await"] }
 cpal = "0.18.1"
 rustfft = "6.4.1"
+tauri-plugin-clipboard-manager = "2.3.2"
 
 [dev-dependencies]
 wiremock = "0.6.5"

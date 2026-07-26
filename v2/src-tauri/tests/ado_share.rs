@@ -2,17 +2,28 @@
 //! write (AttachedFile relation), and the recipient's fetch.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ado_share::parse_share_link;
+use v2_lib::ado_share::{draft_file_name, parse_share_link};
 use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn share_uploads_the_json_and_attaches_it_to_the_pbi() {
     let server = MockServer::start().await;
+    let json = r#"{"test_cases":[{"title":"Login - valid credentials","steps":[]}]}"#;
+    let name = draft_file_name(144714, json);
+
+    // The reuse pre-check finds nothing on the PBI.
+    Mock::given(method("GET"))
+        .and(path("/acme/Web/_apis/wit/workitems/144714"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 144714, "rev": 1, "relations": []
+        })))
+        .mount(&server)
+        .await;
 
     Mock::given(method("POST"))
         .and(path("/acme/Web/_apis/wit/attachments"))
-        .and(query_param("fileName", "tcm-draft-review-144714.json"))
+        .and(query_param("fileName", name.as_str()))
         .and(header("Content-Type", "application/octet-stream"))
         .and(body_string_contains("Login - valid credentials"))
         .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
@@ -29,12 +40,12 @@ async fn share_uploads_the_json_and_attaches_it_to_the_pbi() {
         .and(header("Content-Type", "application/json-patch+json"))
         .and(body_string_contains("AttachedFile"))
         .and(body_string_contains("draft shared for review"))
+        .and(body_string_contains(r#""name":"tcm-draft-review-144714-"#))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 144714 })))
         .mount(&server)
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let json = r#"{"test_cases":[{"title":"Login - valid credentials","steps":[]}]}"#;
     let link = client.share_draft("acme", "Web", 144714, json).await.unwrap();
 
     assert_eq!(
@@ -48,6 +59,13 @@ async fn share_uploads_the_json_and_attaches_it_to_the_pbi() {
 #[tokio::test]
 async fn share_fails_loudly_when_the_pbi_attach_fails() {
     let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/acme/Web/_apis/wit/workitems/144714"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 144714, "rev": 1, "relations": []
+        })))
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/acme/Web/_apis/wit/attachments"))
         .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
@@ -181,4 +199,40 @@ async fn take_still_imports_when_the_revoke_is_forbidden() {
     let (json, warning) = client.take_shared_draft(&share).await.unwrap();
     assert!(json.contains("test_cases"));
     assert!(warning.unwrap().contains("could not be revoked"));
+}
+
+
+/// Re-sharing an unchanged queue reuses the attachment already on the
+/// PBI: same link back, and NO upload or PBI write happens (no POST/PATCH
+/// mocks are mounted - any attempt would fail the call).
+#[tokio::test]
+async fn share_reuses_an_identical_draft_already_attached() {
+    let server = MockServer::start().await;
+    let json = r#"{"test_cases":[{"title":"Same content","steps":[]}]}"#;
+    let name = draft_file_name(144714, json);
+    Mock::given(method("GET"))
+        .and(path("/acme/Web/_apis/wit/workitems/144714"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 144714, "rev": 4,
+            "relations": [
+                { "rel": "AttachedFile",
+                  "url": "https://x/_apis/wit/attachments/eeee9999-8888-7777-6666-555544443333",
+                  "attributes": { "name": name } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let link = client.share_draft("acme", "Web", 144714, json).await.unwrap();
+    assert_eq!(
+        link,
+        "tcm-share:acme/Web/144714/eeee9999-8888-7777-6666-555544443333"
+    );
+
+    // A CHANGED queue hashes to a different name - the old attachment does
+    // not match, and with no POST mock the upload attempt errors, proving
+    // the reuse path was not taken.
+    let changed = r#"{"test_cases":[{"title":"Different content","steps":[]}]}"#;
+    assert!(client.share_draft("acme", "Web", 144714, changed).await.is_err());
 }

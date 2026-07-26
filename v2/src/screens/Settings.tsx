@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { commands } from "../bindings";
+import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
@@ -272,8 +273,7 @@ export default function Settings(_props: { org: string; project: string }) {
                   const text = (logs.data ?? [])
                     .map((l) => `${l.at} [${l.level.toUpperCase()}] ${l.message}`)
                     .join("\n");
-                  navigator.clipboard
-                    .writeText(text)
+                  copyText(text)
                     .then(() => toast.success("Log copied."))
                     .catch(() => toast.error("Could not copy to clipboard."));
                 }}

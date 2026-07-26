@@ -10,6 +10,7 @@ import { diffCase, diffSummary } from "../lib/caseDiff";
 import { loadNotes } from "../lib/caseNotes";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
+import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import AstryxIsland from "./AstryxIsland";
@@ -136,8 +137,7 @@ export default function QueueSection({
       return r.data;
     },
     onSuccess: (link) => {
-      navigator.clipboard
-        .writeText(link)
+      copyText(link)
         .then(() => toast.success("Share link copied - send it to your reviewer."))
         .catch(() => toast.success(`Share link ready: ${link}`));
     },

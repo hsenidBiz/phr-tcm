@@ -72,10 +72,22 @@ pub fn build_share_link(r: &ShareRef) -> String {
     )
 }
 
+/// Deterministic attachment name: the content hash in the filename makes
+/// re-sharing an unchanged queue detectable without downloading anything -
+/// share_draft reuses the existing attachment instead of uploading a
+/// duplicate. A changed queue hashes differently and uploads fresh.
+pub fn draft_file_name(pbi_id: i32, json: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(json.as_bytes());
+    let hash: String = digest.iter().take(6).map(|b| format!("{b:02x}")).collect();
+    format!("tcm-draft-review-{pbi_id}-{hash}.json")
+}
+
 impl AdoClient {
-    /// Uploads the draft JSON and attaches it to the PBI. Returns the
-    /// pasteable share link. The attachment is named so a human browsing
-    /// the PBI in ADO understands what it is.
+    /// Uploads the draft JSON and attaches it to the PBI - unless an
+    /// identical draft (same content hash in the filename) is already
+    /// attached, in which case the existing attachment's link is returned
+    /// and NOTHING is written. Returns the pasteable share link.
     pub async fn share_draft(
         &self,
         org: &str,
@@ -83,7 +95,38 @@ impl AdoClient {
         pbi_id: i32,
         json: &str,
     ) -> Result<String, AdoError> {
-        let file_name = format!("tcm-draft-review-{pbi_id}.json");
+        let file_name = draft_file_name(pbi_id, json);
+
+        // Reuse before upload: an AttachedFile relation carrying this exact
+        // content-hashed name means the same draft is already shared.
+        let wi_url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
+            self.base_url, org, project, pbi_id
+        );
+        let wi = self.get_json(wi_url).await?;
+        let existing = wi["relations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|r| {
+                r["rel"].as_str() == Some("AttachedFile")
+                    && r["attributes"]["name"].as_str() == Some(file_name.as_str())
+            })
+            .and_then(|r| r["url"].as_str())
+            .and_then(|u| u.rsplit('/').next())
+            // The GUID may carry a query string in the relation URL.
+            .map(|last| last.split('?').next().unwrap_or(last).to_string());
+        if let Some(id) = existing {
+            crate::applog::info(format!(
+                "Share reused: identical draft already attached to PBI #{pbi_id}"
+            ));
+            return Ok(build_share_link(&ShareRef {
+                org: org.to_string(),
+                project: project.to_string(),
+                pbi_id,
+                attachment_id: id,
+            }));
+        }
         let upload_url = format!(
             "{}/{}/{}/_apis/wit/attachments?fileName={}&api-version=7.1",
             self.base_url,
@@ -110,7 +153,12 @@ impl AdoClient {
             "value": {
                 "rel": "AttachedFile",
                 "url": url,
-                "attributes": { "comment": "Test Case Manager draft shared for review" }
+                // `name` is what ADO's UI shows AND what the reuse check
+                // above matches on - keep both in sync with file_name.
+                "attributes": {
+                    "name": file_name,
+                    "comment": "Test Case Manager draft shared for review"
+                }
             }
         }]);
         self.send_json_patch(reqwest::Method::PATCH, patch_url, &patch)
