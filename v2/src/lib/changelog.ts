@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.12.6",
+    date: "2026-07-26",
+    items: [
+      "Test Suites now remembers the test plan scan between launches - opening the tab is instant instead of re-scanning every time. It refreshes itself in the background when the saved copy is a few hours old, and Refresh still forces a full re-scan.",
+      "Run Tests opens instantly too: the test points and run history show straight away, then update in the background so outcomes are never stale.",
+      "Scanning test plans now shows a glowing progress bar with the plan count instead of a line of text.",
+      "Test Suites rows read properly in a narrow window - long suite names no longer squeeze the buttons or break across lines.",
+      "The window can no longer be resized small enough to break the layout.",
+    ],
+  },
+  {
     version: "1.12.5",
     date: "2026-07-26",
     items: [
