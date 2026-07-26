@@ -18,6 +18,11 @@ export async function openRunnerWindow(session: RunnerSession) {
     title: "Test Runner",
     width: 460,
     height: 720,
+    // The runner is a single narrow column by design, so its floor is much
+    // lower than the main window's - but below this the step rows and the
+    // outcome buttons start colliding.
+    minWidth: 380,
+    minHeight: 520,
     // Honour the user's last pin toggle instead of forcing on-top.
     alwaysOnTop: loadRunnerPinned(),
     resizable: true,
