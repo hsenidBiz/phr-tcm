@@ -29,6 +29,23 @@ pub struct SuiteScanProgress {
     pub total: u32,
 }
 
+/// Emitted when work items have been newly assigned to the signed-in
+/// user. The frontend decides how to surface them: a toast when the app
+/// has focus, an OS notification when it doesn't.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct WorkAssigned {
+    pub items: Vec<crate::assigned_watch::AssignedItem>,
+}
+
+/// Emitted when the JSON file an import is following changes on disk -
+/// once per real content change, never on a save that rewrote the same
+/// bytes. `stamp` is the new fingerprint (see filewatch.rs).
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct WatchedFileChanged {
+    pub path: String,
+    pub stamp: String,
+}
+
 /// Emitted when the HTML report's comment box autosaves a note back over
 /// the loopback listener - the frontend writes it into local storage.
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]

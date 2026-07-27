@@ -10,6 +10,7 @@ import { Select } from "../../components/ui/select";
 import HistoryDots from "../../components/HistoryDots";
 import ScanProgress from "../../components/ScanProgress";
 import { cn } from "../../lib/cn";
+import { reportPalette } from "../../lib/reportTheme";
 import { CACHE, persistentQuery } from "../../lib/persistentQuery";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
@@ -154,6 +155,9 @@ export default function RunPanel({
           suite.data!.plan_id,
           [suite.data!.suite_id],
           `PBI #${pbiId} — ${pbiTitle}`,
+          // Read at click time, so the report matches the theme in front
+          // of the user rather than whatever was set at startup.
+          reportPalette(),
         ),
       ),
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),

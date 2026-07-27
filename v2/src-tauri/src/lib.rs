@@ -9,19 +9,24 @@ pub mod applog;
 pub mod ado_testplan;
 pub mod ai_bridge;
 pub mod ai_tools;
+pub mod assigned_watch;
 pub mod audio;
 pub mod auth;
 pub mod capture;
 pub mod commands;
 pub mod events;
+pub mod filewatch;
 pub mod import_parser;
 pub mod mcp;
 pub mod model;
 pub mod note_server;
+pub mod optimize;
 pub mod pipelines;
+pub mod refcache;
 pub mod report;
 pub mod state;
 pub mod steps_xml;
+pub mod transform;
 pub mod updater;
 pub mod work_board;
 
@@ -44,7 +49,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::SuiteScanProgress,
             audio::AudioSpectrum,
             events::CaseNoteSaved,
-            events::PlanCreated
+            events::PlanCreated,
+            events::WatchedFileChanged,
+            events::WorkAssigned
         ])
         .commands(collect_commands![
             misc::ping,
@@ -55,6 +62,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             discovery::search_pbis,
             cases::pbi_test_cases,
             queue::parse_import_file,
+            queue::file_stamp,
+            queue::watch_file,
+            queue::unwatch_file,
+            queue::unwatch_all_files,
             queue::export_queue,
             queue::write_template,
             queue::submit_queue,
@@ -64,6 +75,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             runs::submit_test_run,
             board::fetch_board,
             board::move_board_item,
+            board::work_item_history,
             misc::audio_capture_start,
             misc::audio_capture_stop,
             misc::check_update,
@@ -71,6 +83,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::app_logs,
             misc::app_log_dir,
             misc::apply_update,
+            misc::watch_assigned_work,
             cases::list_test_case_fields,
             cases::pbi_test_cases_full,
             cases::update_test_case,
@@ -116,7 +129,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_bridge::set_bridge_context,
             ai_tools::detect_ai_tools,
             ai_tools::register_ai_tool,
-            ai_tools::unregister_ai_tool
+            ai_tools::unregister_ai_tool,
+            ai_tools::register_db_server,
+            ai_tools::unregister_db_server
         ])
 }
 
@@ -127,10 +142,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Mutex::new(auth::AuthState::default()))
         .manage(updater::UpdateState::default())
         .manage(SubmitCancel::default())
         .manage(commands::ai_bridge::BridgeHandle::default())
+        .manage(filewatch::FileWatchState::default())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             // Registers the typed-event registry in Tauri state; without
@@ -143,6 +160,11 @@ pub fn run() {
             use tauri::Manager;
             if let Ok(dir) = app.path().app_log_dir() {
                 applog::init(dir);
+            }
+            // Reference data (project tags) cached on disk and shared by the
+            // UI and the AI bridge - see refcache.rs.
+            if let Ok(dir) = app.path().app_data_dir() {
+                refcache::init(dir);
             }
             applog::info(format!(
                 "Test Case Manager {} started",

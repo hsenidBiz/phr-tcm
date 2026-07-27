@@ -46,3 +46,45 @@ test("picking a PBI records it; recents appear on focus", async () => {
   expect(await screen.findByText("Recently used")).toBeInTheDocument();
   expect(screen.getByText(/Login flow/)).toBeInTheDocument();
 });
+
+test("clicking outside dismisses the results; clicking a result still picks", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "search_pbis")
+      return [{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item" }];
+  });
+  render(<div data-testid="elsewhere">background</div>);
+  renderPicker();
+
+  const input = screen.getByLabelText("Find PBI");
+  fireEvent.change(input, { target: { value: "login" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(await screen.findByText(/Login flow/)).toBeInTheDocument();
+
+  // A press on empty space closes it - the reported bug was that it didn't.
+  fireEvent.pointerDown(screen.getByTestId("elsewhere"));
+  expect(screen.queryByText(/Login flow/)).not.toBeInTheDocument();
+
+  // Re-open and confirm the dismissal never eats a real selection: the
+  // press lands INSIDE, so the click behind it still picks.
+  fireEvent.keyDown(input, { key: "Enter" });
+  const hit = await screen.findByText(/Login flow/);
+  fireEvent.pointerDown(hit);
+  fireEvent.click(hit);
+  expect(screen.getByLabelText("Clear PBI")).toBeInTheDocument();
+});
+
+test("Escape still closes the results", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "search_pbis")
+      return [{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item" }];
+  });
+  renderPicker();
+
+  const input = screen.getByLabelText("Find PBI");
+  fireEvent.change(input, { target: { value: "login" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(await screen.findByText(/Login flow/)).toBeInTheDocument();
+
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByText(/Login flow/)).not.toBeInTheDocument();
+});

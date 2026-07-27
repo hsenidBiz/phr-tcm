@@ -7,6 +7,7 @@ import ScanProgress from "../components/ScanProgress";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { loadNotes } from "../lib/caseNotes";
+import { reportPalette } from "../lib/reportTheme";
 import { CACHE, persistentQuery } from "../lib/persistentQuery";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
@@ -226,7 +227,11 @@ export default function Suites({
 
   const report = useMutation({
     mutationFn: ({ planId, suiteIds, label }: SuiteAction) =>
-      unwrapStr(commands.viewExecutionReport(org, project, planId, suiteIds, label)),
+      unwrapStr(
+        // Read at click time so the report matches the theme currently in
+        // front of the user, not whatever was set at startup.
+        commands.viewExecutionReport(org, project, planId, suiteIds, label, reportPalette()),
+      ),
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
   });
 

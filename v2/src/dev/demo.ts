@@ -580,6 +580,79 @@ function applyPatches() {
       return ok(null);
     },
     workItemComments: (_o: string, _p: string, id: number) => ok(comments.get(id) ?? []),
+
+    // A believably messy history: the item bounced New <-> In Progress
+    // twice, which is exactly the case the state summary exists to make
+    // readable. Dates are relative so the timeline's day grouping and
+    // "3 days ago" labels stay sensible whenever the demo is opened.
+    workItemHistory: (_o: string, _p: string, _id: number) => {
+      const day = 86_400_000;
+      // Days back, then a fixed hour of that day - and never in the
+      // future, which adding hours to "now" would produce.
+      const at = (daysAgo: number, hour = 10) => {
+        const d = new Date(Date.now() - daysAgo * day);
+        d.setHours(hour, 0, 0, 0);
+        return new Date(Math.min(d.getTime(), Date.now() - 60_000)).toISOString();
+      };
+      const who = (by: string) => ({ by, avatar_url: "" });
+      const rev = (
+        n: number,
+        by: string,
+        atIso: string,
+        fields: { reference_name: string; label: string; old: string; new: string }[],
+        extra: Partial<{
+          links_added: string[];
+          links_removed: string[];
+          comment_added: boolean;
+        }> = {},
+      ) => {
+        const state = fields.find((f) => f.reference_name === "System.State");
+        return {
+          rev: n,
+          ...who(by),
+          at: atIso,
+          fields,
+          links_added: extra.links_added ?? [],
+          links_removed: extra.links_removed ?? [],
+          state_from: state?.old ?? "",
+          state_to: state?.new ?? "",
+          comment_added: extra.comment_added ?? false,
+        };
+      };
+      const f = (reference_name: string, label: string, o: string, n: string) => ({
+        reference_name,
+        label,
+        old: o,
+        new: n,
+      });
+      // Newest first, as the real command returns.
+      return ok([
+        rev(9, "Avin Alwis", at(0, 9), [
+          f("System.State", "State", "Resolved", "QA Ready"),
+          f("System.Reason", "Reason", "Moved out of state Resolved", "Moved out of state In Progress"),
+          f("Microsoft.VSTS.Scheduling.FinishDate", "Finish Date", "2026-07-24T07:58:55Z", "2026-07-24T09:28:31Z"),
+        ]),
+        rev(8, "Avin Alwis", at(0, 8), [], { links_added: ["Related link"] }),
+        rev(7, "Dilshan Kaviratne", at(1, 16), [], { links_added: ["Commit link"] }),
+        rev(6, "Dilshan Kaviratne", at(1, 15), [f("System.State", "State", "In Progress", "Resolved")], {
+          comment_added: true,
+        }),
+        rev(5, "Ishani Dasanayake", at(2, 11), [
+          f("Microsoft.VSTS.Common.Priority", "Priority", "3", "2"),
+          f("System.Tags", "Tags", "regression", "regression; smoke"),
+        ]),
+        rev(4, "Avin Alwis", at(3, 14), [
+          f("Microsoft.VSTS.Scheduling.RemainingWork", "Remaining Work", "6.8", "0"),
+        ]),
+        rev(3, "Avin Alwis", at(4, 10), [f("System.State", "State", "New", "In Progress")]),
+        rev(2, "Avin Alwis", at(6, 15), [f("System.State", "State", "In Progress", "New")]),
+        rev(1, "Naveen Warnakulasuriya", at(9, 9), [
+          f("System.State", "State", "", "New"),
+          f("System.Title", "Title", "", "Timeline - split weight across sprints"),
+          f("System.AssignedTo", "Assigned To", "", "Avin Alwis"),
+        ]),
+      ]);
+    },
     addComment: (_o: string, _p: string, id: number, text: string) => {
       const list = comments.get(id) ?? [];
       list.unshift({ id: Date.now(), text, created_by: "Demo User", created_date: new Date().toISOString(), avatar_url: "" });
@@ -595,6 +668,7 @@ function applyPatches() {
     },
     bridgeStatus: () => ok({ port: 51999, mcp_exe: "C:\\demo\\v2.exe" }),
     setBridgeContext: () => ok(null),
+    watchAssignedWork: () => ok(null),
     detectAiTools: () =>
       Promise.resolve([
         { id: "claude-code", name: "Claude Code", installed: true, registered: true },

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Eye, EyeOff, GitPullRequest, RefreshCw } from "lucide-react";
+import { GitPullRequest, RefreshCw } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
@@ -137,7 +137,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     }
   };
   // Per-column visibility: any column can hide (collapsing to a slim rail
-  // that restores it), but at least ONE must stay visible - the eye on the
+  // that restores it), but at least ONE must stay visible - Hide on the
   // last open column disables once two are hidden. Persisted; migrates the
   // old "Hide Done" checkbox's key.
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
@@ -527,15 +527,19 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                     key={col}
                     data-testid={`col-${col}`}
                     // Fixed w-9 (no min-w-0): this is the 0fr track's floor.
-                    className="flex w-9 flex-col items-center gap-2 rounded-md border border-border bg-bg py-2"
+                    className="rail-in flex w-9 flex-col items-center gap-2 rounded-md border border-border bg-bg py-2"
                   >
+                    {/* Reads top-to-bottom in the rail, same as the label
+                        below it - the collapsed column is a vertical strip,
+                        so the control is too. */}
                     <button
-                      aria-label={`Show ${col}`}
-                      title={`Show ${col}`}
-                      className="text-muted hover:text-accent"
+                      aria-label={`Open ${col}`}
+                      title={`Open ${col}`}
+                      className="rounded border border-border px-0.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted transition-colors hover:border-accent hover:text-accent"
+                      style={{ writingMode: "vertical-rl" }}
                       onClick={() => toggleCol(col)}
                     >
-                      <EyeOff size={14} />
+                      Open
                     </button>
                     <span
                       className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-faint"
@@ -578,10 +582,10 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                           : `Hide ${col}`
                       }
                       disabled={hiddenCols.size >= COLUMNS.length - 1}
-                      className="ml-auto text-muted transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                      className="ml-auto rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => toggleCol(col)}
                     >
-                      <Eye size={13} />
+                      Hide
                     </button>
                   </h3>
                   {items.map((item) => (

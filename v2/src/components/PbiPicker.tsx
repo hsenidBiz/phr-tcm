@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { History, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import { unwrap } from "../lib/ipc";
 import { Input } from "./ui/input";
@@ -45,6 +45,20 @@ export default function PbiPicker({
   const [text, setText] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Click anywhere outside to dismiss. Captured `pointerdown`, not click:
+  // it fires before whatever was clicked handles its own press, and it
+  // still reaches us if that thing stops propagation. A press INSIDE
+  // (a result, the input) is ignored, so picking still works.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [open]);
 
   const recents = loadRecents(org, project);
   const pick = (hit: PbiHit) => {
@@ -81,7 +95,7 @@ export default function PbiPicker({
   }
 
   return (
-    <div className="relative">
+    <div className="relative" ref={boxRef}>
       <Input
         aria-label="Find PBI"
         className="w-72 py-1.5"

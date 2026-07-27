@@ -23,7 +23,13 @@ h1 { font-size: 22px; margin: 0 0 4px; }
         page-break-inside: avoid; }
 .case h2 { font-size: 16px; margin: 0 0 8px; }
 .case .wid { color: #2a7ab8; font-weight: 600; margin-right: 6px; }
-.meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.meta { margin: 0 0 10px; }
+/* One labelled row per kind, label column aligned so the three rows read
+   as a small table. The label wraps above its values on narrow screens
+   rather than squeezing them. */
+.metarow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.metalabel { flex: 0 0 130px; font-size: 11.5px; font-weight: 600; color: #44506a; }
+.metavals { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 1 1 200px; }
 .chip { font-size: 11.5px; border-radius: 999px; padding: 2px 10px;
         background: #eef2f8; color: #44506a; border: 1px solid #dbe2ee; }
 .chip.status { background: #e8f3ea; color: #2f6b3c; border-color: #cfe5d4; }
@@ -169,21 +175,40 @@ pub fn export_queue_to_html(
             .unwrap_or_default();
         parts.push(format!("<h2>{wid}{}</h2>", esc(&tc.title)));
 
-        let mut chips = vec![];
+        // One labelled row per kind. A single undifferentiated row of
+        // chips left a reader guessing which pill was the module and
+        // which were tags - the label says so outright.
+        let mut rows = vec![];
         if !tc.automation_status.is_empty() {
-            chips.push(format!("<span class='chip status'>{}</span>", esc(&tc.automation_status)));
+            rows.push(format!(
+                "<div class='metarow'><span class='metalabel'>Automation Status</span>\
+                 <span class='metavals'><span class='chip status'>{}</span></span></div>",
+                esc(&tc.automation_status)
+            ));
         }
         if !tc.module_value.is_empty() {
-            chips.push(format!("<span class='chip module'>{}</span>", esc(&tc.module_value)));
+            rows.push(format!(
+                "<div class='metarow'><span class='metalabel'>Module</span>\
+                 <span class='metavals'><span class='chip module'>{}</span></span></div>",
+                esc(&tc.module_value)
+            ));
         }
-        for tag in tc.tags.split(';') {
-            let tag = tag.trim();
-            if !tag.is_empty() {
-                chips.push(format!("<span class='chip'>{}</span>", esc(tag)));
-            }
+        let tags: Vec<String> = tc
+            .tags
+            .split(';')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(|t| format!("<span class='chip'>{}</span>", esc(t)))
+            .collect();
+        if !tags.is_empty() {
+            rows.push(format!(
+                "<div class='metarow'><span class='metalabel'>Tags</span>\
+                 <span class='metavals'>{}</span></div>",
+                tags.join("")
+            ));
         }
-        if !chips.is_empty() {
-            parts.push(format!("<div class='meta'>{}</div>", chips.join("")));
+        if !rows.is_empty() {
+            parts.push(format!("<div class='meta'>{}</div>", rows.join("")));
         }
 
         // Every case shows a Prerequisites block, even when empty (v1 rule).

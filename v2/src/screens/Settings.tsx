@@ -237,7 +237,10 @@ export default function Settings(_props: { org: string; project: string }) {
       </section>
       </div>
 
-      <section className="space-y-3">
+      {/* Masked in the visual regression suite: this panel's content
+          changes with every release (and every log line), which would
+          otherwise invalidate the Settings golden on each ship. */}
+      <section className="space-y-3" data-visual-mask="release-notes">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-text">
             {rightPanel === "changelog" ? "Changelog" : "App log"}

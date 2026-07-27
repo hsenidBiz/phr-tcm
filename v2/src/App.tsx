@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
-import { lazy, Suspense, useEffect, useRef, useState, type ComponentType } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ComponentType, useSyncExternalStore } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { applyRateLevel } from "./lib/adoRate";
+import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
+import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { cacheEntry } from "./lib/localCache";
 import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
@@ -215,15 +217,61 @@ export default function App() {
   // org/project + the detected custom-field refs. Fire-and-forget; the
   // bridge simply serves stale context until the next push.
   const { prefs: bridgePrefs } = useFieldRefs(org, project);
+  // Re-pushed when the AI Bridge tab toggles a tool, so the change reaches
+  // an assistant on its next tools/list rather than after a restart.
+  const disabledTools = useSyncExternalStore(subscribeDisabledTools, disabledToolsSnapshot);
   useEffect(() => {
     if (!signedIn || !org || !project) return;
     commands
       .bridgeStatus()
       .then(() =>
-        commands.setBridgeContext(org, project, bridgePrefs.moduleRef, bridgePrefs.preconditionsRef),
+        commands.setBridgeContext(
+          org,
+          project,
+          bridgePrefs.moduleRef,
+          bridgePrefs.preconditionsRef,
+          disabledTools,
+        ),
       )
       .catch(() => {});
-  }, [signedIn, org, project, bridgePrefs.moduleRef, bridgePrefs.preconditionsRef]);
+  }, [
+    signedIn,
+    org,
+    project,
+    bridgePrefs.moduleRef,
+    bridgePrefs.preconditionsRef,
+    disabledTools,
+  ]);
+
+  // Background check for work items newly assigned to you. Rust polls and
+  // emits; the choice of toast vs Windows notification is made here,
+  // because "can the user see the app" is a frontend question.
+  useEffect(() => {
+    if (!signedIn || !org || !project) return;
+    commands.watchAssignedWork(org, project).catch(() => {});
+  }, [signedIn, org, project]);
+
+  useEffect(() => {
+    const un = events.workAssigned.listen((e) => {
+      const items = e.payload.items;
+      if (items.length === 0) return;
+      const { title, body } = summarize(items);
+      if (appIsInView()) {
+        toast.info(title, { description: body, duration: 10_000 });
+        return;
+      }
+      // Out of view - go to the OS, and fall back to a toast they will
+      // find on return if notifications are refused.
+      osNotify(title, body)
+        .then((sent) => {
+          if (!sent) toast.info(title, { description: body, duration: 10_000 });
+        })
+        .catch(() => {});
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
 
   const dismissChangelog = () => {
     getVersion()

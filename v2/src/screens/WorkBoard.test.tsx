@@ -361,7 +361,7 @@ test("the legacy Hide Done preference migrates to a collapsed Done rail (no card
   renderBoard();
   const done = await screen.findByTestId("col-Done");
   // Rail: a restore control, no cards - so it can't stretch the board.
-  expect(within(done).getByLabelText("Show Done")).toBeInTheDocument();
+  expect(within(done).getByLabelText("Open Done")).toBeInTheDocument();
   expect(within(done).queryByText("Fix bug")).not.toBeInTheDocument();
   expect(localStorage.getItem("tcm-v2-hidden-cols")).toBe(JSON.stringify(["Done"]));
   expect(localStorage.getItem("tcm-v2-hide-done")).toBeNull();
@@ -380,17 +380,17 @@ test("any column can hide via its eye, but the last visible one is protected", a
   // phase (the column shrinks empty, so card text never squishes) - await it.
   fireEvent.click(screen.getByLabelText("Hide To Do"));
   fireEvent.click(screen.getByLabelText("Hide In Progress"));
-  expect(await screen.findByLabelText("Show To Do")).toBeInTheDocument();
-  expect(await screen.findByLabelText("Show In Progress")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Open To Do")).toBeInTheDocument();
+  expect(await screen.findByLabelText("Open In Progress")).toBeInTheDocument();
 
   // The third column's eye is disabled - all three can never hide at once.
-  const lastEye = screen.getByLabelText("Hide Done");
-  expect(lastEye).toBeDisabled();
-  fireEvent.click(lastEye);
-  expect(screen.queryByLabelText("Show Done")).not.toBeInTheDocument();
+  const lastHide = screen.getByLabelText("Hide Done");
+  expect(lastHide).toBeDisabled();
+  fireEvent.click(lastHide);
+  expect(screen.queryByLabelText("Open Done")).not.toBeInTheDocument();
 
   // Restoring one re-enables hiding the rest.
-  fireEvent.click(screen.getByLabelText("Show To Do"));
+  fireEvent.click(screen.getByLabelText("Open To Do"));
   expect(screen.getByLabelText("Hide Done")).toBeEnabled();
   expect(localStorage.getItem("tcm-v2-hidden-cols")).toBe(JSON.stringify(["In Progress"]));
   localStorage.removeItem("tcm-v2-hidden-cols");

@@ -49,7 +49,13 @@ async function settle(page: Page) {
 
 async function shoot(page: Page, name: string) {
   await settle(page);
-  await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: false });
+  await expect(page).toHaveScreenshot(`${name}.png`, {
+    fullPage: false,
+    // Panels whose content moves with every release (changelog entries,
+    // app log lines) are masked - otherwise shipping anything at all
+    // reddens a golden that has nothing to do with the change.
+    mask: [page.locator("[data-visual-mask]")],
+  });
 }
 
 const CASE_TABS = [

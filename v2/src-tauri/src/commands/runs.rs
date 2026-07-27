@@ -198,6 +198,8 @@ pub async fn run_history(
 /// descendants): gathers points + failure details (comments, linked bugs),
 /// renders the failures-first HTML to a temp file and opens the browser.
 /// GET-only against ADO; writes only the local temp file.
+/// `palette` is the app's live theme, so the page opens looking like the
+/// app the user just came from rather than a hardcoded light page.
 #[tauri::command]
 #[specta::specta]
 pub async fn view_execution_report(
@@ -207,6 +209,7 @@ pub async fn view_execution_report(
     plan_id: i32,
     suite_ids: Vec<i32>,
     title: String,
+    palette: report::ReportPalette,
 ) -> Result<(), String> {
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
     let client = ado::AdoClient::new(token);
@@ -257,6 +260,7 @@ pub async fn view_execution_report(
         &points,
         &failures,
         &generated_at,
+        &palette,
     );
     let path = std::env::temp_dir().join(format!(
         "execution-report-{}-{}.html",

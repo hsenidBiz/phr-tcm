@@ -79,3 +79,55 @@ pub fn audio_capture_start(app: tauri::AppHandle) -> Result<(), String> {
 pub fn audio_capture_stop() {
     audio::stop();
 }
+
+/// Start the background check for newly assigned work items. Idempotent:
+/// the first call arms the loop, later calls only update the scope it
+/// polls, so switching project doesn't spawn a second task.
+#[tauri::command]
+#[specta::specta]
+pub fn watch_assigned_work(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<(), String> {
+    use std::sync::Mutex;
+    use tauri_specta::Event;
+
+    static SCOPE: Mutex<Option<(String, String)>> = Mutex::new(None);
+    static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    *SCOPE.lock().unwrap() = Some((organization, project));
+    if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(()); // already running against the new scope
+    }
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(
+                crate::assigned_watch::POLL_SECS,
+            ))
+            .await;
+            let Some((org, project)) = SCOPE.lock().unwrap().clone() else {
+                continue;
+            };
+            // Not signed in yet, or the token expired - skip this round
+            // rather than nagging; the next one will pick it up.
+            let Ok(token) = crate::state::get_fresh_token(&app).await else {
+                continue;
+            };
+            let client = crate::ado::AdoClient::new(token);
+            match crate::assigned_watch::check_once(&client, &org, &project).await {
+                Ok(items) if !items.is_empty() => {
+                    crate::applog::info(format!(
+                        "{} work item(s) newly assigned",
+                        items.len()
+                    ));
+                    let _ = crate::events::WorkAssigned { items }.emit(&app);
+                }
+                Ok(_) => {}
+                Err(e) => crate::applog::error(format!("assigned-work check failed: {e}")),
+            }
+        }
+    });
+    Ok(())
+}

@@ -13,6 +13,7 @@ import {
   PlayCircle,
 } from "lucide-react";
 import { useState } from "react";
+import { Tooltip } from "./ui/tooltip";
 import { cn } from "../lib/cn";
 
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
@@ -21,22 +22,30 @@ import { cn } from "../lib/cn";
 export type Section = "manual" | "import" | "edit" | "view" | "run" | "suites" | "ai" | "settings";
 export type WorkSection = "prs" | "board" | "create";
 
-type Item<T extends string> = { id: T; label: string; icon: typeof PenLine };
+type Item<T extends string> = {
+  id: T;
+  label: string;
+  icon: typeof PenLine;
+  /** The icon's own colour, so the rail is scannable by hue when it is
+   * collapsed to icons alone. The selected row's tinted background stays
+   * the theme accent - only the glyph is coloured. */
+  tone: string;
+};
 
 const CASE_ITEMS: Item<Section>[] = [
-  { id: "manual", label: "Manual Entry", icon: PenLine },
-  { id: "import", label: "Import File", icon: FileUp },
-  { id: "edit", label: "Update Test Cases", icon: Pencil },
-  { id: "view", label: "View Test Cases", icon: Eye },
-  { id: "run", label: "Run Tests", icon: PlayCircle },
-  { id: "suites", label: "Test Suites", icon: FolderTree },
-  { id: "ai", label: "AI Bridge", icon: Bot },
+  { id: "manual", label: "Manual Entry", icon: PenLine, tone: "nav-ico nav-ico-manual" },
+  { id: "import", label: "Import File", icon: FileUp, tone: "nav-ico nav-ico-import" },
+  { id: "edit", label: "Update Test Cases", icon: Pencil, tone: "nav-ico nav-ico-edit" },
+  { id: "view", label: "View Test Cases", icon: Eye, tone: "nav-ico nav-ico-view" },
+  { id: "run", label: "Run Tests", icon: PlayCircle, tone: "nav-ico nav-ico-run" },
+  { id: "suites", label: "Test Suites", icon: FolderTree, tone: "nav-ico nav-ico-suites" },
+  { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
 ];
 
 export const WORK_ITEMS: Item<WorkSection>[] = [
-  { id: "prs", label: "Pull Requests", icon: GitPullRequest },
-  { id: "board", label: "Board", icon: KanbanSquare },
-  { id: "create", label: "New Work Item", icon: FilePlus2 },
+  { id: "prs", label: "Pull Requests", icon: GitPullRequest, tone: "nav-ico nav-ico-prs" },
+  { id: "board", label: "Board", icon: KanbanSquare, tone: "nav-ico nav-ico-board" },
+  { id: "create", label: "New Work Item", icon: FilePlus2, tone: "nav-ico nav-ico-create" },
 ];
 
 const COLLAPSE_KEY = "tcm-v2-sidebar";
@@ -84,28 +93,39 @@ export default function Sidebar<T extends string = Section>({
       )}
       style={{ transitionDelay: collapsed ? "120ms" : "0ms" }}
     >
-      {list.map(({ id, label, icon: Icon }) => (
+      {list.map(({ id, label, icon: Icon, tone }) => (
+        // Only when collapsed: with the rail open the label is right there.
+        <Tooltip key={id} label={label} side="right" disabled={!collapsed}>
         <button
-          key={id}
           data-tour={`nav-${id}`}
           onClick={() => onSelect(id)}
           aria-current={section === id ? "page" : undefined}
-          title={label}
+          aria-label={label}
           className={cn(
             // px-3 keeps the icon at the exact same x whether the rail is
             // wide or collapsed (8px nav pad + 12px = centered in w-14), so
             // icons stay perfectly still while the width animates.
-            "flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors",
+            "group flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors",
             section === id
               ? "bg-accent-soft font-medium text-accent"
               : "text-muted hover:bg-surface-2 hover:text-text",
           )}
         >
-          <Icon size={16} className="shrink-0" />
+          <Icon
+            size={16}
+            className={cn(
+              "shrink-0 transition-colors",
+              // Selected rows keep the accent so the highlight reads as
+              // one block; unselected rows carry the icon's own colour,
+              // dimmed until hover so the rail stays calm.
+              section === id ? "nav-ico-on text-accent" : tone,
+            )}
+          />
           <span className={labelCls} style={labelDelay}>
             {label}
           </span>
         </button>
+        </Tooltip>
       ))}
       <div className="mt-auto space-y-1">
         <div

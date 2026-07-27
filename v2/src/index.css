@@ -40,6 +40,35 @@
   --color-danger: #dc2626;
   --color-success: #15803d;
   --color-warning: #a16207;
+
+  /* Sidebar icon hues. Each nav item gets its own colour so the collapsed
+     icon rail is scannable at a glance; the selected row still uses the
+     theme accent, so only the glyph is coloured. Tokens rather than
+     Tailwind palette classes, so themes can retune them (and so the
+     colour-system gate stays satisfied). */
+  --color-nav-manual: #0284c7;
+  --color-nav-import: #475569;
+  --color-nav-edit: #b45309;
+  --color-nav-view: #7c3aed;
+  --color-nav-run: #15803d;
+  --color-nav-suites: #c2410c;
+  --color-nav-ai: #a21caf;
+  --color-nav-prs: #0f766e;
+  --color-nav-board: #4338ca;
+  --color-nav-create: #4d7c0f;
+
+  /* Second tone: the meaningful part of each glyph (pupil, play triangle,
+     robot eyes). Chosen to read against the icon's own colour. */
+  --color-nav-manual-2: #f59e0b;
+  --color-nav-import-2: #0284c7;
+  --color-nav-edit-2: #64748b;
+  --color-nav-view-2: #0891b2;
+  --color-nav-run-2: #f8fafc;
+  --color-nav-suites-2: #a16207;
+  --color-nav-ai-2: #22d3ee;
+  --color-nav-prs-2: #c2410c;
+  --color-nav-board-2: #db2777;
+  --color-nav-create-2: #15803d;
 }
 
 .dark {
@@ -59,6 +88,29 @@
   --color-danger: #f87171;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
+
+  /* Brighter on dark: the light values sink into the surface. */
+  --color-nav-manual: #38bdf8;
+  --color-nav-import: #e2e8f0;
+  --color-nav-edit: #fbbf24;
+  --color-nav-view: #a78bfa;
+  --color-nav-run: #4ade80;
+  --color-nav-suites: #fb923c;
+  --color-nav-ai: #e879f9;
+  --color-nav-prs: #2dd4bf;
+  --color-nav-board: #818cf8;
+  --color-nav-create: #a3e635;
+
+  --color-nav-manual-2: #fbbf24;
+  --color-nav-import-2: #38bdf8;
+  --color-nav-edit-2: #cbd5e1;
+  --color-nav-view-2: #22d3ee;
+  --color-nav-run-2: #052e16;
+  --color-nav-suites-2: #fcd34d;
+  --color-nav-ai-2: #67e8f9;
+  --color-nav-prs-2: #fb923c;
+  --color-nav-board-2: #f472b6;
+  --color-nav-create-2: #166534;
 }
 
 @theme inline {
@@ -576,3 +628,117 @@ table {
     opacity: 0.6;
   }
 }
+
+/* The slim rail a hidden board column collapses to. Its contents mount
+   the instant the shrink starts, so they fade in over roughly the same
+   window - without it the Open button pops in against a moving edge. */
+@keyframes rail-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.rail-in {
+  animation: rail-in 220ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-in {
+    animation: none;
+  }
+}
+
+/* One class per nav item, so Sidebar.tsx names a token rather than a raw
+   colour. Dimmed at rest and full strength on hover, which keeps the rail
+   calm without losing the colour cue. */
+.nav-ico {
+  color: var(--nav-ico);
+  opacity: 0.85;
+  transition: opacity 150ms ease;
+}
+.group:hover .nav-ico {
+  opacity: 1;
+}
+.nav-ico-manual { --nav-ico: var(--color-nav-manual); }
+.nav-ico-import { --nav-ico: var(--color-nav-import); }
+.nav-ico-edit { --nav-ico: var(--color-nav-edit); }
+.nav-ico-view { --nav-ico: var(--color-nav-view); }
+.nav-ico-run { --nav-ico: var(--color-nav-run); }
+.nav-ico-suites { --nav-ico: var(--color-nav-suites); }
+.nav-ico-ai { --nav-ico: var(--color-nav-ai); }
+.nav-ico-prs { --nav-ico: var(--color-nav-prs); }
+.nav-ico-board { --nav-ico: var(--color-nav-board); }
+.nav-ico-create { --nav-ico: var(--color-nav-create); }
+
+/* Tooltip entrance: a short fade with a hair of travel, so it reads as
+   appearing rather than blinking into place. Portalled to <body>, so it
+   can never affect the layout it points at. */
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Two-tone sidebar icons -------------------------------------------
+   Each icon gets a second colour on the part that carries its meaning:
+   the pupil in the eye, the play triangle, the robot's eyes, the pencil
+   tip, the arrow on the import file.
+
+   Sub-parts are selected by their exact path data rather than by index.
+   That is deliberate: if lucide ever redraws an icon the selector simply
+   stops matching and the glyph falls back to its single colour, instead
+   of an nth-child rule silently painting the wrong stroke. */
+.nav-ico-2 {
+  color: var(--nav-ico-2);
+}
+
+/* Manual Entry - the writing line under the pen. */
+.nav-ico-manual path[d="M13 21h8"] { stroke: var(--nav-ico-2); }
+/* Import File - the up arrow out of the page. */
+.nav-ico-import path[d="M12 12v6"],
+.nav-ico-import path[d="m15 15-3-3-3 3"] { stroke: var(--nav-ico-2); }
+/* Update - the pencil's tip. */
+.nav-ico-edit path[d="m15 5 4 4"] { stroke: var(--nav-ico-2); }
+/* View - the pupil, filled so it reads as an iris at 16px. */
+.nav-ico-view circle { stroke: var(--nav-ico-2); fill: var(--nav-ico-2); }
+/* Run - the play triangle (the only path in this icon), filled solid. */
+.nav-ico-run path { stroke: var(--nav-ico-2); fill: var(--nav-ico-2); }
+/* AI Bridge - the robot's eyes and antennae. */
+.nav-ico-ai path[d="M15 13v2"],
+.nav-ico-ai path[d="M9 13v2"],
+.nav-ico-ai path[d="M12 8V4H8"] { stroke: var(--nav-ico-2); }
+/* Pull Requests / Board / New item - the nodes and the plus. */
+.nav-ico-prs circle { stroke: var(--nav-ico-2); fill: var(--nav-ico-2); }
+.nav-ico-create path[d="M9 15h6"],
+.nav-ico-create path[d="M12 18v-6"] { stroke: var(--nav-ico-2); }
+
+.nav-ico-manual { --nav-ico-2: var(--color-nav-manual-2); }
+.nav-ico-import { --nav-ico-2: var(--color-nav-import-2); }
+.nav-ico-edit { --nav-ico-2: var(--color-nav-edit-2); }
+.nav-ico-view { --nav-ico-2: var(--color-nav-view-2); }
+.nav-ico-run { --nav-ico-2: var(--color-nav-run-2); }
+.nav-ico-suites { --nav-ico-2: var(--color-nav-suites-2); }
+.nav-ico-ai { --nav-ico-2: var(--color-nav-ai-2); }
+.nav-ico-prs { --nav-ico-2: var(--color-nav-prs-2); }
+.nav-ico-board { --nav-ico-2: var(--color-nav-board-2); }
+.nav-ico-create { --nav-ico-2: var(--color-nav-create-2); }
+
+/* The selected row is one accent-coloured block - a second hue inside it
+   would fight the highlight. */
+.nav-ico-on path,
+.nav-ico-on circle,
+.nav-ico-on rect {
+  stroke: currentColor;
+  fill: none;
+}
+/* Test Suites - the tree connectors, leaving the two folders in the
+   base colour. Short, stable path data, same rule as the rest. */
+.nav-ico-suites path[d="M3 5a2 2 0 0 0 2 2h3"],
+.nav-ico-suites path[d="M3 3v13a2 2 0 0 0 2 2h3"] { stroke: var(--nav-ico-2); }

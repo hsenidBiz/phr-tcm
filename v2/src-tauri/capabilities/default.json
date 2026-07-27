@@ -2,7 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window and the test runner window",
-  "windows": ["main", "runner"],
+  "windows": [
+    "main",
+    "runner"
+  ],
   "permissions": [
     "core:default",
     "opener:default",
@@ -19,6 +22,10 @@
     "core:window:allow-is-maximized",
     "core:window:allow-show",
     "core:window:allow-hide",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "notification:default",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify"
   ]
 }

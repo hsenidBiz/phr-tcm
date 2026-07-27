@@ -56,6 +56,10 @@ futures = { version = "0.3.32", default-features = false, features = ["std", "as
 cpal = "0.18.1"
 rustfft = "6.4.1"
 tauri-plugin-clipboard-manager = "2.3.2"
+# OS-level file change notification (ReadDirectoryChangesW on Windows) so a
+# watched import file costs nothing while it sits still - see filewatch.rs.
+notify = "8.2.0"
+tauri-plugin-notification = "2.3.3"
 
 [dev-dependencies]
 wiremock = "0.6.5"

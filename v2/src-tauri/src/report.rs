@@ -63,36 +63,137 @@ fn outcome_label(outcome: &str) -> String {
     }
 }
 
+/// The app's palette, handed over when a report is opened so the page in
+/// the browser matches the app the user just came from.
+///
+/// The values are read live from the running UI's CSS variables rather
+/// than duplicated here, so a new theme (or an accent preset composed on
+/// top of one) needs no change in Rust. Every field falls back to the
+/// original light styling if it arrives empty, which is what happens for
+/// any caller that doesn't supply a palette.
+#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
+pub struct ReportPalette {
+    pub bg: String,
+    pub surface: String,
+    pub surface_2: String,
+    pub text: String,
+    pub muted: String,
+    pub faint: String,
+    pub border: String,
+    pub accent: String,
+    pub success: String,
+    pub danger: String,
+    pub warning: String,
+    /// Drives `color-scheme`, so form controls and scrollbars follow too.
+    pub dark: bool,
+}
+
+impl Default for ReportPalette {
+    /// The report's original light styling.
+    fn default() -> Self {
+        Self {
+            bg: "#f3f5f8".into(),
+            surface: "#ffffff".into(),
+            surface_2: "#eef1f5".into(),
+            text: "#1f2530".into(),
+            muted: "#5b6472".into(),
+            faint: "#8a93a1".into(),
+            border: "#e8ecf1".into(),
+            accent: "#15803d".into(),
+            success: "#16a34a".into(),
+            danger: "#dc2626".into(),
+            warning: "#d97706".into(),
+            dark: false,
+        }
+    }
+}
+
+impl ReportPalette {
+    /// Replace any empty field with the light default: a half-populated
+    /// palette must never render unreadable text on an unstyled page.
+    fn filled(&self) -> Self {
+        let d = Self::default();
+        let or = |v: &str, fallback: &str| {
+            let v = v.trim();
+            if v.is_empty() { fallback.to_string() } else { v.to_string() }
+        };
+        Self {
+            bg: or(&self.bg, &d.bg),
+            surface: or(&self.surface, &d.surface),
+            surface_2: or(&self.surface_2, &d.surface_2),
+            text: or(&self.text, &d.text),
+            muted: or(&self.muted, &d.muted),
+            faint: or(&self.faint, &d.faint),
+            border: or(&self.border, &d.border),
+            accent: or(&self.accent, &d.accent),
+            success: or(&self.success, &d.success),
+            danger: or(&self.danger, &d.danger),
+            warning: or(&self.warning, &d.warning),
+            dark: self.dark,
+        }
+    }
+
+    fn vars(&self) -> String {
+        let p = self.filled();
+        format!(
+            ":root {{ color-scheme: {scheme};\n\
+             --bg: {bg}; --surface: {surface}; --surface-2: {surface_2};\n\
+             --text: {text}; --muted: {muted}; --faint: {faint}; --border: {border};\n\
+             --accent: {accent}; --success: {success}; --danger: {danger}; --warning: {warning}; }}",
+            scheme = if p.dark { "dark" } else { "light" },
+            bg = p.bg,
+            surface = p.surface,
+            surface_2 = p.surface_2,
+            text = p.text,
+            muted = p.muted,
+            faint = p.faint,
+            border = p.border,
+            accent = p.accent,
+            success = p.success,
+            danger = p.danger,
+            warning = p.warning,
+        )
+    }
+}
+
+/// Everything here is expressed against the variables above, so the same
+/// stylesheet serves every theme. Cards carry a real border as well as a
+/// shadow - a drop shadow is invisible on a black background, and the
+/// table would otherwise dissolve into the page on the OLED theme.
 const CSS: &str = r#"
-:root { color-scheme: light; }
 * { box-sizing: border-box; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px 16px;
-       background: #f3f5f8; color: #1f2530; }
+       background: var(--bg); color: var(--text); }
 .page { max-width: 900px; margin: 0 auto; }
 h1 { font-size: 22px; margin: 0 0 4px; }
-.sub { color: #5b6472; font-size: 13px; margin-bottom: 20px; }
+.sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 .headline { display: flex; gap: 24px; align-items: baseline; margin-bottom: 12px; }
 .rate { font-size: 40px; font-weight: 700; }
-.bar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; margin: 8px 0 4px; }
+.bar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; margin: 8px 0 4px;
+       background: var(--surface-2); }
 .bar span { display: block; height: 100%; }
-.legend { font-size: 12px; color: #5b6472; margin-bottom: 24px; }
-.passed { background: #16a34a; } .failed { background: #dc2626; }
-.blocked { background: #d97706; } .notapplicable { background: #94a3b8; }
-.neverrun { background: #e2e8f0; }
-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px;
-        overflow: hidden; box-shadow: 0 1px 3px rgb(15 23 42 / .08); font-size: 14px; }
-th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e8ecf1; }
-th { background: #eef1f5; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
-.o-failed { color: #dc2626; font-weight: 600; } .o-passed { color: #16a34a; }
-.o-blocked { color: #d97706; } .o-notapplicable, .o-neverrun { color: #94a3b8; }
+.legend { font-size: 12px; color: var(--muted); margin-bottom: 24px; }
+.passed { background: var(--success); } .failed { background: var(--danger); }
+.blocked { background: var(--warning); } .notapplicable { background: var(--faint); }
+.neverrun { background: var(--border); }
+table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px;
+        overflow: hidden; border: 1px solid var(--border); font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: none; }
+th { background: var(--surface-2); font-size: 12px; text-transform: uppercase;
+     letter-spacing: .03em; color: var(--muted); }
+.o-failed { color: var(--danger); font-weight: 600; } .o-passed { color: var(--success); }
+.o-blocked { color: var(--warning); } .o-notapplicable, .o-neverrun { color: var(--faint); }
 h2 { font-size: 16px; margin: 28px 0 8px; }
-.fail { background: #fff; border-left: 4px solid #dc2626; border-radius: 6px;
-        padding: 10px 14px; margin-bottom: 8px; box-shadow: 0 1px 3px rgb(15 23 42 / .08); }
+.fail { background: var(--surface); border: 1px solid var(--border);
+        border-left: 4px solid var(--danger); border-radius: 6px;
+        padding: 10px 14px; margin-bottom: 8px; }
 .fail .name { font-weight: 600; }
-.fail .comment { color: #414b5a; font-size: 13px; margin-top: 4px; white-space: pre-wrap; }
-.fail .bugs a { color: #b91c1c; font-size: 13px; margin-right: 8px; }
-.mono { font-family: Consolas, monospace; color: #7c8698; font-size: 12px; }
-.footer { color: #8a93a1; font-size: 12px; margin-top: 24px; }
+.fail .comment { color: var(--muted); font-size: 13px; margin-top: 4px; white-space: pre-wrap; }
+.fail .bugs a { color: var(--danger); font-size: 13px; margin-right: 8px; }
+.mono { font-family: Consolas, monospace; color: var(--faint); font-size: 12px; }
+.footer { color: var(--faint); font-size: 12px; margin-top: 24px; }
+a { color: var(--accent); }
 "#;
 
 /// Build the self-contained report. `failures` is keyed by point_id.
@@ -104,6 +205,7 @@ pub fn build_report_html(
     points: &[TestPoint],
     failures: &HashMap<i32, FailureInfo>,
     generated_at: &str,
+    palette: &ReportPalette,
 ) -> String {
     let total = points.len();
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -203,7 +305,7 @@ pub fn build_report_html(
     };
 
     format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>{t}</title><style>{CSS}</style></head>
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>{t}</title><style>{vars}{CSS}</style></head>
 <body><div class="page">
 <h1>Execution report — {t}</h1>
 <div class="sub">{org} / {proj}</div>
@@ -214,6 +316,7 @@ pub fn build_report_html(
 {failures_section}
 <div class="footer">Generated {generated_at} by Test Case Manager</div>
 </div></body></html>"#,
+        vars = palette.vars(),
         t = esc(title),
         org = esc(org),
         proj = esc(project),

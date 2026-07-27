@@ -13,6 +13,23 @@ export const commands = {
 	searchPbis: (organization: string, project: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis", { organization, project, query })),
 	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
 	parseImportFile: (path: string) => typedError<ImportResult, string>(__TAURI_INVOKE("parse_import_file", { path })),
+	/**
+	 *  One-shot content fingerprint. Used when a watch is (re)armed, to catch
+	 *  an edit made while the app was closed or the tab was elsewhere - the
+	 *  OS watcher only reports changes from the moment it starts. `None` means
+	 *  the file can't be read right now.
+	 */
+	fileStamp: (path: string) => __TAURI_INVOKE<string | null>("file_stamp", { path }),
+	/**
+	 *  Follow `path` for edits, emitting `WatchedFileChanged` per real content
+	 *  change. Several files can be followed at once; re-watching the same
+	 *  path replaces only that watch.
+	 */
+	watchFile: (path: string) => typedError<null, string>(__TAURI_INVOKE("watch_file", { path })),
+	/**  Stop following one file. Unknown paths are a no-op. */
+	unwatchFile: (path: string) => __TAURI_INVOKE<void>("unwatch_file", { path }),
+	/**  Stop following every file - used when the PBI scope changes. */
+	unwatchAllFiles: () => __TAURI_INVOKE<void>("unwatch_all_files"),
 	exportQueue: (path: string, queue: TestCase[]) => typedError<null, string>(__TAURI_INVOKE("export_queue", { path, queue })),
 	writeTemplate: (path: string) => typedError<null, string>(__TAURI_INVOKE("write_template", { path })),
 	/**
@@ -37,6 +54,8 @@ export const commands = {
 	 *  v1 (_state_for_column) and PATCHes System.State. Returns the state set.
 	 */
 	moveBoardItem: (organization: string, project: string, itemId: number, workItemType: string, column: string) => typedError<string, AdoError>(__TAURI_INVOKE("move_board_item", { organization, project, itemId, workItemType, column })),
+	/**  A work item's revision history, newest first. Read only. */
+	workItemHistory: (organization: string, project: string, id: number) => typedError<WorkRevision[], AdoError>(__TAURI_INVOKE("work_item_history", { organization, project, id })),
 	/**
 	 *  Start streaming AudioSpectrum events from system-audio loopback (the
 	 *  flask equalizer rings). No-op if already running; failures are silent by
@@ -64,6 +83,12 @@ export const commands = {
 	appLogDir: () => __TAURI_INVOKE<string>("app_log_dir"),
 	/**  Download the pending update and restart into it. */
 	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
+	/**
+	 *  Start the background check for newly assigned work items. Idempotent:
+	 *  the first call arms the loop, later calls only update the scope it
+	 *  polls, so switching project doesn't spawn a second task.
+	 */
+	watchAssignedWork: (organization: string, project: string) => typedError<null, string>(__TAURI_INVOKE("watch_assigned_work", { organization, project })),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
 	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**
@@ -113,6 +138,15 @@ export const commands = {
 	 */
 	fetchSharedQueue: (link: string) => typedError<SharedQueue, string>(__TAURI_INVOKE("fetch_shared_queue", { link })),
 	exportQueueHtml: (path: string, queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
+	/**
+	 *  The project's tag names, served from the shared reference cache.
+	 * 
+	 *  Serve-then-revalidate: a cached list comes back immediately - instantly
+	 *  on the second launch, since the cache is on disk - and a stale one is
+	 *  refreshed in the background for next time. Only a completely cold cache
+	 *  waits on Azure DevOps. The AI bridge reads the same cache, so an
+	 *  assistant asking for tags costs nothing extra (see refcache.rs).
+	 */
 	listProjectTags: (organization: string, project: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_project_tags", { organization, project })),
 	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),
 	/**
@@ -153,8 +187,10 @@ export const commands = {
 	 *  descendants): gathers points + failure details (comments, linked bugs),
 	 *  renders the failures-first HTML to a temp file and opens the browser.
 	 *  GET-only against ADO; writes only the local temp file.
+	 *  `palette` is the app's live theme, so the page opens looking like the
+	 *  app the user just came from rather than a hardcoded light page.
 	 */
-	viewExecutionReport: (organization: string, project: string, planId: number, suiteIds: number[], title: string) => typedError<null, string>(__TAURI_INVOKE("view_execution_report", { organization, project, planId, suiteIds, title })),
+	viewExecutionReport: (organization: string, project: string, planId: number, suiteIds: number[], title: string, palette: ReportPalette) => typedError<null, string>(__TAURI_INVOKE("view_execution_report", { organization, project, planId, suiteIds, title, palette })),
 	/**  Read any file for attaching to a result (name + base64 bytes). */
 	readFileB64: (path: string) => typedError<RunAttachmentOut, string>(__TAURI_INVOKE("read_file_b64", { path })),
 	/**
@@ -191,15 +227,17 @@ export const commands = {
 	 *  The frontend pushes its current org/project + detected field refs so
 	 *  bridge routes have defaults the AI never has to guess.
 	 */
-	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef }),
+	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[]) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools }),
 	detectAiTools: () => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools"),
 	registerAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id })),
 	/**
-	 *  Removes our entry from the tool's config. No installed-guard: if a
-	 *  config still carries our entry after the tool was uninstalled, removing
+	 *  Removes a server from the tool's config. No installed-guard: if a
+	 *  config still carries an entry after the tool was uninstalled, removing
 	 *  it is exactly what the user wants. Missing file/entry is a clean no-op.
 	 */
 	unregisterAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id })),
+	registerDbServer: (id: string, config: DbServerConfig) => typedError<null, string>(__TAURI_INVOKE("register_db_server", { id, config })),
+	unregisterDbServer: (id: string) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id })),
 };
 
 /** Events */
@@ -209,6 +247,8 @@ export const events = {
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
+	watchedFileChanged: makeEvent<WatchedFileChanged>("watched-file-changed"),
+	workAssigned: makeEvent<WorkAssigned>("work-assigned"),
 };
 
 /* Types */
@@ -218,6 +258,13 @@ export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail:
 	status: number,
 	body: string,
 } } | { kind: "Network"; detail: string };
+
+export type AssignedItem = {
+	id: number,
+	title: string,
+	work_item_type: string,
+	state: string,
+};
 
 export type AudioSpectrum = {
 	/**  `BAND_COUNT` values in 0..=1, low frequencies first. */
@@ -307,6 +354,22 @@ export type CreatedItem = {
 	url: string,
 };
 
+/**
+ *  The company's SQL Server MCP server, registered beside ours so an
+ *  assistant can read the schema and the test cases in one session. The
+ *  server itself is configured entirely through environment variables
+ *  (see its README); we only place them in the tool's config.
+ */
+export type DbServerConfig = {
+	/**  Path to the built PeoplesHR.DBMCPServer.exe. */
+	exe_path: string,
+	/**  "mssql" or "sqlserver". */
+	db_type: string,
+	connection_string: string,
+	/**  Comma-separated; blank means the server's own default (dbo). */
+	schema_filter: string,
+};
+
 /**  One environment a release carried this build into. */
 export type Deployment = {
 	/**  Release name, e.g. "Release-482". */
@@ -328,7 +391,8 @@ export type DetectedTool = {
 	id: string,
 	name: string,
 	installed: boolean,
-	registered: boolean,
+	/**  Which of `MANAGED_SERVERS` this tool's config currently carries. */
+	registered_servers: string[],
 };
 
 export type EnsuredSuite = {
@@ -361,6 +425,17 @@ export type ExtraField = {
 export type ExtraPage = {
 	name: string,
 	fields: ExtraField[],
+};
+
+/**  One field's before/after inside a revision. */
+export type FieldChange = {
+	reference_name: string,
+	/**  Human label ("Remaining Work"), not the reference name. */
+	label: string,
+	/**  Empty when the field had no previous value. */
+	old: string,
+	/**  Empty when the field was cleared. */
+	new: string,
 };
 
 export type FieldPatch = {
@@ -582,6 +657,32 @@ export type RepoRef = {
 	name: string,
 };
 
+/**
+ *  The app's palette, handed over when a report is opened so the page in
+ *  the browser matches the app the user just came from.
+ * 
+ *  The values are read live from the running UI's CSS variables rather
+ *  than duplicated here, so a new theme (or an accent preset composed on
+ *  top of one) needs no change in Rust. Every field falls back to the
+ *  original light styling if it arrives empty, which is what happens for
+ *  any caller that doesn't supply a palette.
+ */
+export type ReportPalette = {
+	bg: string,
+	surface: string,
+	surface_2: string,
+	text: string,
+	muted: string,
+	faint: string,
+	border: string,
+	accent: string,
+	success: string,
+	danger: string,
+	warning: string,
+	/**  Drives `color-scheme`, so form controls and scrollbars follow too. */
+	dark: boolean,
+};
+
 export type ResultDetail = {
 	outcome: string,
 	comment: string,
@@ -783,6 +884,25 @@ export type TimelineTask = {
 	log_id: number,
 };
 
+/**
+ *  Emitted when the JSON file an import is following changes on disk -
+ *  once per real content change, never on a save that rewrote the same
+ *  bytes. `stamp` is the new fingerprint (see filewatch.rs).
+ */
+export type WatchedFileChanged = {
+	path: string,
+	stamp: string,
+};
+
+/**
+ *  Emitted when work items have been newly assigned to the signed-in
+ *  user. The frontend decides how to surface them: a toast when the app
+ *  has focus, an OS notification when it doesn't.
+ */
+export type WorkAssigned = {
+	items: AssignedItem[],
+};
+
 export type WorkComment = {
 	id: number,
 	text: string,
@@ -838,6 +958,25 @@ export type WorkItemDetail = {
 	 *  <img> gets 401). Field values themselves stay byte-faithful.
 	 */
 	inline_images: InlineImage[],
+};
+
+/**  One entry in a work item's history: everything one save changed. */
+export type WorkRevision = {
+	rev: number,
+	by: string,
+	avatar_url: string,
+	/**  ISO 8601; empty if ADO gave no usable date. */
+	at: string,
+	fields: FieldChange[],
+	links_added: string[],
+	links_removed: string[],
+	/**
+	 *  Pulled out of `fields` so the timeline can lead with the state
+	 *  move, which is what people scan history for.
+	 */
+	state_from: string,
+	state_to: string,
+	comment_added: boolean,
 };
 
 /* Tauri Specta runtime */

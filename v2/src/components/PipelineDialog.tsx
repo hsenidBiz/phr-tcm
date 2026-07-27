@@ -8,8 +8,10 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertCircle,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   ExternalLink,
   Rocket,
   ScrollText,
@@ -21,6 +23,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type BuildStage, type PrBuild } from "../bindings";
 import { cn } from "../lib/cn";
+import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
 import { Input } from "./ui/input";
 import { Modal } from "./ui/modal";
@@ -153,7 +156,7 @@ function splitStamp(line: string): [string, string] {
 /** One step's output in its own wide dialog - the inline tree stays
  * readable and the log gets the room it actually needs. Polled while the
  * step is still running, so it fills in the way ADO's pane does. */
-function LogDialog({
+export function LogDialog({
   org,
   project,
   buildId,
@@ -179,9 +182,26 @@ function LogDialog({
     retry: false,
   });
 
-  const lines = (log.data ?? "").replace(/\s+$/, "").split("\n");
+  const [copied, setCopied] = useState(false);
+  const raw = log.data ?? "";
+  const lines = raw.replace(/\s+$/, "").split("\n");
+
+  const copy = async () => {
+    try {
+      await copyText(raw);
+      setCopied(true);
+      // Long enough to register, short enough that the button is ready
+      // again by the time anyone wants it.
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error("Could not copy the log.");
+    }
+  };
+
   return (
-    <Modal onClose={onClose} className="flex max-h-[88vh] w-[90vw] max-w-5xl flex-col">
+    // No max width: build logs have long lines, and the useful width is
+    // however much the window has. Resizing the window resizes this.
+    <Modal onClose={onClose} className="flex h-[88vh] w-[94vw] flex-col">
       <header className="flex items-center gap-2 border-b border-border px-4 py-3">
         <ScrollText size={14} className="shrink-0 text-muted" />
         <h3 className="min-w-0 flex-1 break-words text-sm font-semibold text-text">{title}</h3>
@@ -198,7 +218,10 @@ function LogDialog({
           <X size={15} />
         </button>
       </header>
-      <div className="id-mono min-h-0 flex-1 overflow-auto bg-bg p-3 text-[12px] leading-relaxed">
+      {/* The scroll area is nested inside a non-scrolling box so the copy
+          button can be pinned to the corner instead of scrolling away. */}
+      <div className="relative min-h-0 flex-1">
+      <div className="id-mono h-full overflow-auto bg-bg p-3 pb-12 text-[12px] leading-relaxed">
         {log.isPending ? (
           <p className="text-faint">Loading log…</p>
         ) : log.isError ? (
@@ -220,6 +243,22 @@ function LogDialog({
             {live && <p className="pt-1 text-accent">● still running…</p>}
           </>
         )}
+        </div>
+        <button
+          aria-label="Copy log"
+          title="Copy the whole log to the clipboard"
+          disabled={!raw}
+          className={cn(
+            "absolute bottom-3 right-4 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs shadow-lg backdrop-blur transition-colors disabled:opacity-40",
+            copied
+              ? "border-success/60 bg-surface/95 text-success"
+              : "border-border bg-surface/95 text-muted hover:border-accent hover:text-accent",
+          )}
+          onClick={copy}
+        >
+          {copied ? <Check size={13} /> : <Copy size={13} />}
+          {copied ? "Copied" : "Copy log"}
+        </button>
       </div>
     </Modal>
   );
