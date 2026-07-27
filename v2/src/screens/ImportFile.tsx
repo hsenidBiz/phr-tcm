@@ -1,13 +1,24 @@
 import { useMutation } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { commands, type PbiHit, type SharedQueue } from "../bindings";
+import { commands, events, type PbiHit, type SharedQueue } from "../bindings";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import QueueSection from "../components/QueueSection";
+import SyncReport from "../components/SyncReport";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Modal } from "../components/ui/modal";
+import {
+  fileName,
+  loadWatches,
+  saveWatches,
+  syncFromFile,
+  upsertWatch,
+  withoutFileCases,
+  type SyncChange,
+  type WatchedFile,
+} from "../lib/fileSync";
 import { useQueue } from "../hooks/useQueue";
 
 export default function ImportFile({
@@ -37,6 +48,183 @@ export default function ImportFile({
     data: SharedQueue;
     extraWarnings: string[];
   } | null>(null);
+
+  // Every JSON file this queue was imported from, so an assistant editing
+  // any of them flows straight through. Persisted per PBI, so leaving the
+  // tab (or the app) doesn't stop the watches.
+  const [watches, setWatchesState] = useState<WatchedFile[]>([]);
+  const [report, setReport] = useState<{
+    changes: SyncChange[];
+    file: string;
+    warnings: number;
+  } | null>(null);
+  // A watch the user asked to drop, pending the "and its cases?" answer.
+  const [dropping, setDropping] = useState<WatchedFile | null>(null);
+
+  // Keyed on the id, never the object: a new PbiHit identity on every
+  // render would re-arm the effects below and could cancel an in-flight
+  // re-parse forever.
+  const pbiId = pbi?.id ?? null;
+  const setWatches = useCallback(
+    (next: WatchedFile[] | ((prev: WatchedFile[]) => WatchedFile[])) => {
+      setWatchesState((prev) => {
+        const list = typeof next === "function" ? next(prev) : next;
+        if (pbiId != null) saveWatches(org, pbiId, list);
+        return list;
+      });
+    },
+    [org, pbiId],
+  );
+
+  // Scope switch -> that PBI's watches, and drop a report about the old one.
+  useEffect(() => {
+    setWatchesState(pbiId != null ? loadWatches(org, pbiId) : []);
+    setReport(null);
+    setDropping(null);
+  }, [org, pbiId]);
+
+  // The reconcile reads the queue but must not re-run when it changes -
+  // only a new file fingerprint should trigger it.
+  const queueRef = useRef(queue);
+  queueRef.current = queue;
+
+  // Newest fingerprint per path, as reported by the OS watcher. Nothing
+  // polls - untouched files cost nothing at all.
+  const [detected, setDetected] = useState<Record<string, string>>({});
+  // A stable key so the arming effect re-runs when the SET of watched
+  // paths changes, but not when a fingerprint or snapshot does.
+  const watchedPaths = JSON.stringify(watches.map((w) => w.path));
+
+  useEffect(() => {
+    const paths: string[] = JSON.parse(watchedPaths);
+    if (paths.length === 0) return;
+    let live = true;
+    let unlisten: (() => void) | undefined;
+
+    void (async () => {
+      for (const path of paths) {
+        const r = await commands.watchFile(path);
+        if (!live) return;
+        if (r.status === "error") {
+          toast.error(`Could not watch ${fileName(path)}: ${r.error}`);
+          setWatches((prev) => prev.filter((w) => w.path !== path));
+          continue;
+        }
+        // The watcher only reports changes from now on, so check once for
+        // an edit made while the app was closed or this tab was elsewhere.
+        const current = await commands.fileStamp(path);
+        if (live && current) setDetected((d) => ({ ...d, [path]: current }));
+      }
+    })();
+
+    void events.watchedFileChanged
+      .listen((e) => {
+        setDetected((d) => ({ ...d, [e.payload.path]: e.payload.stamp }));
+      })
+      .then((f) => {
+        if (live) unlisten = f;
+        else f();
+      });
+
+    return () => {
+      live = false;
+      // Teardown must never throw or reject: this also runs when the app
+      // is shutting down, where the IPC bridge may already be gone.
+      // `unlisten` resolves asynchronously despite its void signature.
+      void (async () => {
+        try {
+          await unlisten?.();
+        } catch {
+          /* already detached */
+        }
+      })();
+      void commands.unwatchAllFiles().catch(() => {});
+    };
+    // Only the SET of paths re-arms the watchers; a new fingerprint must not.
+  }, [watchedPaths, setWatches]);
+
+  // One reconcile per file whose fingerprint moved. Serialized through a
+  // ref-guard so two files saved at once can't interleave their queue
+  // writes and lose one of them.
+  const syncing = useRef(false);
+  useEffect(() => {
+    const stale = watches.find((w) => detected[w.path] && detected[w.path] !== w.stamp);
+    if (!stale || syncing.current) return;
+
+    syncing.current = true;
+    let cancelled = false;
+    const fresh = detected[stale.path];
+    void (async () => {
+      try {
+        const r = await commands.parseImportFile(stale.path);
+        if (cancelled) return;
+        if (r.status === "error") {
+          // Now invalid JSON. Adopt the fingerprint anyway, so this same
+          // broken content isn't re-parsed and re-toasted on the next event.
+          setWatches((prev) =>
+            prev.map((w) => (w.path === stale.path ? { ...w, stamp: fresh } : w)),
+          );
+          toast.error(`${fileName(stale.path)} could not be read: ${r.error}`);
+          return;
+        }
+        const synced = syncFromFile(queueRef.current, stale.snapshot, r.data.cases);
+        setWatches((prev) =>
+          prev.map((w) =>
+            w.path === stale.path ? { ...w, stamp: fresh, snapshot: synced.snapshot } : w,
+          ),
+        );
+        setWarnings(r.data.warnings);
+        if (synced.changes.length > 0) setQueue(synced.queue);
+        // Report a save that produced only warnings too - a draft that
+        // stopped being valid is exactly what someone needs to hear about.
+        if (synced.changes.length > 0 || r.data.warnings.length > 0) {
+          setReport({
+            changes: synced.changes,
+            file: fileName(stale.path),
+            warnings: r.data.warnings.length,
+          });
+        }
+      } finally {
+        syncing.current = false;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [detected, watches, setWatches, setQueue]);
+
+  const dismissReport = useCallback(() => setReport(null), []);
+
+  /** Stop following one file, optionally taking its cases with it. */
+  const dropWatch = useCallback(
+    (target: WatchedFile, alsoRemoveCases: boolean) => {
+      void commands.unwatchFile(target.path).catch(() => {});
+      const others = watches.filter((w) => w.path !== target.path);
+      setWatches(others);
+      if (alsoRemoveCases) {
+        setQueue((q) =>
+          withoutFileCases(
+            q,
+            target.snapshot,
+            others.map((w) => w.snapshot),
+          ),
+        );
+      }
+      setDropping(null);
+    },
+    [watches, setWatches, setQueue],
+  );
+
+  // Rows the last sync touched, so the queue itself shows where the change
+  // landed rather than only naming it in the banner.
+  const flash = useMemo(() => {
+    if (!report) return undefined;
+    const m: Record<string, "added" | "changed"> = {};
+    for (const c of report.changes) {
+      if (c.kind !== "removed") m[c.key] = c.kind;
+    }
+    return m;
+  }, [report]);
 
   useEffect(() => {
     if (!pendingFor || pbi?.id !== pendingFor.pbiId) return;
@@ -78,12 +266,18 @@ export default function ImportFile({
       if (typeof path !== "string") return null;
       const r = await commands.parseImportFile(path);
       if (r.status === "error") throw new Error(r.error);
-      return r.data;
+      return { path, stamp: await commands.fileStamp(path), data: r.data };
     },
-    onSuccess: (data) => {
-      if (!data) return;
+    onSuccess: (res) => {
+      if (!res) return;
+      const { path, stamp, data } = res;
       setQueue((q) => [...q, ...data.cases]);
       setWarnings(data.warnings);
+      setReport(null);
+      // From here on, edits to this file land in the queue by themselves.
+      // Re-importing the same file replaces its entry rather than adding a
+      // second watch on it.
+      if (stamp) setWatches((prev) => upsertWatch(prev, { path, stamp, snapshot: data.cases }));
       toast.success(
         `Imported ${data.cases.length} case${data.cases.length === 1 ? "" : "s"}` +
           (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : ""),
@@ -116,6 +310,54 @@ export default function ImportFile({
             {importFile.isPending ? "Importing" : "Import JSON"}
           </Button>
         </div>
+        {watches.length > 0 && (
+          <div className="space-y-1 rounded-md border border-border/60 bg-surface-2 px-2.5 py-1.5 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2 shrink-0" aria-hidden>
+                <span className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 motion-safe:animate-ping" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+              </span>
+              <span className="text-muted">
+                {watches.length === 1
+                  ? "Watching 1 file — edits are applied to the queue automatically."
+                  : `Watching ${watches.length} files — edits are applied to the queue automatically.`}
+              </span>
+            </div>
+            {/* One row per file once there is a choice to make. A single
+                file needs no list - its name goes on the line above. */}
+            <ul className="space-y-0.5">
+              {watches.map((w) => (
+                <li key={w.path} className="flex items-center gap-2">
+                  <span
+                    className="id-mono min-w-0 flex-1 truncate text-text"
+                    title={w.path}
+                  >
+                    {fileName(w.path)}
+                  </span>
+                  <span className="shrink-0 text-faint">
+                    {w.snapshot.length} case{w.snapshot.length === 1 ? "" : "s"}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Stop watching ${fileName(w.path)}`}
+                    onClick={() => setDropping(w)}
+                  >
+                    Stop
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {report && (
+          <SyncReport
+            changes={report.changes}
+            fileName={report.file}
+            warnings={report.warnings}
+            onDismiss={dismissReport}
+          />
+        )}
         <div className="space-y-1 border-t border-border/60 pt-3">
           <p className="text-xs text-muted">
             Or paste a share link a teammate sent you (one-time use - importing it revokes the link):
@@ -146,7 +388,43 @@ export default function ImportFile({
         )}
       </section>
 
-      <QueueSection org={org} project={project} pbiId={pbi.id} queue={queue} setQueue={setQueue} />
+      <QueueSection
+        org={org}
+        project={project}
+        pbiId={pbi.id}
+        queue={queue}
+        setQueue={setQueue}
+        flash={flash}
+      />
+
+      {dropping && (
+        <Modal onClose={() => setDropping(null)} className="w-full max-w-md p-4">
+          <h2 className="text-sm font-semibold text-text">
+            Stop watching {fileName(dropping.path)}?
+          </h2>
+          <p className="mt-2 text-sm text-muted">
+            Edits to this file will no longer be applied to the queue. The{" "}
+            {dropping.snapshot.length} case
+            {dropping.snapshot.length === 1 ? "" : "s"} it added are still queued — keep
+            them, or remove them too?
+          </p>
+          <p className="mt-2 text-xs text-faint">
+            Cases you typed by hand, or that another watched file also contains, are
+            never removed.
+          </p>
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setDropping(null)}>
+              Cancel
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => dropWatch(dropping, false)}>
+              Keep the cases
+            </Button>
+            <Button variant="danger" size="sm" onClick={() => dropWatch(dropping, true)}>
+              Remove them too
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {choice && (
         <Modal onClose={() => setChoice(null)} className="w-full max-w-md p-4">

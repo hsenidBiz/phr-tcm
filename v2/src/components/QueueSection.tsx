@@ -8,6 +8,8 @@ import { commands, events, type SubmitItemResult, type TestCase } from "../bindi
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { loadNotes } from "../lib/caseNotes";
+import { cn } from "../lib/cn";
+import { caseKey } from "../lib/fileSync";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
@@ -30,12 +32,16 @@ export default function QueueSection({
   pbiId,
   queue,
   setQueue,
+  flash,
 }: {
   org: string;
   project: string;
   pbiId: number;
   queue: TestCase[];
   setQueue: React.Dispatch<React.SetStateAction<TestCase[]>>;
+  /** Rows a watched-file sync just touched, by caseKey - tinted so the
+   * change report's counts can be traced to actual rows. */
+  flash?: Record<string, "added" | "changed">;
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
@@ -287,8 +293,19 @@ export default function QueueSection({
             const diff = reviewing && cur ? diffCase(tc, cur) : null;
             const diffFailed =
               reviewing && tc.update_id != null && !cur && currentCases.isError;
+            const touched = flash?.[caseKey(tc)];
             return (
-              <li key={i} className="rounded-md border border-border text-sm">
+              <li
+                key={i}
+                className={cn(
+                  "rounded-md border text-sm transition-colors",
+                  touched === "added"
+                    ? "border-success/50 bg-success/5"
+                    : touched === "changed"
+                      ? "border-warning/50 bg-warning/5"
+                      : "border-border",
+                )}
+              >
                 <div className="flex items-center justify-between px-3 py-1.5">
                   <span className="text-text">
                     <button
