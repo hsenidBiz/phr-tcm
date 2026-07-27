@@ -12,10 +12,12 @@ import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
 import DateField from "./ui/datefield";
-import { Input, Textarea } from "./ui/input";
+import MarkdownField from "./MarkdownField";
+import { Input } from "./ui/input";
 import { Select } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import CommentsPanel from "./CommentsPanel";
+import HistoryPanel from "./HistoryPanel";
 
 type Draft = {
   title: string;
@@ -118,9 +120,23 @@ export default function WorkItemDrawer({
   const [draft, setDraft] = useState<Draft | null>(null);
   // Rich text opens rendered (like ADO's own form); Write is for editing.
   const [descMode, setDescMode] = useState<"write" | "preview">("preview");
+  // Per-field editing, so clicking ONE rendered block opens that one -
+  // the header Write/Preview buttons still flip everything at once.
+  // Keyed by "" for Description, else the field's reference name.
+  const [editingFields, setEditingFields] = useState<Set<string>>(new Set());
+  const isEditing = (id: string) => descMode === "write" || editingFields.has(id);
+  const startEditing = (id: string) =>
+    setEditingFields((prev) => new Set(prev).add(id));
+  const setMode = (m: "write" | "preview") => {
+    setDescMode(m);
+    // Leaving Write closes the per-field editors too, or "Preview" would
+    // appear to do nothing on a field opened by clicking it.
+    if (m === "preview") setEditingFields(new Set());
+  };
   // Which rich-text tab is active: "" = Description, else the extra
   // section's reference name (Bug: RCA / Preventive Measures).
   const [docTab, setDocTab] = useState("");
+  const [bottomTab, setBottomTab] = useState<"discussion" | "history">("discussion");
 
   // Esc closes (X too); no overlay-click close so edits can't be lost by a
   // stray click.
@@ -137,6 +153,8 @@ export default function WorkItemDrawer({
       setDraft(toDraft(detail.data));
       setDocTab(""); // back to Description when a different item loads
       setDescMode("preview");
+      setEditingFields(new Set());
+      setBottomTab("discussion");
     }
   }, [detail.data]);
 
@@ -370,7 +388,7 @@ export default function WorkItemDrawer({
                           ? "rounded px-2 py-0.5 text-[11px] font-medium bg-accent-soft text-accent"
                           : "rounded px-2 py-0.5 text-[11px] text-faint hover:text-text"
                       }
-                      onClick={() => setDescMode(m)}
+                      onClick={() => setMode(m)}
                     >
                       {m === "write" ? "Write" : "Preview"}
                     </button>
@@ -385,21 +403,15 @@ export default function WorkItemDrawer({
               )}
 
               {docTab === "" ? (
-                descMode === "write" ? (
-                  <Textarea
-                    aria-label="Description (markdown)"
-                    className="mt-1 h-28 w-full"
-                    placeholder="Supports markdown: **bold**, - lists, `code`, [links](url)"
-                    value={draft.description}
-                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                  />
-                ) : (
-                  <div
-                    className="md-preview mt-1 min-h-28 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
-                    // Rendered from the user's own local draft only.
-                    dangerouslySetInnerHTML={{ __html: renderMd(draft.description) }}
-                  />
-                )
+                <MarkdownField
+                  label="Description"
+                  value={draft.description}
+                  onChange={(v) => setDraft({ ...draft, description: v })}
+                  editing={isEditing("")}
+                  onStartEditing={() => startEditing("")}
+                  // Rendered from the user's own local draft only.
+                  renderHtml={renderMd}
+                />
               ) : (
                 // An extra form page, laid out like ADO's form: each layout
                 // section becomes a column (stacking on narrow windows).
@@ -469,20 +481,17 @@ export default function WorkItemDrawer({
                       return (
                         <div key={f.reference_name}>
                           <span>{f.label}</span>
-                          {descMode === "write" ? (
-                            <Textarea
-                              aria-label={`${f.label} (markdown)`}
-                              className="mt-1 h-24 w-full"
-                              placeholder="Supports markdown: **bold**, - lists, `code`, [links](url)"
-                              value={value}
-                              onChange={(e) => setValue(e.target.value)}
-                            />
-                          ) : (
-                            <div
-                              className="md-preview mt-1 min-h-16 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text"
-                              dangerouslySetInnerHTML={{ __html: renderMd(value) }}
-                            />
-                          )}
+                          <MarkdownField
+                            label={f.label}
+                            value={value}
+                            onChange={setValue}
+                            editing={isEditing(f.reference_name)}
+                            onStartEditing={() => startEditing(f.reference_name)}
+                            renderHtml={renderMd}
+                            rows="h-24"
+                            previewMinHeight="min-h-16"
+                            flagged={isFlagged(f.label)}
+                          />
                         </div>
                       );
                         })}
@@ -492,7 +501,32 @@ export default function WorkItemDrawer({
               )}
             </div>
 
-                <CommentsPanel org={org} project={project} itemId={itemId} />
+                <div className="space-y-2">
+                  {/* Discussion and History share this slot: both are
+                      "what happened to this item", and stacking them
+                      both would push the fields off-screen. */}
+                  <div className="flex gap-1 border-b border-border pb-1">
+                    {(["discussion", "history"] as const).map((t) => (
+                      <button
+                        key={t}
+                        aria-pressed={bottomTab === t}
+                        className={
+                          bottomTab === t
+                            ? "rounded px-2 py-0.5 text-[11px] font-medium bg-accent-soft text-accent"
+                            : "rounded px-2 py-0.5 text-[11px] text-faint hover:text-text"
+                        }
+                        onClick={() => setBottomTab(t)}
+                      >
+                        {t === "discussion" ? "Discussion" : "History"}
+                      </button>
+                    ))}
+                  </div>
+                  {bottomTab === "discussion" ? (
+                    <CommentsPanel org={org} project={project} itemId={itemId} />
+                  ) : (
+                    <HistoryPanel org={org} project={project} itemId={itemId} />
+                  )}
+                </div>
               </div>
 
               <div className="space-y-3 overflow-y-auto p-5">

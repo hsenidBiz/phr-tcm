@@ -11,6 +11,7 @@
 
 mod board;
 mod detail;
+pub mod history;
 mod layout;
 
 use serde::Serialize;
@@ -156,6 +157,36 @@ pub struct WorkComment {
     pub created_by: String,
     pub created_date: String,
     pub avatar_url: String,
+}
+
+/// One field's before/after inside a revision.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct FieldChange {
+    pub reference_name: String,
+    /// Human label ("Remaining Work"), not the reference name.
+    pub label: String,
+    /// Empty when the field had no previous value.
+    pub old: String,
+    /// Empty when the field was cleared.
+    pub new: String,
+}
+
+/// One entry in a work item's history: everything one save changed.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct WorkRevision {
+    pub rev: i32,
+    pub by: String,
+    pub avatar_url: String,
+    /// ISO 8601; empty if ADO gave no usable date.
+    pub at: String,
+    pub fields: Vec<FieldChange>,
+    pub links_added: Vec<String>,
+    pub links_removed: Vec<String>,
+    /// Pulled out of `fields` so the timeline can lead with the state
+    /// move, which is what people scan history for.
+    pub state_from: String,
+    pub state_to: String,
+    pub comment_added: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]

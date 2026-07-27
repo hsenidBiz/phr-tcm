@@ -155,6 +155,21 @@ pub async fn work_item_comments(
         .await
 }
 
+/// A work item's revision history, newest first. Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn work_item_history(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: i32,
+) -> Result<Vec<work_board::WorkRevision>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .get_work_item_history(&organization, &project, id)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn add_comment(
