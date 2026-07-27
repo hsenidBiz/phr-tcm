@@ -162,7 +162,7 @@ export default function AiBridge() {
             {installed.map((t) => (
               <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-text">{t.name}</span>
-                {t.registered_servers.includes(TCM_SERVER) ? (
+                {(t.registered_servers ?? []).includes(TCM_SERVER) ? (
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-success">Registered ✓</span>
                     <Button
@@ -376,7 +376,7 @@ export default function AiBridge() {
             {installed.map((t) => (
               <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-text">{t.name}</span>
-                {t.registered_servers.includes(DB_SERVER) ? (
+                {(t.registered_servers ?? []).includes(DB_SERVER) ? (
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-success">Registered ✓</span>
                     <Button

@@ -60,8 +60,8 @@ test("AI Bridge is accessible", async () => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [
-        { id: "claude-code", name: "Claude Code", installed: true, registered: true },
-        { id: "vscode", name: "VS Code", installed: true, registered: false },
+        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases"] },
+        { id: "vscode", name: "VS Code", installed: true, registered_servers: [] },
       ];
   });
   await expectAccessible(<AiBridge />);
