@@ -50,6 +50,13 @@ pub async fn classification_paths(
         .await
 }
 
+/// The project's tag names, served from the shared reference cache.
+///
+/// Serve-then-revalidate: a cached list comes back immediately - instantly
+/// on the second launch, since the cache is on disk - and a stale one is
+/// refreshed in the background for next time. Only a completely cold cache
+/// waits on Azure DevOps. The AI bridge reads the same cache, so an
+/// assistant asking for tags costs nothing extra (see refcache.rs).
 #[tauri::command]
 #[specta::specta]
 pub async fn list_project_tags(
@@ -57,8 +64,30 @@ pub async fn list_project_tags(
     organization: String,
     project: String,
 ) -> Result<Vec<String>, ado::AdoError> {
+    let key = crate::refcache::tags_key(&organization, &project);
+    if let Some(v) = crate::refcache::fresh(&key, crate::refcache::TAGS_TTL_MS) {
+        return Ok(v);
+    }
+    if let Some(stale) = crate::refcache::any(&key) {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // Best effort: a failed background refresh just leaves the
+            // stale list in place until the next attempt.
+            if let Ok(token) = get_fresh_token(&app).await {
+                if let Ok(fresh) = ado::AdoClient::new(token)
+                    .get_tags(&organization, &project)
+                    .await
+                {
+                    crate::refcache::put(&key, &fresh);
+                }
+            }
+        });
+        return Ok(stale);
+    }
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token).get_tags(&organization, &project).await
+    let tags = ado::AdoClient::new(token).get_tags(&organization, &project).await?;
+    crate::refcache::put(&key, &tags);
+    Ok(tags)
 }
 
 /// Iteration paths with sprint dates, for DevOps-style iteration pickers.

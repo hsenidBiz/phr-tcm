@@ -79,13 +79,35 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
     },
 ];
 
+/// Our own MCP server's key in every tool's config.
+pub const TCM_SERVER: &str = "tcm-testcases";
+/// The company's SQL Server schema MCP server, registered alongside ours
+/// so an assistant can read the database and the test cases in one place.
+pub const DB_SERVER: &str = "phr-db-mcp";
+/// Every server this app manages. Anything else in a config is somebody
+/// else's and is never touched.
+pub const MANAGED_SERVERS: &[&str] = &[TCM_SERVER, DB_SERVER];
+
+/// One MCP server as it appears in a tool's config file.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct McpServer {
+    /// The config key, e.g. "tcm-testcases".
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    /// Environment the tool must set when launching it. BTreeMap so the
+    /// written config is byte-stable rather than reordering on every save.
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
 /// What the frontend needs to render one row of the AI-tools list.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 pub struct DetectedTool {
     pub id: String,
     pub name: String,
     pub installed: bool,
-    pub registered: bool,
+    /// Which of `MANAGED_SERVERS` this tool's config currently carries.
+    pub registered_servers: Vec<String>,
 }
 
 /// Shared installed-check used by both `detect` (for every tool) and
@@ -107,26 +129,46 @@ pub fn detect(home: &str, appdata: &str, on_path: &dyn Fn(&str) -> bool) -> Vec<
         .map(|spec| {
             let installed = is_installed(spec, home, appdata, on_path);
             let config_path = (spec.config_path)(home, appdata);
-            let registered = std::fs::read_to_string(&config_path)
+            let entries = std::fs::read_to_string(&config_path)
                 .ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|v| v.get(spec.entry_key).cloned())
-                .and_then(|entries| entries.get("tcm-testcases").cloned())
-                .is_some();
+                .and_then(|v| v.get(spec.entry_key).cloned());
+            let registered_servers = MANAGED_SERVERS
+                .iter()
+                .filter(|name| {
+                    entries.as_ref().and_then(|e| e.get(**name)).is_some()
+                })
+                .map(|name| name.to_string())
+                .collect();
             DetectedTool {
                 id: spec.id.to_string(),
                 name: spec.name.to_string(),
                 installed,
-                registered,
+                registered_servers,
             }
         })
         .collect()
 }
 
-/// Inserts (or replaces) the `tcm-testcases` server entry under `key` in
-/// `existing_json`, preserving every other entry and top-level field.
-/// Errors on unparseable JSON rather than clobbering it with a fresh file.
-pub fn merge_entry(existing_json: &str, key: &str, exe: &str) -> Result<String, String> {
+/// Our own server, as it should appear in a config.
+pub fn tcm_server(exe: &str) -> McpServer {
+    McpServer {
+        name: TCM_SERVER.to_string(),
+        command: exe.to_string(),
+        args: vec!["--mcp".to_string()],
+        env: Default::default(),
+    }
+}
+
+/// Inserts (or replaces) `server`'s entry under `key` in `existing_json`,
+/// preserving every other entry and top-level field. Errors on unparseable
+/// JSON rather than clobbering it with a fresh file.
+///
+/// `type: "stdio"` is written for VS Code (the `servers` key), which is
+/// what its schema and the company server's own docs expect; the other
+/// tools infer it. `env` is omitted entirely when empty rather than
+/// written as `{}`.
+pub fn merge_entry(existing_json: &str, key: &str, server: &McpServer) -> Result<String, String> {
     let mut root: serde_json::Value = serde_json::from_str(existing_json)
         .map_err(|e| format!("existing config is not valid JSON: {e}"))?;
     if !root.is_object() {
@@ -139,24 +181,37 @@ pub fn merge_entry(existing_json: &str, key: &str, exe: &str) -> Result<String, 
     if !entries.is_object() {
         return Err(format!("\"{key}\" is not a JSON object"));
     }
-    entries.as_object_mut().unwrap().insert(
-        "tcm-testcases".to_string(),
-        serde_json::json!({ "command": exe, "args": ["--mcp"] }),
-    );
+    let mut entry = serde_json::Map::new();
+    if key == "servers" {
+        entry.insert("type".into(), serde_json::json!("stdio"));
+    }
+    entry.insert("command".into(), serde_json::json!(server.command));
+    entry.insert("args".into(), serde_json::json!(server.args));
+    if !server.env.is_empty() {
+        entry.insert("env".into(), serde_json::json!(server.env));
+    }
+    entries
+        .as_object_mut()
+        .unwrap()
+        .insert(server.name.clone(), serde_json::Value::Object(entry));
     serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize config: {e}"))
 }
 
-/// Removes our `tcm-testcases` entry from the tool's config, preserving
-/// everything else. `Ok(None)` = the entry wasn't there (nothing to write);
+/// Removes the named server from the tool's config, preserving everything
+/// else. `Ok(None)` = the entry wasn't there (nothing to write);
 /// `Ok(Some(json))` = write this back. Errors on unparseable input - never
 /// fabricate a config we couldn't read.
-pub fn remove_entry(existing_json: &str, key: &str) -> Result<Option<String>, String> {
+pub fn remove_entry(
+    existing_json: &str,
+    key: &str,
+    server_name: &str,
+) -> Result<Option<String>, String> {
     let mut root: serde_json::Value = serde_json::from_str(existing_json)
         .map_err(|e| format!("existing config is not valid JSON: {e}"))?;
     let Some(entries) = root.get_mut(key).and_then(|v| v.as_object_mut()) else {
         return Ok(None);
     };
-    if entries.remove("tcm-testcases").is_none() {
+    if entries.remove(server_name).is_none() {
         return Ok(None);
     }
     serde_json::to_string_pretty(&root)

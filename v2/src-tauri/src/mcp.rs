@@ -23,7 +23,7 @@ pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<Stri
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "tcm-testcases", "version": version },
         }),
-        "tools/list" => tools_list(),
+        "tools/list" => tools_list(disabled(call)),
         "tools/call" => tools_call(&v["params"], call),
         _ => {
             return Some(
@@ -58,8 +58,31 @@ fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({ "type": "object", "properties": props, "required": required })
 }
 
-fn tools_list() -> serde_json::Value {
-    serde_json::json!({ "tools": [
+/// Tools the user has switched off in the app. Asked fresh on every
+/// `tools/list`, so a toggle takes effect without restarting the editor.
+/// A bridge that can't be reached disables nothing - losing the whole
+/// toolset because the app is closed would be worse than showing tools
+/// that then say "sign in first".
+fn disabled(call: BridgeCall) -> Vec<String> {
+    let Ok((status, body)) = call("GET", "/tools", "") else {
+        return vec![];
+    };
+    if status != 200 {
+        return vec![];
+    }
+    serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v["disabled"].as_array().cloned())
+        .map(|a| {
+            a.iter()
+                .filter_map(|n| n.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn tools_list(disabled: Vec<String>) -> serde_json::Value {
+    let all = serde_json::json!({ "tools": [
         {
             "name": "get_writing_guide",
             "description": "The live guide for writing Test Case Manager import JSON: format rules, the org's allowed Module values, and the recommended workflow. Call this first.",
@@ -74,11 +97,29 @@ fn tools_list() -> serde_json::Value {
             }), &["pbi_id"]),
         },
         {
-            "name": "validate_cases",
-            "description": "Validate draft import JSON with Test Case Manager's REAL importer. Returns case count, warnings, and errors - fix every warning before finishing.",
+            "name": "optimize_cases",
+            "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
             "inputSchema": schema(serde_json::json!({
                 "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
+                "entry": { "type": "string", "description": "First step of every preamble, e.g. \"Launch the HRM portal.\" (default: \"Launch the application.\")" },
             }), &["json"]),
+        },
+        {
+            "name": "transform_cases",
+            "description": "Apply bulk edits to a draft without rewriting it yourself: retag, retitle, set module or automation status, find/replace inside steps, sort, dedupe. Each operation takes an optional `where` filter. Use this instead of writing a script to reshape the JSON.",
+            "inputSchema": schema(serde_json::json!({
+                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
+                "operations": {
+                    "type": "array",
+                    "description": "Ops applied in order. Each: {op, value?, find?, replace?, where?}. op is one of set_tags, add_tags, remove_tags, set_module, set_automation_status, set_preconditions, replace_in_title, prefix_title, suffix_title, replace_in_steps, sort_by, dedupe. `where` may carry title_contains, has_tag, module_is.",
+                    "items": { "type": "object" },
+                },
+            }), &["json", "operations"]),
+        },
+        {
+            "name": "get_tags",
+            "description": "The tag names this project already uses. Prefer an existing tag over inventing a near-duplicate. Served from the app's cache - calling this costs no Azure DevOps request.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "search_pbis",
@@ -102,12 +143,36 @@ fn tools_list() -> serde_json::Value {
                 "path": { "type": "string" },
             }), &["wiki_id", "path"]),
         },
-    ]})
+    ]});
+    let tools: Vec<serde_json::Value> = all["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| {
+            let name = t["name"].as_str().unwrap_or_default();
+            !disabled.iter().any(|d| d == name)
+        })
+        .collect();
+    serde_json::json!({ "tools": tools })
 }
 
 fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value {
     let name = params["name"].as_str().unwrap_or_default();
     let args = &params["arguments"];
+    // Checked again here, not just in tools/list: a client may be working
+    // from a list it cached before the tool was switched off.
+    if disabled(call).iter().any(|d| d == name) {
+        return serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "The `{name}` tool is switched off in Test Case Manager.                      Turn it back on in the app's AI Bridge tab if you need it."
+                ),
+            }],
+            "isError": true,
+        });
+    }
     let outcome = match name {
         "get_writing_guide" => call("GET", "/guide", ""),
         "get_example_cases" => {
@@ -115,7 +180,25 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             let limit = args["limit"].as_i64().unwrap_or(5);
             call("GET", &format!("/examples?pbi={pbi}&limit={limit}"), "")
         }
-        "validate_cases" => call("POST", "/validate", args["json"].as_str().unwrap_or("")),
+        "optimize_cases" => {
+            let entry = args["entry"].as_str().unwrap_or("");
+            let target = if entry.is_empty() {
+                "/optimize".to_string()
+            } else {
+                format!("/optimize?entry={}", percent_encode(entry))
+            };
+            call("POST", &target, args["json"].as_str().unwrap_or(""))
+        }
+        "transform_cases" => {
+            // The bridge takes one body, so the draft and the ops travel
+            // together rather than as a query string.
+            let body = serde_json::json!({
+                "test_cases": args["json"].as_str().unwrap_or(""),
+                "operations": args["operations"].clone(),
+            });
+            call("POST", "/transform", &body.to_string())
+        }
+        "get_tags" => call("GET", "/tags", ""),
         "search_pbis" => {
             let q = args["query"].as_str().unwrap_or("");
             call("GET", &format!("/search-pbis?q={}", percent_encode(q)), "")

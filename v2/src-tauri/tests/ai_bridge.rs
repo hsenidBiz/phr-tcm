@@ -10,6 +10,7 @@ fn ctx() -> BridgeContext {
         project: "Web".into(),
         module_ref: Some("Custom.Module".into()),
         preconditions_ref: Some("Custom.Preconditions".into()),
+        disabled_tools: vec![],
     }
 }
 
@@ -38,28 +39,6 @@ async fn unknown_routes_404() {
     assert_eq!(status, 404);
     let (status, _) = route(&ctx(), None, "DELETE", "/ping", "", "1.10.3").await;
     assert_eq!(status, 404);
-}
-
-#[tokio::test]
-async fn validate_runs_the_real_importer() {
-    let good = r#"[{"title": "Login works", "steps": [{"action": "Open", "expected": "Shown"}]}]"#;
-    let (status, body) = route(&ctx(), None, "POST", "/validate", good, "1.10.3").await;
-    assert_eq!(status, 200);
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["cases"], 1);
-    assert_eq!(v["warnings"].as_array().unwrap().len(), 0);
-
-    // Not-JSON is a hard importer error; an empty/foreign wrapper is a
-    // lenient zero-case parse - both must be visible to the AI, never a
-    // silent success with cases > 0.
-    let (status, body) = route(&ctx(), None, "POST", "/validate", "not json at all", "1.10.3").await;
-    assert_eq!(status, 200); // validation RESULTS are a 200; only transport errors aren't
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert!(v["error"].as_str().is_some(), "hard parse failure must carry an error");
-
-    let (_, body) = route(&ctx(), None, "POST", "/validate", r#"{"not": "a wrapper"}"#, "1.10.3").await;
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["cases"], 0, "foreign objects must never count as cases");
 }
 
 #[test]
@@ -113,7 +92,7 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(body.contains("Planned"));
     assert!(body.contains("semicolon"), "tag separator rule");
     assert!(body.contains("Login") && body.contains("Payroll"), "live modules");
-    assert!(body.contains("validate_cases"), "guide tells the AI to validate");
+    assert!(body.contains("optimize_cases"), "the guide points at the optimizer");
 }
 
 #[tokio::test]
@@ -288,57 +267,26 @@ async fn tcp_server_guards_with_token_and_serves_ping() {
     assert_eq!(hs["version"].as_str().unwrap(), "0.0.0-test");
 }
 
-/// With a signed-in client, /validate cross-checks Module values against
-/// the org picklist - the guide says "ONLY from this list", and this
-/// closes that loop. Matching is case-insensitive; empty modules and
-/// offline validation stay silent.
+
+/// Tool toggles: the app publishes what is switched off, and the MCP layer
+/// honours it.
 #[tokio::test]
-async fn validate_warns_on_modules_outside_the_org_picklist() {
-    let (server, client) = ado_stub().await;
-    Mock::given(wm_method("GET"))
-        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "allowedValues": ["Login", "Payroll"]
-        })))
-        .mount(&server)
-        .await;
+async fn the_bridge_publishes_the_disabled_tool_set() {
+    let mut ctx = ctx();
+    ctx.disabled_tools = vec!["search_wiki".into(), "get_wiki_page".into()];
+    let (status, body) = route(&ctx, None, "GET", "/tools", "", "1.0.0").await;
 
-    let draft = serde_json::json!([
-        { "title": "Good", "module": "payroll",
-          "steps": [{ "action": "a", "expected": "b" }] },
-        { "title": "Bad", "module": "Nonexistent Module",
-          "steps": [{ "action": "a", "expected": "b" }] },
-        { "title": "None", "steps": [{ "action": "a", "expected": "b" }] }
-    ])
-    .to_string();
-
-    let (status, body) = route(&ctx(), Some(&client), "POST", "/validate", &draft, "1.0.0").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["cases"], 3);
-    let warnings: Vec<String> = v["warnings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|w| w.as_str().unwrap().to_string())
-        .collect();
-    let module_warnings: Vec<&String> =
-        warnings.iter().filter(|w| w.contains("not an allowed value")).collect();
-    assert_eq!(module_warnings.len(), 1, "only the bad module warns: {warnings:?}");
-    assert!(module_warnings[0].contains("'Bad'"));
-    assert!(module_warnings[0].contains("Nonexistent Module"));
+    assert_eq!(v["disabled"][0], "search_wiki");
+    assert_eq!(v["disabled"].as_array().unwrap().len(), 2);
+}
 
-    // Offline (no client): same draft, no module warnings - validation
-    // still runs and the AI is not blocked by being signed out.
-    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.0.0").await;
-    assert_eq!(status, 200);
+/// Nothing configured means nothing disabled - a fresh install must not
+/// come up with an empty toolset.
+#[tokio::test]
+async fn no_configuration_disables_nothing() {
+    let (_, body) = route(&ctx(), None, "GET", "/tools", "", "1.0.0").await;
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["cases"], 3);
-    assert!(
-        !v["warnings"].as_array().unwrap().iter().any(|w| w
-            .as_str()
-            .unwrap()
-            .contains("not an allowed value")),
-        "no picklist check without a client"
-    );
+    assert!(v["disabled"].as_array().unwrap().is_empty());
 }

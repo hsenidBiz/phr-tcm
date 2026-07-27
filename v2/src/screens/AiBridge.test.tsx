@@ -4,7 +4,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import AiBridge from "./AiBridge";
 
-afterEach(() => clearMocks());
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+});
 
 // jsdom has no Clipboard API - stub one that returns real Promises so
 // `.then()/.catch()` chains in the component resolve/reject like the browser.
@@ -27,8 +30,8 @@ test("lists installed AI tools with their registered state", async () => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [
-        { id: "claude-code", name: "Claude Code", installed: true, registered: true },
-        { id: "vscode", name: "VS Code", installed: true, registered: false },
+        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases"] },
+        { id: "vscode", name: "VS Code", installed: true, registered_servers: [] },
       ];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -45,7 +48,7 @@ test("Register invokes register_ai_tool with the tool's id", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
-      return [{ id: "vscode", name: "VS Code", installed: true, registered: false }];
+      return [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [] }];
     if (cmd === "register_ai_tool") {
       registeredId = (args as { id: string }).id;
       return null;
@@ -63,7 +66,7 @@ test("Unregister invokes unregister_ai_tool for a registered tool", async () => 
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
-      return [{ id: "claude-desktop", name: "Claude Desktop", installed: true, registered: true }];
+      return [{ id: "claude-desktop", name: "Claude Desktop", installed: true, registered_servers: ["tcm-testcases"] }];
     if (cmd === "unregister_ai_tool") {
       unregisteredId = (args as { id: string }).id;
       return null;
@@ -85,7 +88,7 @@ test("Rescan re-runs detection and picks up a newly installed tool", async () =>
       // Second scan sees a tool that wasn't installed at mount.
       return scans === 1
         ? [{ id: "vscode", name: "VS Code", installed: false, registered: false }]
-        : [{ id: "vscode", name: "VS Code", installed: true, registered: false }];
+        : [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [] }];
     }
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -102,7 +105,7 @@ test("Rescan re-runs detection and picks up a newly installed tool", async () =>
   expect(scans).toBe(2);
 });
 
-test("the how-it-works card names all six MCP tools", async () => {
+test("the how-it-works card names every MCP tool", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
@@ -114,12 +117,16 @@ test("the how-it-works card names all six MCP tools", async () => {
   for (const name of [
     "get_writing_guide",
     "get_example_cases",
-    "validate_cases",
+    "get_tags",
+    "optimize_cases",
+    "transform_cases",
     "search_pbis",
     "search_wiki",
     "get_wiki_page",
   ]) {
-    expect(screen.getByText(name)).toBeInTheDocument();
+    // Each tool appears twice now - once in the on/off list, once in the
+    // explanation below it.
+    expect(screen.getAllByText(name).length).toBeGreaterThan(0);
   }
 });
 
@@ -166,4 +173,65 @@ test("shows bridge not running when the status query fails", async () => {
   renderBridge(qc);
 
   expect(await screen.findByText("Bridge not running.")).toBeInTheDocument();
+});
+
+// ------------------------------------------------- company database server
+
+const DB_TOOLS = [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [] }];
+
+test("the database server cannot be registered until it is configured", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(
+    await screen.findByText(/Fill in the executable and connection string/),
+  ).toBeInTheDocument();
+});
+
+test("configuring the database server persists it and enables registration", async () => {
+  let sent: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "register_db_server") {
+      sent = args;
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.change(await screen.findByLabelText("Database server executable"), {
+    target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
+  });
+  fireEvent.change(screen.getByLabelText("Connection string"), {
+    target: { value: "Server=db,1433;Database=HR;User Id=sa;Password=p@ss;" },
+  });
+  fireEvent.change(screen.getByLabelText("Schema filter"), { target: { value: "dbo,hr" } });
+
+  // Kept locally so another editor can be registered without retyping.
+  expect(localStorage.getItem("tcm-v2-db-mcp")).toContain("PeoplesHR.DBMCPServer.exe");
+
+  // Two Register buttons now: ours and the database server's.
+  const buttons = await screen.findAllByRole("button", { name: "Register" });
+  fireEvent.click(buttons[buttons.length - 1]);
+
+  await waitFor(() => expect(sent).toBeTruthy());
+  const payload = sent as { id: string; config: Record<string, string> };
+  expect(payload.id).toBe("vscode");
+  expect(payload.config.db_type).toBe("mssql");
+  expect(payload.config.schema_filter).toBe("dbo,hr");
+  expect(payload.config.connection_string).toContain("Password=p@ss");
+});
+
+test("the connection string is not shown in plain text", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const field = await screen.findByLabelText("Connection string");
+  expect(field).toHaveAttribute("type", "password");
 });

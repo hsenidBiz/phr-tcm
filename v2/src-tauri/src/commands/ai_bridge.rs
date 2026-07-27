@@ -60,6 +60,7 @@ pub fn set_bridge_context(
     project: String,
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
+    disabled_tools: Vec<String>,
 ) {
     use tauri::Manager;
     let handle = app.state::<BridgeHandle>();
@@ -70,6 +71,7 @@ pub fn set_bridge_context(
             project,
             module_ref,
             preconditions_ref,
+            disabled_tools,
         };
     }
 }

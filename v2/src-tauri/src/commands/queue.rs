@@ -31,6 +31,43 @@ pub fn parse_import_file(path: String) -> Result<ImportResult, String> {
     Ok(ImportResult { cases, warnings })
 }
 
+/// One-shot content fingerprint. Used when a watch is (re)armed, to catch
+/// an edit made while the app was closed or the tab was elsewhere - the
+/// OS watcher only reports changes from the moment it starts. `None` means
+/// the file can't be read right now.
+#[tauri::command]
+#[specta::specta]
+pub fn file_stamp(path: String) -> Option<String> {
+    crate::filewatch::stamp(std::path::Path::new(&path))
+}
+
+/// Follow `path` for edits, emitting `WatchedFileChanged` per real content
+/// change. Several files can be followed at once; re-watching the same
+/// path replaces only that watch.
+#[tauri::command]
+#[specta::specta]
+pub fn watch_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::filewatch::FileWatchState>,
+    path: String,
+) -> Result<(), String> {
+    crate::filewatch::start(&app, &state, &path)
+}
+
+/// Stop following one file. Unknown paths are a no-op.
+#[tauri::command]
+#[specta::specta]
+pub fn unwatch_file(state: tauri::State<'_, crate::filewatch::FileWatchState>, path: String) {
+    crate::filewatch::stop(&state, &path);
+}
+
+/// Stop following every file - used when the PBI scope changes.
+#[tauri::command]
+#[specta::specta]
+pub fn unwatch_all_files(state: tauri::State<'_, crate::filewatch::FileWatchState>) {
+    crate::filewatch::stop_all(&state);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn export_queue(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
@@ -288,6 +325,22 @@ pub async fn submit_queue(
         "Submit finished: {} of {total} processed, {failed} failed",
         results.len()
     ));
+    // Tags carried by cases that actually landed provably exist in the
+    // project now, so fold them into the cache rather than waiting for a
+    // refresh to rediscover what we just created ourselves.
+    let created: Vec<String> = results
+        .iter()
+        .filter(|r| r.action != "failed")
+        .filter_map(|r| queue.get(r.index as usize))
+        .flat_map(|tc| tc.tags.split(';').map(|t| t.trim().to_string()))
+        .filter(|t| !t.is_empty())
+        .collect();
+    if !created.is_empty() {
+        crate::refcache::merge(
+            &crate::refcache::tags_key(&organization, &project),
+            &created,
+        );
+    }
     Ok(results)
 }
 

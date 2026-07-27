@@ -1,7 +1,7 @@
 //! The AI bridge: a 127.0.0.1-only service that lets the tcm-mcp stdio
 //! binary (and therefore AI tools) read a live writing guide, fetch real
-//! example cases, validate drafts against the REAL importer, and search
-//! PBIs. Read + validate ONLY - no writes, no raw ADO passthrough, and
+//! example cases, reorganise a draft into a run sheet, and search PBIs.
+//! Reads and pure transforms ONLY - no writes, no raw ADO passthrough, and
 //! the bearer token never leaves the app. Modeled on note_server.rs; the
 //! TCP loop is thin, all logic lives in `route` so tests need no sockets.
 
@@ -14,6 +14,10 @@ pub struct BridgeContext {
     pub project: String,
     pub module_ref: Option<String>,
     pub preconditions_ref: Option<String>,
+    /// Tools the user has switched off in the AI Bridge tab. Empty means
+    /// everything is available - the default - so an unset context can
+    /// never accidentally disable the whole server.
+    pub disabled_tools: Vec<String>,
 }
 
 /// Per-launch shared secret for the handshake file (32 hex chars).
@@ -96,7 +100,8 @@ pub async fn route(
             })
             .to_string(),
         ),
-        ("POST", "/validate") => (200, validate_json(body, ctx, client).await),
+        ("POST", "/optimize") => optimize_json(body, target),
+        ("POST", "/transform") => transform_json(body),
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
             None => (503, "sign in to Test Case Manager first".into()),
@@ -105,6 +110,13 @@ pub async fn route(
             Some(c) => examples(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
+        ("GET", "/tags") => tags(ctx, client).await,
+        // The proxy asks for this before listing tools, so a toggle in the
+        // app takes effect on the assistant's next tools/list.
+        ("GET", "/tools") => (
+            200,
+            serde_json::json!({ "disabled": ctx.disabled_tools }).to_string(),
+        ),
         ("GET", "/search-pbis") => match client {
             Some(c) => search_pbis(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
@@ -121,57 +133,126 @@ pub async fn route(
     }
 }
 
-/// Process-wide counter so concurrent /validate calls never share a temp
-/// file (the pid alone is constant for the app's lifetime).
-static VALIDATE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Reorganise a draft into a run sheet: navigation spelled out as steps,
+/// cases ordered so the tester switches environment as little as
+/// possible, expected results reduced to the outcome. Pure - it reads the
+/// JSON the assistant sends and hands back a new one. Nothing is written
+/// anywhere, and Azure DevOps is never touched.
+fn optimize_json(body: &str, target: &str) -> (u16, String) {
+    let cases = match parse_cases(body) {
+        Ok(c) => c,
+        Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+    };
+    let entry = q(target, "entry");
+    let (optimized, report) = crate::optimize::optimize(cases, entry.as_deref());
+    let json = match crate::import_parser::queue_to_json_string(&optimized) {
+        Ok(j) => j,
+        Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
+    };
+    let doc: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+    (
+        200,
+        serde_json::json!({
+            "test_cases": doc.get("test_cases").cloned().unwrap_or(doc),
+            "report": report,
+            "note": "Hand this JSON to the developer as the file to import.                      The report explains what was reordered and why.",
+        })
+        .to_string(),
+    )
+}
 
-/// Run the REAL importer on the draft: write to a temp file (parse_file
-/// dispatches on extension) and report cases/warnings/error. With a
-/// signed-in client the Module values are also checked against the org's
-/// picklist - the guide says "ONLY from this list", so validation closes
-/// that loop. Offline validation still works; it just skips the check.
-async fn validate_json(
-    body: &str,
-    ctx: &BridgeContext,
-    client: Option<&crate::ado::AdoClient>,
-) -> String {
+/// Apply declarative edits to a draft - the restructuring an assistant
+/// would otherwise write a throwaway script for. Pure, like `optimize`.
+fn transform_json(body: &str) -> (u16, String) {
+    let doc: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return (400, serde_json::json!({ "error": format!("invalid JSON: {e}") }).to_string()),
+    };
+    // The draft arrives as a JSON *string* (the tool's `json` argument),
+    // but a caller posting the array inline should work too.
+    let draft = match &doc["test_cases"] {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let cases = match parse_cases(&draft) {
+        Ok(c) => c,
+        Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+    };
+    let ops = match crate::transform::parse_ops(&doc["operations"]) {
+        Ok(o) => o,
+        Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+    };
+    let (out, report) = crate::transform::apply(cases, &ops);
+    let json = match crate::import_parser::queue_to_json_string(&out) {
+        Ok(j) => j,
+        Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+    (
+        200,
+        serde_json::json!({
+            "test_cases": parsed.get("test_cases").cloned().unwrap_or(parsed),
+            "report": report,
+        })
+        .to_string(),
+    )
+}
+
+/// Run a draft through the app's REAL importer to get `TestCase`s, so
+/// these tools accept exactly what the Import File tab accepts (bare
+/// array, `test_cases` wrapper, the lot).
+fn parse_cases(body: &str) -> Result<Vec<crate::model::TestCase>, String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let dir = std::env::temp_dir().join("tcm-v2-bridge");
     let _ = std::fs::create_dir_all(&dir);
-    let seq = VALIDATE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = dir.join(format!("validate-{}-{}.json", std::process::id(), seq));
-    if std::fs::write(&path, body).is_err() {
-        return serde_json::json!({"error": "could not stage the draft"}).to_string();
-    }
-    let out = match crate::import_parser::parse_file(path.to_str().unwrap_or_default()) {
-        Ok((cases, mut warnings)) => {
-            if let Some(c) = client {
-                let allowed = allowed_modules(ctx, c).await;
-                if !allowed.is_empty() {
-                    for (i, tc) in cases.iter().enumerate() {
-                        let m = tc.module_value.trim();
-                        if !m.is_empty() && !allowed.iter().any(|a| a.eq_ignore_ascii_case(m)) {
-                            warnings.push(format!(
-                                "Test case {} ('{}'): Module '{}' is not an allowed value in \
-                                 this organization - pick one from get_writing_guide.",
-                                i + 1,
-                                tc.title,
-                                m
-                            ));
-                        }
-                    }
-                }
-            }
-            serde_json::json!({
-                "cases": cases.len(),
-                "warnings": warnings,
-                "error": serde_json::Value::Null,
-            })
-        }
-        Err(e) => serde_json::json!({"cases": 0, "warnings": [], "error": e}),
-    };
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("draft-{}-{}.json", std::process::id(), seq));
+    std::fs::write(&path, body).map_err(|_| "could not stage the draft".to_string())?;
+    let parsed = crate::import_parser::parse_file(path.to_str().unwrap_or_default());
     let _ = std::fs::remove_file(&path);
-    out.to_string()
+    parsed.map(|(cases, _warnings)| cases)
 }
+
+/// The project's existing tag names, for suggesting tags that match what
+/// the team already uses instead of inventing near-duplicates.
+///
+/// Reads the shared reference cache the app fills (refcache.rs) - the
+/// whole point is that an assistant asking for tags does NOT repeat a
+/// request the app has already made. Only a completely cold cache (the AI
+/// asked before the developer opened a tag field) fetches, and it stores
+/// the result so the app doesn't pay for it either.
+async fn tags(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>) -> (u16, String) {
+    let key = crate::refcache::tags_key(&ctx.org, &ctx.project);
+    let (values, source) = match crate::refcache::any(&key) {
+        Some(v) => (v, "cache"),
+        None => match client {
+            Some(c) => match c.get_tags(&ctx.org, &ctx.project).await {
+                Ok(v) => {
+                    crate::refcache::put(&key, &v);
+                    (v, "fetched")
+                }
+                Err(e) => return (502, format!("could not read tags: {e}")),
+            },
+            None => return (503, "sign in to Test Case Manager first".into()),
+        },
+    };
+    (
+        200,
+        serde_json::json!({
+            "tags": values,
+            "count": values.len(),
+            "source": source,
+            "note": "Prefer an existing tag over a new one. Tags are \
+                     semicolon-separated in the import JSON, never commas.",
+        })
+        .to_string(),
+    )
+}
+
+/// How many tag names the writing guide inlines before it stops and
+/// points at the dedicated tool. Long enough to be genuinely useful,
+/// short enough not to drown the guide.
+const GUIDE_TAG_LIMIT: usize = 60;
 
 /// The org's Module values: configured picklist first, observed values as
 /// the fallback - the same discovery the app's own module picker uses.
@@ -209,6 +290,27 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
     } else {
         modules.iter().map(|m| format!("- `{m}`")).collect::<Vec<_>>().join("\n")
     };
+    // Cache-only: the guide must not become another request. If nothing is
+    // cached yet, `get_tags` will fill it on demand.
+    let tag_lines = match crate::refcache::any(&crate::refcache::tags_key(&ctx.org, &ctx.project)) {
+        Some(tags) if !tags.is_empty() => {
+            let shown = tags
+                .iter()
+                .take(GUIDE_TAG_LIMIT)
+                .map(|t| format!("`{t}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if tags.len() > GUIDE_TAG_LIMIT {
+                format!(
+                    "{shown}\n\n(showing {GUIDE_TAG_LIMIT} of {} - call `get_tags` for all of them)",
+                    tags.len()
+                )
+            } else {
+                shown
+            }
+        }
+        _ => "Call `get_tags` for the list this project already uses.".to_string(),
+    };
     format!(
         "# Writing test cases for Test Case Manager ({org}/{project})\n\n\
         Produce a JSON array of test cases. The developer imports it via the\n\
@@ -220,12 +322,22 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         below), `preconditions` (state, not steps). Include `id` ONLY to update\n\
         that exact work item; omit it to create.\n\n\
         ## Allowed Module values (live)\n{module_lines}\n\n\
+        ## Tags this project already uses\n\
+        Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\
+        an existing 'smoke') fragments the project's tags. A genuinely new tag\n\
+        is allowed when nothing here matches.\n\n{tag_lines}\n\n\
         ## Workflow\n\
         1. Call `get_example_cases` for the PBI you're writing for and mimic\n\
         their style and granularity.\n\
         2. Draft your cases.\n\
-        3. Call `validate_cases` with the JSON and fix every warning before\n\
-        handing the file to the developer.\n",
+        3. Call `optimize_cases` with the JSON: it spells navigation out as\n\
+        steps, trims expected results to the outcome, and reorders the cases so\n\
+        the tester changes environment as few times as possible. Hand back the\n\
+        JSON it returns.\n\
+        4. For later edits - retagging, retitling, setting a module - call\n\
+        `transform_cases` instead of rewriting the file yourself.\n\n\
+        You do not need to check the draft: the developer's app validates on\n\
+        import and shows any warnings there, live as you save the file.\n",
         org = ctx.org,
         project = ctx.project,
     )

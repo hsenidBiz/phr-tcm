@@ -50,7 +50,9 @@ fn tools_list_names_all_six() {
         vec![
             "get_writing_guide",
             "get_example_cases",
-            "validate_cases",
+            "optimize_cases",
+            "transform_cases",
+            "get_tags",
             "search_pbis",
             "search_wiki",
             "get_wiki_page"
@@ -75,8 +77,9 @@ fn tools_call_proxies_to_the_bridge_and_wraps_text() {
     assert_eq!(v["result"]["content"][0]["type"], "text");
     assert_eq!(v["result"]["content"][0]["text"], r#"{"test_cases":[]}"#);
     let recorded = calls.borrow();
-    assert_eq!(recorded[0].0, "GET");
-    assert_eq!(recorded[0].1, "/examples?pbi=42&limit=3");
+    let last = recorded.last().unwrap();
+    assert_eq!(last.0, "GET");
+    assert_eq!(last.1, "/examples?pbi=42&limit=3");
 }
 
 #[test]
@@ -103,7 +106,8 @@ fn search_pbis_percent_encodes_special_query_chars() {
     };
     handle_message(req, "1.10.3", &call).unwrap();
     let recorded = calls.borrow();
-    assert_eq!(recorded[0].1, "/search-pbis?q=Search%20%26%20Filter");
+    let last = recorded.last().unwrap();
+    assert_eq!(last.1, "/search-pbis?q=Search%20%26%20Filter");
 }
 
 #[test]
@@ -116,8 +120,9 @@ fn search_wiki_percent_encodes_special_query_chars() {
     };
     handle_message(req, "1.10.3", &call).unwrap();
     let recorded = calls.borrow();
-    assert_eq!(recorded[0].0, "GET");
-    assert_eq!(recorded[0].1, "/search-wiki?q=auth%20%26%20login");
+    let last = recorded.last().unwrap();
+    assert_eq!(last.0, "GET");
+    assert_eq!(last.1, "/search-wiki?q=auth%20%26%20login");
 }
 
 #[test]
@@ -132,6 +137,63 @@ fn get_wiki_page_percent_encodes_wiki_id_and_path() {
     };
     handle_message(req, "1.10.3", &call).unwrap();
     let recorded = calls.borrow();
-    assert_eq!(recorded[0].0, "GET");
-    assert_eq!(recorded[0].1, "/wiki-page?wiki=wiki-1&path=%2FDocs%2FAPI%20Guide");
+    let last = recorded.last().unwrap();
+    assert_eq!(last.0, "GET");
+    assert_eq!(last.1, "/wiki-page?wiki=wiki-1&path=%2FDocs%2FAPI%20Guide");
+}
+
+/// A switched-off tool disappears from tools/list.
+#[test]
+fn disabled_tools_are_hidden_from_the_list() {
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":["search_wiki","get_wiki_page"]}"#.into()));
+        }
+        Ok((200, "{}".into()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let names: Vec<&str> = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+
+    assert!(!names.contains(&"search_wiki"));
+    assert!(!names.contains(&"get_wiki_page"));
+    assert!(names.contains(&"optimize_cases"), "the rest are untouched");
+}
+
+/// And calling it anyway - from a cached list - is refused rather than
+/// quietly proxied.
+#[test]
+fn calling_a_disabled_tool_is_refused() {
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":["search_wiki"]}"#.into()));
+        }
+        panic!("a disabled tool must never reach the bridge");
+    };
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_wiki","arguments":{"query":"x"}}}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+
+    assert_eq!(v["result"]["isError"], true);
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("switched off"), "and says why: {text}");
+}
+
+/// A bridge that cannot be reached must not strip every tool - the app
+/// being closed is not the same as the user disabling everything.
+#[test]
+fn an_unreachable_bridge_disables_nothing() {
+    let call = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> {
+        Err("connection refused".into())
+    };
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 8);
 }
