@@ -13,6 +13,26 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.13.0",
+    date: "2026-07-27",
+    items: [
+      "Imported JSON files are now watched: edit one (by hand or with an AI assistant) and the queue updates itself, with a panel showing exactly what was added, changed or removed, and the affected rows tinted. Import several files and each is listed separately - stop watching one and you're asked whether to remove its test cases too.",
+      "Work items now have a History tab beside Discussion: a timeline of every change with before/after values, grouped by day, plus a summary of how long the item spent in each state and how many times it came back.",
+      "Editing a work item's description is now click-to-edit, with a formatting toolbar and a live preview underneath - like Azure DevOps, without the extra clicks.",
+      "AI Bridge: two new tools replace validate_cases. optimize_cases reorganises a finished draft into a run sheet - navigation spelled out as steps, expected results cut to the outcome, and cases ordered so the tester changes environment as few times as possible. transform_cases applies bulk edits (retag, retitle, set module, sort, dedupe) so an assistant never writes its own script.",
+      "AI Bridge: you can now switch individual tools off, and register your company's database MCP server alongside this one so an assistant can read the schema and your test cases together.",
+      "AI Bridge: assistants can read the tag names your project already uses, so they reuse yours instead of inventing near-duplicates.",
+      "You're now notified when a work item is assigned to you - a Windows notification when the app isn't in front of you, a toast when it is.",
+      "The execution report opens in the browser using the app's theme instead of a fixed light page.",
+      "Test-case pages now label Automation Status, Module and Tags on their own rows instead of one undifferentiated row of chips.",
+      "Pipeline step logs open in a wider window that follows your window size, with a copy button pinned in the corner.",
+      "The sidebar icons are colour-coded, and the collapsed rail has proper tooltips.",
+      "Fixed: the PBI search stayed open when you clicked away from it.",
+      "The board's column controls are now Hide/Open buttons instead of an eye icon, with the collapsed column reading vertically.",
+      "The app makes fewer Azure DevOps requests: project tags are cached on disk and shared with the AI bridge.",
+    ],
+  },
+  {
     version: "1.12.6",
     date: "2026-07-26",
     items: [
