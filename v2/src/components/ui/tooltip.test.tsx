@@ -1,121 +1,135 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useRef } from "react";
-import { expect, test, vi } from "vitest";
-import { Tooltip } from "./tooltip";
+import type { ReactNode } from "react";
+import { expect, test } from "vitest";
+import { Tooltip, TooltipLayer } from "./tooltip";
 
-const show = (el: HTMLElement) => fireEvent.pointerOver(el);
-const hide = (el: HTMLElement) => fireEvent.pointerOut(el);
-
-test("it shows after a delay and hides again", async () => {
-  render(
-    <Tooltip label="Run Tests">
-      <button>Run</button>
-    </Tooltip>,
+/** The layer is mounted once per window in main.tsx; tests mount it the
+ * same way, alongside whatever they are hovering. */
+function withLayer(ui: ReactNode) {
+  return render(
+    <>
+      {ui}
+      <TooltipLayer />
+    </>,
   );
-  const btn = screen.getByRole("button");
-  expect(screen.queryByRole("tooltip")).toBeNull();
+}
 
-  show(btn);
+const hover = (el: Element) => fireEvent.pointerOver(el, { bubbles: true });
+const leave = (el: Element) =>
+  fireEvent.pointerOut(el, { bubbles: true, relatedTarget: document.body });
+
+test("any element with a title gets the app's tooltip", async () => {
+  withLayer(<button title="Refresh work items">R</button>);
+  const btn = screen.getByRole("button");
+
+  hover(btn);
   // Not instant - a pointer passing through must not flash tooltips.
   expect(screen.queryByRole("tooltip")).toBeNull();
-  expect(await screen.findByRole("tooltip")).toHaveTextContent("Run Tests");
-
-  hide(btn);
-  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Refresh work items");
 });
 
-/** The reason this component exists: a wrapper element around the trigger
- * broke the sidebar's collapsed rail. Nothing may be added around it. */
+/** Taking `title` off is what stops the OS bubble drawing over ours - and
+ * it has to go back afterwards, or the element is left altered. */
+test("the native title is suppressed while hovered and restored after", async () => {
+  withLayer(<button title="Native text">R</button>);
+  const btn = screen.getByRole("button");
+
+  hover(btn);
+  await waitFor(() => expect(btn).not.toHaveAttribute("title"));
+  expect(btn).toHaveAttribute("data-tip-text", "Native text");
+
+  leave(btn);
+  await waitFor(() => expect(btn).toHaveAttribute("title", "Native text"));
+  expect(btn).not.toHaveAttribute("data-tip-text");
+});
+
+/** The reason this is delegated rather than a wrapper: a wrapper element
+ * inside the sidebar's flex rail stopped the collapsed rail resolving its
+ * width. Nothing may be added around the trigger. */
 test("it adds no element around the trigger", async () => {
-  const { container } = render(
+  const { container } = withLayer(
     <div data-testid="row">
-      <Tooltip label="Tip">
-        <button>Only child</button>
-      </Tooltip>
+      <button title="Tip">Only child</button>
     </div>,
   );
   const row = container.querySelector('[data-testid="row"]')!;
   expect(row.children).toHaveLength(1);
-  expect(row.children[0].tagName).toBe("BUTTON");
 
-  show(screen.getByRole("button"));
+  hover(screen.getByRole("button"));
   await screen.findByRole("tooltip");
   // Still one child: the bubble is portalled out of the layout entirely.
   expect(row.children).toHaveLength(1);
   expect(screen.getByRole("tooltip").parentElement).toBe(document.body);
 });
 
-test("keyboard focus opens it too", async () => {
-  render(
-    <Tooltip label="Focusable">
-      <button>Go</button>
-    </Tooltip>,
-  );
-  fireEvent.focus(screen.getByRole("button"));
-  expect(await screen.findByRole("tooltip")).toBeInTheDocument();
-
-  fireEvent.blur(screen.getByRole("button"));
-  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
-});
-
-test("it describes its trigger while open", async () => {
-  render(
-    <Tooltip label="Described">
-      <button>Trigger</button>
-    </Tooltip>,
-  );
-  const btn = screen.getByRole("button");
-  expect(btn).not.toHaveAttribute("aria-describedby");
-  show(btn);
-  const tip = await screen.findByRole("tooltip");
-  expect(btn.getAttribute("aria-describedby")).toBe(tip.id);
-});
-
-test("disabled means nothing happens at all", async () => {
-  render(
-    <Tooltip label="Hidden" disabled>
-      <button>Quiet</button>
-    </Tooltip>,
-  );
-  show(screen.getByRole("button"));
+test("an element with no title is ignored", async () => {
+  withLayer(<button>Plain</button>);
+  hover(screen.getByRole("button"));
   await new Promise((r) => setTimeout(r, 500));
   expect(screen.queryByRole("tooltip")).toBeNull();
 });
 
-test("Escape closes it", async () => {
-  render(
-    <Tooltip label="Escapable">
-      <button>Trigger</button>
-    </Tooltip>,
+test("an empty title is ignored", async () => {
+  withLayer(<button title="   ">Blank</button>);
+  hover(screen.getByRole("button"));
+  await new Promise((r) => setTimeout(r, 500));
+  expect(screen.queryByRole("tooltip")).toBeNull();
+});
+
+test("hovering a child of the trigger still finds the title", async () => {
+  withLayer(
+    <button title="Outer label">
+      <span data-testid="icon">icon</span>
+    </button>,
   );
-  show(screen.getByRole("button"));
+  hover(screen.getByTestId("icon"));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Outer label");
+});
+
+test("it closes on leave, on Escape and on a press", async () => {
+  withLayer(<button title="Closes">X</button>);
+  const btn = screen.getByRole("button");
+
+  hover(btn);
+  await screen.findByRole("tooltip");
+  leave(btn);
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+
+  hover(btn);
   await screen.findByRole("tooltip");
   fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+
+  hover(btn);
+  await screen.findByRole("tooltip");
+  fireEvent.pointerDown(btn);
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
 });
 
-/** The trigger's own handlers and ref must survive being cloned. */
-test("it preserves the trigger's own handlers and ref", async () => {
-  const onClick = vi.fn();
-  const onPointerOver = vi.fn();
-  function Harness() {
-    const ref = useRef<HTMLButtonElement>(null);
-    return (
-      <Tooltip label="Tip">
-        <button ref={ref} onClick={onClick} onPointerOver={onPointerOver} data-ref-check>
-          Trigger
-        </button>
-      </Tooltip>
-    );
-  }
-  render(<Harness />);
+test("the explicit wrapper just labels its child", async () => {
+  withLayer(
+    <Tooltip label="Manual Entry" side="right">
+      <button>M</button>
+    </Tooltip>,
+  );
   const btn = screen.getByRole("button");
-  show(btn);
-  expect(onPointerOver).toHaveBeenCalled();
-  await screen.findByRole("tooltip");
+  expect(btn).toHaveAttribute("title", "Manual Entry");
+  expect(btn).toHaveAttribute("data-tip-side", "right");
 
-  // Clicking runs the caller's handler AND dismisses the tooltip.
-  fireEvent.click(btn);
-  expect(onClick).toHaveBeenCalled();
-  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  hover(btn);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Manual Entry");
+});
+
+test("a disabled wrapper sets no title at all", async () => {
+  withLayer(
+    <Tooltip label="Hidden" disabled>
+      <button>Q</button>
+    </Tooltip>,
+  );
+  const btn = screen.getByRole("button");
+  expect(btn).not.toHaveAttribute("title");
+
+  hover(btn);
+  await new Promise((r) => setTimeout(r, 500));
+  expect(screen.queryByRole("tooltip")).toBeNull();
 });

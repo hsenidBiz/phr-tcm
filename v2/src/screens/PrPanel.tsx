@@ -488,7 +488,9 @@ export default function PrPanel({ org, project }: { org: string; project: string
     prStatus === "active" ? fetched.filter((pr) => !shownAbove.has(pr.id)) : fetched;
 
   return (
-    <div className="max-w-3xl space-y-6">
+    // Pull requests are a list: give them the width on a wide window
+    // rather than leaving half the screen empty.
+    <div className="max-w-3xl space-y-6 xl:max-w-5xl">
       <div className="flex items-center gap-2">
         <Select
           aria-label="Repository"

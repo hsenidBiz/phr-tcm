@@ -112,7 +112,11 @@ export default function AiBridge() {
   const dbReady = isDbConfigComplete(db);
 
   return (
-    <div className="max-w-lg space-y-6">
+    // Two columns once there is room (the window floor is 900px, so
+    // this only kicks in above it); a single column below, which is
+    // also what the narrow runner-sized windows get.
+    <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start">
+      <div className="space-y-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Status</h2>
         {bridge.data ? (
@@ -297,6 +301,11 @@ export default function AiBridge() {
         )}
       </section>
 
+      </div>
+
+      {/* Right column: the two tallest cards, so neither column runs
+          far past the other. */}
+      <div className="space-y-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
@@ -491,6 +500,7 @@ export default function AiBridge() {
           through this bridge - it only reads.
         </p>
       </section>
+      </div>
     </div>
   );
 }

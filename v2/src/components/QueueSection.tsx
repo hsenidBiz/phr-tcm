@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
+import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { loadNotes } from "../lib/caseNotes";
 import { cn } from "../lib/cn";
 import { caseKey } from "../lib/fileSync";
@@ -153,10 +154,11 @@ export default function QueueSection({
   const exportJson = useMutation({
     mutationFn: async () => {
       const path = await save({
-        defaultPath: "test-case-queue.json",
+        defaultPath: exportPathFor("test-case-queue.json"),
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
+      rememberExportPath(path);
       const r = await commands.exportQueueJson(path, queue);
       if (r.status === "error") throw new Error(r.error);
       toast.success("Queue exported.");

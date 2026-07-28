@@ -123,7 +123,9 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
   }
 
   return (
-    <div className="max-w-xl space-y-4">
+    // The form stays one readable column; only its cap relaxes, so a
+    // wide window is not mostly empty.
+    <div className="max-w-xl space-y-4 xl:max-w-3xl">
       <div className="flex gap-2">
         <label className="block text-xs text-muted">
           <span className="mb-1 block">Type</span>

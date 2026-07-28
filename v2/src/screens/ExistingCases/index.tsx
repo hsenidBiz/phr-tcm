@@ -13,6 +13,7 @@ import { Input } from "../../components/ui/input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { cn } from "../../lib/cn";
+import { exportPathFor, rememberExportPath } from "../../lib/exportDir";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap } from "../../lib/ipc";
@@ -133,10 +134,11 @@ export default function ExistingCases({
   const exportJson = useMutation({
     mutationFn: async () => {
       const path = await save({
-        defaultPath: "test-cases.json",
+        defaultPath: exportPathFor("test-cases.json"),
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
+      rememberExportPath(path);
       const r = await commands.exportQueueJson(path, selectedCases.map(toTestCase));
       if (r.status === "error") throw new Error(r.error);
       toast.success(`Exported ${selectedCases.length} case(s).`);
