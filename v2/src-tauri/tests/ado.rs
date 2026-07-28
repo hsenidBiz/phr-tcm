@@ -322,11 +322,45 @@ async fn update_from_model_skips_blank_fields() {
         .iter()
         .map(|op| op["path"].as_str().unwrap())
         .collect();
+    assert!(paths.contains(&"/fields/System.Title"));
     assert!(paths.contains(&"/fields/Microsoft.VSTS.TCM.Steps"));
     assert!(paths.contains(&"/fields/Microsoft.VSTS.TCM.AutomationStatus"));
     assert!(!paths.iter().any(|p| p.contains("Tags")), "blank tags must be skipped");
     assert!(!paths.iter().any(|p| p.contains("Custom.Module")));
     assert!(!paths.iter().any(|p| p.contains("Custom.Prec")));
+}
+
+#[tokio::test]
+async fn update_from_model_writes_the_title() {
+    // Regression guard: bulk-import updates rename cases via System.Title.
+    // The diff preview promises "Title: old -> new" as an always-written
+    // field - an update that omits it reports success while silently
+    // keeping the old name in Azure DevOps.
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/wit/workitems/55"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 55})))
+        .mount(&server)
+        .await;
+
+    let mut tc = sample_tc();
+    tc.title = "Renamed by bulk import".into();
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client
+        .update_test_case_from_model("org", "proj", 55, &tc, None, None)
+        .await
+        .unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
+    let title_op = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|op| op["path"] == "/fields/System.Title")
+        .expect("update must PATCH System.Title");
+    assert_eq!(title_op["value"], "Renamed by bulk import");
+    assert_eq!(title_op["op"], "add");
 }
 
 #[tokio::test]

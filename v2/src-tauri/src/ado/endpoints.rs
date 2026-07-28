@@ -424,9 +424,10 @@ impl AdoClient {
     }
 
     /// SAFETY RULE (ported from v1 update_test_case_from_model): always
-    /// overwrites Steps and AutomationStatus, but overwrites Tags / module /
-    /// Preconditions only when the imported case provides a value - a blank
-    /// spreadsheet column must never wipe existing data.
+    /// overwrites Title, Steps and AutomationStatus, but overwrites Tags /
+    /// module / Preconditions only when the imported case provides a value -
+    /// a blank spreadsheet column must never wipe existing data. (Title is
+    /// never blank: is_valid rejects an empty title before any submit.)
     pub async fn update_test_case_from_model(
         &self,
         organization: &str,
@@ -437,6 +438,7 @@ impl AdoClient {
         preconditions_ref: Option<&str>,
     ) -> Result<(), AdoError> {
         let mut fields = vec![
+            ("System.Title".to_string(), tc.title.clone()),
             (
                 "Microsoft.VSTS.TCM.Steps".to_string(),
                 crate::steps_xml::build_steps_xml(&tc.steps),
