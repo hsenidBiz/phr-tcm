@@ -12,7 +12,7 @@ export const commands = {
 	listOrgs: () => typedError<Org[], AdoError>(__TAURI_INVOKE("list_orgs")),
 	searchPbis: (organization: string, project: string, query: string) => typedError<PbiHit[], AdoError>(__TAURI_INVOKE("search_pbis", { organization, project, query })),
 	pbiTestCases: (organization: string, pbiId: number) => typedError<TestCaseSummary[], AdoError>(__TAURI_INVOKE("pbi_test_cases", { organization, pbiId })),
-	parseImportFile: (path: string) => typedError<ImportResult, string>(__TAURI_INVOKE("parse_import_file", { path })),
+	parseImportFile: (path: string) => typedError<ImportResult_Serialize, string>(__TAURI_INVOKE("parse_import_file", { path })),
 	/**
 	 *  One-shot content fingerprint. Used when a watch is (re)armed, to catch
 	 *  an edit made while the app was closed or the tab was elsewhere - the
@@ -30,14 +30,14 @@ export const commands = {
 	unwatchFile: (path: string) => __TAURI_INVOKE<void>("unwatch_file", { path }),
 	/**  Stop following every file - used when the PBI scope changes. */
 	unwatchAllFiles: () => __TAURI_INVOKE<void>("unwatch_all_files"),
-	exportQueue: (path: string, queue: TestCase[]) => typedError<null, string>(__TAURI_INVOKE("export_queue", { path, queue })),
+	exportQueue: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue", { path, queue })),
 	writeTemplate: (path: string) => typedError<null, string>(__TAURI_INVOKE("write_template", { path })),
 	/**
 	 *  Serial creation loop ported from v1 CreationWorker: one item at a time,
 	 *  500 ms spacing (rate-limit respect), new cases linked to the PBI, updates
 	 *  patched in place. A failed item never aborts the rest.
 	 */
-	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath })),
+	submitQueue: (organization: string, project: string, pbiId: number, queue: TestCase_Deserialize[], moduleRef: string | null, preconditionsRef: string | null, areaPath: string | null, iterationPath: string | null) => typedError<SubmitItemResult[], string>(__TAURI_INVOKE("submit_queue", { organization, project, pbiId, queue, moduleRef, preconditionsRef, areaPath, iterationPath })),
 	/**  Find-or-create the PBI's requirement suite and return it with its plan. */
 	ensurePbiSuite: (organization: string, project: string, pbiId: number) => typedError<EnsuredSuite, AdoError>(__TAURI_INVOKE("ensure_pbi_suite", { organization, project, pbiId })),
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
@@ -95,8 +95,8 @@ export const commands = {
 	 *  Save one existing case from the editor (no suite-ensure, no pacing).
 	 *  The case must carry update_id; blank-skip semantics apply as always.
 	 */
-	updateTestCase: (organization: string, project: string, tc: TestCase, moduleRef: string | null, preconditionsRef: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef })),
-	exportQueueJson: (path: string, queue: TestCase[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
+	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef })),
+	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
 	captureScreens: () => typedError<ScreenShot[], string>(__TAURI_INVOKE("capture_screens")),
@@ -130,14 +130,14 @@ export const commands = {
 	 *  pasteable share link. Review-before-upload sharing: the cases do NOT
 	 *  exist in ADO - only this JSON file does.
 	 */
-	shareQueue: (organization: string, project: string, pbiId: number, queue: TestCase[]) => typedError<string, string>(__TAURI_INVOKE("share_queue", { organization, project, pbiId, queue })),
+	shareQueue: (organization: string, project: string, pbiId: number, queue: TestCase_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("share_queue", { organization, project, pbiId, queue })),
 	/**
 	 *  Consumes a shared draft by its link (with the CALLER's own sign-in) and
 	 *  runs it through the real importer, exactly like a file import. Links
 	 *  are one-time use: a successful import revokes the share.
 	 */
-	fetchSharedQueue: (link: string) => typedError<SharedQueue, string>(__TAURI_INVOKE("fetch_shared_queue", { link })),
-	exportQueueHtml: (path: string, queue: TestCase[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
+	fetchSharedQueue: (link: string) => typedError<SharedQueue_Serialize, string>(__TAURI_INVOKE("fetch_shared_queue", { link })),
+	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
 	 * 
@@ -155,7 +155,7 @@ export const commands = {
 	 *  work item id get a comment box that autosaves back into the app via
 	 *  the loopback note listener.
 	 */
-	viewQueueHtml: (queue: TestCase[], subtitle: string, organization: string, notes: { [key in string]: string }) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes })),
+	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
@@ -453,8 +453,15 @@ export type FiledBug = {
 	url: string,
 };
 
-export type ImportResult = {
-	cases: TestCase[],
+export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;
+
+export type ImportResult_Deserialize = {
+	cases: TestCase_Deserialize[],
+	warnings: string[],
+};
+
+export type ImportResult_Serialize = {
+	cases: TestCase_Serialize[],
 	warnings: string[],
 };
 
@@ -724,7 +731,9 @@ export type ScreenShot = {
 	b64_png: string,
 };
 
-export type SharedQueue = {
+export type SharedQueue = SharedQueue_Serialize | SharedQueue_Deserialize;
+
+export type SharedQueue_Deserialize = {
 	/**
 	 *  The PBI the sender drafted against. When it differs from the
 	 *  recipient's current selection the frontend asks which one to load
@@ -737,7 +746,24 @@ export type SharedQueue = {
 	pbi_work_item_type: string,
 	organization: string,
 	project: string,
-	cases: TestCase[],
+	cases: TestCase_Deserialize[],
+	warnings: string[],
+};
+
+export type SharedQueue_Serialize = {
+	/**
+	 *  The PBI the sender drafted against. When it differs from the
+	 *  recipient's current selection the frontend asks which one to load
+	 *  into - the queue is stored PER PBI, so loading into the wrong one
+	 *  hides the cases behind a PBI switch.
+	 */
+	pbi_id: number,
+	/**  Enough to select that PBI without another lookup. */
+	pbi_title: string,
+	pbi_work_item_type: string,
+	organization: string,
+	project: string,
+	cases: TestCase_Serialize[],
 	warnings: string[],
 };
 
@@ -797,23 +823,7 @@ export type TeamRef = {
 	name: string,
 };
 
-export type TestCase = {
-	title: string,
-	steps: Step[],
-	/**  Semicolon-separated. */
-	tags: string,
-	/**  "Not Automated" or "Planned". */
-	automation_status: string,
-	module_value: string,
-	preconditions: string,
-	/**  When set, update this existing work item instead of creating a new one. */
-	update_id: number | null,
-	/**
-	 *  In-app note that round-trips through the JSON export/import but is
-	 *  NEVER sent to Azure DevOps (no ADO field mapping reads it).
-	 */
-	comment?: string,
-};
+export type TestCase = TestCase_Serialize | TestCase_Deserialize;
 
 /**
  *  A fully-loaded Test Case for the editor: steps parsed from the XML blob,
@@ -840,6 +850,48 @@ export type TestCaseSummary = {
 	title: string,
 	tags: string,
 	automation_status: string,
+};
+
+export type TestCase_Deserialize = {
+	title: string,
+	steps: Step[],
+	/**  Semicolon-separated. */
+	tags: string,
+	/**  "Not Automated" or "Planned". */
+	automation_status: string,
+	module_value: string,
+	preconditions: string,
+	/**  When set, update this existing work item instead of creating a new one. */
+	update_id: number | null,
+	/**
+	 *  In-app note that round-trips through the JSON export/import but is
+	 *  NEVER sent to Azure DevOps (no ADO field mapping reads it).
+	 *  Absent from serialized output when empty, so tools that round-trip
+	 *  a draft do not inject a field the caller never wrote (feedback:
+	 *  a transform must be idempotent in shape).
+	 */
+	comment?: string,
+};
+
+export type TestCase_Serialize = {
+	title: string,
+	steps: Step[],
+	/**  Semicolon-separated. */
+	tags: string,
+	/**  "Not Automated" or "Planned". */
+	automation_status: string,
+	module_value: string,
+	preconditions: string,
+	/**  When set, update this existing work item instead of creating a new one. */
+	update_id: number | null,
+	/**
+	 *  In-app note that round-trips through the JSON export/import but is
+	 *  NEVER sent to Azure DevOps (no ADO field mapping reads it).
+	 *  Absent from serialized output when empty, so tools that round-trip
+	 *  a draft do not inject a field the caller never wrote (feedback:
+	 *  a transform must be idempotent in shape).
+	 */
+	comment?: string,
 };
 
 export type TestPlan = {

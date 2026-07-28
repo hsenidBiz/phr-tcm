@@ -27,8 +27,10 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 /* One labelled row per kind, label column aligned so the three rows read
    as a small table. The label wraps above its values on narrow screens
    rather than squeezing them. */
-.metarow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin-bottom: 4px; }
-.metalabel { flex: 0 0 130px; font-size: 11.5px; font-weight: 600; color: #44506a; }
+.metarow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+/* Auto-width, not a fixed column: the chips sit right beside their label
+   instead of across a gap sized for the longest label. */
+.metalabel { flex: 0 0 auto; font-size: 11.5px; font-weight: 600; color: #44506a; }
 .metavals { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 1 1 200px; }
 .chip { font-size: 11.5px; border-radius: 999px; padding: 2px 10px;
         background: #eef2f8; color: #44506a; border: 1px solid #dbe2ee; }

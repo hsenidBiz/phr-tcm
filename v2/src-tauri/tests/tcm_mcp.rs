@@ -52,6 +52,7 @@ fn tools_list_names_all_six() {
             "get_example_cases",
             "optimize_cases",
             "transform_cases",
+            "validate_cases",
             "get_tags",
             "search_pbis",
             "search_wiki",
@@ -79,7 +80,7 @@ fn tools_call_proxies_to_the_bridge_and_wraps_text() {
     let recorded = calls.borrow();
     let last = recorded.last().unwrap();
     assert_eq!(last.0, "GET");
-    assert_eq!(last.1, "/examples?pbi=42&limit=3");
+    assert_eq!(last.1, "/examples?pbi=42&limit=3&offset=0");
 }
 
 #[test]
@@ -195,5 +196,5 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 9);
 }

@@ -26,10 +26,26 @@ pub enum Op {
     SuffixTitle(String),
     /// Literal find/replace across every step's action and expected.
     ReplaceInSteps { find: String, replace: String },
-    /// Sort the whole draft: "title" | "module" | "tags".
+    /// Sort the whole draft: "title" | "module" | "tags" | "preconditions".
     SortBy(String),
+    /// Stable grouping: cases sharing the field's value become contiguous,
+    /// groups ordered by first appearance and within-group order kept -
+    /// grouping that never destroys a deliberate sequence.
+    GroupBy(String),
     /// Drop cases whose title repeats an earlier one.
     Dedupe,
+    /// Add a step at the front of each matched case.
+    PrependStep { action: String, expected: String },
+    /// Add a step at the end of each matched case.
+    AppendStep { action: String, expected: String },
+    /// Remove steps whose action contains this text (case-insensitive) -
+    /// the repair for a duplicated preamble.
+    RemoveStepMatching(String),
+    /// Drop the matched cases. Requires a `where` filter: an unfiltered
+    /// remove would delete the whole draft, and nobody means that.
+    RemoveCases,
+    /// Append new cases to the draft.
+    InsertCases(Vec<TestCase>),
 }
 
 /// Which cases an operation applies to. Absent means all of them.
@@ -129,19 +145,104 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                 find: str_of(v, "find"),
                 replace: str_of(v, "replace"),
             },
-            "sort_by" => {
-                if !["title", "module", "tags"].contains(&value.as_str()) {
-                    return Err(format!("{label}: sort_by takes \"title\", \"module\" or \"tags\"."));
+            "sort_by" | "group_by" => {
+                if !["title", "module", "tags", "preconditions"].contains(&value.as_str()) {
+                    return Err(format!(
+                        "{label}: {name} takes \"title\", \"module\", \"tags\" or \"preconditions\"."
+                    ));
                 }
-                Op::SortBy(value)
+                if name == "sort_by" { Op::SortBy(value) } else { Op::GroupBy(value) }
             }
             "dedupe" => Op::Dedupe,
+            "prepend_step" | "append_step" => {
+                let action = str_of(v, "action");
+                if action.trim().is_empty() {
+                    return Err(format!("{label}: {name} needs a non-empty \"action\"."));
+                }
+                let expected = str_of(v, "expected");
+                if name == "prepend_step" {
+                    Op::PrependStep { action, expected }
+                } else {
+                    Op::AppendStep { action, expected }
+                }
+            }
+            "remove_step_matching" => {
+                let find = if value.is_empty() { str_of(v, "find") } else { value.clone() };
+                if find.trim().is_empty() {
+                    return Err(format!("{label}: remove_step_matching needs the text to match."));
+                }
+                Op::RemoveStepMatching(find)
+            }
+            "remove_cases" => {
+                let f = &v["where"];
+                let has_filter = f["title_contains"].as_str().is_some()
+                    || f["has_tag"].as_str().is_some()
+                    || f["module_is"].as_str().is_some();
+                if !has_filter {
+                    return Err(format!(
+                        "{label}: remove_cases requires a \"where\" filter - an unfiltered remove would delete every case."
+                    ));
+                }
+                Op::RemoveCases
+            }
+            "insert_cases" => {
+                // Lenient, like the importer: only a title is required,
+                // and "module" is what draft JSON actually calls the
+                // field. Strict serde would reject every real draft.
+                let raw = v["cases"]
+                    .as_array()
+                    .ok_or(format!("{label}: \"cases\" must be a list of test-case objects."))?;
+                let mut cases = vec![];
+                for (j, rv) in raw.iter().enumerate() {
+                    let title = rv["title"].as_str().unwrap_or("").trim().to_string();
+                    if title.is_empty() {
+                        return Err(format!("{label}: cases[{j}] has no title."));
+                    }
+                    let steps = rv["steps"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .map(|sv| crate::steps_xml::Step {
+                                    action: sv["action"].as_str().unwrap_or("").to_string(),
+                                    expected: sv["expected"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    cases.push(TestCase {
+                        title,
+                        steps,
+                        tags: rv["tags"].as_str().unwrap_or("").to_string(),
+                        automation_status: rv["automation_status"]
+                            .as_str()
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or("Not Automated")
+                            .to_string(),
+                        module_value: rv["module"]
+                            .as_str()
+                            .or_else(|| rv["module_value"].as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        preconditions: rv["preconditions"].as_str().unwrap_or("").to_string(),
+                        update_id: rv["id"]
+                            .as_i64()
+                            .or_else(|| rv["update_id"].as_i64())
+                            .map(|n| n as i32),
+                        comment: rv["comment"].as_str().unwrap_or("").to_string(),
+                    });
+                }
+                if cases.is_empty() {
+                    return Err(format!("{label}: insert_cases got an empty \"cases\" list."));
+                }
+                Op::InsertCases(cases)
+            }
             other => {
                 return Err(format!(
                     "{label}: unknown op \"{other}\". Supported: set_tags, add_tags, \
                      remove_tags, set_module, set_automation_status, set_preconditions, \
                      replace_in_title, prefix_title, suffix_title, replace_in_steps, \
-                     sort_by, dedupe."
+                     prepend_step, append_step, remove_step_matching, sort_by, group_by, \
+                     dedupe, remove_cases, insert_cases."
                 ))
             }
         };
@@ -177,13 +278,38 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
         match &operation.op {
             // Whole-list operations ignore the filter by nature.
             Op::SortBy(key) => {
-                cases.sort_by_key(|c| match key.as_str() {
-                    "module" => c.module_value.to_lowercase(),
-                    "tags" => c.tags.to_lowercase(),
-                    _ => c.title.to_lowercase(),
-                });
+                cases.sort_by_key(|c| field_key(c, key));
                 touched = cases.len();
                 report.applied.push(format!("Sorted {} cases by {key}.", cases.len()));
+            }
+            Op::GroupBy(key) => {
+                // Stable: groups appear in first-encounter order, and the
+                // order WITHIN each group is exactly the input order.
+                let mut buckets: Vec<(String, Vec<TestCase>)> = vec![];
+                for c in cases.drain(..) {
+                    let k = field_key(&c, key);
+                    match buckets.iter_mut().find(|(bk, _)| *bk == k) {
+                        Some((_, list)) => list.push(c),
+                        None => buckets.push((k, vec![c])),
+                    }
+                }
+                let groups = buckets.len();
+                cases = buckets.into_iter().flat_map(|(_, list)| list).collect();
+                touched = cases.len();
+                report
+                    .applied
+                    .push(format!("Grouped {} cases by {key} into {groups} group(s).", cases.len()));
+            }
+            Op::RemoveCases => {
+                let before = cases.len();
+                cases.retain(|c| !operation.filter.matches(c));
+                touched = before - cases.len();
+                report.applied.push(format!("Removed {touched} case(s)."));
+            }
+            Op::InsertCases(new_cases) => {
+                touched = new_cases.len();
+                cases.extend(new_cases.iter().cloned());
+                report.applied.push(format!("Inserted {touched} case(s) at the end."));
             }
             Op::Dedupe => {
                 let before = cases.len();
@@ -239,7 +365,30 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                                 s.expected = s.expected.replace(find.as_str(), replace);
                             }
                         }
-                        Op::SortBy(_) | Op::Dedupe => unreachable!("handled above"),
+                        Op::PrependStep { action, expected } => {
+                            c.steps.insert(
+                                0,
+                                crate::steps_xml::Step {
+                                    action: action.clone(),
+                                    expected: expected.clone(),
+                                },
+                            );
+                        }
+                        Op::AppendStep { action, expected } => {
+                            c.steps.push(crate::steps_xml::Step {
+                                action: action.clone(),
+                                expected: expected.clone(),
+                            });
+                        }
+                        Op::RemoveStepMatching(find) => {
+                            let needle = find.to_lowercase();
+                            c.steps.retain(|s| !s.action.to_lowercase().contains(&needle));
+                        }
+                        Op::SortBy(_)
+                        | Op::GroupBy(_)
+                        | Op::Dedupe
+                        | Op::RemoveCases
+                        | Op::InsertCases(_) => unreachable!("handled above"),
                     }
                 }
                 report
@@ -258,6 +407,16 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
     (cases, report)
 }
 
+/// The sortable/groupable value of one field, lowercased for stability.
+fn field_key(c: &TestCase, key: &str) -> String {
+    match key {
+        "module" => c.module_value.to_lowercase(),
+        "tags" => c.tags.to_lowercase(),
+        "preconditions" => c.preconditions.to_lowercase(),
+        _ => c.title.to_lowercase(),
+    }
+}
+
 fn describe(op: &Op) -> String {
     match op {
         Op::SetTags(v) => format!("Set tags to '{v}'"),
@@ -271,6 +430,12 @@ fn describe(op: &Op) -> String {
         Op::SuffixTitle(v) => format!("Suffixed titles with '{v}'"),
         Op::ReplaceInSteps { find, replace } => format!("Replaced '{find}' with '{replace}' in steps"),
         Op::SortBy(k) => format!("Sorted by {k}"),
+        Op::GroupBy(k) => format!("Grouped by {k}"),
         Op::Dedupe => "Deduped".to_string(),
+        Op::PrependStep { action, .. } => format!("Prepended step '{action}'"),
+        Op::AppendStep { action, .. } => format!("Appended step '{action}'"),
+        Op::RemoveStepMatching(f) => format!("Removed steps matching '{f}'"),
+        Op::RemoveCases => "Removed cases".to_string(),
+        Op::InsertCases(list) => format!("Inserted {} case(s)", list.len()),
     }
 }

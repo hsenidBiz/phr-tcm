@@ -117,6 +117,7 @@ test("the how-it-works card names every MCP tool", async () => {
   for (const name of [
     "get_writing_guide",
     "get_example_cases",
+    "validate_cases",
     "get_tags",
     "optimize_cases",
     "transform_cases",

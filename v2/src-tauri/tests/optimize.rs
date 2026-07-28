@@ -296,11 +296,66 @@ async fn the_bridge_exposes_both_tools_without_a_client() {
     assert_eq!(v["test_cases"][0]["tags"], "smoke");
 }
 
+/// validate_cases is BACK (owner decision after field feedback rated it
+/// the most trustworthy tool): body-based validation works offline.
 #[tokio::test]
-async fn the_removed_validate_route_is_gone() {
+async fn validate_runs_the_real_importer_again() {
     let ctx = BridgeContext::default();
-    let (status, _) = route(&ctx, None, "POST", "/validate", "[]", "test").await;
-    assert_eq!(status, 404, "validate_cases was removed on purpose");
+    let good = r#"[{"title":"A","steps":[{"action":"do","expected":"ok"}]}]"#;
+    let (status, body) = route(&ctx, None, "POST", "/validate", good, "test").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["cases"], 1);
+    assert!(v["error"].is_null());
+}
+
+/// Large drafts validate from a local file via ?path= - no splitting, and
+/// no subagent tempted to fabricate a result it could not obtain.
+#[tokio::test]
+async fn validate_accepts_a_file_path_for_large_drafts() {
+    let dir = std::env::temp_dir().join("tcm-validate-path-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("draft.json");
+    std::fs::write(&file, r#"[{"title":"From disk","steps":[{"action":"a","expected":"b"}]}]"#)
+        .unwrap();
+
+    let ctx = BridgeContext::default();
+    let target = format!("/validate?path={}", file.to_string_lossy().replace('\\', "%5C").replace(' ', "%20"));
+    let (status, body) = route(&ctx, None, "POST", &target, "", "test").await;
+    let _ = std::fs::remove_file(&file);
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["cases"], 1, "body: {body}");
+
+    // A path that does not exist is an explicit error, never a pass.
+    let (_, body) = route(&ctx, None, "POST", "/validate?path=C:%5Cnowhere%5Cx.json", "", "test").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(!v["error"].is_null());
+}
+
+/// An empty body with no path is an explicit error - "nothing arrived"
+/// must never read as "nothing wrong".
+#[tokio::test]
+async fn validate_refuses_an_empty_draft() {
+    let ctx = BridgeContext::default();
+    let (_, body) = route(&ctx, None, "POST", "/validate", "  ", "test").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("empty draft"));
+    assert_eq!(v["cases"], 0);
+}
+
+/// dry_run: the report comes back alone, so the damage (if any) can be
+/// inspected before committing to the transformed JSON.
+#[tokio::test]
+async fn optimize_dry_run_returns_only_the_report() {
+    let ctx = BridgeContext::default();
+    let draft = r#"[{"title":"A","preconditions":"User is on the Orders page",
+        "steps":[{"action":"Do it","expected":"Verify that it worked"}]}]"#;
+    let (status, body) = route(&ctx, None, "POST", "/optimize?dry_run=true", draft, "test").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("test_cases").is_none(), "no JSON on a dry run");
+    assert!(v["report"]["preconditions_rewritten"].is_array());
 }
 
 #[tokio::test]
@@ -309,4 +364,248 @@ async fn a_malformed_draft_is_a_400_with_an_explanation() {
     let (status, body) = route(&ctx, None, "POST", "/optimize", "{not json", "test").await;
     assert_eq!(status, 400);
     assert!(!body.is_empty());
+}
+
+// ------------------------------------------------- feedback regressions
+// These reproduce the two failure runs from the 2026-07-27 field report
+// (tcm-testcases-mcp-feedback.md). Run 1 duplicated the entry step and put
+// module-open before sign-in; run 2 silently deleted the sign-in clause
+// from every precondition. Neither may ever happen again.
+
+/// Run 1: the draft's first step already IS the entry. No duplicate.
+#[test]
+fn an_entry_already_present_as_the_first_step_is_not_duplicated() {
+    let entry = "In the PMS Module, open Performance Management from the main menu.";
+    let c = case(
+        "Tab renders for a manager",
+        "Performance",
+        "Signed in as a user who appears as manager_emp_number in a published cycle",
+        vec![
+            step(entry, "The module opens"),
+            step("Click the My Team Assessment tab", "The tab opens"),
+        ],
+    );
+    let (out, report) = optimize(vec![c], Some(entry));
+    let c = &out[0];
+
+    let entry_count = c
+        .steps
+        .iter()
+        .filter(|s| s.action.trim_end_matches('.') == entry.trim_end_matches('.'))
+        .count();
+    assert_eq!(entry_count, 1, "steps: {:?}", c.steps.iter().map(|s| &s.action).collect::<Vec<_>>());
+    assert_eq!(report.preamble_steps_added, 0);
+    // And because nothing was added, the preconditions are UNTOUCHED.
+    assert!(
+        c.preconditions.contains("manager_emp_number"),
+        "the sign-in context survived: {:?}",
+        c.preconditions
+    );
+}
+
+/// Run 2: the draft starts with its own navigation, so no preamble is
+/// added - and the sign-in precondition must therefore survive verbatim.
+/// This is the case that came back with empty preconditions in the field.
+#[test]
+fn preconditions_survive_when_no_preamble_is_added() {
+    let c = case(
+        "The tab is not rendered for a non-manager",
+        "Performance",
+        "Signed in as a user who is NOT a manager in any published cycle",
+        vec![step("Navigate to Self Service -> My Assessments", "The page opens")],
+    );
+    let before = c.preconditions.clone();
+    let (out, report) = optimize(
+        vec![c],
+        Some("In the PMS Module, open Performance Management from the main menu."),
+    );
+
+    assert_eq!(out[0].preconditions, before, "untouched, not stripped");
+    assert_eq!(report.preamble_steps_added, 0);
+    assert!(report.preconditions_rewritten.is_empty());
+}
+
+/// The atomic rule from the other side: when a preamble IS built, only the
+/// sentences that became steps leave preconditions - sign-in stays, since
+/// it defines the setup group as well as being an action.
+#[test]
+fn only_sentences_that_became_steps_leave_preconditions() {
+    let c = case(
+        "Apply a discount",
+        "Payments",
+        "Signed in as Admin. User is on the Payments page. Feature flag DISCOUNTS is on",
+        vec![step("Enter a code", "It applies")],
+    );
+    let (out, report) = optimize(vec![c], None);
+    let c = &out[0];
+
+    // The navigation sentence became a step and left preconditions...
+    assert!(c.steps.iter().any(|s| s.action.to_lowercase().contains("payments page")));
+    assert!(!c.preconditions.to_lowercase().contains("payments page"));
+    // ...the sign-in clause did NOT leave, even though it also earned a step.
+    assert!(c.preconditions.contains("Signed in as Admin"), "got {:?}", c.preconditions);
+    assert!(c.steps.iter().any(|s| s.action.starts_with("Sign in as Admin")));
+    assert!(c.preconditions.contains("Feature flag DISCOUNTS is on"));
+
+    // And the rewrite is visible in the report, not just implied by counts.
+    assert_eq!(report.preconditions_rewritten.len(), 1);
+    let rw = &report.preconditions_rewritten[0];
+    assert!(rw.before.to_lowercase().contains("payments page"));
+    assert!(!rw.after.to_lowercase().contains("payments page"));
+}
+
+/// Fix 3 from the report: sign in comes before a non-launch entry.
+#[test]
+fn a_non_launch_entry_is_placed_after_the_sign_in_step() {
+    let c = case(
+        "Counts every subordinate",
+        "Performance",
+        "Signed in as a manager with three subordinates",
+        vec![step("Open the Team Members card", "Counts are shown")],
+    );
+    let entry = "In the PMS Module, open Performance Management from the main menu.";
+    let (out, _) = optimize(vec![c], Some(entry));
+    let actions: Vec<&str> = out[0].steps.iter().map(|s| s.action.as_str()).collect();
+
+    let signin = actions.iter().position(|a| a.starts_with("Sign in")).expect("sign-in step");
+    let module = actions.iter().position(|a| *a == entry).expect("entry step");
+    assert!(signin < module, "sign in first, then the module: {actions:?}");
+}
+
+/// A launch entry keeps the original order: launch, then sign in.
+#[test]
+fn a_launch_entry_still_comes_before_sign_in() {
+    let c = case(
+        "T",
+        "M",
+        "Signed in as Admin",
+        vec![step("Do the thing", "It works")],
+    );
+    let (out, _) = optimize(vec![c], Some("Launch the HRM portal."));
+    let actions: Vec<&str> = out[0].steps.iter().map(|s| s.action.as_str()).collect();
+    assert_eq!(actions[0], "Launch the HRM portal.");
+    assert!(actions[1].starts_with("Sign in as Admin"));
+}
+
+/// Running the optimizer on its own output changes nothing - the
+/// idempotency the duplicated preamble violated.
+#[test]
+fn optimizing_twice_is_a_no_op_the_second_time() {
+    let draft = vec![case(
+        "T",
+        "Payments",
+        "Signed in as Admin. User is on the Payments page",
+        vec![step("Enter a code", "Verify it applies")],
+    )];
+    let (once, _) = optimize(draft, None);
+    let (twice, report) = optimize(once.clone(), None);
+
+    assert_eq!(report.preamble_steps_added, 0);
+    assert!(report.preconditions_rewritten.is_empty());
+    assert_eq!(
+        once.iter().map(|c| c.steps.len()).collect::<Vec<_>>(),
+        twice.iter().map(|c| c.steps.len()).collect::<Vec<_>>(),
+    );
+    assert_eq!(once[0].preconditions, twice[0].preconditions);
+}
+
+
+// ------------------------------------------------- new transform ops
+
+#[test]
+fn group_by_preconditions_is_stable_and_keeps_order() {
+    let a = "Signed in as Admin";
+    let v = "Signed in as Viewer";
+    let draft = vec![
+        case("A1", "M", a, vec![]),
+        case("V1", "M", v, vec![]),
+        case("A2", "M", a, vec![]),
+        case("V2", "M", v, vec![]),
+    ];
+    let (out, report) = apply(
+        draft,
+        &ops(serde_json::json!([{ "op": "group_by", "value": "preconditions" }])),
+    );
+    assert_eq!(
+        out.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
+        vec!["A1", "A2", "V1", "V2"],
+        "groups in first-appearance order, within-group order untouched"
+    );
+    assert!(report.applied.iter().any(|l| l.contains("2 group(s)")));
+}
+
+#[test]
+fn steps_can_be_prepended_appended_and_removed() {
+    let draft = vec![case("T", "M", "", vec![step("Do it", "Done")])];
+    let (out, _) = apply(
+        draft,
+        &ops(serde_json::json!([
+            { "op": "prepend_step", "action": "Launch the app.", "expected": "It opens." },
+            { "op": "append_step", "action": "Log out.", "expected": "Signed out." },
+        ])),
+    );
+    let actions: Vec<&str> = out[0].steps.iter().map(|s| s.action.as_str()).collect();
+    assert_eq!(actions, vec!["Launch the app.", "Do it", "Log out."]);
+
+    // remove_step_matching repairs a duplicated preamble.
+    let (out, _) = apply(out, &ops(serde_json::json!([
+        { "op": "remove_step_matching", "value": "launch the app" }
+    ])));
+    let actions: Vec<&str> = out[0].steps.iter().map(|s| s.action.as_str()).collect();
+    assert_eq!(actions, vec!["Do it", "Log out."]);
+}
+
+#[test]
+fn cases_can_be_removed_with_a_filter_and_inserted() {
+    let mut dup = case("Duplicate of existing", "M", "", vec![step("a", "b")]);
+    dup.tags = "drop-me".into();
+    let draft = vec![case("Keep", "M", "", vec![step("a", "b")]), dup];
+
+    let (out, report) = apply(
+        draft,
+        &ops(serde_json::json!([
+            { "op": "remove_cases", "where": { "has_tag": "drop-me" } },
+            { "op": "insert_cases", "cases": [
+                { "title": "Brand new", "steps": [{ "action": "x", "expected": "y" }] }
+            ]},
+        ])),
+    );
+    assert_eq!(
+        out.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
+        vec!["Keep", "Brand new"]
+    );
+    assert!(report.applied.iter().any(|l| l.contains("Removed 1 case")));
+}
+
+/// The guard that keeps remove_cases from being a foot-gun.
+#[test]
+fn remove_cases_without_a_filter_is_refused() {
+    let err = parse_ops(&serde_json::json!([{ "op": "remove_cases" }])).unwrap_err();
+    assert!(err.contains("requires a \"where\" filter"), "got: {err}");
+}
+
+/// The shape defect from the field report: a transform must round-trip
+/// the caller's shape, not inject an empty comment field into every case.
+#[tokio::test]
+async fn transforms_do_not_inject_an_empty_comment_field() {
+    let ctx = BridgeContext::default();
+    let body_in = serde_json::json!({
+        "test_cases": r#"[{"title":"A","steps":[{"action":"a","expected":"b"}]}]"#,
+        "operations": [{ "op": "add_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (_, body) = route(&ctx, None, "POST", "/transform", &body_in, "test").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let case = v["test_cases"][0].as_object().unwrap();
+    assert!(!case.contains_key("comment"), "keys: {:?}", case.keys().collect::<Vec<_>>());
+
+    // A non-empty comment still round-trips - only the empty one vanishes.
+    let body_in = serde_json::json!({
+        "test_cases": r#"[{"title":"A","comment":"keep me","steps":[{"action":"a","expected":"b"}]}]"#,
+        "operations": [{ "op": "add_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (_, body) = route(&ctx, None, "POST", "/transform", &body_in, "test").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["test_cases"][0]["comment"], "keep me");
 }

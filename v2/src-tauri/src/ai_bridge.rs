@@ -102,6 +102,7 @@ pub async fn route(
         ),
         ("POST", "/optimize") => optimize_json(body, target),
         ("POST", "/transform") => transform_json(body),
+        ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
             None => (503, "sign in to Test Case Manager first".into()),
@@ -110,7 +111,7 @@ pub async fn route(
             Some(c) => examples(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
-        ("GET", "/tags") => tags(ctx, client).await,
+        ("GET", "/tags") => tags(ctx, client, target).await,
         // The proxy asks for this before listing tools, so a toggle in the
         // app takes effect on the assistant's next tools/list.
         ("GET", "/tools") => (
@@ -144,7 +145,20 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
         Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
     };
     let entry = q(target, "entry");
+    let dry_run = matches!(q(target, "dry_run").as_deref(), Some("true") | Some("1"));
     let (optimized, report) = crate::optimize::optimize(cases, entry.as_deref());
+    if dry_run {
+        // Report only: the caller inspects what WOULD change before
+        // committing to the transformed JSON.
+        return (
+            200,
+            serde_json::json!({
+                "report": report,
+                "note": "Dry run - no test_cases returned. Call again without dry_run to get the transformed JSON.",
+            })
+            .to_string(),
+        );
+    }
     let json = match crate::import_parser::queue_to_json_string(&optimized) {
         Ok(j) => j,
         Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
@@ -155,7 +169,7 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
         serde_json::json!({
             "test_cases": doc.get("test_cases").cloned().unwrap_or(doc),
             "report": report,
-            "note": "Hand this JSON to the developer as the file to import.                      The report explains what was reordered and why.",
+            "note": "Hand this JSON to the developer as the file to import. The report explains what was reordered and why.",
         })
         .to_string(),
     )
@@ -198,6 +212,92 @@ fn transform_json(body: &str) -> (u16, String) {
     )
 }
 
+/// Validate a draft with the app's REAL importer: case count, warnings,
+/// errors. With a signed-in client the Module values are also checked
+/// against the org's picklist. Reinstated after field feedback rated it
+/// the most trustworthy tool in the set.
+///
+/// Large drafts: `?path=` reads the draft from a local file instead of
+/// the request body, so a 166 KB file needs no splitting. An empty body
+/// with no path is an explicit error, never a silent pass - a caller must
+/// not be able to mistake "nothing arrived" for "nothing wrong".
+async fn validate_json(
+    body: &str,
+    target: &str,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+) -> String {
+    let from_path = q(target, "path");
+    let parsed = match &from_path {
+        Some(path) => {
+            if !std::path::Path::new(path).is_file() {
+                return serde_json::json!({
+                    "cases": 0, "warnings": [],
+                    "error": format!("{path} does not exist or is not a file"),
+                })
+                .to_string();
+            }
+            crate::import_parser::parse_file(path)
+        }
+        None => {
+            if body.trim().is_empty() {
+                return serde_json::json!({
+                    "cases": 0, "warnings": [],
+                    "error": "empty draft - pass the JSON in the body, or a local file via ?path= for large drafts",
+                })
+                .to_string();
+            }
+            match parse_cases_with_warnings(body) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(e),
+            }
+        }
+    };
+    let out = match parsed {
+        Ok((cases, mut warnings)) => {
+            if let Some(c) = client {
+                let allowed = allowed_modules(ctx, c).await;
+                if !allowed.is_empty() {
+                    for (i, tc) in cases.iter().enumerate() {
+                        let m = tc.module_value.trim();
+                        if !m.is_empty() && !allowed.iter().any(|a| a.eq_ignore_ascii_case(m)) {
+                            warnings.push(format!(
+                                "Test case {} ('{}'): Module '{}' is not an allowed value in \
+                                 this organization - pick one from get_writing_guide.",
+                                i + 1,
+                                tc.title,
+                                m
+                            ));
+                        }
+                    }
+                }
+            }
+            serde_json::json!({
+                "cases": cases.len(),
+                "warnings": warnings,
+                "error": serde_json::Value::Null,
+            })
+        }
+        Err(e) => serde_json::json!({ "cases": 0, "warnings": [], "error": e }),
+    };
+    out.to_string()
+}
+
+/// Like `parse_cases`, but keeps the importer's warnings too.
+fn parse_cases_with_warnings(
+    body: &str,
+) -> Result<(Vec<crate::model::TestCase>, Vec<String>), String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = std::env::temp_dir().join("tcm-v2-bridge");
+    let _ = std::fs::create_dir_all(&dir);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("validate-{}-{}.json", std::process::id(), seq));
+    std::fs::write(&path, body).map_err(|_| "could not stage the draft".to_string())?;
+    let parsed = crate::import_parser::parse_file(path.to_str().unwrap_or_default());
+    let _ = std::fs::remove_file(&path);
+    parsed
+}
+
 /// Run a draft through the app's REAL importer to get `TestCase`s, so
 /// these tools accept exactly what the Import File tab accepts (bare
 /// array, `test_cases` wrapper, the lot).
@@ -221,7 +321,11 @@ fn parse_cases(body: &str) -> Result<Vec<crate::model::TestCase>, String> {
 /// request the app has already made. Only a completely cold cache (the AI
 /// asked before the developer opened a tag field) fetches, and it stores
 /// the result so the app doesn't pay for it either.
-async fn tags(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>) -> (u16, String) {
+async fn tags(
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    target: &str,
+) -> (u16, String) {
     let key = crate::refcache::tags_key(&ctx.org, &ctx.project);
     let (values, source) = match crate::refcache::any(&key) {
         Some(v) => (v, "cache"),
@@ -236,11 +340,25 @@ async fn tags(ctx: &BridgeContext, client: Option<&crate::ado::AdoClient>) -> (u
             None => return (503, "sign in to Test Case Manager first".into()),
         },
     };
+    // A project can carry thousands of tags; ?query= filters to a
+    // case-insensitive substring match so the common call stays cheap.
+    let total = values.len();
+    let values: Vec<String> = match q(target, "query").filter(|f| !f.trim().is_empty()) {
+        Some(f) => {
+            let f = f.to_lowercase();
+            values
+                .into_iter()
+                .filter(|t| t.to_lowercase().contains(&f))
+                .collect()
+        }
+        None => values,
+    };
     (
         200,
         serde_json::json!({
             "tags": values,
             "count": values.len(),
+            "total": total,
             "source": source,
             "note": "Prefer an existing tag over a new one. Tags are \
                      semicolon-separated in the import JSON, never commas.",
@@ -319,8 +437,10 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
         `{{\"action\", \"expected\"}}`), `tags` (semicolon-separated, never commas),\n\
         `automation_status` (exactly {statuses}), `module` (ONLY from the list\n\
-        below), `preconditions` (state, not steps). Include `id` ONLY to update\n\
-        that exact work item; omit it to create.\n\n\
+        below), `preconditions` (state, not steps), and optionally `comment` -\n\
+        an in-app note that round-trips through the file but is never sent\n\
+        to Azure DevOps. Include `id` ONLY to update that exact work item;\n\
+        omit it to create.\n\n\
         ## Allowed Module values (live)\n{module_lines}\n\n\
         ## Tags this project already uses\n\
         Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\
@@ -334,10 +454,11 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         steps, trims expected results to the outcome, and reorders the cases so\n\
         the tester changes environment as few times as possible. Hand back the\n\
         JSON it returns.\n\
-        4. For later edits - retagging, retitling, setting a module - call\n\
-        `transform_cases` instead of rewriting the file yourself.\n\n\
-        You do not need to check the draft: the developer's app validates on\n\
-        import and shows any warnings there, live as you save the file.\n",
+        4. Call `validate_cases` and fix every warning. For a large draft,\n\
+        pass a local file via its `path` argument instead of inlining the\n\
+        JSON.\n\
+        5. For later edits - retagging, retitling, setting a module - call\n\
+        `transform_cases` instead of rewriting the file yourself.\n",
         org = ctx.org,
         project = ctx.project,
     )
@@ -357,6 +478,10 @@ async fn examples(
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(5)
         .min(20);
+    let offset = q(target, "offset").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    // Titles-only mode exists for duplicate checking: comparing titles
+    // against a PBI with 60 cases must not cost 60 cases of step text.
+    let titles_only = matches!(q(target, "titles_only").as_deref(), Some("true") | Some("1"));
     match client
         .get_pbi_test_cases_full(
             &ctx.org,
@@ -367,24 +492,49 @@ async fn examples(
         .await
     {
         Ok(cases) => {
+            let total = cases.len();
+            // Titles are cheap: cap at 200, not 20, so one call can cover
+            // a whole PBI when all the caller needs is duplicate checking.
+            let page = if titles_only { limit.max(200).min(200) } else { limit };
             let records: Vec<serde_json::Value> = cases
                 .iter()
-                .take(limit)
+                .skip(offset)
+                .take(page)
                 .map(|c| {
-                    serde_json::json!({
-                        "id": c.id,
-                        "title": c.title,
-                        "tags": c.tags,
-                        "automation_status": c.automation_status,
-                        "module": c.module_value,
-                        "preconditions": c.preconditions,
-                        "steps": c.steps.iter().map(|s| serde_json::json!({
-                            "action": s.action, "expected": s.expected
-                        })).collect::<Vec<_>>(),
-                    })
+                    if titles_only {
+                        serde_json::json!({ "id": c.id, "title": c.title })
+                    } else {
+                        serde_json::json!({
+                            "id": c.id,
+                            "title": c.title,
+                            "tags": c.tags,
+                            "automation_status": c.automation_status,
+                            "module": c.module_value,
+                            "preconditions": c.preconditions,
+                            "steps": c.steps.iter().map(|s| serde_json::json!({
+                                "action": s.action, "expected": s.expected
+                            })).collect::<Vec<_>>(),
+                        })
+                    }
                 })
                 .collect();
-            (200, serde_json::json!({ "test_cases": records }).to_string())
+            let returned = records.len();
+            let mut out = serde_json::json!({
+                "test_cases": records,
+                "total": total,
+                "offset": offset,
+            });
+            if offset + returned < total {
+                // Say so explicitly: a silently incomplete page is how a
+                // duplicate check quietly misses cases.
+                out["note"] = serde_json::json!(format!(
+                    "{} of {} cases returned - pass offset={} for the next page.",
+                    returned,
+                    total,
+                    offset + returned
+                ));
+            }
+            (200, out.to_string())
         }
         Err(e) => (502, format!("Azure DevOps error: {e:?}")),
     }

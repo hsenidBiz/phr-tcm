@@ -36,6 +36,16 @@ pub struct OptimizeReport {
     pub empty_steps_removed: usize,
     /// Anything a human should look at rather than trust blindly.
     pub notes: Vec<String>,
+    /// Every precondition this run changed, with its before and after -
+    /// so a caller can SEE what moved instead of diffing by hand.
+    pub preconditions_rewritten: Vec<PreconditionChange>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PreconditionChange {
+    pub title: String,
+    pub before: String,
+    pub after: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -60,10 +70,6 @@ const NAV_MARKERS: &[&str] = &[
     "at the",
     "from the",
     "launch",
-    "log in",
-    "logged in",
-    "sign in",
-    "signed in",
 ];
 
 /// Openers stripped from an expected result: they restate that we're
@@ -240,40 +246,75 @@ fn count_switches(cases: &[TestCase]) -> usize {
         .count()
 }
 
-/// The preamble a tester needs to reach the page under test: the entry
-/// point, any sign-in, then each navigation sentence lifted out of
-/// preconditions, then the module itself.
-fn preamble_steps(c: &TestCase, entry: &str) -> Vec<Step> {
+/// True when `entry` describes opening the application itself (the
+/// default does). A caller may instead pass a post-sign-in navigation
+/// ("In the PMS Module, open Performance Management...") - that must come
+/// AFTER signing in, not before it.
+fn entry_is_launch(entry: &str) -> bool {
+    let l = entry.to_lowercase();
+    l.contains("launch")
+        || l.contains("open the app")
+        || l.contains("start the app")
+        || l.contains("browser")
+}
+
+/// Step-action equality that shrugs off whitespace, case and the final
+/// full stop - "closely matches" for the idempotency check.
+fn norm_step(s: &str) -> String {
+    squash(s).to_lowercase().trim_end_matches('.').to_string()
+}
+
+/// The preamble a tester needs to reach the page under test, plus the
+/// precondition sentences it CONSUMED. The two travel together on
+/// purpose: a sentence may only leave preconditions if it is in the
+/// returned steps - the move is atomic or it does not happen.
+///
+/// The sign-in sentence is NOT consumed: "Signed in as a manager" is
+/// both an action (it earns a step) and the state that defines the
+/// case setup group, so it stays in preconditions too.
+fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
     let all = sentences(&c.preconditions);
     let nav: Vec<&String> = all.iter().filter(|s| is_navigation(s)).collect();
-
-    let mut out: Vec<Step> = vec![Step {
-        action: entry.to_string(),
-        expected: "The application opens.".to_string(),
-    }];
+    let mut consumed: Vec<String> = vec![];
 
     // Signing in is scanned across ALL preconditions, not just the ones
-    // classed as navigation: "User is logged in as Admin" is a state that
-    // defines the setup group AND an action the tester has to perform, so
-    // it stays in preconditions and also earns a step.
+    // classed as navigation.
     let signin = all.iter().find(|s| {
         let l = s.to_lowercase();
         ["log in", "logged in", "sign in", "signed in", "authenticated"]
             .iter()
             .any(|m| l.contains(m))
     });
-    if let Some(sentence) = signin {
+    let signin_step = signin.map(|sentence| {
         let role = sentence
             .to_lowercase()
             .find(" as ")
             .map(|i| squash(&sentence[i + 4..]))
             .filter(|r| !r.is_empty());
-        out.push(Step {
+        Step {
             action: match &role {
                 Some(r) => format!("Sign in as {r}."),
                 None => "Sign in.".to_string(),
             },
             expected: "The home page is displayed.".to_string(),
+        }
+    });
+
+    // Sign in belongs immediately after the application opens. When the
+    // caller entry is itself a navigation rather than a launch, the
+    // order is sign in -> entry - never module-open before sign-in.
+    let mut out: Vec<Step> = vec![];
+    if entry_is_launch(entry) {
+        out.push(Step {
+            action: entry.to_string(),
+            expected: "The application opens.".to_string(),
+        });
+        out.extend(signin_step);
+    } else {
+        out.extend(signin_step);
+        out.push(Step {
+            action: entry.to_string(),
+            expected: "The module opens.".to_string(),
         });
     }
 
@@ -294,9 +335,6 @@ fn preamble_steps(c: &TestCase, entry: &str) -> Vec<Step> {
     ];
     for sentence in &nav {
         let l = sentence.to_lowercase();
-        if signin.map(|s| s == *sentence).unwrap_or(false) {
-            continue;
-        }
         let target = PREFIXES
             .iter()
             .find(|m| l.starts_with(**m))
@@ -310,9 +348,10 @@ fn preamble_steps(c: &TestCase, entry: &str) -> Vec<Step> {
             action: format!("Navigate to the {target}."),
             expected: format!("The {target} is displayed."),
         });
+        consumed.push((*sentence).clone());
     }
 
-    if out.len() == 1 && !c.module_value.trim().is_empty() {
+    if nav.is_empty() && signin.is_none() && !c.module_value.trim().is_empty() {
         // Nothing was described at all - at least name the module, so the
         // tester is not left standing at the front door.
         out.push(Step {
@@ -320,15 +359,21 @@ fn preamble_steps(c: &TestCase, entry: &str) -> Vec<Step> {
             expected: format!("The {} page is displayed.", c.module_value.trim()),
         });
     }
-    out
+    (out, consumed)
 }
 
 /// True if the case's own first steps already walk in from the entry
-/// point, in which case a preamble would just duplicate them.
-fn already_has_preamble(c: &TestCase) -> bool {
+/// point, in which case a preamble would just duplicate them. The first
+/// step matching `entry` itself counts - re-running the optimizer (or
+/// passing an entry the draft already starts with) must be a no-op, not
+/// a second copy of the same step.
+fn already_has_preamble(c: &TestCase, entry: &str) -> bool {
     let Some(first) = c.steps.first() else {
         return false;
     };
+    if norm_step(&first.action) == norm_step(entry) {
+        return true;
+    }
     let l = first.action.to_lowercase();
     ["launch", "open the app", "start the app", "log in", "sign in", "navigate to"]
         .iter()
@@ -392,22 +437,35 @@ pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, Op
             s.expected = cleaned_expected;
         }
 
-        if !already_has_preamble(&c) {
-            let pre = preamble_steps(&c, entry);
+        // The move is ATOMIC: a precondition sentence leaves preconditions
+        // only in the same pass that adds it as a step. When no preamble
+        // is added - the draft already walks in, or its first step IS the
+        // entry - preconditions are left completely untouched. The earlier
+        // version stripped unconditionally, which silently destroyed
+        // sign-in context that was never re-emitted.
+        if !already_has_preamble(&c, entry) {
+            let (pre, consumed) = preamble_steps(&c, entry);
             report.preamble_steps_added += pre.len();
             let mut steps = pre;
             steps.append(&mut c.steps);
             c.steps = steps;
-        }
 
-        // Navigation now lives in the steps; preconditions keep only the
-        // state the tester has to arrange.
-        let conditions = setup_conditions(&c.preconditions);
-        c.preconditions = conditions
-            .iter()
-            .map(|s| sentence_case(s))
-            .collect::<Vec<_>>()
-            .join("; ");
+            let before_text = squash(&c.preconditions);
+            let after_text = sentences(&c.preconditions)
+                .into_iter()
+                .filter(|s| !consumed.contains(s))
+                .map(|s| sentence_case(&s))
+                .collect::<Vec<_>>()
+                .join("; ");
+            if squash(&after_text) != before_text {
+                report.preconditions_rewritten.push(PreconditionChange {
+                    title: c.title.clone(),
+                    before: before_text,
+                    after: after_text.clone(),
+                });
+                c.preconditions = after_text;
+            }
+        }
 
         if c.steps.is_empty() {
             report.notes.push(format!("'{}' has no steps - it needs one.", c.title));

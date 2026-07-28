@@ -22,7 +22,10 @@ pub struct TestCase {
     pub update_id: Option<i32>,
     /// In-app note that round-trips through the JSON export/import but is
     /// NEVER sent to Azure DevOps (no ADO field mapping reads it).
-    #[serde(default)]
+    /// Absent from serialized output when empty, so tools that round-trip
+    /// a draft do not inject a field the caller never wrote (feedback:
+    /// a transform must be idempotent in shape).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub comment: String,
 }
 

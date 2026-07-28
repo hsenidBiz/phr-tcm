@@ -427,7 +427,7 @@ export default function AiBridge() {
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">How it works</h2>
         <p className="text-sm text-muted">
-          Connected AI tools can call eight tools this app exposes. All of them
+          Connected AI tools can call nine tools this app exposes. All of them
           either read or reshape the AI's own draft — none can write to Azure
           DevOps:
         </p>
@@ -441,6 +441,11 @@ export default function AiBridge() {
             <code className="id-mono text-text">get_example_cases</code> — real test
             cases already linked to a PBI, in the exact import shape, so the AI can
             mimic their style and granularity.
+          </li>
+          <li>
+            <code className="id-mono text-text">validate_cases</code> — runs a draft
+            through this app's real importer and returns the case count, warnings, and
+            errors. Large drafts can be validated from a file path.
           </li>
           <li>
             <code className="id-mono text-text">get_tags</code> — the tag names this

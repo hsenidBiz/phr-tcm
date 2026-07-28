@@ -109,19 +109,25 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
     let records: Vec<serde_json::Value> = queue
         .iter()
         .map(|tc| {
-            serde_json::json!({
+            let mut rec = serde_json::json!({
                 "id": tc.update_id,
                 "title": tc.title,
                 "tags": tc.tags,
                 "automation_status": tc.automation_status,
                 "module": tc.module_value,
                 "preconditions": tc.preconditions,
-                // In-app note: round-trips through this file, never sent to ADO.
-                "comment": tc.comment,
                 "steps": tc.steps.iter().map(|s| serde_json::json!({
                     "action": s.action, "expected": s.expected
                 })).collect::<Vec<_>>(),
-            })
+            });
+            // In-app note: round-trips through this file, never sent to
+            // ADO - and only present when non-empty, so a tool that
+            // round-trips a caller's draft does not inject a field the
+            // caller never wrote (a transform must be idempotent in shape).
+            if !tc.comment.is_empty() {
+                rec["comment"] = serde_json::json!(tc.comment);
+            }
+            rec
         })
         .collect();
     let doc = serde_json::json!({

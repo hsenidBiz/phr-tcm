@@ -94,6 +94,8 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({
                 "pbi_id": { "type": "integer", "description": "Work item id of the PBI" },
                 "limit": { "type": "integer", "description": "Max cases (default 5, cap 20)" },
+                "offset": { "type": "integer", "description": "Skip this many cases - page through a PBI with more than the cap" },
+                "titles_only": { "type": "boolean", "description": "Return only ids and titles (cap 200) - use for duplicate checking instead of pulling full step text" },
             }), &["pbi_id"]),
         },
         {
@@ -101,7 +103,8 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
             "inputSchema": schema(serde_json::json!({
                 "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
-                "entry": { "type": "string", "description": "First step of every preamble, e.g. \"Launch the HRM portal.\" (default: \"Launch the application.\")" },
+                "entry": { "type": "string", "description": "First step of every preamble, e.g. \"Launch the HRM portal.\" (default: \"Launch the application.\"). A non-launch entry (e.g. opening a module) is placed AFTER the sign-in step." },
+                "dry_run": { "type": "boolean", "description": "Return only the report of what would change - inspect it before committing to the transformed JSON" },
             }), &["json"]),
         },
         {
@@ -111,15 +114,25 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
                 "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
                 "operations": {
                     "type": "array",
-                    "description": "Ops applied in order. Each: {op, value?, find?, replace?, where?}. op is one of set_tags, add_tags, remove_tags, set_module, set_automation_status, set_preconditions, replace_in_title, prefix_title, suffix_title, replace_in_steps, sort_by, dedupe. `where` may carry title_contains, has_tag, module_is.",
+                    "description": "Ops applied in order. Each: {op, value?, find?, replace?, action?, expected?, cases?, where?}. op is one of set_tags, add_tags, remove_tags, set_module, set_automation_status, set_preconditions, replace_in_title, prefix_title, suffix_title, replace_in_steps, prepend_step, append_step, remove_step_matching, sort_by, group_by (stable - keeps within-group order), dedupe, remove_cases (where filter required), insert_cases. sort_by/group_by take title, module, tags or preconditions. `where` may carry title_contains, has_tag, module_is.",
                     "items": { "type": "object" },
                 },
             }), &["json", "operations"]),
         },
         {
+            "name": "validate_cases",
+            "description": "Validate draft import JSON with Test Case Manager's REAL importer. Returns case count, warnings, and errors - fix every warning before finishing. For large drafts pass `path` (a local file) instead of inlining the JSON; never skip validation because the draft is too big to inline.",
+            "inputSchema": schema(serde_json::json!({
+                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
+                "path": { "type": "string", "description": "Absolute path to a local draft file - use this instead of `json` for large drafts" },
+            }), &[]),
+        },
+        {
             "name": "get_tags",
             "description": "The tag names this project already uses. Prefer an existing tag over inventing a near-duplicate. Served from the app's cache - calling this costs no Azure DevOps request.",
-            "inputSchema": schema(serde_json::json!({}), &[]),
+            "inputSchema": schema(serde_json::json!({
+                "query": { "type": "string", "description": "Case-insensitive substring filter - a project can carry thousands of tags, so filter rather than fetching all of them" },
+            }), &[]),
         },
         {
             "name": "search_pbis",
@@ -178,14 +191,33 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_example_cases" => {
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);
             let limit = args["limit"].as_i64().unwrap_or(5);
-            call("GET", &format!("/examples?pbi={pbi}&limit={limit}"), "")
+            let offset = args["offset"].as_i64().unwrap_or(0);
+            let mut target = format!("/examples?pbi={pbi}&limit={limit}&offset={offset}");
+            if args["titles_only"].as_bool().unwrap_or(false) {
+                target.push_str("&titles_only=true");
+            }
+            call("GET", &target, "")
         }
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
-            let target = if entry.is_empty() {
+            let mut params: Vec<String> = vec![];
+            if !entry.is_empty() {
+                params.push(format!("entry={}", percent_encode(entry)));
+            }
+            if args["dry_run"].as_bool().unwrap_or(false) {
+                params.push("dry_run=true".to_string());
+            }
+            let target = if params.is_empty() {
                 "/optimize".to_string()
             } else {
-                format!("/optimize?entry={}", percent_encode(entry))
+                format!("/optimize?{}", params.join("&"))
+            };
+            call("POST", &target, args["json"].as_str().unwrap_or(""))
+        }
+        "validate_cases" => {
+            let target = match args["path"].as_str().filter(|p| !p.trim().is_empty()) {
+                Some(p) => format!("/validate?path={}", percent_encode(p)),
+                None => "/validate".to_string(),
             };
             call("POST", &target, args["json"].as_str().unwrap_or(""))
         }
@@ -198,7 +230,13 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             });
             call("POST", "/transform", &body.to_string())
         }
-        "get_tags" => call("GET", "/tags", ""),
+        "get_tags" => {
+            let target = match args["query"].as_str().filter(|f| !f.trim().is_empty()) {
+                Some(f) => format!("/tags?query={}", percent_encode(f)),
+                None => "/tags".to_string(),
+            };
+            call("GET", &target, "")
+        }
         "search_pbis" => {
             let q = args["query"].as_str().unwrap_or("");
             call("GET", &format!("/search-pbis?q={}", percent_encode(q)), "")
