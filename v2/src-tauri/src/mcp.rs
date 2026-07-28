@@ -84,6 +84,24 @@ fn disabled(call: BridgeCall) -> Vec<String> {
 fn tools_list(disabled: Vec<String>) -> serde_json::Value {
     let all = serde_json::json!({ "tools": [
         {
+            "name": "begin_test_case_writing",
+            "description": "START HERE for any test-case writing job, before reading specs or drafting anything. Call it with only `feature` first: it returns the questions to put to the developer in chat (where the JSON goes, which spec documents are authoritative, whether to check a PBI for duplicates, tags/module/status, what is out of scope) plus this org's real Module values. Ask them those questions - do not answer them yourself - then call this tool again with their answers. It checks the paths and values actually exist, and returns a plan file for them to approve. Do not write a single test case until it returns status \"ready\" and the developer has agreed to the plan.",
+            "inputSchema": schema(serde_json::json!({
+                "feature": { "type": "string", "description": "What you are about to write cases for, e.g. \"Manager Assessment landing page\" - becomes the plan's title" },
+                "output_path": { "type": "string", "description": "Full path, including file name, where the finished JSON goes" },
+                "spec_paths": { "type": "array", "items": { "type": "string" }, "description": "Full paths to the specification documents the cases come from" },
+                "sections": { "type": "string", "description": "Which parts of those documents are in scope" },
+                "authority": { "type": "string", "description": "\"spec\", \"app\", or \"spec-wins\" - which source decides when they disagree" },
+                "examples_pbi": { "type": "integer", "description": "PBI holding existing cases to learn style from and check for duplicates" },
+                "check_examples": { "type": "boolean", "description": "Whether to read those existing cases at all" },
+                "tags": { "type": "string", "description": "Semicolon-separated" },
+                "module": { "type": "string", "description": "Must be one of the org's allowed Module values" },
+                "automation_status": { "type": "string", "description": "\"Not Automated\" or \"Planned\"" },
+                "out_of_scope": { "type": "string", "description": "Anything explicitly not to cover" },
+                "notes": { "type": "string", "description": "House rules, naming, granularity - the developer's own conventions" },
+            }), &[]),
+        },
+        {
             "name": "get_writing_guide",
             "description": "The live guide for writing Test Case Manager import JSON: format rules, the org's allowed Module values, and the recommended workflow. Call this first.",
             "inputSchema": schema(serde_json::json!({}), &[]),
@@ -187,6 +205,32 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         });
     }
     let outcome = match name {
+        "begin_test_case_writing" => {
+            let feature = args["feature"].as_str().unwrap_or("");
+            let target = if feature.is_empty() {
+                "/begin".to_string()
+            } else {
+                format!("/begin?feature={}", percent_encode(feature))
+            };
+            // Everything except `feature` is an answer. With none of them
+            // present this is phase 1 (the questions); with any of them it
+            // is phase 2 (check and plan).
+            let answers: serde_json::Map<String, serde_json::Value> = args
+                .as_object()
+                .map(|o| {
+                    o.iter()
+                        .filter(|(k, _)| k.as_str() != "feature")
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let body = if answers.is_empty() {
+                String::new()
+            } else {
+                serde_json::Value::Object(answers).to_string()
+            };
+            call("POST", &target, &body)
+        }
         "get_writing_guide" => call("GET", "/guide", ""),
         "get_example_cases" => {
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);

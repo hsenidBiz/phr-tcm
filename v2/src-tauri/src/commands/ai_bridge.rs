@@ -82,3 +82,4 @@ fn mcp_exe_path() -> String {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default()
 }
+

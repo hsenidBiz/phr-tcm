@@ -103,6 +103,7 @@ pub async fn route(
         ("POST", "/optimize") => optimize_json(body, target),
         ("POST", "/transform") => transform_json(body),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
+        ("POST", "/begin") => begin_writing(body, target, ctx, client).await,
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
             None => (503, "sign in to Test Case Manager first".into()),
@@ -207,6 +208,102 @@ fn transform_json(body: &str) -> (u16, String) {
         serde_json::json!({
             "test_cases": parsed.get("test_cases").cloned().unwrap_or(parsed),
             "report": report,
+        })
+        .to_string(),
+    )
+}
+
+/// Hand control to the developer before a single case is written.
+///
+/// Phase 1 (empty body): the checklist to put to them in chat, with the
+/// context this app already knows - org/project, the org's real Module
+/// values, a suggested output folder - so they correct defaults instead
+/// of composing answers from nothing.
+///
+/// Phase 2 (answers in the body): the answers are CHECKED - spec files
+/// must exist on disk, the output folder must exist, the module must be
+/// a real one - and only then is a plan file written. An assistant that
+/// invents a plausible path is caught by name here, which is most of
+/// what a file picker would have bought.
+async fn begin_writing(
+    body: &str,
+    target: &str,
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+) -> (u16, String) {
+    let feature = q(target, "feature").unwrap_or_default();
+    let modules = match client {
+        Some(c) => allowed_modules(ctx, c).await,
+        None => vec![],
+    };
+
+    // Phase 1: nothing sent, so hand back the questions.
+    if body.trim().is_empty() || body.trim() == "{}" {
+        return (
+            200,
+            serde_json::json!({
+                "status": "questions",
+                "feature": feature,
+                "ask_the_developer": crate::intake::questions(),
+                "context": {
+                    "organization": ctx.org,
+                    "project": ctx.project,
+                    "allowed_modules": modules,
+                    "tags_hint": "Call get_tags (with a query filter) to reuse existing tags.",
+                },
+                "note": "Put these to the developer in chat - one at a time, and let them \
+                         paste or drop file paths. Do NOT answer them yourself, and do not \
+                         start writing. When they have answered, call this tool again with \
+                         their answers to get the plan.",
+            })
+            .to_string(),
+        );
+    }
+
+    let answers: crate::intake::IntakeAnswers = match serde_json::from_str(body) {
+        Ok(a) => a,
+        Err(e) => {
+            return (
+                400,
+                serde_json::json!({ "status": "error", "error": format!("could not read the answers: {e}") })
+                    .to_string(),
+            )
+        }
+    };
+
+    let problems = crate::intake::problems(&answers, &modules);
+    if !problems.is_empty() {
+        return (
+            200,
+            serde_json::json!({
+                "status": "needs_answers",
+                "problems": problems,
+                "allowed_modules": modules,
+                "note": "Go back to the developer with these - do not guess a value or a \
+                         path to get past them, and do not start writing.",
+            })
+            .to_string(),
+        );
+    }
+
+    let plan = crate::intake::plan_markdown(&answers, &feature);
+    let plan_path = crate::intake::plan_path(&answers.output_path);
+    let written = std::fs::write(&plan_path, &plan).is_ok();
+    (
+        200,
+        serde_json::json!({
+            "status": "ready",
+            "plan": plan,
+            "plan_path": if written { serde_json::json!(plan_path) } else { serde_json::Value::Null },
+            "plan_write_error": if written {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(format!("could not write {plan_path} - the plan is in this response instead"))
+            },
+            "answers": answers,
+            "note": "Show this plan to the developer and get their agreement before writing \
+                     any case. Then write only what it covers, put the JSON exactly at \
+                     output_path, and follow the steps at the end of the plan.",
         })
         .to_string(),
     )
@@ -447,6 +544,9 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         an existing 'smoke') fragments the project's tags. A genuinely new tag\n\
         is allowed when nothing here matches.\n\n{tag_lines}\n\n\
         ## Workflow\n\
+        0. Call `begin_test_case_writing` FIRST and put its questions to the\n\
+        developer. Where the file goes, which specs are authoritative and what\n\
+        is out of scope are theirs to decide, not yours to assume.\n\
         1. Call `get_example_cases` for the PBI you're writing for and mimic\n\
         their style and granularity.\n\
         2. Draft your cases.\n\

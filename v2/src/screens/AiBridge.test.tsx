@@ -115,6 +115,7 @@ test("the how-it-works card names every MCP tool", async () => {
 
   await screen.findByText("How it works");
   for (const name of [
+    "begin_test_case_writing",
     "get_writing_guide",
     "get_example_cases",
     "validate_cases",

@@ -12,6 +12,10 @@ export type McpToolInfo = { name: string; summary: string };
  * what each tool does without a round trip. `tcm_mcp.rs` asserts the same
  * names on the Rust side, so a drift shows up as a failing test. */
 export const MCP_TOOLS: McpToolInfo[] = [
+  {
+    name: "begin_test_case_writing",
+    summary: "Asks you how the set should be written, before anything is.",
+  },
   { name: "get_writing_guide", summary: "Format rules and your org's allowed Module values." },
   { name: "get_example_cases", summary: "Real cases from a PBI, to copy the house style." },
   { name: "validate_cases", summary: "Check a draft with the app's real importer." },

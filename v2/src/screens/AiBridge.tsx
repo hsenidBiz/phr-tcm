@@ -436,11 +436,19 @@ export default function AiBridge() {
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">How it works</h2>
         <p className="text-sm text-muted">
-          Connected AI tools can call nine tools this app exposes. All of them
+          Connected AI tools can call ten tools this app exposes. All of them
           either read or reshape the AI's own draft — none can write to Azure
           DevOps:
         </p>
         <ul className="space-y-1.5 text-xs text-muted">
+          <li>
+            <code className="id-mono text-text">begin_test_case_writing</code> — the
+            starting point. It hands the assistant a checklist to put to you in chat:
+            where the JSON goes, which spec documents are authoritative, whether to
+            check a PBI for duplicates, tags and module, what is out of scope. Your
+            answers are checked against the real paths and values, and written to a
+            plan file for you to approve before a single case exists.
+          </li>
           <li>
             <code className="id-mono text-text">get_writing_guide</code> — the live
             guide for writing import JSON: format rules, your org's allowed Module

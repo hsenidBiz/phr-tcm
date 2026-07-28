@@ -31,7 +31,7 @@ fn notifications_get_no_response() {
 }
 
 #[test]
-fn tools_list_names_all_six() {
+fn tools_list_names_every_tool() {
     let resp = handle_message(
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
         "1.10.3",
@@ -48,6 +48,7 @@ fn tools_list_names_all_six() {
     assert_eq!(
         names,
         vec![
+            "begin_test_case_writing",
             "get_writing_guide",
             "get_example_cases",
             "optimize_cases",
@@ -196,5 +197,5 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 10);
 }
