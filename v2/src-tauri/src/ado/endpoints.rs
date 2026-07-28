@@ -350,7 +350,7 @@ impl AdoClient {
         if let Some(p) = preconditions_ref {
             if !tc.preconditions.is_empty() {
                 patch.push(serde_json::json!({"op": "add", "path": format!("/fields/{p}"),
-                    "value": format!("<div>{}</div>", tc.preconditions)}));
+                    "value": format!("<div>{}</div>", escape_html(&tc.preconditions))}));
             }
         }
         let url = format!(
@@ -458,7 +458,7 @@ impl AdoClient {
         }
         if let Some(p) = preconditions_ref {
             if !tc.preconditions.is_empty() {
-                fields.push((p.to_string(), format!("<div>{}</div>", tc.preconditions)));
+                fields.push((p.to_string(), format!("<div>{}</div>", escape_html(&tc.preconditions))));
             }
         }
         self.update_work_item_fields(organization, project, tc_id, &fields)
@@ -928,4 +928,16 @@ fn percent_encode_path(s: &str) -> String {
         }
     }
     out
+}
+
+/// Text going into an HTML field value.
+///
+/// Preconditions are typed as plain text and were interpolated straight
+/// into `<div>...</div>`, so a `<` or an `&` - "value < 10", "Tom & Jerry"
+/// - reached Azure DevOps as broken markup and came back mangled or
+/// truncated. Escaping is what makes the round-trip faithful.
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }

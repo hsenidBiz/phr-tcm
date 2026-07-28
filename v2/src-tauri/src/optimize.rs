@@ -403,16 +403,43 @@ pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, Op
         ..Default::default()
     };
 
-    // 1. Drop exact duplicate titles, keeping the first.
+    // 1. Collapse duplicate titles - but never at the cost of a work item.
+    //
+    // Two DIFFERENT test cases in Azure DevOps are allowed to share a title,
+    // and dropping one here would quietly delete an update the caller asked
+    // for: the id goes with it, so the survivor creates a new case and the
+    // real one is never touched. Nobody asked for a dedupe either - it runs
+    // on every optimize call. So a title clash is only collapsed when it
+    // cannot cost anything: both sides id-less, or both the same work item.
+    // Otherwise both are kept and the clash is reported for a human to
+    // settle.
     let mut deduped: Vec<TestCase> = vec![];
     for c in cases {
         let key = squash(&c.title).to_lowercase();
-        if deduped.iter().any(|k| squash(&k.title).to_lowercase() == key) {
-            report.duplicates_removed += 1;
-            report.notes.push(format!("Removed a duplicate of '{}'.", squash(&c.title)));
-            continue;
+        let clash = deduped
+            .iter()
+            .position(|k| squash(&k.title).to_lowercase() == key);
+        match clash.map(|i| (i, deduped[i].update_id, c.update_id)) {
+            None => deduped.push(c),
+            // Same work item, or neither is one: a genuine duplicate.
+            Some((_, a, b)) if a == b => {
+                report.duplicates_removed += 1;
+                report.notes.push(format!("Removed a duplicate of '{}'.", squash(&c.title)));
+            }
+            Some((_, a, b)) => {
+                let which = |id: Option<i32>| match id {
+                    Some(v) => format!("#{v}"),
+                    None => "a new case".to_string(),
+                };
+                report.notes.push(format!(
+                    "Two cases share the title '{}' - {} and {} - so both were kept.                      Rename one if that was accidental.",
+                    squash(&c.title),
+                    which(a),
+                    which(b)
+                ));
+                deduped.push(c);
+            }
         }
-        deduped.push(c);
     }
 
     // 2. Per-case cleanup: preamble in, noise out.

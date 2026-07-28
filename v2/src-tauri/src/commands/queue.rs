@@ -543,10 +543,29 @@ async fn process_queue_item(
             .create_test_case(organization, project, tc, m_ref, area_path, iteration_path, p_ref)
             .await
         {
-            Ok(new_id) => client
-                .link_to_pbi(organization, project, new_id, pbi_id)
-                .await
-                .map(|_| (new_id, "created")),
+            // The case EXISTS from here on. A failed link must not be
+            // reported as a failed create: the row stays in the queue, the
+            // user submits again, and Azure DevOps ends up with two copies
+            // of a case that cannot be deleted. Report it created, and say
+            // the link is what needs attention.
+            Ok(new_id) => match client.link_to_pbi(organization, project, new_id, pbi_id).await {
+                Ok(()) => Ok((new_id, "created")),
+                Err(e) => {
+                    crate::applog::warn(format!(
+                        "Created #{new_id} '{}' but linking it to PBI #{pbi_id} failed: {e}",
+                        tc.title
+                    ));
+                    return SubmitItemResult {
+                        index,
+                        title: tc.title.clone(),
+                        action: "created".into(),
+                        id: Some(new_id),
+                        error: Some(format!(
+                            "Created, but linking to PBI #{pbi_id} failed: {e}.                              The case exists - link it in Azure DevOps rather than                              submitting again, which would create a second copy."
+                        )),
+                    };
+                }
+            },
             Err(e) => Err(e),
         },
     };

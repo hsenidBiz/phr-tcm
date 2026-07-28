@@ -655,10 +655,23 @@ export default function QueueSection({
         <div className="space-y-2">
           <ul className="space-y-0.5 text-sm">
             {results.map((r) => (
-              <li key={r.index} className={r.action === "failed" ? "text-danger" : "text-success"}>
+              <li
+                key={r.index}
+                className={
+                  r.action === "failed"
+                    ? "text-danger"
+                    : // Created or updated, but something after the write
+                      // went wrong - the case exists, so this is a warning
+                      // to act on, not a failure to retry.
+                      r.error
+                      ? "text-warning"
+                      : "text-success"
+                }
+              >
                 {r.action === "created" && `Created #${r.id}: ${r.title}`}
                 {r.action === "updated" && `Updated #${r.id}: ${r.title}`}
                 {r.action === "failed" && `Failed: ${r.title} - ${r.error}`}
+                {r.action !== "failed" && r.error && ` - ${r.error}`}
               </li>
             ))}
           </ul>

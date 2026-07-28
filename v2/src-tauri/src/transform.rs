@@ -109,6 +109,58 @@ fn str_of(v: &serde_json::Value, key: &str) -> String {
     v[key].as_str().unwrap_or_default().to_string()
 }
 
+/// A string the caller MUST have written, distinguishing "absent" from
+/// "deliberately empty".
+///
+/// `str_of` cannot tell those apart - both come back as "" - and every
+/// set_* op then wrote that empty string over the field on every matched
+/// case and reported it as applied. Clearing a field is a legitimate edit,
+/// so the fix is not to reject "": it is to insist the key be present, so
+/// a typo like "vlaue" fails loudly instead of blanking the draft.
+fn required_str(v: &serde_json::Value, key: &str, label: &str) -> Result<String, String> {
+    match v.get(key) {
+        Some(serde_json::Value::String(s)) => Ok(s.to_string()),
+        Some(_) => Err(format!("{label}: \"{key}\" must be a string.")),
+        None => Err(format!(
+            "{label}: requires a \"{key}\". Pass \"\" explicitly to clear the field."
+        )),
+    }
+}
+
+/// The only keys a `where` clause may carry. An unrecognised one used to be
+/// ignored, which left an all-None filter - and `Filter::matches` reads that
+/// as "every case", so one typo turned a targeted edit into a draft-wide
+/// rewrite that reported success.
+const FILTER_KEYS: [&str; 3] = ["title_contains", "has_tag", "module_is"];
+
+fn parse_filter(v: &serde_json::Value, label: &str) -> Result<Filter, String> {
+    let f = &v["where"];
+    if f.is_null() {
+        return Ok(Filter::default()); // no clause = every case, as documented
+    }
+    let obj = f
+        .as_object()
+        .ok_or_else(|| format!("{label}: \"where\" must be an object."))?;
+    for key in obj.keys() {
+        if !FILTER_KEYS.contains(&key.as_str()) {
+            return Err(format!(
+                "{label}: \"where\" has an unknown key \"{key}\". Use one of: {}.",
+                FILTER_KEYS.join(", ")
+            ));
+        }
+    }
+    for key in FILTER_KEYS {
+        if obj.get(key).is_some_and(|x| !x.is_string()) {
+            return Err(format!("{label}: \"where.{key}\" must be a string."));
+        }
+    }
+    Ok(Filter {
+        title_contains: f["title_contains"].as_str().map(str::to_string),
+        has_tag: f["has_tag"].as_str().map(str::to_string),
+        module_is: f["module_is"].as_str().map(str::to_string),
+    })
+}
+
 /// Read the `operations` array an assistant sends. Errors name the
 /// offending entry rather than silently skipping it - a dropped edit that
 /// looks applied is the worst outcome here.
@@ -120,12 +172,14 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
     for (i, v) in list.iter().enumerate() {
         let label = format!("operation {}", i + 1);
         let name = v["op"].as_str().ok_or(format!("{label}: missing \"op\"."))?;
+        // Only read for the ops that take one; required_str below is what
+        // actually guards them.
         let value = str_of(v, "value");
         let op = match name {
-            "set_tags" => Op::SetTags(value),
-            "add_tags" => Op::AddTags(value),
-            "remove_tags" => Op::RemoveTags(value),
-            "set_module" => Op::SetModule(value),
+            "set_tags" => Op::SetTags(required_str(v, "value", &label)?),
+            "add_tags" => Op::AddTags(required_str(v, "value", &label)?),
+            "remove_tags" => Op::RemoveTags(required_str(v, "value", &label)?),
+            "set_module" => Op::SetModule(required_str(v, "value", &label)?),
             "set_automation_status" => {
                 if value != "Not Automated" && value != "Planned" {
                     return Err(format!(
@@ -134,7 +188,7 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                 }
                 Op::SetAutomationStatus(value)
             }
-            "set_preconditions" => Op::SetPreconditions(value),
+            "set_preconditions" => Op::SetPreconditions(required_str(v, "value", &label)?),
             "replace_in_title" => Op::ReplaceInTitle {
                 find: str_of(v, "find"),
                 replace: str_of(v, "replace"),
@@ -253,14 +307,9 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                 return Err(format!("{label}: \"find\" must not be empty."));
             }
         }
-        let f = &v["where"];
         out.push(Operation {
             op,
-            filter: Filter {
-                title_contains: f["title_contains"].as_str().map(str::to_string),
-                has_tag: f["has_tag"].as_str().map(str::to_string),
-                module_is: f["module_is"].as_str().map(str::to_string),
-            },
+            filter: parse_filter(v, &label)?,
         });
     }
     Ok(out)

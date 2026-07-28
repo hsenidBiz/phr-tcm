@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.14.1",
+    date: "2026-07-29",
+    items: [
+      "Fixed: a test case that was created but could not be linked to the PBI was reported as a failure, so submitting again created a second copy of a case that cannot be deleted. It now reports as created, with the linking problem named.",
+      "Fixed: preconditions containing < or & (\"value < 10\", \"Tom & Jerry\") reached Azure DevOps as broken markup.",
+      "Fixed: one mistyped key in an AI transform's \"where\" clause matched every case instead of none, so a targeted edit silently rewrote the whole draft and reported success. Unknown keys are now refused by name.",
+      "Fixed: a mistyped \"value\" in an AI transform blanked the field on every matched case. Writing an empty value on purpose still clears it.",
+      "Fixed: optimising a draft removed cases that shared a title, taking a distinct work item id with them - so an update silently became a new case. Both are kept now, and the clash is reported.",
+    ],
+  },
+  {
     version: "1.14.0",
     date: "2026-07-29",
     items: [

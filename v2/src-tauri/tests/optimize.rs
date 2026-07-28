@@ -609,3 +609,41 @@ async fn transforms_do_not_inject_an_empty_comment_field() {
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["test_cases"][0]["comment"], "keep me");
 }
+
+/// Two DIFFERENT work items are allowed to share a title. Dropping one
+/// took its id with it, so the survivor would CREATE a new case and the
+/// real one would never be updated - a silent loss of the caller's edit.
+#[test]
+fn a_title_clash_between_two_real_work_items_keeps_both() {
+    let mut a = TestCase { title: "Login as admin".into(), ..Default::default() };
+    a.update_id = Some(101);
+    let mut b = TestCase { title: "Login as admin".into(), ..Default::default() };
+    b.update_id = Some(205);
+
+    let (out, report) = v2_lib::optimize::optimize(vec![a, b], None);
+    assert_eq!(out.len(), 2, "a work item was dropped");
+    assert_eq!(report.duplicates_removed, 0);
+    let note = report.notes.join(" ");
+    assert!(note.contains("101") && note.contains("205"), "got {note}");
+}
+
+/// A case carrying an id must not be collapsed into an id-less one either:
+/// that would retarget an update into a create.
+#[test]
+fn an_identified_case_is_not_collapsed_into_an_id_less_one() {
+    let plain = TestCase { title: "Login as admin".into(), ..Default::default() };
+    let mut identified = TestCase { title: "Login as admin".into(), ..Default::default() };
+    identified.update_id = Some(101);
+    let (out, _) = v2_lib::optimize::optimize(vec![plain, identified], None);
+    assert_eq!(out.len(), 2);
+}
+
+/// A genuine duplicate - same id, or neither carrying one - still collapses.
+#[test]
+fn a_real_duplicate_is_still_removed() {
+    let one = TestCase { title: "Login as admin".into(), ..Default::default() };
+    let two = TestCase { title: "Login  as  admin".into(), ..Default::default() };
+    let (out, report) = v2_lib::optimize::optimize(vec![one, two], None);
+    assert_eq!(out.len(), 1);
+    assert_eq!(report.duplicates_removed, 1);
+}

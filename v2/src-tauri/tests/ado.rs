@@ -584,3 +584,44 @@ async fn set_state_extracts_rule_message_from_400() {
         other => panic!("expected Http error, got {other:?}"),
     }
 }
+
+/// Preconditions are typed as plain text and were interpolated straight
+/// into `<div>...</div>`, so "value < 10" or "Tom & Jerry" reached Azure
+/// DevOps as broken markup.
+#[tokio::test]
+async fn preconditions_are_html_escaped_on_create_and_update() {
+    for (label, method) in [("create", "POST"), ("update", "PATCH")] {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method(method))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({ "id": 7, "fields": {} }),
+            ))
+            .mount(&server)
+            .await;
+        let client = v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri());
+        let tc = v2_lib::model::TestCase {
+            title: "T".into(),
+            steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into() }],
+            automation_status: "Planned".into(),
+            preconditions: "value < 10 & rising".into(),
+            ..Default::default()
+        };
+        let _ = if method == "POST" {
+            client
+                .create_test_case("o", "p", &tc, None, "", "", Some("Custom.Pre"))
+                .await
+                .map(|_| ())
+        } else {
+            client
+                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"))
+                .await
+        };
+        let sent = server.received_requests().await.unwrap();
+        let body = String::from_utf8_lossy(&sent[0].body).to_string();
+        assert!(
+            body.contains("value &lt; 10 &amp; rising"),
+            "{label}: preconditions were not escaped:\n{body}"
+        );
+        assert!(!body.contains("value < 10"), "{label}: raw < reached ADO");
+    }
+}
