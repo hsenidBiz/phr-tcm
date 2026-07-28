@@ -13,6 +13,29 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.14.0",
+    date: "2026-07-29",
+    items: [
+      "Comments now work in the browser view of an imported draft. Every case gets a box - not just the ones that already exist in Azure DevOps - and what you type is saved into the case in the JSON file it came from, so the card in the app, the browser tab and the file all agree.",
+      "A collapsible General comments column beside the cases, one box per imported file, for the notes that belong to the whole set rather than to any one case. It lives in the file too, so it travels with it. The same panel is on the Import screen for anyone who never opens the browser view.",
+      "Test cases are numbered in the browser view. The numbers do not renumber when you search, so \"case 7\" means the same thing before and after typing in the box.",
+      "Buttons across the app now carry an icon beside their label, from one shared set - the same action gets the same icon everywhere.",
+      "Editing a title now shows a word-level difference instead of striking out the whole old title and printing the whole new one. The same renderer is used for every before/after in the app, including the work item history.",
+      "Fixed: an image attached to a bug would not load. A screenshot pasted in from a failed test run is a test-result attachment, which the app did not recognise as an attachment at all, so it never fetched it.",
+      "Fixed: pressing Cancel during an upload could still create one more test case. The pause between items is now checked as well, so only the case already in flight finishes.",
+      "Report a bug, in Settings. It opens a prefilled GitHub issue for you to check and submit, with your log attached - and your organization, project and work item names removed from it first.",
+      "The app log now records every Azure DevOps request with its result and timing, so \"what was it doing when it broke\" has an answer. Settings hides that detail behind a switch; the file on disk always has all of it.",
+      "Only one copy of the app runs now. Opening it again brings the window you already have to the front.",
+      "The watched-files list has a Remove all button, and an import that lands while you are in another window now raises a notification.",
+      "Pull Requests and New Work Item use the width of the window instead of stopping halfway across it. The work item form becomes two columns when there is room and one when there is not.",
+      "The sidebar icons were recoloured, the board's Hide/Open buttons are easier to see, and the sign-in icon matches its label.",
+      "Dialogs now keep the keyboard inside them. Tabbing off the last control used to land on the window behind, leaving you driving a screen you could not see.",
+      "AI Bridge: begin_test_case_writing asks how you want a set written - where the file goes, which specs decide, what is out of scope - and writes the agreed plan beside the output before anything is drafted.",
+      "AI Bridge: get_example_cases is now get_test_cases, since it is useful for more than examples, and every tool can be switched on and off individually.",
+      "Fixed: bulk-import updates now write the title.",
+    ],
+  },
+  {
     version: "1.13.0",
     date: "2026-07-27",
     items: [
