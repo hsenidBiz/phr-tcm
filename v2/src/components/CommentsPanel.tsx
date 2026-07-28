@@ -6,6 +6,7 @@ import { unwrap } from "../lib/ipc";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
+import { IconPost } from "../lib/actionIcons";
 
 // Deterministic avatar colours for initials discs (v1 _AVATAR_COLORS).
 const AVATAR_COLORS = [
@@ -114,6 +115,7 @@ export default function CommentsPanel({
           disabled={!text.trim() || add.isPending}
           onClick={() => add.mutate()}
         >
+          <IconPost aria-hidden />
           {add.isPending ? "Posting" : "Post"}
         </Button>
       </div>

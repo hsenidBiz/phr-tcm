@@ -9,8 +9,8 @@ import {
   GitPullRequest,
   KanbanSquare,
   PenLine,
-  Pencil,
-  PlayCircle,
+  RotateCcw,
+  SquarePlay,
 } from "lucide-react";
 import { useState } from "react";
 import { Tooltip } from "./ui/tooltip";
@@ -35,14 +35,18 @@ type Item<T extends string> = {
 const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine, tone: "nav-ico nav-ico-manual" },
   { id: "import", label: "Import File", icon: FileUp, tone: "nav-ico nav-ico-import" },
-  { id: "edit", label: "Update Test Cases", icon: Pencil, tone: "nav-ico nav-ico-edit" },
+  // A circular arrow, not a second pencil: Manual Entry already owns the
+  // pencil, and two pencils in one rail are indistinguishable at 16px.
+  { id: "edit", label: "Update Test Cases", icon: RotateCcw, tone: "nav-ico nav-ico-edit" },
   { id: "view", label: "View Test Cases", icon: Eye, tone: "nav-ico nav-ico-view" },
-  { id: "run", label: "Run Tests", icon: PlayCircle, tone: "nav-ico nav-ico-run" },
+  { id: "run", label: "Run Tests", icon: SquarePlay, tone: "nav-ico nav-ico-run" },
   { id: "suites", label: "Test Suites", icon: FolderTree, tone: "nav-ico nav-ico-suites" },
   { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
 ];
 
 export const WORK_ITEMS: Item<WorkSection>[] = [
+  // The same glyph, in the same accent, that heads every row in the
+  // Pull Requests panel - GitBranch there is only the branch-name mark.
   { id: "prs", label: "Pull Requests", icon: GitPullRequest, tone: "nav-ico nav-ico-prs" },
   { id: "board", label: "Board", icon: KanbanSquare, tone: "nav-ico nav-ico-board" },
   { id: "create", label: "New Work Item", icon: FilePlus2, tone: "nav-ico nav-ico-create" },

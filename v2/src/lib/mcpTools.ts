@@ -17,7 +17,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Asks you how the set should be written, before anything is.",
   },
   { name: "get_writing_guide", summary: "Format rules and your org's allowed Module values." },
-  { name: "get_example_cases", summary: "Real cases from a PBI, to copy the house style." },
+  { name: "get_test_cases", summary: "The cases already on a PBI - style, and what is covered." },
   { name: "validate_cases", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", summary: "Reorganise a draft into a tester-ready run sheet." },

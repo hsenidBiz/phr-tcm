@@ -11,11 +11,12 @@
 //! owns the Excel/JSON writers and the template; `html` owns the standalone
 //! HTML report and its autosaving note boxes.
 
+pub mod comments;
 mod export;
 mod html;
 
 pub use export::{export_queue_to_excel, export_queue_to_json, generate_template, queue_to_json_string};
-pub use html::{export_queue_to_html, NoteCtx};
+pub use html::{export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx};
 
 use crate::model::{TestCase, MAX_TITLE_LEN, VALID_STATUSES};
 use crate::steps_xml::Step;

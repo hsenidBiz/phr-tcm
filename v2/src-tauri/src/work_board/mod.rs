@@ -10,7 +10,7 @@
 //! process-layout discovery behind the extra form tabs.
 
 mod board;
-mod detail;
+pub mod detail;
 pub mod history;
 mod layout;
 

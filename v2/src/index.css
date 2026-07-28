@@ -46,29 +46,36 @@
      theme accent, so only the glyph is coloured. Tokens rather than
      Tailwind palette classes, so themes can retune them (and so the
      colour-system gate stays satisfied). */
-  --color-nav-manual: #0284c7;
+  --color-nav-manual: #ca8a04;
   --color-nav-import: #475569;
-  --color-nav-edit: #b45309;
-  --color-nav-view: #7c3aed;
-  --color-nav-run: #15803d;
   --color-nav-suites: #c2410c;
   --color-nav-ai: #a21caf;
-  --color-nav-prs: #0f766e;
-  --color-nav-board: #4338ca;
-  --color-nav-create: #4d7c0f;
+  --color-nav-run: #dc2626;
+  /* Ink, accent and muted follow the theme by themselves, so these four
+     are NOT restated in the dark block below - restating them would be a
+     second place to keep in step for no gain. */
+  --color-nav-edit: var(--color-text);
+  --color-nav-view: var(--color-text);
+  --color-nav-create: var(--color-text);
+  --color-nav-prs: var(--color-accent);
+  --color-nav-board: var(--color-muted);
 
   /* Second tone: the meaningful part of each glyph (pupil, play triangle,
      robot eyes). Chosen to read against the icon's own colour. */
-  --color-nav-manual-2: #f59e0b;
   --color-nav-import-2: #0284c7;
-  --color-nav-edit-2: #64748b;
-  --color-nav-view-2: #0891b2;
-  --color-nav-run-2: #f8fafc;
   --color-nav-suites-2: #a16207;
   --color-nav-ai-2: #22d3ee;
-  --color-nav-prs-2: #c2410c;
-  --color-nav-board-2: #db2777;
-  --color-nav-create-2: #15803d;
+  --color-nav-create-2: #16a34a;
+  /* The pencil is the yellow part, so its RULED LINE is the ink one -
+     which is why manual's two tones are the reverse of what you might
+     expect from the names. */
+  --color-nav-manual-2: var(--color-text);
+  /* The pupil is the accent: the one glyph that points at the theme. */
+  --color-nav-view-2: var(--color-accent);
+  /* Play triangle inside the red frame - ink, not white, so it survives
+     on a light background where the frame is only an outline. */
+  --color-nav-run-2: var(--color-text);
+  --color-nav-prs-2: var(--color-accent);
 }
 
 .dark {
@@ -90,27 +97,16 @@
   --color-warning: #fbbf24;
 
   /* Brighter on dark: the light values sink into the surface. */
-  --color-nav-manual: #38bdf8;
+  --color-nav-manual: #fbbf24;
   --color-nav-import: #e2e8f0;
-  --color-nav-edit: #fbbf24;
-  --color-nav-view: #a78bfa;
-  --color-nav-run: #4ade80;
   --color-nav-suites: #fb923c;
   --color-nav-ai: #e879f9;
-  --color-nav-prs: #2dd4bf;
-  --color-nav-board: #818cf8;
-  --color-nav-create: #a3e635;
+  --color-nav-run: #ef4444;
 
-  --color-nav-manual-2: #fbbf24;
   --color-nav-import-2: #38bdf8;
-  --color-nav-edit-2: #cbd5e1;
-  --color-nav-view-2: #22d3ee;
-  --color-nav-run-2: #052e16;
   --color-nav-suites-2: #fcd34d;
   --color-nav-ai-2: #67e8f9;
-  --color-nav-prs-2: #fb923c;
-  --color-nav-board-2: #f472b6;
-  --color-nav-create-2: #166534;
+  --color-nav-create-2: #4ade80;
 }
 
 @theme inline {
@@ -704,30 +700,31 @@ table {
 /* Import File - the up arrow out of the page. */
 .nav-ico-import path[d="M12 12v6"],
 .nav-ico-import path[d="m15 15-3-3-3 3"] { stroke: var(--nav-ico-2); }
-/* Update - the pencil's tip. */
-.nav-ico-edit path[d="m15 5 4 4"] { stroke: var(--nav-ico-2); }
+/* Update - one ink-coloured circular arrow, no second tone. */
 /* View - the pupil, filled so it reads as an iris at 16px. */
 .nav-ico-view circle { stroke: var(--nav-ico-2); fill: var(--nav-ico-2); }
-/* Run - the play triangle (the only path in this icon), filled solid. */
+/* Run - the play triangle. The frame is a <rect>, so `path` is the
+   triangle alone; filled so it reads at 16px. */
 .nav-ico-run path { stroke: var(--nav-ico-2); fill: var(--nav-ico-2); }
 /* AI Bridge - the robot's eyes and antennae. */
 .nav-ico-ai path[d="M15 13v2"],
 .nav-ico-ai path[d="M9 13v2"],
 .nav-ico-ai path[d="M12 8V4H8"] { stroke: var(--nav-ico-2); }
-/* Pull Requests / Board / New item - the nodes and the plus. */
+/* Pull Requests - the branch's two nodes, filled so they read as dots. */
 .nav-ico-prs circle { stroke: var(--nav-ico-2); fill: var(--nav-ico-2); }
-.nav-ico-create path[d="M9 15h6"],
-.nav-ico-create path[d="M12 18v-6"] { stroke: var(--nav-ico-2); }
+/* New work item - the plus beside the page. These two selectors were
+   stale (the glyph was redrawn in a lucide bump) and had silently stopped
+   matching, which is exactly what the sidebar-icon gate now catches. */
+.nav-ico-create path[d="M14 19h6"],
+.nav-ico-create path[d="M17 16v6"] { stroke: var(--nav-ico-2); }
 
 .nav-ico-manual { --nav-ico-2: var(--color-nav-manual-2); }
 .nav-ico-import { --nav-ico-2: var(--color-nav-import-2); }
-.nav-ico-edit { --nav-ico-2: var(--color-nav-edit-2); }
 .nav-ico-view { --nav-ico-2: var(--color-nav-view-2); }
 .nav-ico-run { --nav-ico-2: var(--color-nav-run-2); }
 .nav-ico-suites { --nav-ico-2: var(--color-nav-suites-2); }
 .nav-ico-ai { --nav-ico-2: var(--color-nav-ai-2); }
 .nav-ico-prs { --nav-ico-2: var(--color-nav-prs-2); }
-.nav-ico-board { --nav-ico-2: var(--color-nav-board-2); }
 .nav-ico-create { --nav-ico-2: var(--color-nav-create-2); }
 
 /* The selected row is one accent-coloured block - a second hue inside it

@@ -43,7 +43,7 @@ async fn unknown_routes_404() {
 
 #[test]
 fn query_parsing_survives_valueless_pairs() {
-    assert_eq!(q("/examples?flag&pbi=42", "pbi").as_deref(), Some("42"));
+    assert_eq!(q("/test-cases?flag&pbi=42", "pbi").as_deref(), Some("42"));
     assert_eq!(q("/x?module=Pay+roll%20HR", "module").as_deref(), Some("Pay roll HR"));
     assert_eq!(q("/x?a=1", "b"), None);
     assert_eq!(q("/noquery", "a"), None);
@@ -96,7 +96,7 @@ async fn guide_carries_format_rules_and_live_modules() {
 }
 
 #[tokio::test]
-async fn examples_return_real_cases_in_import_shape() {
+async fn test_cases_return_real_cases_in_import_shape() {
     let (server, client) = ado_stub().await;
     // The same two calls the runner/edit screens make: ids-for-PBI, then
     // batch details. Match loosely on path; the client's own tests pin the
@@ -131,7 +131,7 @@ async fn examples_return_real_cases_in_import_shape() {
         .await;
 
     let (status, body) =
-        route(&ctx(), Some(&client), "GET", "/examples?pbi=42&limit=5", "", "1.10.3").await;
+        route(&ctx(), Some(&client), "GET", "/test-cases?pbi=42&limit=5", "", "1.10.3").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     let cases = v["test_cases"].as_array().unwrap();
@@ -209,9 +209,9 @@ async fn wiki_page_returns_content_via_wiremock() {
 }
 
 #[tokio::test]
-async fn examples_without_pbi_400_with_guidance() {
+async fn test_cases_without_pbi_400_with_guidance() {
     let (_server, client) = ado_stub().await;
-    let (status, body) = route(&ctx(), Some(&client), "GET", "/examples", "", "1.10.3").await;
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/test-cases", "", "1.10.3").await;
     assert_eq!(status, 400);
     assert!(body.contains("pbi"));
 }

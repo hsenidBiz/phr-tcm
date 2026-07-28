@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "./ui/button";
+import { IconBack, IconConfirm, IconNext } from "../lib/actionIcons";
 
 const TOUR_DONE_KEY = "tcm-v2-tour-done";
 
@@ -149,15 +150,18 @@ export default function UiTour({ onClose }: { onClose: () => void }) {
           <div className="ml-auto flex gap-2">
             {i > 0 && (
               <Button variant="outline" size="sm" onClick={() => setI((n) => n - 1)}>
+                <IconBack aria-hidden />
                 Back
               </Button>
             )}
             {i < steps.length - 1 ? (
               <Button size="sm" onClick={() => setI((n) => n + 1)}>
+                <IconNext aria-hidden />
                 Next
               </Button>
             ) : (
               <Button size="sm" onClick={finish}>
+                <IconConfirm aria-hidden />
                 Done
               </Button>
             )}

@@ -107,8 +107,8 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
-            "name": "get_example_cases",
-            "description": "Real existing test cases linked to a PBI, in the exact import JSON shape - mimic their style and granularity.",
+            "name": "get_test_cases",
+            "description": "The test cases already linked to a PBI, in the exact import JSON shape. Use them to copy the house style, to check what is already covered before writing more, or just to read what a PBI is currently tested by.",
             "inputSchema": schema(serde_json::json!({
                 "pbi_id": { "type": "integer", "description": "Work item id of the PBI" },
                 "limit": { "type": "integer", "description": "Max cases (default 5, cap 20)" },
@@ -232,11 +232,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             call("POST", &target, &body)
         }
         "get_writing_guide" => call("GET", "/guide", ""),
-        "get_example_cases" => {
+        "get_test_cases" => {
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);
             let limit = args["limit"].as_i64().unwrap_or(5);
             let offset = args["offset"].as_i64().unwrap_or(0);
-            let mut target = format!("/examples?pbi={pbi}&limit={limit}&offset={offset}");
+            let mut target = format!("/test-cases?pbi={pbi}&limit={limit}&offset={offset}");
             if args["titles_only"].as_bool().unwrap_or(false) {
                 target.push_str("&titles_only=true");
             }

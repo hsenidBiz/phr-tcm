@@ -488,9 +488,10 @@ export default function PrPanel({ org, project }: { org: string; project: string
     prStatus === "active" ? fetched.filter((pr) => !shownAbove.has(pr.id)) : fetched;
 
   return (
-    // Pull requests are a list: give them the width on a wide window
-    // rather than leaving half the screen empty.
-    <div className="max-w-3xl space-y-6 xl:max-w-5xl">
+    // Pull requests are a list, so width costs nothing: the cap steps up
+    // with the window and comes off entirely on a very wide one, rather
+    // than stopping at 1024px and leaving half the screen black.
+    <div className="max-w-3xl space-y-6 xl:max-w-5xl 2xl:max-w-none">
       <div className="flex items-center gap-2">
         <Select
           aria-label="Repository"

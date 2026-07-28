@@ -7,6 +7,10 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
+import { Switch } from "../components/ui/switch";
+import { Modal } from "../components/ui/modal";
+import { Textarea } from "../components/ui/input";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
 import { cn } from "../lib/cn";
@@ -20,6 +24,14 @@ import {
   type Accent,
   type ThemeChoice,
 } from "../lib/theme";
+import {
+  IconBrowse,
+  IconBug,
+  IconCancel,
+  IconCopy,
+  IconRefresh,
+  IconTour,
+} from "../lib/actionIcons";
 
 const ACCENT_SWATCH: Record<Accent, string> = {
   default: "var(--color-accent)", // live preview of the theme's own accent
@@ -39,9 +51,7 @@ const ACCENT_TITLE: Record<Accent, string> = {
   rose: "Rose",
 };
 
-// org/project stay in the signature (App passes them) for when a
-// project-scoped setting returns here.
-export default function Settings(_props: { org: string; project: string }) {
+export default function Settings({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
@@ -50,9 +60,19 @@ export default function Settings(_props: { org: string; project: string }) {
   // app's own log for when something needs reporting.
   const [rightPanel, setRightPanel] = useState<"changelog" | "logs">("changelog");
 
+  // The request trail is most of the log by volume, so the viewer
+  // hides it until it is asked for - someone opening this panel wants
+  // "what happened", not every 200 OK.
+  const [showRequests, setShowRequests] = useState(false);
+  // Reporting a bug in the APP itself (bugs in the test cases go to
+  // Azure DevOps from the runner). Nothing is posted from here - the
+  // reporter reviews the prefilled issue and presses the button, which
+  // is also why this feature needs no GitHub credential.
+  const [reporting, setReporting] = useState(false);
+  const [bugText, setBugText] = useState("");
   const logs = useQuery({
     queryKey: ["app-logs"],
-    queryFn: () => commands.appLogs(500),
+    queryFn: () => commands.appLogs(2000),
     enabled: rightPanel === "logs",
     // Ongoing: refresh while the panel is open so it reads live.
     refetchInterval: rightPanel === "logs" ? 2000 : false,
@@ -63,6 +83,9 @@ export default function Settings(_props: { org: string; project: string }) {
     enabled: rightPanel === "logs",
     staleTime: Infinity,
   });
+  // Filtered here rather than in the query, so flipping the switch is
+  // instant and does not re-fetch. The file on disk always has everything.
+  const shownLogs = (logs.data ?? []).filter((l) => showRequests || l.level !== "debug");
 
 
   const version = useQuery({
@@ -216,6 +239,7 @@ export default function Settings(_props: { org: string; project: string }) {
           variant="outline"
           onClick={() => window.dispatchEvent(new Event(START_TOUR_EVENT))}
         >
+          <IconTour aria-hidden />
           Show UI tour
         </Button>
       </section>
@@ -232,6 +256,7 @@ export default function Settings(_props: { org: string; project: string }) {
           the releases feed.
         </p>
         <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
+          <IconRefresh aria-hidden />
           {check.isPending ? "Checking" : "Check for updates"}
         </Button>
       </section>
@@ -281,6 +306,7 @@ export default function Settings(_props: { org: string; project: string }) {
                     .catch(() => toast.error("Could not copy to clipboard."));
                 }}
               >
+                <IconCopy aria-hidden />
                 Copy log
               </Button>
               <Button
@@ -293,14 +319,31 @@ export default function Settings(_props: { org: string; project: string }) {
                   openPath(dir).catch(() => toast.error("Could not open the log folder."));
                 }}
               >
+                <IconBrowse aria-hidden />
                 Open log folder
               </Button>
+              <Button size="sm" variant="outline" onClick={() => setReporting(true)}>
+                <IconBug aria-hidden />
+                Report a bug
+              </Button>
+              <label className="ml-auto flex items-center gap-2 text-xs text-muted">
+                <Switch
+                  checked={showRequests}
+                  onCheckedChange={setShowRequests}
+                  ariaLabel="Show every request"
+                />
+                Every request
+              </label>
             </div>
             <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[70vh]">
-              {(logs.data?.length ?? 0) === 0 ? (
-                <p className="text-xs text-faint">Nothing logged yet this session.</p>
+              {shownLogs.length === 0 ? (
+                <p className="text-xs text-faint">
+                  {(logs.data?.length ?? 0) === 0
+                    ? "Nothing logged yet this session."
+                    : "Nothing but requests so far - turn on \u201cEvery request\u201d to see them."}
+                </p>
               ) : (
-                logs.data!.map((l, i) => (
+                shownLogs.map((l, i) => (
                   <p key={i} className="id-mono flex gap-2 text-[11px] leading-relaxed">
                     <span className="shrink-0 text-faint">{l.at}</span>
                     <span
@@ -310,7 +353,9 @@ export default function Settings(_props: { org: string; project: string }) {
                           ? "text-danger"
                           : l.level === "warn"
                             ? "text-warning"
-                            : "text-muted",
+                            : l.level === "debug"
+                              ? "text-faint"
+                              : "text-muted",
                       )}
                     >
                       {l.level}
@@ -344,6 +389,58 @@ export default function Settings(_props: { org: string; project: string }) {
           </>
         )}
       </section>
+
+      {reporting && (
+        <Modal onClose={() => setReporting(false)}>
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-text">Report a bug in this app</h2>
+            <p className="text-sm text-muted">
+              This opens a prefilled issue on GitHub for you to check and submit -
+              nothing is sent from the app. Your organization, project and work
+              item names are removed from the log first.
+            </p>
+            <Textarea
+              aria-label="What happened"
+              className="h-28 w-full"
+              autoFocus
+              placeholder="What were you doing, and what happened instead?"
+              value={bugText}
+              onChange={(e) => setBugText(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setReporting(false)}>
+                <IconCancel aria-hidden />
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  void commands
+                    .prepareBugReport(bugText, org, project)
+                    .then((r) => {
+                      if (r.status === "error") {
+                        toast.error(`Could not prepare the report: ${r.error}`);
+                        return;
+                      }
+                      setReporting(false);
+                      setBugText("");
+                      void openUrl(r.data.url);
+                      // The log is a separate file because GitHub cannot take
+                      // an attachment from a URL - opening its folder makes the
+                      // drag the reporter has to do a short one.
+                      if (logDir.data) void openPath(logDir.data);
+                      toast.info("Drag the tcm-bug-report log onto the issue before submitting.");
+                    })
+                    .catch(() => toast.error("Could not prepare the report."));
+                }}
+              >
+                <IconBug aria-hidden />
+                Open the issue
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

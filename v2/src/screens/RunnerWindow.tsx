@@ -2,7 +2,7 @@ import { useLightbox } from "@astryxdesign/core/Lightbox";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { ClipboardPaste, Paperclip, Pin, PinOff, Scissors, Video, X } from "lucide-react";
+import { Pin, PinOff, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
@@ -17,6 +17,16 @@ import { unwrap, unwrapStr } from "../lib/ipc";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
 import { getTheme } from "../lib/theme";
 import { outcomeLabel } from "./RunPanel";
+import {
+  IconAttach,
+  IconBack,
+  IconBug,
+  IconFinish,
+  IconNext,
+  IconPasteImage,
+  IconRecord,
+  IconSnip,
+} from "../lib/actionIcons";
 
 const OUTCOMES = ["Passed", "Failed", "Blocked", "NotApplicable"] as const;
 type Outcome = (typeof OUTCOMES)[number] | "";
@@ -511,19 +521,20 @@ export default function RunnerWindow() {
               onClick={toggleRecord}
               title="Record the screen; the video attaches to this result"
             >
-              <Video size={14} /> {recording ? "Stop recording" : "Record"}
+              <IconRecord aria-hidden />{recording ? "Stop recording" : "Record"}
             </Button>
             <Button variant="outline" size="sm" disabled={snipping} onClick={snip}>
-              <Scissors size={14} /> {snipping ? "Waiting for snip" : "Snip"}
+              <IconSnip aria-hidden />{snipping ? "Waiting for snip" : "Snip"}
             </Button>
             <Button variant="outline" size="sm" onClick={pasteImage}>
-              <ClipboardPaste size={14} /> Paste
+              <IconPasteImage aria-hidden />Paste
             </Button>
             <Button variant="outline" size="sm" onClick={attachFile}>
-              <Paperclip size={14} /> Attach file
+              <IconAttach aria-hidden />Attach file
             </Button>
             {(st.outcome === "Failed" || Object.values(st.stepOutcomes).includes("Failed")) && (
               <Button variant="outline" size="sm" onClick={() => setBugFor(current)}>
+                <IconBug aria-hidden />
                 File bug
               </Button>
             )}
@@ -591,6 +602,7 @@ export default function RunnerWindow() {
 
       <footer className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
         <Button variant="ghost" size="sm" disabled={idx === 0} onClick={() => setIdx((i) => i - 1)}>
+          <IconBack aria-hidden />
           Prev
         </Button>
         <Button
@@ -599,6 +611,7 @@ export default function RunnerWindow() {
           disabled={idx >= list.length - 1}
           onClick={() => setIdx((i) => i + 1)}
         >
+          <IconNext aria-hidden />
           Next
         </Button>
         <Button
@@ -607,6 +620,7 @@ export default function RunnerWindow() {
           disabled={markedCount === 0 || finish.isPending}
           onClick={() => finish.mutate()}
         >
+          <IconFinish aria-hidden />
           {finish.isPending ? "Recording" : `Finish (${markedCount})`}
         </Button>
       </footer>

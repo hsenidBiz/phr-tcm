@@ -248,8 +248,8 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
     };
     let examples = match (a.check_examples, a.examples_pbi) {
         (true, Some(pbi)) => format!(
-            "Read the existing cases on PBI #{pbi} first: copy their style and \
-             granularity, and drop anything of yours they already cover."
+            "Call `get_test_cases` for PBI #{pbi} first: copy the style and \
+             granularity of what is there, and drop anything of yours it already covers."
         ),
         (false, Some(pbi)) => format!(
             "PBI #{pbi} was named but the duplicate check was declined - do not spend calls on it."

@@ -1,6 +1,15 @@
 import { expect, test } from "vitest";
 import type { TestCase } from "../bindings";
-import { caseKey, changedFields, countBy, fileName, syncFromFile } from "./fileSync";
+import {
+  caseKey,
+  changedFields,
+  countBy,
+  fileName,
+  ownerPaths,
+  patchWatch,
+  syncFromFile,
+  syncNotification,
+} from "./fileSync";
 
 const tc = (title: string, over: Partial<TestCase> = {}): TestCase => ({
   title,
@@ -121,4 +130,65 @@ test("caseKey is case-insensitive on titles", () => {
 test("fileName handles both separators", () => {
   expect(fileName("C:\\tmp\\cases.json")).toBe("cases.json");
   expect(fileName("/home/a/cases.json")).toBe("cases.json");
+});
+
+const watch = (path: string, snapshot: TestCase[], comment = "") => ({
+  path,
+  stamp: "s",
+  snapshot,
+  comment,
+});
+
+test("each case is attributed to the file that contributed it", () => {
+  const queue = [tc("A"), tc("B"), tc("typed by hand")];
+  const owners = ownerPaths(queue, [
+    watch("C:/w/one.json", [tc("A")]),
+    watch("C:/w/two.json", [tc("B")]),
+  ]);
+  expect(owners).toEqual(["C:/w/one.json", "C:/w/two.json", ""]);
+});
+
+// A comment has to be written into exactly one file. When two files hold
+// the same title the app cannot tell them apart, so the first importer
+// keeps it - the same order withoutFileCases uses.
+test("a case claimed by two files belongs to the one imported first", () => {
+  const owners = ownerPaths(
+    [tc("Shared")],
+    [watch("C:/w/first.json", [tc("Shared")]), watch("C:/w/second.json", [tc("Shared")])],
+  );
+  expect(owners).toEqual(["C:/w/first.json"]);
+});
+
+test("an updated case is attributed by its work item id, not its title", () => {
+  const owners = ownerPaths(
+    [tc("Renamed in the app", { update_id: 7 })],
+    [watch("C:/w/one.json", [tc("Original title", { update_id: 7 })])],
+  );
+  expect(owners).toEqual(["C:/w/one.json"]);
+});
+
+test("patchWatch touches one file and leaves the rest alone", () => {
+  const list = [watch("a.json", [], "old"), watch("b.json", [], "keep")];
+  const next = patchWatch(list, "a.json", { comment: "new", stamp: "s2" });
+  expect(next[0]).toMatchObject({ comment: "new", stamp: "s2" });
+  expect(next[1]).toBe(list[1]);
+  // An unknown path is a no-op, not an insert.
+  expect(patchWatch(list, "gone.json", { comment: "x" })).toHaveLength(2);
+});
+
+test("the notification counts what moved, not what it was called", () => {
+  const n = syncNotification("login-cases.json", [
+    { kind: "added", key: "t:a", title: "A", fields: [] },
+    { kind: "added", key: "t:b", title: "B", fields: [] },
+    { kind: "changed", key: "t:c", title: "C", fields: ["Title"] },
+  ]);
+  expect(n.title).toBe("login-cases.json was updated");
+  expect(n.body).toContain("2 added");
+  expect(n.body).toContain("1 changed");
+  // Nothing removed, so it isn't mentioned at all.
+  expect(n.body).not.toContain("removed");
+});
+
+test("a warnings-only sync still says something useful", () => {
+  expect(syncNotification("a.json", []).body).toBe("The queue is up to date.");
 });

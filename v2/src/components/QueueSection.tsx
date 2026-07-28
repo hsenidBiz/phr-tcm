@@ -8,21 +8,32 @@ import { commands, events, type SubmitItemResult, type TestCase } from "../bindi
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
-import { loadNotes } from "../lib/caseNotes";
 import { cn } from "../lib/cn";
-import { caseKey } from "../lib/fileSync";
+import { caseKey, fileName, ownerPaths, type WatchedFile } from "../lib/fileSync";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import AstryxIsland from "./AstryxIsland";
+import InlineDiff from "./InlineDiff";
 import Combobox from "./ui/combobox";
 import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
+import {
+  IconBack,
+  IconClear,
+  IconConfirm,
+  IconExport,
+  IconOpenInBrowser,
+  IconRemove,
+  IconReview,
+  IconShare,
+  IconStop,
+} from "../lib/actionIcons";
 
 /** The shared pending-creation queue with the review gate, live progress and
  * exports. Manual Entry and Import File both render this under their own
@@ -34,6 +45,7 @@ export default function QueueSection({
   queue,
   setQueue,
   flash,
+  watches = [],
 }: {
   org: string;
   project: string;
@@ -43,6 +55,10 @@ export default function QueueSection({
   /** Rows a watched-file sync just touched, by caseKey - tinted so the
    * change report's counts can be traced to actual rows. */
   flash?: Record<string, "added" | "changed">;
+  /** The JSON files this queue was imported from, so a comment typed in
+   * the browser view knows which file to be written back into. Manual
+   * Entry passes none - its cases live only in the app. */
+  watches?: WatchedFile[];
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
@@ -167,13 +183,62 @@ export default function QueueSection({
   });
 
   // v1's "View": render to a temp file and open the browser - no download.
+  //
+  // The draft page, not the one used for cases that already exist in Azure
+  // DevOps: here every case gets a comment box (a draft has no work item id
+  // to key an app-side note by), the text is the case's own `comment` -
+  // the same field the card below edits - and it is written back into the
+  // JSON file the case came from.
   const viewHtml = useMutation({
     mutationFn: async () => {
-      const r = await commands.viewQueueHtml(queue, `PBI #${pbiId}`, org, loadNotes(org));
+      const r = await commands.viewDraftHtml(
+        queue,
+        `PBI #${pbiId}`,
+        ownerPaths(queue, watches),
+        watches.map((w) => ({
+          path: w.path,
+          label: fileName(w.path),
+          comment: w.comment ?? "",
+        })),
+      );
       if (r.status === "error") throw new Error(r.error);
     },
     onError: (e) => toast.error(`Could not open the report: ${e.message}`),
   });
+
+  /**
+   * Push a comment edited on the card into the JSON file the case came
+   * from, so the card, the browser view and the file agree.
+   *
+   * Addressed by the case as it was BEFORE the edit: the same form can
+   * rename a case, and the file still holds it under the old title.
+   * Nothing else on the card is written through - an in-app edit has never
+   * propagated to the file, and widening that is not this feature's job.
+   *
+   * Silent on failure. The comment is already in the queue, the file is
+   * the copy that lagged, and an error toast for a note nobody asked to
+   * sync would be noise.
+   */
+  const writeCommentThrough = (before: TestCase, text: string) => {
+    if ((before.comment ?? "") === text) return;
+    const owner = ownerPaths([before], watches)[0];
+    if (!owner) return;
+    void commands.saveDraftComment(owner, before.update_id, before.title, text);
+  };
+
+  // A comment typed in that page comes back here, so the card and the
+  // browser tab never disagree. The file is already written by the time
+  // this fires - this is only the app catching up.
+  useEffect(() => {
+    const un = events.draftCommentSaved.listen((e) => {
+      const { id, title, text } = e.payload;
+      const key = id != null ? `id:${id}` : `t:${title.trim().toLowerCase()}`;
+      setQueue((q) => q.map((c) => (caseKey(c) === key ? { ...c, comment: text } : c)));
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [setQueue]);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -245,6 +310,7 @@ export default function QueueSection({
             disabled={queue.length === 0 || viewHtml.isPending}
             onClick={() => viewHtml.mutate()}
           >
+            <IconOpenInBrowser aria-hidden />
             View in browser
           </Button>
           <Button
@@ -254,6 +320,7 @@ export default function QueueSection({
             title="Upload the draft as a one-time share link a teammate can import for review"
             onClick={() => share.mutate()}
           >
+            <IconShare aria-hidden />
             {share.isPending ? "Sharing" : "Share for review"}
           </Button>
           <Button
@@ -262,6 +329,7 @@ export default function QueueSection({
             disabled={queue.length === 0}
             onClick={() => exportJson.mutate()}
           >
+            <IconExport aria-hidden />
             Export JSON
           </Button>
           <Button
@@ -274,6 +342,7 @@ export default function QueueSection({
               toast.info(`Removed ${n} queued case${n === 1 ? "" : "s"}.`);
             }}
           >
+            <IconRemove aria-hidden />
             Remove all
           </Button>
         </div>
@@ -388,6 +457,7 @@ export default function QueueSection({
                     onSave={(next) => {
                       setQueue((q) => q.map((t, j) => (j === i ? next : t)));
                       setEditingIdx(null);
+                      writeCommentThrough(tc, next.comment ?? "");
                       toast.success("Queued case updated.");
                     }}
                     onCancel={() => setEditingIdx(null)}
@@ -427,12 +497,13 @@ export default function QueueSection({
                 )}
                 {diff && !diff.noop && expandedDiffs.has(i) && (
                   <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
+                    {/* Word-level, like the step lines below: editing one
+                        word of a title must not read as the whole title
+                        being replaced. */}
                     {diff.fields.map((f) => (
                       <div key={f.name}>
                         <span className="font-medium text-muted">{f.name}:</span>{" "}
-                        <span className="text-danger line-through">{f.old || "(empty)"}</span>{" "}
-                        <span className="text-faint">→</span>{" "}
-                        <span className="text-success">{f.new}</span>
+                        <InlineDiff old={f.old} next={f.new} />
                       </div>
                     ))}
                     {diff.steps.detail.length > 0 && (
@@ -478,6 +549,7 @@ export default function QueueSection({
                 toast.info("Stopping after the current item");
               }}
             >
+              <IconStop aria-hidden />
               Cancel
             </Button>
           </div>
@@ -517,6 +589,7 @@ export default function QueueSection({
       <div className="flex items-center gap-3">
         {!reviewing ? (
           <Button disabled={queue.length === 0} onClick={() => setReviewing(true)}>
+            <IconReview aria-hidden />
             Review {queue.length} test case{queue.length === 1 ? "" : "s"}
           </Button>
         ) : (
@@ -536,9 +609,11 @@ export default function QueueSection({
                     disabled={queue.length === 0 || hasBlockers || submit.isPending}
                     onClick={() => arm(true)}
                   >
+                    <IconConfirm aria-hidden />
                     {submit.isPending ? "Processing" : `Confirm & ${label || "create 0"}`}
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
+                    <IconBack aria-hidden />
                     Back
                   </Button>
                   {hasBlockers && (
@@ -562,9 +637,11 @@ export default function QueueSection({
                       submit.mutate();
                     }}
                   >
+                    <IconConfirm aria-hidden />
                     {submit.isPending ? "Processing" : `Yes — ${label}`}
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => arm(false)}>
+                    <IconBack aria-hidden />
                     Back
                   </Button>
                 </div>
@@ -587,6 +664,7 @@ export default function QueueSection({
           </ul>
           {/* Dismiss the results once read - the button goes with them. */}
           <Button variant="outline" size="sm" onClick={() => setResults(null)}>
+            <IconClear aria-hidden />
             Clear results
           </Button>
         </div>

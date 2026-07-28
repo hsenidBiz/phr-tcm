@@ -131,3 +131,46 @@ pub fn watch_assigned_work(
     });
     Ok(())
 }
+
+/// Prepare a bug report about THIS app: scrub the log, write it out, and
+/// build a prefilled GitHub issue for the reporter to review and submit.
+///
+/// Nothing is posted here. The reporter sees the body first, which is the
+/// point - the log is theirs to check before it goes anywhere public - and
+/// it means the app needs no GitHub credential of any kind.
+#[tauri::command]
+#[specta::specta]
+pub fn prepare_bug_report(
+    app: tauri::AppHandle,
+    description: String,
+    organization: String,
+    project: String,
+) -> Result<crate::bugreport::BugReport, String> {
+    let raw = crate::applog::recent(6000)
+        .iter()
+        .map(|l| format!("{} [{}] {}", l.at, l.level.to_uppercase(), l.message))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let scrubbed = crate::bugreport::scrub(&raw, &organization, &project);
+
+    // Written beside the daily logs, so "Open log folder" reaches it too.
+    let dir = if crate::applog::directory().is_empty() {
+        std::env::temp_dir()
+    } else {
+        std::path::PathBuf::from(crate::applog::directory())
+    };
+    let name = format!("tcm-bug-report-{}.log", std::process::id());
+    let path = dir.join(&name);
+    std::fs::write(&path, &scrubbed).map_err(|e| format!("could not write the log: {e}"))?;
+
+    let (excerpt, truncated) = crate::bugreport::excerpt(&scrubbed);
+    let version = app.package_info().version.to_string();
+    let os = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
+    let body = crate::bugreport::body(&description, &version, &os, &excerpt, truncated, &name);
+    crate::applog::info("Prepared a bug report");
+    Ok(crate::bugreport::BugReport {
+        url: crate::bugreport::issue_url(&crate::bugreport::title(&description), &body),
+        log_path: path.to_string_lossy().to_string(),
+        truncated,
+    })
+}

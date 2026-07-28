@@ -6,6 +6,15 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 /** Commands */
 export const commands = {
 	ping: (msg: string) => __TAURI_INVOKE<string>("ping", { msg }),
+	/**
+	 *  Prepare a bug report about THIS app: scrub the log, write it out, and
+	 *  build a prefilled GitHub issue for the reporter to review and submit.
+	 * 
+	 *  Nothing is posted here. The reporter sees the body first, which is the
+	 *  point - the log is theirs to check before it goes anywhere public - and
+	 *  it means the app needs no GitHub credential of any kind.
+	 */
+	prepareBugReport: (description: string, organization: string, project: string) => typedError<BugReport, string>(__TAURI_INVOKE("prepare_bug_report", { description, organization, project })),
 	authStatus: () => __TAURI_INVOKE<AuthStatus>("auth_status"),
 	signIn: () => typedError<AuthStatus, string>(__TAURI_INVOKE("sign_in")),
 	listProjects: (organization: string) => typedError<Project[], AdoError>(__TAURI_INVOKE("list_projects", { organization })),
@@ -156,6 +165,31 @@ export const commands = {
 	 *  the loopback note listener.
 	 */
 	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes })),
+	/**
+	 *  The same page for a DRAFT queue. Every case gets a comment box - drafts
+	 *  have no work item id to key an app-side note by, and the comment belongs
+	 *  to the case itself here - plus a collapsible column of whole-set
+	 *  comments, one per file the draft was imported from.
+	 * 
+	 *  `owners` is the file each queued case came from, aligned with `queue`;
+	 *  an empty entry means the case was typed by hand and has no file.
+	 */
+	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[]) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, owners, files })),
+	/**
+	 *  The whole-set comment held in a JSON file, for prefilling the panel.
+	 *  A file that has none - or can't be read - simply has no comment.
+	 */
+	readGeneralComment: (path: string) => __TAURI_INVOKE<string>("read_general_comment", { path }),
+	/**
+	 *  Save the whole-set comment from the app's own panel. Returns the file's
+	 *  new fingerprint so the caller can move its watch snapshot forward.
+	 */
+	saveGeneralComment: (path: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_general_comment", { path, text })),
+	/**
+	 *  Save one draft case's comment into the file it came from, from the app.
+	 *  Mirrors what the report page's box does, for the queue card.
+	 */
+	saveDraftComment: (path: string, id: number | null, title: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_draft_comment", { path, id, title, text })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
@@ -244,6 +278,8 @@ export const commands = {
 export const events = {
 	audioSpectrum: makeEvent<AudioSpectrum>("audio-spectrum"),
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
+	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
+	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
@@ -303,6 +339,22 @@ export type BridgeStatus = {
 	 *  binary, not a separate file).
 	 */
 	mcp_exe: string,
+};
+
+/**  What the app hands the reporter. */
+export type BugReport = {
+	/**
+	 *  The prefilled GitHub issue form. Nothing is submitted until the
+	 *  reporter presses the button on that page.
+	 */
+	url: string,
+	/**
+	 *  The full scrubbed log, written to disk so it can be dragged onto
+	 *  the issue - GitHub has no way to attach a file from a URL.
+	 */
+	log_path: string,
+	/**  Whether the body had to drop older lines to fit the URL. */
+	truncated: boolean,
 };
 
 /**  Deployments for one build, for the cache-revalidation command. */
@@ -395,6 +447,43 @@ export type DetectedTool = {
 	registered_servers: string[],
 };
 
+/**
+ *  Emitted when a comment typed in the report page has been written into a
+ *  DRAFT case. The file (when there is one) is already updated; this is
+ *  what keeps the queue in the app showing the same text.
+ * 
+ *  `stamp` is the file's new fingerprint, so the frontend can move its
+ *  watch snapshot forward - the watcher stays silent about our own write,
+ *  so nothing else would.
+ */
+export type DraftCommentSaved = {
+	/**  The file it was written into, empty for a case with no file. */
+	path: string,
+	stamp: string,
+	/**  Identity, matching the frontend's `caseKey` rule. */
+	id: number | null,
+	title: string,
+	text: string,
+};
+
+/**
+ *  One JSON file the draft was imported from, and the comment about it as
+ *  a whole.
+ */
+export type DraftFile = {
+	path: string,
+	/**  What to call it in the panel - the file name, not the full path. */
+	label: string,
+	comment: string,
+};
+
+/**  Emitted when the whole-set comment for one file has been written. */
+export type DraftGeneralCommentSaved = {
+	path: string,
+	stamp: string,
+	text: string,
+};
+
 export type EnsuredSuite = {
 	plan_id: number,
 	plan_name: string,
@@ -485,7 +574,7 @@ export type IterationRef = {
 export type LogLine = {
 	/**  "YYYY-MM-DD HH:MM:SS" in UTC. */
 	at: string,
-	/**  "info" | "warn" | "error". */
+	/**  "debug" | "info" | "warn" | "error". */
 	level: string,
 	message: string,
 };

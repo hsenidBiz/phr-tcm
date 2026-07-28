@@ -14,6 +14,7 @@ import { ChevronDown, ChevronRight, Link2, Link2Off, MessageSquare } from "lucid
 import { useMemo, useState } from "react";
 import { commands, type WorkRevision } from "../bindings";
 import { cn } from "../lib/cn";
+import InlineDiff from "./InlineDiff";
 import {
   displayValue,
   groupByDay,
@@ -52,8 +53,10 @@ function Who({ name, avatar }: { name: string; avatar: string }) {
   );
 }
 
-/** old → new, with the old value struck through. A missing side reads as
- * "set"/"cleared" rather than an empty box. */
+/** old → new. A side that is missing entirely reads as "set"/"cleared"
+ * rather than an empty box; when both sides have a value the change is
+ * marked WORD by word, so retitling "Login as admin" to "Log in as admin"
+ * shows two words moving instead of the whole title being replaced. */
 function Diff({ old: raw, next: rawNext }: { old: string; next: string }) {
   const before = displayValue(raw);
   const next = displayValue(rawNext);
@@ -65,13 +68,7 @@ function Diff({ old: raw, next: rawNext }: { old: string; next: string }) {
       <span className="rounded bg-danger/15 px-1.5 py-0.5 text-danger line-through">{before}</span>
     );
   }
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1">
-      <span className="rounded bg-danger/10 px-1.5 py-0.5 text-muted line-through">{before}</span>
-      <span className="text-faint">→</span>
-      <span className="rounded bg-success/15 px-1.5 py-0.5 text-success">{next}</span>
-    </span>
-  );
+  return <InlineDiff old={before} next={next} />;
 }
 
 function Entry({ r }: { r: WorkRevision }) {

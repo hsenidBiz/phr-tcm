@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { KanbanSquare, Settings as SettingsIcon } from "lucide-react";
+import { Settings as SettingsIcon } from "lucide-react";
+import { IconBoard } from "../lib/actionIcons";
 import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
@@ -131,7 +132,7 @@ export default function ContextBar({
           title={workMode ? "Test Case Manager" : "Work Manager (Beta)"}
           onClick={onToggleWork}
         >
-          <KanbanSquare size={14} />
+          <IconBoard aria-hidden />
           {/* Icon-only below lg so the button never crowds the PBI picker. */}
           <span className="hidden lg:inline">
             {workMode ? "Test Case Manager" : "Work Manager (Beta)"}

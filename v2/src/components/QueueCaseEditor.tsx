@@ -12,6 +12,7 @@ import TagsField from "./TagsField";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
 import { Select } from "./ui/select";
+import { IconCancel, IconConfirm } from "../lib/actionIcons";
 
 export default function QueueCaseEditor({
   original,
@@ -83,9 +84,11 @@ export default function QueueCaseEditor({
 
       <div className="flex items-center gap-3">
         <Button size="sm" disabled={Boolean(problem)} onClick={() => onSave(tc)}>
+          <IconConfirm aria-hidden />
           Save to queue
         </Button>
         <Button variant="ghost" size="sm" onClick={onCancel}>
+          <IconCancel aria-hidden />
           Cancel
         </Button>
         {problem && <span className="text-xs text-danger">{problem}</span>}

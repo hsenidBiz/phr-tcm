@@ -4,7 +4,9 @@
 use tauri::Manager;
 use tauri_specta::Event;
 
-use crate::events::{CaseNoteSaved, PlanCreated, SubmitProgress};
+use crate::events::{
+    CaseNoteSaved, DraftCommentSaved, DraftGeneralCommentSaved, PlanCreated, SubmitProgress,
+};
 use crate::state::{get_fresh_token, SubmitCancel};
 use crate::{ado, import_parser, model, note_server};
 
@@ -185,11 +187,122 @@ fn ensure_note_server(app: &tauri::AppHandle) -> Option<u16> {
     static PORT: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
     *PORT.get_or_init(|| {
         let app = app.clone();
-        note_server::start(move |n| {
-            let _ = CaseNoteSaved { org: n.org, case_id: n.case_id, text: n.text }.emit(&app);
-        })
-        .ok() // no listener -> report still opens, comments just can't save
+        note_server::start(move |n| route_note(&app, n))
+            .ok() // no listener -> report still opens, comments just can't save
     })
+}
+
+/// Where a comment posted from a report page belongs. The default arm also
+/// catches pages generated before drafts had comments, which send no kind.
+fn route_note(app: &tauri::AppHandle, n: note_server::NotePayload) -> Result<(), String> {
+    match n.kind.as_str() {
+        "case" => save_draft_case_comment(app, n),
+        "general" => save_draft_general_comment(app, n),
+        _ => {
+            let _ = CaseNoteSaved { org: n.org, case_id: n.case_id, text: n.text }.emit(app);
+            Ok(())
+        }
+    }
+}
+
+fn watch_state(app: &tauri::AppHandle) -> tauri::State<'_, crate::filewatch::FileWatchState> {
+    app.state::<crate::filewatch::FileWatchState>()
+}
+
+/// Patch one case's comment into the file it came from, then tell the app
+/// so the queue card shows the same text.
+///
+/// A case with no file (typed in Manual Entry) skips straight to the event:
+/// the comment still belongs on the case, it just has nowhere on disk to
+/// live until the draft is exported.
+fn save_draft_case_comment(
+    app: &tauri::AppHandle,
+    n: note_server::NotePayload,
+) -> Result<(), String> {
+    let mut stamp = String::new();
+    if !n.path.is_empty() {
+        let json = std::fs::read_to_string(&n.path)
+            .map_err(|e| format!("could not read the file: {e}"))?;
+        let target = import_parser::comments::CaseTarget {
+            id: n.id,
+            title: n.title.clone(),
+        };
+        let patched = import_parser::comments::patch_case_comment(&json, &target, &n.text)?;
+        stamp = crate::filewatch::write_watched(&watch_state(app), &n.path, &patched)?;
+    }
+    let _ = DraftCommentSaved {
+        path: n.path,
+        stamp,
+        id: n.id,
+        title: n.title,
+        text: n.text,
+    }
+    .emit(app);
+    Ok(())
+}
+
+fn save_draft_general_comment(
+    app: &tauri::AppHandle,
+    n: note_server::NotePayload,
+) -> Result<(), String> {
+    let stamp = write_general_comment(app, &n.path, &n.text)?;
+    let _ = DraftGeneralCommentSaved {
+        path: n.path,
+        stamp,
+        text: n.text,
+    }
+    .emit(app);
+    Ok(())
+}
+
+fn write_general_comment(
+    app: &tauri::AppHandle,
+    path: &str,
+    text: &str,
+) -> Result<String, String> {
+    let json =
+        std::fs::read_to_string(path).map_err(|e| format!("could not read the file: {e}"))?;
+    let patched = import_parser::comments::patch_general_comment(&json, text)?;
+    crate::filewatch::write_watched(&watch_state(app), path, &patched)
+}
+
+/// The whole-set comment held in a JSON file, for prefilling the panel.
+/// A file that has none - or can't be read - simply has no comment.
+#[tauri::command]
+#[specta::specta]
+pub fn read_general_comment(path: String) -> String {
+    std::fs::read_to_string(&path)
+        .map(|j| import_parser::comments::general_comment(&j))
+        .unwrap_or_default()
+}
+
+/// Save the whole-set comment from the app's own panel. Returns the file's
+/// new fingerprint so the caller can move its watch snapshot forward.
+#[tauri::command]
+#[specta::specta]
+pub fn save_general_comment(
+    app: tauri::AppHandle,
+    path: String,
+    text: String,
+) -> Result<String, String> {
+    write_general_comment(&app, &path, &text)
+}
+
+/// Save one draft case's comment into the file it came from, from the app.
+/// Mirrors what the report page's box does, for the queue card.
+#[tauri::command]
+#[specta::specta]
+pub fn save_draft_comment(
+    app: tauri::AppHandle,
+    path: String,
+    id: Option<i32>,
+    title: String,
+    text: String,
+) -> Result<String, String> {
+    let json = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
+    let target = import_parser::comments::CaseTarget { id, title };
+    let patched = import_parser::comments::patch_case_comment(&json, &target, &text)?;
+    crate::filewatch::write_watched(&watch_state(&app), &path, &patched)
 }
 
 /// Render the queue's HTML report to a temp file and open it in the
@@ -215,7 +328,48 @@ pub fn view_queue_html(
         .then(|| ensure_note_server(&app))
         .flatten()
         .map(|port| import_parser::NoteCtx { port, org: organization, notes });
-    import_parser::export_queue_to_html(&queue, &path_str, &subtitle, note_ctx.as_ref())?;
+    import_parser::export_queue_to_html(
+        &queue,
+        &path_str,
+        &subtitle,
+        note_ctx.as_ref().map(import_parser::CommentCtx::Ado),
+    )?;
+    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// The same page for a DRAFT queue. Every case gets a comment box - drafts
+/// have no work item id to key an app-side note by, and the comment belongs
+/// to the case itself here - plus a collapsible column of whole-set
+/// comments, one per file the draft was imported from.
+///
+/// `owners` is the file each queued case came from, aligned with `queue`;
+/// an empty entry means the case was typed by hand and has no file.
+#[tauri::command]
+#[specta::specta]
+pub fn view_draft_html(
+    app: tauri::AppHandle,
+    queue: Vec<model::TestCase>,
+    subtitle: String,
+    owners: Vec<String>,
+    files: Vec<import_parser::DraftFile>,
+) -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!(
+        "test-cases-draft-{}-{}.html",
+        std::process::id(),
+        queue.len()
+    ));
+    let path_str = path.to_string_lossy().to_string();
+    let ctx = ensure_note_server(&app).map(|port| import_parser::DraftNoteCtx {
+        port,
+        owners,
+        files,
+    });
+    import_parser::export_queue_to_html(
+        &queue,
+        &path_str,
+        &subtitle,
+        ctx.as_ref().map(import_parser::CommentCtx::Draft),
+    )?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -290,6 +444,14 @@ pub async fn submit_queue(
             // wider when the user has asked for a gentler rate.
             let gap = std::cmp::max(500, crate::ado::throttle::current_interval_ms());
             tokio::time::sleep(std::time::Duration::from_millis(gap)).await;
+            // Check again on the far side of the pause. The loop spends
+            // most of its life here - half a second per item, more when
+            // throttled - so this is where a Cancel usually lands, and
+            // checking only at the top of the iteration would create one
+            // more case after the click. These cases cannot be deleted.
+            if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
         }
         let item = process_queue_item(
             &app,

@@ -35,16 +35,29 @@ const COALESCE: Duration = Duration::from_millis(200);
 /// now - deleted, or momentarily absent mid-rename. Not an error: the
 /// watcher simply has nothing to report yet.
 pub fn stamp(path: &Path) -> Option<String> {
+    Some(fingerprint(&std::fs::read(path).ok()?))
+}
+
+/// The fingerprint of some bytes. Shared with `write_watched` so a write
+/// the app makes hashes identically to the same bytes read back - if these
+/// two ever drifted, self-writes would stop being recognised.
+pub fn fingerprint(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(path).ok()?;
-    let digest = Sha256::digest(&bytes);
-    Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
+    Sha256::digest(bytes)
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Dropping this stops the watch: the watcher's sender goes with it, the
 /// worker thread's `recv` fails, and the thread returns.
 pub struct FileWatch {
     _watcher: RecommendedWatcher,
+    /// A fingerprint the app itself is about to write. Seeing it is not
+    /// news - reporting it would show the user a change report for their
+    /// own typing - so it is absorbed once and forgotten.
+    expected: std::sync::Arc<Mutex<Option<String>>>,
 }
 
 /// Every file currently being followed, keyed by path. A queue can be fed
@@ -95,6 +108,8 @@ where
 
     let emit_for = target.clone();
     let mut last = stamp(&target);
+    let expected: std::sync::Arc<Mutex<Option<String>>> = Default::default();
+    let mine = expected.clone();
     std::thread::spawn(move || {
         while let Ok(first) = rx.recv() {
             let touched_us = |ev: &notify::Result<notify::Event>| {
@@ -118,7 +133,22 @@ where
             if Some(&now) == last.as_ref() {
                 continue;
             }
+            // Our own write (a comment saved from the report page). Take it
+            // as the new baseline so the NEXT outside edit still reads as a
+            // change, and say nothing.
+            let ours = {
+                let mut slot = mine.lock().unwrap();
+                if slot.as_ref() == Some(&now) {
+                    *slot = None;
+                    true
+                } else {
+                    false
+                }
+            };
             last = Some(now.clone());
+            if ours {
+                continue;
+            }
             on_change(now);
         }
     });
@@ -129,8 +159,26 @@ where
         .0
         .lock()
         .unwrap()
-        .insert(path.to_string(), FileWatch { _watcher: watcher });
+        .insert(path.to_string(), FileWatch { _watcher: watcher, expected });
     Ok(())
+}
+
+/// Write `text` to a watched file without the watch reporting it back.
+///
+/// The app writes into these files itself (a comment typed in the report
+/// page), and that write is not news to the app that made it. Registering
+/// the fingerprint BEFORE the write closes the race where the watcher
+/// notices the new bytes before we get a chance to claim them.
+///
+/// A path that is not being watched is written normally - Manual Entry
+/// drafts and one-off exports have no watch to confuse.
+pub fn write_watched(state: &FileWatchState, path: &str, text: &str) -> Result<String, String> {
+    let stamp = fingerprint(text.as_bytes());
+    if let Some(watch) = state.0.lock().unwrap().get(path) {
+        *watch.expected.lock().unwrap() = Some(stamp.clone());
+    }
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    Ok(stamp)
 }
 
 /// Stop following one file. Unknown paths are a no-op: the UI may drop a

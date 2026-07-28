@@ -1,52 +1,117 @@
 //! HTTP transport for `AdoClient`: the only place requests are built and
 //! status codes become `AdoError`s. Verbs stop at GET / POST / PATCH —
 //! no DELETE, ever (tests/ado.rs scans this file).
+//!
+//! Every request also goes through one function, `send`. That is what
+//! makes "what was the app doing when it broke" answerable: pacing,
+//! sending, timing and logging happen in a single place, so a call cannot
+//! be added later that quietly skips any of them.
 
 use super::{AdoClient, AdoError};
+
+/// A URL as it should appear in the log: no scheme, and without the
+/// `api-version` every single call carries. Keeps a request line readable
+/// while still naming the exact endpoint that was hit.
+fn tidy(url: &str) -> String {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let (path, query) = match rest.split_once('?') {
+        None => return rest.to_string(),
+        Some(parts) => parts,
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|p| !p.starts_with("api-version="))
+        .collect();
+    if kept.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{}", kept.join("&"))
+    }
+}
 
 impl AdoClient {
     /// Azure DevOps caps the workitems batch-GET (?ids=) endpoint at 200 ids.
     pub(crate) const WORKITEM_BATCH_SIZE: usize = 200;
 
-    pub(crate) async fn get_json(&self, url: String) -> Result<serde_json::Value, AdoError> {
+    /// Pace, send, time and record one request.
+    ///
+    /// The bearer token is attached here and never logged - the log is
+    /// meant to be pasted into a bug report, so nothing that grants access
+    /// may reach it. Successful calls are `debug` (they are a firehose
+    /// during a bulk create); anything that did not succeed is `warn`, so
+    /// the useful lines still stand out at the default filter.
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        build: impl FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, AdoError> {
+        // Funnelling every call through here means the verb is now a
+        // runtime value, so the "no destructive verbs" rule gets a runtime
+        // guard to match the one the tests enforce on this file's source.
+        // An ALLOW-list, deliberately: a deny-list would have to name the
+        // verb it forbids, and would miss the next one somebody adds.
+        if !matches!(
+            method,
+            reqwest::Method::GET | reqwest::Method::POST | reqwest::Method::PATCH
+        ) {
+            crate::applog::error(format!("refused a {method} request to {}", tidy(url)));
+            return Err(AdoError::Network(format!(
+                "{method} is not a verb this client will send"
+            )));
+        }
         super::throttle::pace().await;
+        let started = std::time::Instant::now();
+        let request = build(self.http.request(method.clone(), url).bearer_auth(&self.token));
+        let outcome = request.send().await;
+        let ms = started.elapsed().as_millis();
+        match outcome {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let line = format!("{method} {} -> {status} in {ms} ms", tidy(url));
+                if (200..300).contains(&status) {
+                    crate::applog::debug(line);
+                } else {
+                    crate::applog::warn(line);
+                }
+                Ok(resp)
+            }
+            Err(e) => {
+                crate::applog::warn(format!(
+                    "{method} {} failed after {ms} ms: {e}",
+                    tidy(url)
+                ));
+                Err(AdoError::Network(e.to_string()))
+            }
+        }
+    }
+
+    pub(crate) async fn get_json(&self, url: String) -> Result<serde_json::Value, AdoError> {
         let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(reqwest::Method::GET, &url, |r| {
+                r.header("Accept", "application/json")
+            })
+            .await?;
         Self::handle_json(resp).await
     }
 
     /// GET returning the raw body as text - build logs are plain text, not
     /// JSON. Same status handling as the JSON path.
     pub(crate) async fn get_text(&self, url: String) -> Result<String, AdoError> {
-        super::throttle::pace().await;
         let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.token)
-            .header("Accept", "text/plain")
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(reqwest::Method::GET, &url, |r| {
+                r.header("Accept", "text/plain")
+            })
+            .await?;
         match resp.status().as_u16() {
             200..=299 => resp.text().await.map_err(|e| AdoError::Network(e.to_string())),
             401 => Err(AdoError::Unauthorized),
             403 => Err(AdoError::Forbidden),
             404 => Err(AdoError::NotFound),
-            429 => {
-                let retry = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(5);
-                Err(AdoError::RateLimited { retry_after_secs: retry })
-            }
+            429 => Err(AdoError::RateLimited { retry_after_secs: retry_after(&resp) }),
             s => Err(AdoError::Http {
                 status: s,
                 body: resp.text().await.unwrap_or_default(),
@@ -60,15 +125,11 @@ impl AdoClient {
         &self,
         url: String,
     ) -> Result<(serde_json::Value, Option<String>), AdoError> {
-        super::throttle::pace().await;
         let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(reqwest::Method::GET, &url, |r| {
+                r.header("Accept", "application/json")
+            })
+            .await?;
         let cont = resp
             .headers()
             .get("x-ms-continuationtoken")
@@ -85,16 +146,11 @@ impl AdoClient {
         url: String,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
-        super::throttle::pace().await;
         let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/json")
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(reqwest::Method::POST, &url, |r| {
+                r.header("Accept", "application/json").json(body)
+            })
+            .await?;
         Self::handle_json(resp).await
     }
 
@@ -105,16 +161,11 @@ impl AdoClient {
         url: String,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
-        super::throttle::pace().await;
         let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/json")
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(reqwest::Method::POST, &url, |r| {
+                r.header("Accept", "application/json").json(body)
+            })
+            .await?;
         Self::handle_json(resp).await
     }
 
@@ -125,17 +176,13 @@ impl AdoClient {
         url: String,
         body: String,
     ) -> Result<serde_json::Value, AdoError> {
-        super::throttle::pace().await;
         let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/octet-stream")
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(reqwest::Method::POST, &url, |r| {
+                r.header("Accept", "application/json")
+                    .header("Content-Type", "application/octet-stream")
+                    .body(body)
+            })
+            .await?;
         Self::handle_json(resp).await
     }
 
@@ -145,16 +192,11 @@ impl AdoClient {
         url: String,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
-        super::throttle::pace().await;
         let resp = self
-            .http
-            .patch(&url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/json")
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(reqwest::Method::PATCH, &url, |r| {
+                r.header("Accept", "application/json").json(body)
+            })
+            .await?;
         Self::handle_json(resp).await
     }
 
@@ -166,17 +208,13 @@ impl AdoClient {
         url: String,
         patch: &serde_json::Value,
     ) -> Result<serde_json::Value, AdoError> {
-        super::throttle::pace().await;
         let resp = self
-            .http
-            .request(method, &url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json-patch+json")
-            .json(patch)
-            .send()
-            .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .send(method, &url, |r| {
+                r.header("Accept", "application/json")
+                    .header("Content-Type", "application/json-patch+json")
+                    .json(patch)
+            })
+            .await?;
         Self::handle_json(resp).await
     }
 
@@ -189,19 +227,20 @@ impl AdoClient {
             401 => Err(AdoError::Unauthorized),
             403 => Err(AdoError::Forbidden),
             404 => Err(AdoError::NotFound),
-            429 => {
-                let retry = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(5);
-                Err(AdoError::RateLimited { retry_after_secs: retry })
-            }
+            429 => Err(AdoError::RateLimited { retry_after_secs: retry_after(&resp) }),
             s => Err(AdoError::Http {
                 status: s,
                 body: resp.text().await.unwrap_or_default(),
             }),
         }
     }
+}
+
+/// ADO's back-off hint, defaulting to 5s when it doesn't send one.
+fn retry_after(resp: &reqwest::Response) -> u32 {
+    resp.headers()
+        .get("Retry-After")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5)
 }

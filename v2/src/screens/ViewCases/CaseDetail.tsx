@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { TestCaseFull } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
+import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 
 /** The expanded (read-only) detail: preconditions, steps, and the personal
  * local comment - a scratchpad saved on this machine only, never written
@@ -85,6 +86,7 @@ export default function CaseDetail({
                   setEditing(false);
                 }}
               >
+                <IconConfirm aria-hidden />
                 Save comment
               </Button>
               <Button
@@ -95,6 +97,7 @@ export default function CaseDetail({
                   setEditing(false);
                 }}
               >
+                <IconCancel aria-hidden />
                 Cancel
               </Button>
               <span className="text-[11px] text-faint">

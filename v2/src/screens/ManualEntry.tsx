@@ -9,6 +9,7 @@ import { Button } from "../components/ui/button";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { useQueue } from "../hooks/useQueue";
+import { IconAdd } from "../lib/actionIcons";
 
 export default function ManualEntry({
   org,
@@ -106,6 +107,7 @@ export default function ManualEntry({
           </div>
         </div>
         <Button disabled={!title.trim() || cleanSteps.length === 0} onClick={addManual}>
+          <IconAdd aria-hidden />
           Add to queue
         </Button>
       </section>

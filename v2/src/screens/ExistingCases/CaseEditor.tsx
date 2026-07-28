@@ -13,6 +13,7 @@ import { Input, Textarea } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import { toTestCase } from "../../lib/testCaseConvert";
 import { validateCase } from "../../lib/validate";
+import { IconConfirm } from "../../lib/actionIcons";
 
 export default function CaseEditor({
   original,
@@ -94,6 +95,7 @@ export default function CaseEditor({
 
       <div className="flex items-center gap-3">
         <Button size="sm" disabled={Boolean(problem) || saveCase.isPending} onClick={() => saveCase.mutate()}>
+          <IconConfirm aria-hidden />
           {saveCase.isPending ? "Saving" : "Save changes"}
         </Button>
         {problem && <span className="text-xs text-danger">{problem}</span>}

@@ -22,13 +22,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct LogLine {
     /// "YYYY-MM-DD HH:MM:SS" in UTC.
     pub at: String,
-    /// "info" | "warn" | "error".
+    /// "debug" | "info" | "warn" | "error".
     pub level: String,
     pub message: String,
 }
 
 /// Lines kept in memory for the viewer. Older lines stay in the files.
-const TAIL: usize = 2000;
+/// Sized for the request trail: one bulk create of 50 cases is already a
+/// few hundred lines, and the tail has to still hold what came BEFORE the
+/// thing that went wrong.
+const TAIL: usize = 6000;
 /// Files older than this are pruned at startup.
 const KEEP_DAYS: u64 = 7;
 
@@ -128,6 +131,15 @@ pub fn log(level: &str, message: impl Into<String>) {
     }
 }
 
+/// The fine-grained trail: every request, every step of a long job.
+///
+/// Separate from `info` because it is a firehose - a bulk create makes a
+/// request per case, plus the suite and classification lookups - and the
+/// viewer defaults to hiding it. It is still written to the file, which is
+/// the copy that ends up in a bug report.
+pub fn debug(msg: impl Into<String>) {
+    log("debug", msg);
+}
 pub fn info(msg: impl Into<String>) {
     log("info", msg);
 }

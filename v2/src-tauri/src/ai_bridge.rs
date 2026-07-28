@@ -108,8 +108,8 @@ pub async fn route(
             Some(c) => (200, guide(ctx, c).await),
             None => (503, "sign in to Test Case Manager first".into()),
         },
-        ("GET", "/examples") => match client {
-            Some(c) => examples(ctx, c, target).await,
+        ("GET", "/test-cases") => match client {
+            Some(c) => test_cases(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
         ("GET", "/tags") => tags(ctx, client, target).await,
@@ -547,7 +547,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         0. Call `begin_test_case_writing` FIRST and put its questions to the\n\
         developer. Where the file goes, which specs are authoritative and what\n\
         is out of scope are theirs to decide, not yours to assume.\n\
-        1. Call `get_example_cases` for the PBI you're writing for and mimic\n\
+        1. Call `get_test_cases` for the PBI you're writing for and mimic\n\
         their style and granularity.\n\
         2. Draft your cases.\n\
         3. Call `optimize_cases` with the JSON: it spells navigation out as\n\
@@ -566,7 +566,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
 
 /// Real cases for a PBI, serialized in the import JSON record shape so
 /// they double as format demonstrations.
-async fn examples(
+async fn test_cases(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
     target: &str,

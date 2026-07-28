@@ -124,3 +124,53 @@ describe("readability", () => {
     expect(hits).toEqual([]);
   });
 });
+
+describe("button icons", () => {
+  // An icon beside a label makes a button quicker to FIND. It must not
+  // change what the button IS called: the label already names the action,
+  // so an announced icon would only repeat it, and every test that finds a
+  // button by its accessible name would start matching something else.
+  test("every button icon is aria-hidden", () => {
+    const hits: string[] = [];
+    for (const { file, text } of files) {
+      text.split("\n").forEach((line, i) => {
+        const m = line.match(/<Icon[A-Za-z]+\b(?![^/>]*aria-hidden)[^>]*\/>/);
+        if (m) hits.push(`${file}:${i + 1}  ${m[0]}`);
+      });
+    }
+    expect(hits).toEqual([]);
+  });
+
+  // One intent, one icon. Importing a lucide icon straight into a screen is
+  // how the same action ends up with two different pictures on two tabs -
+  // the vocabulary in lib/actionIcons.ts is the single place to add one.
+  test("action icons come from the shared vocabulary, not straight from lucide", () => {
+    const vocabulary = new Set(
+      (files.find((f) => f.file === "lib/actionIcons.ts")?.text ?? "")
+        .split("\n")
+        .flatMap((l) => l.match(/as (Icon[A-Za-z]+),/)?.slice(1) ?? []),
+    );
+    expect(vocabulary.size).toBeGreaterThan(20);
+
+    const hits: string[] = [];
+    for (const { file, text } of files) {
+      if (file === "lib/actionIcons.ts") continue;
+      for (const m of text.matchAll(/<(Icon[A-Za-z]+)\b/g)) {
+        if (!vocabulary.has(m[1])) hits.push(`${file}  ${m[1]}`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+
+  // Size is the Button's job ([&_svg]:size-*), so a call site that passes
+  // its own is a 14px icon next to a 16px one on the next screen.
+  test("no hand-sized icons inside buttons", () => {
+    const hits: string[] = [];
+    for (const { file, text } of files) {
+      for (const m of text.matchAll(/<Icon[A-Za-z]+[^>]*\bsize=\{?\d/g)) {
+        hits.push(`${file}  ${m[0]}`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+});

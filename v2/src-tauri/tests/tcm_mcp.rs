@@ -50,7 +50,7 @@ fn tools_list_names_every_tool() {
         vec![
             "begin_test_case_writing",
             "get_writing_guide",
-            "get_example_cases",
+            "get_test_cases",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -68,7 +68,7 @@ fn tools_list_names_every_tool() {
 
 #[test]
 fn tools_call_proxies_to_the_bridge_and_wraps_text() {
-    let req = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_example_cases","arguments":{"pbi_id":42,"limit":3}}}"#;
+    let req = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_test_cases","arguments":{"pbi_id":42,"limit":3}}}"#;
     let calls = std::cell::RefCell::new(vec![]);
     let call = |method: &str, path: &str, body: &str| {
         calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
@@ -81,7 +81,7 @@ fn tools_call_proxies_to_the_bridge_and_wraps_text() {
     let recorded = calls.borrow();
     let last = recorded.last().unwrap();
     assert_eq!(last.0, "GET");
-    assert_eq!(last.1, "/examples?pbi=42&limit=3&offset=0");
+    assert_eq!(last.1, "/test-cases?pbi=42&limit=3&offset=0");
 }
 
 #[test]

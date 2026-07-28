@@ -18,6 +18,7 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap } from "../../lib/ipc";
 import { toTestCase } from "../../lib/testCaseConvert";
+import { IconBulkEdit, IconClear, IconExport } from "../../lib/actionIcons";
 
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
@@ -207,12 +208,15 @@ export default function ExistingCases({
         <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
           <span className="font-medium text-accent">{selected.size} selected</span>
           <Button size="sm" onClick={() => setBulkOpen(true)}>
+            <IconBulkEdit aria-hidden />
             Bulk edit
           </Button>
           <Button variant="outline" size="sm" onClick={() => exportJson.mutate()}>
+            <IconExport aria-hidden />
             Export JSON
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            <IconClear aria-hidden />
             Clear
           </Button>
           <span className="ml-auto text-xs text-faint">Ctrl+click to toggle · Shift+click for range</span>

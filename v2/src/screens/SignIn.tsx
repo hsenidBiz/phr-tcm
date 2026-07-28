@@ -11,6 +11,7 @@ import SplitText from "../components/SplitText";
 import Threads from "../components/Threads";
 import { Button } from "../components/ui/button";
 import { hasWebGL } from "../lib/webgl";
+import { IconSignIn } from "../lib/actionIcons";
 
 export default function SignIn({
   signingIn,
@@ -62,6 +63,12 @@ export default function SignIn({
           cases, runs, and work items.
         </p>
         <Button disabled={signingIn} onClick={onSignIn}>
+          {/* White to match the label, not the button's on-accent token.
+              ShinyText paints itself white so it can shine, and an icon
+              following the token instead sat black beside white text. This
+              screen is fixed branding either way - the flask, the threads
+              and the wordmark are all light on dark whatever theme is on. */}
+          <IconSignIn aria-hidden className="text-white" />
           {signingIn ? (
             "Waiting for browser"
           ) : (

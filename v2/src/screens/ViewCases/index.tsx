@@ -18,6 +18,7 @@ import { unwrap, unwrapStr } from "../../lib/ipc";
 import { toTestCase } from "../../lib/testCaseConvert";
 import CaseDetail from "./CaseDetail";
 import CommentModal from "./CommentModal";
+import { IconClear, IconOpenInBrowser } from "../../lib/actionIcons";
 
 
 
@@ -185,6 +186,7 @@ export default function ViewCases({
             disabled={chosen.length === 0 || viewHtml.isPending}
             onClick={() => viewHtml.mutate()}
           >
+            <IconOpenInBrowser aria-hidden />
             {selected.size > 0 ? `View ${selected.size} in browser` : "View in browser"}
           </Button>
         </div>
@@ -220,6 +222,7 @@ export default function ViewCases({
         <div className="flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-1.5 text-sm">
           <span className="font-medium text-accent">{selected.size} selected</span>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            <IconClear aria-hidden />
             Clear
           </Button>
           <span className="ml-auto text-xs text-faint">Ctrl+click to toggle · Shift+click for range</span>

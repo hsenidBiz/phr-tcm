@@ -145,20 +145,32 @@ impl AdoClient {
                 }
                 // The src sits in an HTML attribute, so & is entity-encoded.
                 let url = cap[1].replace("&amp;", "&");
-                if !url.contains("/_apis/wit/attachments/") || !seen.insert(url.clone()) {
+                let Some(download) = attachment_download_url(&url, &self.base_url) else {
+                    continue;
+                };
+                if !seen.insert(url.clone()) {
                     continue;
                 }
                 let Ok(resp) = self
                     .http
-                    .get(&url)
+                    .get(download)
                     .bearer_auth(&self.token)
                     .header("Accept", "application/octet-stream")
                     .send()
                     .await
                 else {
+                    crate::applog::warn(format!("inline image {url} could not be fetched"));
                     continue;
                 };
                 if !resp.status().is_success() {
+                    // Every failure here used to be a bare `continue`, so a
+                    // picture that would not load left no trace anywhere -
+                    // the field just showed a broken image and the log had
+                    // nothing to say about it.
+                    crate::applog::warn(format!(
+                        "inline image {url} returned {}",
+                        resp.status().as_u16()
+                    ));
                     continue;
                 }
                 let mime = resp
@@ -169,8 +181,15 @@ impl AdoClient {
                     .filter(|m| m.starts_with("image/"))
                     .unwrap_or("image/png")
                     .to_string();
-                let Ok(bytes) = resp.bytes().await else { continue };
+                let Ok(bytes) = resp.bytes().await else {
+                    crate::applog::warn(format!("inline image {url} could not be read"));
+                    continue;
+                };
                 if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+                    crate::applog::warn(format!(
+                        "inline image {url} skipped at {} bytes",
+                        bytes.len()
+                    ));
                     continue; // keep the broken link rather than a 10MB blob
                 }
                 out.push(InlineImage {
@@ -221,4 +240,49 @@ impl AdoClient {
         }
         Some(base64::engine::general_purpose::STANDARD.encode(&bytes))
     }
+}
+
+/// The scheme+host of a URL, lower-cased, or None if it has neither.
+fn host_of(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let host = rest.split(['/', '?', '#']).next()?;
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// The URL to download an `<img src>` from with the user's token, or None
+/// if this app has no business fetching it.
+///
+/// TWO checks, and the host one is the important half. A work item's HTML
+/// is attacker-controlled - anyone who can edit the item chooses what the
+/// src says - so a rule that looked only at the PATH would happily send an
+/// Azure DevOps bearer token to `https://evil.example/_apis/wit/attachments/x`.
+/// The token only ever goes to the host this client is already talking to,
+/// or to Microsoft's own Azure DevOps domains.
+///
+/// The path check is deliberately broader than "work item attachment":
+/// a screenshot pasted into a bug from a failed test run is a TEST RESULT
+/// attachment (`/_apis/test/Runs/.../attachments/...`), which is exactly
+/// the case that showed up as a permanently broken image - it was never
+/// recognised as an attachment at all, so nothing was ever fetched.
+///
+/// Azure DevOps also embeds these without an api-version - the browser
+/// gets one from its session, a bare request does not, and the service can
+/// answer 400 rather than the bytes.
+pub fn attachment_download_url(src: &str, base_url: &str) -> Option<String> {
+    let host = host_of(src)?;
+    let trusted = host_of(base_url).is_some_and(|b| b == host)
+        || host == "dev.azure.com"
+        || host.ends_with(".visualstudio.com");
+    if !trusted {
+        return None;
+    }
+    let path = src.to_ascii_lowercase();
+    if !path.contains("/_apis/") || !path.contains("attachment") {
+        return None;
+    }
+    if path.contains("api-version=") {
+        return Some(src.to_string());
+    }
+    let sep = if src.contains('?') { '&' } else { '?' };
+    Some(format!("{src}{sep}api-version=7.1"))
 }

@@ -18,14 +18,27 @@ fn post(port: u16, path: &str, body: &str) -> String {
 #[test]
 fn loopback_listener_delivers_posted_notes() {
     let (tx, rx) = mpsc::channel();
-    let port = start(move |n| tx.send(n).unwrap()).unwrap();
+    let port = start(move |n| {
+        tx.send(n).unwrap();
+        Ok(())
+    })
+    .unwrap();
 
     let resp = post(port, "/note", r#"{"org":"acme","case_id":42,"text":"fix step 3"}"#);
-    assert!(resp.starts_with("HTTP/1.1 204"));
+    assert!(resp.starts_with("HTTP/1.1 200"));
+    assert!(resp.contains("\"ok\":true"));
     let note = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     assert_eq!(
         note,
-        NotePayload { org: "acme".into(), case_id: 42, text: "fix step 3".into() }
+        NotePayload {
+            kind: "ado".into(),
+            org: "acme".into(),
+            case_id: 42,
+            path: String::new(),
+            id: None,
+            title: String::new(),
+            text: "fix step 3".into(),
+        }
     );
 
     // Wrong path or junk body: responds politely, never delivers a note.
@@ -34,9 +47,28 @@ fn loopback_listener_delivers_posted_notes() {
     assert!(rx.recv_timeout(std::time::Duration::from_millis(300)).is_err());
 }
 
+/// The payload got LOOSER when draft comments arrived, and deliberately:
+/// `text` is the only field every kind of comment has. A draft case has no
+/// org and no work item id; a whole-set comment has neither of those nor a
+/// title. So "missing org" stopped being malformed - which is what this
+/// test used to assert.
 #[test]
-fn parse_note_rejects_malformed_payloads() {
+fn only_the_text_is_required_of_a_note() {
     assert!(parse_note(r#"{"org":"a","case_id":1,"text":"t"}"#).is_some());
-    assert!(parse_note(r#"{"case_id":1,"text":"t"}"#).is_none());
+    assert!(parse_note(r#"{"kind":"general","path":"C:/w/a.json","text":"t"}"#).is_some());
+    // No text at all is still malformed, as is anything that isn't JSON.
+    assert!(parse_note(r#"{"org":"a","case_id":1}"#).is_none());
     assert!(parse_note("").is_none());
+    assert!(parse_note("not json").is_none());
+}
+
+/// Pages generated before draft comments existed post no `kind` at all.
+/// They must keep working: the app they were generated from is the app
+/// they post back to, and it may well have updated underneath them.
+#[test]
+fn a_note_with_no_kind_is_still_an_azure_devops_note() {
+    let note = parse_note(r#"{"org":"acme","case_id":42,"text":"t"}"#).unwrap();
+    assert_eq!(note.kind, "ado");
+    assert_eq!(note.org, "acme");
+    assert_eq!(note.case_id, 42);
 }

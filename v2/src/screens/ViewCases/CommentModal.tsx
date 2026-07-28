@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { TestCaseFull } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
+import { IconCancel, IconConfirm, IconEdit, IconRemove } from "../../lib/actionIcons";
 
 /** A small dialog for reading (and editing) one case's local comment,
  * opened from the row's Comment chip - no need to expand the whole case. */
@@ -67,6 +68,7 @@ export default function CommentModal({
                     setEditing(false);
                   }}
                 >
+                  <IconConfirm aria-hidden />
                   Save comment
                 </Button>
                 <Button
@@ -77,6 +79,7 @@ export default function CommentModal({
                     setEditing(false);
                   }}
                 >
+                  <IconCancel aria-hidden />
                   Cancel
                 </Button>
               </div>
@@ -86,6 +89,7 @@ export default function CommentModal({
               <p className="whitespace-pre-wrap text-sm text-text">{note}</p>
               <div className="flex items-center gap-2 pt-1">
                 <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                  <IconEdit aria-hidden />
                   Edit
                 </Button>
                 <Button
@@ -97,6 +101,7 @@ export default function CommentModal({
                     onClose();
                   }}
                 >
+                  <IconRemove aria-hidden />
                   Remove
                 </Button>
                 <span className="text-[11px] text-faint">

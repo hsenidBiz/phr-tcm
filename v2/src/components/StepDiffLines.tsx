@@ -4,31 +4,7 @@
 
 import { type StepDiff } from "../lib/caseDiff";
 import { cn } from "../lib/cn";
-import { inlineWordDiff, type InlineSegment } from "../lib/wordDiff";
-
-/** Inline word-diff segments: unchanged text plain, insertions green,
- * deletions red-struck - exactly where they sit in the sentence. */
-function Segments({ segments }: { segments: InlineSegment[] }) {
-  return (
-    <>
-      {segments.map((s, i) => (
-        <span
-          key={i}
-          className={
-            s.kind === "added"
-              ? "rounded-sm bg-success/25 px-0.5 font-medium text-success"
-              : s.kind === "removed"
-                ? "rounded-sm bg-danger/20 px-0.5 text-danger line-through"
-                : undefined
-          }
-        >
-          {i > 0 ? " " : ""}
-          {s.text}
-        </span>
-      ))}
-    </>
-  );
-}
+import InlineDiff from "./InlineDiff";
 
 /** A changed step is ONE neutral line with only the differing words marked
  * (green = inserted, red struck = deleted). Whole-step adds/removes keep
@@ -40,11 +16,15 @@ export default function StepDiffLines({ d }: { d: StepDiff }) {
         <span className="select-none font-semibold text-faint">±</span>
         <span className="whitespace-pre-wrap">
           <span className="id-mono text-faint">#{d.index + 1}</span>{" "}
-          <Segments segments={inlineWordDiff(d.old!.action, d.new!.action)} />
+          <InlineDiff old={d.old!.action} next={d.new!.action} />
           {(d.old!.expected || d.new!.expected) && (
             <span className="text-muted">
               {" ⇒ "}
-              <Segments segments={inlineWordDiff(d.old!.expected, d.new!.expected)} />
+              <InlineDiff
+                old={d.old!.expected}
+                next={d.new!.expected}
+                emptyLabel="(no expected result)"
+              />
             </span>
           )}
         </span>

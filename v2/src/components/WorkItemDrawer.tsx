@@ -18,6 +18,7 @@ import { Select } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import CommentsPanel from "./CommentsPanel";
 import HistoryPanel from "./HistoryPanel";
+import { IconCancel, IconConfirm } from "../lib/actionIcons";
 
 type Draft = {
   title: string;
@@ -587,9 +588,11 @@ export default function WorkItemDrawer({
 
             <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
               <Button variant="ghost" size="sm" onClick={onClose}>
+                <IconCancel aria-hidden />
                 Close
               </Button>
               <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+                <IconConfirm aria-hidden />
                 {save.isPending ? "Saving" : "Save changes"}
               </Button>
             </footer>

@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, events, type PbiHit, type SharedQueue } from "../bindings";
 import PickPbiEmpty from "../components/PickPbiEmpty";
+import GeneralComments from "../components/GeneralComments";
 import QueueSection from "../components/QueueSection";
+import { appIsInView, osNotify } from "../lib/assignedAlerts";
 import SyncReport from "../components/SyncReport";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -14,12 +16,22 @@ import {
   loadWatches,
   saveWatches,
   syncFromFile,
+  syncNotification,
+  patchWatch,
   upsertWatch,
   withoutFileCases,
   type SyncChange,
   type WatchedFile,
 } from "../lib/fileSync";
 import { useQueue } from "../hooks/useQueue";
+import {
+  IconCancel,
+  IconConfirm,
+  IconImport,
+  IconNext,
+  IconRemove,
+  IconStopWatching,
+} from "../lib/actionIcons";
 
 export default function ImportFile({
   org,
@@ -58,8 +70,11 @@ export default function ImportFile({
     file: string;
     warnings: number;
   } | null>(null);
-  // A watch the user asked to drop, pending the "and its cases?" answer.
-  const [dropping, setDropping] = useState<WatchedFile | null>(null);
+  // The watches the user asked to drop, pending the "and their cases?"
+  // answer. A list rather than one file so Stop and Remove all go through
+  // the same confirmation - the question is identical, only the count
+  // differs, and two dialogs would be two things to keep in step.
+  const [dropping, setDropping] = useState<WatchedFile[] | null>(null);
 
   // Keyed on the id, never the object: a new PbiHit identity on every
   // render would re-arm the effects below and could cancel an in-flight
@@ -168,10 +183,16 @@ export default function ImportFile({
           return;
         }
         const synced = syncFromFile(queueRef.current, stale.snapshot, r.data.cases);
+        // The set-wide comment lives in the same file, so an edit can have
+        // moved it as well - re-read rather than let the panel go stale.
+        const comment = await commands.readGeneralComment(stale.path);
+        if (cancelled) return;
         setWatches((prev) =>
-          prev.map((w) =>
-            w.path === stale.path ? { ...w, stamp: fresh, snapshot: synced.snapshot } : w,
-          ),
+          patchWatch(prev, stale.path, {
+            stamp: fresh,
+            snapshot: synced.snapshot,
+            comment,
+          }),
         );
         setWarnings(r.data.warnings);
         if (synced.changes.length > 0) setQueue(synced.queue);
@@ -183,6 +204,14 @@ export default function ImportFile({
             file: fileName(stale.path),
             warnings: r.data.warnings.length,
           });
+          // The whole point of watching a file is that an assistant can
+          // edit it while you are somewhere else. If the app is behind
+          // another window the report panel is not feedback at all, so
+          // the OS says it instead - and stays quiet when you are looking.
+          if (!appIsInView()) {
+            const n = syncNotification(fileName(stale.path), synced.changes);
+            void osNotify(n.title, n.body);
+          }
         }
       } finally {
         syncing.current = false;
@@ -193,19 +222,51 @@ export default function ImportFile({
     };
   }, [detected, watches, setWatches, setQueue]);
 
+  // A general comment typed in the browser view. The file is already
+  // written; this keeps the app's panel and its fingerprint in step.
+  useEffect(() => {
+    const un = events.draftGeneralCommentSaved.listen((e) => {
+      setWatches((prev) =>
+        patchWatch(prev, e.payload.path, { comment: e.payload.text, stamp: e.payload.stamp }),
+      );
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [setWatches]);
+
+  // A per-case comment typed there lands in the same file, so the watch's
+  // fingerprint has to move too - the watcher stays quiet about the app's
+  // own write, so nothing else would tell us.
+  useEffect(() => {
+    const un = events.draftCommentSaved.listen((e) => {
+      if (!e.payload.path) return;
+      setWatches((prev) => patchWatch(prev, e.payload.path, { stamp: e.payload.stamp }));
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [setWatches]);
+
   const dismissReport = useCallback(() => setReport(null), []);
 
-  /** Stop following one file, optionally taking its cases with it. */
+  /** Stop following these files, optionally taking their cases with them.
+   *
+   * The cases of ALL the dropped files are considered together against the
+   * ones that remain, so a case two dropped files share still goes, and a
+   * case a surviving file also contains still stays. */
   const dropWatch = useCallback(
-    (target: WatchedFile, alsoRemoveCases: boolean) => {
-      void commands.unwatchFile(target.path).catch(() => {});
-      const others = watches.filter((w) => w.path !== target.path);
+    (targets: WatchedFile[], alsoRemoveCases: boolean) => {
+      const dropped = new Set(targets.map((t) => t.path));
+      for (const t of targets) void commands.unwatchFile(t.path).catch(() => {});
+      const others = watches.filter((w) => !dropped.has(w.path));
       setWatches(others);
       if (alsoRemoveCases) {
+        const owned = targets.flatMap((t) => t.snapshot);
         setQueue((q) =>
           withoutFileCases(
             q,
-            target.snapshot,
+            owned,
             others.map((w) => w.snapshot),
           ),
         );
@@ -266,18 +327,26 @@ export default function ImportFile({
       if (typeof path !== "string") return null;
       const r = await commands.parseImportFile(path);
       if (r.status === "error") throw new Error(r.error);
-      return { path, stamp: await commands.fileStamp(path), data: r.data };
+      return {
+        path,
+        stamp: await commands.fileStamp(path),
+        data: r.data,
+        // Whatever the file already says about the set as a whole - very
+        // often written by whoever generated it.
+        comment: await commands.readGeneralComment(path),
+      };
     },
     onSuccess: (res) => {
       if (!res) return;
-      const { path, stamp, data } = res;
+      const { path, stamp, data, comment } = res;
       setQueue((q) => [...q, ...data.cases]);
       setWarnings(data.warnings);
       setReport(null);
       // From here on, edits to this file land in the queue by themselves.
       // Re-importing the same file replaces its entry rather than adding a
       // second watch on it.
-      if (stamp) setWatches((prev) => upsertWatch(prev, { path, stamp, snapshot: data.cases }));
+      if (stamp)
+        setWatches((prev) => upsertWatch(prev, { path, stamp, snapshot: data.cases, comment }));
       toast.success(
         `Imported ${data.cases.length} case${data.cases.length === 1 ? "" : "s"}` +
           (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : ""),
@@ -307,6 +376,7 @@ export default function ImportFile({
         </p>
         <div className="flex gap-2">
           <Button disabled={importFile.isPending} onClick={() => importFile.mutate()}>
+            <IconImport aria-hidden />
             {importFile.isPending ? "Importing" : "Import JSON"}
           </Button>
         </div>
@@ -322,6 +392,18 @@ export default function ImportFile({
                   ? "Watching 1 file — edits are applied to the queue automatically."
                   : `Watching ${watches.length} files — edits are applied to the queue automatically.`}
               </span>
+              {watches.length > 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  aria-label="Stop watching every file"
+                  onClick={() => setDropping(watches)}
+                >
+                  <IconStopWatching aria-hidden />
+                  Remove all
+                </Button>
+              )}
             </div>
             {/* One row per file once there is a choice to make. A single
                 file needs no list - its name goes on the line above. */}
@@ -341,14 +423,23 @@ export default function ImportFile({
                     variant="ghost"
                     size="sm"
                     aria-label={`Stop watching ${fileName(w.path)}`}
-                    onClick={() => setDropping(w)}
+                    onClick={() => setDropping([w])}
                   >
+                    <IconStopWatching aria-hidden />
                     Stop
                   </Button>
                 </li>
               ))}
             </ul>
           </div>
+        )}
+        {watches.length > 0 && (
+          <GeneralComments
+            watches={watches}
+            onSaved={(path, text, stamp) =>
+              setWatches((prev) => patchWatch(prev, path, { comment: text, stamp }))
+            }
+          />
         )}
         {report && (
           <SyncReport
@@ -375,6 +466,7 @@ export default function ImportFile({
               disabled={!shareLink.trim() || importShared.isPending}
               onClick={() => importShared.mutate()}
             >
+              <IconImport aria-hidden />
               {importShared.isPending ? "Fetching" : "Import shared"}
             </Button>
           </div>
@@ -395,31 +487,49 @@ export default function ImportFile({
         queue={queue}
         setQueue={setQueue}
         flash={flash}
+        watches={watches}
       />
 
       {dropping && (
         <Modal onClose={() => setDropping(null)} className="w-full max-w-md p-4">
           <h2 className="text-sm font-semibold text-text">
-            Stop watching {fileName(dropping.path)}?
+            {dropping.length === 1
+              ? `Stop watching ${fileName(dropping[0].path)}?`
+              : `Stop watching all ${dropping.length} files?`}
           </h2>
           <p className="mt-2 text-sm text-muted">
-            Edits to this file will no longer be applied to the queue. The{" "}
-            {dropping.snapshot.length} case
-            {dropping.snapshot.length === 1 ? "" : "s"} it added are still queued — keep
-            them, or remove them too?
+            {dropping.length === 1 ? "Edits to this file" : "Edits to these files"} will
+            no longer be applied to the queue. The{" "}
+            {dropping.reduce((n, w) => n + w.snapshot.length, 0)} case
+            {dropping.reduce((n, w) => n + w.snapshot.length, 0) === 1 ? "" : "s"}{" "}
+            {dropping.length === 1 ? "it" : "they"} added{" "}
+            {dropping.reduce((n, w) => n + w.snapshot.length, 0) === 1 ? "is" : "are"}{" "}
+            still queued — keep them, or remove them too?
           </p>
+          {dropping.length > 1 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-faint">
+              {dropping.map((w) => (
+                <li key={w.path} className="id-mono truncate" title={w.path}>
+                  {fileName(w.path)}
+                </li>
+              ))}
+            </ul>
+          )}
           <p className="mt-2 text-xs text-faint">
             Cases you typed by hand, or that another watched file also contains, are
             never removed.
           </p>
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setDropping(null)}>
+              <IconCancel aria-hidden />
               Cancel
             </Button>
             <Button variant="outline" size="sm" onClick={() => dropWatch(dropping, false)}>
+              <IconConfirm aria-hidden />
               Keep the cases
             </Button>
             <Button variant="danger" size="sm" onClick={() => dropWatch(dropping, true)}>
+              <IconRemove aria-hidden />
               Remove them too
             </Button>
           </div>
@@ -442,6 +552,7 @@ export default function ImportFile({
           </p>
           <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setChoice(null)}>
+              <IconCancel aria-hidden />
               Cancel
             </Button>
             <Button
@@ -458,6 +569,7 @@ export default function ImportFile({
                 setChoice(null);
               }}
             >
+              <IconConfirm aria-hidden />
               Stay on #{pbi.id}
             </Button>
             <Button
@@ -474,6 +586,7 @@ export default function ImportFile({
                 setChoice(null);
               }}
             >
+              <IconNext aria-hidden />
               Switch to #{choice.pbi_id}
             </Button>
           </div>

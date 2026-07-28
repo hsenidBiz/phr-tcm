@@ -18,6 +18,7 @@ import { Select } from "../components/ui/select";
 import { unwrap } from "../lib/ipc";
 import { cached } from "../lib/localCache";
 import { iterationDetails } from "../lib/iterations";
+import { IconAdd, IconOpenInBrowser } from "../lib/actionIcons";
 
 const TYPES = ["Task", "Bug", "Product Backlog Item"];
 
@@ -99,7 +100,7 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
 
   if (created) {
     return (
-      <div className="max-w-xl space-y-3 rounded-md border border-border bg-surface p-4">
+      <div className="max-w-xl space-y-3 rounded-md border border-border bg-surface p-4 xl:max-w-3xl">
         <h2 className="text-sm font-semibold text-text">
           Created {wiType} <span className="id-mono text-accent">#{created.id}</span>
         </h2>
@@ -112,9 +113,11 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
             variant="outline"
             onClick={() => openUrl(created.url).catch(() => toast.error("Could not open the browser."))}
           >
+            <IconOpenInBrowser aria-hidden />
             Open in Azure DevOps
           </Button>
           <Button size="sm" onClick={resetForKeep}>
+            <IconAdd aria-hidden />
             Create another
           </Button>
         </div>
@@ -123,9 +126,15 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
   }
 
   return (
-    // The form stays one readable column; only its cap relaxes, so a
-    // wide window is not mostly empty.
-    <div className="max-w-xl space-y-4 xl:max-w-3xl">
+    // Two columns when the window can hold them, one when it cannot.
+    // The split is by KIND, not by halving the form: the short metadata
+    // fields stack on the left at a width that suits them, and the
+    // description - the only field that benefits from being big - takes
+    // the other half and grows tall. Widening one column instead would
+    // just have stretched the selects.
+    <div className="max-w-xl space-y-4 lg:max-w-none">
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+      <div className="space-y-4">
       <div className="flex gap-2">
         <label className="block text-xs text-muted">
           <span className="mb-1 block">Type</span>
@@ -218,22 +227,26 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
         <TagsField org={org} project={project} className="w-full" value={tags} onChange={setTags} />
       </label>
 
-      <label className="block text-xs text-muted">
-        <span className="mb-1 block">Description</span>
-        <Textarea
-          aria-label="Description"
-          className="h-28 w-full"
-          placeholder="Context, acceptance criteria, links…"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </label>
-
       <div className="text-xs text-muted">
         Parent PBI (optional - nests the item under it on the board)
         <div className="mt-1 max-w-md">
           <PbiPicker org={org} project={project} pbi={parent} onChange={setParent} />
         </div>
+      </div>
+      </div>
+
+      <label className="block text-xs text-muted">
+        <span className="mb-1 block">Description</span>
+        {/* Tall enough to be worth the column it occupies; back to a
+            normal box when the columns collapse. */}
+        <Textarea
+          aria-label="Description"
+          className="h-28 w-full lg:h-[22rem]"
+          placeholder="Context, acceptance criteria, links…"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </label>
       </div>
 
       <div className="pt-1">
@@ -241,6 +254,7 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
           disabled={!title.trim() || create.isPending}
           onClick={() => create.mutate()}
         >
+          <IconAdd aria-hidden />
           {create.isPending ? "Creating…" : `Create ${wiType}`}
         </Button>
       </div>

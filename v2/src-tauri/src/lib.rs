@@ -5,8 +5,9 @@
 pub mod ado;
 pub mod ado_git;
 pub mod ado_share;
-pub mod applog;
 pub mod ado_testplan;
+pub mod applog;
+pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
 pub mod assigned_watch;
@@ -52,10 +53,13 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::CaseNoteSaved,
             events::PlanCreated,
             events::WatchedFileChanged,
+            events::DraftCommentSaved,
+            events::DraftGeneralCommentSaved,
             events::WorkAssigned
         ])
         .commands(collect_commands![
             misc::ping,
+            misc::prepare_bug_report,
             auth::auth_status,
             auth::sign_in,
             discovery::list_projects,
@@ -110,6 +114,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             discovery::list_project_tags,
             runs::result_screenshots,
             queue::view_queue_html,
+            queue::view_draft_html,
+            queue::read_general_comment,
+            queue::save_general_comment,
+            queue::save_draft_comment,
             cases::test_cases_by_ids,
             cases::test_case_field_values,
             testplan::find_pbi_suite,
@@ -136,10 +144,52 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
         ])
 }
 
+/// Bring the running app's window forward.
+///
+/// Order matters: a minimized window cannot take focus, and this window is
+/// created hidden (`visible: false` in tauri.conf.json) and shown by the
+/// frontend, so it has to be restored and shown before `set_focus` has
+/// anything to focus. Each step is best-effort - a window the user closed
+/// out from under us is not worth failing over.
+#[cfg(desktop)]
+fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = specta_builder();
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut tauri_builder = tauri::Builder::default();
+
+    // A second launch of the exe hands its arguments to the process that is
+    // already running and then exits, so double-clicking the shortcut again
+    // brings the app forward instead of starting a rival copy - which would
+    // otherwise carry its own draft queue, its own file watches and its own
+    // AI bridge port, and whichever copy the user typed into last would win.
+    //
+    // Registered before every other plugin: the second process is turned
+    // away inside this plugin's setup, and anything registered ahead of it
+    // would run in a process that is about to die.
+    //
+    // `--mcp` never reaches here (main() returns first), so an AI session
+    // spawning the stdio proxy is not mistaken for a second window.
+    #[cfg(desktop)]
+    {
+        tauri_builder = tauri_builder.plugin(tauri_plugin_single_instance::init(
+            |app, _argv, _cwd| {
+                applog::info("second launch refused - focusing the running window");
+                focus_main_window(app);
+            },
+        ));
+    }
+
+    tauri_builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())

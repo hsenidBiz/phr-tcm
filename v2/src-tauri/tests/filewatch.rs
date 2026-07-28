@@ -191,3 +191,45 @@ fn stopping_an_unwatched_path_is_harmless() {
     stop(&state, r"C:\nothing\here.json"); // must not panic
     assert!(watched_paths(&state).is_empty());
 }
+
+/// A comment typed in the report page is written back into the watched
+/// file BY THE APP. That write is not news to the app that made it -
+/// reporting it would show the user a change report for their own typing -
+/// so `write_watched` claims the fingerprint and the watch stays quiet.
+#[test]
+fn the_apps_own_write_is_not_reported_back() {
+    let dir = temp_dir("selfwrite");
+    let file = dir.0.join("cases.json");
+    std::fs::write(&file, r#"{"test_cases":[]}"#).unwrap();
+    let (state, rx) = armed(&file);
+
+    let path = file.to_string_lossy().to_string();
+    let stamp = v2_lib::filewatch::write_watched(&state, &path, r#"{"comments":"mine"}"#).unwrap();
+    assert_eq!(stamp, v2_lib::filewatch::stamp(&file).unwrap());
+    assert!(
+        rx.recv_timeout(QUIET).is_err(),
+        "the app's own write must not come back as a change"
+    );
+
+    // ...and the watch is still live: the NEXT outside edit is reported.
+    std::fs::write(&file, r#"{"comments":"theirs"}"#).unwrap();
+    let seen = rx.recv_timeout(SETTLE).expect("an outside edit is still seen");
+    assert_eq!(seen, v2_lib::filewatch::stamp(&file).unwrap());
+}
+
+/// Only ONE write is absorbed. If an assistant happened to write the same
+/// bytes twice, the second is a real change from the app's point of view.
+#[test]
+fn only_the_claimed_write_is_absorbed() {
+    let dir = temp_dir("claimonce");
+    let file = dir.0.join("cases.json");
+    std::fs::write(&file, "start").unwrap();
+    let (state, rx) = armed(&file);
+    let path = file.to_string_lossy().to_string();
+
+    v2_lib::filewatch::write_watched(&state, &path, "ours").unwrap();
+    assert!(rx.recv_timeout(QUIET).is_err());
+
+    std::fs::write(&file, "someone else").unwrap();
+    assert!(rx.recv_timeout(SETTLE).is_ok(), "the next edit is reported");
+}

@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Database, RefreshCw } from "lucide-react";
+import { Database } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type DbServerConfig } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
-import { Checkbox } from "../components/ui/checkbox";
+import { Switch } from "../components/ui/switch";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { cn } from "../lib/cn";
@@ -18,6 +18,14 @@ import {
 } from "../lib/dbServer";
 import { loadDisabledTools, MCP_TOOLS, saveDisabledTools, toggleTool } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
+import {
+  IconBrowse,
+  IconConfirm,
+  IconCopy,
+  IconRefresh,
+  IconRegister,
+  IconUnregister,
+} from "../lib/actionIcons";
 
 /** Config keys, mirroring `ai_tools.rs` - a tool row shows a separate
  * state for each server this app can register. */
@@ -151,7 +159,7 @@ export default function AiBridge() {
                 .catch(() => toast.error("Could not scan for AI tools."));
             }}
           >
-            <RefreshCw size={12} className={cn("mr-1", tools.isFetching && "animate-spin")} />
+            <IconRefresh aria-hidden className={cn(tools.isFetching && "animate-spin")} />
             {tools.isFetching ? "Scanning" : "Rescan"}
           </Button>
         </div>
@@ -175,6 +183,7 @@ export default function AiBridge() {
                       disabled={unregister.isPending && unregister.variables === t.id}
                       onClick={() => unregister.mutate(t.id)}
                     >
+                      <IconUnregister aria-hidden />
                       {unregister.isPending && unregister.variables === t.id
                         ? "Removing"
                         : "Unregister"}
@@ -187,6 +196,7 @@ export default function AiBridge() {
                     disabled={register.isPending && register.variables === t.id}
                     onClick={() => register.mutate(t.id)}
                   >
+                    <IconRegister aria-hidden />
                     {register.isPending && register.variables === t.id
                       ? "Registering"
                       : "Register"}
@@ -215,6 +225,7 @@ export default function AiBridge() {
                     copy(`claude mcp add --scope user tcm-testcases -- "${exe}" --mcp`, "Command")
                   }
                 >
+                  <IconCopy aria-hidden />
                   Copy
                 </Button>
               </div>
@@ -243,6 +254,7 @@ export default function AiBridge() {
                     )
                   }
                 >
+                  <IconCopy aria-hidden />
                   Copy
                 </Button>
               </div>
@@ -268,7 +280,7 @@ export default function AiBridge() {
             const on = !disabled.includes(t.name);
             return (
               <li key={t.name} className="flex items-start gap-2">
-                <Checkbox
+                <Switch
                   checked={on}
                   ariaLabel={t.name}
                   onCheckedChange={() => {
@@ -276,6 +288,7 @@ export default function AiBridge() {
                     setDisabled(next);
                     saveDisabledTools(next);
                   }}
+                  className="mt-0.5"
                 />
                 <span className="min-w-0 flex-1">
                   <span className={cn("id-mono text-xs", on ? "text-text" : "text-faint")}>
@@ -296,6 +309,7 @@ export default function AiBridge() {
               saveDisabledTools([]);
             }}
           >
+            <IconConfirm aria-hidden />
             Turn all back on
           </Button>
         )}
@@ -331,6 +345,7 @@ export default function AiBridge() {
               />
             </label>
             <Button size="sm" variant="outline" onClick={pickExe}>
+              <IconBrowse aria-hidden />
               Browse
             </Button>
           </div>
@@ -394,6 +409,7 @@ export default function AiBridge() {
                       disabled={unregisterDb.isPending && unregisterDb.variables === t.id}
                       onClick={() => unregisterDb.mutate(t.id)}
                     >
+                      <IconUnregister aria-hidden />
                       {unregisterDb.isPending && unregisterDb.variables === t.id
                         ? "Removing"
                         : "Unregister"}
@@ -406,6 +422,7 @@ export default function AiBridge() {
                     disabled={registerDb.isPending && registerDb.variables === t.id}
                     onClick={() => registerDb.mutate(t.id)}
                   >
+                    <IconRegister aria-hidden />
                     {registerDb.isPending && registerDb.variables === t.id
                       ? "Registering"
                       : "Register"}
@@ -455,9 +472,9 @@ export default function AiBridge() {
             values, and the recommended workflow.
           </li>
           <li>
-            <code className="id-mono text-text">get_example_cases</code> — real test
-            cases already linked to a PBI, in the exact import shape, so the AI can
-            mimic their style and granularity.
+            <code className="id-mono text-text">get_test_cases</code> — the test cases
+            already linked to a PBI, in the exact import shape: to copy the house
+            style, to check what is already covered, or just to read them.
           </li>
           <li>
             <code className="id-mono text-text">validate_cases</code> — runs a draft

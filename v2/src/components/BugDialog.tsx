@@ -6,6 +6,7 @@ import { unwrapStr } from "../lib/ipc";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
 import { Modal } from "./ui/modal";
+import { IconBug, IconCancel } from "../lib/actionIcons";
 
 /** Prefills title + repro from the case's failed steps, then POSTs a Bug
  * (or Issue) linked to the test case and PBI, with the runner's screenshots. */
@@ -67,9 +68,11 @@ export default function BugDialog({
       </p>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onClose}>
+          <IconCancel aria-hidden />
           Cancel
         </Button>
         <Button size="sm" disabled={!title.trim() || file.isPending} onClick={() => file.mutate()}>
+          <IconBug aria-hidden />
           {file.isPending ? "Filing" : "File bug"}
         </Button>
       </div>

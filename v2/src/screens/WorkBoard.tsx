@@ -531,11 +531,46 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                   >
                     {/* Reads top-to-bottom in the rail, same as the label
                         below it - the collapsed column is a vertical strip,
-                        so the control is too. */}
+                        so the control is too. In the accent, because a
+                        muted control on a 36px rail is easy to miss
+                        entirely, and this is the only way back.
+                        `text-center` centres the label along the axis it
+                        runs down; the flex centres the box across the
+                        rail.
+
+                        The padding is spelled out PHYSICALLY on purpose.
+                        Tailwind mixes the two systems - px/py are logical
+                        (padding-inline/block) while pl/pr/pt/pb are
+                        physical - and under vertical-rl the logical pair
+                        swaps axes, so `py` silently becomes left/right.
+                        Naming the sides directly means what you read is
+                        where the space goes.
+
+                        pt/pb-2 is the room above and below the word.
+                        pl-0/pr-0.5 is the sliver across it, and the
+                        lopsided 0/2 is measured, not eyeballed: in caps
+                        the ink runs ascent 8 / descent 0 while the font
+                        box is 9 / 3, so the glyphs sit 1px off the em-box
+                        centre. With `leading-none` the whole control is
+                        14px across - it hugs the text, which is the only
+                        thing it has to fit.
+
+                        The exact splits here and on Hide were read off the
+                        RENDERED PIXELS, not derived: font metrics predict
+                        the direction but not the amount, and at this size
+                        half a pixel is visible. If the font or size
+                        changes, measure again rather than reasoning.
+
+                        Both stop about half a pixel short of perfect, and
+                        that is a floor rather than a missing tweak: glyph
+                        baselines snap to whole pixels, so fractional
+                        padding below 1px moves nothing. Closing the last
+                        half pixel would mean changing the box height, not
+                        the padding. */}
                     <button
                       aria-label={`Open ${col}`}
                       title={`Open ${col}`}
-                      className="rounded border border-border px-0.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted transition-colors hover:border-accent hover:text-accent"
+                      className="self-center rounded border border-accent/60 pb-2 pl-[0.5px] pr-[1.5px] pt-2 text-center text-[10px] font-semibold uppercase leading-none tracking-wide text-accent transition-colors hover:bg-accent-soft"
                       style={{ writingMode: "vertical-rl" }}
                       onClick={() => toggleCol(col)}
                     >
@@ -582,7 +617,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                           : `Hide ${col}`
                       }
                       disabled={hiddenCols.size >= COLUMNS.length - 1}
-                      className="ml-auto rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                      className="ml-auto rounded border border-accent/60 px-1.5 pb-px pt-[3px] text-center text-[10px] font-semibold uppercase tracking-wide text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => toggleCol(col)}
                     >
                       Hide

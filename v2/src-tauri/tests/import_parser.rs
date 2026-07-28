@@ -309,11 +309,17 @@ fn html_export_with_note_ctx_adds_autosaving_comment_boxes() {
     let ctx = v2_lib::import_parser::NoteCtx { port: 4711, org: "acme".into(), notes };
 
     let path = tmp_path("report-notes.html");
-    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", Some(&ctx)).unwrap();
+    v2_lib::import_parser::export_queue_to_html(
+        &queue,
+        &path,
+        "",
+        Some(v2_lib::import_parser::CommentCtx::Ado(&ctx)),
+    )
+    .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
 
     // The identified case gets a prefilled (escaped) comment box...
-    assert!(html.contains("data-id='42'"));
+    assert!(html.contains("data-ado='42'"));
     assert!(html.contains("Needs the &lt;new&gt; dialog"));
     // ...wired to the loopback listener with the org baked in.
     assert!(html.contains("var NOTE_PORT=4711"));

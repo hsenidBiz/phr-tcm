@@ -10,6 +10,7 @@ import { Checkbox } from "./ui/checkbox";
 import { Textarea } from "./ui/input";
 import { Modal } from "./ui/modal";
 import { Select } from "./ui/select";
+import { IconCancel, IconConfirm } from "../lib/actionIcons";
 
 /** Bulk edit for the selected cases: every field defaults to "leave
  * unchanged"; chosen fields are applied to each case IN ADDITION to its
@@ -173,9 +174,11 @@ export default function BulkEditDialog({
 
       <div className="flex shrink-0 justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onClose}>
+          <IconCancel aria-hidden />
           Cancel
         </Button>
         <Button size="sm" disabled={nothingChosen || apply.isPending} onClick={() => apply.mutate()}>
+          <IconConfirm aria-hidden />
           {apply.isPending ? "Applying" : `Apply to ${cases.length}`}
         </Button>
       </div>

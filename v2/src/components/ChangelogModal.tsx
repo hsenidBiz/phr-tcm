@@ -6,6 +6,7 @@ import { Sparkles } from "lucide-react";
 import type { ChangelogEntry } from "../lib/changelog";
 import { Button } from "./ui/button";
 import { Modal } from "./ui/modal";
+import { IconConfirm } from "../lib/actionIcons";
 
 export default function ChangelogModal({
   entries,
@@ -39,6 +40,7 @@ export default function ChangelogModal({
 
       <div className="flex shrink-0 justify-end">
         <Button size="sm" onClick={onClose}>
+          <IconConfirm aria-hidden />
           Got it
         </Button>
       </div>

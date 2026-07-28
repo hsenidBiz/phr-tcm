@@ -651,3 +651,97 @@ async fn dated_iterations_carry_sprint_windows() {
     // Nodes without dates (root, folders) stay date-less rather than erroring.
     assert!(its.iter().find(|i| i.path == "proj").unwrap().start_date.is_none());
 }
+
+/// A screenshot pasted into a bug from a failed test run is a TEST RESULT
+/// attachment, not a work item one. The old rule only recognised
+/// `/_apis/wit/attachments/`, so nothing was ever fetched for it and the
+/// image stayed broken forever with no request in the log to explain it.
+#[test]
+fn a_test_result_attachment_is_recognised_not_just_a_work_item_one() {
+    use v2_lib::work_board::detail::attachment_download_url;
+    let base = "https://dev.azure.com";
+    for src in [
+        "https://dev.azure.com/Acme/HRM/_apis/wit/attachments/GUID?fileName=a.png",
+        "https://dev.azure.com/Acme/HRM/_apis/test/Runs/12/Results/1/attachments/9",
+        "https://dev.azure.com/Acme/HRM/_apis/testresults/runs/12/results/1/attachments/9",
+    ] {
+        assert!(
+            attachment_download_url(src, base).is_some(),
+            "should be fetched: {src}"
+        );
+    }
+}
+
+/// The half that matters most: a work item's HTML is written by whoever
+/// can edit the item, so the src is attacker-controlled. Sending the Azure
+/// DevOps bearer token to a host of their choosing would hand it over.
+#[test]
+fn the_token_is_never_sent_to_a_host_we_do_not_trust() {
+    use v2_lib::work_board::detail::attachment_download_url;
+    let base = "https://dev.azure.com";
+    // The same PATH that would otherwise qualify, on someone else's host.
+    assert_eq!(
+        attachment_download_url("https://evil.example/_apis/wit/attachments/GUID", base),
+        None
+    );
+    assert_eq!(
+        attachment_download_url("http://dev.azure.com.evil.example/_apis/wit/attachments/x", base),
+        None
+    );
+    // Relative and data URLs have no host to check, so they are not fetched.
+    assert_eq!(attachment_download_url("/_apis/wit/attachments/x", base), None);
+    assert_eq!(attachment_download_url("data:image/png;base64,AAAA", base), None);
+
+    // Microsoft's own Azure DevOps domains are trusted, plus whatever host
+    // this client is already talking to (a mock server, in these tests).
+    assert!(attachment_download_url(
+        "https://acme.visualstudio.com/p/_apis/wit/attachments/x",
+        base
+    )
+    .is_some());
+    assert!(attachment_download_url(
+        "http://127.0.0.1:9999/p/_apis/wit/attachments/x",
+        "http://127.0.0.1:9999"
+    )
+    .is_some());
+}
+
+/// An ADO URL that is not an attachment is left alone - the token has no
+/// business going to it just because the host is right.
+#[test]
+fn only_attachment_endpoints_are_fetched() {
+    use v2_lib::work_board::detail::attachment_download_url;
+    assert_eq!(
+        attachment_download_url(
+            "https://dev.azure.com/Acme/HRM/_apis/wit/workitems/42",
+            "https://dev.azure.com"
+        ),
+        None
+    );
+}
+
+/// Azure DevOps embeds these without an api-version - the browser gets one
+/// from its session, a bare request does not, and the service can answer
+/// 400 rather than the bytes.
+#[test]
+fn an_attachment_url_is_given_an_api_version_when_it_has_none() {
+    use v2_lib::work_board::detail::attachment_download_url;
+    let base = "https://dev.azure.com";
+    assert_eq!(
+        attachment_download_url("https://dev.azure.com/o/p/_apis/wit/attachments/GUID", base),
+        Some("https://dev.azure.com/o/p/_apis/wit/attachments/GUID?api-version=7.1".into())
+    );
+    assert_eq!(
+        attachment_download_url(
+            "https://dev.azure.com/o/p/_apis/wit/attachments/GUID?fileName=a.png",
+            base
+        ),
+        Some(
+            "https://dev.azure.com/o/p/_apis/wit/attachments/GUID?fileName=a.png&api-version=7.1"
+                .into()
+        )
+    );
+    // One that already says which version keeps it.
+    let already = "https://dev.azure.com/o/p/_apis/wit/attachments/GUID?api-version=6.0";
+    assert_eq!(attachment_download_url(already, base), Some(already.into()));
+}

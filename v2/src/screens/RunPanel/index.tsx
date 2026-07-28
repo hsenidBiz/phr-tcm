@@ -18,6 +18,7 @@ import { unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
 import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
+import { IconOpenWindow, IconReport, IconRun } from "../../lib/actionIcons";
 
 
 export { outcomeLabel };
@@ -258,9 +259,11 @@ export default function RunPanel({
               disabled={report.isPending}
               onClick={() => report.mutate()}
             >
+              <IconReport aria-hidden />
               {report.isPending ? "Building report" : "Execution report"}
             </Button>
             <Button variant="outline" size="sm" onClick={() => openRunner()}>
+              <IconOpenWindow aria-hidden />
               Open runner window
             </Button>
           </div>
@@ -451,6 +454,7 @@ export default function RunPanel({
         <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-4 pr-2 shadow-2xl">
           <span className="text-xs font-medium text-muted">{selected.size} selected</span>
           <Button size="sm" onClick={() => openRunner([...selected])}>
+            <IconRun aria-hidden />
             Run {selected.size} in runner
           </Button>
           <button

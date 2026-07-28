@@ -1,6 +1,7 @@
 import type { Step } from "../bindings";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { IconAdd } from "../lib/actionIcons";
 
 /** The step grid used by Manual Entry AND the case editor: numbered rows of
  * action/expected with reorder, remove and Add Step - one interaction model
@@ -65,6 +66,7 @@ export default function StepsEditor({
         size="sm"
         onClick={() => onChange([...steps, { action: "", expected: "" }])}
       >
+        <IconAdd aria-hidden />
         + Add Step
       </Button>
     </div>

@@ -54,3 +54,29 @@ pub struct CaseNoteSaved {
     pub case_id: i32,
     pub text: String,
 }
+
+/// Emitted when a comment typed in the report page has been written into a
+/// DRAFT case. The file (when there is one) is already updated; this is
+/// what keeps the queue in the app showing the same text.
+///
+/// `stamp` is the file's new fingerprint, so the frontend can move its
+/// watch snapshot forward - the watcher stays silent about our own write,
+/// so nothing else would.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct DraftCommentSaved {
+    /// The file it was written into, empty for a case with no file.
+    pub path: String,
+    pub stamp: String,
+    /// Identity, matching the frontend's `caseKey` rule.
+    pub id: Option<i32>,
+    pub title: String,
+    pub text: String,
+}
+
+/// Emitted when the whole-set comment for one file has been written.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct DraftGeneralCommentSaved {
+    pub path: String,
+    pub stamp: String,
+    pub text: String,
+}
