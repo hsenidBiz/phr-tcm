@@ -11,6 +11,7 @@ import { diffCase, diffSummary } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
 import { caseKey, fileName, keysFor, ownerPaths, type WatchedFile } from "../lib/fileSync";
+import { pruneCreated } from "../lib/queuePrune";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
@@ -301,24 +302,6 @@ export default function QueueSection({
       const ok = done.length;
       const failedCount = results.length - ok;
 
-      // Prune by CONTENT KEY, not by index and not by object reference.
-      //
-      // An index is only meaningful against the list that was sent - the
-      // queue may have been reordered or emptied meanwhile, and filtering
-      // by index then removes whichever rows happen to sit at those
-      // positions, which is how a submit on one PBI could delete another
-      // PBI's drafts.
-      //
-      // Object identity fixed that and introduced its own hole: a watched
-      // file saved DURING the create loop makes syncFromFile hand back a
-      // NEW object for the case it changed - which is the whole point of
-      // watching a file - so the reference no longer matched, the created
-      // draft stayed queued, and the next Create made a duplicate work
-      // item. The occurrence-aware key survives an object being replaced,
-      // and still tells two drafts that share a title apart.
-      const createdKeys = new Set(
-        keysFor(done.map((r) => sent[r.index]).filter(Boolean)),
-      );
       if (sentFor !== pbiId) {
         // The queue on screen is not the one that was submitted. Leave it
         // completely alone and say so, rather than guess.
@@ -326,21 +309,30 @@ export default function QueueSection({
           `${ok} test case(s) processed for PBI #${sentFor}. Switch back to it to see what is left.`,
         );
       } else {
+        // The whole calculation lives in lib/queuePrune.ts, with the four
+        // ways it has been wrong written down as tests. It was inline here
+        // for all four of them, on a path with no test at all.
+        let stranded = 0;
         setQueue((q) => {
-          // Keys computed once for the live queue, then consumed one at a
-          // time - so two drafts sharing a key remove one each rather than
-          // both vanishing on the first match.
-          const liveKeys = keysFor(q);
-          const left = new Set(createdKeys);
-          return q.filter((_, i) => {
-            const k = liveKeys[i];
-            if (!left.has(k)) return true;
-            left.delete(k);
-            return false;
-          });
+          const { queue, unmatched } = pruneCreated(sent, q, results);
+          stranded = unmatched;
+          return queue;
         });
-        if (failedCount === 0) toast.success(`${ok} test case(s) processed.`);
-        else toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
+        if (failedCount === 0 && stranded === 0) {
+          toast.success(`${ok} test case(s) processed.`);
+        } else if (failedCount > 0) {
+          toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
+        }
+        if (stranded > 0) {
+          // Never silent: a created case still sitting in the queue is one
+          // Create away from a duplicate work item, and this app cannot
+          // delete one.
+          toast.warning(
+            `${stranded} case(s) were created but could not be matched back to the queue - ` +
+              `check the queue before creating again, or you will get duplicates.`,
+            { duration: 20000 },
+          );
+        }
       }
       qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
       qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });

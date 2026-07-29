@@ -30,6 +30,9 @@ export default function DeleteConfirm({
   onDeleted: () => void;
 }) {
   const [failures, setFailures] = useState<DeleteOutcome[] | null>(null);
+  /** How many actually went, so the panel does not claim a "rest" that
+   * does not exist when every one of them failed. */
+  const [deleted, setDeleted] = useState(0);
 
   const remove = useMutation({
     mutationFn: () => unwrap(commands.deleteTestCases(org, project, cases.map((c) => c.id))),
@@ -47,9 +50,16 @@ export default function DeleteConfirm({
       // Stay open and show WHICH survived. Closing here would leave the
       // user to work out from a refreshed list what had happened.
       setFailures(failed);
-      onDeleted();
+      setDeleted(gone);
+      // Only when something actually went. onDeleted refreshes the list AND
+      // clears the selection, so calling it when every delete failed threw
+      // away the selection of cases that all still exist - leaving the user
+      // to re-find and re-select them to try again.
       if (gone > 0) {
+        onDeleted();
         toast.warning(`${gone} deleted, ${failed.length} could not be.`, { duration: 20000 });
+      } else {
+        toast.error(`None of the ${failed.length} could be deleted.`, { duration: 20000 });
       }
     },
     onError: (e) => toast.error(e.message),
@@ -62,7 +72,9 @@ export default function DeleteConfirm({
           {failures.length} could not be deleted
         </h2>
         <p className="shrink-0 text-xs text-muted">
-          The rest were moved to the recycle bin. These were left exactly as they were.
+          {deleted > 0
+            ? `The other ${deleted} moved to the recycle bin. These were left exactly as they were.`
+            : "Nothing was deleted - every one of these was left exactly as it was."}
         </p>
         <ul className="min-h-0 flex-1 space-y-1 overflow-auto text-xs">
           {failures.map((f) => (

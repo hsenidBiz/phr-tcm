@@ -95,3 +95,23 @@ test("a partial failure names what was left behind and stays open", async () => 
   expect(screen.getByText("#5002")).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
 });
+
+/** When EVERY delete fails there is no "rest" that was recycled, and the
+ *  selection must survive - those cases all still exist, and the user needs
+ *  them selected to try again. */
+test("an all-failed delete claims nothing and keeps the selection", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "delete_test_cases") {
+      return CASES.map((c) => ({ id: c.id, deleted: false, error: "You do not have permission." }));
+    }
+    return null;
+  });
+  const { onDeleted, onClose } = mount();
+  fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
+
+  expect(await screen.findByText(/2 could not be deleted/)).toBeInTheDocument();
+  expect(screen.getByText(/Nothing was deleted/)).toBeInTheDocument();
+  expect(screen.queryByText(/moved to the recycle bin/)).not.toBeInTheDocument();
+  expect(onDeleted).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+});

@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.4",
+    date: "2026-07-30",
+    items: [
+      "Fixed: when several queued drafts share a title and only some are created, the wrong one was removed from the queue - the FAILED draft you still had to fix was deleted, and the one already created in Azure DevOps stayed, so the next Create made a duplicate. Introduced in 1.17.3.",
+      "This calculation - which drafts to remove after creating - has now been wrong four times in a row, each fix breaking it a different way. It has been moved out of the screen into its own tested piece of code, with all four failures written down as tests. It had no test at all before, which is why it took four goes.",
+      "You are now warned if a created case cannot be matched back to the queue at all, rather than it silently staying there ready to be created a second time.",
+      "Fixed: when deleting test cases failed for ALL of them, the app still said the others had been moved to the recycle bin, and cleared your selection - so you had to find and re-select them to try again.",
+    ],
+  },
+  {
     version: "1.17.3",
     date: "2026-07-29",
     items: [

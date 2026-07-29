@@ -322,10 +322,10 @@ async fn begin_writing(
     // one of our own plans is replaced; anything else is left alone.
     // Blowing away somebody's notes to leave a plan in their place is not
     // a trade this tool gets to make on its own.
-    let refused = match std::fs::read_to_string(&plan_path) {
-        Ok(existing) if !existing.starts_with(crate::intake::PLAN_HEADING) => true,
-        _ => false,
-    };
+    let refused = matches!(
+        std::fs::read_to_string(&plan_path),
+        Ok(existing) if !existing.starts_with(crate::intake::PLAN_HEADING)
+    );
     let written = !refused && std::fs::write(&plan_path, &plan).is_ok();
     (
         200,
@@ -668,9 +668,13 @@ async fn test_cases(
     {
         Ok(cases) => {
             let total = cases.len();
-            // Titles are cheap: cap at 200, not 20, so one call can cover
-            // a whole PBI when all the caller needs is duplicate checking.
-            let page = if titles_only { limit.max(200).min(200) } else { limit };
+            // Titles are cheap: a fixed 200, not the caller's limit, so one
+            // call can cover a whole PBI when all it needs is duplicate
+            // checking. (Was written `limit.max(200).min(200)`, which is
+            // the same 200 by a longer route - and a deny-level clippy lint,
+            // because that shape is usually a mistake rather than a
+            // deliberate constant.)
+            let page = if titles_only { 200 } else { limit };
             let records: Vec<serde_json::Value> = cases
                 .iter()
                 .skip(offset)
