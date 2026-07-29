@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.3",
+    date: "2026-07-29",
+    items: [
+      "Fixed: a test case could be created TWICE. If a watched file was saved while the create loop was still running, the case it changed stayed in the queue after being created - so the next Create made a second copy in Azure DevOps. Background edits while you are elsewhere are the whole point of watched files, so this was reachable in normal use.",
+      "Fixed: a run where some results could not be recorded showed a second, contradictory message saying \"0 could not be\" with no case names, right after the accurate one. Introduced in 1.17.2 while fixing the message above it.",
+      "Fixed: the AI optimiser could turn \"Verify that is shown\" into \"That is shown.\" - it refused to strip the longer opener, then stripped a shorter one that overlapped it and left the connective behind.",
+      "Fixed: SVG and WebP images attached to a work item showed as broken. The app works out the image type from the file itself, because Azure DevOps does not say, and it only recognised PNG, JPEG and GIF.",
+    ],
+  },
+  {
     version: "1.17.2",
     date: "2026-07-29",
     items: [

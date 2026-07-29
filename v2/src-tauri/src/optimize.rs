@@ -297,7 +297,7 @@ pub fn clean_expected(raw: &str) -> String {
     // tester can no longer tell which number to look at.
     let mut changed = true;
     let mut bare_verb_used = false;
-    while changed {
+    'stripping: while changed {
         changed = false;
         for noise in EXPECTED_NOISE {
             if !starts_with_ascii_ci(&s, noise) {
@@ -317,8 +317,16 @@ pub fn clean_expected(raw: &str) -> String {
             let rest = s[noise.len()..].trim();
             // And a strip that ate the subject is not a strip at all: what
             // is left has to still name the thing the tester looks at.
+            //
+            // Rejecting a prefix STOPS the stripping - it does not fall
+            // through to the next candidate. The list holds overlapping
+            // prefixes, longest first ("verify that " before "verify "), so
+            // skipping on to the shorter one strips the verb and leaves the
+            // connective behind: "Verify that is shown" was refused on
+            // "verify that ", matched "verify ", and came out as
+            // "That is shown."
             if rest.is_empty() || starts_with_a_bare_copula(rest) {
-                continue;
+                break 'stripping;
             }
             s = rest.to_string();
             bare_verb_used |= bare;

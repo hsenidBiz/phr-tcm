@@ -402,11 +402,16 @@ export default function RunnerWindow() {
       };
     },
     onSuccess: ({ recorded, dropped, unrecorded, extrasFailed }) => {
-      // An outcome Azure DevOps had no result row for is NOT the same as an
-      // attachment that failed, and it briefly shared that message - which
-      // reads "the outcomes were recorded, but this did not attach - add it
-      // in Azure DevOps". Both halves are false here: it was not recorded,
-      // and it cannot be added there. It has to be marked again, in here.
+      // Each message is guarded by the list it describes. They were briefly
+      // chained, with the last one reached by FALL-THROUGH - so an
+      // unrecorded-only run printed the suite message too, with
+      // "0 could not be:" and no names, contradicting the accurate warning
+      // just above it. A message must never be able to fire about a list
+      // that is empty.
+
+      // Marked, but Azure DevOps had no result row: NOT recorded, and not
+      // something that can be added over there. It has to be marked again
+      // in here - which is the opposite of the attachment message below.
       if (unrecorded.length > 0) {
         toast.warning(
           `${recorded} result(s) recorded. ${unrecorded.length} could NOT be - Azure DevOps ` +
@@ -415,9 +420,21 @@ export default function RunnerWindow() {
           { duration: 20000 },
         );
       }
-      // Step-by-step marks and screenshots are attached after the outcomes
-      // are already saved, so they cannot fail the run - but they used to
-      // fail in complete silence, and they are the evidence.
+
+      // Not in the suite at all, so there was never a test point for them.
+      if (dropped.length > 0) {
+        const one = dropped.length === 1;
+        toast.warning(
+          `${recorded} result(s) recorded, but ${dropped.length} could not be: ` +
+            `${dropped.join(", ")} - ${one ? "it is" : "they are"} not in this suite, so there ` +
+            `is no test point to record against. Add ${one ? "it" : "them"} to the suite and ` +
+            `mark again.`,
+          { duration: 20000 },
+        );
+      }
+
+      // Attached AFTER the outcomes are saved, so these genuinely are
+      // "recorded, but this did not attach".
       if (extrasFailed.length > 0) {
         toast.warning(
           `The outcomes were recorded, but this did not attach: ${extrasFailed.join(", ")}. ` +
@@ -425,22 +442,14 @@ export default function RunnerWindow() {
           { duration: 20000 },
         );
       }
-      if (dropped.length === 0 && unrecorded.length === 0) {
-        if (extrasFailed.length === 0) {
-          toast.success("Run recorded. Closing runner.");
-          setTimeout(() => getCurrentWindow().close(), 600);
-        }
-        return;
+
+      // Only a completely clean run closes the window. Anything else leaves
+      // it open so the tester can read what happened - and the Finish
+      // button is latched, so it cannot be sent a second time.
+      if (dropped.length === 0 && unrecorded.length === 0 && extrasFailed.length === 0) {
+        toast.success("Run recorded. Closing runner.");
+        setTimeout(() => getCurrentWindow().close(), 600);
       }
-      // Do NOT close: the tester needs to see which results did not land,
-      // and closing would take the only copy of them with it.
-      toast.warning(
-        `${recorded} result(s) recorded, but ${dropped.length} could not be: ` +
-          `${dropped.join(", ")} - ${dropped.length === 1 ? "it is" : "they are"} not in this ` +
-          `suite, so there is no test point to record against. Add ${dropped.length === 1 ? "it" : "them"} ` +
-          `to the suite and mark again.`,
-        { duration: 20000 },
-      );
     },
     onError: (e) => toast.error(e.message),
   });

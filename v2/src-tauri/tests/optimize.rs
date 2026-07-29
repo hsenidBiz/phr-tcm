@@ -918,3 +918,29 @@ fn a_word_that_merely_contains_a_place_word_is_not_a_place() {
         assert!(out[0].steps.len() > 1, "'{pre}' should still become a step");
     }
 }
+
+/// EXPECTED_NOISE holds overlapping prefixes, longest first. When the
+/// subject-guard refused the longer one, the loop moved on to the shorter
+/// one that overlaps it - stripping the verb and leaving the connective:
+/// "Verify that is shown" became "That is shown."
+#[test]
+fn refusing_a_prefix_does_not_fall_through_to_a_shorter_one() {
+    for raw in [
+        "Verify that is shown",
+        "Ensure that are listed",
+        "Check that was saved",
+    ] {
+        let out = clean_expected(raw);
+        assert!(
+            !out.starts_with("That ") && !out.starts_with("Are ") && !out.starts_with("Was "),
+            "'{raw}' left a dangling connective: {out}"
+        );
+    }
+
+    // The ordinary strips are untouched - a real subject still survives.
+    assert_eq!(clean_expected("Verify that the invoice is saved"), "The invoice is saved.");
+    assert_eq!(
+        clean_expected("Verify that the system should display an error"),
+        "Display an error."
+    );
+}

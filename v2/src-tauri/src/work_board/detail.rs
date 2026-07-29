@@ -168,13 +168,7 @@ impl AdoClient {
                 // The bytes carry their own type; ADO serves these as
                 // octet-stream, so sniff rather than trust a header we no
                 // longer see. PNG and GIF are unambiguous, JPEG starts FFD8.
-                let mime = match bytes.as_slice() {
-                    [0x89, b'P', b'N', b'G', ..] => "image/png",
-                    [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
-                    [b'G', b'I', b'F', ..] => "image/gif",
-                    _ => "image/png",
-                }
-                .to_string();
+                let mime = sniff_image_mime(&bytes).to_string();
                 if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
                     crate::applog::warn(format!(
                         "inline image {url} skipped at {} bytes",
@@ -250,6 +244,36 @@ fn host_of(url: &str) -> Option<String> {
         return None;
     }
     Some(host.to_ascii_lowercase())
+}
+
+/// The image type, from the bytes themselves.
+///
+/// Azure DevOps serves attachments as octet-stream, so the Content-Type
+/// header cannot answer this. Sniffing only PNG, JPEG and GIF and calling
+/// everything else PNG meant an SVG or a WebP - both perfectly ordinary in
+/// a work item - was labelled as something it is not, and the browser
+/// refused to render the data URI at all.
+fn sniff_image_mime(bytes: &[u8]) -> &'static str {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => "image/png",
+        [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
+        [b'G', b'I', b'F', ..] => "image/gif",
+        [b'B', b'M', ..] => "image/bmp",
+        // RIFF....WEBP
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => "image/webp",
+        _ => {
+            // SVG is text, and may open with an XML declaration, a comment
+            // or whitespace before the root element - so look for the tag
+            // rather than requiring it first.
+            let head = &bytes[..bytes.len().min(512)];
+            let text = String::from_utf8_lossy(head);
+            if text.contains("<svg") {
+                "image/svg+xml"
+            } else {
+                "image/png"
+            }
+        }
+    }
 }
 
 /// Whether this app may attach the user's Azure DevOps bearer token to a

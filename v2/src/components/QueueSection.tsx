@@ -301,13 +301,24 @@ export default function QueueSection({
       const ok = done.length;
       const failedCount = results.length - ok;
 
-      // Prune by IDENTITY, not by index. An index is only meaningful
-      // against the list that was sent, and by now the queue may have been
-      // reordered by a watched-file sync or emptied by a PBI switch -
-      // filtering by index there removes whichever rows happen to sit at
-      // those positions, which is how a submit on one PBI could delete
-      // another PBI's drafts.
-      const created = new Set(done.map((r) => sent[r.index]).filter(Boolean));
+      // Prune by CONTENT KEY, not by index and not by object reference.
+      //
+      // An index is only meaningful against the list that was sent - the
+      // queue may have been reordered or emptied meanwhile, and filtering
+      // by index then removes whichever rows happen to sit at those
+      // positions, which is how a submit on one PBI could delete another
+      // PBI's drafts.
+      //
+      // Object identity fixed that and introduced its own hole: a watched
+      // file saved DURING the create loop makes syncFromFile hand back a
+      // NEW object for the case it changed - which is the whole point of
+      // watching a file - so the reference no longer matched, the created
+      // draft stayed queued, and the next Create made a duplicate work
+      // item. The occurrence-aware key survives an object being replaced,
+      // and still tells two drafts that share a title apart.
+      const createdKeys = new Set(
+        keysFor(done.map((r) => sent[r.index]).filter(Boolean)),
+      );
       if (sentFor !== pbiId) {
         // The queue on screen is not the one that was submitted. Leave it
         // completely alone and say so, rather than guess.
@@ -315,7 +326,19 @@ export default function QueueSection({
           `${ok} test case(s) processed for PBI #${sentFor}. Switch back to it to see what is left.`,
         );
       } else {
-        setQueue((q) => q.filter((c) => !created.has(c)));
+        setQueue((q) => {
+          // Keys computed once for the live queue, then consumed one at a
+          // time - so two drafts sharing a key remove one each rather than
+          // both vanishing on the first match.
+          const liveKeys = keysFor(q);
+          const left = new Set(createdKeys);
+          return q.filter((_, i) => {
+            const k = liveKeys[i];
+            if (!left.has(k)) return true;
+            left.delete(k);
+            return false;
+          });
+        });
         if (failedCount === 0) toast.success(`${ok} test case(s) processed.`);
         else toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
       }
