@@ -230,6 +230,11 @@ fn bullets(text: &str) -> String {
 
 /// The plan file: what was agreed, in the developer's words, written next
 /// to the output so the decisions outlive the chat that produced them.
+/// The first line of every plan this tool writes. `begin` uses it to tell
+/// its own file from one that merely shares the name, so re-running never
+/// truncates something a developer wrote by hand.
+pub const PLAN_HEADING: &str = "# Test case plan - ";
+
 pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
     let authority = match a.authority.trim() {
         "spec" => "The specification only - ignore how the build currently behaves.",
@@ -258,7 +263,7 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
     };
 
     format!(
-        "# Test case plan - {feature}\n\n\
+        "{PLAN_HEADING}{feature}\n\n\
          Agreed with the developer before any case was written.\n\n\
          ## Scope\n\n\
          **Specifications**\n{specs}\n\n\

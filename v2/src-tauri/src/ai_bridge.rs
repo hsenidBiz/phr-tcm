@@ -297,7 +297,17 @@ async fn begin_writing(
 
     let plan = crate::intake::plan_markdown(&answers, &feature);
     let plan_path = crate::intake::plan_path(&answers.output_path);
-    let written = std::fs::write(&plan_path, &plan).is_ok();
+    // `fs::write` TRUNCATES, and this path is derived from a name the
+    // developer typed - so it can land on a file that was never ours.
+    // Re-running begin after refining the answers has to keep working, so
+    // one of our own plans is replaced; anything else is left alone.
+    // Blowing away somebody's notes to leave a plan in their place is not
+    // a trade this tool gets to make on its own.
+    let refused = match std::fs::read_to_string(&plan_path) {
+        Ok(existing) if !existing.starts_with(crate::intake::PLAN_HEADING) => true,
+        _ => false,
+    };
+    let written = !refused && std::fs::write(&plan_path, &plan).is_ok();
     (
         200,
         serde_json::json!({
@@ -306,6 +316,12 @@ async fn begin_writing(
             "plan_path": if written { serde_json::json!(plan_path) } else { serde_json::Value::Null },
             "plan_write_error": if written {
                 serde_json::Value::Null
+            } else if refused {
+                serde_json::json!(format!(
+                    "{plan_path} already exists and was not written by this tool, so it was left \
+                     untouched - the plan is in this response instead. Ask the developer for a \
+                     different output_path if it should be saved."
+                ))
             } else {
                 serde_json::json!(format!("could not write {plan_path} - the plan is in this response instead"))
             },
@@ -821,16 +837,40 @@ pub async fn start_listener(
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut buf = vec![0u8; 65536];
                 let mut used = 0usize;
-                // Read until headers+body are complete (or the cap).
-                let (method, target, tok, body) = loop {
-                    let Ok(n) = sock.read(&mut buf[used..]).await else { return };
+                // Read until headers+body are complete (or the cap). Every
+                // read is bounded: a client that opens a connection, sends
+                // half a request and stops used to hold this task and its
+                // socket for the life of the process, one per attempt.
+                let deadline = std::time::Duration::from_secs(15);
+                let parsed = loop {
+                    let read = tokio::time::timeout(deadline, sock.read(&mut buf[used..])).await;
+                    let Ok(Ok(n)) = read else { return };
                     if n == 0 { return; }
                     used += n;
-                    if let Some(parsed) = parse_http(&buf[..used]) {
-                        break parsed;
+                    match parse_http(&buf[..used]) {
+                        Parsed::Complete { method, target, token, body } => {
+                            break (method, target, token, body)
+                        }
+                        // Answer rather than close in silence: the proxy on
+                        // the other end is waiting on a response, and "the
+                        // connection went away" tells it nothing it can act
+                        // on or show the user.
+                        Parsed::Malformed => {
+                            let _ = sock
+                                .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                                .await;
+                            return;
+                        }
+                        Parsed::Incomplete => {}
                     }
-                    if used >= buf.len() { return; }
+                    if used >= buf.len() {
+                        let _ = sock
+                            .write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                            .await;
+                        return;
+                    }
                 };
+                let (method, target, tok, body) = parsed;
                 let (status, payload) = if tok.as_deref() != Some(state.token.as_str()) {
                     (401, String::new())
                 } else {
@@ -853,26 +893,68 @@ pub async fn start_listener(
     Ok((port, token))
 }
 
-/// Returns Some((method, target, token-header, body)) once the request is
-/// fully buffered; None while incomplete or on garbage.
-fn parse_http(raw: &[u8]) -> Option<(String, String, Option<String>, String)> {
-    let text = String::from_utf8_lossy(raw);
-    let head_end = text.find("\r\n\r\n")?;
-    let head = &text[..head_end];
+/// What a buffer of bytes off the socket amounts to so far.
+///
+/// The old version returned an Option, which conflated the two ways of not
+/// having a request: "keep reading" and "this will never be one". A
+/// malformed header read as "keep reading", so the connection sat there
+/// until the 64 KB cap - or, if the client simply stopped sending, until
+/// the end of the process, holding a task and a socket per attempt.
+pub enum Parsed {
+    Complete { method: String, target: String, token: Option<String>, body: String },
+    Incomplete,
+    Malformed,
+}
+
+/// Parse a request from the raw BYTES.
+///
+/// Offsets used to come from `String::from_utf8_lossy(raw)` and then index
+/// `raw`. Those are not the same string: every invalid byte becomes a
+/// three-byte U+FFFD, so one bad byte anywhere in the headers slid the body
+/// offset and the request was read from the wrong place. The head is found
+/// by byte, and only then decoded.
+pub fn parse_http(raw: &[u8]) -> Parsed {
+    let Some(head_end) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
+        // No blank line yet. A request line is short; if this much has
+        // arrived without one, it is not HTTP.
+        return if raw.len() > 16 * 1024 { Parsed::Malformed } else { Parsed::Incomplete };
+    };
+    let Ok(head) = std::str::from_utf8(&raw[..head_end]) else {
+        return Parsed::Malformed; // headers are not text
+    };
     let mut lines = head.lines();
-    let mut req = lines.next()?.split_whitespace();
-    let method = req.next()?.to_string();
-    let target = req.next()?.to_string();
+    let Some(mut req) = lines.next().map(str::split_whitespace) else {
+        return Parsed::Malformed;
+    };
+    let (Some(method), Some(target)) = (req.next(), req.next()) else {
+        return Parsed::Malformed;
+    };
     let mut token = None;
     let mut content_len = 0usize;
     for line in lines {
-        let (k, v) = line.split_once(':')?;
+        // A header we cannot read is not a reason to reject the request -
+        // only Content-Length has to be right, because it decides where
+        // the body ends.
+        let Some((k, v)) = line.split_once(':') else { continue };
         let v = v.trim();
-        if k.eq_ignore_ascii_case("x-bridge-token") { token = Some(v.to_string()); }
-        if k.eq_ignore_ascii_case("content-length") { content_len = v.parse().ok()?; }
+        if k.eq_ignore_ascii_case("x-bridge-token") {
+            token = Some(v.to_string());
+        }
+        if k.eq_ignore_ascii_case("content-length") {
+            match v.parse() {
+                Ok(n) => content_len = n,
+                Err(_) => return Parsed::Malformed,
+            }
+        }
     }
     let body_start = head_end + 4;
-    if raw.len() < body_start + content_len { return None; }
-    let body = String::from_utf8_lossy(&raw[body_start..body_start + content_len]).to_string();
-    Some((method, target, token, body))
+    let Some(end) = body_start.checked_add(content_len).filter(|e| *e <= raw.len()) else {
+        return Parsed::Incomplete; // body still arriving
+    };
+    Parsed::Complete {
+        method: method.to_string(),
+        target: target.to_string(),
+        token,
+        body: String::from_utf8_lossy(&raw[body_start..end]).to_string(),
+    }
 }

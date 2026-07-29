@@ -68,15 +68,36 @@ pub fn reply_body(outcome: &Result<(), String>) -> String {
 /// Returns the bound port.
 pub fn start(
     token: String,
-    on_note: impl Fn(NotePayload) -> Result<(), String> + Send + 'static,
+    on_note: impl Fn(NotePayload) -> Result<(), String> + Send + Sync + 'static,
 ) -> Result<u16, String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let on_note = std::sync::Arc::new(on_note);
+    let token = std::sync::Arc::new(token);
+    // Bounded so a flood cannot spawn threads without end. Loopback and
+    // token-guarded, so this only has to be larger than any honest burst.
+    let live = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    const MAX_LIVE: usize = 32;
     std::thread::Builder::new()
         .name("note-server".into())
         .spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
+                // Every connection used to be read to completion ON THIS
+                // THREAD, with no timeout. One peer that connected and then
+                // said nothing - and this port is on loopback with
+                // Access-Control-Allow-Origin: *, so any page the user
+                // visits can reach it - blocked the accept loop for good,
+                // and every comment save after it hung.
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(5)));
+                if live.load(std::sync::atomic::Ordering::SeqCst) >= MAX_LIVE {
+                    continue; // drop it; the page retries on the next keystroke
+                }
+                let (on_note, token, slot) = (on_note.clone(), token.clone(), live.clone());
+                live.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let spawned = std::thread::Builder::new().name("note-conn".into()).spawn(move || {
+                    let _guard = LiveGuard(slot);
                 // Small requests only: read up to 64KB, parse head + body.
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
@@ -99,7 +120,7 @@ pub fn start(
                                     // The secret is only in the page this app
                                     // generated, so a request without it did
                                     // not come from one.
-                                    outcome = if note.token == token {
+                                    outcome = if note.token == *token {
                                         on_note(note)
                                     } else {
                                         Err("this page is out of date - reopen it from the app".into())
@@ -122,10 +143,23 @@ pub fn start(
                     )
                     .as_bytes(),
                 );
+                });
+                if spawned.is_err() {
+                    live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                }
             }
         })
         .map_err(|e| e.to_string())?;
     Ok(port)
+}
+
+/// Releases a connection slot however the handler ends.
+struct LiveGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// Once the whole body (per Content-Length) has arrived, return it.

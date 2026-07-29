@@ -333,3 +333,72 @@ async fn optimize_and_transform_report_what_the_importer_could_not_read() {
         "transform must report it too"
     );
 }
+
+/// Offsets used to come from `String::from_utf8_lossy(raw)` and then index
+/// `raw`. Those are not the same string - every invalid byte becomes a
+/// three-byte U+FFFD - so one bad byte in the headers slid the body offset
+/// and the request was read from the wrong place.
+#[test]
+fn the_body_is_found_by_byte_not_by_a_lossy_copy() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+
+    // A header carrying a byte that is not valid UTF-8. Under the old
+    // parser the decoded head was longer than the real one, so body_start
+    // pointed past the start of the body.
+    let mut raw = b"POST /validate?x=1 HTTP/1.1\r\nX-Note: ".to_vec();
+    raw.push(0xFF);
+    raw.extend_from_slice(b"\r\nContent-Length: 9\r\n\r\n{\"a\":123}");
+    match parse_http(&raw) {
+        // Headers that are not text at all is a fine thing to refuse - what
+        // must never happen is reading the body from the wrong offset and
+        // treating the result as a real request.
+        Parsed::Malformed => {}
+        Parsed::Complete { body, .. } => assert_eq!(body, "{\"a\":123}", "body read at the wrong offset"),
+        Parsed::Incomplete => panic!("a complete request was read as incomplete"),
+    }
+
+    // The ordinary case still works, body and all.
+    let ok = b"POST /validate HTTP/1.1\r\nX-Bridge-Token: abc\r\nContent-Length: 9\r\n\r\n{\"a\":123}";
+    let Parsed::Complete { method, target, token, body } = parse_http(ok) else {
+        panic!("a well-formed request did not parse");
+    };
+    assert_eq!((method.as_str(), target.as_str()), ("POST", "/validate"));
+    assert_eq!(token.as_deref(), Some("abc"));
+    assert_eq!(body, "{\"a\":123}");
+}
+
+/// "Keep reading" and "this will never be a request" used to be the same
+/// answer (None). A malformed request therefore read as incomplete, and the
+/// connection sat there - to the 64 KB cap if the client kept sending, or
+/// for the life of the process if it simply stopped.
+#[test]
+fn a_malformed_request_is_told_apart_from_an_unfinished_one() {
+    use v2_lib::ai_bridge::{parse_http, Parsed};
+
+    // Genuinely unfinished: no blank line yet, and short.
+    assert!(matches!(parse_http(b"POST /validate HTTP/1.1\r\nX-A: 1\r\n"), Parsed::Incomplete));
+    // Headers complete, body still arriving.
+    assert!(matches!(
+        parse_http(b"POST /v HTTP/1.1\r\nContent-Length: 20\r\n\r\nshort"),
+        Parsed::Incomplete
+    ));
+
+    // Never going to be a request.
+    assert!(matches!(
+        parse_http(b"POST /v HTTP/1.1\r\nContent-Length: not-a-number\r\n\r\n"),
+        Parsed::Malformed
+    ));
+    assert!(matches!(parse_http(b"\r\n\r\n"), Parsed::Malformed), "no request line");
+    assert!(matches!(parse_http(b"GET\r\n\r\n"), Parsed::Malformed), "no target");
+
+    // A header line without a colon is not a reason to refuse the request -
+    // only Content-Length has to be right.
+    assert!(matches!(
+        parse_http(b"GET /ping HTTP/1.1\r\ngarbage-line\r\n\r\n"),
+        Parsed::Complete { .. }
+    ));
+
+    // Endless garbage with no blank line stops being "incomplete".
+    let flood = vec![b'x'; 17 * 1024];
+    assert!(matches!(parse_http(&flood), Parsed::Malformed));
+}

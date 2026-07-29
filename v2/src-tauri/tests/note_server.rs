@@ -109,3 +109,37 @@ fn a_note_without_the_secret_is_refused() {
     assert!(ok.contains("\"ok\":true"), "the app's own page must still save: {ok}");
     assert!(rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok());
 }
+
+/// Every connection used to be read to completion on the single accept
+/// thread, with no timeout - so one peer that connected and then said
+/// nothing blocked the loop for good, and every comment save after it hung.
+/// The port is on loopback with `Access-Control-Allow-Origin: *`, so any
+/// page the user visits can open that socket.
+#[test]
+fn a_silent_connection_does_not_stop_anyone_else_saving() {
+    let (tx, rx) = mpsc::channel();
+    let port = start("secret".into(), move |n| {
+        tx.send(n).unwrap();
+        Ok(())
+    })
+    .unwrap();
+
+    // Connect and say nothing. Held open for the whole test.
+    let _stalled: Vec<TcpStream> = (0..3)
+        .map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap())
+        .collect();
+
+    // A real save must still go through, promptly.
+    let started = std::time::Instant::now();
+    let resp = post(port, "/note", r#"{"token":"secret","org":"acme","case_id":7,"text":"still works"}"#);
+    assert!(resp.contains("\"ok\":true"), "a save was blocked by a silent peer: {resp}");
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap().text,
+        "still works"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "the save waited on the silent peers ({:?})",
+        started.elapsed()
+    );
+}
