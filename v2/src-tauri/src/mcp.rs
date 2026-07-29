@@ -9,13 +9,31 @@ use std::io::{BufRead, Write};
 
 type BridgeCall<'a> = &'a dyn Fn(&str, &str, &str) -> Result<(u16, String), String>;
 
+/// A JSON-RPC error object, for the cases where there is nothing else to
+/// say. `id` is null when the message could not be parsed far enough to
+/// find one - which is what the protocol prescribes, and is still an
+/// answer: returning None left the client waiting on an id forever.
+fn rpc_error(id: serde_json::Value, code: i32, message: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message },
+    })
+    .to_string()
+}
+
 pub fn handle_message(msg: &str, version: &str, call: BridgeCall) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(msg).ok()?;
-    let method = v["method"].as_str()?;
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(msg) else {
+        return Some(rpc_error(serde_json::Value::Null, -32700, "Parse error"));
+    };
     let id = v.get("id").cloned();
-    // Notifications (no id) never get a response.
+    // Notifications (no id) never get a response - that part was right.
     id.as_ref()?;
     let id = id.unwrap();
+    let Some(method) = v["method"].as_str() else {
+        // Has an id, so it is a request and something must come back.
+        return Some(rpc_error(id, -32600, "Invalid Request: no method"));
+    };
 
     let result = match method {
         "initialize" => serde_json::json!({
