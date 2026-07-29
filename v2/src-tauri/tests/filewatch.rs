@@ -233,3 +233,50 @@ fn only_the_claimed_write_is_absorbed() {
     std::fs::write(&file, "someone else").unwrap();
     assert!(rx.recv_timeout(SETTLE).is_ok(), "the next edit is reported");
 }
+
+/// The watch is on the DIRECTORY, not the file, so every event beside our
+/// file also reset the 200 ms coalescing window. A folder with any
+/// background traffic - a log being appended, a sync client, a download
+/// target - never went quiet for 200 ms, the drain never ended, and the
+/// change was never emitted: the followed file silently stopped updating
+/// the queue.
+#[test]
+fn a_busy_folder_cannot_starve_the_change_notification() {
+    let dir = std::env::temp_dir().join(format!("tcm-busy-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let target = dir.join("cases.json");
+    std::fs::write(&target, r#"{"test_cases":[]}"#).unwrap();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let state = v2_lib::filewatch::FileWatchState::default();
+    v2_lib::filewatch::start_with(&state, target.to_str().unwrap(), move |p| {
+        let _ = tx.send(p);
+    })
+    .unwrap();
+
+    // A noisy neighbour in the same folder, writing faster than the 200 ms
+    // window - which is what used to hold the drain open indefinitely.
+    let noisy = dir.clone();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_writer = stop.clone();
+    let writer = std::thread::spawn(move || {
+        let mut n = 0u32;
+        while !stop_writer.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = std::fs::write(noisy.join("build.log"), format!("line {n}"));
+            n += 1;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::fs::write(&target, r#"{"test_cases":[{"title":"New","steps":[]}]}"#).unwrap();
+
+    // MAX_COALESCE is 2s, so this must arrive well inside 10 even while the
+    // folder never goes quiet.
+    let got = rx.recv_timeout(std::time::Duration::from_secs(10));
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = writer.join();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(got.is_ok(), "the change was never emitted while the folder stayed busy");
+}

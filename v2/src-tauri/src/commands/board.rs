@@ -113,13 +113,51 @@ pub async fn update_work_item(
     patches: Vec<work_board::FieldPatch>,
 ) -> Result<(), ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    let fields: Vec<(String, String)> = patches
+    let client = ado::AdoClient::new(token);
+    let mut fields: Vec<(String, String)> = patches
         .into_iter()
         .map(|p| (p.reference_name, p.value))
         .collect();
-    ado::AdoClient::new(token)
-        .update_work_item_fields(&organization, &project, id, &fields)
-        .await
+
+    // System.State goes through the VERIFIED path, the same one the board's
+    // drag already uses. Azure DevOps can keep or rewrite a state on a 2xx
+    // when a rule blocks the transition, and this command threw the
+    // response away - so the drawer said "Saved", the item stayed where it
+    // was, and the drawer went on showing the state it had asked for.
+    // (It does not self-correct: the refetch is deeply equal, so react-query
+    // hands back the same object and the effect that reseeds the form never
+    // runs. The drawer and the board disagree until it is reopened.)
+    //
+    // Only this field. The rest cannot be compared: Description and the
+    // rich-text pages come back sanitised, System.AssignedTo comes back as
+    // an identity object rather than the unique name that was sent, and
+    // dates and numbers come back typed.
+    let state = fields
+        .iter()
+        .position(|(r, _)| r == "System.State")
+        .map(|i| fields.remove(i).1);
+
+    if !fields.is_empty() {
+        client
+            .update_work_item_fields(&organization, &project, id, &fields)
+            .await?;
+    }
+    if let Some(target) = state {
+        let actual = client
+            .set_work_item_state(&organization, &project, id, &target)
+            .await?;
+        if actual != target {
+            return Err(ado::AdoError::Http {
+                status: 409,
+                body: format!(
+                    "Azure DevOps kept #{id} in '{actual}' - moving to '{target}' is blocked by \
+                     work item rules (for example required dates). Any other changes were saved. \
+                     Fill the required fields, then set the state again."
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

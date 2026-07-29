@@ -648,6 +648,99 @@ fn a_real_duplicate_is_still_removed() {
     assert_eq!(report.duplicates_removed, 1);
 }
 
+/// The noise strips CHAINED. "Ensure Check Number is displayed" lost
+/// "ensure " and then "check " - because the subject's own first word was
+/// one of the verbs - and reached a real Azure DevOps test case as "Number
+/// is displayed.", where the tester can no longer tell which number.
+/// Banking fields ("Check Number", "Check Date") and UI labels ("Confirm
+/// button") all hit it.
+#[test]
+fn stripping_noise_never_eats_the_subject() {
+    assert_eq!(
+        clean_expected("Ensure Check Number is displayed on the receipt"),
+        "Check Number is displayed on the receipt."
+    );
+    assert_eq!(clean_expected("Verify check is cleared"), "Check is cleared.");
+    assert_eq!(clean_expected("Check that Confirm is enabled"), "Confirm is enabled.");
+
+    // The chaining that was WANTED still works - these have a real subject
+    // left after each strip.
+    assert_eq!(
+        clean_expected("Verify that the system should display an error"),
+        "Display an error."
+    );
+    assert_eq!(clean_expected("Verify that the invoice is saved"), "The invoice is saved.");
+}
+
+/// `". "` is not always a sentence end. "Approx. 30 results are returned"
+/// was cut at the abbreviation and became the single word "Approx".
+#[test]
+fn an_abbreviation_is_not_a_sentence_end() {
+    assert_eq!(
+        clean_expected("Approx. 30 results are returned"),
+        "Approx. 30 results are returned."
+    );
+    assert_eq!(clean_expected("No. 5 is highlighted"), "No. 5 is highlighted.");
+    // A real sentence boundary still cuts.
+    assert_eq!(
+        clean_expected("A confirmation appears. This proves the flow works."),
+        "A confirmation appears."
+    );
+}
+
+/// Shortening an expected result can DELETE an assertion - "The status
+/// changes to Shipped. A confirmation email is sent." keeps only the first,
+/// so nobody is ever asked to check the email. A bare counter could not
+/// tell that from "added a full stop", and named no case.
+#[test]
+fn an_expected_result_that_lost_text_is_named_in_the_report() {
+    let draft = vec![
+        case("Order ships", "M", "", vec![step(
+            "Ship it",
+            "The order status changes to Shipped. A confirmation email is sent to the customer.",
+        )]),
+        // Cosmetic only - sentence case and a full stop. Must NOT be listed.
+        case("Tidy only", "M", "", vec![step("Do it", "the invoice is saved")]),
+    ];
+    let (_out, report) = optimize(draft, None);
+
+    let named: Vec<&str> = report.expected_rewritten.iter().map(|e| e.title.as_str()).collect();
+    assert_eq!(named, vec!["Order ships"], "only material loss is listed");
+    let change = &report.expected_rewritten[0];
+    assert_eq!(change.step_number, 1);
+    assert!(change.before.contains("confirmation email"), "the report must show what was lost");
+    assert!(!change.after.contains("confirmation email"));
+}
+
+/// already_has_preamble looked only at steps[0], so a draft that opened
+/// with a setup line and launched at step 2 was judged to have no preamble
+/// and got a whole second one: launch, sign in and navigate, all twice.
+#[test]
+fn a_draft_whose_preamble_starts_at_step_two_is_not_given_another() {
+    let c = case(
+        "Approve a leave request",
+        "Leave Management",
+        "Signed in as a manager; User is on the Leave Management page",
+        vec![
+            step("Ensure the seed data script has run.", "Test employees exist."),
+            step("Launch the application.", "The application opens."),
+            step("Sign in as a manager.", "The home page is displayed."),
+            step("Navigate to the Leave Management page.", "The page is displayed."),
+            step("Approve the request", "It is approved"),
+        ],
+    );
+    let (out, report) = optimize(vec![c], Some("Launch the application."));
+
+    assert_eq!(report.preamble_steps_added, 0, "the draft already walks itself in");
+    assert_eq!(out[0].steps.len(), 5, "steps: {:?}", out[0].steps);
+    let launches = out[0]
+        .steps
+        .iter()
+        .filter(|s| s.action.to_lowercase().starts_with("launch"))
+        .count();
+    assert_eq!(launches, 1, "the launch step was duplicated: {:?}", out[0].steps);
+}
+
 /// A case with no steps does not survive the importer - it is skipped -
 /// so a remove that emptied one DELETED it from the draft, while the
 /// report said the operation had been applied. Same rule the writer keeps

@@ -39,6 +39,29 @@ pub struct OptimizeReport {
     /// Every precondition this run changed, with its before and after -
     /// so a caller can SEE what moved instead of diffing by hand.
     pub preconditions_rewritten: Vec<PreconditionChange>,
+    /// Every expected result this run SHORTENED, same reasoning. A count
+    /// alone said nothing about which case lost text, or what it said.
+    pub expected_rewritten: Vec<ExpectedChange>,
+}
+
+/// One expected result this run shortened, with what it used to say.
+#[derive(Debug, serde::Serialize)]
+pub struct ExpectedChange {
+    pub title: String,
+    pub step_number: usize,
+    pub before: String,
+    pub after: String,
+}
+
+/// Whether the difference is more than tidying. Sentence-casing the first
+/// letter and adding a trailing full stop happen to almost every step, and
+/// counting those drowned the changes that actually removed something.
+fn material_loss(before: &str, after: &str) -> bool {
+    let cosmetic = {
+        let t = before.trim_end_matches(['.', ' ']).trim();
+        if t.is_empty() { String::new() } else { format!("{}.", sentence_case(t)) }
+    };
+    after != cosmetic
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -169,6 +192,53 @@ fn starts_with_ascii_ci(s: &str, prefix: &str) -> bool {
     s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
+/// Abbreviations that end in a full stop and are followed by more of the
+/// SAME sentence. Without these, "Approx. 30 results are returned" was cut
+/// at the first `". "` and became the single word "Approx".
+const ABBREVIATIONS: &[&str] = &[
+    "approx", "no", "vs", "etc", "fig", "ref", "min", "max", "sec", "mins", "secs", "hrs", "e.g",
+    "i.e", "mr", "mrs", "ms", "dr", "st", "co", "inc", "ltd",
+];
+
+/// The end of the first real sentence, or None if the whole string is one.
+fn sentence_break(s: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(rel) = s[from..].find(". ") {
+        let at = from + rel;
+        let word = s[..at]
+            .rsplit(|c: char| c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        // A single letter is an initial ("J. Smith"), never a sentence end.
+        let is_abbrev = ABBREVIATIONS.contains(&word.as_str()) || word.chars().count() == 1;
+        if !is_abbrev {
+            return Some(at);
+        }
+        from = at + 2;
+    }
+    None
+}
+
+/// A one-word opener, as opposed to a phrase that could not be content.
+/// "verify " could start a real sentence about a Verify button; "verify
+/// that " could not.
+fn is_bare_verb(noise: &str) -> bool {
+    matches!(
+        noise,
+        "verify " | "ensure " | "check " | "confirm " | "validate " | "should " | "should be "
+    )
+}
+
+/// True when the text opens with a verb that has nothing in front of it -
+/// what is left after a noise strip has eaten the subject. "Is cleared",
+/// "are shown", "be displayed" name no thing for the tester to look at.
+fn starts_with_a_bare_copula(s: &str) -> bool {
+    const COPULAS: &[&str] = &["is ", "are ", "was ", "were ", "be ", "been ", "has ", "have "];
+    COPULAS.iter().any(|c| starts_with_ascii_ci(s, c))
+}
+
 /// Reduce an expected result to the observable outcome. Bails out and
 /// keeps the original whenever trimming would leave nothing useful -
 /// losing information is worse than an untidy sentence.
@@ -197,21 +267,51 @@ pub fn clean_expected(raw: &str) -> String {
         }
     }
 
-    // One sentence: the outcome.
-    if let Some(i) = s.find(". ") {
+    // One sentence: the outcome. `". "` is not always a sentence end - an
+    // abbreviation carries one too, and "Approx. 30 results are returned"
+    // was being cut down to the single word "Approx".
+    if let Some(i) = sentence_break(&s) {
         s = s[..i].to_string();
     }
 
     // Strip the openers that restate the act of testing.
+    //
+    // Bounded, and checked. Looping without either meant the prefixes
+    // CHAINED: "Ensure Check Number is displayed" lost "ensure " and then
+    // "check " - because the subject's first word happened to be one of
+    // the verbs - and came out as "Number is displayed." Banking fields
+    // ("Check Number", "Check Date") and UI labels ("Confirm button") hit
+    // that, and the result reaches a real Azure DevOps test case where the
+    // tester can no longer tell which number to look at.
     let mut changed = true;
+    let mut bare_verb_used = false;
     while changed {
         changed = false;
         for noise in EXPECTED_NOISE {
-            if starts_with_ascii_ci(&s, noise) {
-                s = s[noise.len()..].trim().to_string();
-                changed = true;
-                break;
+            if !starts_with_ascii_ci(&s, noise) {
+                continue;
             }
+            // A BARE verb fires at most once. "Ensure Check Number is
+            // displayed" is a sentence whose subject happens to begin with
+            // one of these words; after "ensure " has gone, a second match
+            // is the content, not another opener. The multi-word forms
+            // ("verify that ", "the system should ") still chain, which is
+            // what turns "Verify that the system should display an error"
+            // into "Display an error."
+            let bare = is_bare_verb(noise);
+            if bare && bare_verb_used {
+                continue;
+            }
+            let rest = s[noise.len()..].trim();
+            // And a strip that ate the subject is not a strip at all: what
+            // is left has to still name the thing the tester looks at.
+            if rest.is_empty() || starts_with_a_bare_copula(rest) {
+                continue;
+            }
+            s = rest.to_string();
+            bare_verb_used |= bare;
+            changed = true;
+            break;
         }
     }
 
@@ -412,17 +512,26 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
 /// step matching `entry` itself counts - re-running the optimizer (or
 /// passing an entry the draft already starts with) must be a no-op, not
 /// a second copy of the same step.
+/// How far in to look for a preamble the draft already wrote.
+///
+/// Only `steps.first()` was checked, so a draft that opened with a setup
+/// line - "Ensure the seed data script has run." - and launched at step 2
+/// was judged to have no preamble and got a whole second one prepended:
+/// launch, sign in and navigate, all twice. Bounded rather than the whole
+/// case, so a mid-case "navigate to the report tab" cannot suppress a
+/// preamble that is genuinely needed.
+const PREAMBLE_PROBE: usize = 4;
+
 fn already_has_preamble(c: &TestCase, entry: &str) -> bool {
-    let Some(first) = c.steps.first() else {
-        return false;
-    };
-    if norm_step(&first.action) == norm_step(entry) {
-        return true;
-    }
-    let l = first.action.to_lowercase();
-    ["launch", "open the app", "start the app", "log in", "sign in", "navigate to"]
-        .iter()
-        .any(|m| l.starts_with(m))
+    c.steps.iter().take(PREAMBLE_PROBE).any(|s| {
+        if norm_step(&s.action) == norm_step(entry) {
+            return true;
+        }
+        let l = s.action.to_lowercase();
+        ["launch", "open the app", "start the app", "log in", "sign in", "navigate to"]
+            .iter()
+            .any(|m| l.starts_with(m))
+    })
 }
 
 fn normalize_tags(raw: &str) -> String {
@@ -500,11 +609,28 @@ pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, Op
         c.steps.retain(|s| !s.action.trim().is_empty() || !s.expected.trim().is_empty());
         report.empty_steps_removed += before - c.steps.len();
 
-        for s in c.steps.iter_mut() {
+        for (i, s) in c.steps.iter_mut().enumerate() {
             s.action = squash(&s.action);
+            let original = squash(&s.expected);
             let cleaned_expected = clean_expected(&s.expected);
-            if cleaned_expected != squash(&s.expected) {
+            if cleaned_expected != original {
                 report.expected_trimmed += 1;
+                // A count on its own could not tell "added a full stop"
+                // from "deleted the second assertion" - and this function
+                // does delete: an expected of "The status changes to
+                // Shipped. A confirmation email is sent." keeps only the
+                // first, so nobody is ever asked to check the email. The
+                // preconditions record next to this one names every change
+                // with its before and after; so does this one now, and a
+                // dry run shows it before anything is imported.
+                if material_loss(&original, &cleaned_expected) {
+                    report.expected_rewritten.push(ExpectedChange {
+                        title: c.title.clone(),
+                        step_number: i + 1,
+                        before: original,
+                        after: cleaned_expected.clone(),
+                    });
+                }
             }
             s.expected = cleaned_expected;
         }
@@ -517,6 +643,16 @@ pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, Op
         // sign-in context that was never re-emitted.
         if !already_has_preamble(&c, entry) {
             let (pre, consumed) = preamble_steps(&c, entry);
+            // Subtractive, as well as the probe above. The probe decides
+            // WHETHER a preamble is needed; this decides which of its steps
+            // the case does not already have, so a draft that writes its
+            // own "Sign in as a manager." further down never ends up with
+            // two of them however the probe judged it.
+            let existing: Vec<String> = c.steps.iter().map(|s| norm_step(&s.action)).collect();
+            let pre: Vec<Step> = pre
+                .into_iter()
+                .filter(|p| !existing.contains(&norm_step(&p.action)))
+                .collect();
             report.preamble_steps_added += pre.len();
             let mut steps = pre;
             steps.append(&mut c.steps);

@@ -18,7 +18,16 @@ export function describeAdoError(e: AdoError): string {
         const m = JSON.parse(e.detail.body)?.message;
         if (typeof m === "string" && m.trim()) return m;
       } catch {
-        // body wasn't JSON - fall through to the generic line
+        // Not JSON. That is the normal shape for the errors this APP
+        // raises about Azure DevOps rather than receives from it - status
+        // 0 with a written explanation ("Run #12 was created but those
+        // outcomes were NOT recorded..."). Every one of those was being
+        // shown as "Azure DevOps returned HTTP 0.", so the sentence
+        // written to tell the user what to do never reached them.
+        const body = e.detail.body?.trim() ?? "";
+        // A server error page is not an explanation - only prose, and only
+        // as much of it as belongs in a toast.
+        if (body && !body.startsWith("<") && body.length <= 400) return body;
       }
       return `Azure DevOps returned HTTP ${e.detail.status}.`;
     }

@@ -31,6 +31,16 @@ use crate::events::WatchedFileChanged;
 /// finish before reading, so the file isn't hashed half-written.
 const COALESCE: Duration = Duration::from_millis(200);
 
+/// A hard ceiling on how long one burst may be coalesced.
+///
+/// The watch is on the DIRECTORY, not the file, so every event beside our
+/// file also landed in this channel and reset the 200 ms window. A folder
+/// with any background traffic - a log being appended, OneDrive or Dropbox
+/// syncing, a download target - never went quiet for 200 ms, so the drain
+/// never ended and the change was never emitted: the followed file simply
+/// stopped updating the queue, with nothing said and nothing to see.
+const MAX_COALESCE: Duration = Duration::from_secs(2);
+
 /// Content fingerprint of a file, or `None` when it can't be read right
 /// now - deleted, or momentarily absent mid-rename. Not an error: the
 /// watcher simply has nothing to report yet.
@@ -119,9 +129,20 @@ where
             };
             let mut ours = touched_us(&first);
             // Drain the rest of the burst (and let a rename settle) before
-            // reading, so a half-written file is never hashed.
-            while let Ok(next) = rx.recv_timeout(COALESCE) {
-                ours |= touched_us(&next);
+            // reading, so a half-written file is never hashed - but never
+            // for longer than MAX_COALESCE, however busy the folder is.
+            let deadline = std::time::Instant::now() + MAX_COALESCE;
+            loop {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(COALESCE.min(left)) {
+                    Ok(next) => ours |= touched_us(&next),
+                    // Quiet for the window, or the watcher is gone. Either
+                    // way this burst is over.
+                    Err(_) => break,
+                }
             }
             if !ours {
                 continue;
