@@ -77,11 +77,32 @@ fn render(doc: &Value) -> Result<String, String> {
 /// against the wrong case.
 pub fn patch_case_comment(json: &str, target: &CaseTarget, text: &str) -> Result<String, String> {
     let mut doc = document(json)?;
-    let case = cases_of(&mut doc)?
-        .iter_mut()
-        .find(|c| target.matches(c))
-        .ok_or_else(|| format!("'{}' is not in this file", target.title))?;
-    let obj = case
+    let cases = cases_of(&mut doc)?;
+    // Not `find`. A draft case has no id, so its title is its whole
+    // identity, and a file may hold the same title twice - the importer
+    // warns about that and still imports both. Taking the first match wrote
+    // the comment onto the wrong case and reported it saved. The payload
+    // from the page carries no way to tell the two apart, so the only
+    // honest answer is to say which one is ambiguous.
+    let hits: Vec<usize> = cases
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| target.matches(c))
+        .map(|(i, _)| i)
+        .collect();
+    let idx = match hits.as_slice() {
+        [only] => *only,
+        [] => return Err(format!("'{}' is not in this file", target.title)),
+        many => {
+            return Err(format!(
+                "'{}' appears {} times in this file, so there is no way to tell which one this \
+                 comment is about - give them different titles, or comment on the card in the app.",
+                target.title,
+                many.len()
+            ))
+        }
+    };
+    let obj = cases[idx]
         .as_object_mut()
         .ok_or("a test case in this file is not an object")?;
     if text.trim().is_empty() {

@@ -56,6 +56,34 @@ fn an_id_less_target_does_not_claim_an_identified_case() {
     assert!(patch_case_comment(FILE, &target, "x").is_err());
 }
 
+/// A draft case has no id, so its title is its whole identity - and the
+/// importer warns about a duplicate title without refusing it, so a file
+/// really can hold two. Taking the first match wrote the comment onto the
+/// wrong case and said it was saved. Nothing in the payload can tell them
+/// apart, so the only honest answer names the problem.
+#[test]
+fn a_title_that_appears_twice_is_refused_rather_than_guessed() {
+    let dupes = r#"{ "test_cases": [
+        { "id": null, "title": "Sign in", "steps": [] },
+        { "id": null, "title": "  SIGN IN ", "steps": [] }
+    ] }"#;
+    let err = patch_case_comment(dupes, &CaseTarget { id: None, title: "Sign in".into() }, "x")
+        .unwrap_err();
+    assert!(err.contains("appears 2 times"), "got {err}");
+    assert!(err.contains("Sign in"), "got {err}");
+
+    // An id still resolves it - that is what an id is for.
+    let with_id = r#"{ "test_cases": [
+        { "id": 7, "title": "Sign in", "steps": [] },
+        { "id": null, "title": "Sign in", "steps": [] }
+    ] }"#;
+    let out =
+        patch_case_comment(with_id, &CaseTarget { id: Some(7), title: "Sign in".into() }, "ok")
+            .unwrap();
+    assert_eq!(cases(&out)[0]["comment"], "ok");
+    assert!(cases(&out)[1].get("comment").is_none());
+}
+
 #[test]
 fn a_case_that_is_not_in_this_file_is_refused_by_name() {
     let target = CaseTarget { id: None, title: "Never written".into() };

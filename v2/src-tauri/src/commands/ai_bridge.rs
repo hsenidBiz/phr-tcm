@@ -8,7 +8,14 @@ use crate::state::get_fresh_token;
 
 /// Managed state: the running bridge, if any.
 #[derive(Default)]
-pub struct BridgeHandle(pub std::sync::Mutex<Option<(SharedBridge, u16)>>);
+pub struct BridgeHandle {
+    pub running: std::sync::Mutex<Option<(SharedBridge, u16)>>,
+    /// Held for the whole of a start. The `running` lock cannot be, because
+    /// binding the listener is async and a std mutex must not be held across
+    /// an await - so without this, two callers both saw None and both bound
+    /// a port. See `bridge_status`.
+    starting: tokio::sync::Mutex<()>,
+}
 
 #[derive(serde::Serialize, specta::Type)]
 pub struct BridgeStatus {
@@ -23,13 +30,16 @@ pub struct BridgeStatus {
 #[specta::specta]
 pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String> {
     use tauri::Manager;
-    // Already running? Reuse it.
-    {
-        let handle = app.state::<BridgeHandle>();
-        let guard = handle.0.lock().unwrap();
-        if let Some((_, port)) = guard.as_ref() {
-            return Ok(BridgeStatus { port: *port, mcp_exe: mcp_exe_path() });
-        }
+    let handle = app.state::<BridgeHandle>();
+    // One start at a time. The frontend pushes context from an effect that
+    // can fire twice in a row (org and the field refs resolving in adjacent
+    // commits), and both calls used to get past the check below while the
+    // other was still awaiting the bind - leaving a second listener on a
+    // loopback port that no handshake file names, serving a context that is
+    // never updated again.
+    let _starting = handle.starting.lock().await;
+    if let Some((_, port)) = handle.running.lock().unwrap().as_ref() {
+        return Ok(BridgeStatus { port: *port, mcp_exe: mcp_exe_path() });
     }
     let shared = BridgeState::new(BridgeContext::default(), app.package_info().version.to_string());
     let app_for_client = app.clone();
@@ -45,8 +55,7 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
         Some(crate::ai_bridge::handshake_path()),
     )
     .await?;
-    let handle = app.state::<BridgeHandle>();
-    *handle.0.lock().unwrap() = Some((shared, port));
+    *handle.running.lock().unwrap() = Some((shared, port));
     Ok(BridgeStatus { port, mcp_exe: mcp_exe_path() })
 }
 
@@ -64,7 +73,7 @@ pub fn set_bridge_context(
 ) {
     use tauri::Manager;
     let handle = app.state::<BridgeHandle>();
-    let guard = handle.0.lock().unwrap();
+    let guard = handle.running.lock().unwrap();
     if let Some((shared, _)) = guard.as_ref() {
         *shared.ctx.lock().unwrap() = BridgeContext {
             org: organization,

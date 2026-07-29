@@ -339,18 +339,22 @@ impl AdoClient {
         if !iteration_path.is_empty() {
             patch.push(serde_json::json!({"op": "add", "path": "/fields/System.IterationPath", "value": iteration_path}));
         }
-        if !tc.tags.is_empty() {
-            patch.push(serde_json::json!({"op": "add", "path": "/fields/System.Tags", "value": tc.tags}));
+        // Blankness is judged AFTER trimming: a field holding only spaces is
+        // blank to the person who typed it, and treating it as content
+        // wrote a module that matches no picklist entry and a precondition
+        // of "<div>   </div>" - a field that looks empty and is not.
+        if !tc.tags.trim().is_empty() {
+            patch.push(serde_json::json!({"op": "add", "path": "/fields/System.Tags", "value": tc.tags.trim()}));
         }
         if let Some(m) = module_ref {
-            if !tc.module_value.is_empty() {
-                patch.push(serde_json::json!({"op": "add", "path": format!("/fields/{m}"), "value": tc.module_value}));
+            if !tc.module_value.trim().is_empty() {
+                patch.push(serde_json::json!({"op": "add", "path": format!("/fields/{m}"), "value": tc.module_value.trim()}));
             }
         }
         if let Some(p) = preconditions_ref {
-            if !tc.preconditions.is_empty() {
+            if !tc.preconditions.trim().is_empty() {
                 patch.push(serde_json::json!({"op": "add", "path": format!("/fields/{p}"),
-                    "value": format!("<div>{}</div>", escape_html(&tc.preconditions))}));
+                    "value": format!("<div>{}</div>", escape_html(tc.preconditions.trim()))}));
             }
         }
         let url = format!(
@@ -455,23 +459,27 @@ impl AdoClient {
         }
         // A blank is either "no opinion" or "erase it", and only the caller
         // knows which.
-        let writes = |value: &str| blanks == BlankPolicy::Clear || !value.is_empty();
+        // Trimmed, because a field holding only spaces is blank to the
+        // person who left it that way. Judging it as content meant a Skip
+        // import overwrote real tags with a space, and wrote a precondition
+        // of "<div>   </div>" - which is the "looks blank but is not" case
+        // the Clear branch below already went out of its way to avoid.
+        let writes = |value: &str| blanks == BlankPolicy::Clear || !value.trim().is_empty();
         if writes(&tc.tags) {
-            fields.push(("System.Tags".to_string(), tc.tags.clone()));
+            fields.push(("System.Tags".to_string(), tc.tags.trim().to_string()));
         }
         if let Some(m) = module_ref {
             if writes(&tc.module_value) {
-                fields.push((m.to_string(), tc.module_value.clone()));
+                fields.push((m.to_string(), tc.module_value.trim().to_string()));
             }
         }
         if let Some(p) = preconditions_ref {
             if writes(&tc.preconditions) {
-                // Empty stays empty - wrapping "" in <div></div> would leave
-                // a field that looks blank but is not.
-                let html = if tc.preconditions.is_empty() {
+                let text = tc.preconditions.trim();
+                let html = if text.is_empty() {
                     String::new()
                 } else {
-                    format!("<div>{}</div>", escape_html(&tc.preconditions))
+                    format!("<div>{}</div>", escape_html(text))
                 };
                 fields.push((p.to_string(), html));
             }

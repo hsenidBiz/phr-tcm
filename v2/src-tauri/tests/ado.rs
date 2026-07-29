@@ -810,3 +810,60 @@ async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
         }
     }
 }
+
+/// A field holding only spaces is blank to the person who left it that way.
+/// Judged as content, a Skip import overwrote real tags with a space, sent a
+/// module value that matches no picklist entry, and wrote a precondition of
+/// "<div>   </div>" - the "looks blank but is not" state the Clear branch
+/// already went out of its way to avoid.
+#[tokio::test]
+async fn a_field_of_only_spaces_counts_as_blank() {
+    let spaces = v2_lib::model::TestCase {
+        title: "T".into(),
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into() }],
+        automation_status: "Planned".into(),
+        tags: "   ".into(),
+        module_value: "\t ".into(),
+        preconditions: " \n ".into(),
+        update_id: Some(55),
+        ..Default::default()
+    };
+
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 55, "fields": {} })),
+        )
+        .mount(&server)
+        .await;
+    AdoClient::with_base_url("t".into(), server.uri())
+        .update_test_case_from_model(
+            "o", "p", 55, &spaces,
+            Some("Custom.Module"), Some("Custom.Pre"), None, BlankPolicy::Skip,
+        )
+        .await
+        .unwrap();
+    let body =
+        String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).to_string();
+    for field in ["System.Tags", "Custom.Module", "Custom.Pre"] {
+        assert!(!body.contains(field), "{field} was written from whitespace:\n{body}");
+    }
+    assert!(!body.contains("<div>"), "whitespace became a non-empty precondition:\n{body}");
+
+    // And a real value still travels trimmed, not padded.
+    let padded = v2_lib::model::TestCase { tags: "  smoke  ".into(), ..spaces };
+    let server2 = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 55, "fields": {} })),
+        )
+        .mount(&server2)
+        .await;
+    AdoClient::with_base_url("t".into(), server2.uri())
+        .update_test_case_from_model("o", "p", 55, &padded, None, None, None, BlankPolicy::Skip)
+        .await
+        .unwrap();
+    let body2 =
+        String::from_utf8_lossy(&server2.received_requests().await.unwrap()[0].body).to_string();
+    assert!(body2.contains(r#""smoke""#), "tags were not trimmed:\n{body2}");
+}
