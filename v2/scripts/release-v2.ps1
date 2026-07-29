@@ -9,6 +9,12 @@ param(
     [switch]$SkipChecks
 )
 $ErrorActionPreference = "Stop"
+trap {
+    # Restore the shell we borrowed before the failure propagates.
+    if ($me) {
+        try { $me.ProcessorAffinity = $affinityWas; $me.PriorityClass = $priorWas } catch {}
+    }
+}
 $v2 = Split-Path -Parent $PSScriptRoot            # v2/
 $repoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
 
@@ -31,15 +37,30 @@ if ($changelog -notmatch [regex]::Escape("version: `"$Version`"")) {
 }
 
 # --- Keep the machine usable -----------------------------------------------
-# A release compiles the whole Rust tree in release mode, which will take every
-# core it is given and leave the desktop unresponsive for minutes. Cap it at
-# ~70% and leave the rest for whoever is sitting in front of the machine.
-# Computed from THIS machine rather than hardcoded, so it travels.
-$jobs = [Math]::Max(1, [Math]::Floor([Environment]::ProcessorCount * 0.7))
-# CARGO_BUILD_JOBS is the lever that reaches cargo through `npm run tauri
-# build`, which shells out to it - there is no flag to pass down that chain.
+# A release compiles the whole Rust tree in release mode and will otherwise
+# take every core, leaving the desktop unresponsive for minutes.
+#
+# CARGO_BUILD_JOBS alone is NOT enough, and it was tried first: it caps how
+# many rustc PROCESSES run at once, and nothing else. Each rustc is itself
+# multi-threaded, the linker is heavily threaded and ignores -j entirely, and
+# the vite build on the front half has its own workers. The result printed
+# "16 of 24 cores" and still pegged all 24.
+#
+# ProcessorAffinity is the ceiling that actually holds: a child process
+# inherits its parent's mask on Windows, so setting it here bounds cargo,
+# rustc, the linker, node and everything else this script starts. Priority is
+# the other half - the cores it DOES use yield to whatever is in the
+# foreground, so the machine stays responsive rather than merely 30% idle.
+$total = [Environment]::ProcessorCount
+$jobs = [Math]::Max(1, [Math]::Floor($total * 0.7))
+$me = [System.Diagnostics.Process]::GetCurrentProcess()
+$priorWas = $me.PriorityClass
+$affinityWas = $me.ProcessorAffinity
+# Low $jobs bits set: cores 0..$jobs-1.
+$me.ProcessorAffinity = [IntPtr]([int64][Math]::Pow(2, $jobs) - 1)
+$me.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
 $env:CARGO_BUILD_JOBS = $jobs
-Write-Host "Building with $jobs of $([Environment]::ProcessorCount) cores."
+Write-Host "Building on $jobs of $total cores at below-normal priority."
 
 # --- Gates -----------------------------------------------------------------
 if (-not $SkipChecks) {
@@ -72,4 +93,8 @@ vpk upload github --repoUrl $repoUrl --publish --releaseName "v$Version" --tag "
 if ($LASTEXITCODE -ne 0) { throw "vpk upload failed with exit code $LASTEXITCODE" }
 
 gh release view "v$Version" --repo AvinAlwis/azure-devops-test-case-manager-v2-releases
+# The caller's shell keeps whatever we set here, so put it back - on the
+# error paths too, which is why this is a trap rather than a last line.
+$me.ProcessorAffinity = $affinityWas
+$me.PriorityClass = $priorWas
 Write-Host "Released V2 v$Version"
