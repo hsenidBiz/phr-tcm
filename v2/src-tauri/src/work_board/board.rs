@@ -234,7 +234,8 @@ impl AdoClient {
     }
 
     /// Allowed (picklist) values for a field on a type - e.g. Activity.
-    /// Absent field / no picklist -> empty (v1 get_field_allowed_values).
+    /// An empty list means the field has no picklist (free text). A failed
+    /// lookup is an Err - the two are not the same thing.
     pub async fn get_field_allowed_values(
         &self,
         org: &str,
@@ -252,16 +253,20 @@ impl AdoClient {
             urlencoding::encode(wi_type),
             urlencoding::encode(field_ref)
         );
-        match self.get_json(url).await {
-            Ok(data) => Ok(data["allowedValues"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()),
-            Err(_) => Ok(vec![]),
-        }
+        // The error is PROPAGATED. Mapping it to an empty list here made a
+        // failed lookup indistinguishable from "this field is free text",
+        // and callers read empty as "nothing to check against" - so a 403
+        // or a dropped connection came out the far end as a clean bill of
+        // health. Callers that genuinely want to shrug can still do so, but
+        // now they have to say it.
+        let data = self.get_json(url).await?;
+        Ok(data["allowedValues"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect())
     }
 
     /// The board in one call, ported from v1 _fetch_work: scope is "me"

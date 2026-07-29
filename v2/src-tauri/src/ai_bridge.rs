@@ -141,8 +141,11 @@ pub async fn route(
 /// JSON the assistant sends and hands back a new one. Nothing is written
 /// anywhere, and Azure DevOps is never touched.
 fn optimize_json(body: &str, target: &str) -> (u16, String) {
-    let cases = match parse_cases(body) {
-        Ok(c) => c,
+    // Warnings are not failures - a long title or a comma in a tag is worth
+    // saying and not worth refusing over - but they must reach the caller,
+    // because some of them mean a case was dropped.
+    let (cases, import_warnings) = match parse_cases_with_warnings(body) {
+        Ok(v) => v,
         Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
     };
     let entry = q(target, "entry");
@@ -155,6 +158,7 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
             200,
             serde_json::json!({
                 "report": report,
+                "import_warnings": import_warnings,
                 "note": "Dry run - no test_cases returned. Call again without dry_run to get the transformed JSON.",
             })
             .to_string(),
@@ -170,7 +174,11 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
         serde_json::json!({
             "test_cases": doc.get("test_cases").cloned().unwrap_or(doc),
             "report": report,
-            "note": "Hand this JSON to the developer as the file to import. The report explains what was reordered and why.",
+            // Anything the importer could not read. A case it skipped is
+            // simply not in the output, so silence here read as success
+            // over a draft that had quietly got shorter.
+            "import_warnings": import_warnings,
+            "note": "Hand this JSON to the developer as the file to import. The report explains what was reordered and why. Check import_warnings - a case listed there was NOT read and is not in this output.",
         })
         .to_string(),
     )
@@ -189,8 +197,8 @@ fn transform_json(body: &str) -> (u16, String) {
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
     };
-    let cases = match parse_cases(&draft) {
-        Ok(c) => c,
+    let (cases, import_warnings) = match parse_cases_with_warnings(&draft) {
+        Ok(v) => v,
         Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
     };
     let ops = match crate::transform::parse_ops(&doc["operations"]) {
@@ -208,6 +216,7 @@ fn transform_json(body: &str) -> (u16, String) {
         serde_json::json!({
             "test_cases": parsed.get("test_cases").cloned().unwrap_or(parsed),
             "report": report,
+            "import_warnings": import_warnings,
         })
         .to_string(),
     )
@@ -232,8 +241,8 @@ async fn begin_writing(
     client: Option<&crate::ado::AdoClient>,
 ) -> (u16, String) {
     let feature = q(target, "feature").unwrap_or_default();
-    let modules = match client {
-        Some(c) => allowed_modules(ctx, c).await,
+    let modules: Vec<String> = match client {
+        Some(c) => allowed_modules(ctx, c).await.known().to_vec(),
         None => vec![],
     };
 
@@ -354,10 +363,18 @@ async fn validate_json(
         Ok((cases, mut warnings)) => {
             if let Some(c) = client {
                 let allowed = allowed_modules(ctx, c).await;
-                if !allowed.is_empty() {
+                // Say so rather than pass silently: "no warnings" has to
+                // mean "checked and fine", not "could not look".
+                if let Modules::Unavailable(why) = &allowed {
+                    warnings.push(format!(
+                        "Module values could not be read from Azure DevOps ({why}), so the                          Module on each case was NOT checked. Everything else was."
+                    ));
+                }
+                let known = allowed.known();
+                if !known.is_empty() {
                     for (i, tc) in cases.iter().enumerate() {
                         let m = tc.module_value.trim();
-                        if !m.is_empty() && !allowed.iter().any(|a| a.eq_ignore_ascii_case(m)) {
+                        if !m.is_empty() && !known.iter().any(|a| a.eq_ignore_ascii_case(m)) {
                             warnings.push(format!(
                                 "Test case {} ('{}'): Module '{}' is not an allowed value in \
                                  this organization - pick one from get_writing_guide.",
@@ -398,16 +415,12 @@ fn parse_cases_with_warnings(
 /// Run a draft through the app's REAL importer to get `TestCase`s, so
 /// these tools accept exactly what the Import File tab accepts (bare
 /// array, `test_cases` wrapper, the lot).
+/// One implementation, so a caller cannot quietly drop the warnings by
+/// choosing the wrong helper - which is exactly what optimize and transform
+/// were doing: the importer skips a case it cannot read and says so, and
+/// both tools threw that away and reported success over a shorter draft.
 fn parse_cases(body: &str) -> Result<Vec<crate::model::TestCase>, String> {
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = std::env::temp_dir().join("tcm-v2-bridge");
-    let _ = std::fs::create_dir_all(&dir);
-    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = dir.join(format!("draft-{}-{}.json", std::process::id(), seq));
-    std::fs::write(&path, body).map_err(|_| "could not stage the draft".to_string())?;
-    let parsed = crate::import_parser::parse_file(path.to_str().unwrap_or_default());
-    let _ = std::fs::remove_file(&path);
-    parsed.map(|(cases, _warnings)| cases)
+    parse_cases_with_warnings(body).map(|(cases, _)| cases)
 }
 
 /// The project's existing tag names, for suggesting tags that match what
@@ -471,23 +484,48 @@ const GUIDE_TAG_LIMIT: usize = 60;
 
 /// The org's Module values: configured picklist first, observed values as
 /// the fallback - the same discovery the app's own module picker uses.
-async fn allowed_modules(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> Vec<String> {
-    match &ctx.module_ref {
-        Some(fref) => {
-            let picklist = client
-                .get_field_allowed_values(&ctx.org, &ctx.project, "Test Case", fref)
-                .await
-                .unwrap_or_default();
-            if picklist.is_empty() {
-                client
-                    .field_values_in_use(&ctx.org, &ctx.project, fref)
-                    .await
-                    .unwrap_or_default()
-            } else {
-                picklist
-            }
+/// What is known about the Module values a case may carry.
+///
+/// Three states, not one list. Collapsing them lost the only one that
+/// matters: a failed lookup used to come back as an empty Vec, which every
+/// caller read as "no constraint to check", so validate_cases answered a
+/// dropped connection or a 403 with a clean bill of health.
+pub enum Modules {
+    /// This organization has no Module field at all.
+    NotConfigured,
+    /// The values a case may carry. Empty means the field is free text.
+    Known(Vec<String>),
+    /// The lookup failed, so nothing can be said about Module either way.
+    Unavailable(String),
+}
+
+async fn allowed_modules(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> Modules {
+    let Some(fref) = &ctx.module_ref else {
+        return Modules::NotConfigured;
+    };
+    match client
+        .get_field_allowed_values(&ctx.org, &ctx.project, "Test Case", fref)
+        .await
+    {
+        // A picklist with entries is the answer.
+        Ok(list) if !list.is_empty() => Modules::Known(list),
+        // No picklist: the field is free text, so fall back to what the
+        // project actually uses. That call failing is still a failure.
+        Ok(_) => match client.field_values_in_use(&ctx.org, &ctx.project, fref).await {
+            Ok(used) => Modules::Known(used),
+            Err(e) => Modules::Unavailable(e.to_string()),
+        },
+        Err(e) => Modules::Unavailable(e.to_string()),
+    }
+}
+
+impl Modules {
+    /// The values to check against, when there are any to check against.
+    pub fn known(&self) -> &[String] {
+        match self {
+            Modules::Known(v) => v,
+            _ => &[],
         }
-        None => vec![],
     }
 }
 
@@ -499,11 +537,20 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         .map(|v| format!("\"{v}\""))
         .collect::<Vec<_>>()
         .join(" or ");
-    let modules = allowed_modules(ctx, client).await;
-    let module_lines = if modules.is_empty() {
-        "Module values could not be discovered - ask the developer.".to_string()
-    } else {
-        modules.iter().map(|m| format!("- `{m}`")).collect::<Vec<_>>().join("\n")
+    let module_lines = match allowed_modules(ctx, client).await {
+        Modules::Known(v) if !v.is_empty() => {
+            v.iter().map(|m| format!("- `{m}`")).collect::<Vec<_>>().join("\n")
+        }
+        Modules::Known(_) | Modules::NotConfigured => {
+            "This organization has no Module values to choose from - leave it blank.".to_string()
+        }
+        // Deliberately not the same sentence as above: one says there is
+        // nothing to pick, the other says we could not find out. An
+        // assistant told the first will confidently leave Module blank.
+        Modules::Unavailable(why) => format!(
+            "Module values could not be read from Azure DevOps ({why}) - ask the developer \
+             rather than guessing."
+        ),
     };
     // Cache-only: the guide must not become another request. If nothing is
     // cached yet, `get_tags` will fill it on demand.

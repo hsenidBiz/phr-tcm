@@ -290,3 +290,46 @@ async fn no_configuration_disables_nothing() {
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(v["disabled"].as_array().unwrap().is_empty());
 }
+
+/// The importer skips a case it cannot read and says why. Both tools threw
+/// those warnings away, so a draft came back shorter with no indication -
+/// "success" over work that had quietly gone missing.
+#[tokio::test]
+async fn optimize_and_transform_report_what_the_importer_could_not_read() {
+    // Two cases; the second has no steps, which the importer skips.
+    let draft = serde_json::json!({
+        "test_cases": [
+            { "id": null, "title": "Good", "steps": [{ "action": "Do", "expected": "Done" }] },
+            { "id": null, "title": "No steps at all", "steps": [] }
+        ]
+    })
+    .to_string();
+
+    let (status, body) = route(&ctx(), None, "POST", "/optimize", &draft, "test").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let warned = v["import_warnings"].as_array().expect("import_warnings present");
+    assert!(
+        warned.iter().any(|w| w.as_str().unwrap_or_default().contains("No steps at all")),
+        "the dropped case must be named: {warned:?}"
+    );
+    // And the output really is shorter, which is why silence was wrong.
+    assert_eq!(v["test_cases"].as_array().unwrap().len(), 1);
+
+    let t_body = serde_json::json!({
+        "test_cases": draft,
+        "operations": [{ "op": "set_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (status, body) = route(&ctx(), None, "POST", "/transform", &t_body, "test").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(
+        v["import_warnings"]
+            .as_array()
+            .expect("import_warnings present")
+            .iter()
+            .any(|w| w.as_str().unwrap_or_default().contains("No steps at all")),
+        "transform must report it too"
+    );
+}
