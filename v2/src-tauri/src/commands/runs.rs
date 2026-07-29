@@ -105,10 +105,6 @@ pub async fn submit_test_run(
             .await?;
     }
 
-    // Everything that did not make it onto this run, gathered in one place:
-    // outcomes with no result row here, per-step marks and attachments
-    // below. The runner shows them together and stays open.
-    let mut extras_failed: Vec<String> = vec![];
     if !unmatched.is_empty() {
         crate::applog::error(format!(
             "run {} has no result rows for test point(s) {unmatched:?} - {} of {} outcomes could not be recorded",
@@ -116,21 +112,37 @@ pub async fn submit_test_run(
             unmatched.len(),
             outcomes.len(),
         ));
-        for point in &unmatched {
-            extras_failed.push(format!(
-                "the outcome for test point {point} - Azure DevOps created no result row for it, \
-                 so mark that case again"
-            ));
-        }
     }
+    // Nothing at all was recorded: completing the run would leave an empty
+    // Completed run in Azure DevOps and tell the tester their marks landed.
+    // Erroring here costs nothing, because nothing was written - and the
+    // runner keeps the marks so they can be sent again.
+    if updates.is_empty() {
+        return Err(ado::AdoError::Http {
+            status: 0,
+            body: format!(
+                "Azure DevOps created no result row for any of the {} marked case(s), so \
+                 nothing was recorded. Run #{} exists but is empty - mark them again rather \
+                 than looking for results in it.",
+                outcomes.len(),
+                run.run_id,
+            ),
+        });
+    }
+
+    // Attachment and per-step failures, reported SEPARATELY from outcomes
+    // that were never recorded. They were briefly the same list, and its
+    // consumer frames every entry as "the outcomes were recorded, but this
+    // did not attach - add it in Azure DevOps". Both halves of that are
+    // false for a lost outcome.
+    let mut extras_failed: Vec<String> = vec![];
 
     // Per-step outcomes + screenshots are additive and best-effort (v1
     // semantics): a failure here never loses the recorded outcomes. It was
     // also never REPORTED, so a tester who marked five steps individually
     // and attached a screenshot of the failure had no way to know that none
-    // of it arrived. Collected onto the same list the unmatched outcomes
-    // above use - everything that did not make it onto this run, in one
-    // place, so the runner can show it in one message.
+    // of it arrived. These genuinely ARE "recorded, but this did not
+    // attach" - which is why an unrecorded outcome must not share the list.
     for o in &outcomes {
         let Some(result) = results.iter().find(|r| r.point_id == Some(o.point_id)) else {
             continue;
@@ -184,7 +196,7 @@ pub async fn submit_test_run(
     client
         .complete_test_run(&organization, &project, run.run_id)
         .await?;
-    Ok(ado_testplan::RunCreated { extras_failed, ..run })
+    Ok(ado_testplan::RunCreated { outcomes_unrecorded: unmatched, extras_failed, ..run })
 }
 
 #[tauri::command]

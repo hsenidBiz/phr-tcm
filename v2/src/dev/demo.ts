@@ -342,7 +342,7 @@ function applyPatches() {
         hist.unshift({ outcome: oc.outcome, completed_date: new Date().toISOString(), run_id: runId });
         historyByCase.set(caseId, hist.slice(0, 5));
       }
-      return ok({ run_id: runId, web_url: "https://example.invalid/demo-run", extras_failed: [] });
+      return ok({ run_id: runId, web_url: "https://example.invalid/demo-run", outcomes_unrecorded: [], extras_failed: [] });
     },
     getResultDetail: () => ok({ outcome: "Failed", comment: "Demo failure comment" }),
     resultFailureDetail: () => ok({ comment: "Demo: step 3 timed out waiting for the redirect.", bug_ids: [2003] }),

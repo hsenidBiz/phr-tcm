@@ -56,6 +56,17 @@ pub struct TestPoint {
 pub struct RunCreated {
     pub run_id: i32,
     pub web_url: String,
+    /// Marked outcomes Azure DevOps had no result row for, so they were
+    /// never recorded at all.
+    ///
+    /// Deliberately NOT folded into `extras_failed`. These were briefly
+    /// reported through that list, whose one consumer wraps everything in
+    /// "The outcomes were recorded, but this did not attach - add it in
+    /// Azure DevOps." Both halves of that sentence are false for a lost
+    /// outcome: it was not recorded, and it cannot be added there - it has
+    /// to be marked again here. A channel whose framing contradicts the
+    /// item is worse than no channel.
+    pub outcomes_unrecorded: Vec<i32>,
     /// Per-step marks and attachments that did NOT make it onto the run.
     ///
     /// These are attached after the outcomes are already recorded, so a

@@ -85,7 +85,9 @@ impl AdoClient {
         Ok(RunCreated {
             run_id: data["id"].as_i64().unwrap_or_default() as i32,
             web_url: data["webAccessUrl"].as_str().unwrap_or_default().to_string(),
-            // Filled in by the caller, which is what actually attaches them.
+            // Both filled in by the caller, which is what records and
+            // attaches them.
+            outcomes_unrecorded: vec![],
             extras_failed: vec![],
         })
     }
@@ -262,11 +264,23 @@ impl AdoClient {
             match self.get_bytes(dl).await {
                 Ok(bytes) => shots.push(base64::engine::general_purpose::STANDARD.encode(&bytes)),
                 Err(e @ (AdoError::Unauthorized | AdoError::RateLimited { .. })) => {
-                    // These are about the SESSION, not this picture -
-                    // swallowing them showed "no screenshots" to a tester
-                    // whose token had simply expired. Propagated as-is so
-                    // the caller keeps the Retry-After it was given.
-                    return Err(e);
+                    // About the SESSION, not this picture - swallowing them
+                    // showed "no screenshots" to a tester whose token had
+                    // simply expired. But returning Err discarded the ones
+                    // already downloaded, and the strip then showed nothing
+                    // at all rather than "three of five".
+                    //
+                    // So: keep what arrived, and only surface the error when
+                    // there is nothing to show. A partial strip beats an
+                    // empty one, and the next open retries the rest.
+                    crate::applog::warn(format!(
+                        "run {run_id} result {result_id}: stopped after {} screenshot(s): {e}",
+                        shots.len()
+                    ));
+                    if shots.is_empty() {
+                        return Err(e);
+                    }
+                    return Ok(shots);
                 }
                 Err(e) => crate::applog::warn(format!(
                     "run {run_id} result {result_id}: screenshot {id} could not be read: {e}"

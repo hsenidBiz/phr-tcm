@@ -394,9 +394,27 @@ export default function RunnerWindow() {
       // A PARTIAL drop used to pass silently: only an all-dropped run
       // errored, so a tester who marked eight cases and had two without a
       // point was told the run was recorded and lost those two results.
-      return { recorded: resolved.length, dropped, extrasFailed: run.extras_failed };
+      return {
+        recorded: resolved.length - run.outcomes_unrecorded.length,
+        dropped,
+        unrecorded: run.outcomes_unrecorded,
+        extrasFailed: run.extras_failed,
+      };
     },
-    onSuccess: ({ recorded, dropped, extrasFailed }) => {
+    onSuccess: ({ recorded, dropped, unrecorded, extrasFailed }) => {
+      // An outcome Azure DevOps had no result row for is NOT the same as an
+      // attachment that failed, and it briefly shared that message - which
+      // reads "the outcomes were recorded, but this did not attach - add it
+      // in Azure DevOps". Both halves are false here: it was not recorded,
+      // and it cannot be added there. It has to be marked again, in here.
+      if (unrecorded.length > 0) {
+        toast.warning(
+          `${recorded} result(s) recorded. ${unrecorded.length} could NOT be - Azure DevOps ` +
+            `created no result row for test point(s) ${unrecorded.join(", ")}. Mark those ` +
+            `cases again here; they are not in the run.`,
+          { duration: 20000 },
+        );
+      }
       // Step-by-step marks and screenshots are attached after the outcomes
       // are already saved, so they cannot fail the run - but they used to
       // fail in complete silence, and they are the evidence.
@@ -407,7 +425,7 @@ export default function RunnerWindow() {
           { duration: 20000 },
         );
       }
-      if (dropped.length === 0) {
+      if (dropped.length === 0 && unrecorded.length === 0) {
         if (extrasFailed.length === 0) {
           toast.success("Run recorded. Closing runner.");
           setTimeout(() => getCurrentWindow().close(), 600);
@@ -654,11 +672,21 @@ export default function RunnerWindow() {
         <Button
           className="ml-auto"
           size="sm"
-          disabled={markedCount === 0 || finish.isPending}
+          // Latched on success. Every one of the non-closing paths above
+          // leaves the window open with the marks still in state and the
+          // button re-armed, so a second click created a SECOND Azure
+          // DevOps run with all the same outcomes recorded twice - and
+          // this app cannot delete a run. The window stays open so the
+          // tester can read what failed; it just cannot be sent again.
+          disabled={markedCount === 0 || finish.isPending || finish.isSuccess}
           onClick={() => finish.mutate()}
         >
           <IconFinish aria-hidden />
-          {finish.isPending ? "Recording" : `Finish (${markedCount})`}
+          {finish.isPending
+            ? "Recording"
+            : finish.isSuccess
+              ? "Recorded"
+              : `Finish (${markedCount})`}
         </Button>
       </footer>
 

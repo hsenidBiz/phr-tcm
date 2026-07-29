@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.2",
+    date: "2026-07-29",
+    items: [
+      "Fixed: when some marked cases could not be recorded, the run still said \"The outcomes were recorded, but this did not attach - add it in Azure DevOps.\" Both halves were wrong for a lost result: it was not recorded, and it cannot be added there - it has to be marked again in the runner. Lost results now get their own message saying exactly that. Introduced in 1.17.1 while fixing a related problem in the same code.",
+      "Fixed: if NONE of the marked cases could be recorded, the run was completed anyway and reported as saved - leaving an empty run in Azure DevOps. It now refuses, keeps your marks, and says the run is empty.",
+      "Fixed: after a run that partly failed, the Finish button re-armed. Clicking it again created a SECOND test run with every outcome recorded twice - and runs cannot be deleted from this app. The button now reads \"Recorded\" and cannot be pressed again; the window still stays open so you can read what failed.",
+      "Fixed: the AI optimiser treated \"performance\", \"review\" and \"table\" as places, because it was matching \"form\", \"view\" and \"tab\" inside them. \"At the end of the performance review the rating is locked\" was turned into a navigation step. It now matches whole words.",
+      "Fixed: cached Azure DevOps data from a previous account could be read once before being cleared, when a different account signed in on the same machine.",
+      "Fixed: a comment that could not be written to its file - because two drafts share a title - failed silently, and the message pointed at the queue card, which uses the same path and could not get round it either. You are now told, and the advice is accurate.",
+      "Fixed: a rate limit part-way through loading a result's screenshots discarded the ones already fetched, showing none instead of some.",
+      "Fixed: renaming the queue could report success for a draft that was no longer there, if the queue changed while the dialog was open.",
+    ],
+  },
+  {
     version: "1.17.1",
     date: "2026-07-29",
     items: [

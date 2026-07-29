@@ -197,12 +197,15 @@ export default function App() {
     DEV_TOOLS && devAuth !== "real" ? devAuth === "in" : Boolean(status.data?.signed_in);
 
   // The persistent cache is scoped by org and project, which is not the same
-  // as being scoped by person. Claim it for whoever is signed in NOW, before
-  // any screen that reads it can mount - a different account's plans, suites
-  // and outcomes are dropped rather than served.
-  useEffect(() => {
-    claimCacheFor(status.data?.account ?? null);
-  }, [status.data?.account]);
+  // as being scoped by person. Claim it for whoever is signed in NOW.
+  //
+  // During RENDER, not in an effect. An effect runs after the commit, so on
+  // the render where a new account first appears the screens below have
+  // already mounted and seeded their queries from the previous account's
+  // cache - the wipe then landed a beat too late to stop it being read.
+  // `claimCacheFor` is idempotent and guarded by its own owner key, so
+  // calling it every render costs a string compare.
+  claimCacheFor(status.data?.account ?? null);
 
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version

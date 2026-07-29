@@ -104,9 +104,22 @@ const NAV_MARKERS: &[&str] = &[
 /// case's setup signature, which is what decides the run order.
 const NAV_MARKERS_NEEDING_PLACE: &[&str] = &["on the", "at the", "from the"];
 
+/// Matched as WHOLE WORDS, never substrings. As a substring test this was
+/// exactly backwards: "performance" contains "form", "review" contains
+/// "view" and "table" contains "tab", so "At the end of the performance
+/// review the rating is locked" counted as naming a place and got promoted
+/// to a navigation step - the precise failure the marker split above was
+/// added to prevent.
 const PLACE_WORDS: &[&str] = &[
     "page", "screen", "tab", "module", "dialog", "form", "view", "menu", "panel", "portal",
+    "window", "pane", "list", "grid", "board", "editor", "wizard",
 ];
+
+fn names_a_place(lowered: &str) -> bool {
+    lowered
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| PLACE_WORDS.contains(&word))
+}
 
 /// Openers stripped from an expected result: they restate that we're
 /// testing, rather than saying what the tester should see.
@@ -150,8 +163,7 @@ fn is_navigation(sentence: &str) -> bool {
     if NAV_MARKERS.iter().any(|m| l.starts_with(m)) {
         return true;
     }
-    NAV_MARKERS_NEEDING_PLACE.iter().any(|m| l.starts_with(m))
-        && PLACE_WORDS.iter().any(|w| l.contains(w))
+    NAV_MARKERS_NEEDING_PLACE.iter().any(|m| l.starts_with(m)) && names_a_place(&l)
 }
 
 /// Capitalise the first character, leaving the rest alone (so acronyms

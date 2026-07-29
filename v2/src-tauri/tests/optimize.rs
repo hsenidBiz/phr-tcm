@@ -892,3 +892,29 @@ fn a_mid_case_navigation_is_not_mistaken_for_a_duplicate_preamble() {
         "one preamble navigation and one mid-case check: {actions:?}"
     );
 }
+
+/// PLACE_WORDS was a SUBSTRING test, which is exactly backwards: "performance"
+/// contains "form", "review" contains "view", "table" contains "tab". So the
+/// setup sentences the marker split was added to protect were promoted after
+/// all - just via a different route.
+#[test]
+fn a_word_that_merely_contains_a_place_word_is_not_a_place() {
+    for pre in [
+        "At the end of the performance review the rating is locked",
+        "On the summary table the totals are frozen",
+        "From the previous review cycle two goals are carried over",
+    ] {
+        let out = optimize(vec![case("T", "", pre, vec![step("do", "done")])], None).0;
+        assert_eq!(
+            out[0].preconditions.trim(),
+            pre,
+            "'{pre}' was promoted because a word merely CONTAINS a place word"
+        );
+    }
+
+    // A real place still promotes - the whole point of the marker.
+    for pre in ["On the Payments page", "At the Orders screen", "From the Reports tab"] {
+        let out = optimize(vec![case("T", "", pre, vec![step("do", "done")])], None).0;
+        assert!(out[0].steps.len() > 1, "'{pre}' should still become a step");
+    }
+}

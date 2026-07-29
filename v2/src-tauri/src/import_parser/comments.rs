@@ -96,7 +96,8 @@ pub fn patch_case_comment(json: &str, target: &CaseTarget, text: &str) -> Result
         many => {
             return Err(format!(
                 "'{}' appears {} times in this file, so there is no way to tell which one this \
-                 comment is about - give them different titles, or comment on the card in the app.",
+                 comment is about - give them different titles and try again. (The queue card \
+                 writes through this same path, so it cannot get round it either.)",
                 target.title,
                 many.len()
             ))

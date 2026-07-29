@@ -217,15 +217,27 @@ export default function QueueSection({
    * Nothing else on the card is written through - an in-app edit has never
    * propagated to the file, and widening that is not this feature's job.
    *
-   * Silent on failure. The comment is already in the queue, the file is
-   * the copy that lagged, and an error toast for a note nobody asked to
-   * sync would be noise.
+   * A REFUSAL is surfaced. This used to be silent on every failure, with
+   * the reasoning that a transient sync error is noise - fair enough. But
+   * a refusal is not transient: two drafts sharing a title cannot be told
+   * apart in the file, so that comment will NEVER reach it, and the card
+   * would go on showing text the file does not have. The comment stays in
+   * the queue either way, so the toast is informational, not a rollback.
    */
   const writeCommentThrough = (before: TestCase, text: string) => {
     if ((before.comment ?? "") === text) return;
     const owner = ownerPaths([before], watches)[0];
     if (!owner) return;
-    void commands.saveDraftComment(owner, before.update_id, before.title, text);
+    void commands
+      .saveDraftComment(owner, before.update_id, before.title, text)
+      .then((r) => {
+        if (r.status === "error") {
+          toast.warning(`Kept in the queue, but not written to the file: ${r.error}`, {
+            duration: 15000,
+          });
+        }
+      })
+      .catch(() => {});
   };
 
   // A comment typed in that page comes back here, so the card and the
@@ -335,6 +347,12 @@ export default function QueueSection({
       // title back on whichever one it reached first and left titles
       // sitting on the wrong steps - reported as "Put back 1 title".
       const byIndex = new Map(rows.map((r) => [r.index, r]));
+      // Every row must be accounted for, so the loop is driven by ROWS as
+      // well as by the queue. Walking only the queue meant a row whose
+      // index no longer exists - the queue shrank while the dialog was
+      // open - was never visited, so it counted as succeeded and Undo then
+      // had nothing to put back for it.
+      const written = new Set<number>();
       const failed: typeof rows = [];
       setQueue((q) =>
         q.map((tc, i) => {
@@ -348,9 +366,13 @@ export default function QueueSection({
             failed.push(row);
             return tc;
           }
+          written.add(row.index);
           return { ...tc, title: row.after };
         }),
       );
+      for (const r of rows) {
+        if (!written.has(r.index) && !failed.includes(r)) failed.push(r);
+      }
       return failed;
     },
   };
