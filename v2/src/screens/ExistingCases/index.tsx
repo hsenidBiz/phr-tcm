@@ -313,6 +313,12 @@ export default function ExistingCases({
           onClose={() => setBulkOpen(false)}
           onDone={() => {
             setBulkOpen(false);
+            // A CaseEditor seeds its draft from the case ONCE, when it
+            // opens. If one of the cases the bulk edit just changed was
+            // left expanded, that draft is now the pre-edit version - and
+            // the next save from it would put the old values back over the
+            // change the user asked for. Collapse it so it re-seeds.
+            if (openId != null && selected.has(openId)) setOpenId(null);
             setSelected(new Set());
             refresh();
           }}

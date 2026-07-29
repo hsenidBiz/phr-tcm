@@ -6,7 +6,7 @@ import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { applyRateLevel } from "./lib/adoRate";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
-import { cacheEntry } from "./lib/localCache";
+import { cacheEntry, claimCacheFor } from "./lib/localCache";
 import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
@@ -195,6 +195,14 @@ export default function App() {
   const [devAuth, setDevAuth] = useState<"real" | "out" | "in">("real");
   const signedIn =
     DEV_TOOLS && devAuth !== "real" ? devAuth === "in" : Boolean(status.data?.signed_in);
+
+  // The persistent cache is scoped by org and project, which is not the same
+  // as being scoped by person. Claim it for whoever is signed in NOW, before
+  // any screen that reads it can mount - a different account's plans, suites
+  // and outcomes are dropped rather than served.
+  useEffect(() => {
+    claimCacheFor(status.data?.account ?? null);
+  }, [status.data?.account]);
 
   // Post-update "What's new": once per version change, after sign-in (so it
   // never covers the sign-in screen). Fresh installs record the version

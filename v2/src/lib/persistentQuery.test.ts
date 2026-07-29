@@ -1,8 +1,47 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { cacheRead, cacheWrite } from "./localCache";
+import { cacheRead, cacheWrite, claimCacheFor } from "./localCache";
 import { CACHE, persistentQuery } from "./persistentQuery";
 
 afterEach(() => localStorage.clear());
+
+/** Cache keys carry org and project, which is not the same as carrying the
+ * PERSON. Two accounts on one Windows profile used to read each other's
+ * plans, suites and outcomes - fetched with a token the second one never
+ * held, and painted instantly from the seed before a request could have
+ * been refused. */
+test("signing in as someone else drops the previous account's cache", () => {
+  claimCacheFor("first@example.com");
+  cacheWrite("plans-suites:acme/Payments", ["Plan A"]);
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toEqual(["Plan A"]);
+
+  // Same person again, however many times: their cache survives.
+  claimCacheFor("first@example.com");
+  claimCacheFor("first@example.com");
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toEqual(["Plan A"]);
+
+  // Someone else: gone, even though org and project are identical.
+  claimCacheFor("second@example.com");
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toBeNull();
+
+  // Signed out (no account yet) must not wipe what the signed-in user has.
+  cacheWrite("plans-suites:acme/Payments", ["Plan B"]);
+  claimCacheFor(null);
+  expect(cacheRead("plans-suites:acme/Payments", CACHE.structure.ttlMs)).toEqual(["Plan B"]);
+
+  // The address itself is never written to disk.
+  expect(JSON.stringify(localStorage)).not.toContain("example.com");
+});
+
+/** Only this module's own entries are its to drop. */
+test("claiming the cache leaves everything else in storage alone", () => {
+  localStorage.setItem("tcm-v2-draft", "the user's queue");
+  localStorage.setItem("tcm-v2-theme", "dark");
+  claimCacheFor("first@example.com");
+  cacheWrite("points:acme/Payments/1/2", [1, 2, 3]);
+  claimCacheFor("second@example.com");
+  expect(localStorage.getItem("tcm-v2-draft")).toBe("the user's queue");
+  expect(localStorage.getItem("tcm-v2-theme")).toBe("dark");
+});
 
 test("a fetch writes the result to disk for the next launch", async () => {
   const opts = persistentQuery({

@@ -13,9 +13,45 @@
  */
 
 const PREFIX = "tcm-v2-cache:";
+const OWNER_KEY = "tcm-v2-cache-owner";
 const MAX_ENTRIES = 150;
 
 type Entry<T> = { at: number; data: T };
+
+/** Non-reversible tag for an account, so the identity check never needs the
+ * address itself written to disk. Collisions only cost a needless wipe. */
+function tag(account: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < account.length; i++) {
+    h = ((h ^ account.charCodeAt(i)) * 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
+ * Hand the cache to the signed-in account, discarding anything the previous
+ * one left behind.
+ *
+ * Every key here is scoped by org and project, which is not the same as
+ * being scoped by PERSON. Two accounts on one Windows profile - someone
+ * signing out and back in as a service or test account - saw each other's
+ * plan and suite trees for up to the structure TTL, painted instantly from
+ * `initialData` before any request could have been refused. The data was
+ * fetched with a token the second account never held.
+ */
+export function claimCacheFor(account: string | null): void {
+  if (!account) return;
+  try {
+    const now = tag(account);
+    if (localStorage.getItem(OWNER_KEY) === now) return;
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith(PREFIX)) localStorage.removeItem(k);
+    }
+    localStorage.setItem(OWNER_KEY, now);
+  } catch {
+    // storage unavailable - nothing was cached to leak
+  }
+}
 
 function demoMode(): boolean {
   try {

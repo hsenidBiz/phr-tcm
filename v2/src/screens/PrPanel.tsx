@@ -15,7 +15,7 @@ import {
   RefreshCw,
   Rocket,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
 import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
@@ -420,6 +420,18 @@ export default function PrPanel({ org, project }: { org: string; project: string
   const qc = useQueryClient();
   const repoKey = `tcm-v2-pr-repo:${org}/${project}`;
   const [repoId, setRepoIdRaw] = useState(() => localStorage.getItem(repoKey) ?? "");
+  // The seed above runs once, but repoKey changes the moment the user
+  // switches org or project - and the previous project's repo stayed
+  // selected, so the panel asked Azure DevOps for pull requests on a repo
+  // that is not in this project and showed the error it got back. Re-seed
+  // from the key that is current. Adjusting state during render (rather
+  // than in an effect) is what React prescribes here: it re-renders before
+  // painting, so the wrong repo is never on screen or in a request.
+  const seededFor = useRef(repoKey);
+  if (seededFor.current !== repoKey) {
+    seededFor.current = repoKey;
+    setRepoIdRaw(localStorage.getItem(repoKey) ?? "");
+  }
   const setRepoId = (id: string) => {
     setRepoIdRaw(id);
     try {
