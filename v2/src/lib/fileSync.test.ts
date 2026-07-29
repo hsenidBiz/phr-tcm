@@ -5,6 +5,7 @@ import {
   changedFields,
   countBy,
   fileName,
+  loadWatches,
   ownerPaths,
   withoutFileCases,
   patchWatch,
@@ -234,4 +235,36 @@ test("ownership and removal agree about which case is which", () => {
   expect(ownerPaths([a, b], watches)).toEqual(["C:/w/first.json", "C:/w/first.json"]);
   // Both belong to that file, so dropping it takes both.
   expect(withoutFileCases([a, b], [a, b], [])).toEqual([]);
+});
+
+/** The cast that used to stand in loadWatches trusted whatever was in
+ * storage, and this shape has already changed once. A half-written or
+ * older entry got as far as `snapshot.map(...)` and threw mid-render,
+ * taking the Import screen with it. */
+test("a malformed watch entry is dropped rather than thrown on later", () => {
+  const key = "tcm-v2-watch:acme/42";
+  const good = { path: "C:/w/a.json", stamp: "abc", snapshot: [] };
+  localStorage.setItem(
+    key,
+    JSON.stringify([
+      good,
+      { path: "C:/w/b.json", stamp: "x" }, // no snapshot - the one that threw
+      { stamp: "x", snapshot: [] }, // no path
+      { path: "", stamp: "x", snapshot: [] }, // empty path
+      { path: "C:/w/c.json", stamp: "x", snapshot: {} }, // snapshot not a list
+      null,
+      "not an object",
+    ]),
+  );
+  expect(loadWatches("acme", 42)).toEqual([good]);
+
+  // The pre-multi-file single-object shape still loads.
+  localStorage.setItem(key, JSON.stringify(good));
+  expect(loadWatches("acme", 42)).toEqual([good]);
+
+  // And an entry from before general comments existed is still valid.
+  const older = { path: "C:/w/d.json", stamp: "y", snapshot: [] };
+  localStorage.setItem(key, JSON.stringify([older]));
+  expect(loadWatches("acme", 42)).toEqual([older]);
+  localStorage.clear();
 });

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
 import CountUp from "../../components/CountUp";
@@ -45,6 +45,15 @@ export default function ViewCases({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes(org));
+  // Seeded once, but work item ids are org-scoped and so is the store. On
+  // an org switch the previous org's notes stayed on screen - and saving
+  // one then wrote it under the NEW org's key, copying notes across orgs.
+  // Re-seeded during render so nothing wrong is ever shown or saved.
+  const notesOrg = useRef(org);
+  if (notesOrg.current !== org) {
+    notesOrg.current = org;
+    setNotes(loadNotes(org));
+  }
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-view") === "on",
   );

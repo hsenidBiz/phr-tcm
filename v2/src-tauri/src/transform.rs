@@ -69,6 +69,12 @@ pub struct Operation {
 pub struct TransformReport {
     /// One line per operation: what it did and how many cases it touched.
     pub applied: Vec<String>,
+    /// Anything an operation declined to do. `applied` counts cases it
+    /// touched, which said nothing about a case it deliberately left
+    /// alone - and the caller reads this report instead of diffing the
+    /// draft by hand.
+    #[serde(default)]
+    pub warnings: Vec<String>,
     pub cases_in: usize,
     pub cases_out: usize,
 }
@@ -431,7 +437,27 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         }
                         Op::RemoveStepMatching(find) => {
                             let needle = find.to_lowercase();
-                            c.steps.retain(|s| !s.action.to_lowercase().contains(&needle));
+                            let kept: Vec<_> = c
+                                .steps
+                                .iter()
+                                .filter(|s| !s.action.to_lowercase().contains(&needle))
+                                .cloned()
+                                .collect();
+                            // A case with no steps does not survive the
+                            // importer - it is skipped - so emptying one
+                            // here deleted it from the draft while the
+                            // report said the operation had been applied.
+                            // The same rule the writer already keeps: never
+                            // let an empty step list stand in for a real one.
+                            if kept.is_empty() {
+                                report.warnings.push(format!(
+                                    "'{}': every step matches '{find}', and a case with no steps \
+                                     cannot be imported - its steps were left alone.",
+                                    c.title
+                                ));
+                            } else {
+                                c.steps = kept;
+                            }
                         }
                         Op::SortBy(_)
                         | Op::GroupBy(_)

@@ -648,6 +648,35 @@ fn a_real_duplicate_is_still_removed() {
     assert_eq!(report.duplicates_removed, 1);
 }
 
+/// A case with no steps does not survive the importer - it is skipped -
+/// so a remove that emptied one DELETED it from the draft, while the
+/// report said the operation had been applied. Same rule the writer keeps
+/// against Azure DevOps: an empty step list never stands in for a real one.
+#[test]
+fn removing_every_step_is_refused_rather_than_emptying_the_case() {
+    let draft = vec![
+        case("Keeps one", "M", "", vec![step("Open the app", "It opens"), step("Pay", "Paid")]),
+        case("Loses all", "M", "", vec![step("Open the app", "It opens")]),
+    ];
+    let (out, report) = apply(
+        draft,
+        &ops(serde_json::json!([{ "op": "remove_step_matching", "value": "open the app" }])),
+    );
+
+    assert_eq!(out.len(), 2, "no case may disappear");
+    assert_eq!(out[0].steps.len(), 1, "the matching step still goes when others remain");
+    assert_eq!(
+        out[1].steps.len(),
+        1,
+        "the only step was kept rather than leaving an unimportable case"
+    );
+    assert!(
+        report.warnings.iter().any(|w| w.contains("Loses all")),
+        "the case that was left alone must be named: {:?}",
+        report.warnings
+    );
+}
+
 /// A precondition is only navigation if it actually navigates. "On the",
 /// "at the" and "from the" open any English sentence, and matching them
 /// bare turned real setup into a nonsense step AND dropped it from the

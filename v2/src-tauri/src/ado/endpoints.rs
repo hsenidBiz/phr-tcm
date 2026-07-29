@@ -364,7 +364,17 @@ impl AdoClient {
         let data = self
             .send_json_patch(reqwest::Method::POST, url, &serde_json::Value::Array(patch))
             .await?;
-        Ok(data["id"].as_i64().unwrap_or_default() as i32)
+        // A create with no id is not a create. `unwrap_or_default` handed
+        // back work item 0 and called it success, so the queue reported
+        // "created #0" and the link that followed went looking for a work
+        // item that does not exist.
+        data["id"].as_i64().map(|id| id as i32).ok_or_else(|| AdoError::Http {
+            status: 0,
+            body: format!(
+                "Azure DevOps accepted the test case but its response carried no work item id, \
+                 so there is nothing to link or report: {data}"
+            ),
+        })
     }
 
     /// PATCH System.State and return the state ADO actually persisted.
