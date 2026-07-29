@@ -88,6 +88,10 @@ pub async fn update_test_case(
             module_ref.as_deref(),
             preconditions_ref.as_deref(),
             original_steps_xml.as_deref(),
+            // This command IS the editor. A field the user emptied is meant
+            // to be emptied in Azure DevOps - skipping it left the old value
+            // there while the app reported the save as done.
+            ado::BlankPolicy::Clear,
         )
         .await
         .map_err(|e| e.to_string())

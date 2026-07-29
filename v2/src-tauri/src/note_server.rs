@@ -21,6 +21,10 @@ use std::net::TcpListener;
 /// working against a newer app.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct NotePayload {
+    /// The secret from the page that was generated for this app run. A
+    /// request without it is not from a page this app wrote.
+    #[serde(default)]
+    pub token: String,
     /// "ado" (default) | "case" | "general".
     #[serde(default = "ado")]
     pub kind: String,
@@ -63,6 +67,7 @@ pub fn reply_body(outcome: &Result<(), String>) -> String {
 /// `on_note` for each valid note and reporting its result back to the page.
 /// Returns the bound port.
 pub fn start(
+    token: String,
     on_note: impl Fn(NotePayload) -> Result<(), String> + Send + 'static,
 ) -> Result<u16, String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -86,7 +91,19 @@ pub fn start(
                             }
                             if let Some(body) = body_if_complete(&buf) {
                                 if let Some(note) = request_note(&buf, &body) {
-                                    outcome = on_note(note);
+                                    // The listener is on loopback with
+                                    // Access-Control-Allow-Origin: *, so any
+                                    // page the user visits can reach it if it
+                                    // guesses the port - and these notes now
+                                    // write to files named in the request.
+                                    // The secret is only in the page this app
+                                    // generated, so a request without it did
+                                    // not come from one.
+                                    outcome = if note.token == token {
+                                        on_note(note)
+                                    } else {
+                                        Err("this page is out of date - reopen it from the app".into())
+                                    };
                                 }
                                 break;
                             }

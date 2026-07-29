@@ -18,19 +18,20 @@ fn post(port: u16, path: &str, body: &str) -> String {
 #[test]
 fn loopback_listener_delivers_posted_notes() {
     let (tx, rx) = mpsc::channel();
-    let port = start(move |n| {
+    let port = start("secret".into(), move |n| {
         tx.send(n).unwrap();
         Ok(())
     })
     .unwrap();
 
-    let resp = post(port, "/note", r#"{"org":"acme","case_id":42,"text":"fix step 3"}"#);
+    let resp = post(port, "/note", r#"{"token":"secret","org":"acme","case_id":42,"text":"fix step 3"}"#);
     assert!(resp.starts_with("HTTP/1.1 200"));
     assert!(resp.contains("\"ok\":true"));
     let note = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     assert_eq!(
         note,
         NotePayload {
+            token: "secret".into(),
             kind: "ado".into(),
             org: "acme".into(),
             case_id: 42,
@@ -42,7 +43,7 @@ fn loopback_listener_delivers_posted_notes() {
     );
 
     // Wrong path or junk body: responds politely, never delivers a note.
-    post(port, "/other", r#"{"org":"acme","case_id":1,"text":"x"}"#);
+    post(port, "/other", r#"{"token":"secret","org":"acme","case_id":1,"text":"x"}"#);
     post(port, "/note", "not json");
     assert!(rx.recv_timeout(std::time::Duration::from_millis(300)).is_err());
 }
@@ -71,4 +72,40 @@ fn a_note_with_no_kind_is_still_an_azure_devops_note() {
     assert_eq!(note.kind, "ado");
     assert_eq!(note.org, "acme");
     assert_eq!(note.case_id, 42);
+}
+
+/// The listener is on loopback with `Access-Control-Allow-Origin: *`, so any
+/// page the user visits can reach it if it guesses the port - and a note
+/// names the file to write. The secret only exists in the page this app
+/// generated, so a request without it is not one of ours.
+#[test]
+fn a_note_without_the_secret_is_refused() {
+    let (tx, rx) = mpsc::channel();
+    let port = start("the-real-secret".into(), move |n| {
+        tx.send(n).unwrap();
+        Ok(())
+    })
+    .unwrap();
+
+    for body in [
+        r#"{"kind":"general","path":"C:/w/a.json","text":"x"}"#,
+        r#"{"token":"","kind":"general","path":"C:/w/a.json","text":"x"}"#,
+        r#"{"token":"guessed","kind":"general","path":"C:/w/a.json","text":"x"}"#,
+    ] {
+        let resp = post(port, "/note", body);
+        assert!(resp.contains("\"ok\":false"), "accepted a note without the secret: {resp}");
+    }
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_millis(300)).is_err(),
+        "a refused note must never reach the handler"
+    );
+
+    // The real page still works.
+    let ok = post(
+        port,
+        "/note",
+        r#"{"token":"the-real-secret","kind":"general","path":"C:/w/a.json","text":"x"}"#,
+    );
+    assert!(ok.contains("\"ok\":true"), "the app's own page must still save: {ok}");
+    assert!(rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok());
 }

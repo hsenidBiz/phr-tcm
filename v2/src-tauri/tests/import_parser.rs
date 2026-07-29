@@ -223,7 +223,12 @@ fn html_export_with_note_ctx_adds_autosaving_comment_boxes() {
     ];
     let mut notes = std::collections::HashMap::new();
     notes.insert("42".to_string(), "Needs the <new> dialog".to_string());
-    let ctx = v2_lib::import_parser::NoteCtx { port: 4711, org: "acme".into(), notes };
+    let ctx = v2_lib::import_parser::NoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        org: "acme".into(),
+        notes,
+    };
 
     let path = tmp_path("report-notes.html");
     v2_lib::import_parser::export_queue_to_html(

@@ -185,21 +185,21 @@ const NOTE_JS: &str = r#"
 
   Array.prototype.forEach.call(document.querySelectorAll('[data-ado]'), function (box) {
     wire(box, document.getElementById(box.dataset.status), function (text) {
-      return { kind: 'ado', org: NOTE_ORG, case_id: Number(box.dataset.ado), text: text };
+      return { token: NOTE_TOKEN, kind: 'ado', org: NOTE_ORG, case_id: Number(box.dataset.ado), text: text };
     });
   });
 
   Array.prototype.forEach.call(document.querySelectorAll('[data-case]'), function (box) {
     var t = DRAFT_CASES[Number(box.dataset.case)];
     wire(box, document.getElementById(box.dataset.status), function (text) {
-      return { kind: 'case', path: t.path, id: t.id, title: t.title, text: text };
+      return { token: NOTE_TOKEN, kind: 'case', path: t.path, id: t.id, title: t.title, text: text };
     });
   });
 
   Array.prototype.forEach.call(document.querySelectorAll('[data-file]'), function (box) {
     var f = DRAFT_FILES[Number(box.dataset.file)];
     wire(box, document.getElementById(box.dataset.status), function (text) {
-      return { kind: 'general', path: f.path, text: text };
+      return { token: NOTE_TOKEN, kind: 'general', path: f.path, text: text };
     });
   });
 })();
@@ -210,6 +210,8 @@ const NOTE_JS: &str = r#"
 /// item id - nothing is written to Azure DevOps and there is no file.
 pub struct NoteCtx {
     pub port: u16,
+    /// Shared secret the listener requires - see note_server::start.
+    pub token: String,
     pub org: String,
     /// Existing notes to prefill, keyed by work item id (as a string).
     pub notes: std::collections::HashMap<String, String>,
@@ -231,6 +233,8 @@ pub struct DraftFile {
 /// edits - which is written back into the JSON file the case came from.
 pub struct DraftNoteCtx {
     pub port: u16,
+    /// Shared secret the listener requires - see note_server::start.
+    pub token: String,
     /// The file each queued case came from, aligned with `queue`. Empty
     /// where a case was typed by hand and has no file to be written to;
     /// its comment is still kept by the app.
@@ -252,6 +256,13 @@ impl CommentCtx<'_> {
         match self {
             CommentCtx::Ado(c) => c.port,
             CommentCtx::Draft(c) => c.port,
+        }
+    }
+
+    fn token(&self) -> &str {
+        match self {
+            CommentCtx::Ado(c) => &c.token,
+            CommentCtx::Draft(c) => &c.token,
         }
     }
 }
@@ -445,8 +456,9 @@ pub fn export_queue_to_html(
             .map(|f| serde_json::json!({ "path": f.path }))
             .collect();
         parts.push(format!(
-            "<script>var NOTE_PORT={};var NOTE_ORG={};var DRAFT_CASES={};var DRAFT_FILES={};{NOTE_JS}</script>",
+            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var DRAFT_CASES={};var DRAFT_FILES={};{NOTE_JS}</script>",
             c.port(),
+            script_json(&c.token(), "\"\""),
             script_json(&org, "\"\""),
             script_json(&draft_cases, "[]"),
             script_json(&file_paths, "[]"),

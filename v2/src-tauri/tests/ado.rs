@@ -1,4 +1,4 @@
-use v2_lib::ado::{AdoClient, AdoError};
+use v2_lib::ado::{AdoClient, AdoError, BlankPolicy};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -309,7 +309,7 @@ async fn update_from_model_skips_blank_fields() {
     tc.preconditions = String::new();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"), None)
+        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"), None, BlankPolicy::Skip)
         .await
         .unwrap();
 
@@ -347,7 +347,7 @@ async fn update_from_model_writes_the_title() {
     tc.title = "Renamed by bulk import".into();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, None, None, None)
+        .update_test_case_from_model("org", "proj", 55, &tc, None, None, None, BlankPolicy::Skip)
         .await
         .unwrap();
 
@@ -619,7 +619,7 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
                 .map(|_| ())
         } else {
             client
-                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"), None)
+                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"), None, BlankPolicy::Skip)
                 .await
         };
         let sent = server.received_requests().await.unwrap();
@@ -651,7 +651,7 @@ async fn captured_patch(tc: &v2_lib::model::TestCase, original: Option<&str>) ->
         .mount(&server)
         .await;
     v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri())
-        .update_test_case_from_model("o", "p", 55, tc, None, None, original)
+        .update_test_case_from_model("o", "p", 55, tc, None, None, original, BlankPolicy::Skip)
         .await
         .unwrap();
     String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).to_string()
@@ -761,4 +761,52 @@ async fn a_case_exported_and_reimported_does_not_rewrite_its_steps() {
         !body.contains("Microsoft.VSTS.TCM.Steps"),
         "the round trip must not rewrite the steps:\n{body}"
     );
+}
+
+/// The editor is not an import. Emptying the tags box and saving used to do
+/// nothing at all and still report "Updated" - the blank-skip rule that
+/// protects imports was governing the form as well.
+#[tokio::test]
+async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
+    let blank = v2_lib::model::TestCase {
+        title: "T".into(),
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into() }],
+        automation_status: "Planned".into(),
+        tags: String::new(),
+        module_value: String::new(),
+        preconditions: String::new(),
+        update_id: Some(55),
+        ..Default::default()
+    };
+
+    for (policy, should_write) in [(BlankPolicy::Clear, true), (BlankPolicy::Skip, false)] {
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({ "id": 55, "fields": {} }),
+            ))
+            .mount(&server)
+            .await;
+        AdoClient::with_base_url("t".into(), server.uri())
+            .update_test_case_from_model(
+                "o", "p", 55, &blank,
+                Some("Custom.Module"), Some("Custom.Pre"), None, policy,
+            )
+            .await
+            .unwrap();
+        let body =
+            String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).to_string();
+        for field in ["System.Tags", "Custom.Module", "Custom.Pre"] {
+            assert_eq!(
+                body.contains(field),
+                should_write,
+                "{policy:?} and {field}: expected written={should_write}\n{body}"
+            );
+        }
+        // Clearing preconditions must write empty, not an empty <div> that
+        // looks blank but is not.
+        if should_write {
+            assert!(!body.contains("<div>"), "cleared preconditions must be empty:\n{body}");
+        }
+    }
 }

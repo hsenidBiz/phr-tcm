@@ -159,7 +159,7 @@ fn tmp(name: &str) -> String {
 }
 
 fn draft_page(queue: &[TestCase], owners: Vec<String>, files: Vec<DraftFile>) -> String {
-    let ctx = DraftNoteCtx { port: 4711, owners, files };
+    let ctx = DraftNoteCtx { port: 4711, token: "secret".into(), owners, files };
     let path = tmp("draft.html");
     export_queue_to_html(queue, &path, "", Some(CommentCtx::Draft(&ctx))).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();

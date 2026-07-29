@@ -3,7 +3,7 @@
 //! writes are POST/PATCH create-or-update only — no DELETE, ever.
 
 use super::{
-    tc_ids_i32, AdoClient, AdoError, BugTypeInfo, FieldRef, Org, PbiHit, Project,
+    tc_ids_i32, AdoClient, AdoError, BlankPolicy, BugTypeInfo, FieldRef, Org, PbiHit, Project,
     TestCaseFull, TestCaseSummary, WikiHit, WikiPage,
 };
 
@@ -423,11 +423,10 @@ impl AdoClient {
         Ok(())
     }
 
-    /// SAFETY RULE (ported from v1 update_test_case_from_model): always
-    /// overwrites Title and AutomationStatus, but overwrites Tags / module /
-    /// Preconditions only when the imported case provides a value - a blank
-    /// imported column must never wipe existing data. (Title is never blank:
-    /// is_valid rejects an empty title before any submit.)
+    /// Title and AutomationStatus are always overwritten (is_valid rejects an
+    /// empty title before any submit). Tags, module and Preconditions follow
+    /// `blanks` - see `BlankPolicy`, which is the whole of the difference
+    /// between an import and someone editing a form.
     ///
     /// `original_steps_xml` is the Steps field as Azure DevOps currently
     /// holds it, when the caller has it. See `steps_patch` for why that
@@ -442,6 +441,7 @@ impl AdoClient {
         module_ref: Option<&str>,
         preconditions_ref: Option<&str>,
         original_steps_xml: Option<&str>,
+        blanks: BlankPolicy,
     ) -> Result<(), AdoError> {
         let mut fields = vec![
             ("System.Title".to_string(), tc.title.clone()),
@@ -453,17 +453,27 @@ impl AdoClient {
         if let Some(xml) = steps_patch(&tc.steps, original_steps_xml) {
             fields.push(("Microsoft.VSTS.TCM.Steps".to_string(), xml));
         }
-        if !tc.tags.is_empty() {
+        // A blank is either "no opinion" or "erase it", and only the caller
+        // knows which.
+        let writes = |value: &str| blanks == BlankPolicy::Clear || !value.is_empty();
+        if writes(&tc.tags) {
             fields.push(("System.Tags".to_string(), tc.tags.clone()));
         }
         if let Some(m) = module_ref {
-            if !tc.module_value.is_empty() {
+            if writes(&tc.module_value) {
                 fields.push((m.to_string(), tc.module_value.clone()));
             }
         }
         if let Some(p) = preconditions_ref {
-            if !tc.preconditions.is_empty() {
-                fields.push((p.to_string(), format!("<div>{}</div>", escape_html(&tc.preconditions))));
+            if writes(&tc.preconditions) {
+                // Empty stays empty - wrapping "" in <div></div> would leave
+                // a field that looks blank but is not.
+                let html = if tc.preconditions.is_empty() {
+                    String::new()
+                } else {
+                    format!("<div>{}</div>", escape_html(&tc.preconditions))
+                };
+                fields.push((p.to_string(), html));
             }
         }
         self.update_work_item_fields(organization, project, tc_id, &fields)

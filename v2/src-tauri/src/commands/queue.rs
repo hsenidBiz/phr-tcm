@@ -170,14 +170,42 @@ pub async fn fetch_shared_queue(
     })
 }
 
+/// The secret shared with the report pages this run generates. Minted once,
+/// never written to disk, and only ever embedded in a page the app itself
+/// wrote - see `note_server::start` for what it defends against.
+fn note_token() -> &'static str {
+    static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TOKEN.get_or_init(|| {
+        rand::random::<[u8; 24]>()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    })
+}
+
 /// One note listener per app run, started lazily on the first report.
 fn ensure_note_server(app: &tauri::AppHandle) -> Option<u16> {
     static PORT: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
     *PORT.get_or_init(|| {
         let app = app.clone();
-        note_server::start(move |n| route_note(&app, n))
+        note_server::start(note_token().to_string(), move |n| route_note(&app, n))
             .ok() // no listener -> report still opens, comments just can't save
     })
+}
+
+/// A note may only write to a file the app is CURRENTLY WATCHING.
+///
+/// The token above already keeps out anything that is not one of our pages,
+/// but a note carries the path to write, and our own page should not be able
+/// to name an arbitrary file either - a stale tab, or a page saved to disk
+/// and reopened later, would otherwise still be able to patch whatever path
+/// it was holding. The watch list is exactly the set of files the user has
+/// pointed the app at.
+fn writable(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    if crate::filewatch::watched_paths(&watch_state(app)).iter().any(|p| p == path) {
+        return Ok(());
+    }
+    Err("this file is no longer open in the app - reopen the report from the queue".into())
 }
 
 /// Where a comment posted from a report page belongs. The default arm also
@@ -209,6 +237,7 @@ fn save_draft_case_comment(
 ) -> Result<(), String> {
     let mut stamp = String::new();
     if !n.path.is_empty() {
+        writable(app, &n.path)?;
         let json = std::fs::read_to_string(&n.path)
             .map_err(|e| format!("could not read the file: {e}"))?;
         let target = import_parser::comments::CaseTarget {
@@ -248,6 +277,7 @@ fn write_general_comment(
     path: &str,
     text: &str,
 ) -> Result<String, String> {
+    writable(app, path)?;
     let json =
         std::fs::read_to_string(path).map_err(|e| format!("could not read the file: {e}"))?;
     let patched = import_parser::comments::patch_general_comment(&json, text)?;
@@ -315,7 +345,12 @@ pub fn view_queue_html(
     let note_ctx = (!organization.is_empty())
         .then(|| ensure_note_server(&app))
         .flatten()
-        .map(|port| import_parser::NoteCtx { port, org: organization, notes });
+        .map(|port| import_parser::NoteCtx {
+            port,
+            token: note_token().to_string(),
+            org: organization,
+            notes,
+        });
     import_parser::export_queue_to_html(
         &queue,
         &path_str,
@@ -349,6 +384,7 @@ pub fn view_draft_html(
     let path_str = path.to_string_lossy().to_string();
     let ctx = ensure_note_server(&app).map(|port| import_parser::DraftNoteCtx {
         port,
+        token: note_token().to_string(),
         owners,
         files,
     });
@@ -559,6 +595,9 @@ async fn process_queue_item(
                 m_ref,
                 p_ref,
                 original_steps_xml,
+                // An import: a blank column is the absence of an opinion,
+                // never an instruction to erase.
+                ado::BlankPolicy::Skip,
             )
             .await
             .map(|_| (existing_id, "updated")),

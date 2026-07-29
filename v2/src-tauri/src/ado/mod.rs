@@ -92,6 +92,22 @@ pub struct TestCaseFull {
     pub preconditions: String,
 }
 
+/// What a blank value means on an update.
+///
+/// The two callers genuinely disagree, and conflating them was a bug in both
+/// directions. An IMPORT must never erase: a blank column in a file is the
+/// absence of an opinion, and letting it through would wipe data the file
+/// never mentioned. A FORM the user emptied is the opposite: they deleted
+/// the tags on purpose, and skipping the write left the old value in Azure
+/// DevOps while the app said "Updated".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlankPolicy {
+    /// Imports: a blank leaves whatever Azure DevOps already has.
+    Skip,
+    /// Editor and Bulk Edit: a blank clears the field.
+    Clear,
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct BugTypeInfo {
     pub wi_type: String,
