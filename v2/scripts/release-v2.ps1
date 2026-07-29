@@ -31,6 +31,17 @@ $confVersion = (Get-Content $confPath -Raw | ConvertFrom-Json).version
 if ($confVersion -ne $Version) {
     throw "tauri.conf.json says '$confVersion' but you asked to release '$Version'. Bump it (and add the changelog entry) and commit first."
 }
+# Cargo's own version is not what the app reports at runtime - that comes
+# from tauri.conf.json - so this drifted to 1.4.0 and nobody noticed for
+# many releases. It still shows up in build output and crate metadata, and
+# two version numbers disagreeing is the kind of thing that misleads exactly
+# when you are trying to work out which build you are looking at.
+$cargoHead = (Get-Content (Join-Path $v2 "src-tauri\Cargo.toml") -Raw) -split "\[dependencies\]" | Select-Object -First 1
+if ($cargoHead -notmatch 'version\s*=\s*"([^"]+)"') { throw "Could not read the version from src-tauri/Cargo.toml" }
+if ($Matches[1] -ne $Version) {
+    throw "src-tauri/Cargo.toml says '$($Matches[1])' but you asked to release '$Version'. Bump it too."
+}
+
 $changelog = Get-Content (Join-Path $v2 "src\lib\changelog.ts") -Raw
 if ($changelog -notmatch [regex]::Escape("version: `"$Version`"")) {
     throw "src/lib/changelog.ts has no entry for $Version - without one the update installs silently."
