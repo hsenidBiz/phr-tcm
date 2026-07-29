@@ -268,27 +268,45 @@ export default function QueueSection({
         iterationPath || null,
       );
       if (r.status === "error") throw new Error(r.error);
-      return r.data;
+      // The exact rows that were sent, and the PBI they were sent for.
+      // onSuccess runs later, by which time the user may have switched PBI
+      // or a watched file may have rewritten the queue - so neither the
+      // indices nor "the current queue" still mean what they meant here.
+      return { results: r.data, sent: queue, sentFor: pbiId };
     },
     onSettled: () => {
       unlistenRef.current?.();
       unlistenRef.current = null;
       setProgress(null);
     },
-    onSuccess: (data) => {
-      setResults(data);
+    onSuccess: ({ results, sent, sentFor }) => {
+      setResults(results);
       setReviewing(false);
       // Keep failed items AND anything the loop never reached (cancelled).
-      const succeeded = new Set(
-        data.filter((r) => r.action !== "failed").map((r) => r.index),
-      );
-      setQueue((q) => q.filter((_, i) => !succeeded.has(i)));
-      qc.invalidateQueries({ queryKey: ["pbi-tcs", org, pbiId] });
-      qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, pbiId] });
-      const failedCount = data.filter((r) => r.action === "failed").length;
-      const ok = succeeded.size;
-      if (failedCount === 0) toast.success(`${ok} test case(s) processed.`);
-      else toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
+      const done = results.filter((r) => r.action !== "failed");
+      const ok = done.length;
+      const failedCount = results.length - ok;
+
+      // Prune by IDENTITY, not by index. An index is only meaningful
+      // against the list that was sent, and by now the queue may have been
+      // reordered by a watched-file sync or emptied by a PBI switch -
+      // filtering by index there removes whichever rows happen to sit at
+      // those positions, which is how a submit on one PBI could delete
+      // another PBI's drafts.
+      const created = new Set(done.map((r) => sent[r.index]).filter(Boolean));
+      if (sentFor !== pbiId) {
+        // The queue on screen is not the one that was submitted. Leave it
+        // completely alone and say so, rather than guess.
+        toast.info(
+          `${ok} test case(s) processed for PBI #${sentFor}. Switch back to it to see what is left.`,
+        );
+      } else {
+        setQueue((q) => q.filter((c) => !created.has(c)));
+        if (failedCount === 0) toast.success(`${ok} test case(s) processed.`);
+        else toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
+      }
+      qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
+      qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });
     },
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
   });

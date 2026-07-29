@@ -95,23 +95,32 @@ impl AdoClient {
         project: &str,
         run_id: i32,
     ) -> Result<Vec<RunResultRef>, AdoError> {
-        let url = format!(
-            "{}/test/Runs/{}/results?api-version=7.1",
-            self.tp_base(org, project),
-            run_id
-        );
-        let data = self.get_json(url).await?;
-        Ok(data["value"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|r| RunResultRef {
+        // PAGED. This is the Test Management API, which pages with
+        // $top/$skip and does NOT send the continuation-token header the
+        // paginated-testplan helper reads - so a run of more than one page
+        // silently returned only the first, and every outcome beyond it was
+        // dropped as "no matching result".
+        const PAGE: usize = 200;
+        let mut out: Vec<RunResultRef> = vec![];
+        loop {
+            let url = format!(
+                "{}/test/Runs/{}/results?$top={PAGE}&$skip={}&api-version=7.1",
+                self.tp_base(org, project),
+                run_id,
+                out.len()
+            );
+            let data = self.get_json(url).await?;
+            let page = data["value"].as_array().cloned().unwrap_or_default();
+            let got = page.len();
+            out.extend(page.iter().map(|r| RunResultRef {
                 result_id: r["id"].as_i64().unwrap_or_default() as i32,
                 test_case_id: id_i32(&r["testCase"]["id"]),
                 point_id: id_i32(&r["testPoint"]["id"]),
-            })
-            .collect())
+            }));
+            if got < PAGE {
+                return Ok(out);
+            }
+        }
     }
 
     /// PATCH outcomes onto a run's results (plain JSON, marks each result

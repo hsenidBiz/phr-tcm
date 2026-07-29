@@ -367,13 +367,15 @@ export default function RunnerWindow() {
         commands.listTestPoints(session!.org, session!.project, session!.planId, session!.suiteId),
       );
       const byCase = new Map(pts.map((p) => [p.test_case_id, p.point_id]));
+      // Membership, not a `?? 0` sentinel: a real point id of 0 would
+      // otherwise be indistinguishable from "this case has no point".
+      const dropped = outcomes.filter((o) => !byCase.has(o.case.id)).map((o) => o.case.title);
       const resolved = outcomes
-        .map((o) => ({ ...o, point_id: byCase.get(o.case.id) ?? 0 }))
-        .filter((o) => o.point_id !== 0)
-        .map(({ case: _c, ...rest }) => rest);
+        .filter((o) => byCase.has(o.case.id))
+        .map(({ case: c, ...rest }) => ({ ...rest, point_id: byCase.get(c.id)! }));
       if (resolved.length === 0) throw new Error("None of the marked cases have a test point.");
 
-      return unwrap(
+      await unwrap(
         commands.submitTestRun(
           session!.org,
           session!.project,
@@ -382,10 +384,26 @@ export default function RunnerWindow() {
           resolved,
         ),
       );
+      // A PARTIAL drop used to pass silently: only an all-dropped run
+      // errored, so a tester who marked eight cases and had two without a
+      // point was told the run was recorded and lost those two results.
+      return { recorded: resolved.length, dropped };
     },
-    onSuccess: () => {
-      toast.success("Run recorded. Closing runner.");
-      setTimeout(() => getCurrentWindow().close(), 600);
+    onSuccess: ({ recorded, dropped }) => {
+      if (dropped.length === 0) {
+        toast.success("Run recorded. Closing runner.");
+        setTimeout(() => getCurrentWindow().close(), 600);
+        return;
+      }
+      // Do NOT close: the tester needs to see which results did not land,
+      // and closing would take the only copy of them with it.
+      toast.warning(
+        `${recorded} result(s) recorded, but ${dropped.length} could not be: ` +
+          `${dropped.join(", ")} - ${dropped.length === 1 ? "it is" : "they are"} not in this ` +
+          `suite, so there is no test point to record against. Add ${dropped.length === 1 ? "it" : "them"} ` +
+          `to the suite and mark again.`,
+        { duration: 20000 },
+      );
     },
     onError: (e) => toast.error(e.message),
   });

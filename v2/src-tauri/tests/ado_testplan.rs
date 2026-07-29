@@ -411,3 +411,40 @@ async fn result_report_info_parses_comment_and_bugs() {
     assert_eq!(comment, "It exploded");
     assert_eq!(bugs, vec![901, 902]);
 }
+
+/// The run-results endpoint is the Test Management API: it pages with
+/// $top/$skip and does NOT send the continuation-token header the testplan
+/// helper reads. A single unpaged GET returned only the first page, so
+/// every outcome beyond it looked like "no matching result" and was
+/// dropped - the tester's results simply never existed.
+#[tokio::test]
+async fn run_results_are_read_across_every_page() {
+    let server = wiremock::MockServer::start().await;
+    let page = |from: i32, n: i32| {
+        let value: Vec<serde_json::Value> = (0..n)
+            .map(|i| {
+                serde_json::json!({
+                    "id": from + i,
+                    "testCase": { "id": (from + i).to_string() },
+                    "testPoint": { "id": (1000 + from + i).to_string() }
+                })
+            })
+            .collect();
+        serde_json::json!({ "value": value })
+    };
+    // Full page, then a short one - which is how the loop knows to stop.
+    wiremock::Mock::given(wiremock::matchers::query_param("$skip", "0"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(page(1, 200)))
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::query_param("$skip", "200"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(page(201, 30)))
+        .mount(&server)
+        .await;
+
+    let client = v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri());
+    let results = client.get_run_results("o", "p", 7).await.unwrap();
+    assert_eq!(results.len(), 230, "the second page was dropped");
+    // A point from the second page must be findable, which is the whole point.
+    assert!(results.iter().any(|r| r.point_id == Some(1230)));
+}

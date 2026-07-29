@@ -415,14 +415,6 @@ fn parse_cases_with_warnings(
 /// Run a draft through the app's REAL importer to get `TestCase`s, so
 /// these tools accept exactly what the Import File tab accepts (bare
 /// array, `test_cases` wrapper, the lot).
-/// One implementation, so a caller cannot quietly drop the warnings by
-/// choosing the wrong helper - which is exactly what optimize and transform
-/// were doing: the importer skips a case it cannot read and says so, and
-/// both tools threw that away and reported success over a shorter draft.
-fn parse_cases(body: &str) -> Result<Vec<crate::model::TestCase>, String> {
-    parse_cases_with_warnings(body).map(|(cases, _)| cases)
-}
-
 /// The project's existing tag names, for suggesting tags that match what
 /// the team already uses instead of inventing near-duplicates.
 ///

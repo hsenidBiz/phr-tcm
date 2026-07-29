@@ -72,19 +72,48 @@ pub async fn submit_test_run(
     let results = client
         .get_run_results(&organization, &project, run.run_id)
         .await?;
-    let updates: Vec<ado_testplan::OutcomeUpdate> = outcomes
-        .iter()
-        .filter_map(|o| {
-            let result = results.iter().find(|r| r.point_id == Some(o.point_id))?;
-            Some(ado_testplan::OutcomeUpdate {
+    // Every marked outcome must find its result. A filter_map here dropped
+    // any that did not, with no error and no log line, and the run was then
+    // reported as fully recorded - so a tester's result simply never
+    // existed. Refuse instead: the run has been created either way, and
+    // saying which cases are missing is the only way to act on it.
+    let mut updates: Vec<ado_testplan::OutcomeUpdate> = Vec::with_capacity(outcomes.len());
+    let mut unmatched: Vec<i32> = vec![];
+    for o in &outcomes {
+        match results.iter().find(|r| r.point_id == Some(o.point_id)) {
+            Some(result) => updates.push(ado_testplan::OutcomeUpdate {
                 id: result.result_id,
                 outcome: o.outcome.clone(),
                 comment: o.comment.clone(),
                 duration_ms: o.duration_ms,
                 bug_ids: o.bug_ids.clone(),
-            })
-        })
-        .collect();
+            }),
+            None => unmatched.push(o.point_id),
+        }
+    }
+    if !unmatched.is_empty() {
+        crate::applog::error(format!(
+            "run {} has no result rows for test point(s) {unmatched:?} - {} of {} outcomes could not be recorded",
+            run.run_id,
+            unmatched.len(),
+            outcomes.len(),
+        ));
+        // Http { status: 0 } is this client's existing shape for "the
+        // service answered, but not with what this operation needs". A
+        // bespoke variant would ripple through every IPC signature for one
+        // call site.
+        return Err(ado::AdoError::Http {
+            status: 0,
+            body: format!(
+                "Azure DevOps returned no result row for {} of the {} marked case(s) \
+                 (test point(s) {unmatched:?}). Run #{} was created but those outcomes \
+                 were NOT recorded - open it in Azure DevOps rather than marking again.",
+                unmatched.len(),
+                outcomes.len(),
+                run.run_id,
+            ),
+        });
+    }
     client
         .update_run_results(&organization, &project, run.run_id, &updates)
         .await?;
