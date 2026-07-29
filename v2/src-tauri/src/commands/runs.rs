@@ -91,6 +91,24 @@ pub async fn submit_test_run(
             None => unmatched.push(o.point_id),
         }
     }
+    // Save what CAN be saved, FIRST.
+    //
+    // This used to return here the moment anything was unmatched, which was
+    // worse than the silent filter_map it replaced: two unmatched points out
+    // of eight meant none of the eight were written, complete_test_run never
+    // ran so the run sat In Progress, and the message told the tester not to
+    // mark again - so the six good results were lost as well, and the advice
+    // kept them lost. Record the six, then say which two are missing.
+    if !updates.is_empty() {
+        client
+            .update_run_results(&organization, &project, run.run_id, &updates)
+            .await?;
+    }
+
+    // Everything that did not make it onto this run, gathered in one place:
+    // outcomes with no result row here, per-step marks and attachments
+    // below. The runner shows them together and stays open.
+    let mut extras_failed: Vec<String> = vec![];
     if !unmatched.is_empty() {
         crate::applog::error(format!(
             "run {} has no result rows for test point(s) {unmatched:?} - {} of {} outcomes could not be recorded",
@@ -98,32 +116,21 @@ pub async fn submit_test_run(
             unmatched.len(),
             outcomes.len(),
         ));
-        // Http { status: 0 } is this client's existing shape for "the
-        // service answered, but not with what this operation needs". A
-        // bespoke variant would ripple through every IPC signature for one
-        // call site.
-        return Err(ado::AdoError::Http {
-            status: 0,
-            body: format!(
-                "Azure DevOps returned no result row for {} of the {} marked case(s) \
-                 (test point(s) {unmatched:?}). Run #{} was created but those outcomes \
-                 were NOT recorded - open it in Azure DevOps rather than marking again.",
-                unmatched.len(),
-                outcomes.len(),
-                run.run_id,
-            ),
-        });
+        for point in &unmatched {
+            extras_failed.push(format!(
+                "the outcome for test point {point} - Azure DevOps created no result row for it, \
+                 so mark that case again"
+            ));
+        }
     }
-    client
-        .update_run_results(&organization, &project, run.run_id, &updates)
-        .await?;
 
     // Per-step outcomes + screenshots are additive and best-effort (v1
     // semantics): a failure here never loses the recorded outcomes. It was
     // also never REPORTED, so a tester who marked five steps individually
     // and attached a screenshot of the failure had no way to know that none
-    // of it arrived. Collected and handed back instead.
-    let mut extras_failed: Vec<String> = vec![];
+    // of it arrived. Collected onto the same list the unmatched outcomes
+    // above use - everything that did not make it onto this run, in one
+    // place, so the runner can show it in one message.
     for o in &outcomes {
         let Some(result) = results.iter().find(|r| r.point_id == Some(o.point_id)) else {
             continue;

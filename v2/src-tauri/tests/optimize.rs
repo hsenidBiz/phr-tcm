@@ -841,3 +841,54 @@ fn a_multi_byte_expected_result_does_not_panic() {
         let _ = clean_expected(raw);
     }
 }
+
+/// The precondition move is ATOMIC: a sentence leaves preconditions only in
+/// the same pass that adds it as a step. The duplicate-guard broke that by
+/// scanning the WHOLE case - a mid-case "Navigate to the Payments page."
+/// (there to check the result) matched the generated nav step, so the step
+/// was dropped while the precondition it consumed was still removed. The
+/// case lost both: no step telling the tester to go there, and no
+/// precondition saying they should be.
+#[test]
+fn a_mid_case_navigation_is_not_mistaken_for_a_duplicate_preamble() {
+    let c = case(
+        "Refund a completed payment",
+        "Payments",
+        "Signed in as a finance admin; User is on the Payments page",
+        vec![
+            step("Enter 1000 in the Amount box.", "The amount is accepted"),
+            step("Click Pay.", "The payment completes"),
+            step("Open the payment detail.", "The detail opens"),
+            step("Click Refund.", "A confirmation appears"),
+            step("Confirm the refund.", "The refund is accepted"),
+            step("Navigate to the Payments page.", "The list is shown"),
+            step("Check the row shows Refunded.", "It shows Refunded"),
+        ],
+    );
+    let (out, _) = optimize(vec![c], Some("Launch the application."));
+    let actions: Vec<&str> = out[0].steps.iter().map(|s| s.action.as_str()).collect();
+
+    // The tester is walked in before being told to type an amount.
+    assert!(
+        actions.iter().any(|a| a.to_lowercase().contains("payments page")),
+        "the preamble navigation was dropped: {actions:?}"
+    );
+    let first_amount = actions.iter().position(|a| a.contains("Amount box")).unwrap();
+    let first_nav = actions
+        .iter()
+        .position(|a| a.to_lowercase().contains("navigate to the payments"))
+        .unwrap();
+    assert!(first_nav < first_amount, "navigation must come first: {actions:?}");
+
+    // The step at the END is still there - it checks the result and is not
+    // a duplicate of the preamble.
+    assert!(
+        actions.last().unwrap().contains("Refunded"),
+        "the case lost its closing steps: {actions:?}"
+    );
+    assert_eq!(
+        actions.iter().filter(|a| a.to_lowercase().contains("navigate to the payments")).count(),
+        2,
+        "one preamble navigation and one mid-case check: {actions:?}"
+    );
+}

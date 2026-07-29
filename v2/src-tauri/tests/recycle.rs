@@ -7,9 +7,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Area node + a permission answer, which is what the gate needs.
 async fn with_permission(server: &MockServer, allowed: bool) {
     Mock::given(method("GET"))
-        .and(path("/o/p/_apis/wit/classificationnodes/areas"))
+        .and(path("/o/_apis/projects/p"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "identifier": "node-1" })),
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "proj-guid-1" })),
         )
         .mount(server)
         .await;
@@ -75,7 +75,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
     let empty = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "identifier": "n" })),
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "g" })),
         )
         .mount(&empty)
         .await;
@@ -97,7 +97,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
         .can_delete_work_items("o", "p")
         .await);
 
-    // The project has no area node identifier to build a token from.
+    // The project carried no id to build a token from.
     let nonode = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
@@ -139,4 +139,46 @@ async fn one_failure_does_not_stop_the_others_and_is_named() {
     assert!(!out[1].deleted);
     assert_eq!(out[1].id, 2, "the failure names the item");
     assert!(!out[1].error.is_empty(), "and says why");
+}
+
+
+/// What the permission request actually ASKS.
+///
+/// The first version of this gate evaluated the classification-node (area
+/// path) namespace and its bit 8 - both real, both internally consistent,
+/// and both about "may this user delete this AREA NODE" rather than "may
+/// this user delete work items". Azure DevOps answered it confidently, so
+/// nothing failed: a default Contributor simply never saw the button.
+///
+/// Every test here mocked the endpoint by PATH only and never looked at the
+/// body, so all of them passed against the wrong question. This one reads
+/// the body, which is the only way that class of mistake shows up.
+#[tokio::test]
+async fn the_permission_asked_for_is_work_item_delete_on_the_project() {
+    let server = MockServer::start().await;
+    with_permission(&server, true).await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    assert!(client.can_delete_work_items("o", "p").await);
+
+    let sent = server.received_requests().await.unwrap();
+    let eval = sent
+        .iter()
+        .find(|r| r.url.path().ends_with("/permissionevaluationbatch"))
+        .expect("the permission was evaluated");
+    let body: serde_json::Value = serde_json::from_slice(&eval.body).unwrap();
+    let e = &body["evaluations"][0];
+
+    // The PROJECT namespace, not the classification-node one.
+    assert_eq!(
+        e["securityNamespaceId"].as_str(),
+        Some("52d39943-cb85-4d7f-8fa8-c6baac873819"),
+        "wrong security namespace - this decides WHICH permission is being asked about"
+    );
+    // WORK_ITEM_DELETE in that namespace.
+    assert_eq!(e["permissions"].as_i64(), Some(8192));
+    // Token built from the project's GUID, not the name in the URL.
+    assert_eq!(
+        e["token"].as_str(),
+        Some("$PROJECT:vstfs:///Classification/TeamProject/proj-guid-1")
+    );
 }

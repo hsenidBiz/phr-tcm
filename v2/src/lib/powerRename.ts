@@ -55,6 +55,14 @@ export type RowStatus =
 export type RenameRow = {
   /** Work item id, or null for a draft that has not been created yet. */
   id: number | null;
+  /** Position in the list this row came from.
+   *
+   * A draft has no id, so a caller matching rows back by TITLE gets it
+   * wrong the moment a rename makes two of them the same - undo then put
+   * the old title on whichever one it happened to reach first, leaving
+   * titles attached to the wrong steps. The position does not change under
+   * a rename, so it is the identity that survives one. */
+  index: number;
   before: string;
   after: string;
   status: RowStatus;
@@ -169,8 +177,9 @@ export function previewRename(
   const { re, error } = buildRegex(rule);
   if (error) {
     return {
-      rows: cases.map((c) => ({
+      rows: cases.map((c, i) => ({
         id: c.id,
+        index: i,
         before: c.title,
         after: c.title,
         status: { kind: "unchanged" } as RowStatus,
@@ -190,6 +199,7 @@ export function previewRename(
 
   const draft = cases.map((c, i) => ({
     id: c.id,
+    index: i,
     before: c.title,
     after: re || !ruleIsEmpty(rule) ? renameOne(c.title, i, rule, re) : c.title,
   }));

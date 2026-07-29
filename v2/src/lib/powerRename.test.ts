@@ -158,6 +158,34 @@ describe("what the preview refuses", () => {
   });
 });
 
+/**
+ * Every row carries its position, and that is what a caller must match on.
+ *
+ * A draft has no work item id, so the title was the only handle - and a
+ * rename can make two drafts share one. Undo then put the old title back on
+ * whichever draft it reached first, leaving titles attached to the wrong
+ * steps while reporting success. The position does not change under a
+ * rename, which is exactly why it is the identity that survives one.
+ */
+test("rows carry a position that a collision cannot confuse", () => {
+  const p = previewRename(
+    [
+      { id: null, title: "Login works" },
+      { id: null, title: "Logout works" },
+    ],
+    rule({ find: "Logout", replace: "Login" }),
+  );
+  // Both drafts now read "Login works" - indistinguishable by title.
+  expect(p.rows.map((r) => r.after)).toEqual(["Login works", "Login works"]);
+  // Only the second changed, and it knows which one it is.
+  const applied = rowsToApply(p);
+  expect(applied).toHaveLength(1);
+  expect(applied[0].index).toBe(1);
+  expect(applied[0].before).toBe("Logout works");
+  // Positions are the row's own, in list order, whatever the titles do.
+  expect(p.rows.map((r) => r.index)).toEqual([0, 1]);
+});
+
 /** Undo is the same write in the other direction - this app has no DELETE
  *  and does not roll back revisions, so there is nothing else it could be. */
 test("undo carries the titles back", () => {

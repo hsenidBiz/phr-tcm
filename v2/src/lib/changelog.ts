@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.1",
+    date: "2026-07-29",
+    items: [
+      "Fixed: saving a test run threw away EVERY result when any one of the marked cases had no result row in Azure DevOps - and the message then told you not to mark them again. If you marked eight cases and two of them could not be recorded, all eight were lost. The six that can be saved are now saved first, the run is completed, and you are told which ones still need marking. This was introduced in 1.15.0 while fixing a smaller version of the same problem.",
+      "Fixed: the Delete button checked the wrong permission, so it stayed hidden from almost everyone. It asked Azure DevOps whether you could delete an AREA PATH rather than whether you could delete work items - a normal Contributor holds the second but not the first. Introduced with the feature in 1.17.0.",
+      "Fixed: Undo after a Power Rename could put a title back on the wrong draft, if the rename had made two drafts share a title. Titles ended up attached to the wrong steps while the message said it had worked. Introduced with the feature in 1.16.0.",
+      "Fixed: the AI optimiser could delete a navigation step AND the precondition that went with it, leaving a case that tells the tester to start typing before saying where to be. It happened when a case navigated somewhere again later on to check a result. Introduced in 1.16.0.",
+      "The sidebar icons are one colour again, following the text beside them, instead of each having its own. The rail was busier than it was useful. The icons themselves are unchanged - including the circular arrow for Update Test Cases.",
+    ],
+  },
+  {
     version: "1.17.0",
     date: "2026-07-29",
     items: [

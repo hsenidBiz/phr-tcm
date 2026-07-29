@@ -26,19 +26,31 @@
 
 use super::{AdoClient, AdoError};
 
-/// Azure DevOps' Classification-node (area path) security namespace, which
-/// is what governs deleting a work item.
+/// Azure DevOps' PROJECT security namespace, which is where work-item
+/// delete lives.
 ///
-/// NOT VERIFIED against a live organization - it comes from Microsoft's
-/// published namespace list, and this machine cannot reach a real one to
-/// confirm it. That is precisely why `can_delete_work_items` fails closed:
-/// if this constant or the bit below were wrong, the evaluation returns
-/// nothing usable and the app simply does not offer to delete. A wrong
-/// constant costs a missing button, never an unexpected deletion.
-const CSS_NAMESPACE_ID: &str = "83e28ad4-2d72-4ceb-97b0-c7726d5502c3";
+/// The first version of this used the Classification-node (area path)
+/// namespace and its bit 8. Those are real and internally consistent, so
+/// Azure DevOps resolved them and answered confidently - about a different
+/// question: "may this user delete this AREA PATH NODE". A default
+/// Contributor holds project-level "Delete and restore work items" but not
+/// "Delete this node", so they got a clean `false` and never saw the
+/// button.
+///
+/// NOT VERIFIED against a live organization - this machine cannot reach
+/// one. And note what that first version got wrong in its REASONING, not
+/// just its constants: it claimed a wrong constant could only ever cost a
+/// missing button. That holds for a constant Azure DevOps cannot resolve.
+/// A wrong-but-valid one gets a confident yes or no about the wrong thing,
+/// and `evaluate_delete_permission` cannot tell the difference. So the
+/// permission check is a courtesy that hides a button nobody could use -
+/// the real backstop is the 403 handling on the delete itself, which needs
+/// no constant to be right.
+const PROJECT_NAMESPACE_ID: &str = "52d39943-cb85-4d7f-8fa8-c6baac873819";
 
-/// The WORK_ITEM_DELETE bit in that namespace. Same caveat as above.
-const WORK_ITEM_DELETE: u32 = 8;
+/// WORK_ITEM_DELETE in the PROJECT namespace. Pinned by a test that reads
+/// the request body, so changing it is a deliberate act rather than a typo.
+const WORK_ITEM_DELETE: u32 = 8192;
 
 /// One work item's fate after a delete attempt.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -74,25 +86,26 @@ impl AdoClient {
         org: &str,
         project: &str,
     ) -> Result<bool, AdoError> {
-        // The permission is held against the project's root AREA node, so
-        // its identifier is needed to build the security token.
-        let areas = self
+        // The permission is held against the PROJECT, so the security token
+        // is built from the project's id - which is a GUID, not the name in
+        // the URL.
+        let meta = self
             .get_json(format!(
-                "{}/{}/{}/_apis/wit/classificationnodes/areas?api-version=7.1",
+                "{}/{}/_apis/projects/{}?api-version=7.1",
                 self.base_url, org, project
             ))
             .await?;
-        let Some(node) = areas["identifier"].as_str() else {
+        let Some(project_id) = meta["id"].as_str() else {
             return Err(AdoError::Http {
                 status: 0,
-                body: "the project's area node carried no identifier".into(),
+                body: "the project carried no id to build a security token from".into(),
             });
         };
 
         let body = serde_json::json!({
             "evaluations": [{
-                "securityNamespaceId": CSS_NAMESPACE_ID,
-                "token": format!("vstfs:///Classification/Node/{node}"),
+                "securityNamespaceId": PROJECT_NAMESPACE_ID,
+                "token": format!("$PROJECT:vstfs:///Classification/TeamProject/{project_id}"),
                 "permissions": WORK_ITEM_DELETE,
             }],
             "alwaysAllowAdministrators": true,

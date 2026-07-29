@@ -643,12 +643,23 @@ pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, Op
         // sign-in context that was never re-emitted.
         if !already_has_preamble(&c, entry) {
             let (pre, consumed) = preamble_steps(&c, entry);
-            // Subtractive, as well as the probe above. The probe decides
-            // WHETHER a preamble is needed; this decides which of its steps
-            // the case does not already have, so a draft that writes its
-            // own "Sign in as a manager." further down never ends up with
-            // two of them however the probe judged it.
-            let existing: Vec<String> = c.steps.iter().map(|s| norm_step(&s.action)).collect();
+            // Subtractive, as well as the probe above - but only against
+            // the case's OPENING steps, not all of them.
+            //
+            // Scanning the whole case broke the atomic move that the
+            // comment below promises. "Refund a payment" ends with
+            // "Navigate to the Payments page." at step 6 to check the
+            // result; that matched the generated nav step, so the step was
+            // dropped - while the precondition sentence it had consumed was
+            // still removed. The case lost both: no step telling the tester
+            // to go there, and no precondition saying they should be. A
+            // mid-case navigation is a real step, not a duplicate preamble.
+            let existing: Vec<String> = c
+                .steps
+                .iter()
+                .take(PREAMBLE_PROBE)
+                .map(|s| norm_step(&s.action))
+                .collect();
             let pre: Vec<Step> = pre
                 .into_iter()
                 .filter(|p| !existing.contains(&norm_step(&p.action)))

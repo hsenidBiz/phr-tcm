@@ -321,29 +321,37 @@ export default function QueueSection({
   /** Renaming drafts touches nothing outside this list - they are in memory
    *  until Create runs - so undo here can never fail.
    *
-   *  Rows are matched back to drafts occurrence-aware, the same way
-   *  fileSync identifies cases: a draft has no work item id, so two of them
-   *  really can share a title, and matching by title alone would rename the
-   *  first one twice and the second not at all. */
+   *  Rows are matched back to drafts by POSITION. A draft has no work item
+   *  id and a rename can make two of them share a title, so the title is
+   *  not an identity that survives the very operation being applied. */
   const renameTarget: RenameTarget = {
     label: "the queued drafts",
     cases: queue.map((tc) => ({ id: tc.update_id, title: tc.title })),
     undoable: true,
     apply: async (rows) => {
-      const pending = new Map<string, string[]>();
-      for (const r of rows) {
-        const k = `${r.id ?? ""}\u0000${r.before}`;
-        pending.set(k, [...(pending.get(k) ?? []), r.after]);
-      }
+      // By POSITION, not by title. Title matching failed in exactly the
+      // case this feature makes likely: rename one draft onto another's
+      // title and the two stop being distinguishable, so Undo put the old
+      // title back on whichever one it reached first and left titles
+      // sitting on the wrong steps - reported as "Put back 1 title".
+      const byIndex = new Map(rows.map((r) => [r.index, r]));
+      const failed: typeof rows = [];
       setQueue((q) =>
-        q.map((tc) => {
-          const k = `${tc.update_id ?? ""}\u0000${tc.title}`;
-          const waiting = pending.get(k);
-          if (!waiting || waiting.length === 0) return tc;
-          return { ...tc, title: waiting.shift()! };
+        q.map((tc, i) => {
+          const row = byIndex.get(i);
+          if (!row) return tc;
+          // The queue can move underneath an open dialog - a watched file
+          // syncing, another tab adding a case. If this is no longer the
+          // draft the preview showed, leave it alone and report it rather
+          // than writing that title onto something else.
+          if (tc.title !== row.before) {
+            failed.push(row);
+            return tc;
+          }
+          return { ...tc, title: row.after };
         }),
       );
-      return []; // nothing to fail: this is a state update, not a request
+      return failed;
     },
   };
 
