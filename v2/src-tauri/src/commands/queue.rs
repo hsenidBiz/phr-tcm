@@ -449,7 +449,8 @@ pub async fn submit_queue(
     // One submit at a time. A second call used to clear the cancel flag
     // below - wiping a Cancel already clicked - and then run a second loop
     // over the same queue. Two loops create every case twice, and this tool
-    // has no DELETE, so those duplicates are permanent. The guard releases
+    // only deletes Test Cases, and only for someone Azure DevOps says may,
+    // so those duplicates may well be permanent. The guard releases
     // on every exit path, including a panic.
     let cancel = app.state::<SubmitCancel>();
     let Some(_running) = cancel.claim() else {

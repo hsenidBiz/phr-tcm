@@ -510,6 +510,48 @@ fn client_source_has_no_delete_calls() {
     }
 }
 
+/// The one sanctioned exception, and it is held to a TIGHTER rule than the
+/// files above rather than a looser one.
+///
+/// `recycle.rs` may issue DELETE - that is its whole reason to exist - but
+/// `DELETE _apis/wit/workitems/{id}?destroy=true` erases a work item
+/// permanently and irrecoverably, where the plain form moves it to the
+/// project's recycle bin and it can be restored. The recoverable one is the
+/// only delete this app will ever make, and the difference is a single
+/// query parameter, so it is asserted here rather than trusted to review.
+#[test]
+fn the_only_delete_is_the_recoverable_one() {
+    let recycle = include_str!("../src/ado/recycle.rs");
+
+    // It really is the delete path - otherwise this test passes vacuously
+    // if someone renames the file or moves the call out of it.
+    assert!(
+        recycle.contains(".delete("),
+        "recycle.rs is supposed to be the file that deletes"
+    );
+
+    // Case-insensitive: ?destroy=true, DESTROY, "Destroy" in a builder -
+    // none of it. The word appears nowhere, including in prose, so that
+    // this assertion can never be weakened by a comment mentioning it.
+    let lowered = recycle.to_lowercase();
+    assert!(
+        !lowered.contains("destroy"),
+        "recycle.rs must never mention destroy - a permanent delete is not          a capability this app has"
+    );
+
+    // And nothing else may quietly grow one.
+    for (name, src) in [
+        ("commands/cases.rs", include_str!("../src/commands/cases.rs")),
+        ("commands/queue.rs", include_str!("../src/commands/queue.rs")),
+        ("commands/board.rs", include_str!("../src/commands/board.rs")),
+    ] {
+        assert!(
+            !src.to_lowercase().contains("destroy"),
+            "{name} must not mention destroy"
+        );
+    }
+}
+
 #[tokio::test]
 async fn field_values_in_use_dedupes_and_sorts() {
     let server = MockServer::start().await;

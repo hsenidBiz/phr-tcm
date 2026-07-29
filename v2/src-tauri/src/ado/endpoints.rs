@@ -1,6 +1,8 @@
 //! Work-item-tracking endpoints (orgs, projects, PBIs, test cases, bugs,
 //! tags, classification). Every method rides the `transport` helpers; the
-//! writes are POST/PATCH create-or-update only — no DELETE, ever.
+//! writes are POST/PATCH create-or-update only - no DELETE in THIS file,
+//! nor in any other except `recycle.rs`, which is the single audited
+//! exception and is held to a tighter rule than this one. See its header.
 
 use super::{
     tc_ids_i32, AdoClient, AdoError, BlankPolicy, BugTypeInfo, FieldRef, Org, PbiHit, Project,

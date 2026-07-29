@@ -276,6 +276,17 @@ function applyPatches() {
       }
       return { status: "ok" as const, data: results };
     },
+    // Demo mode never reaches Azure DevOps, so the delete is offered and
+    // removes from the in-memory store only. Permission is granted here so
+    // the confirmation screen can actually be exercised.
+    canDeleteTestCases: () => ok(true),
+    deleteTestCases: (_o: string, _p: string, ids: number[]) => {
+      for (const [pbi, list] of casesByPbi) {
+        casesByPbi.set(pbi, list.filter((c) => !ids.includes(c.id)));
+      }
+      return ok(ids.map((id) => ({ id, deleted: true, error: "" })));
+    },
+
     updateTestCase: (_o: string, _p: string, tc: TestCase) => {
       const existing = tc.update_id != null ? findCase(tc.update_id) : undefined;
       if (existing) {

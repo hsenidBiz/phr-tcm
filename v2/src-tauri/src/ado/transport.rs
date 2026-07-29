@@ -1,6 +1,8 @@
 //! HTTP transport for `AdoClient`: the only place requests are built and
 //! status codes become `AdoError`s. Verbs stop at GET / POST / PATCH —
-//! no DELETE, ever (tests/ado.rs scans this file).
+//! no DELETE (tests/ado.rs scans this file). The one place that does
+//! delete is `recycle.rs`, which carries its own send for exactly that
+//! reason - so this funnel's verb allow-list stays as narrow as it was.
 //!
 //! Every request also goes through one function, `send`. That is what
 //! makes "what was the app doing when it broke" answerable: pacing,
@@ -167,7 +169,7 @@ impl AdoClient {
     }
 
     /// Plain-JSON POST (application/json) - used by testplan/test-run
-    /// endpoints. Still no DELETE anywhere in this client.
+    /// endpoints. Still no DELETE through this funnel.
     pub(crate) async fn post_json(
         &self,
         url: String,
@@ -182,7 +184,7 @@ impl AdoClient {
     }
 
     /// POST used for WIQL queries only — query-only, creates and modifies
-    /// nothing. Still no DELETE anywhere in this client.
+    /// nothing. Still no DELETE through this funnel.
     pub(crate) async fn post_json_query(
         &self,
         url: String,
@@ -197,7 +199,7 @@ impl AdoClient {
     }
 
     /// Raw-body POST (application/octet-stream) - the attachment upload
-    /// endpoint takes file bytes, not JSON. Still no DELETE anywhere.
+    /// endpoint takes file bytes, not JSON. Still no DELETE here.
     pub(crate) async fn post_octet(
         &self,
         url: String,
@@ -228,7 +230,8 @@ impl AdoClient {
     }
 
     /// PATCH-shaped request helpers. The only verbs this client will ever
-    /// grow are GET, POST and PATCH - no DELETE, ever.
+    /// grow are GET, POST and PATCH. The one delete this app makes does
+    /// not come through here at all - see `recycle.rs`.
     pub(crate) async fn send_json_patch(
         &self,
         method: reqwest::Method,

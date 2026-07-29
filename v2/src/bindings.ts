@@ -202,6 +202,25 @@ export const commands = {
 	 */
 	testCaseFieldValues: (organization: string, project: string, fieldRef: string) => typedError<string[], AdoError>(__TAURI_INVOKE("test_case_field_values", { organization, project, fieldRef })),
 	/**
+	 *  Whether this user may delete work items here, which is what decides
+	 *  whether the app offers to at all.
+	 * 
+	 *  Fails closed inside the client: anything short of an explicit yes from
+	 *  Azure DevOps is a no. See `ado/recycle.rs` for why that asymmetry is
+	 *  deliberate.
+	 */
+	canDeleteTestCases: (organization: string, project: string) => typedError<boolean, AdoError>(__TAURI_INVOKE("can_delete_test_cases", { organization, project })),
+	/**
+	 *  Move test cases to the project's RECYCLE BIN, where Azure DevOps can
+	 *  restore them. This app has no permanent delete and issues no other
+	 *  DELETE anywhere - see `ado/recycle.rs`, which is the only file allowed
+	 *  to, and the tests that keep it that way.
+	 * 
+	 *  Every id is reported individually: a partly-completed delete has to be
+	 *  able to say which ones survived.
+	 */
+	deleteTestCases: (organization: string, project: string, ids: number[]) => typedError<DeleteOutcome[], AdoError>(__TAURI_INVOKE("delete_test_cases", { organization, project, ids })),
+	/**
 	 *  Read-only suite lookup for background prefetch: finds the PBI's
 	 *  requirement suite if one exists anywhere, but NEVER creates a plan or
 	 *  suite (creation stays on the Run Tests screen where the user asked).
@@ -423,6 +442,14 @@ export type DbServerConfig = {
 	connection_string: string,
 	/**  Comma-separated; blank means the server's own default (dbo). */
 	schema_filter: string,
+};
+
+/**  One work item's fate after a delete attempt. */
+export type DeleteOutcome = {
+	id: number,
+	deleted: boolean,
+	/**  Why not, when it was not. Empty on success. */
+	error: string,
 };
 
 /**  One environment a release carried this build into. */

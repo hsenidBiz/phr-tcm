@@ -133,3 +133,50 @@ pub async fn test_case_field_values(
         .field_values_in_use(&organization, &project, &field_ref)
         .await
 }
+
+/// Whether this user may delete work items here, which is what decides
+/// whether the app offers to at all.
+///
+/// Fails closed inside the client: anything short of an explicit yes from
+/// Azure DevOps is a no. See `ado/recycle.rs` for why that asymmetry is
+/// deliberate.
+#[tauri::command]
+#[specta::specta]
+pub async fn can_delete_test_cases(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<bool, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    Ok(ado::AdoClient::new(token)
+        .can_delete_work_items(&organization, &project)
+        .await)
+}
+
+/// Move test cases to the project's RECYCLE BIN, where Azure DevOps can
+/// restore them. This app has no permanent delete and issues no other
+/// DELETE anywhere - see `ado/recycle.rs`, which is the only file allowed
+/// to, and the tests that keep it that way.
+///
+/// Every id is reported individually: a partly-completed delete has to be
+/// able to say which ones survived.
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_test_cases(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    ids: Vec<i32>,
+) -> Result<Vec<ado::recycle::DeleteOutcome>, ado::AdoError> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    crate::applog::warn(format!(
+        "deleting {} test case(s) to the recycle bin in {project}: {ids:?}",
+        ids.len()
+    ));
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .delete_test_cases_to_recycle_bin(&organization, &project, &ids)
+        .await
+}

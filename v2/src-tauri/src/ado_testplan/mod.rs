@@ -2,7 +2,8 @@
 //! the v1 devops_client.py testplan/test-execution sections. Requirement
 //! suites auto-populate from the PBI's "Tested By" links, which is what makes
 //! created tests show on the board's test count. Only GET/POST/PATCH here -
-//! no DELETE anywhere, same as the rest of the client.
+//! no DELETE anywhere - test plans, suites and runs are never removed by
+//! this app. Only Test Case work items can be deleted, from `recycle.rs`.
 //!
 //! Layout: this file owns the shared types, pure helpers and the plan URL
 //! base; `plans` owns plan/suite discovery and find-or-create; `runs` owns

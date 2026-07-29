@@ -395,7 +395,7 @@ impl AdoClient {
             }
         };
         // Everything from here on happens AFTER a plan may have been
-        // created, and this tool has no DELETE by design - so a failure
+        // created, and this tool cannot delete a test PLAN - so a failure
         // now leaves an empty test plan in the project that nothing can
         // tidy up. Name it, in the log and in the error, rather than let a
         // plan appear out of nowhere with no explanation.

@@ -14,8 +14,9 @@ use crate::{ado, auth};
 /// `running` makes the loop single-flight. Both matter and for the same
 /// reason: submit_queue clears `cancel` on entry, so a second call while
 /// one was running wiped a Cancel the user had already clicked AND put a
-/// second loop over the same queue - and this tool has no DELETE, so every
-/// case that pair created twice is a duplicate nobody can remove.
+/// second loop over the same queue - and every case that pair creates twice
+/// is a duplicate that only someone with delete permission can remove, if
+/// anyone can. Not making them is still far better than tidying them up.
 #[derive(Default)]
 pub struct SubmitCancel(
     pub(crate) std::sync::atomic::AtomicBool,

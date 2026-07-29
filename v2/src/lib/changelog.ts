@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.0",
+    date: "2026-07-29",
+    items: [
+      "New: you can now delete test cases. Select them in Update Test Cases and a Delete button appears - but only if Azure DevOps says you have permission to delete work items in that project. If it cannot confirm you do, the button is simply not there.",
+      "Deleted cases go to the project's RECYCLE BIN in Azure DevOps, where an administrator can restore them. The app has no permanent delete at all, and cannot be made to do one - that is enforced by a test, not by good intentions.",
+      "The confirmation lists every case being deleted, by ID and title, with Delete and Cancel. A count is not something you can check, and checking is the entire point of a confirmation.",
+      "If some cases cannot be deleted, the others still are, and you are told exactly which ones were left behind and why - the confirmation stays open showing them rather than closing on a number.",
+      "Until now this app has never deleted anything anywhere. That is still true of everything else: test plans, suites, runs, attachments, comments, board items and pull requests are all still create-or-update only.",
+    ],
+  },
+  {
     version: "1.16.0",
     date: "2026-07-29",
     items: [

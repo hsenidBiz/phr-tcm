@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { commands, type TestCaseFull } from "../../bindings";
 import BulkEditDialog from "../../components/BulkEditDialog";
 import PowerRenameDialog, { type RenameTarget } from "../../components/PowerRenameDialog";
+import DeleteConfirm from "../../components/DeleteConfirm";
 import CaseEditor from "./CaseEditor";
 import CountUp from "../../components/CountUp";
 import { Button } from "../../components/ui/button";
@@ -19,7 +20,7 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap } from "../../lib/ipc";
 import { toTestCase } from "../../lib/testCaseConvert";
-import { IconBulkEdit, IconClear, IconExport, IconRename } from "../../lib/actionIcons";
+import { IconBulkEdit, IconClear, IconExport, IconRemove, IconRename } from "../../lib/actionIcons";
 
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
@@ -45,6 +46,7 @@ export default function ExistingCases({
   const [anchor, setAnchor] = useState<number | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
@@ -64,6 +66,18 @@ export default function ExistingCases({
         ? unwrap(commands.testCasesByIds(org, caseIds, prefs.moduleRef, prefs.preconditionsRef))
         : unwrap(commands.pbiTestCasesFull(org, pbiId!, prefs.moduleRef, prefs.preconditionsRef)),
     enabled: Boolean(org && (caseIds ? caseIds.length > 0 : pbiId != null)),
+    retry: false,
+  });
+
+  /** Whether Azure DevOps says this user may delete here. The client fails
+   *  closed on every uncertain answer, so `false` covers "not allowed",
+   *  "could not ask" and "answered something unexpected" alike - and the
+   *  button simply does not exist rather than failing when pressed. */
+  const canDelete = useQuery({
+    queryKey: ["can-delete", org, project],
+    queryFn: () => unwrap(commands.canDeleteTestCases(org, project)),
+    enabled: Boolean(org && project),
+    staleTime: 10 * 60_000,
     retry: false,
   });
 
@@ -251,6 +265,12 @@ export default function ExistingCases({
             <IconExport aria-hidden />
             Export JSON
           </Button>
+          {canDelete.data === true && (
+            <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)}>
+              <IconRemove aria-hidden />
+              Delete
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
             <IconClear aria-hidden />
             Clear
@@ -340,6 +360,22 @@ export default function ExistingCases({
           )}
         </div>
       ))}
+
+      {deleteOpen && (
+        <DeleteConfirm
+          org={org}
+          project={project}
+          cases={selectedCases.map((c) => ({ id: c.id, title: c.title }))}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={() => {
+            // An expanded editor for a case that is now gone would save it
+            // straight back as a new one.
+            setOpenId(null);
+            setSelected(new Set());
+            refresh();
+          }}
+        />
+      )}
 
       {renameOpen && (
         <PowerRenameDialog

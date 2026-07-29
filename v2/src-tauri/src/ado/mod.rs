@@ -10,6 +10,8 @@
 //! the same client from `ado_testplan` / `work_board`.
 
 mod endpoints;
+/// The single, audited exception to the no-DELETE rule. See its header.
+pub mod recycle;
 pub mod throttle;
 mod transport;
 

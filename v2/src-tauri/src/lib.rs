@@ -118,6 +118,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::save_draft_comment,
             cases::test_cases_by_ids,
             cases::test_case_field_values,
+            cases::can_delete_test_cases,
+            cases::delete_test_cases,
             testplan::find_pbi_suite,
             runs::run_history,
             runs::view_execution_report,
