@@ -390,8 +390,33 @@ pub async fn submit_queue(
     // created cases (unset picker = "Same as PBI").
     let mut pbi_area = String::new();
     let mut pbi_iteration = String::new();
+    // The Steps field as Azure DevOps currently holds it, for every row that
+    // is an UPDATE. See `steps_patch`: without it, a case exported to JSON,
+    // retitled and re-imported writes its steps back from the plain-text
+    // read and strips their formatting and screenshots. One batched read
+    // covers the whole queue, and creates cost nothing.
+    let mut steps_before: std::collections::HashMap<i32, String> = Default::default();
     if let Ok(token) = get_fresh_token(&app).await {
         let client = ado::AdoClient::new(token);
+        let update_ids: Vec<i32> = queue.iter().filter_map(|tc| tc.update_id).collect();
+        if !update_ids.is_empty() {
+            match client
+                .get_test_cases_by_ids(&organization, &update_ids, None, None)
+                .await
+            {
+                Ok(current) => {
+                    steps_before = current.into_iter().map(|c| (c.id, c.steps_xml)).collect();
+                }
+                // Without a baseline the import's own steps are written, as
+                // they always were - the file is meant to describe the case.
+                // Say so, because it is the one path where markup can still
+                // be lost and the log is where that has to be visible.
+                Err(e) => crate::applog::warn(format!(
+                    "could not read the current steps for {} update(s) ({e}) - their steps                      will be rewritten from the imported text, which drops any formatting                      Azure DevOps holds",
+                    update_ids.len()
+                )),
+            }
+        }
         if let Ok((area, iteration)) = client
             .get_work_item_paths(&organization, &project, pbi_id)
             .await
@@ -452,6 +477,7 @@ pub async fn submit_queue(
             preconditions_ref.as_deref(),
             &effective_area,
             &effective_iteration,
+            tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
         )
         .await;
         let _ = SubmitProgress {
@@ -506,6 +532,7 @@ async fn process_queue_item(
     p_ref: Option<&str>,
     area_path: &str,
     iteration_path: &str,
+    original_steps_xml: Option<&str>,
 ) -> SubmitItemResult {
     let failed = |error: String| SubmitItemResult {
         index,
@@ -524,9 +551,15 @@ async fn process_queue_item(
     let client = ado::AdoClient::new(token);
     let outcome = match tc.update_id {
         Some(existing_id) => client
-            // No baseline: this is an imported update, where the file
-            // itself supplies the steps and is meant to write them.
-            .update_test_case_from_model(organization, project, existing_id, tc, m_ref, p_ref, None)
+            .update_test_case_from_model(
+                organization,
+                project,
+                existing_id,
+                tc,
+                m_ref,
+                p_ref,
+                original_steps_xml,
+            )
             .await
             .map(|_| (existing_id, "updated")),
         None => match client

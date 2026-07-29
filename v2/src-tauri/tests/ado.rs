@@ -444,6 +444,12 @@ async fn full_cases_parse_steps_and_optional_refs() {
     assert_eq!(c.module_value, "Auth");
     assert_eq!(c.preconditions, "Logged out"); // html flattened
     assert_eq!(c.automation_status, "Not Automated"); // empty -> default
+    // The raw blob comes back UNPARSED alongside the lossy read. Every save
+    // compares against it to decide whether Steps needs writing at all, so
+    // if this ever came back empty, saves would start clobbering steps again
+    // without anything else failing.
+    assert!(c.steps_xml.contains("<steps"), "raw steps blob: {:?}", c.steps_xml);
+    assert!(c.steps_xml.contains("Open"));
 }
 
 #[tokio::test]
@@ -711,4 +717,48 @@ async fn an_empty_step_list_is_never_written_over_a_real_one() {
             "an empty list must never reach ADO:\n{body}"
         );
     }
+}
+
+/// The round-trip exposure: export existing cases to JSON, retitle them in
+/// the file, re-import, submit. The exported JSON only ever held the
+/// plain-text read of the steps, so the submit used to write that back and
+/// strip the markup - the same defect as a title-only save, reached by a
+/// different route.
+///
+/// The submit path now reads the current Steps for every update row first,
+/// so what matters is that a case which survived the round trip still
+/// compares EQUAL to what Azure DevOps holds. This proves it does.
+#[tokio::test]
+async fn a_case_exported_and_reimported_does_not_rewrite_its_steps() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("tcm-roundtrip-{nanos}.json"));
+
+    // What the Edit screen would hold after loading the case from ADO.
+    let loaded = case_from(RICH_STEPS, "Original title");
+    v2_lib::import_parser::export_queue_to_json(
+        std::slice::from_ref(&loaded),
+        path.to_str().unwrap(),
+    )
+    .unwrap();
+
+    // Retitle it in the file, exactly as someone would.
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, text.replace("Original title", "Renamed in the file")).unwrap();
+
+    let (mut cases, _) = v2_lib::import_parser::parse_file(path.to_str().unwrap()).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(cases.len(), 1);
+    let reimported = cases.remove(0);
+    assert_eq!(reimported.title, "Renamed in the file");
+    assert_eq!(reimported.update_id, Some(55), "the id must survive, or it would CREATE");
+
+    let body = captured_patch(&reimported, Some(RICH_STEPS)).await;
+    assert!(body.contains("Renamed in the file"), "the retitle must be written");
+    assert!(
+        !body.contains("Microsoft.VSTS.TCM.Steps"),
+        "the round trip must not rewrite the steps:\n{body}"
+    );
 }
