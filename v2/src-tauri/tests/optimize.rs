@@ -647,3 +647,35 @@ fn a_real_duplicate_is_still_removed() {
     assert_eq!(out.len(), 1);
     assert_eq!(report.duplicates_removed, 1);
 }
+
+/// Lowercasing is not length-preserving, and this function used to search
+/// a lowercased copy and then slice the ORIGINAL at the offsets it got
+/// back. Every case here shifts the bytes: capital sharp S loses one byte
+/// when lowered, capital dotted I gains one, and the Kelvin sign collapses
+/// from three bytes to one. The offsets then pointed into the middle of a
+/// character and `clean_expected` panicked - taking down optimize_cases,
+/// which is a whole draft, over one German or Turkish word.
+#[test]
+fn a_multi_byte_expected_result_does_not_panic() {
+    // Sharp S: 3 bytes uppercase, 2 lowercase - offsets slide LEFT.
+    assert_eq!(
+        clean_expected("The STRAẞE field is saved Note: trimmed"),
+        "The STRAẞE field is saved."
+    );
+    // Dotted capital I: 2 bytes, lowercases to 3 - offsets slide RIGHT.
+    assert_eq!(
+        clean_expected("İstanbul is listed because the filter matches"),
+        "İstanbul is listed."
+    );
+    // Kelvin sign: 3 bytes, lowercases to 1.
+    assert_eq!(clean_expected("The K reading is shown e.g. 300"), "The K reading is shown.");
+
+    // The same trap on the noise-prefix loop, which stripped `noise.len()`
+    // bytes off the original after matching against the lowered copy.
+    assert_eq!(clean_expected("VERIFY THAT ẞ is rendered"), "ẞ is rendered.");
+
+    // And the whole point: it must not panic on anything, however odd.
+    for raw in ["ẞ", "İ", "K", "verify that ẞ", " note: İ", "ẞ because İ"] {
+        let _ = clean_expected(raw);
+    }
+}

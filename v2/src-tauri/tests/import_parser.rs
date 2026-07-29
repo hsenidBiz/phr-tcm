@@ -308,3 +308,76 @@ fn only_json_is_accepted_and_the_error_says_so() {
     assert!(parse_file(&csv).is_err(), "csv is no longer an import format");
     let _ = std::fs::remove_file(&csv);
 }
+
+/// An id that is not a work item id must NEVER become one. `as i32`
+/// saturates, so "99999999999" used to arrive as 2147483647 and "12.7" as
+/// 12 - both silently retargeting the update at a real work item nobody
+/// asked for. Refusing means the case is created new, which is the
+/// recoverable half of being wrong.
+#[test]
+fn an_id_out_of_range_or_fractional_is_refused_not_rounded() {
+    let parse = |id: &str| {
+        let path = tmp_path(&format!("id-{}.json", id.replace(['.', '-'], "_")));
+        std::fs::write(
+            &path,
+            format!(
+                r#"[{{"id": "{id}", "title": "Retarget me", "steps": [{{"action":"a","expected":"b"}}]}}]"#
+            ),
+        )
+        .unwrap();
+        let out = parse_file(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        out
+    };
+
+    for bad in ["99999999999", "2147483648", "12.7", "-5", "0", "1e40", "abc"] {
+        let (cases, warnings) = parse(bad);
+        assert_eq!(cases.len(), 1, "the case itself must survive: {bad}");
+        assert_eq!(
+            cases[0].update_id, None,
+            "id '{bad}' was accepted as a work item to update"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains(bad)),
+            "id '{bad}' was dropped without a warning; got {warnings:?}"
+        );
+    }
+
+    // The tolerated shape - an integral id a JSON writer rendered as a
+    // float - still works, and so does a plain one.
+    for (good, want) in [("123.0", 123), ("123", 123), ("2147483647", i32::MAX)] {
+        let (cases, _) = parse(good);
+        assert_eq!(cases[0].update_id, Some(want), "id '{good}' was refused");
+    }
+}
+
+/// An AI-written draft happily puts a line break inside a step. Azure
+/// DevOps stores steps in a single-line HTML field and the app's own step
+/// editor is a one-line input, so that layout was never going to survive -
+/// it just used to disappear without anyone saying so, and the text came
+/// back from Azure DevOps looking edited. Fold it here, and say so.
+#[test]
+fn a_step_that_spans_lines_is_folded_and_the_author_is_told() {
+    let path = tmp_path("wrapped-steps.json");
+    let json = serde_json::json!([{
+        "title": "Multi-line draft",
+        "steps": [
+            { "action": "Open Settings\nthen the Payments tab", "expected": "The tab opens" },
+            { "action": "Save", "expected": "A toast appears:\r\n  'Saved'" },
+            { "action": "Close", "expected": "It closes" }
+        ]
+    }]);
+    std::fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let (cases, warnings) = parse_file(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(cases[0].steps[0].action, "Open Settings then the Payments tab");
+    assert_eq!(cases[0].steps[1].expected, "A toast appears: 'Saved'");
+    // The untouched step keeps its exact text - folding is not a reformat.
+    assert_eq!(cases[0].steps[2].expected, "It closes");
+
+    // One warning for the case, not one per offending step.
+    let folded: Vec<_> = warnings.iter().filter(|w| w.contains("line breaks")).collect();
+    assert_eq!(folded.len(), 1, "got {warnings:?}");
+    assert!(folded[0].contains("Multi-line draft"));
+}

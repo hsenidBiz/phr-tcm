@@ -53,6 +53,40 @@ pub fn parse_file(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
     }
 }
 
+/// A work item id from a file, or None with the reason it was rejected.
+///
+/// `as i32` is a SATURATING cast, and that was the whole bug: "99999999999"
+/// became i32::MAX and "12.7" became 12, so an id that was never a work
+/// item quietly turned into an UPDATE of a real one somebody else owns.
+/// Only an integral value inside the range Azure DevOps actually issues
+/// counts; everything else is refused and the case is created instead,
+/// which is the recoverable half of being wrong.
+fn work_item_id(raw: &str) -> Option<i32> {
+    // A JSON writer may render an integral id as "123.0" - tolerate that
+    // exact shape and nothing looser. (NaN and infinity fail `fract() == 0`,
+    // so they need no separate check.)
+    let f = raw.parse::<f64>().ok()?;
+    if f.fract() != 0.0 || f < 1.0 || f > i32::MAX as f64 {
+        return None;
+    }
+    Some(f as i32)
+}
+
+/// Flatten a step's internal line breaks, reporting whether any were there.
+///
+/// Azure DevOps stores steps in an HTML field, and the app's own step
+/// editor is a single-line input - so a line break in an imported step
+/// never survives to anywhere the user will see it. It used to be dropped
+/// silently somewhere between here and the browser; folding it here means
+/// what the file said and what the app shows are the same thing, and the
+/// author gets told their layout did not carry.
+fn flatten_step_text(s: &str) -> (String, bool) {
+    if !s.contains(['\n', '\r']) {
+        return (s.to_string(), false);
+    }
+    (s.split_whitespace().collect::<Vec<_>>().join(" "), true)
+}
+
 fn step_sort_key(item: &Row) -> (i64, u32) {
     let (row_num, row) = item;
     let num = row
@@ -170,10 +204,9 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             block_value(&group, "TestCaseID")
         };
         if !raw_id.is_empty() {
-            // Excel numeric cells may render as "123.0"; tolerate that.
-            match raw_id.parse::<f64>() {
-                Ok(f) if f.is_finite() => update_id = Some(f as i32),
-                _ => warnings.push(format!(
+            match work_item_id(&raw_id) {
+                Some(id) => update_id = Some(id),
+                None => warnings.push(format!(
                     "Row {first_row}: test case '{name}' - TestCaseID '{raw_id}' is not a valid work item ID; it will be created as a new test case instead of updating."
                 )),
             }
@@ -202,6 +235,7 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
         }
 
         let mut steps: Vec<Step> = vec![];
+        let mut wrapped_steps = false;
         for (row_num, row) in &group {
             let action = row.get("StepAction").map(|s| s.trim()).unwrap_or("");
             let expected = row.get("StepExpected").map(|s| s.trim()).unwrap_or("");
@@ -213,10 +247,12 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
                 }
                 continue;
             }
-            steps.push(Step {
-                action: action.to_string(),
-                expected: expected.to_string(),
-            });
+            let (action, action_wrapped) = flatten_step_text(action);
+            let (expected, expected_wrapped) = flatten_step_text(expected);
+            if action_wrapped || expected_wrapped {
+                wrapped_steps = true;
+            }
+            steps.push(Step { action, expected });
         }
 
         if steps.is_empty() {
@@ -224,6 +260,11 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
                 "Row {first_row}: test case '{name}' has no rows with a StepAction - skipped."
             ));
             continue;
+        }
+        if wrapped_steps {
+            warnings.push(format!(
+                "Row {first_row}: test case '{name}' - a step spanned several lines; Azure DevOps stores steps on one line, so the line breaks were removed."
+            ));
         }
 
         test_cases.push(TestCase {
@@ -314,9 +355,9 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
         let mut update_id = None;
         if let Some(raw_id) = json_value(&raw_v, &["id", "test_case_id", "work_item_id"]) {
             let s = value_to_string(raw_id);
-            match s.parse::<f64>() {
-                Ok(f) if f.is_finite() => update_id = Some(f as i32),
-                _ => warnings.push(format!(
+            match work_item_id(&s) {
+                Some(id) => update_id = Some(id),
+                None => warnings.push(format!(
                     "{label} ('{title}'): id '{s}' is not a valid work item ID; it will be created as a new test case instead of updating."
                 )),
             }
@@ -383,6 +424,7 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             }
         };
         let mut steps = vec![];
+        let mut wrapped_steps = false;
         for (j, rs) in raw_steps.iter().enumerate() {
             let (action, expected) = match rs {
                 serde_json::Value::String(s) => (s.trim().to_string(), String::new()),
@@ -416,6 +458,11 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
                 }
                 continue;
             }
+            let (action, action_wrapped) = flatten_step_text(&action);
+            let (expected, expected_wrapped) = flatten_step_text(&expected);
+            if action_wrapped || expected_wrapped {
+                wrapped_steps = true;
+            }
             steps.push(Step { action, expected });
         }
 
@@ -424,6 +471,11 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
                 "{label} ('{title}'): has no steps with an action - skipped."
             ));
             continue;
+        }
+        if wrapped_steps {
+            warnings.push(format!(
+                "{label} ('{title}'): a step spanned several lines; Azure DevOps stores steps on one line, so the line breaks were removed."
+            ));
         }
 
         test_cases.push(TestCase {

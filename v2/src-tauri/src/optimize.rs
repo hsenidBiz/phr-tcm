@@ -124,6 +124,34 @@ fn sentence_case(s: &str) -> String {
     }
 }
 
+/// Case-insensitive search for an ASCII needle, returning a byte index
+/// into `haystack` ITSELF.
+///
+/// The obvious version - lowercase the string, search that, slice the
+/// original at the index it gives back - is wrong, because lowercasing
+/// does not preserve byte length: 'S' is three bytes and 's' is one,
+/// 'I' is two bytes and lowercases to three. The offsets then point
+/// somewhere else in the original, and if they land inside a character
+/// the slice panics and takes the optimize call down with it.
+///
+/// A match here is at an ASCII byte (`eq_ignore_ascii_case` only ever
+/// folds A-Z/a-z, and never equates a UTF-8 continuation byte with an
+/// ASCII one), so both ends of the match are character boundaries by
+/// construction and the slice is always safe.
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let (h, n) = (haystack.as_bytes(), needle.as_bytes());
+    if n.is_empty() || n.len() > h.len() {
+        return None;
+    }
+    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+}
+
+/// `starts_with`, ASCII-case-insensitively, with the same guarantee:
+/// when this is true, `&s[prefix.len()..]` is a valid slice.
+fn starts_with_ascii_ci(s: &str, prefix: &str) -> bool {
+    s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+}
+
 /// Reduce an expected result to the observable outcome. Bails out and
 /// keeps the original whenever trimming would leave nothing useful -
 /// losing information is worse than an untidy sentence.
@@ -145,9 +173,8 @@ pub fn clean_expected(raw: &str) -> String {
     }
 
     // Cut trailing rationale: notes, "because", "so that", "e.g.".
-    let lower = s.to_lowercase();
     for marker in [" note:", " notes:", " because ", " so that ", " e.g.", " i.e."] {
-        if let Some(i) = lower.find(marker) {
+        if let Some(i) = find_ascii_ci(&s, marker) {
             s = s[..i].trim().to_string();
             break;
         }
@@ -162,9 +189,8 @@ pub fn clean_expected(raw: &str) -> String {
     let mut changed = true;
     while changed {
         changed = false;
-        let lower = s.to_lowercase();
         for noise in EXPECTED_NOISE {
-            if lower.starts_with(noise) {
+            if starts_with_ascii_ci(&s, noise) {
                 s = s[noise.len()..].trim().to_string();
                 changed = true;
                 break;
