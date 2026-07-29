@@ -171,8 +171,22 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
 test("update banner appears when a newer version exists", async () => {
   mockIPC((cmd) => {
     if (cmd === "auth_status") return { signed_in: false, account: null };
-    if (cmd === "check_update") return "0.5.0";
+    if (cmd === "check_update") return { available: "0.5.0", blocked: null };
   });
   renderApp();
   expect(await screen.findByText(/Version 0.5.0 is available/)).toBeInTheDocument();
+});
+
+/// A check that could not run is not the same as being up to date, and the
+/// banner must not treat it as either - it has nothing to offer. The
+/// difference is told to the person who ASKED, in the toast.
+test("a failed update check shows no banner", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update") return { available: null, blocked: "Could not reach the update feed" };
+  });
+  renderApp();
+  await screen.findByRole("button", { name: /sign in/i });
+  expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Could not reach/)).not.toBeInTheDocument();
 });

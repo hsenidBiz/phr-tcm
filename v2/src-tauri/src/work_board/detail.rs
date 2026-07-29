@@ -151,40 +151,30 @@ impl AdoClient {
                 if !seen.insert(url.clone()) {
                     continue;
                 }
-                let Ok(resp) = self
-                    .http
-                    .get(download)
-                    .bearer_auth(&self.token)
-                    .header("Accept", "application/octet-stream")
-                    .send()
-                    .await
-                else {
-                    crate::applog::warn(format!("inline image {url} could not be fetched"));
-                    continue;
+                // Through the transport, like every other request: paced,
+                // and with a log line, which is what "log every request"
+                // has to mean for the one the user is looking for. Every
+                // failure here used to be a bare `continue`, so a picture
+                // that would not load left no trace anywhere - the field
+                // just showed a broken image and the log had nothing to
+                // say about it.
+                let bytes = match self.get_bytes(download).await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        crate::applog::warn(format!("inline image {url} could not be fetched: {e}"));
+                        continue;
+                    }
                 };
-                if !resp.status().is_success() {
-                    // Every failure here used to be a bare `continue`, so a
-                    // picture that would not load left no trace anywhere -
-                    // the field just showed a broken image and the log had
-                    // nothing to say about it.
-                    crate::applog::warn(format!(
-                        "inline image {url} returned {}",
-                        resp.status().as_u16()
-                    ));
-                    continue;
+                // The bytes carry their own type; ADO serves these as
+                // octet-stream, so sniff rather than trust a header we no
+                // longer see. PNG and GIF are unambiguous, JPEG starts FFD8.
+                let mime = match bytes.as_slice() {
+                    [0x89, b'P', b'N', b'G', ..] => "image/png",
+                    [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
+                    [b'G', b'I', b'F', ..] => "image/gif",
+                    _ => "image/png",
                 }
-                let mime = resp
-                    .headers()
-                    .get("Content-Type")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|c| c.split(';').next())
-                    .filter(|m| m.starts_with("image/"))
-                    .unwrap_or("image/png")
-                    .to_string();
-                let Ok(bytes) = resp.bytes().await else {
-                    crate::applog::warn(format!("inline image {url} could not be read"));
-                    continue;
-                };
+                .to_string();
                 if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
                     crate::applog::warn(format!(
                         "inline image {url} skipped at {} bytes",
@@ -210,7 +200,13 @@ impl AdoClient {
     /// initials. Handles the Graph endpoint's base64-JSON body variant.
     pub async fn get_avatar_b64(&self, url: &str) -> Option<String> {
         use base64::Engine;
-        if url.is_empty() {
+        // The attachment path has checked this since the leak found while
+        // widening its filter. Avatars were fetched exactly the same way -
+        // bearer token attached to whatever URL arrived over IPC - and
+        // never did, so anything that could reach the command could name
+        // the host the token went to.
+        if !token_may_be_sent_to(url, &self.base_url) {
+            crate::applog::warn(format!("refused to send the token to {url} for an avatar"));
             return None;
         }
         let resp = self
@@ -246,7 +242,34 @@ impl AdoClient {
 fn host_of(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
     let host = rest.split(['/', '?', '#']).next()?;
-    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+    // Userinfo makes a URL read as one host and connect to another
+    // ("https://dev.azure.com@evil.example/"). Nothing legitimate here has
+    // it, so refuse outright rather than rely on which half we happen to
+    // keep.
+    if host.is_empty() || host.contains('@') {
+        return None;
+    }
+    Some(host.to_ascii_lowercase())
+}
+
+/// Whether this app may attach the user's Azure DevOps bearer token to a
+/// request for `url`.
+///
+/// The token is the whole of the user's access, and the rule is that it
+/// never leaves the app. URLs here arrive from OUTSIDE - out of a work
+/// item's HTML, out of an identity record, out of whatever the frontend
+/// passes over IPC - and none of that is a reason to send it somewhere
+/// new. So: the host this client is already talking to (which covers an
+/// on-premises server), or Microsoft's own Azure DevOps domains.
+pub fn token_may_be_sent_to(url: &str, base_url: &str) -> bool {
+    let Some(host) = host_of(url) else {
+        return false;
+    };
+    host_of(base_url).is_some_and(|b| b == host)
+        || host == "dev.azure.com"
+        // vssps./vsrm./vstmr. - avatars and test results live on these.
+        || host.ends_with(".dev.azure.com")
+        || host.ends_with(".visualstudio.com")
 }
 
 /// The URL to download an `<img src>` from with the user's token, or None
@@ -269,11 +292,7 @@ fn host_of(url: &str) -> Option<String> {
 /// gets one from its session, a bare request does not, and the service can
 /// answer 400 rather than the bytes.
 pub fn attachment_download_url(src: &str, base_url: &str) -> Option<String> {
-    let host = host_of(src)?;
-    let trusted = host_of(base_url).is_some_and(|b| b == host)
-        || host == "dev.azure.com"
-        || host.ends_with(".visualstudio.com");
-    if !trusted {
+    if !token_may_be_sent_to(src, base_url) {
         return None;
     }
     let path = src.to_ascii_lowercase();

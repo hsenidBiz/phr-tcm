@@ -72,7 +72,7 @@ export const commands = {
 	/**  Stop the AudioSpectrum stream (last UI subscriber unmounted). */
 	audioCaptureStop: () => __TAURI_INVOKE<void>("audio_capture_stop"),
 	/**  Non-blocking update check; Some(version) when a newer build is published. */
-	checkUpdate: () => __TAURI_INVOKE<string | null>("check_update"),
+	checkUpdate: () => __TAURI_INVOKE<UpdateStatus>("check_update"),
 	/**
 	 *  How hard the app is allowed to hit Azure DevOps: "full" | "balanced" |
 	 *  "gentle". The limit ADO enforces is per USER, so the app shares one
@@ -1044,6 +1044,24 @@ export type TimelineTask = {
 	 *  pending step, or one whose logs have been cleaned up).
 	 */
 	log_id: number,
+};
+
+/**
+ *  The outcome of an update check - all THREE of them.
+ * 
+ *  This used to be an Option, so "a newer version exists", "you are up to
+ *  date", "this build cannot update itself" and "the feed was unreachable"
+ *  collapsed into two answers. The app told the last two "You are on the
+ *  latest version", which is a claim it had not checked and could not make.
+ */
+export type UpdateStatus = {
+	/**  The newer version, when there is one. */
+	available: string | null,
+	/**
+	 *  Why no check happened. When this is set, `available` being None
+	 *  means "unknown", NOT "up to date".
+	 */
+	blocked: string | null,
 };
 
 /**

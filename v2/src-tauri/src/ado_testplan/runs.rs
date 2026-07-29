@@ -253,21 +253,22 @@ impl AdoClient {
                 result_id,
                 id
             );
-            let Ok(resp) = self
-                .http
-                .get(&dl)
-                .bearer_auth(&self.token)
-                .header("Accept", "application/octet-stream")
-                .send()
-                .await
-            else {
-                continue;
-            };
-            if !resp.status().is_success() {
-                continue;
-            }
-            if let Ok(bytes) = resp.bytes().await {
-                shots.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+            // Through the transport, so this is paced, logged, and a 401
+            // becomes a re-sign-in rather than an empty screenshot strip.
+            // A single picture failing must still not lose the others, so
+            // the error is reported and the loop carries on.
+            match self.get_bytes(dl).await {
+                Ok(bytes) => shots.push(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+                Err(e @ (AdoError::Unauthorized | AdoError::RateLimited { .. })) => {
+                    // These are about the SESSION, not this picture -
+                    // swallowing them showed "no screenshots" to a tester
+                    // whose token had simply expired. Propagated as-is so
+                    // the caller keeps the Retry-After it was given.
+                    return Err(e);
+                }
+                Err(e) => crate::applog::warn(format!(
+                    "run {run_id} result {result_id}: screenshot {id} could not be read: {e}"
+                )),
             }
         }
         Ok(shots)

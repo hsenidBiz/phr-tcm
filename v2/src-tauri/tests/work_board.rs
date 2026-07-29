@@ -706,6 +706,43 @@ fn the_token_is_never_sent_to_a_host_we_do_not_trust() {
     .is_some());
 }
 
+/// Avatars were fetched exactly the same way as attachments - bearer token
+/// attached to whatever URL arrived over IPC - and never had the host check
+/// the attachment path grew after the leak found while widening its filter.
+/// Anything that could reach the command could name the host the token went
+/// to, and a work item's HTML is written by whoever can edit the item.
+#[test]
+fn the_avatar_fetch_uses_the_same_host_rule_as_attachments() {
+    use v2_lib::work_board::detail::token_may_be_sent_to;
+    let base = "https://dev.azure.com";
+    for bad in [
+        "https://evil.example/avatar.png",
+        "http://dev.azure.com.evil.example/a.png",
+        // Userinfo: reads as an allowed host, connects to another one.
+        "https://dev.azure.com@evil.example/a.png",
+        "https://acme.visualstudio.com@evil.example/a.png",
+        "/relative/avatar.png",
+        "data:image/png;base64,AAAA",
+        "",
+    ] {
+        assert!(!token_may_be_sent_to(bad, base), "token would go to {bad}");
+    }
+
+    for good in [
+        "https://dev.azure.com/Acme/_apis/GraphProfile/MemberAvatars/abc",
+        // Avatars and test results live on the subdomains, which the
+        // attachment rule's exact-match on dev.azure.com never covered.
+        "https://vssps.dev.azure.com/Acme/_apis/graph/Subjects/abc/avatars",
+        "https://acme.visualstudio.com/_api/_common/identityImage?id=1",
+    ] {
+        assert!(token_may_be_sent_to(good, base), "should be fetched: {good}");
+    }
+
+    // An on-premises server: whatever host this client already talks to.
+    assert!(token_may_be_sent_to("http://tfs.corp.local/a.png", "http://tfs.corp.local"));
+    assert!(!token_may_be_sent_to("http://other.corp.local/a.png", "http://tfs.corp.local"));
+}
+
 /// An ADO URL that is not an attachment is left alone - the token has no
 /// business going to it just because the host is right.
 #[test]

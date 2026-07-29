@@ -219,19 +219,36 @@ impl AdoClient {
         //    the link.
         let json = self.fetch_shared_draft(share).await.map_err(|e| e.to_string())?;
 
-        // 3) Revoke: remove EXACTLY the relation found above. The `test`
-        //    op on /rev aborts the patch if the work item changed since
-        //    the read, so a shifted relations array can never make the
-        //    remove hit a different relation.
+        // 3) Do NOT revoke yet. Downloading is not the same as importing,
+        //    and the draft still has to survive the parser. Revoking here
+        //    burned the link on a draft the importer then refused, which
+        //    left the recipient with nothing and the sender having to
+        //    share again. The caller revokes once it has actually read it.
+        Ok(TakenDraft {
+            json,
+            pbi_title,
+            pbi_work_item_type,
+            pending_revoke: PendingRevoke { rev, relation_index: idx },
+        })
+    }
+
+    /// Burn a share link, once its draft has actually been imported.
+    ///
+    /// Removes EXACTLY the relation `take_shared_draft` found. The `test`
+    /// op on /rev aborts the patch if the work item changed since that
+    /// read, so a shifted relations array can never make the remove hit a
+    /// different relation - and a link that stays usable is a far smaller
+    /// problem than removing the wrong attachment from someone's PBI.
+    pub async fn revoke_share(&self, share: &ShareRef, pending: &PendingRevoke) -> Option<String> {
         let patch_url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
             self.base_url, share.org, share.project, share.pbi_id
         );
         let patch = serde_json::json!([
-            { "op": "test", "path": "/rev", "value": rev },
-            { "op": "remove", "path": format!("/relations/{idx}") }
+            { "op": "test", "path": "/rev", "value": pending.rev },
+            { "op": "remove", "path": format!("/relations/{}", pending.relation_index) }
         ]);
-        let revoke_warning = match self
+        match self
             .send_json_patch(reqwest::Method::PATCH, patch_url, &patch)
             .await
         {
@@ -239,18 +256,25 @@ impl AdoClient {
             Err(e) => Some(format!(
                 "Imported, but the share link could not be revoked (it stays usable): {e}"
             )),
-        };
-        Ok(TakenDraft { json, revoke_warning, pbi_title, pbi_work_item_type })
+        }
     }
+}
+
+/// Enough to remove one exact relation, and nothing else - carried from the
+/// read that found it to the revoke that uses it.
+#[derive(Debug, Clone)]
+pub struct PendingRevoke {
+    pub rev: i64,
+    pub relation_index: usize,
 }
 
 /// What a consumed share yields: the draft plus the PBI it belongs to.
 #[derive(Debug, Clone)]
 pub struct TakenDraft {
     pub json: String,
-    pub revoke_warning: Option<String>,
     pub pbi_title: String,
     pub pbi_work_item_type: String,
+    pub pending_revoke: PendingRevoke,
 }
 
 #[cfg(test)]

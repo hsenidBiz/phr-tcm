@@ -1,8 +1,8 @@
+import { reportUpdateCheck } from "../lib/updateToast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { Command } from "cmdk";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { commands } from "../bindings";
 import AstryxIsland from "./AstryxIsland";
 import { unwrap } from "../lib/ipc";
@@ -93,8 +93,7 @@ export default function CommandPalette({
                 const v = await commands.checkUpdate();
                 // Seed the ["update"] query so App's update banner appears.
                 qc.setQueryData(["update"], v);
-                if (v) toast.info(`Version ${v} is available - use the banner to update.`);
-                else toast.success("You are on the latest version.");
+                reportUpdateCheck(v);
               })
             }
           >

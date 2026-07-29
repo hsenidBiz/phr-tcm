@@ -422,9 +422,9 @@ export default function App() {
           />
         )}
 
-        {update.data && (
+        {update.data?.available && (
           <div className="flex items-center justify-between border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
-            <span>Version {update.data} is available.</span>
+            <span>Version {update.data.available} is available.</span>
             <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
               <IconRefresh aria-hidden />
               {applyUpdate.isPending ? "Updating" : "Restart to update"}

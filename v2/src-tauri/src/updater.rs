@@ -22,16 +22,43 @@ fn manager() -> Option<UpdateManager> {
     UpdateManager::new(source, None, None).ok()
 }
 
-/// Returns the available version string, storing the UpdateInfo for apply.
-pub fn check(state: &UpdateState) -> Option<String> {
-    let um = manager()?;
+/// The outcome of an update check - all THREE of them.
+///
+/// This used to be an Option, so "a newer version exists", "you are up to
+/// date", "this build cannot update itself" and "the feed was unreachable"
+/// collapsed into two answers. The app told the last two "You are on the
+/// latest version", which is a claim it had not checked and could not make.
+#[derive(Debug, Default, Clone, serde::Serialize, specta::Type)]
+pub struct UpdateStatus {
+    /// The newer version, when there is one.
+    pub available: Option<String>,
+    /// Why no check happened. When this is set, `available` being None
+    /// means "unknown", NOT "up to date".
+    pub blocked: Option<String>,
+}
+
+/// Looks for a newer release, storing the UpdateInfo for apply.
+pub fn check(state: &UpdateState) -> UpdateStatus {
+    let Some(um) = manager() else {
+        return UpdateStatus {
+            available: None,
+            blocked: Some("This build does not update itself - it was not installed by the installer.".into()),
+        };
+    };
     match um.check_for_updates() {
         Ok(UpdateCheck::UpdateAvailable(info)) => {
             let version = info.TargetFullRelease.Version.clone();
             *state.pending.lock().unwrap() = Some(*info);
-            Some(version)
+            UpdateStatus { available: Some(version), blocked: None }
         }
-        _ => None,
+        Ok(_) => UpdateStatus::default(),
+        Err(e) => {
+            crate::applog::warn(format!("update check failed: {e}"));
+            UpdateStatus {
+                available: None,
+                blocked: Some(format!("Could not reach the update feed: {e}")),
+            }
+        }
     }
 }
 

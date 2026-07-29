@@ -138,7 +138,8 @@ pub async fn fetch_shared_queue(
 ) -> Result<SharedQueue, String> {
     let share = crate::ado_share::parse_share_link(&link)?;
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
-    let taken = ado::AdoClient::new(token).take_shared_draft(&share).await?;
+    let client = ado::AdoClient::new(token);
+    let taken = client.take_shared_draft(&share).await?;
     let json = taken.json;
     // Through the same temp-file + parse_file path as every other import,
     // so shared drafts get identical validation and warnings.
@@ -150,8 +151,12 @@ pub async fn fetch_shared_queue(
     std::fs::write(&path, &json).map_err(|e| e.to_string())?;
     let parsed = import_parser::parse_file(path.to_str().unwrap_or_default());
     let _ = std::fs::remove_file(&path);
+    // The `?` here is why the revoke waits until after it. A link is
+    // one-time use, and burning it on a draft the importer then refused
+    // left the recipient with nothing to retry and the sender having to
+    // share the whole thing again.
     let (cases, mut warnings) = parsed?;
-    if let Some(w) = taken.revoke_warning {
+    if let Some(w) = client.revoke_share(&share, &taken.pending_revoke).await {
         warnings.push(w);
     }
     crate::applog::info(format!(
@@ -413,10 +418,20 @@ pub async fn submit_queue(
     area_path: Option<String>,
     iteration_path: Option<String>,
 ) -> Result<Vec<SubmitItemResult>, String> {
+    // One submit at a time. A second call used to clear the cancel flag
+    // below - wiping a Cancel already clicked - and then run a second loop
+    // over the same queue. Two loops create every case twice, and this tool
+    // has no DELETE, so those duplicates are permanent. The guard releases
+    // on every exit path, including a panic.
+    let cancel = app.state::<SubmitCancel>();
+    let Some(_running) = cancel.claim() else {
+        crate::applog::warn("refused a second submit while one was already running");
+        return Err("A submit is already running. Wait for it to finish, or cancel it.".into());
+    };
+
     // Arm the cancel flag BEFORE any awaits: the suite-resolution phase
     // below can take seconds, and a Cancel clicked during it must stick
     // (resetting later would silently swallow it and run the whole queue).
-    let cancel = app.state::<SubmitCancel>();
     cancel.0.store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Best-effort board visibility (ported from v1 CreationWorker._ensure_suite):

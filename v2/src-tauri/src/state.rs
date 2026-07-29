@@ -10,8 +10,40 @@ use crate::{ado, auth};
 
 /// Cooperative cancel for the submit loop: checked between items, so the
 /// in-flight item always completes (never a half-created case).
+///
+/// `running` makes the loop single-flight. Both matter and for the same
+/// reason: submit_queue clears `cancel` on entry, so a second call while
+/// one was running wiped a Cancel the user had already clicked AND put a
+/// second loop over the same queue - and this tool has no DELETE, so every
+/// case that pair created twice is a duplicate nobody can remove.
 #[derive(Default)]
-pub struct SubmitCancel(pub(crate) std::sync::atomic::AtomicBool);
+pub struct SubmitCancel(
+    pub(crate) std::sync::atomic::AtomicBool,
+    pub(crate) std::sync::atomic::AtomicBool,
+);
+
+impl SubmitCancel {
+    /// Claim the loop, or None if one is already running. `compare_exchange`
+    /// rather than load-then-store: two clicks land on the same millisecond.
+    pub(crate) fn claim(&self) -> Option<SubmitGuard<'_>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.1
+            .compare_exchange(false, true, SeqCst, SeqCst)
+            .ok()
+            .map(|_| SubmitGuard(self))
+    }
+}
+
+/// Releases the claim however the loop ends - returned, errored, or
+/// unwound. A submit that could never be started again would be worse than
+/// the duplicates this guards against.
+pub(crate) struct SubmitGuard<'a>(&'a SubmitCancel);
+
+impl Drop for SubmitGuard<'_> {
+    fn drop(&mut self) {
+        self.0 .1.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// Returns a valid access token, silently refreshing when it is within
 /// 5 minutes of expiry. The token itself never leaves the Rust side.

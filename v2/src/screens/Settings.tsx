@@ -1,3 +1,4 @@
+import { reportUpdateCheck } from "../lib/updateToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
@@ -100,8 +101,7 @@ export default function Settings({ org, project }: { org: string; project: strin
       // App's update banner renders from the ["update"] query (fetched once
       // at startup) - seed it so the banner appears for a manual check too.
       qc.setQueryData(["update"], v);
-      if (v) toast.info(`Version ${v} is available - use the banner to update.`);
-      else toast.success("You are on the latest version.");
+      reportUpdateCheck(v);
     },
   });
 

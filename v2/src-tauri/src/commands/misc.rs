@@ -42,14 +42,16 @@ pub fn app_log_dir() -> String {
 /// Non-blocking update check; Some(version) when a newer build is published.
 #[tauri::command]
 #[specta::specta]
-pub async fn check_update(app: tauri::AppHandle) -> Option<String> {
+pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<updater::UpdateState>();
         updater::check(&state)
     })
     .await
-    .ok()
-    .flatten()
+    .unwrap_or_else(|e| updater::UpdateStatus {
+        available: None,
+        blocked: Some(format!("The update check did not run: {e}")),
+    })
 }
 
 /// Download the pending update and restart into it.

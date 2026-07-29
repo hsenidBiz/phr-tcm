@@ -98,6 +98,33 @@ impl AdoClient {
         Self::handle_json(resp).await
     }
 
+    /// GET returning the raw body as bytes - attachments and screenshots.
+    ///
+    /// These were fetched with a hand-rolled `self.http.get(..)` that
+    /// skipped this funnel entirely: no pacing, no log line (so the request
+    /// the user was looking for was simply not there), and every failure
+    /// flattened to "no screenshots" - including a 401, which should have
+    /// prompted a re-sign-in, and a 429, which should have backed off.
+    pub(crate) async fn get_bytes(&self, url: String) -> Result<Vec<u8>, AdoError> {
+        let resp = self
+            .send(reqwest::Method::GET, &url, |r| {
+                r.header("Accept", "application/octet-stream")
+            })
+            .await?;
+        match resp.status().as_u16() {
+            200..=299 => Ok(resp
+                .bytes()
+                .await
+                .map_err(|e| AdoError::Network(e.to_string()))?
+                .to_vec()),
+            401 => Err(AdoError::Unauthorized),
+            403 => Err(AdoError::Forbidden),
+            404 => Err(AdoError::NotFound),
+            429 => Err(AdoError::RateLimited { retry_after_secs: retry_after(&resp) }),
+            s => Err(AdoError::Http { status: s, body: resp.text().await.unwrap_or_default() }),
+        }
+    }
+
     /// GET returning the raw body as text - build logs are plain text, not
     /// JSON. Same status handling as the JSON path.
     pub(crate) async fn get_text(&self, url: String) -> Result<String, AdoError> {

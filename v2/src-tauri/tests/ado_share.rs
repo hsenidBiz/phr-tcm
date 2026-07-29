@@ -143,7 +143,15 @@ async fn take_downloads_then_revokes_only_our_relation() {
         parse_share_link("tcm-share:acme/Web/144714/aaaa1111-2222-3333-4444-555566667777").unwrap();
     let taken = client.take_shared_draft(&share).await.unwrap();
     assert!(taken.json.contains("test_cases"));
-    assert!(taken.revoke_warning.is_none(), "revoke succeeded - no warning");
+    // Taking the draft does NOT revoke - the caller does that once the
+    // importer has actually read it. Revoking here burned the link on a
+    // draft that then failed to parse.
+    assert!(
+        server.received_requests().await.unwrap().iter().all(|r| r.method != wiremock::http::Method::PATCH),
+        "the link was revoked before the draft had been imported"
+    );
+    assert!(client.revoke_share(&share, &taken.pending_revoke).await.is_none(),
+        "revoke succeeded - no warning");
     // The same work-item read supplies the PBI identity, so the recipient
     // can be offered a switch without another lookup.
     assert_eq!(taken.pbi_title, "Timeline - split weight");
@@ -206,7 +214,11 @@ async fn take_still_imports_when_the_revoke_is_forbidden() {
         parse_share_link("tcm-share:acme/Web/144714/aaaa1111-2222-3333-4444-555566667777").unwrap();
     let taken = client.take_shared_draft(&share).await.unwrap();
     assert!(taken.json.contains("test_cases"));
-    assert!(taken.revoke_warning.unwrap().contains("could not be revoked"));
+    assert!(client
+        .revoke_share(&share, &taken.pending_revoke)
+        .await
+        .unwrap()
+        .contains("could not be revoked"));
 }
 
 
