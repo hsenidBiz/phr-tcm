@@ -66,10 +66,23 @@ const NAV_MARKERS: &[&str] = &[
     "go to",
     "open the",
     "opened the",
-    "on the",
-    "at the",
-    "from the",
-    "launch",
+    // "launch" on its own also claimed "Launch darkly flag PAY-42 is on".
+    "launch the",
+    "launches the",
+];
+
+/// Openers that mean navigation ONLY when the sentence also names a place.
+///
+/// "On the Payments page" is the elliptical form of "the user is on the
+/// Payments page" and belongs in the steps. "On the second attempt the
+/// lockout applies", "At the end of the billing cycle" and "From the
+/// previous run the cart holds 3 items" are setup, and promoting them
+/// turned real conditions into nonsense steps AND dropped them from the
+/// case's setup signature, which is what decides the run order.
+const NAV_MARKERS_NEEDING_PLACE: &[&str] = &["on the", "at the", "from the"];
+
+const PLACE_WORDS: &[&str] = &[
+    "page", "screen", "tab", "module", "dialog", "form", "view", "menu", "panel", "portal",
 ];
 
 /// Openers stripped from an expected result: they restate that we're
@@ -111,7 +124,11 @@ fn sentences(text: &str) -> Vec<String> {
 
 fn is_navigation(sentence: &str) -> bool {
     let l = sentence.to_lowercase();
-    NAV_MARKERS.iter().any(|m| l.starts_with(m))
+    if NAV_MARKERS.iter().any(|m| l.starts_with(m)) {
+        return true;
+    }
+    NAV_MARKERS_NEEDING_PLACE.iter().any(|m| l.starts_with(m))
+        && PLACE_WORDS.iter().any(|w| l.contains(w))
 }
 
 /// Capitalise the first character, leaving the rest alone (so acronyms
@@ -312,9 +329,11 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
             .any(|m| l.contains(m))
     });
     let signin_step = signin.map(|sentence| {
-        let role = sentence
-            .to_lowercase()
-            .find(" as ")
+        // find_ascii_ci, not `to_lowercase().find(..)` - the offsets from a
+        // lowercased copy do not address the original, so a sharp S or a
+        // dotted capital I earlier in the sentence sliced the role off at
+        // the wrong byte, or panicked.
+        let role = find_ascii_ci(sentence, " as ")
             .map(|i| squash(&sentence[i + 4..]))
             .filter(|r| !r.is_empty());
         Step {

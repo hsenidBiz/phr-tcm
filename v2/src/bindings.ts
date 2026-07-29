@@ -543,6 +543,14 @@ export type FieldRef = {
 export type FiledBug = {
 	id: number,
 	url: string,
+	/**
+	 *  Screenshots that did NOT make it onto the bug. The work item is
+	 *  created first and must never be re-filed over a failed upload,
+	 *  so the only way the tester learns their evidence is missing is
+	 *  if we say so here.
+	 */
+	screenshots_failed: number,
+	screenshots_total: number,
 };
 
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;

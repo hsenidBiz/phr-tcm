@@ -153,9 +153,16 @@ export default function RunnerWindow() {
       ),
     )
       .then((d) => {
-        if (!stale && d.comment && !states[current.id]?.comment) {
-          patch(current.id, { comment: d.comment });
-        }
+        if (stale || !d.comment) return;
+        // Decided against the state as it is NOW. The `states` the effect
+        // closed over is from the render that started this request, so
+        // anything the tester typed while it was in flight was invisible
+        // here - and the old run's comment landed on top of it.
+        setStates((s) =>
+          s[current.id]?.comment
+            ? s
+            : { ...s, [current.id]: { ...emptyState(), ...s[current.id], comment: d.comment } },
+        );
       })
       .catch(() => {});
     return () => {

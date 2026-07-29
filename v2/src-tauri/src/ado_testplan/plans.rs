@@ -394,13 +394,47 @@ impl AdoClient {
                     .await?
             }
         };
-        let root = plan.root_suite_id.ok_or(AdoError::Http {
-            status: 0,
-            body: "plan has no root suite".into(),
-        })?;
-        let suite_id = self
+        // Everything from here on happens AFTER a plan may have been
+        // created, and this tool has no DELETE by design - so a failure
+        // now leaves an empty test plan in the project that nothing can
+        // tidy up. Name it, in the log and in the error, rather than let a
+        // plan appear out of nowhere with no explanation.
+        let orphan = |what: &str| {
+            if created_plan {
+                crate::applog::error(format!(
+                    "left test plan '{}' (id {}) in {project} with no requirement suite - {what}. \
+                     This tool never deletes; remove it in Azure DevOps if it is not wanted.",
+                    plan.name, plan.id
+                ));
+            }
+        };
+        let root = match plan.root_suite_id {
+            Some(r) => r,
+            None => {
+                orphan("it has no root suite");
+                return Err(AdoError::Http {
+                    status: 0,
+                    body: format!(
+                        "test plan '{}' (id {}) has no root suite, so the requirement suite for \
+                         #{pbi_id} could not be created.",
+                        plan.name, plan.id
+                    ),
+                });
+            }
+        };
+        let suite_id = match self
             .create_requirement_suite(org, project, plan.id, root, pbi_id)
-            .await?;
+            .await
+        {
+            Ok(id) => id,
+            // Propagated unchanged: the caller tells 401 and 429 apart from
+            // the rest, and flattening them here would cost it the re-auth
+            // and back-off it does on those.
+            Err(e) => {
+                orphan(&format!("creating the suite failed: {e}"));
+                return Err(e);
+            }
+        };
         Ok(EnsuredSuite {
             plan_id: plan.id,
             plan_name: plan.name,

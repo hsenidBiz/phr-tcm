@@ -648,6 +648,46 @@ fn a_real_duplicate_is_still_removed() {
     assert_eq!(report.duplicates_removed, 1);
 }
 
+/// A precondition is only navigation if it actually navigates. "On the",
+/// "at the" and "from the" open any English sentence, and matching them
+/// bare turned real setup into a nonsense step AND dropped it from the
+/// case's setup signature - which is what decides the run order, so one
+/// stray sentence reshuffled the whole sheet. Bare "launch" did the same
+/// to feature-flag preconditions.
+#[test]
+fn a_setup_sentence_is_not_promoted_just_for_starting_with_a_preposition() {
+    let setup = [
+        "On the second attempt the lockout applies",
+        "At the end of the billing cycle the invoice is issued",
+        "From the previous run the cart holds 3 items",
+        "Launch darkly flag PAY-42 is enabled",
+    ];
+    for pre in setup {
+        let out = optimize(vec![case("T", "", pre, vec![step("do", "done")])], None).0;
+        assert_eq!(
+            out[0].preconditions.trim(),
+            pre,
+            "'{pre}' was treated as navigation and moved out of preconditions"
+        );
+    }
+
+    // The forms that DO navigate still do, including the elliptical ones -
+    // that is the whole reason these openers were listed.
+    for pre in [
+        "On the Payments page",
+        "At the Orders screen",
+        "Launch the HRM portal",
+        "User is on the Settings tab",
+    ] {
+        let out = optimize(vec![case("T", "", pre, vec![step("do", "done")])], None).0;
+        assert!(
+            out[0].steps.len() > 1,
+            "'{pre}' should have become a step, steps={:?}",
+            out[0].steps
+        );
+    }
+}
+
 /// Lowercasing is not length-preserving, and this function used to search
 /// a lowercased copy and then slice the ORIGINAL at the offsets it got
 /// back. Every case here shifts the bytes: capital sharp S loses one byte

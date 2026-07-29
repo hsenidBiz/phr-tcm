@@ -9,6 +9,12 @@ pub mod work_bug {
     pub struct FiledBug {
         pub id: i32,
         pub url: String,
+        /// Screenshots that did NOT make it onto the bug. The work item is
+        /// created first and must never be re-filed over a failed upload,
+        /// so the only way the tester learns their evidence is missing is
+        /// if we say so here.
+        pub screenshots_failed: i32,
+        pub screenshots_total: i32,
     }
 }
 
@@ -48,20 +54,43 @@ pub async fn file_bug(
         .create_work_item(&organization, &project, &info.wi_type, &fields, &[test_case_id, pbi_id], None)
         .await
         .map_err(|e| e.to_string())?;
+    // The bug itself exists from here on, so a screenshot that fails must
+    // not fail the call - re-filing would leave a duplicate. Count them
+    // instead: a tester who attached three screenshots of a failure needs
+    // to know when none of them arrived.
+    let mut failed = 0;
     for (i, b64) in screenshots_b64.iter().enumerate() {
+        let name = format!("bug-{}-{}.png", id, i + 1);
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) else {
+            crate::applog::warn(format!("bug {id}: screenshot {name} is not valid base64"));
+            failed += 1;
             continue;
         };
-        if let Ok(att_url) = client
-            .upload_wi_attachment(&organization, &project, &format!("bug-{}-{}.png", id, i + 1), bytes)
+        match client
+            .upload_wi_attachment(&organization, &project, &name, bytes)
             .await
         {
-            let _ = client
-                .add_wi_attachment_relation(&organization, &project, id, &att_url)
-                .await;
+            Ok(att_url) => {
+                if let Err(e) = client
+                    .add_wi_attachment_relation(&organization, &project, id, &att_url)
+                    .await
+                {
+                    crate::applog::warn(format!("bug {id}: {name} uploaded but not linked: {e}"));
+                    failed += 1;
+                }
+            }
+            Err(e) => {
+                crate::applog::warn(format!("bug {id}: {name} did not upload: {e}"));
+                failed += 1;
+            }
         }
     }
-    Ok(work_bug::FiledBug { id, url })
+    Ok(work_bug::FiledBug {
+        id,
+        url,
+        screenshots_failed: failed,
+        screenshots_total: screenshots_b64.len() as i32,
+    })
 }
 
 #[tauri::command]

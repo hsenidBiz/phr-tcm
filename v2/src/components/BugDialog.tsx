@@ -41,7 +41,17 @@ export default function BugDialog({
     mutationFn: () =>
       unwrapStr(commands.fileBug(org, project, title.trim(), repro, testCase.id, pbiId, screenshots)),
     onSuccess: (bug) => {
-      toast.success(`Filed bug #${bug.id}`);
+      // The bug exists either way - re-filing over a failed upload would
+      // leave a duplicate - but a tester who attached screenshots of the
+      // failure has to be told when they did not arrive.
+      if (bug.screenshots_failed > 0) {
+        toast.warning(
+          `Filed bug #${bug.id}, but ${bug.screenshots_failed} of ${bug.screenshots_total} screenshot(s) did not attach - add them in Azure DevOps.`,
+          { duration: 20_000 },
+        );
+      } else {
+        toast.success(`Filed bug #${bug.id}`);
+      }
       onFiled(bug.id);
     },
     onError: (e) => toast.error(`Could not file bug: ${e.message}`),

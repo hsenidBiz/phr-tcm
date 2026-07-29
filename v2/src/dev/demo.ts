@@ -339,7 +339,12 @@ function applyPatches() {
     fileBug: (_o: string, _p: string, title: string) => {
       const id = nextId++;
       boardItems.push({ id, title, work_item_type: "Bug", state: "To Do", state_color: "cc293d", column: "To Do", assigned_to: "Demo User", tags: "demo", priority: 2, changed_date: new Date().toISOString() });
-      return ok({ id, url: "https://example.invalid/demo-bug" });
+      return ok({
+        id,
+        url: "https://example.invalid/demo-bug",
+        screenshots_failed: 0,
+        screenshots_total: 0,
+      });
     },
     viewExecutionReport: () => err("Demo mode: execution reports are disabled"),
 
