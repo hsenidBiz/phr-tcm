@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.16.0",
+    date: "2026-07-29",
+    items: [
+      "New: Power Rename. Select any number of test cases in Update Test Cases and rename them all at once - or rename the whole queue before anything is created. Bulk Edit still leaves titles alone; this is the tool for them.",
+      "Find and replace, plain text or a regular expression with capture groups ($1). Toggles for matching case and for replacing only the first occurrence in each title.",
+      "Add a prefix or suffix, change capitalisation (Title Case, UPPERCASE, lowercase), and number the cases with ${n} - put it in the replacement, the prefix or the suffix, and set what it counts from and how many digits it pads to. The numbering follows the order shown on screen.",
+      "Title Case leaves acronyms alone: a word that already has a capital in it is left exactly as it is, so API, PBI and HRM survive instead of becoming Api, Pbi and Hrm.",
+      "Everything shows in a live before-and-after list as you type, and what you see is precisely what gets saved - the preview is not a guess at the result, it IS the result.",
+      "A title that would end up empty or longer than the 255 characters Azure DevOps allows is flagged and blocks the rename until you fix the rule. A title that would collide with another one warns but still lets you continue, since duplicates are allowed.",
+      "An invalid regular expression shows the actual reason it could not be read, rather than silently doing nothing.",
+      "Undo. After a rename, one click puts every title back the way it was - and only the ones that actually saved, so a partly failed rename undoes cleanly too.",
+    ],
+  },
+  {
     version: "1.15.1",
     date: "2026-07-29",
     items: [
