@@ -13,6 +13,25 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.15.0",
+    date: "2026-07-29",
+    items: [
+      "Fixed: a work item ID in an imported file that was out of range (\"99999999999\") or not whole (\"12.7\") was rounded into a real, different ID - so the import updated a test case nobody had named. Those IDs are now refused and the case is created instead, with the reason given.",
+      "Fixed: a step, title or expected result containing certain letters (the German sharp S, the Turkish dotted I) could crash the AI optimiser outright.",
+      "Fixed: a field left holding only spaces counted as content, so importing overwrote real tags with a space and left preconditions that look empty but are not. Spaces now count as blank, the same as an empty box.",
+      "Fixed: switching project left the Pull Requests panel showing the previous project's repository, which then failed to load.",
+      "Fixed: a test case left open while a bulk edit ran kept its pre-edit values, and saving it put them back over the change you had just made.",
+      "Fixed: a comment typed in the runner could be overwritten by the previous run's comment arriving a moment later.",
+      "Fixed: screenshots that failed to attach to a bug were never mentioned - the bug was reported as filed with its evidence silently missing. You are now told how many did not attach.",
+      "Fixed: results beyond the first 200 test points in a run were not recorded, and the run was still reported as fully saved. Any outcome that cannot be recorded now names the cases it affects.",
+      "Fixed: a comment on a draft case whose title appears twice in the same file was written onto the wrong one. It now says which title is ambiguous.",
+      "Fixed: preconditions like \"On the second attempt the lockout applies\" were treated as navigation, turned into a nonsense step and dropped from the case's setup - which reordered the whole run sheet.",
+      "Line breaks inside an imported step are now folded, with a warning, instead of vanishing on the way to Azure DevOps.",
+      "Cached Azure DevOps data is dropped when a different account signs in on the same machine.",
+      "Spreadsheet import was removed - the app has taken JSON only for some time and the leftover paths were misleading.",
+    ],
+  },
+  {
     version: "1.14.1",
     date: "2026-07-29",
     items: [

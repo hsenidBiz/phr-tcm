@@ -14,6 +14,22 @@ $repoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-relea
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }
 
+# -Version is only the Velopack tag. The version the APP reports - in the
+# title bar, in a bug report, on the bridge's /ping, and to the "What's new"
+# gate - comes from tauri.conf.json, and the changelog entry is what that
+# gate looks for. Both are hand-edited in a bump commit before releasing,
+# and 1.15.0 shipped without one: installable, updatable, and calling
+# itself 1.14.1. Refuse rather than let that happen twice.
+$confPath = Join-Path $v2 "src-tauri\tauri.conf.json"
+$confVersion = (Get-Content $confPath -Raw | ConvertFrom-Json).version
+if ($confVersion -ne $Version) {
+    throw "tauri.conf.json says '$confVersion' but you asked to release '$Version'. Bump it (and add the changelog entry) and commit first."
+}
+$changelog = Get-Content (Join-Path $v2 "src\lib\changelog.ts") -Raw
+if ($changelog -notmatch [regex]::Escape("version: `"$Version`"")) {
+    throw "src/lib/changelog.ts has no entry for $Version - without one the update installs silently."
+}
+
 # --- Gates -----------------------------------------------------------------
 if (-not $SkipChecks) {
     Push-Location (Join-Path $v2 "src-tauri")
