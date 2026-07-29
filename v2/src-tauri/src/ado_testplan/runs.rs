@@ -85,6 +85,8 @@ impl AdoClient {
         Ok(RunCreated {
             run_id: data["id"].as_i64().unwrap_or_default() as i32,
             web_url: data["webAccessUrl"].as_str().unwrap_or_default().to_string(),
+            // Filled in by the caller, which is what actually attaches them.
+            extras_failed: vec![],
         })
     }
 

@@ -55,6 +55,14 @@ pub struct TestPoint {
 pub struct RunCreated {
     pub run_id: i32,
     pub web_url: String,
+    /// Per-step marks and attachments that did NOT make it onto the run.
+    ///
+    /// These are attached after the outcomes are already recorded, so a
+    /// failure here must not fail the run - but it was not reported
+    /// either, and a tester who marked five steps individually and
+    /// attached a screenshot of the failure had no way to know none of it
+    /// arrived. Each entry names what was lost, for which case.
+    pub extras_failed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]

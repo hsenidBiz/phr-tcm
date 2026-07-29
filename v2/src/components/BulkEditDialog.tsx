@@ -44,7 +44,7 @@ export default function BulkEditDialog({
 
   const apply = useMutation({
     mutationFn: async () => {
-      let failed = 0;
+      const failed: { title: string; error: string }[] = [];
       for (let i = 0; i < cases.length; i++) {
         setProgress({ done: i + 1, total: cases.length });
         const c = cases[i];
@@ -81,14 +81,33 @@ export default function BulkEditDialog({
           // entirely, instead of rewriting them from a plain-text read.
           c.steps_xml,
         );
-        if (r.status === "error") failed++;
+        // The message is the actionable half. Counting the failures and
+        // dropping WHY told the user "2 failed" about a selection of
+        // twenty, with no way to tell which two or what to change.
+        if (r.status === "error") failed.push({ title: c.title, error: r.error });
       }
       return failed;
     },
     onSettled: () => setProgress(null),
     onSuccess: (failed) => {
-      if (failed === 0) toast.success(`Updated ${cases.length} test case(s).`);
-      else toast.warning(`${cases.length - failed} updated, ${failed} failed.`);
+      if (failed.length === 0) {
+        toast.success(`Updated ${cases.length} test case(s).`);
+      } else {
+        // Named, with the reason. Several cases usually fail the same way
+        // (one field rule), so identical reasons are grouped rather than
+        // repeated once per case.
+        const byReason = new Map<string, string[]>();
+        for (const f of failed) {
+          byReason.set(f.error, [...(byReason.get(f.error) ?? []), f.title]);
+        }
+        const detail = [...byReason]
+          .map(([reason, titles]) => `${titles.join(", ")}: ${reason}`)
+          .join(" | ");
+        toast.warning(
+          `${cases.length - failed.length} updated, ${failed.length} failed - ${detail}`,
+          { duration: 20000 },
+        );
+      }
       onDone();
     },
     onError: (e) => toast.error(`Bulk edit failed: ${e.message}`),

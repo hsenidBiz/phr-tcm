@@ -241,10 +241,16 @@ async fn begin_writing(
     client: Option<&crate::ado::AdoClient>,
 ) -> (u16, String) {
     let feature = q(target, "feature").unwrap_or_default();
-    let modules: Vec<String> = match client {
-        Some(c) => allowed_modules(ctx, c).await.known().to_vec(),
-        None => vec![],
+    // The tri-state is kept, not flattened. `.known()` returns an empty
+    // list for BOTH "this organization has no Module field" and "the
+    // request for its values failed", and `problems` skips the module
+    // check entirely on an empty list - so a failed fetch silently turned
+    // off the very check this tool exists for and still said "ready".
+    let allowed = match client {
+        Some(c) => allowed_modules(ctx, c).await,
+        None => Modules::Unavailable("not signed in to Test Case Manager".into()),
     };
+    let modules: Vec<String> = allowed.known().to_vec();
 
     // Phase 1: nothing sent, so hand back the questions.
     if body.trim().is_empty() || body.trim() == "{}" {
@@ -295,6 +301,19 @@ async fn begin_writing(
         );
     }
 
+    // Not a `problem` - those block, and a transient fetch failure must not
+    // stop a developer whose module is perfectly correct. But it has to be
+    // SAID, or "ready" claims a check that never ran.
+    let mut unchecked: Vec<String> = vec![];
+    if let Modules::Unavailable(why) = &allowed {
+        if !answers.module.trim().is_empty() {
+            unchecked.push(format!(
+                "module '{}' could not be checked against this organization's allowed values ({why}) - confirm it with the developer.",
+                answers.module.trim()
+            ));
+        }
+    }
+
     let plan = crate::intake::plan_markdown(&answers, &feature);
     let plan_path = crate::intake::plan_path(&answers.output_path);
     // `fs::write` TRUNCATES, and this path is derived from a name the
@@ -312,6 +331,7 @@ async fn begin_writing(
         200,
         serde_json::json!({
             "status": "ready",
+            "unchecked": unchecked,
             "plan": plan,
             "plan_path": if written { serde_json::json!(plan_path) } else { serde_json::Value::Null },
             "plan_write_error": if written {

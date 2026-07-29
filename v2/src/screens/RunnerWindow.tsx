@@ -382,7 +382,7 @@ export default function RunnerWindow() {
         .map(({ case: c, ...rest }) => ({ ...rest, point_id: byCase.get(c.id)! }));
       if (resolved.length === 0) throw new Error("None of the marked cases have a test point.");
 
-      await unwrap(
+      const run = await unwrap(
         commands.submitTestRun(
           session!.org,
           session!.project,
@@ -394,12 +394,24 @@ export default function RunnerWindow() {
       // A PARTIAL drop used to pass silently: only an all-dropped run
       // errored, so a tester who marked eight cases and had two without a
       // point was told the run was recorded and lost those two results.
-      return { recorded: resolved.length, dropped };
+      return { recorded: resolved.length, dropped, extrasFailed: run.extras_failed };
     },
-    onSuccess: ({ recorded, dropped }) => {
+    onSuccess: ({ recorded, dropped, extrasFailed }) => {
+      // Step-by-step marks and screenshots are attached after the outcomes
+      // are already saved, so they cannot fail the run - but they used to
+      // fail in complete silence, and they are the evidence.
+      if (extrasFailed.length > 0) {
+        toast.warning(
+          `The outcomes were recorded, but this did not attach: ${extrasFailed.join(", ")}. ` +
+            `Add it in Azure DevOps.`,
+          { duration: 20000 },
+        );
+      }
       if (dropped.length === 0) {
-        toast.success("Run recorded. Closing runner.");
-        setTimeout(() => getCurrentWindow().close(), 600);
+        if (extrasFailed.length === 0) {
+          toast.success("Run recorded. Closing runner.");
+          setTimeout(() => getCurrentWindow().close(), 600);
+        }
         return;
       }
       // Do NOT close: the tester needs to see which results did not land,

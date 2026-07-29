@@ -119,7 +119,11 @@ pub async fn submit_test_run(
         .await?;
 
     // Per-step outcomes + screenshots are additive and best-effort (v1
-    // semantics): a failure here never loses the recorded outcomes.
+    // semantics): a failure here never loses the recorded outcomes. It was
+    // also never REPORTED, so a tester who marked five steps individually
+    // and attached a screenshot of the failure had no way to know that none
+    // of it arrived. Collected and handed back instead.
+    let mut extras_failed: Vec<String> = vec![];
     for o in &outcomes {
         let Some(result) = results.iter().find(|r| r.point_id == Some(o.point_id)) else {
             continue;
@@ -128,7 +132,7 @@ pub async fn submit_test_run(
             if let Some(details) =
                 ado_testplan::build_iteration_details(ids, step_ocs, &o.outcome)
             {
-                let _ = client
+                if let Err(e) = client
                     .update_result_steps(
                         &organization,
                         &project,
@@ -136,12 +140,19 @@ pub async fn submit_test_run(
                         result.result_id,
                         details,
                     )
-                    .await;
+                    .await
+                {
+                    crate::applog::warn(format!(
+                        "run {}: per-step marks for point {} were not saved: {e}",
+                        run.run_id, o.point_id
+                    ));
+                    extras_failed.push(format!("step-by-step marks for test point {}", o.point_id));
+                }
             }
         }
         if let Some(files) = &o.attachments {
             for att in files {
-                let _ = client
+                if let Err(e) = client
                     .add_result_attachment(
                         &organization,
                         &project,
@@ -151,7 +162,14 @@ pub async fn submit_test_run(
                         &att.file_name,
                         "",
                     )
-                    .await;
+                    .await
+                {
+                    crate::applog::warn(format!(
+                        "run {}: attachment {} for point {} was not saved: {e}",
+                        run.run_id, att.file_name, o.point_id
+                    ));
+                    extras_failed.push(format!("{} (test point {})", att.file_name, o.point_id));
+                }
             }
         }
     }
@@ -159,7 +177,7 @@ pub async fn submit_test_run(
     client
         .complete_test_run(&organization, &project, run.run_id)
         .await?;
-    Ok(run)
+    Ok(ado_testplan::RunCreated { extras_failed, ..run })
 }
 
 #[tauri::command]
