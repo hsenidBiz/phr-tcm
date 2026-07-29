@@ -34,9 +34,11 @@ export {
   Check as IconConfirm,
   Pencil as IconEdit,
   Layers as IconBulkEdit,
+  CaseSensitive as IconRename,
   Send as IconPost,
 
   // Undoing and stopping
+  Undo2 as IconUndo,
   X as IconCancel,
   Eraser as IconClear,
   Trash2 as IconRemove,

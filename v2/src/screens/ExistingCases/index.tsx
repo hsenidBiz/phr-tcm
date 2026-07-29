@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { commands, type TestCaseFull } from "../../bindings";
 import BulkEditDialog from "../../components/BulkEditDialog";
+import PowerRenameDialog, { type RenameTarget } from "../../components/PowerRenameDialog";
 import CaseEditor from "./CaseEditor";
 import CountUp from "../../components/CountUp";
 import { Button } from "../../components/ui/button";
@@ -18,7 +19,7 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap } from "../../lib/ipc";
 import { toTestCase } from "../../lib/testCaseConvert";
-import { IconBulkEdit, IconClear, IconExport } from "../../lib/actionIcons";
+import { IconBulkEdit, IconClear, IconExport, IconRename } from "../../lib/actionIcons";
 
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
@@ -43,6 +44,7 @@ export default function ExistingCases({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
@@ -132,6 +134,36 @@ export default function ExistingCases({
 
   const selectedCases = list.filter((c) => selected.has(c.id));
 
+  /** Only titles change: the case's own steps_xml goes back untouched, so
+   *  the save leaves Steps out of the patch entirely. The rows carry the
+   *  exact strings the preview displayed - nothing is recomputed here. */
+  const renameTarget: RenameTarget = {
+    label: "Azure DevOps",
+    cases: selectedCases.map((c) => ({ id: c.id, title: c.title })),
+    otherTitles: list.filter((c) => !selected.has(c.id)).map((c) => c.title),
+    undoable: true,
+    apply: async (rows) => {
+      const failed: typeof rows = [];
+      for (const row of rows) {
+        const full = list.find((c) => c.id === row.id);
+        if (!full) {
+          failed.push(row);
+          continue;
+        }
+        const r = await commands.updateTestCase(
+          org,
+          project,
+          { ...toTestCase(full), title: row.after, update_id: full.id },
+          prefs.moduleRef,
+          prefs.preconditionsRef,
+          full.steps_xml,
+        );
+        if (r.status === "error") failed.push(row);
+      }
+      return failed;
+    },
+  };
+
   const exportJson = useMutation({
     mutationFn: async () => {
       const path = await save({
@@ -210,6 +242,10 @@ export default function ExistingCases({
           <Button size="sm" onClick={() => setBulkOpen(true)}>
             <IconBulkEdit aria-hidden />
             Bulk edit
+          </Button>
+          <Button size="sm" onClick={() => setRenameOpen(true)}>
+            <IconRename aria-hidden />
+            Power Rename
           </Button>
           <Button variant="outline" size="sm" onClick={() => exportJson.mutate()}>
             <IconExport aria-hidden />
@@ -304,6 +340,22 @@ export default function ExistingCases({
           )}
         </div>
       ))}
+
+      {renameOpen && (
+        <PowerRenameDialog
+          target={renameTarget}
+          onClose={() => {
+            setRenameOpen(false);
+            setSelected(new Set());
+          }}
+          onDone={() => {
+            // Same reason Bulk Edit collapses them: an expanded editor still
+            // holds the pre-rename title and would put it back on save.
+            if (openId != null && selected.has(openId)) setOpenId(null);
+            refresh();
+          }}
+        />
+      )}
 
       {bulkOpen && (
         <BulkEditDialog

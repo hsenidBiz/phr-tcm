@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
+import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
 import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
@@ -33,6 +34,7 @@ import {
   IconReview,
   IconShare,
   IconStop,
+  IconRename,
 } from "../lib/actionIcons";
 
 /** The shared pending-creation queue with the review gate, live progress and
@@ -314,6 +316,37 @@ export default function QueueSection({
   // Same occurrence-aware keys the file sync reports changes under, so a
   // second case sharing a title still lights up its own row.
   const rowKeys = keysFor(queue);
+  const [renameOpen, setRenameOpen] = useState(false);
+
+  /** Renaming drafts touches nothing outside this list - they are in memory
+   *  until Create runs - so undo here can never fail.
+   *
+   *  Rows are matched back to drafts occurrence-aware, the same way
+   *  fileSync identifies cases: a draft has no work item id, so two of them
+   *  really can share a title, and matching by title alone would rename the
+   *  first one twice and the second not at all. */
+  const renameTarget: RenameTarget = {
+    label: "the queued drafts",
+    cases: queue.map((tc) => ({ id: tc.update_id, title: tc.title })),
+    undoable: true,
+    apply: async (rows) => {
+      const pending = new Map<string, string[]>();
+      for (const r of rows) {
+        const k = `${r.id ?? ""}\u0000${r.before}`;
+        pending.set(k, [...(pending.get(k) ?? []), r.after]);
+      }
+      setQueue((q) =>
+        q.map((tc) => {
+          const k = `${tc.update_id ?? ""}\u0000${tc.title}`;
+          const waiting = pending.get(k);
+          if (!waiting || waiting.length === 0) return tc;
+          return { ...tc, title: waiting.shift()! };
+        }),
+      );
+      return []; // nothing to fail: this is a state update, not a request
+    },
+  };
+
   const problems = queue.map((tc) => validateCase(tc));
   const duplicates = queue.map((tc) => duplicateWarning(tc, existingTitles));
   const hasBlockers = problems.some(Boolean);
@@ -366,8 +399,25 @@ export default function QueueSection({
             <IconRemove aria-hidden />
             Remove all
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={queue.length === 0 || submit.isPending}
+            onClick={() => setRenameOpen(true)}
+          >
+            <IconRename aria-hidden />
+            Power Rename
+          </Button>
         </div>
       </div>
+
+      {renameOpen && (
+        <PowerRenameDialog
+          target={renameTarget}
+          onClose={() => setRenameOpen(false)}
+          onDone={() => {}}
+        />
+      )}
 
       {queue.length === 0 && (
         <AstryxIsland>
