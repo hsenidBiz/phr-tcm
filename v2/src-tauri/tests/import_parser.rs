@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use v2_lib::import_parser::{
-    export_queue_to_excel, export_queue_to_json, generate_template, parse_file, parse_rows,
+    export_queue_to_json, parse_file, parse_rows,
     EXCEL_HEADERS,
 };
 use v2_lib::model::TestCase;
@@ -60,7 +60,7 @@ fn basic_case_with_continuation_rows() {
 }
 
 #[test]
-fn testcaseid_marks_update_and_tolerates_excel_floats() {
+fn testcaseid_marks_update_and_tolerates_float_formatting() {
     let rows = vec![(2, row(&[("TestCaseID", "123.0"), ("TestCaseName", "Existing"), ("StepNumber", "1"), ("StepAction", "Do")]))];
     let (cases, _) = parse_rows(&rows, &headers()).unwrap();
     assert_eq!(cases[0].update_id, Some(123));
@@ -132,91 +132,8 @@ fn case_without_steps_skipped_with_row() {
     assert!(warnings.iter().any(|w| w.contains("Row 4") && w.contains("Empty")));
 }
 
-#[test]
-fn csv_row_numbers_survive_blank_lines() {
-    let path = tmp_path("cases.csv");
-    std::fs::write(
-        &path,
-        "TestCaseID,TestCaseName,StepNumber,StepAction,StepExpected,\
-Tags,AutomationStatus,ModuleValue,Preconditions\n\
-,Case A,1,Open,,,,,\n\
-\n\
-,Case B,1,Do,,,Wrong,,\n",
-    )
-    .unwrap();
-    let (cases, warnings) = parse_file(&path).unwrap();
-    assert_eq!(
-        cases.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
-        vec!["Case A", "Case B"]
-    );
-    // Case B sits on physical line 4 (blank line 3 must not shift the number).
-    assert!(
-        warnings.iter().any(|w| w.contains("Row 4") && w.contains("Wrong")),
-        "warnings were: {warnings:?}"
-    );
-}
 
-#[test]
-fn excel_round_trip_preserves_update_id_and_steps() {
-    let queue = vec![
-        TestCase {
-            title: "Round trip".into(),
-            steps: vec![
-                Step { action: "One".into(), expected: "A".into() },
-                Step { action: "Two".into(), expected: "".into() },
-            ],
-            tags: "smoke; nightly".into(),
-            automation_status: "Planned".into(),
-            module_value: "Auth".into(),
-            preconditions: "Logged out".into(),
-            update_id: Some(4242),
-            comment: String::new(),
-        },
-        TestCase {
-            title: "New case".into(),
-            steps: vec![Step { action: "Go".into(), expected: "".into() }],
-            automation_status: "Not Automated".into(),
-            ..Default::default()
-        },
-    ];
-    let path = tmp_path("queue.xlsx");
-    export_queue_to_excel(&queue, &path).unwrap();
-    let (cases, warnings) = parse_file(&path).unwrap();
 
-    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
-    assert_eq!(cases.len(), 2);
-    let first = &cases[0];
-    let second = &cases[1];
-    assert_eq!(first.update_id, Some(4242));
-    assert_eq!(first.title, "Round trip");
-    assert_eq!(
-        first
-            .steps
-            .iter()
-            .map(|s| (s.action.as_str(), s.expected.as_str()))
-            .collect::<Vec<_>>(),
-        vec![("One", "A"), ("Two", "")]
-    );
-    assert_eq!(first.tags, "smoke; nightly");
-    assert_eq!(first.automation_status, "Planned");
-    assert_eq!(first.module_value, "Auth");
-    assert_eq!(first.preconditions, "Logged out");
-    assert_eq!(second.update_id, None);
-    assert_eq!(second.title, "New case");
-}
-
-#[test]
-fn generate_template_parses_back() {
-    let path = tmp_path("template.xlsx");
-    generate_template(&path).unwrap();
-    let (cases, warnings) = parse_file(&path).unwrap();
-    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
-    assert_eq!(
-        cases.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
-        vec!["Login as admin", "Invalid login attempt"]
-    );
-    assert_eq!(cases[0].steps.len(), 3);
-}
 
 #[test]
 fn json_export_round_trips_through_the_importer() {
@@ -362,4 +279,27 @@ fn is_valid_rules_ported() {
     let mut bad = ok.clone();
     bad.tags = "a, b".into();
     assert!(bad.is_valid().unwrap_err().contains("semicolons"));
+}
+
+/// JSON is the only interchange format. The spreadsheet readers and writers
+/// were ported from v1 but nothing in the v2 UI ever called them - every
+/// file dialog filters to .json - so they were removed along with calamine,
+/// rust_xlsxwriter and csv. This pins the contract so they do not creep
+/// back in unnoticed.
+#[test]
+fn only_json_is_accepted_and_the_error_says_so() {
+    let path = tmp_path("cases.xlsx");
+    std::fs::write(&path, b"not really a workbook").unwrap();
+    let err = parse_file(&path).unwrap_err();
+    // It echoes the extension it rejected, which is useful; what it must
+    // not do is still OFFER the formats that no longer exist.
+    assert!(err.contains("Use .json"), "got: {err}");
+    assert!(!err.contains("Use .xlsx"), "the error still offers xlsx: {err}");
+    assert!(!err.contains(".csv"), "the error still offers csv: {err}");
+    let _ = std::fs::remove_file(&path);
+
+    let csv = tmp_path("cases.csv");
+    std::fs::write(&csv, b"TestCaseName,StepNumber,StepAction\na,1,b").unwrap();
+    assert!(parse_file(&csv).is_err(), "csv is no longer an import format");
+    let _ = std::fs::remove_file(&csv);
 }

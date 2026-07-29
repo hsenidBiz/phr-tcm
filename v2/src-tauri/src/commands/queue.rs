@@ -72,12 +72,6 @@ pub fn unwatch_all_files(state: tauri::State<'_, crate::filewatch::FileWatchStat
 
 #[tauri::command]
 #[specta::specta]
-pub fn export_queue(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
-    import_parser::export_queue_to_excel(&queue, &path)
-}
-
-#[tauri::command]
-#[specta::specta]
 pub fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<(), String> {
     import_parser::export_queue_to_json(&queue, &path)
 }
@@ -87,12 +81,6 @@ pub fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<()
 pub fn export_queue_html(path: String, queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
     // A saved-to-disk export is shared/archived - no autosaving note boxes.
     import_parser::export_queue_to_html(&queue, &path, &subtitle, None)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn write_template(path: String) -> Result<(), String> {
-    import_parser::generate_template(&path)
 }
 
 #[derive(serde::Serialize, specta::Type)]

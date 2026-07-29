@@ -39,8 +39,6 @@ export const commands = {
 	unwatchFile: (path: string) => __TAURI_INVOKE<void>("unwatch_file", { path }),
 	/**  Stop following every file - used when the PBI scope changes. */
 	unwatchAllFiles: () => __TAURI_INVOKE<void>("unwatch_all_files"),
-	exportQueue: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue", { path, queue })),
-	writeTemplate: (path: string) => typedError<null, string>(__TAURI_INVOKE("write_template", { path })),
 	/**
 	 *  Serial creation loop ported from v1 CreationWorker: one item at a time,
 	 *  500 ms spacing (rate-limit respect), new cases linked to the PBI, updates

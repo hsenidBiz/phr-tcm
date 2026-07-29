@@ -92,5 +92,15 @@ export function inlineWordDiff(oldText: string, newText: string): InlineSegment[
       i++;
     }
   }
+  // The split discards whitespace, so an edit that is only line breaks or
+  // spacing comes back with every segment marked "same" - the review would
+  // show an unmarked line for a value it is about to overwrite. Fall back to
+  // the whole value before/after so something always reads as changed.
+  if (oldText !== newText && !out.some((s) => s.kind !== "same")) {
+    return [
+      { text: oldText, kind: "removed" },
+      { text: newText, kind: "added" },
+    ];
+  }
   return out;
 }

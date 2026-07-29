@@ -15,7 +15,7 @@ pub mod comments;
 mod export;
 mod html;
 
-pub use export::{export_queue_to_excel, export_queue_to_json, generate_template, queue_to_json_string};
+pub use export::{export_queue_to_json, queue_to_json_string};
 pub use html::{export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx};
 
 use crate::model::{TestCase, MAX_TITLE_LEN, VALID_STATUSES};
@@ -48,95 +48,9 @@ pub fn parse_file(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
         .unwrap_or("")
         .to_lowercase();
     match ext.as_str() {
-        "xlsx" => parse_excel(path),
-        "csv" => parse_csv(path),
         "json" => parse_json(path),
-        other => Err(format!(
-            "Unsupported file type: .{other}. Use .xlsx, .csv or .json"
-        )),
+        other => Err(format!("Unsupported file type: .{other}. Use .json")),
     }
-}
-
-fn parse_excel(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
-    use calamine::{Data, Reader};
-    let mut wb: calamine::Xlsx<_> =
-        calamine::open_workbook(path).map_err(|e| format!("Could not open Excel file: {e}"))?;
-    let sheet_name = wb
-        .sheet_names()
-        .first()
-        .cloned()
-        .ok_or("The Excel file is empty.")?;
-    let range = wb
-        .worksheet_range(&sheet_name)
-        .map_err(|e| format!("Could not read the worksheet: {e}"))?;
-
-    let mut rows_iter = range.rows();
-    let Some(header_row) = rows_iter.next() else {
-        return Err("The Excel file is empty.".into());
-    };
-    let cell_str = |c: &Data| -> String {
-        match c {
-            Data::Empty => String::new(),
-            // Excel numeric cells render whole floats without ".0" (openpyxl
-            // hands ints back to v1, so "2" not "2.0" is the faithful form).
-            Data::Float(f) if f.fract() == 0.0 && f.is_finite() => format!("{}", *f as i64),
-            other => other.to_string().trim().to_string(),
-        }
-    };
-    let headers: Vec<String> = header_row.iter().map(|c| cell_str(c).trim().to_string()).collect();
-
-    let mut data_rows: Vec<Row> = vec![];
-    for (i, row) in rows_iter.enumerate() {
-        let row_num = (i + 2) as u32; // header = sheet row 1
-        let mut map = HashMap::new();
-        let mut any = false;
-        for (h, cell) in headers.iter().zip(row.iter()) {
-            let v = cell_str(cell).trim().to_string();
-            if !v.is_empty() {
-                any = true;
-            }
-            map.insert(h.clone(), v);
-        }
-        if any {
-            data_rows.push((row_num, map));
-        }
-    }
-    parse_rows(&data_rows, &headers)
-}
-
-fn parse_csv(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("Could not read CSV: {e}"))?;
-    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
-    let mut reader = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_reader(content.as_bytes());
-    let headers: Vec<String> = reader
-        .headers()
-        .map_err(|e| format!("Could not read CSV headers: {e}"))?
-        .iter()
-        .map(|h| h.trim().to_string())
-        .collect();
-    let mut data_rows: Vec<Row> = vec![];
-    let mut records = reader.records();
-    loop {
-        let Some(record) = records.next() else { break };
-        let record = record.map_err(|e| format!("Could not read CSV row: {e}"))?;
-        // Physical line of the record's END, so blank lines and quoted
-        // multi-line fields never drift the row numbers in warnings
-        // (mirrors v1's reader.line_num). record.position() points at the
-        // start of the scan (before skipped blank lines), so take the max
-        // of it and reader-position-minus-one to survive both blank-line
-        // runs and a missing trailing newline.
-        let start = record.position().map(|p| p.line() as u32).unwrap_or(0);
-        let after = records.reader().position().line() as u32;
-        let line = start.max(after.saturating_sub(1)).max(1);
-        let mut map = HashMap::new();
-        for (h, v) in headers.iter().zip(record.iter()) {
-            map.insert(h.clone(), v.trim().to_string());
-        }
-        data_rows.push((line, map));
-    }
-    parse_rows(&data_rows, &headers)
 }
 
 fn step_sort_key(item: &Row) -> (i64, u32) {
