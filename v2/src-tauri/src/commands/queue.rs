@@ -213,9 +213,27 @@ fn writable(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
     Err("this file is no longer open in the app - reopen the report from the queue".into())
 }
 
+/// Serialises the read-patch-write that every comment save performs.
+///
+/// Saving a comment reads the whole JSON file, patches one value and writes
+/// it back. Two of those interleaving means the second read happens before
+/// the first write, and the first comment is gone - the box on the page
+/// still shows it, so nobody finds out until the file is reopened.
+///
+/// This became reachable when the note listener started handling
+/// connections off the accept thread: the single-threaded loop used to
+/// serialise these by accident, and that was the only thing stopping it.
+/// The listener has to stay concurrent - one stalled peer must not block
+/// every save - so the guarantee moves here, where it is only ever held
+/// across a file read and a file write.
+static NOTE_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Where a comment posted from a report page belongs. The default arm also
 /// catches pages generated before drafts had comments, which send no kind.
 fn route_note(app: &tauri::AppHandle, n: note_server::NotePayload) -> Result<(), String> {
+    // Poisoning only means a previous save panicked mid-write; the next one
+    // still has to work, and it re-reads the file anyway.
+    let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     match n.kind.as_str() {
         "case" => save_draft_case_comment(app, n),
         "general" => save_draft_general_comment(app, n),
@@ -308,6 +326,11 @@ pub fn save_general_comment(
     path: String,
     text: String,
 ) -> Result<String, String> {
+    // Third and last entry into the read-patch-write. The lock lives at the
+    // entry points rather than inside write_general_comment, because
+    // route_note already holds it by the time it gets there and a std Mutex
+    // is not reentrant.
+    let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     write_general_comment(&app, &path, &text)
 }
 
@@ -322,6 +345,11 @@ pub fn save_draft_comment(
     title: String,
     text: String,
 ) -> Result<String, String> {
+    // The same guard the note listener takes. A comment typed on the queue
+    // card and one typed in the browser page reach the same file by
+    // different routes, and read-patch-write from both at once loses one of
+    // them silently.
+    let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let json = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
     let target = import_parser::comments::CaseTarget { id, title };
     let patched = import_parser::comments::patch_case_comment(&json, &target, &text)?;
