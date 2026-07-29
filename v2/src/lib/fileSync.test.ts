@@ -6,6 +6,7 @@ import {
   countBy,
   fileName,
   ownerPaths,
+  withoutFileCases,
   patchWatch,
   syncFromFile,
   syncNotification,
@@ -191,4 +192,46 @@ test("the notification counts what moved, not what it was called", () => {
 
 test("a warnings-only sync still says something useful", () => {
   expect(syncNotification("a.json", []).body).toBe("The queue is up to date.");
+});
+
+// ------------------------------------- two cases can share a title
+
+test("two new cases sharing a title both reach the queue", () => {
+  // Reported: the second silently never arrived, and nothing said so.
+  const file = [tc("Login works", { tags: "smoke" }), tc("login works ", { tags: "regression" })];
+  const r = syncFromFile([], [], file);
+  expect(r.queue).toHaveLength(2);
+  expect(r.queue.map((c) => c.tags)).toEqual(["smoke", "regression"]);
+  expect(countBy(r.changes, "added")).toBe(2);
+  // Distinct keys, or the change report collapses them again.
+  expect(new Set(r.changes.map((c) => c.key)).size).toBe(2);
+});
+
+test("one file case is never written over two queue rows", () => {
+  // Reported: both rows became the SAME object, so creating them wrote the
+  // same test case to Azure DevOps twice. The file contributed ONE of them;
+  // the other was typed by hand and happens to share the title.
+  const fromFile = tc("Dup", { tags: "a" });
+  const typedByHand = tc("Dup", { tags: "b" });
+  const r = syncFromFile([fromFile, typedByHand], [fromFile], [tc("Dup", { tags: "c" })]);
+  expect(r.queue).toHaveLength(2);
+  expect(r.queue[0]).not.toBe(r.queue[1]);
+  // The file's row takes the update; the hand-typed one is left alone.
+  expect(r.queue.map((c) => c.tags)).toEqual(["c", "b"]);
+});
+
+test("dropping one of two same-titled cases removes exactly one", () => {
+  const both = [tc("Dup", { tags: "a" }), tc("Dup", { tags: "b" })];
+  const r = syncFromFile(both, both, [tc("Dup", { tags: "a" })]);
+  expect(r.queue).toHaveLength(1);
+  expect(countBy(r.changes, "removed")).toBe(1);
+});
+
+test("ownership and removal agree about which case is which", () => {
+  const a = tc("Shared", { tags: "one" });
+  const b = tc("Shared", { tags: "two" });
+  const watches = [watch("C:/w/first.json", [a, b])];
+  expect(ownerPaths([a, b], watches)).toEqual(["C:/w/first.json", "C:/w/first.json"]);
+  // Both belong to that file, so dropping it takes both.
+  expect(withoutFileCases([a, b], [a, b], [])).toEqual([]);
 });

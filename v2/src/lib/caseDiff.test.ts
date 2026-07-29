@@ -105,3 +105,29 @@ test("steps diff positionally: changed, added, removed", () => {
   expect(removed.steps.removed).toBe(1);
   expect(diffSummary(removed)).toBe("1 step change");
 });
+
+test("a project with no Module field is not promised a Module change", () => {
+  // bestMatch returns null when the project has no such custom field, and
+  // the update then skips it entirely - so showing it as pending would be a
+  // change the submit cannot make.
+  const q = queued({ module_value: "Payments" });
+  const c = current({ module_value: "Auth" });
+
+  const withField = diffCase(q, c, { moduleRef: "Custom.Module", preconditionsRef: "Custom.Pre" });
+  expect(withField.fields.map((f) => f.name)).toContain("Module");
+
+  const without = diffCase(q, c, { moduleRef: null, preconditionsRef: null });
+  expect(without.fields.map((f) => f.name)).not.toContain("Module");
+  // Not blank-skipped either - that would claim a blank is preserving a
+  // server value, which is a different statement.
+  expect(without.blankSkipped).not.toContain("Module");
+});
+
+test("preconditions are hidden the same way, and tags are never affected", () => {
+  const q = queued({ preconditions: "Logged in", tags: "smoke" });
+  const c = current({ preconditions: "Logged out", tags: "regression" });
+  const d = diffCase(q, c, { moduleRef: null, preconditionsRef: null });
+  expect(d.fields.map((f) => f.name)).not.toContain("Preconditions");
+  // Tags is a built-in field and always writes.
+  expect(d.fields.map((f) => f.name)).toContain("Tags");
+});

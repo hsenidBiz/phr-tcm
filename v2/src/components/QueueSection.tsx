@@ -9,7 +9,7 @@ import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
-import { caseKey, fileName, ownerPaths, type WatchedFile } from "../lib/fileSync";
+import { caseKey, fileName, keysFor, ownerPaths, type WatchedFile } from "../lib/fileSync";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
@@ -293,6 +293,9 @@ export default function QueueSection({
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
   });
 
+  // Same occurrence-aware keys the file sync reports changes under, so a
+  // second case sharing a title still lights up its own row.
+  const rowKeys = keysFor(queue);
   const problems = queue.map((tc) => validateCase(tc));
   const duplicates = queue.map((tc) => duplicateWarning(tc, existingTitles));
   const hasBlockers = problems.some(Boolean);
@@ -361,10 +364,16 @@ export default function QueueSection({
         <ul className="space-y-1">
           {queue.map((tc, i) => {
             const cur = tc.update_id != null ? currentById.get(tc.update_id) : undefined;
-            const diff = reviewing && cur ? diffCase(tc, cur) : null;
+            const diff =
+              reviewing && cur
+                ? diffCase(tc, cur, {
+                    moduleRef: prefs.moduleRef,
+                    preconditionsRef: prefs.preconditionsRef,
+                  })
+                : null;
             const diffFailed =
               reviewing && tc.update_id != null && !cur && currentCases.isError;
-            const touched = flash?.[caseKey(tc)];
+            const touched = flash?.[rowKeys[i]];
             return (
               <li
                 key={i}
