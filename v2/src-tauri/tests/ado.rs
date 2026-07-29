@@ -309,7 +309,7 @@ async fn update_from_model_skips_blank_fields() {
     tc.preconditions = String::new();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"))
+        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"), None)
         .await
         .unwrap();
 
@@ -347,7 +347,7 @@ async fn update_from_model_writes_the_title() {
     tc.title = "Renamed by bulk import".into();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, None, None)
+        .update_test_case_from_model("org", "proj", 55, &tc, None, None, None)
         .await
         .unwrap();
 
@@ -613,7 +613,7 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
                 .map(|_| ())
         } else {
             client
-                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"))
+                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"), None)
                 .await
         };
         let sent = server.received_requests().await.unwrap();
@@ -623,5 +623,92 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
             "{label}: preconditions were not escaped:\n{body}"
         );
         assert!(!body.contains("value < 10"), "{label}: raw < reached ADO");
+    }
+}
+
+// ------------------------------------------------- steps are not clobbered
+
+/// A step as Azure DevOps really holds one: markup and an embedded image
+/// that `parse_steps_xml` cannot represent.
+const RICH_STEPS: &str = "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\">\
+<parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;\
+&lt;IMG src=\"http://ado/att/1.png\"&gt;&lt;/DIV&gt;</parameterizedString>\
+<parameterizedString isformatted=\"true\">Saved</parameterizedString></step></steps>";
+
+async fn captured_patch(tc: &v2_lib::model::TestCase, original: Option<&str>) -> String {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("PATCH"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "id": 55, "fields": {} })),
+        )
+        .mount(&server)
+        .await;
+    v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri())
+        .update_test_case_from_model("o", "p", 55, tc, None, None, original)
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).to_string()
+}
+
+fn case_from(xml: &str, title: &str) -> v2_lib::model::TestCase {
+    v2_lib::model::TestCase {
+        title: title.into(),
+        steps: v2_lib::steps_xml::parse_steps_xml(xml),
+        automation_status: "Planned".into(),
+        update_id: Some(55),
+        ..Default::default()
+    }
+}
+
+/// THE bug: the editor reads steps as plain text, so saving a case you only
+/// retitled used to PATCH that flattened text back and delete the markup and
+/// the screenshot from Azure DevOps.
+#[tokio::test]
+async fn a_title_only_save_does_not_touch_the_steps() {
+    // Exactly what the editor holds after loading: steps parsed from ADO.
+    let tc = case_from(RICH_STEPS, "A better title");
+    let body = captured_patch(&tc, Some(RICH_STEPS)).await;
+
+    assert!(body.contains("A better title"), "the title must still be written");
+    assert!(
+        !body.contains("Microsoft.VSTS.TCM.Steps"),
+        "Steps must be left out of the patch entirely:\n{body}"
+    );
+}
+
+/// When the user really does edit a step, it is written - the loss of markup
+/// there is unavoidable and intended, because they replaced the text.
+#[tokio::test]
+async fn an_edited_step_is_still_written() {
+    let mut tc = case_from(RICH_STEPS, "T");
+    tc.steps[0].action = "Click Save twice".into();
+    let body = captured_patch(&tc, Some(RICH_STEPS)).await;
+    assert!(body.contains("Microsoft.VSTS.TCM.Steps"), "an edit must write:\n{body}");
+    assert!(body.contains("Click Save twice"));
+}
+
+/// An imported update has no baseline - the file supplies the steps and is
+/// meant to write them, which is the queue submit path.
+#[tokio::test]
+async fn without_a_baseline_the_steps_are_written_as_before() {
+    let tc = case_from(RICH_STEPS, "T");
+    let body = captured_patch(&tc, None).await;
+    assert!(body.contains("Microsoft.VSTS.TCM.Steps"), "no baseline means write:\n{body}");
+}
+
+/// build_steps_xml(&[]) emits a blank placeholder step, so writing it would
+/// replace a real step list with one empty row. Nothing should send an empty
+/// list, but the cost of being wrong is unrecoverable.
+#[tokio::test]
+async fn an_empty_step_list_is_never_written_over_a_real_one() {
+    let mut tc = case_from(RICH_STEPS, "T");
+    tc.steps.clear();
+    for baseline in [Some(RICH_STEPS), None] {
+        let body = captured_patch(&tc, baseline).await;
+        assert!(
+            !body.contains("Microsoft.VSTS.TCM.Steps"),
+            "an empty list must never reach ADO:\n{body}"
+        );
     }
 }

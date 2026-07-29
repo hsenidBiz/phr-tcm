@@ -35,7 +35,19 @@ export default function CaseEditor({
 
   const saveCase = useMutation({
     mutationFn: async () => {
-      const r = await commands.updateTestCase(org, project, tc, moduleRef, preconditionsRef);
+      // `original.steps_xml` is the Steps field as Azure DevOps holds it.
+      // Passing it lets the save leave Steps out of the patch when they were
+      // not edited - without it, saving a case you only retitled rewrites
+      // the steps from a plain-text read and strips their formatting and
+      // embedded screenshots.
+      const r = await commands.updateTestCase(
+        org,
+        project,
+        tc,
+        moduleRef,
+        preconditionsRef,
+        original.steps_xml,
+      );
       if (r.status === "error") throw new Error(r.error);
     },
     onSuccess: () => {

@@ -99,6 +99,9 @@ const full = (
   id,
   title,
   tags,
+  // What ADO would hold; the editor compares against it to decide whether
+  // a save needs to write Steps at all.
+  steps_xml: "",
   automation_status: "Not Automated",
   steps: steps.map(([action, expected]) => ({ action, expected })),
   step_ids: steps.map((_, i) => String(i + 2)),

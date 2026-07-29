@@ -424,10 +424,15 @@ impl AdoClient {
     }
 
     /// SAFETY RULE (ported from v1 update_test_case_from_model): always
-    /// overwrites Title, Steps and AutomationStatus, but overwrites Tags /
-    /// module / Preconditions only when the imported case provides a value -
-    /// a blank spreadsheet column must never wipe existing data. (Title is
-    /// never blank: is_valid rejects an empty title before any submit.)
+    /// overwrites Title and AutomationStatus, but overwrites Tags / module /
+    /// Preconditions only when the imported case provides a value - a blank
+    /// imported column must never wipe existing data. (Title is never blank:
+    /// is_valid rejects an empty title before any submit.)
+    ///
+    /// `original_steps_xml` is the Steps field as Azure DevOps currently
+    /// holds it, when the caller has it. See `steps_patch` for why that
+    /// matters - in short, without it, saving a case you only retitled
+    /// deletes the formatting and screenshots from its steps.
     pub async fn update_test_case_from_model(
         &self,
         organization: &str,
@@ -436,18 +441,18 @@ impl AdoClient {
         tc: &crate::model::TestCase,
         module_ref: Option<&str>,
         preconditions_ref: Option<&str>,
+        original_steps_xml: Option<&str>,
     ) -> Result<(), AdoError> {
         let mut fields = vec![
             ("System.Title".to_string(), tc.title.clone()),
-            (
-                "Microsoft.VSTS.TCM.Steps".to_string(),
-                crate::steps_xml::build_steps_xml(&tc.steps),
-            ),
             (
                 "Microsoft.VSTS.TCM.AutomationStatus".to_string(),
                 tc.automation_status.clone(),
             ),
         ];
+        if let Some(xml) = steps_patch(&tc.steps, original_steps_xml) {
+            fields.push(("Microsoft.VSTS.TCM.Steps".to_string(), xml));
+        }
         if !tc.tags.is_empty() {
             fields.push(("System.Tags".to_string(), tc.tags.clone()));
         }
@@ -631,6 +636,7 @@ impl AdoClient {
                     },
                     steps: crate::steps_xml::parse_steps_xml(&str_of("Microsoft.VSTS.TCM.Steps")),
                     step_ids: crate::steps_xml::parse_step_ids(&str_of("Microsoft.VSTS.TCM.Steps")),
+                    steps_xml: str_of("Microsoft.VSTS.TCM.Steps"),
                     module_value: module_ref.map(str_of).unwrap_or_default(),
                     preconditions: preconditions_ref
                         .map(|p| crate::steps_xml::html_to_text(&str_of(p)))
@@ -928,6 +934,42 @@ fn percent_encode_path(s: &str) -> String {
         }
     }
     out
+}
+
+/// The Steps XML to write, or `None` to leave the field out of the patch.
+///
+/// The problem this solves: `steps` on a loaded case is a LOSSY read.
+/// `parse_steps_xml` strips every tag, so a step whose action is
+/// `<b>Click Save</b><img src="...screenshot...">` comes back as the bare
+/// text `Click Save`. Rebuilding the field from that and PATCHing it - which
+/// is what every save used to do, unconditionally - deleted the formatting
+/// and the screenshot from Azure DevOps. Editing only the TITLE was enough
+/// to do it, and the save reported success.
+///
+/// The comparison is deliberately PARSED against PARSED. A case the user did
+/// not touch parses to exactly what it parsed to when it was loaded, so it
+/// compares equal and the field is omitted - the original XML stays in ADO,
+/// markup and all. Only a real edit to a step differs, and then the loss of
+/// markup in that one step is unavoidable: the editor is plain text, and the
+/// user is deliberately replacing what was there.
+///
+/// Without a baseline (an imported update, where the file genuinely supplies
+/// the steps) the field is written as before.
+fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> Option<String> {
+    // build_steps_xml(&[]) emits a single blank placeholder step, so writing
+    // it would replace a real step list with one empty row. Nothing upstream
+    // should send an empty list - is_valid rejects it - but the cost of
+    // being wrong here is unrecoverable, so refuse rather than wipe.
+    if steps.is_empty() {
+        crate::applog::warn("refused to write an empty step list over an existing test case");
+        return None;
+    }
+    if let Some(xml) = original_xml {
+        if crate::steps_xml::parse_steps_xml(xml) == steps {
+            return None;
+        }
+    }
+    Some(crate::steps_xml::build_steps_xml(steps))
 }
 
 /// Text going into an HTML field value.

@@ -21,6 +21,7 @@ function current(over: Partial<TestCaseFull> = {}): TestCaseFull {
     title: "Login works",
     tags: "smoke",
     automation_status: "Planned",
+    steps_xml: "",
     steps: [{ action: "Open", expected: "Shown" }],
     step_ids: ["2"],
     module_value: "Auth",

@@ -60,6 +60,11 @@ pub async fn test_cases_by_ids(
 
 /// Save one existing case from the editor (no suite-ensure, no pacing).
 /// The case must carry update_id; blank-skip semantics apply as always.
+///
+/// `original_steps_xml` is the Steps field as Azure DevOps currently holds
+/// it, taken from the TestCaseFull this edit started from. Without it a
+/// title-only save rewrites the steps from a plain-text read and strips
+/// their formatting and embedded images - see `steps_patch`.
 #[tauri::command]
 #[specta::specta]
 pub async fn update_test_case(
@@ -69,6 +74,7 @@ pub async fn update_test_case(
     tc: model::TestCase,
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
+    original_steps_xml: Option<String>,
 ) -> Result<(), String> {
     let id = tc.update_id.ok_or("update_test_case requires update_id")?;
     tc.is_valid()?;
@@ -81,6 +87,7 @@ pub async fn update_test_case(
             &tc,
             module_ref.as_deref(),
             preconditions_ref.as_deref(),
+            original_steps_xml.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())

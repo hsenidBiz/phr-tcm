@@ -61,7 +61,9 @@ export default function BulkEditDialog({
               : c.tags;
         const tc: TestCase = {
           title: c.title,
-          steps: c.steps, // always preserved
+          // Handed straight back unchanged, so the save compares them equal
+          // to the original and omits Steps from the patch altogether.
+          steps: c.steps,
           tags: mergedTags,
           automation_status: status || c.automation_status,
           module_value: applyModule ? moduleValue : c.module_value,
@@ -74,6 +76,10 @@ export default function BulkEditDialog({
           tc,
           prefs.moduleRef,
           prefs.preconditionsRef,
+          // What makes "steps are never touched" below actually true: with
+          // the original XML in hand the save leaves Steps out of the patch
+          // entirely, instead of rewriting them from a plain-text read.
+          c.steps_xml,
         );
         if (r.status === "error") failed++;
       }

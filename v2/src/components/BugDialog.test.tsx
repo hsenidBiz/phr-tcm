@@ -7,6 +7,7 @@ import BugDialog from "./BugDialog";
 afterEach(() => clearMocks());
 
 const testCase = {
+  steps_xml: "",
   id: 201,
   title: "Valid login",
   tags: "",

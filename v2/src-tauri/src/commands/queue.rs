@@ -524,7 +524,9 @@ async fn process_queue_item(
     let client = ado::AdoClient::new(token);
     let outcome = match tc.update_id {
         Some(existing_id) => client
-            .update_test_case_from_model(organization, project, existing_id, tc, m_ref, p_ref)
+            // No baseline: this is an imported update, where the file
+            // itself supplies the steps and is meant to write them.
+            .update_test_case_from_model(organization, project, existing_id, tc, m_ref, p_ref, None)
             .await
             .map(|_| (existing_id, "updated")),
         None => match client

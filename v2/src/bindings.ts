@@ -101,8 +101,13 @@ export const commands = {
 	/**
 	 *  Save one existing case from the editor (no suite-ensure, no pacing).
 	 *  The case must carry update_id; blank-skip semantics apply as always.
+	 * 
+	 *  `original_steps_xml` is the Steps field as Azure DevOps currently holds
+	 *  it, taken from the TestCaseFull this edit started from. Without it a
+	 *  title-only save rewrites the steps from a plain-text read and strips
+	 *  their formatting and embedded images - see `steps_patch`.
 	 */
-	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef })),
+	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml })),
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),
@@ -928,6 +933,16 @@ export type TestCaseFull = {
 	 *  needs them to build iterationDetails.
 	 */
 	step_ids: string[],
+	/**
+	 *  The Steps field EXACTLY as Azure DevOps holds it.
+	 * 
+	 *  `steps` above is a lossy read: parse_steps_xml strips every tag, so
+	 *  bold, links and embedded screenshots do not survive it. Writing that
+	 *  back would delete them from the work item. Keeping the original
+	 *  lets a save ask "did the user actually change the steps?" and, when
+	 *  the answer is no, leave the field out of the patch entirely.
+	 */
+	steps_xml: string,
 	module_value: string,
 	preconditions: string,
 };

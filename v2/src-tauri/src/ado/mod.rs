@@ -80,6 +80,14 @@ pub struct TestCaseFull {
     /// Real ADO step ids (document order, aligned with `steps`) - the runner
     /// needs them to build iterationDetails.
     pub step_ids: Vec<String>,
+    /// The Steps field EXACTLY as Azure DevOps holds it.
+    ///
+    /// `steps` above is a lossy read: parse_steps_xml strips every tag, so
+    /// bold, links and embedded screenshots do not survive it. Writing that
+    /// back would delete them from the work item. Keeping the original
+    /// lets a save ask "did the user actually change the steps?" and, when
+    /// the answer is no, leave the field out of the patch entirely.
+    pub steps_xml: String,
     pub module_value: String,
     pub preconditions: String,
 }
