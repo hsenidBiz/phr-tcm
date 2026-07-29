@@ -30,14 +30,25 @@ if ($changelog -notmatch [regex]::Escape("version: `"$Version`"")) {
     throw "src/lib/changelog.ts has no entry for $Version - without one the update installs silently."
 }
 
+# --- Keep the machine usable -----------------------------------------------
+# A release compiles the whole Rust tree in release mode, which will take every
+# core it is given and leave the desktop unresponsive for minutes. Cap it at
+# ~70% and leave the rest for whoever is sitting in front of the machine.
+# Computed from THIS machine rather than hardcoded, so it travels.
+$jobs = [Math]::Max(1, [Math]::Floor([Environment]::ProcessorCount * 0.7))
+# CARGO_BUILD_JOBS is the lever that reaches cargo through `npm run tauri
+# build`, which shells out to it - there is no flag to pass down that chain.
+$env:CARGO_BUILD_JOBS = $jobs
+Write-Host "Building with $jobs of $([Environment]::ProcessorCount) cores."
+
 # --- Gates -----------------------------------------------------------------
 if (-not $SkipChecks) {
     Push-Location (Join-Path $v2 "src-tauri")
-    cargo test
+    cargo test -j $jobs -- --test-threads=$jobs
     if ($LASTEXITCODE -ne 0) { Pop-Location; throw "cargo test failed" }
     Pop-Location
     Push-Location $v2
-    npm test
+    npm test -- --maxWorkers=$jobs
     if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm test failed" }
     Pop-Location
 }
