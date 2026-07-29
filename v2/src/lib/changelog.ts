@@ -13,6 +13,30 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.15.1",
+    date: "2026-07-29",
+    items: [
+      "Fixed: most error messages were replaced by \"Azure DevOps returned HTTP 0.\" The app writes a real explanation for these - which cases could not be recorded, why a move was refused, what to do next - and none of it was reaching the screen.",
+      "Fixed: changing a work item's State in the details panel said \"Saved\" even when Azure DevOps refused the change, and the panel went on showing the state you picked. It now tells you the item stayed where it was, and why - the same check the board's drag-and-drop already made.",
+      "Fixed: screenshots and step-by-step marks that failed to attach to a test run were never mentioned. The run was reported as saved with its evidence silently missing.",
+      "Fixed: a bulk edit that partly failed said only \"2 failed\". It now names which test cases and gives the reason for each.",
+      "Fixed: a followed JSON file could silently stop updating the queue. Any other activity in the same folder - a log being written, a sync client, a download - kept resetting the app's wait for the file to settle.",
+      "Fixed: two comments saved at almost the same moment could overwrite each other, with the box still showing the one that was lost.",
+      "Fixed: importing a shared draft revoked the one-time link BEFORE reading the file, so a draft the importer refused left you with nothing to retry and the sender having to share it again.",
+      "Fixed: clicking Submit twice ran two upload loops over the same queue and created every test case twice. These cannot be deleted, so this one mattered.",
+      "Fixed: \"Check for updates\" said \"You are on the latest version\" even when it had not managed to check.",
+      "Fixed: the AI optimiser mangled some expected results. \"Ensure Check Number is displayed\" became \"Number is displayed\", and \"Approx. 30 results are returned\" became \"Approx\". It also removed a second sentence without saying so - the report now lists every expected result it shortened, with the original.",
+      "Fixed: a draft that already began with its own launch/sign-in steps, but not on step 1, had a second set added on top.",
+      "Fixed: a comment on a draft case whose title appears twice in the same file was written onto the wrong one.",
+      "Fixed: removing every step from a case with an AI transform deleted the case on import. It is now left alone and reported.",
+      "Fixed: personal notes in View Test Cases stayed on screen after switching organization, and saving one filed it under the new organization.",
+      "Fixed: a bad entry in the watched-file list could blank the Import screen.",
+      "Fixed: a test case created without a work item id was reported as \"created #0\".",
+      "The app no longer sends your sign-in token anywhere except Azure DevOps' own addresses when loading a profile picture, and cached Azure DevOps data is cleared when a different account signs in on the same machine.",
+      "Version numbering: 1.15.0 installed correctly but reported itself as 1.14.1 in the title bar and in bug reports. This release reports its own version, and the release script now refuses to publish one that does not match.",
+    ],
+  },
+  {
     version: "1.15.0",
     date: "2026-07-29",
     items: [
