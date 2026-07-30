@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.5",
+    date: "2026-07-30",
+    items: [
+      "Fixed: clicking \"Restart to update\" could fail with an HTTP error. The update feed serves whatever release is newest, and the banner was downloading the exact file it had been told about when the check ran - so if another release went out in between, that file was no longer the newest one and the download failed. The app now re-checks at the moment you click, which takes one request and cannot go stale. This mattered more since the hourly check arrived: the banner used to be clicked seconds after it appeared, and now it can sit there for an hour.",
+      "An update that does fail now names the version it was trying to fetch, so the message says which of the two problems it was.",
+      "The instructions an AI assistant gets for writing reviewer notes now ask for a pointer rather than an explanation: one or two lines naming the spec section or the code symbol, and nothing else. Asked for the section, the criterion, a quote and the out-of-scope list, assistants wrote a paragraph per case - accurate, and slower to read than the steps it was annotating.",
+    ],
+  },
+  {
     version: "1.18.4",
     date: "2026-07-30",
     items: [

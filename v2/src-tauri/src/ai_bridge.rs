@@ -615,15 +615,23 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         omit it to create.\n\n\
         ## reviewer_notes\n\
         Optional, also never sent to Azure DevOps, and the most useful thing\n\
-        you can add. Reviewing is where the time goes, and the hard part is\n\
-        matching a case back to the spec - so say, for each case, WHERE it\n\
-        comes from: the document and section, the acceptance criterion it\n\
-        covers, a short quote of the requirement, and anything you decided\n\
-        was out of scope. Cite; do not paraphrase from memory. If the wiki\n\
-        search found the passage, link it.\n\
-        It is rendered as MARKDOWN in the browser review page, so headings,\n\
-        lists, tables and links work. Keep it to what a reviewer cannot see\n\
-        from the steps themselves - do not restate the test.\n\n\
+        you can add - but ONLY if it stays short. It is a POINTER to where\n\
+        the requirement lives, not an explanation of it. A reviewer reads one\n\
+        of these per case while checking dozens, so a paragraph costs more\n\
+        time than it saves and buries the citation that made it worth\n\
+        reading.\n\n\
+        ONE OR TWO LINES. Cite the source and stop:\n\
+        - `Spec: Step10-ManagePerformanceCycle.md 7.7 (AC-3)`\n\
+        - `Code: IndexModel.CanCopyFromPreviousCycle`\n\
+        - `Out of scope: SSO` - only when you deliberately left something out\n\
+        - one short quote ONLY when the exact wording IS the requirement\n\n\
+        Do NOT restate the test, explain your reasoning, describe what the\n\
+        app does, or justify a decision at length. The steps already say what\n\
+        is being tested; anything longer is prose the reviewer must read\n\
+        before reaching the reference they actually wanted. If a case really\n\
+        does need an argument made, that is a `comment`, not this.\n\n\
+        Cite; never paraphrase from memory. Rendered as MARKDOWN, so a wiki\n\
+        link works - but a bare citation line needs no formatting at all.\n\n\
         ## Allowed Module values (live)\n{module_lines}\n\n\
         ## Tags this project already uses\n\
         Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\

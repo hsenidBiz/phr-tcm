@@ -93,6 +93,25 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(body.contains("semicolon"), "tag separator rule");
     assert!(body.contains("Login") && body.contains("Payroll"), "live modules");
     assert!(body.contains("optimize_cases"), "the guide points at the optimizer");
+
+    // Reviewer notes have to be told to stay SHORT. Asked only for "the
+    // spec section, the acceptance criterion, a quote and what was out of
+    // scope", an assistant dutifully wrote a paragraph per case - correct,
+    // and slower to read than the steps it was annotating. The brief is a
+    // pointer, and the guide has to say so or the notes drift back.
+    let notes = body
+        .split("## reviewer_notes")
+        .nth(1)
+        .and_then(|rest| rest.split("## Allowed Module values").next())
+        .expect("the guide still has a reviewer_notes section");
+    assert!(notes.contains("POINTER"), "says what the field is FOR: {notes}");
+    assert!(notes.contains("ONE OR TWO LINES"), "bounds the length: {notes}");
+    assert!(
+        notes.contains("Do NOT restate the test"),
+        "names the failure mode it guards against: {notes}"
+    );
+    // And a shape to copy, not just a prohibition.
+    assert!(notes.contains("Spec:") && notes.contains("Code:"), "{notes}");
 }
 
 #[tokio::test]

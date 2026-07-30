@@ -17,11 +17,12 @@ to null to CREATE a new test case. 'title' is required (max 255 chars). \
 string - commas are not allowed in tags. 'module' and 'preconditions' \
 are free text and may be empty strings. Two optional fields never reach \
 Azure DevOps and exist only in this file: 'comment', a short in-app note, \
-and 'reviewer_notes', context for whoever reviews the case - which part \
-of the spec it comes from, the acceptance criterion it covers, anything \
-deliberately out of scope. 'reviewer_notes' is rendered as MARKDOWN when \
-the cases are opened in a browser, so headings, lists, tables and links \
-to the spec all work.";
+and 'reviewer_notes', a POINTER to where the requirement lives - one or \
+two lines naming the spec section or the code symbol, plus an 'Out of \
+scope:' line only if something was deliberately left out. Keep it short: \
+it is read once per case during review, so do not restate the test or \
+explain the reasoning behind it. 'reviewer_notes' is rendered as MARKDOWN \
+when the cases are opened in a browser, so a link to the spec works.";
 
 pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
     let records: Vec<serde_json::Value> = queue

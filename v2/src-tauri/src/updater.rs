@@ -63,15 +63,59 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
 }
 
 /// Download the pending update and restart into it.
+///
+/// # Why this asks the feed again instead of trusting `pending`
+///
+/// `RELEASES_URL` ends in `/releases/latest/download/`, which is a MOVING
+/// target: it serves the assets of whatever release is newest right now.
+/// The stored `UpdateInfo` names an exact file - `...-1.18.3-full.nupkg` -
+/// and the moment a newer release is published, that file is no longer
+/// under `latest` and the download 404s. Measured, not guessed: with 1.18.4
+/// published, `latest/download/...1.18.4-full.nupkg` answers 200 and
+/// `...1.18.3-full.nupkg` answers 404.
+///
+/// That was survivable when the app only checked at launch, because the
+/// banner appeared and was clicked within about the same minute. It stopped
+/// being survivable when the check moved to hourly: the banner now sits
+/// there until someone notices it, so the info behind it can be an hour old
+/// - and two releases half an hour apart is enough to break it. Re-asking
+/// costs one request and removes the whole class of staleness.
 pub fn download_and_apply(state: &UpdateState) -> Result<(), String> {
-    let info = state
-        .pending
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("no update pending - check first")?;
     let um = manager().ok_or("not a Velopack install")?;
-    um.download_updates(&info, None).map_err(|e| e.to_string())?;
+
+    let info = match um.check_for_updates() {
+        Ok(UpdateCheck::UpdateAvailable(fresh)) => {
+            let fresh = *fresh;
+            *state.pending.lock().unwrap() = Some(fresh.clone());
+            fresh
+        }
+        // Already current - someone updated this install another way, or
+        // the release was pulled. Saying so is better than downloading
+        // nothing and calling it a failure.
+        Ok(_) => {
+            *state.pending.lock().unwrap() = None;
+            return Err("This build is already up to date.".into());
+        }
+        // A re-check that could not run is not itself a reason to refuse.
+        // Fall back to what the banner was built from and let the download
+        // report its own problem.
+        Err(e) => {
+            crate::applog::warn(format!("re-check before update failed: {e}"));
+            state
+                .pending
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or("no update pending - check first")?
+        }
+    };
+
+    // Name the version in both failures. "http 404" on its own cannot tell
+    // you whether the feed is unreachable or whether it moved out from
+    // under a stale banner, and that distinction is the whole bug above.
+    let version = info.TargetFullRelease.Version.clone();
+    um.download_updates(&info, None)
+        .map_err(|e| format!("could not download {version}: {e}"))?;
     um.apply_updates_and_restart(&info.TargetFullRelease)
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("could not apply {version}: {e}"))
 }
