@@ -77,7 +77,11 @@ test("manual add, review gate, submit reports results", async () => {
   // Two-stage confirm: arming shows the check-the-PBI warning, then the
   // explicit Yes actually writes.
   fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
-  expect(screen.getByText(/cannot be deleted/)).toBeInTheDocument();
+  // The warning names the real cost of getting the PBI wrong. It used to
+  // say created cases "cannot be deleted", which stopped being true the day
+  // the recycle-bin delete shipped - and a test pinning a claim keeps it
+  // alive long after the code stops backing it up.
+  expect(screen.getByText(/needs delete permission/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
   expect(await screen.findByText(/Created #900: Login works/)).toBeInTheDocument();
 

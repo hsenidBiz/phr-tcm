@@ -105,7 +105,7 @@ and it goes back on the board before retirement.
 | Keyboard: Ctrl+Shift+M mode switch | SHIPPED | + Ctrl+1..5, Ctrl+K |
 | Team-members cache (24h) | SHIPPED | Query staleTime |
 | Auto-update | IMPROVED | git-pull -> Velopack delta updates, ~10MB app vs ~300MB |
-| No DELETE calls anywhere | SHIPPED | Guard test |
+| No DELETE except the recycle bin (`ado/recycle.rs`, permission-gated, never the permanent form) | SHIPPED | Guard test + `the_only_delete_is_the_recoverable_one` |
 | Blank imported fields never wipe data | SHIPPED | Tested |
 | Windows-first packaging + release pipeline | SHIPPED | release-v2.ps1, dedicated feed repo |
 | CI (ruff+pytest on master) | CHANGED | v2 gates run locally in release-v2.ps1; GitHub Actions CI for v2 not set up - add on request |

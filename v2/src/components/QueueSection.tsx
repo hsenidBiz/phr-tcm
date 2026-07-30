@@ -748,8 +748,9 @@ export default function QueueSection({
               <div className="w-full space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3">
                 <p className="text-sm text-text">
                   Check the highlighted PBI above — everything here will be written to{" "}
-                  <span className="font-semibold">PBI #{pbiId}</span>. Created test cases{" "}
-                  <span className="font-semibold">cannot be deleted</span>.
+                  <span className="font-semibold">PBI #{pbiId}</span>. Removing them afterwards{" "}
+                  <span className="font-semibold">needs delete permission</span> in Azure DevOps,
+                  and this app can only move them to the recycle bin.
                 </p>
                 <div className="flex items-center gap-2">
                   <Button
