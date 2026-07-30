@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, events, type EnsuredSuite, type TestPoint } from "../../bindings";
 import { Button } from "../../components/ui/button";
@@ -460,24 +461,36 @@ export default function RunPanel({
         </table>
       )}
 
-      {/* Floating action bar: stays on screen while scrolling the table. */}
-      {suite.data && selected.size > 0 && (
-        <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-4 pr-2 shadow-2xl">
-          <span className="text-xs font-medium text-muted">{selected.size} selected</span>
-          <Button size="sm" onClick={() => openRunner([...selected])}>
-            <IconRun aria-hidden />
-            Run {selected.size} in runner
-          </Button>
-          <button
-            aria-label="Clear selection"
-            title="Clear selection"
-            className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
-            onClick={() => setSelected(new Set())}
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
+      {/* Floating action bar, PORTALLED to <body> - and that is the whole
+          reason it works. This screen renders inside AnimatedContent, whose
+          GSAP transform becomes the containing block for any `fixed`
+          descendant, so `bottom-6 right-6` pinned the bar to the bottom of
+          the SCROLLABLE REGION rather than the viewport: pick some cases
+          near the top of a long suite and the button to run them was
+          somewhere below the fold, which is the opposite of a floating
+          action bar. Same trap as ui/modal.tsx, CommentModal and
+          WorkItemDrawer. Rendering at <body> makes `fixed` mean the
+          viewport again, so it stays put while the table scrolls. */}
+      {suite.data &&
+        selected.size > 0 &&
+        createPortal(
+          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-4 pr-2 shadow-2xl">
+            <span className="text-xs font-medium text-muted">{selected.size} selected</span>
+            <Button size="sm" onClick={() => openRunner([...selected])}>
+              <IconRun aria-hidden />
+              Run {selected.size} in runner
+            </Button>
+            <button
+              aria-label="Clear selection"
+              title="Clear selection"
+              className="rounded-full p-1.5 text-muted transition-colors hover:text-danger"
+              onClick={() => setSelected(new Set())}
+            >
+              <X size={14} />
+            </button>
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }

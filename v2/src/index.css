@@ -754,3 +754,45 @@ table {
   fill: none;
 }
 
+/* A toast's action button ("Undo" on a discard) is the app's own outline
+   button, not sonner's.
+
+   Sonner paints it `background: var(--normal-text)` over
+   `color: var(--normal-bg)` - a solid white pill with black text, which
+   under richColors is the one element on a toast that ignores both the
+   theme and the accent the user picked. Next to every other button in the
+   app it reads as a piece of somebody else's UI.
+
+   This mirrors `Button variant="outline" size="sm"` (see ui/button.tsx)
+   in plain CSS rather than via `toastOptions.classNames`, because those
+   land as single utility classes and lose to sonner's own
+   `[data-sonner-toast][data-styled='true'] [data-button]` on specificity.
+   Matching that selector exactly is what makes the override stick.
+
+   `[data-button]` covers the cancel button too, deliberately: two buttons
+   on one toast styled differently would be worse than either choice. */
+[data-sonner-toast][data-styled="true"] [data-button] {
+  height: auto;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  font-weight: 500;
+  transition: color 150ms, border-color 150ms;
+}
+
+[data-sonner-toast][data-styled="true"] [data-button]:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: transparent;
+}
+
+/* Sonner's default focus ring is a black box-shadow, invisible on a dark
+   toast. The accent outline is what every other control in the app uses. */
+[data-sonner-toast][data-styled="true"] [data-button]:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
