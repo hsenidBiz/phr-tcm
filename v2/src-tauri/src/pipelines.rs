@@ -196,11 +196,21 @@ impl AdoClient {
     /// the answer out locally - the same trick `builds_for_commit` uses,
     /// because Azure DevOps will not filter builds by a set of branches.
     ///
-    /// One PR can trigger several pipelines. They are folded the way a
-    /// reader folds them: anything still going makes the PR "running",
-    /// otherwise anything that did not succeed makes it "failed". A PR with
-    /// no validation build at all is simply absent from the result - it is
-    /// not the same as passing, and the caller must not treat it as either.
+    /// The state is the CURRENT one, not a summary of the history. For
+    /// each pipeline definition only its newest run counts; those are then
+    /// folded the way a reader folds them - anything still going makes the
+    /// PR "running", otherwise anything that did not succeed makes it
+    /// "failed". Re-running a red build green therefore clears the pill,
+    /// which is the whole point of it.
+    ///
+    /// A PR with no validation build at all is simply absent from the
+    /// result - it is not the same as passing, and the caller must not
+    /// treat it as either.
+    ///
+    /// Known bound: only the repository's most recent 200 builds are
+    /// examined, so a very busy repository can push an older PR's runs off
+    /// the end and leave it unlabelled. Unlabelled is the safe direction -
+    /// it shows no pill rather than a wrong one.
     pub async fn pr_build_states(
         &self,
         org: &str,
@@ -223,6 +233,9 @@ impl AdoClient {
         let mut running: std::collections::HashSet<i32> = Default::default();
         let mut failed: std::collections::HashSet<i32> = Default::default();
         let mut passed: std::collections::HashSet<i32> = Default::default();
+        // (pull request, pipeline definition) -> (build id, that build).
+        let mut latest: std::collections::HashMap<(i32, String), (i64, serde_json::Value)> =
+            Default::default();
         for b in data["value"].as_array().cloned().unwrap_or_default() {
             let Some(pr_id) = b["sourceBranch"].as_str().and_then(pr_id_from_branch) else {
                 continue;
@@ -230,16 +243,48 @@ impl AdoClient {
             if !pr_ids.contains(&pr_id) {
                 continue;
             }
+            // Keep only the NEWEST run of each pipeline definition. The
+            // response carries a PR's whole history, and folding all of it
+            // together meant one old red run marked a pull request failed
+            // forever - re-running it green changed nothing, because the
+            // failure was still in the list.
+            //
+            // Per DEFINITION, not per pull request: a PR can trigger
+            // several pipelines, and "latest overall" would hide a
+            // still-failing build behind a different pipeline that
+            // happened to finish later.
+            //
+            // Newest by build id. Azure DevOps hands them out in
+            // increasing order, so within one definition the largest id is
+            // the most recent attempt - and unlike queueTime it is always
+            // present and needs no date parsing.
+            let definition = b["definition"]["id"]
+                .as_i64()
+                .map(|d| d.to_string())
+                .or_else(|| b["definition"]["name"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            let build_id = b["id"].as_i64().unwrap_or(0);
+            // or_insert's argument is eager, so the placeholder is a cheap
+            // Null rather than a clone of every build that loses.
+            let slot = latest
+                .entry((pr_id, definition))
+                .or_insert((i64::MIN, serde_json::Value::Null));
+            if build_id >= slot.0 {
+                *slot = (build_id, b);
+            }
+        }
+
+        for ((pr_id, _definition), (_id, b)) in &latest {
             let status = b["status"].as_str().unwrap_or("");
             let result = b["result"].as_str().unwrap_or("");
             if status != "completed" {
-                running.insert(pr_id);
+                running.insert(*pr_id);
             } else if result == "succeeded" {
-                passed.insert(pr_id);
+                passed.insert(*pr_id);
             } else {
                 // canceled and partiallySucceeded land here too. Neither is
                 // a green run, and the panel only has the two words.
-                failed.insert(pr_id);
+                failed.insert(*pr_id);
             }
         }
 

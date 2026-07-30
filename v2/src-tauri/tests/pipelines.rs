@@ -313,20 +313,30 @@ async fn pr_build_states_folds_a_repos_builds_onto_its_pull_requests() {
     Mock::given(method("GET"))
         .and(path("/o/p/_apis/build/builds"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
-            // 101: one green, one still going -> running wins.
-            { "sourceBranch": "refs/pull/101/merge", "status": "completed", "result": "succeeded" },
-            { "sourceBranch": "refs/pull/101/merge", "status": "inProgress", "result": "" },
+            // 101: the same pipeline re-queued while an older run is green
+            // -> the newest run is what counts, so it is running.
+            { "id": 10, "definition": { "id": 1 }, "sourceBranch": "refs/pull/101/merge",
+              "status": "completed", "result": "succeeded" },
+            { "id": 11, "definition": { "id": 1 }, "sourceBranch": "refs/pull/101/merge",
+              "status": "inProgress", "result": "" },
             // 102: green only.
-            { "sourceBranch": "refs/pull/102/merge", "status": "completed", "result": "succeeded" },
-            // 103: one green, one failed -> failed wins.
-            { "sourceBranch": "refs/pull/103/merge", "status": "completed", "result": "succeeded" },
-            { "sourceBranch": "refs/pull/103/merge", "status": "completed", "result": "failed" },
+            { "id": 12, "definition": { "id": 1 }, "sourceBranch": "refs/pull/102/merge",
+              "status": "completed", "result": "succeeded" },
+            // 103: TWO pipelines. One is green, the other's latest is red -
+            // the PR is failing, and a green sibling must not hide that.
+            { "id": 13, "definition": { "id": 1 }, "sourceBranch": "refs/pull/103/merge",
+              "status": "completed", "result": "succeeded" },
+            { "id": 14, "definition": { "id": 2 }, "sourceBranch": "refs/pull/103/merge",
+              "status": "completed", "result": "failed" },
             // 104: canceled is not success.
-            { "sourceBranch": "refs/pull/104/merge", "status": "completed", "result": "canceled" },
+            { "id": 15, "definition": { "id": 1 }, "sourceBranch": "refs/pull/104/merge",
+              "status": "completed", "result": "canceled" },
             // 105 has no build at all and must not appear.
             // A branch build, and another PR's build, are both ignored.
-            { "sourceBranch": "refs/heads/main", "status": "completed", "result": "failed" },
-            { "sourceBranch": "refs/pull/999/merge", "status": "completed", "result": "failed" },
+            { "id": 16, "definition": { "id": 1 }, "sourceBranch": "refs/heads/main",
+              "status": "completed", "result": "failed" },
+            { "id": 17, "definition": { "id": 1 }, "sourceBranch": "refs/pull/999/merge",
+              "status": "completed", "result": "failed" },
         ]})))
         .mount(&server)
         .await;
@@ -356,4 +366,60 @@ async fn no_pull_requests_asks_azure_devops_nothing() {
         .unwrap();
     assert!(out.is_empty());
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+/// The bug this pill shipped with: it folded a pull request's WHOLE build
+/// history together, so one old red run marked it failed forever. Fixing
+/// the build and re-running changed nothing, because the failure was still
+/// in the list - which is the opposite of what a status pill is for.
+#[tokio::test]
+async fn a_failure_that_has_since_been_re_run_green_is_not_an_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/build/builds"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+            // Deliberately newest-first, the order Azure DevOps returns:
+            // the fix must not depend on reading them in any order.
+            { "id": 902, "definition": { "id": 7 }, "sourceBranch": "refs/pull/55/merge",
+              "status": "completed", "result": "succeeded" },
+            { "id": 901, "definition": { "id": 7 }, "sourceBranch": "refs/pull/55/merge",
+              "status": "completed", "result": "failed" },
+        ]})))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .pr_build_states("o", "p", "repo-guid", &[55])
+        .await
+        .unwrap();
+    assert_eq!(
+        out.iter().map(|s| (s.pr_id, s.state.as_str())).collect::<Vec<_>>(),
+        vec![(55, "succeeded")],
+        "the older red run is history, not the current state"
+    );
+}
+
+/// And the other direction: a pipeline that WAS green and has just broken
+/// must show the error, however many green runs preceded it.
+#[tokio::test]
+async fn a_pipeline_that_has_just_broken_shows_the_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/build/builds"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+            { "id": 801, "definition": { "id": 3 }, "sourceBranch": "refs/pull/56/merge",
+              "status": "completed", "result": "succeeded" },
+            { "id": 802, "definition": { "id": 3 }, "sourceBranch": "refs/pull/56/merge",
+              "status": "completed", "result": "succeeded" },
+            { "id": 803, "definition": { "id": 3 }, "sourceBranch": "refs/pull/56/merge",
+              "status": "completed", "result": "failed" },
+        ]})))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .pr_build_states("o", "p", "repo-guid", &[56])
+        .await
+        .unwrap();
+    assert_eq!(out[0].state, "failed");
 }

@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.1",
+    date: "2026-07-30",
+    items: [
+      "The pipeline pill on a pull request now reflects the CURRENT state, not its whole history. It was folding every past run together, so one old failure marked a pull request red forever - fixing the build and re-running it changed nothing. Only the newest run of each pipeline counts now, and a green re-run clears the pill.",
+    ],
+  },
+  {
     version: "1.18.0",
     date: "2026-07-30",
     items: [
