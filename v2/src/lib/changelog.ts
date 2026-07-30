@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.3",
+    date: "2026-07-30",
+    items: [
+      "The app window now runs under a Content-Security-Policy. Text that comes from Azure DevOps was already sanitised before being displayed; this is the layer behind that one, so even markup that got past sanitising cannot run as code or fetch anything remote.",
+      "Fixed: in Run Tests, the \"Run N in runner\" button was pinned to the bottom of the scrolling list rather than to the window. Picking a few cases near the top of a long suite left the button to run them somewhere below the fold. It now stays in the bottom-right corner while the list scrolls, which is what it always claimed to do.",
+      "The Undo button on a toast is now the app's own button, in your theme and your accent, instead of the white pill it came with.",
+    ],
+  },
+  {
     version: "1.18.2",
     date: "2026-07-30",
     items: [
