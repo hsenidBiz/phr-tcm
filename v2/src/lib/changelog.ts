@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.9",
+    date: "2026-07-30",
+    items: [
+      "Pull Requests: open a pull request and you now see its review comments - who said what, on which file and line, and whether the thread is still open. Unresolved threads come first.",
+      "You can resolve a thread, or put it back to active, without leaving the app. This is the first thing the pull request panel writes to Azure DevOps; voting, completing, abandoning and replying all still happen there.",
+      "Azure DevOps mixes its activity feed into the same place as the comments (\"voted\", \"updated the source branch\"). Those are filtered out, including when they are mixed into a real conversation.",
+      "The board card's pull-request chip had its repository name sitting high next to the icons. Fixed by nudging the label alone, so the icons stay where they were.",
+    ],
+  },
+  {
     version: "1.17.8",
     date: "2026-07-30",
     items: [

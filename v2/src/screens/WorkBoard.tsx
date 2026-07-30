@@ -91,7 +91,8 @@ function Card({
                   // a flex row holding an icon and a dot as well as text,
                   // and those are already centred. pill-label shifts the
                   // whole content box, so it would fix the label by putting
-                  // the icons 2px low.
+                  // the icons 2px low. The text span carries the nudge
+                  // instead - see pill-label-ink below.
                   "flex max-w-32 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
                   l.status === "active"
                     ? "bg-accent-soft text-accent"
@@ -104,7 +105,7 @@ function Card({
                 }}
               >
                 <GitPullRequest size={10} className="shrink-0" />
-                <span className="truncate">{l.repo}</span>
+                <span className="pill-label-ink truncate">{l.repo}</span>
                 {/* The status mark is geometry, not a glyph. As text, "●"
                     carries its ink about 1.5px below the repo name's at
                     this size and "✓" about half that - they sit low next

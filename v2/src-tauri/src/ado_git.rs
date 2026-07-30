@@ -72,6 +72,42 @@ pub struct PrWorkItem {
     pub url: String,
 }
 
+/// One comment in a review thread.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PrComment {
+    pub id: i32,
+    pub author: String,
+    /// The author's avatar URL, or empty.
+    pub avatar: String,
+    pub content: String,
+    /// ISO 8601, as Azure DevOps returns it.
+    pub published: String,
+    /// True once the author has edited it - Azure DevOps shows this.
+    pub edited: bool,
+}
+
+/// A review thread: the comment chain plus where it is anchored.
+///
+/// Azure DevOps mixes SYSTEM threads into the same collection - "voted",
+/// "updated the source branch", "linked a work item". Those are activity,
+/// not conversation, and this type only ever holds the human ones; see
+/// `pr_threads` for the filter and why it is written the way it is.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PrThread {
+    pub id: i32,
+    /// "active" | "fixed" | "wontFix" | "closed" | "pending" | "byDesign".
+    /// Empty when Azure DevOps sends none, which it does for a thread that
+    /// has never been resolved either way - those read as active.
+    pub status: String,
+    /// The file this thread hangs off, or empty for a PR-level comment.
+    pub file_path: String,
+    /// First line of the anchored range; 0 when there is no range.
+    pub line: i32,
+    pub comments: Vec<PrComment>,
+    /// ISO 8601 of the newest activity, for ordering.
+    pub last_updated: String,
+}
+
 /// One work-item -> pull-request association, for the board's PR chips.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PrLink {
@@ -376,6 +412,125 @@ impl AdoClient {
     /// Paged on purpose: completed history is unbounded, and even active
     /// lists on a busy repo don't need to arrive all at once. A page
     /// shorter than PR_PAGE_SIZE means there is no next page. Read only.
+    /// The review conversation on one PR: human comment threads only,
+    /// oldest activity first, each with where it is anchored and whether it
+    /// is resolved.
+    ///
+    /// Azure DevOps returns SYSTEM threads from this endpoint too - "voted
+    /// approved", "updated the source branch", "linked #123". They are the
+    /// activity feed, not the review, and showing them would bury the
+    /// comments the panel exists to surface. The filter is on each
+    /// comment's `commentType` rather than on the thread, because a thread
+    /// can hold both: a system entry can be appended to a real
+    /// conversation. So the comments are filtered first and the thread is
+    /// dropped only if nothing human is left.
+    ///
+    /// Deleted comments are skipped the same way - Azure DevOps keeps them
+    /// in the payload with `isDeleted` set and the content blanked.
+    pub async fn pr_threads(
+        &self,
+        org: &str,
+        project: &str,
+        repo: &str,
+        pr_id: i32,
+    ) -> Result<Vec<PrThread>, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}/threads?api-version=7.1",
+            self.base_url,
+            org,
+            project,
+            urlencoding::encode(repo),
+            pr_id
+        );
+        let body = self.get_json(url).await?;
+        let mut out: Vec<PrThread> = vec![];
+        for t in body["value"].as_array().cloned().unwrap_or_default() {
+            if t["isDeleted"].as_bool() == Some(true) {
+                continue;
+            }
+            let comments: Vec<PrComment> = t["comments"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter(|c| {
+                    c["isDeleted"].as_bool() != Some(true)
+                        // Absent commentType means a normal comment; only
+                        // an explicit "system" is activity.
+                        && c["commentType"].as_str().unwrap_or("text") != "system"
+                })
+                .map(|c| PrComment {
+                    id: c["id"].as_i64().unwrap_or(0) as i32,
+                    author: c["author"]["displayName"].as_str().unwrap_or("").to_string(),
+                    avatar: c["author"]["imageUrl"].as_str().unwrap_or("").to_string(),
+                    content: c["content"].as_str().unwrap_or("").to_string(),
+                    published: c["publishedDate"].as_str().unwrap_or("").to_string(),
+                    edited: c["lastContentUpdatedDate"].as_str().is_some_and(|u| {
+                        c["publishedDate"].as_str().is_some_and(|p| u != p)
+                    }),
+                })
+                .collect();
+            if comments.is_empty() {
+                continue;
+            }
+            let ctx = &t["threadContext"];
+            out.push(PrThread {
+                id: t["id"].as_i64().unwrap_or(0) as i32,
+                status: t["status"].as_str().unwrap_or("").to_string(),
+                file_path: ctx["filePath"].as_str().unwrap_or("").to_string(),
+                // rightFileStart is the line in the PR's version; a thread
+                // on deleted code only has leftFileStart.
+                line: ctx["rightFileStart"]["line"]
+                    .as_i64()
+                    .or_else(|| ctx["leftFileStart"]["line"].as_i64())
+                    .unwrap_or(0) as i32,
+                comments,
+                last_updated: t["lastUpdatedDate"].as_str().unwrap_or("").to_string(),
+            });
+        }
+        out.sort_by(|a, b| a.last_updated.cmp(&b.last_updated));
+        Ok(out)
+    }
+
+    /// Resolve a review thread, or put it back to active.
+    ///
+    /// This is the ONE write the pull-request panel makes. Everything else
+    /// there is read-only and stays that way: voting, completing, replying
+    /// and abandoning all remain in Azure DevOps. A thread status is the
+    /// exception because it is the half of reviewing that is bookkeeping
+    /// rather than judgement, it is reversible from inside this app, and it
+    /// carries no content of its own.
+    ///
+    /// `status` is passed through to Azure DevOps and must be one of its
+    /// thread statuses; the caller is responsible for that, and the command
+    /// layer checks it against a fixed list rather than trusting the UI.
+    pub async fn set_pr_thread_status(
+        &self,
+        org: &str,
+        project: &str,
+        repo: &str,
+        pr_id: i32,
+        thread_id: i32,
+        status: &str,
+    ) -> Result<String, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}/threads/{}?api-version=7.1",
+            self.base_url,
+            org,
+            project,
+            urlencoding::encode(repo),
+            pr_id,
+            thread_id
+        );
+        let saved = self
+            .patch_plain_json(url, &serde_json::json!({ "status": status }))
+            .await?;
+        // Report what Azure DevOps actually stored, not what we asked for -
+        // the same rule set_state follows, so the UI can never claim a
+        // state the server declined.
+        Ok(saved["status"].as_str().unwrap_or(status).to_string())
+    }
+
     pub async fn repo_pull_requests(
         &self,
         org: &str,

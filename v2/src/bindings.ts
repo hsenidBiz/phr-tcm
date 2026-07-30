@@ -260,6 +260,12 @@ export const commands = {
 	repoPullRequests: (organization: string, project: string, repoId: string, status: string, skip: number) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status, skip })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
+	prThreads: (organization: string, project: string, repo: string, prId: number) => typedError<PrThread[], AdoError>(__TAURI_INVOKE("pr_threads", { organization, project, repo, prId })),
+	/**
+	 *  The pull-request panel's only write. See `set_pr_thread_status` for why
+	 *  this one is allowed and voting/completing/replying are not.
+	 */
+	setPrThreadStatus: (organization: string, project: string, repo: string, prId: number, threadId: number, status: string) => typedError<string, AdoError>(__TAURI_INVOKE("set_pr_thread_status", { organization, project, repo, prId, threadId, status })),
 	/**
 	 *  Build runs for one PR - validation + post-merge CI - each with its
 	 *  stages and the environments a release carried it to.
@@ -722,6 +728,19 @@ export type PrBuild = {
 	deployments: Deployment[],
 };
 
+/**  One comment in a review thread. */
+export type PrComment = {
+	id: number,
+	author: string,
+	/**  The author's avatar URL, or empty. */
+	avatar: string,
+	content: string,
+	/**  ISO 8601, as Azure DevOps returns it. */
+	published: string,
+	/**  True once the author has edited it - Azure DevOps shows this. */
+	edited: boolean,
+};
+
 /**  One work-item -> pull-request association, for the board's PR chips. */
 export type PrLink = {
 	work_item_id: number,
@@ -752,6 +771,31 @@ export type PrReviewer = {
 	 *  -5 waiting for author, -10 rejected.
 	 */
 	vote: number,
+};
+
+/**
+ *  A review thread: the comment chain plus where it is anchored.
+ * 
+ *  Azure DevOps mixes SYSTEM threads into the same collection - "voted",
+ *  "updated the source branch", "linked a work item". Those are activity,
+ *  not conversation, and this type only ever holds the human ones; see
+ *  `pr_threads` for the filter and why it is written the way it is.
+ */
+export type PrThread = {
+	id: number,
+	/**
+	 *  "active" | "fixed" | "wontFix" | "closed" | "pending" | "byDesign".
+	 *  Empty when Azure DevOps sends none, which it does for a thread that
+	 *  has never been resolved either way - those read as active.
+	 */
+	status: string,
+	/**  The file this thread hangs off, or empty for a PR-level comment. */
+	file_path: string,
+	/**  First line of the anchored range; 0 when there is no range. */
+	line: number,
+	comments: PrComment[],
+	/**  ISO 8601 of the newest activity, for ordering. */
+	last_updated: string,
 };
 
 /**

@@ -202,3 +202,124 @@ async fn pr_work_items_render_like_devops() {
     assert_eq!(wi.state_color, "007acc"); // resolved from the type's states
     assert!(wi.url.ends_with("/org/proj/_workitems/edit/143783"));
 }
+
+/// Azure DevOps returns the review conversation and its own activity feed
+/// from the SAME endpoint. "voted", "updated the source branch" and the
+/// like are system entries, and showing them would bury the comments the
+/// panel exists to surface - so they are filtered out, and a thread left
+/// with nothing human in it is dropped entirely.
+///
+/// The filter is per COMMENT, not per thread, because a system entry can be
+/// appended to a real conversation: filtering by thread would throw away
+/// the discussion along with the noise.
+#[tokio::test]
+async fn pr_threads_keeps_the_conversation_and_drops_the_activity_feed() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/git/repositories/demo-web/pullRequests/7/threads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+            // Pure activity - no human comment survives, so no thread.
+            { "id": 1, "status": "closed", "lastUpdatedDate": "2026-07-01T00:00:00Z",
+              "comments": [ { "id": 1, "commentType": "system", "content": "Sam voted 10",
+                              "author": { "displayName": "Sam" } } ] },
+            // A real thread that ALSO collected a system entry.
+            { "id": 2, "status": "active", "lastUpdatedDate": "2026-07-03T00:00:00Z",
+              "threadContext": { "filePath": "/src/a.ts", "rightFileStart": { "line": 42 } },
+              "comments": [
+                { "id": 2, "content": "Can we surface this error?", "publishedDate": "2026-07-02T00:00:00Z",
+                  "author": { "displayName": "Priya", "imageUrl": "http://img/priya" } },
+                { "id": 3, "commentType": "system", "content": "Priya updated the source branch",
+                  "author": { "displayName": "Priya" } },
+                { "id": 4, "content": "Fixed.", "publishedDate": "2026-07-03T00:00:00Z",
+                  "lastContentUpdatedDate": "2026-07-03T01:00:00Z",
+                  "author": { "displayName": "Sam" } } ] },
+            // Deleted threads and deleted comments both vanish.
+            { "id": 3, "isDeleted": true, "lastUpdatedDate": "2026-07-04T00:00:00Z",
+              "comments": [ { "id": 5, "content": "gone", "author": { "displayName": "Sam" } } ] },
+            { "id": 4, "lastUpdatedDate": "2026-07-05T00:00:00Z",
+              "comments": [ { "id": 6, "isDeleted": true, "content": "",
+                              "author": { "displayName": "Sam" } } ] },
+            // No threadContext at all: a pull-request-level comment.
+            { "id": 5, "status": "fixed", "lastUpdatedDate": "2026-07-02T00:00:00Z",
+              "comments": [ { "id": 7, "content": "Changelog?", "publishedDate": "2026-07-02T00:00:00Z",
+                              "author": { "displayName": "Priya" } } ] },
+        ]})))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .pr_threads("o", "p", "demo-web", 7)
+        .await
+        .unwrap();
+
+    let ids: Vec<i32> = out.iter().map(|t| t.id).collect();
+    assert_eq!(ids, vec![5, 2], "oldest activity first; 1, 3 and 4 carry nothing human");
+
+    let general = &out[0];
+    assert_eq!(general.file_path, "", "a PR-level comment has no file");
+    assert_eq!(general.line, 0);
+    assert_eq!(general.status, "fixed");
+
+    let anchored = &out[1];
+    assert_eq!(anchored.file_path, "/src/a.ts");
+    assert_eq!(anchored.line, 42);
+    assert_eq!(anchored.comments.len(), 2, "the system entry between them is gone");
+    assert_eq!(anchored.comments[0].author, "Priya");
+    assert_eq!(anchored.comments[0].avatar, "http://img/priya");
+    assert!(!anchored.comments[0].edited);
+    assert!(anchored.comments[1].edited, "a later content update marks it edited");
+}
+
+/// A thread on code that was DELETED in the pull request has no
+/// rightFileStart - only a left one. Falling back matters, or the comment
+/// renders as if it were unanchored.
+#[tokio::test]
+async fn a_thread_on_removed_code_still_reports_its_line() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/git/repositories/r/pullRequests/1/threads"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+            { "id": 1, "status": "active", "lastUpdatedDate": "2026-07-01T00:00:00Z",
+              "threadContext": { "filePath": "/old.ts", "leftFileStart": { "line": 88 } },
+              "comments": [ { "id": 1, "content": "why was this removed?",
+                              "author": { "displayName": "Priya" } } ] },
+        ]})))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .pr_threads("o", "p", "r", 1)
+        .await
+        .unwrap();
+    assert_eq!(out[0].line, 88);
+}
+
+/// The panel's ONE write. It must be a PATCH carrying only a status, and it
+/// must report back what Azure DevOps stored rather than what was asked
+/// for - so the UI can never claim a state the server declined.
+#[tokio::test]
+async fn resolving_a_thread_patches_only_the_status_and_reports_what_stuck() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/o/p/_apis/git/repositories/r/pullRequests/1/threads/9"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 9, "status": "closed" })),
+        )
+        .mount(&server)
+        .await;
+
+    let saved = AdoClient::with_base_url("t".into(), server.uri())
+        .set_pr_thread_status("o", "p", "r", 1, 9, "fixed")
+        .await
+        .unwrap();
+    assert_eq!(saved, "closed", "the server's answer wins over the request");
+
+    let sent = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&sent[0].body).unwrap();
+    assert_eq!(body["status"], "fixed");
+    assert_eq!(
+        body.as_object().unwrap().len(),
+        1,
+        "a thread PATCH must carry the status and nothing else: {body}"
+    );
+}

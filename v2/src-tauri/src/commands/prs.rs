@@ -109,6 +109,58 @@ pub async fn build_log(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn pr_threads(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    repo: String,
+    pr_id: i32,
+) -> Result<Vec<ado_git::PrThread>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .pr_threads(&organization, &project, &repo, pr_id)
+        .await
+}
+
+/// The thread statuses this app is willing to set.
+///
+/// Azure DevOps accepts more of them, and the API would take any string.
+/// This is the whole list the UI can reach: resolve it, decline it, or put
+/// it back. Checked HERE rather than in the frontend, because the command
+/// layer is the boundary - the UI is just the thing that happens to call
+/// it today, and a typo there should not become an arbitrary write.
+const SETTABLE_THREAD_STATUS: [&str; 4] = ["active", "fixed", "wontFix", "closed"];
+
+/// The pull-request panel's only write. See `set_pr_thread_status` for why
+/// this one is allowed and voting/completing/replying are not.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_pr_thread_status(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    repo: String,
+    pr_id: i32,
+    thread_id: i32,
+    status: String,
+) -> Result<String, ado::AdoError> {
+    if !SETTABLE_THREAD_STATUS.contains(&status.as_str()) {
+        return Err(ado::AdoError::Http {
+            status: 0,
+            body: format!(
+                "\"{status}\" is not a thread status this app sets - expected one of {}.",
+                SETTABLE_THREAD_STATUS.join(", ")
+            ),
+        });
+    }
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .set_pr_thread_status(&organization, &project, &repo, pr_id, thread_id, &status)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn repo_pull_requests(
     app: tauri::AppHandle,
     organization: String,

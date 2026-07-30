@@ -649,11 +649,24 @@ table {
    than tuning a number at a call site.
 
    Not for a pill that also holds an icon: this shifts the whole content
-   box, so a correctly-centred glyph would go down with the text. The
-   board card's PR chip is the example, and says so at its call site. */
+   box, so a correctly-centred glyph would go down with the text. Use
+   `pill-label-ink` on the text span instead - see below. */
 .pill-label {
   padding-top: 4px;
   padding-bottom: 0;
+}
+
+/* The same correction for a pill whose text sits BESIDE an icon - the
+   board card's PR chip, which carries a pull-request glyph and a status
+   mark as well as the repository name.
+
+   Padding is the wrong lever there: it would move the icons, which are
+   already centred, down with the text. This nudges the text span alone,
+   as a relative offset so nothing about the layout changes - the chip's
+   height, the gaps and the icons all stay exactly where they were. */
+.pill-label-ink {
+  position: relative;
+  top: 2px;
 }
 
 /* "There is a highlighted item folded up in here." Shown beside a group

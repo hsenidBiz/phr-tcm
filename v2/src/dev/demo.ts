@@ -413,6 +413,47 @@ function applyPatches() {
           url: "https://example.invalid/demo-wi/143783",
         },
       ]),
+    // One unresolved thread on a file, one general thread already resolved
+    // - enough to see both states and both buttons without a live org.
+    prThreads: () =>
+      ok([
+        {
+          id: 9001,
+          status: "active",
+          file_path: "/src/components/LoginForm.tsx",
+          line: 42,
+          last_updated: new Date(Date.now() - 3 * 3600_000).toISOString(),
+          comments: [
+            {
+              id: 1, author: "Priya Raman", avatar: "", edited: false,
+              published: new Date(Date.now() - 4 * 3600_000).toISOString(),
+              content: "This swallows the error - can we surface it instead of `catch {}`?",
+            },
+            {
+              id: 2, author: "Sam Doyle", avatar: "", edited: true,
+              published: new Date(Date.now() - 3 * 3600_000).toISOString(),
+              content: "Good catch. Pushing a fix that toasts the message.",
+            },
+          ],
+        },
+        {
+          id: 9002,
+          status: "fixed",
+          file_path: "",
+          line: 0,
+          last_updated: new Date(Date.now() - 26 * 3600_000).toISOString(),
+          comments: [
+            {
+              id: 3, author: "Priya Raman", avatar: "", edited: false,
+              published: new Date(Date.now() - 28 * 3600_000).toISOString(),
+              content: "Does this need a changelog entry?",
+            },
+          ],
+        },
+      ]),
+    setPrThreadStatus: (
+      _o: string, _p: string, _r: string, _i: number, _t: number, status: string,
+    ) => ok(status),
     repoPullRequests: () =>
       ok([
         {

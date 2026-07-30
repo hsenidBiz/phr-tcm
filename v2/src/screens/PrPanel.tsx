@@ -18,6 +18,7 @@ import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
 import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
+import PrThreads from "../components/PrThreads";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
@@ -315,6 +316,17 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
               ))}
             </div>
           )}
+          {/* The review conversation, and the only write this panel makes
+              (resolving a thread). Lazy like the work items - one more ADO
+              call per PR, only for the row that was opened. */}
+          <PrThreads
+            org={org}
+            project={project}
+            repo={pr.repo}
+            prId={pr.id}
+            enabled={open}
+            finalized={finalized}
+          />
           <div className="space-y-1">
             {pr.reviewers.length === 0 && <p className="text-faint">No reviewers assigned.</p>}
             {pr.reviewers.map((r, i) => {
