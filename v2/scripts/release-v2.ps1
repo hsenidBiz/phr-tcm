@@ -1,6 +1,6 @@
 # One-shot release for the Tauri V2 app. Pure ASCII on purpose (PS 5.1).
 #
-# Flow: gates (cargo test + vitest) -> push source branch -> tauri build ->
+# Flow: gates (cargo test + vitest + production build) -> push source branch -> tauri build ->
 # vpk pack -> publish to the DEDICATED v2 releases repo (never v1's):
 #   https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases
 # Token comes from gh auth token in-process and is never printed.
@@ -82,6 +82,15 @@ if (-not $SkipChecks) {
     Push-Location $v2
     npm test -- --maxWorkers=$jobs
     if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm test failed" }
+    # The PRODUCTION build, before the push - not just as a side effect of
+    # `tauri build` afterwards. tsc and vitest never compile the CSS, so a
+    # broken stylesheet passes both and only dies in the bundler. That is
+    # exactly what happened on 1.17.8: a stray */ closed a comment early,
+    # every test was green, the source went to master, and the build failed
+    # a step later - leaving master briefly unbuildable, which is the one
+    # thing the source-first rule exists to prevent.
+    npm run build
+    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "production build failed - nothing pushed" }
     Pop-Location
 }
 

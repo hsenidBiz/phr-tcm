@@ -638,7 +638,8 @@ table {
 
    A label that does carry a descender ("gyp") ends up a hair low. That is
    the right trade - descenders are rare in these labels, and the
-   alternative is per-string tuning, which cannot be consistent. */
+   alternative is per-string tuning, which cannot be consistent.
+
    Scope: the 10px label pills only, replacing their py-0.5. Deliberately
    NOT generalised to the 12px controls - the same measurement there gave
    contradictory answers between methods, and an unverified nudge on a
