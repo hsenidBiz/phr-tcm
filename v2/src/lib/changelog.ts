@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.10",
+    date: "2026-07-30",
+    items: [
+      "Pull Requests: a pill next to the title says \"Pipeline In Progress\" or \"Pipeline Error\". A pull request whose build passed gets no pill - the list stays quiet so the ones that need you stand out. A pull request with no validation build gets no pill either; that is not the same as passing, and the app does not claim it is.",
+      "Tabbing through the app no longer raises the browser's plain tooltip. Keyboard focus now shows the app's own tooltip, which it never did before - it only ever appeared on hover.",
+    ],
+  },
+  {
     version: "1.17.9",
     date: "2026-07-30",
     items: [

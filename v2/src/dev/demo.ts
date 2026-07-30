@@ -413,6 +413,19 @@ function applyPatches() {
           url: "https://example.invalid/demo-wi/143783",
         },
       ]),
+    // 501 is mid-build and 502 went red, so both pills show on the default
+    // view; 503 passed and is therefore ABSENT, which is what a green run
+    // looks like to this endpoint - no entry rather than "succeeded".
+    prBuildStates: (_o: string, _p: string, _r: string, ids: number[]) =>
+      ok(
+        ids
+          .map((id) =>
+            id === 501 || id === 504 ? { pr_id: id, state: "running" }
+            : id === 502 || id === 505 ? { pr_id: id, state: "failed" }
+            : null,
+          )
+          .filter(Boolean),
+      ),
     // One unresolved thread on a file, one general thread already resolved
     // - enough to see both states and both buttons without a live org.
     prThreads: () =>

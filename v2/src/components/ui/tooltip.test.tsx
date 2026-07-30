@@ -145,6 +145,56 @@ test("dismissing the bubble does not hand the title back while still hovered", a
   await waitFor(() => expect(btn).toHaveAttribute("title", "Still suppressed"));
 });
 
+/** Tabbing to a control has to behave like hovering it: Chromium draws its
+ *  own bubble for a `title` on a keyboard-focused element, and this layer
+ *  used to take the title away on hover only - so tabbing across the app
+ *  produced the plain tooltip everything else here suppresses. */
+test("tabbing to a control shows the app's tooltip and suppresses the native one", async () => {
+  withLayer(<button title="Refresh work items">R</button>);
+  const btn = screen.getByRole("button");
+  // jsdom has no :focus-visible heuristic, so pin the keyboard case.
+  btn.matches = ((sel: string) => sel === ":focus-visible") as typeof btn.matches;
+
+  fireEvent.focusIn(btn);
+  await waitFor(() => expect(btn).not.toHaveAttribute("title"));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Refresh work items");
+
+  fireEvent.focusOut(btn);
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  expect(btn).toHaveAttribute("title", "Refresh work items");
+});
+
+/** Clicking focuses too. Without the :focus-visible gate, the press that
+ *  dismisses the hover bubble would be followed straight away by a focus
+ *  one hanging over the thing just clicked. */
+test("clicking a control does not raise a tooltip on focus", async () => {
+  withLayer(<button title="Not on click">C</button>);
+  const btn = screen.getByRole("button");
+  btn.matches = (() => false) as typeof btn.matches; // never :focus-visible
+
+  fireEvent.focusIn(btn);
+  await new Promise((r) => setTimeout(r, 500));
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(btn).toHaveAttribute("title", "Not on click");
+});
+
+/** A keyboard-opened tooltip is the keyboard's to close. The mouse is
+ *  wherever it was left, so the pointer-left check must not shut it. */
+test("a stray mouse movement does not close a tooltip opened by Tab", async () => {
+  withLayer(<button title="Stays put">S</button>);
+  const btn = screen.getByRole("button");
+  btn.matches = ((sel: string) => sel === ":focus-visible") as typeof btn.matches;
+
+  fireEvent.focusIn(btn);
+  await screen.findByRole("tooltip");
+
+  // Far away from the button - jsdom reports a zero rect, so any point is
+  // "outside" and the hover path would have released here.
+  fireEvent.pointerMove(document.body, { clientX: 900, clientY: 900, bubbles: true });
+  expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  expect(btn).not.toHaveAttribute("title");
+});
+
 /** Chromium suppresses a disabled control's CLICK events, not its pointer
  * events - so the layer sees them like anything else and the native bubble
  * never gets a chance. This was previously documented as an accepted gap. */

@@ -298,3 +298,62 @@ async fn builds_deployments_picks_up_late_releases() {
     assert_eq!(fresh[1].build_id, 902);
     assert!(fresh[1].deployments.is_empty());
 }
+
+/// The pill on a list row. One call for the whole repository, and the
+/// folding rules the panel depends on:
+///   - anything still running wins over anything finished;
+///   - anything that did not SUCCEED is an error, canceled included;
+///   - a PR with no validation build is absent, not "succeeded" - showing
+///     nothing for it is the caller's choice, but the data must not claim
+///     it passed;
+///   - a build on a real branch is not a PR validation build.
+#[tokio::test]
+async fn pr_build_states_folds_a_repos_builds_onto_its_pull_requests() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/build/builds"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+            // 101: one green, one still going -> running wins.
+            { "sourceBranch": "refs/pull/101/merge", "status": "completed", "result": "succeeded" },
+            { "sourceBranch": "refs/pull/101/merge", "status": "inProgress", "result": "" },
+            // 102: green only.
+            { "sourceBranch": "refs/pull/102/merge", "status": "completed", "result": "succeeded" },
+            // 103: one green, one failed -> failed wins.
+            { "sourceBranch": "refs/pull/103/merge", "status": "completed", "result": "succeeded" },
+            { "sourceBranch": "refs/pull/103/merge", "status": "completed", "result": "failed" },
+            // 104: canceled is not success.
+            { "sourceBranch": "refs/pull/104/merge", "status": "completed", "result": "canceled" },
+            // 105 has no build at all and must not appear.
+            // A branch build, and another PR's build, are both ignored.
+            { "sourceBranch": "refs/heads/main", "status": "completed", "result": "failed" },
+            { "sourceBranch": "refs/pull/999/merge", "status": "completed", "result": "failed" },
+        ]})))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .pr_build_states("o", "p", "repo-guid", &[101, 102, 103, 104, 105])
+        .await
+        .unwrap();
+
+    let got: Vec<(i32, &str)> = out.iter().map(|s| (s.pr_id, s.state.as_str())).collect();
+    assert_eq!(
+        got,
+        vec![(101, "running"), (102, "succeeded"), (103, "failed"), (104, "failed")],
+        "105 has no validation build and must be absent, not succeeded"
+    );
+
+    // One request for the whole list - the reason this exists at all.
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn no_pull_requests_asks_azure_devops_nothing() {
+    let server = MockServer::start().await;
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .pr_build_states("o", "p", "repo-guid", &[])
+        .await
+        .unwrap();
+    assert!(out.is_empty());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

@@ -3,7 +3,7 @@
 // on a chosen repo. Rows open the PR in the browser; voting/completing
 // stays in Azure DevOps (this panel never writes).
 
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Bug,
@@ -154,7 +154,77 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
   );
 }
 
-function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: string }) {
+/**
+ * Validation state for every PR on screen, in one call per REPOSITORY.
+ *
+ * The expanded row already fetches a PR's builds in full, but that is
+ * several calls and only worth it for the row someone opened. A pill on
+ * every title needs the same answer for the whole list, so it is asked
+ * per repo and sorted out server-side - see `pr_build_states`.
+ *
+ * A PR with no validation build is absent from the map, which is not the
+ * same as passing: the caller shows nothing for either, but it must not
+ * turn "no build" into a green claim.
+ */
+function usePrBuildStates(org: string, project: string, prs: PullRequest[]) {
+  const byRepo = useMemo(() => {
+    const m = new Map<string, number[]>();
+    for (const pr of prs) m.set(pr.repo_id, [...(m.get(pr.repo_id) ?? []), pr.id]);
+    // Sorted so the query key is stable across re-orders of the same set.
+    return [...m.entries()].map(([repoId, ids]) => ({ repoId, ids: [...ids].sort((a, b) => a - b) }));
+  }, [prs]);
+
+  const results = useQueries({
+    queries: byRepo.map(({ repoId, ids }) => ({
+      queryKey: ["pr-build-states", org, project, repoId, ids],
+      queryFn: () => unwrap(commands.prBuildStates(org, project, repoId, ids)),
+      enabled: Boolean(org && project) && ids.length > 0,
+      staleTime: 60_000,
+      retry: false,
+    })),
+  });
+
+  const states = new Map<number, string>();
+  for (const r of results) for (const s of r.data ?? []) states.set(s.pr_id, s.state);
+  return states;
+}
+
+/** The pill beside a title. Nothing at all for a green run - a list where
+ * most rows are fine should be quiet, and the pill is there to pick out
+ * the ones that are not. */
+function PipelinePill({ state }: { state?: string }) {
+  if (state === "running") {
+    // Amber, NOT the accent. The accent here is green, and a green pill
+    // next to a title is read as "this one passed" - the opposite of what
+    // a running build means. Amber is shared with Conflicts, which is
+    // fine: both say "not settled yet", and the words tell them apart.
+    return (
+      <span className="pill-label rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
+        Pipeline In Progress
+      </span>
+    );
+  }
+  if (state === "failed") {
+    return (
+      <span className="pill-label rounded-full bg-danger/15 px-2 text-[10px] font-medium text-danger">
+        Pipeline Error
+      </span>
+    );
+  }
+  return null;
+}
+
+function PrRow({
+  pr,
+  org,
+  project,
+  buildState,
+}: {
+  pr: PullRequest;
+  org: string;
+  project: string;
+  buildState?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
   const created = pr.created ? new Date(pr.created).toLocaleDateString() : "";
@@ -243,6 +313,7 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
                 Conflicts
               </span>
             )}
+            <PipelinePill state={buildState} />
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             {/* Same repo-pill treatment as the board's PR chips. */}
@@ -403,6 +474,7 @@ function PrGroup({
   org: string;
   project: string;
 }) {
+  const buildStates = usePrBuildStates(org, project, prs);
   return (
     <section className="space-y-2">
       <h2
@@ -421,7 +493,13 @@ function PrGroup({
       ) : (
         <div className="space-y-1.5">
           {prs.map((pr) => (
-            <PrRow key={`${pr.repo}-${pr.id}`} pr={pr} org={org} project={project} />
+            <PrRow
+              key={`${pr.repo}-${pr.id}`}
+              pr={pr}
+              org={org}
+              project={project}
+              buildState={buildStates.get(pr.id)}
+            />
           ))}
         </div>
       )}

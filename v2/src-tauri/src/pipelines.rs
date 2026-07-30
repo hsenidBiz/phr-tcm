@@ -82,6 +82,25 @@ pub struct BuildDeployments {
     pub deployments: Vec<Deployment>,
 }
 
+/// How far a pull request's validation got, for the row in the list.
+/// Only ever "running", "failed" or "succeeded"; a PR with no validation
+/// build is omitted rather than guessed at.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PrBuildState {
+    pub pr_id: i32,
+    pub state: String,
+}
+
+/// `refs/pull/1234/merge` -> 1234. Anything else is not a PR validation
+/// branch: a build on `refs/heads/main` must never be read as one.
+pub(crate) fn pr_id_from_branch(branch: &str) -> Option<i32> {
+    branch
+        .strip_prefix("refs/pull/")?
+        .strip_suffix("/merge")?
+        .parse()
+        .ok()
+}
+
 /// A build run tied to a pull request, with its stages and deployments.
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct PrBuild {
@@ -167,6 +186,77 @@ impl AdoClient {
         );
         let data = self.get_json(url).await?;
         Ok(parse_builds(&data, is_validation))
+    }
+
+    /// Where each pull request's validation build got to, for the LIST.
+    ///
+    /// The expanded row fetches a PR's builds in full, which is several
+    /// calls; doing that for every row on screen is exactly the traffic
+    /// this app works to avoid. So this asks once per REPOSITORY and sorts
+    /// the answer out locally - the same trick `builds_for_commit` uses,
+    /// because Azure DevOps will not filter builds by a set of branches.
+    ///
+    /// One PR can trigger several pipelines. They are folded the way a
+    /// reader folds them: anything still going makes the PR "running",
+    /// otherwise anything that did not succeed makes it "failed". A PR with
+    /// no validation build at all is simply absent from the result - it is
+    /// not the same as passing, and the caller must not treat it as either.
+    pub async fn pr_build_states(
+        &self,
+        org: &str,
+        project: &str,
+        repo_id: &str,
+        pr_ids: &[i32],
+    ) -> Result<Vec<PrBuildState>, AdoError> {
+        if pr_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let url = format!(
+            "{}/{}/{}/_apis/build/builds?repositoryId={}&repositoryType=TfsGit&$top=200&api-version=7.1",
+            self.base_url,
+            org,
+            project,
+            urlencoding::encode(repo_id),
+        );
+        let data = self.get_json(url).await?;
+
+        let mut running: std::collections::HashSet<i32> = Default::default();
+        let mut failed: std::collections::HashSet<i32> = Default::default();
+        let mut passed: std::collections::HashSet<i32> = Default::default();
+        for b in data["value"].as_array().cloned().unwrap_or_default() {
+            let Some(pr_id) = b["sourceBranch"].as_str().and_then(pr_id_from_branch) else {
+                continue;
+            };
+            if !pr_ids.contains(&pr_id) {
+                continue;
+            }
+            let status = b["status"].as_str().unwrap_or("");
+            let result = b["result"].as_str().unwrap_or("");
+            if status != "completed" {
+                running.insert(pr_id);
+            } else if result == "succeeded" {
+                passed.insert(pr_id);
+            } else {
+                // canceled and partiallySucceeded land here too. Neither is
+                // a green run, and the panel only has the two words.
+                failed.insert(pr_id);
+            }
+        }
+
+        let mut out: Vec<PrBuildState> = vec![];
+        for &id in pr_ids {
+            let state = if running.contains(&id) {
+                "running"
+            } else if failed.contains(&id) {
+                "failed"
+            } else if passed.contains(&id) {
+                "succeeded"
+            } else {
+                continue; // no validation build - say nothing about it
+            };
+            out.push(PrBuildState { pr_id: id, state: state.into() });
+        }
+        Ok(out)
     }
 
     /// The post-merge CI build. ADO has no "builds for commit" filter, so

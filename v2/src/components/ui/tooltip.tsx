@@ -55,6 +55,8 @@ const PARK = "data-tip-text";
 const BIG_TRIGGER = 200;
 
 type Point = { top: number; left: number };
+/** How the current trigger was reached. */
+type Claim = "pointer" | "focus";
 /** Viewport coordinates of the mouse. */
 export type Pointer = { x: number; y: number };
 /** The parts of a DOMRect this file uses - so tests can pass literals. */
@@ -133,6 +135,10 @@ export function TooltipLayer() {
   // wanders for the length of the open delay, and where it comes to REST
   // is where the bubble belongs.
   const pointer = useRef<Pointer | null>(null);
+  /** Whether the held trigger was reached by hovering it or by tabbing to
+   * it. The two are released by different things, and only the hover one
+   * has a meaningful pointer position to place the bubble against. */
+  const via = useRef<Claim>("pointer");
 
   useEffect(() => {
     /** Give the text back, so the element is unchanged once we let go. */
@@ -176,7 +182,10 @@ export function TooltipLayer() {
       // re-render). A rect check on the element we are already holding
       // costs one clean-layout read and closes that hole.
       const held = anchor.current;
-      if (!held) return;
+      // A tooltip the KEYBOARD opened is not the pointer's to close - the
+      // mouse is wherever it was left, usually nowhere near the focused
+      // control, so this check would shut it on the first stray movement.
+      if (!held || via.current === "focus") return;
       const r = held.getBoundingClientRect();
       const inside =
         e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
@@ -184,13 +193,14 @@ export function TooltipLayer() {
     };
 
     /** Take possession of an element's `title`, and schedule the bubble. */
-    const claim = (from: Element | null) => {
+    const claim = (from: Element | null, how: Claim = "pointer") => {
       const el = from?.closest?.("[title]") as HTMLElement | null;
       if (!el || el === anchor.current) return;
       const text = (el.getAttribute("title") ?? "").trim();
       if (!text) return;
       hide();
       anchor.current = el;
+      via.current = how;
       // Taking `title` off is what stops the OS bubble appearing on top of
       // ours. Note this works for DISABLED controls too: Chromium
       // suppresses their CLICK events, not their pointer events, so they
@@ -219,10 +229,35 @@ export function TooltipLayer() {
     };
 
     const onOut = (e: PointerEvent) => {
+      // A keyboard-opened tooltip survives the mouse wandering off; only
+      // moving focus closes that one.
+      if (via.current === "focus") return;
       const to = e.relatedTarget as Node | null;
       // Moving between children of the same trigger is not leaving it.
       if (anchor.current && to && anchor.current.contains(to)) return;
       if (anchor.current) hide();
+    };
+
+    /** Tabbing to a control shows its tooltip too.
+     *
+     * Two reasons. Chromium draws its OWN bubble for a `title` on a
+     * keyboard-focused element, and this layer only ever took the title
+     * away on hover - so tabbing across the app produced exactly the plain
+     * tooltip everything else here suppresses. And a keyboard user was
+     * getting no tooltip from this layer at all, which makes "every title
+     * becomes the app's tooltip" untrue for them specifically.
+     *
+     * Gated on :focus-visible so a MOUSE click does not leave a tooltip
+     * hanging over the thing just clicked - clicking focuses too, and the
+     * press that dismissed the hover bubble would otherwise be followed
+     * straight away by a focus one. */
+    const onFocusIn = (e: FocusEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (!el?.matches?.(":focus-visible")) return;
+      claim(el, "focus");
+    };
+    const onFocusOut = () => {
+      if (via.current === "focus") hide();
     };
 
     // Escape and a press both dismiss the bubble, and both leave the
@@ -234,6 +269,8 @@ export function TooltipLayer() {
     document.addEventListener("pointerover", onOver, true);
     document.addEventListener("pointermove", onMove, { capture: true, passive: true });
     document.addEventListener("pointerout", onOut, true);
+    document.addEventListener("focusin", onFocusIn, true);
+    document.addEventListener("focusout", onFocusOut, true);
     // Anything that moves the trigger invalidates the position; closing
     // is cheaper and less startling than chasing it.
     document.addEventListener("pointerdown", hideBubble, true);
@@ -248,6 +285,8 @@ export function TooltipLayer() {
       document.removeEventListener("pointerover", onOver, true);
       document.removeEventListener("pointermove", onMove, true);
       document.removeEventListener("pointerout", onOut, true);
+      document.removeEventListener("focusin", onFocusIn, true);
+      document.removeEventListener("focusout", onFocusOut, true);
       document.removeEventListener("pointerdown", hideBubble, true);
       window.removeEventListener("scroll", hideBubble, true);
       window.removeEventListener("resize", hideBubble);
@@ -266,7 +305,11 @@ export function TooltipLayer() {
         anchor.current.getBoundingClientRect(),
         bubble.current.getBoundingClientRect(),
         open.side,
-        pointer.current,
+        // Only a hover has a pointer worth anchoring to. For a tabbed-to
+        // control the mouse is wherever it was abandoned, and feeding that
+        // in would put the bubble across the window from the thing it
+        // describes.
+        via.current === "pointer" ? pointer.current : null,
       ),
     );
   }, [open]);

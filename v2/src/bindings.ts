@@ -260,6 +260,11 @@ export const commands = {
 	repoPullRequests: (organization: string, project: string, repoId: string, status: string, skip: number) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status, skip })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
+	/**
+	 *  Validation state for a whole list of PRs in one repository - one call,
+	 *  not one per row. See `pr_build_states`.
+	 */
+	prBuildStates: (organization: string, project: string, repoId: string, prIds: number[]) => typedError<PrBuildState[], AdoError>(__TAURI_INVOKE("pr_build_states", { organization, project, repoId, prIds })),
 	prThreads: (organization: string, project: string, repo: string, prId: number) => typedError<PrThread[], AdoError>(__TAURI_INVOKE("pr_threads", { organization, project, repo, prId })),
 	/**
 	 *  The pull-request panel's only write. See `set_pr_thread_status` for why
@@ -726,6 +731,16 @@ export type PrBuild = {
 	web_url: string,
 	stages: BuildStage[],
 	deployments: Deployment[],
+};
+
+/**
+ *  How far a pull request's validation got, for the row in the list.
+ *  Only ever "running", "failed" or "succeeded"; a PR with no validation
+ *  build is omitted rather than guessed at.
+ */
+export type PrBuildState = {
+	pr_id: number,
+	state: string,
 };
 
 /**  One comment in a review thread. */

@@ -107,6 +107,23 @@ pub async fn build_log(
         .await
 }
 
+/// Validation state for a whole list of PRs in one repository - one call,
+/// not one per row. See `pr_build_states`.
+#[tauri::command]
+#[specta::specta]
+pub async fn pr_build_states(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    repo_id: String,
+    pr_ids: Vec<i32>,
+) -> Result<Vec<crate::pipelines::PrBuildState>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .pr_build_states(&organization, &project, &repo_id, &pr_ids)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn pr_threads(
