@@ -488,13 +488,15 @@ export default function ImportFile({
         setQueue={setQueue}
         flash={flash}
         watches={watches}
-        // Remove all means "I am done with this import". The watches only
-        // existed to keep that queue in step with the files, so leaving
-        // them armed would let the next save to a finished file quietly
-        // refill a queue that was deliberately emptied. The cases are
-        // already gone, so this drops the watches and nothing else.
+        // Called both by Remove all and by a submit that emptied the queue.
+        // Either way the import is finished, and everything that existed to
+        // service it goes with it: the file watches (which would otherwise
+        // let a later save refill a queue already dealt with), the change
+        // report describing edits that have now been written, and the
+        // per-file general comments, which were notes for that review.
         onQueueCleared={() => {
           if (watches.length > 0) dropWatch(watches, false);
+          setReport(null);
         }}
       />
 

@@ -131,6 +131,31 @@ export default function QueueSection({
     retry: false,
   });
   const currentById = new Map((currentCases.data ?? []).map((c) => [c.id, c]));
+
+  /** Rows this submit has nothing to write for.
+   *
+   * The review gate already computes this and prints "no-op - nothing will
+   * change" on the row; until now it printed that and then wrote the case
+   * anyway. On a queue of 81 imported cases where ten had really changed,
+   * that was 71 pointless PATCHes plus 71 x the half-second pacing gap -
+   * about a minute of waiting, and a minute of someone's rate-limit budget,
+   * to say nothing.
+   *
+   * Fails SAFE in both directions that matter:
+   *  - only an UPDATE can be a no-op; a create always writes.
+   *  - it needs the server's current values. If that fetch failed, or has
+   *    not landed, the row is NOT skipped - "we could not check" must never
+   *    read as "nothing to do".
+   */
+  const isNoop = (tc: TestCase): boolean => {
+    if (tc.update_id == null) return false;
+    const cur = currentById.get(tc.update_id);
+    if (!cur) return false;
+    return diffCase(tc, cur, {
+      moduleRef: prefs.moduleRef,
+      preconditionsRef: prefs.preconditionsRef,
+    }).noop;
+  };
   const [expandedDiffs, setExpandedDiffs] = useState<Set<number>>(new Set());
   const toggleDiff = (i: number) =>
     setExpandedDiffs((s) => {
@@ -267,7 +292,16 @@ export default function QueueSection({
 
   const submit = useMutation({
     mutationFn: async () => {
-      setProgress({ done: 0, total: queue.length });
+      // Everything that actually has something to write. The skipped rows
+      // are still in the queue and still on screen - they are just not
+      // sent, and they are pruned alongside the written ones afterwards.
+      const toSend = queue.filter((tc) => !isNoop(tc));
+      const skippedRows = queue.filter((tc) => isNoop(tc));
+      const skipped = skippedRows.length;
+      if (toSend.length === 0) {
+        return { results: [], sent: [], sentFor: pbiId, skipped, skippedRows };
+      }
+      setProgress({ done: 0, total: toSend.length });
       const unProgress = await events.submitProgress.listen((e) => {
         setProgress({ done: e.payload.index + 1, total: e.payload.total });
       });
@@ -286,7 +320,7 @@ export default function QueueSection({
         org,
         project,
         pbiId,
-        queue,
+        toSend,
         prefs.moduleRef,
         prefs.preconditionsRef,
         areaPath || null,
@@ -297,14 +331,17 @@ export default function QueueSection({
       // onSuccess runs later, by which time the user may have switched PBI
       // or a watched file may have rewritten the queue - so neither the
       // indices nor "the current queue" still mean what they meant here.
-      return { results: r.data, sent: queue, sentFor: pbiId };
+      // `sent` is the FILTERED list: every result index is an index into
+      // it, and pruneCreated matches on that list. Passing the full queue
+      // here would shift every index by the number skipped.
+      return { results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows };
     },
     onSettled: () => {
       unlistenRef.current?.();
       unlistenRef.current = null;
       setProgress(null);
     },
-    onSuccess: ({ results, sent, sentFor }) => {
+    onSuccess: ({ results, sent, sentFor, skipped, skippedRows }) => {
       setResults(results);
       setReviewing(false);
       // Keep failed items AND anything the loop never reached (cancelled).
@@ -323,13 +360,39 @@ export default function QueueSection({
         // ways it has been wrong written down as tests. It was inline here
         // for all four of them, on a path with no test at all.
         let stranded = 0;
+        let emptied = false;
         setQueue((q) => {
-          const { queue, unmatched } = pruneCreated(sent, q, results);
-          stranded = unmatched;
-          return queue;
+          const pruned = pruneCreated(sent, q, results);
+          stranded = pruned.unmatched;
+          let next = pruned.queue;
+          // The rows deliberately skipped are finished too - nothing was
+          // written because nothing needed to be. Leaving them queued
+          // would end an 81-case submit with 71 still on screen and no
+          // way to tell them from work outstanding.
+          //
+          // Pruned through the same tested function rather than a key
+          // filter: two cases can share a title, and matching by key alone
+          // is exactly how this went wrong four times before.
+          if (skippedRows.length > 0) {
+            next = pruneCreated(
+              skippedRows,
+              next,
+              skippedRows.map((_, index) => ({ index, action: "skipped" })),
+            ).queue;
+          }
+          emptied = next.length === 0;
+          return next;
         });
+        // A finished import has nothing left to watch. The files fed this
+        // queue; with the queue gone, a later save to one of them would
+        // refill a list the user has already dealt with.
+        if (emptied && stranded === 0) onQueueCleared?.();
         if (failedCount === 0 && stranded === 0) {
-          toast.success(`${ok} test case(s) processed.`);
+          toast.success(
+            skipped > 0
+              ? `${ok} test case(s) processed, ${skipped} already up to date.`
+              : `${ok} test case(s) processed.`,
+          );
         } else if (failedCount > 0) {
           toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
         }

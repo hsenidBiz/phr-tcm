@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import ImportFile from "./ImportFile";
@@ -58,6 +58,72 @@ const sharedFor = (pbiId: number) => ({
     },
   ],
   warnings: [],
+});
+
+/** An import is mostly cases that have not moved. The review gate already
+ *  printed "no-op - nothing will change" on those rows and then submitted
+ *  them anyway: 81 cases where ten had changed meant 71 pointless PATCHes,
+ *  each behind the half-second pacing gap. They are not sent now.
+ *
+ *  The dangerous half is the indices - results are numbered against the
+ *  list that was SENT, so filtering it and then pruning against the
+ *  original queue is exactly the mistake that stranded created cases four
+ *  times before. This checks both: what went, and what is left. */
+test("an update with nothing to change is not submitted at all", async () => {
+  const unchanged = {
+    title: "Unchanged", steps: [{ action: "A", expected: "ok" }], tags: "",
+    automation_status: "Not Automated", module_value: "", preconditions: "", update_id: 201,
+  };
+  const edited = {
+    title: "Edited now", steps: [{ action: "B", expected: "ok" }], tags: "",
+    automation_status: "Not Automated", module_value: "", preconditions: "", update_id: 202,
+  };
+  let sent: Array<{ title: string }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "list_repos") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "classification_paths") return [];
+    if (cmd === "list_iterations") return [];
+    if (cmd === "plugin:dialog|open") return "C:\\cases.json";
+    if (cmd === "parse_import_file") return { cases: [unchanged, edited], warnings: [] };
+    // What Azure DevOps currently holds: 201 identical, 202 different.
+    if (cmd === "test_cases_by_ids")
+      return [
+        { id: 201, title: "Unchanged", tags: "", automation_status: "Not Automated",
+          steps: [{ action: "A", expected: "ok" }], step_ids: ["2"], module_value: "",
+          preconditions: "" },
+        { id: 202, title: "Edited BEFORE", tags: "", automation_status: "Not Automated",
+          steps: [{ action: "B", expected: "ok" }], step_ids: ["2"], module_value: "",
+          preconditions: "" },
+      ];
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string }> };
+      sent = a.queue;
+      return a.queue.map((tc, index) => ({
+        index, title: tc.title, action: "updated", id: 900 + index, error: null,
+      }));
+    }
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Unchanged");
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
+  // Both rows are updates, so the gate says "update", not "create".
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & update 2/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Yes — update 2/ }));
+
+  await waitFor(() => expect(sent.length).toBeGreaterThan(0));
+  expect(sent.map((c) => c.title)).toEqual(["Edited now"]);
+
+  // And the skipped row does not linger: nothing was written for it
+  // because nothing needed to be, so the import is finished for it too.
+  await waitFor(() => expect(screen.queryByText("Unchanged")).not.toBeInTheDocument());
 });
 
 test("import feeds the shared queue; failed items stay queued", async () => {
