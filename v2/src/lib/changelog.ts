@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.5",
+    date: "2026-07-30",
+    items: [
+      "Corrected: the warning shown before creating test cases said \"Created test cases cannot be deleted.\" That stopped being true when delete shipped, and it was shown to the very people who now have a Delete button. It now says what is actually true - removing a case afterwards needs delete permission, and this app can only move it to the recycle bin.",
+      "The project's own documentation still claimed the app makes no DELETE calls anywhere. It now describes the single exception accurately: one file, recycle bin only, permission-gated, and the permanent form is absent by test.",
+    ],
+  },
+  {
     version: "1.17.4",
     date: "2026-07-30",
     items: [
