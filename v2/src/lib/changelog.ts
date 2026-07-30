@@ -13,6 +13,22 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.2",
+    date: "2026-07-30",
+    items: [
+      "Updating a queue of test cases now skips the ones with nothing to change. Submitting 81 imported cases when 10 had actually been edited still sent all 81 to Azure DevOps, one at a time, with the usual pause between each - roughly forty seconds of waiting for work that was already done. The queue always knew which cases were unchanged; now it acts on it, and the toast tells you how many it skipped.",
+      "Finishing an update or a create now clears the watcher, the change report and the comments for the file it came from. That file has been dealt with, and a leftover diff invites you to re-read a report about work that already shipped.",
+      "The app checks for a new version every hour instead of only at launch. It is left open for days at a time, so a release could land on Monday and go unnoticed until whenever you next restarted. Nothing appears unless there is genuinely a new version - no toast, no spinner, just the usual banner when there is something to say.",
+      "Work item text and reviewer notes are now sanitised before they are displayed. A description written by someone else is somebody else's content, and the app was rendering it as-is.",
+      "Fixed: a button whose label changes when you click it - the sidebar collapse, the board's Hide/Open - kept showing the previous label in its tooltip, permanently. It said \"Collapse\" on a collapsed sidebar until you restarted.",
+      "Fixed: tabbing off the last control in the comment dialog or the work item drawer walked out of it and into the app behind, which you could then drive without being able to see it. Both now keep the keyboard inside until you close them, and hand focus back to whatever opened them.",
+      "Fixed: saving an edit in Update Test Cases while still typing showed a confirmation naming the title you had just typed rather than the one that was saved, and made Discard vanish on the unsaved part.",
+      "Reviewer notes written as \"review_notes\", and comments written as \"notes\", are now accepted from an assistant's edit as well as from a file. They were only read from one of the two, and the other silently dropped them.",
+      "Fixed: a table in a reviewer note rendered its header row as ordinary cells, and a link the review page refuses now stops at the link instead of dragging the rest of the paragraph into the same greyed-out style.",
+      "Fixed: file paths on pull request comments showed their leading slash at the end.",
+    ],
+  },
+  {
     version: "1.18.1",
     date: "2026-07-30",
     items: [
