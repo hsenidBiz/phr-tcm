@@ -60,6 +60,9 @@ import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
 import { IconRefresh } from "./lib/actionIcons";
 
+/** How often to look for a new release, in the background. */
+const UPDATE_CHECK_MS = 60 * 60 * 1000;
+
 const TITLES: Record<Section, string> = {
   manual: "Manual Entry",
   import: "Import File",
@@ -171,10 +174,25 @@ export default function App() {
     queryFn: () => commands.authStatus(),
   });
 
+  // Checked on launch and then quietly once an hour, because this app is
+  // left open for days at a time - a launch-only check means a release
+  // lands and nobody sees it until they next restart, which for some
+  // people is next week.
+  //
+  // Silent by design: no toast, no spinner, nothing moves. React Query
+  // holds the previous answer while a background refetch is in flight, so
+  // the only visible effect is the banner below appearing the first time
+  // there is genuinely something to say. `refetchIntervalInBackground`
+  // keeps it running while the window is minimised, which is exactly when
+  // an app left open all week is sitting.
   const update = useQuery({
     queryKey: ["update"],
     queryFn: () => commands.checkUpdate(),
-    staleTime: Infinity,
+    staleTime: UPDATE_CHECK_MS,
+    refetchInterval: UPDATE_CHECK_MS,
+    refetchIntervalInBackground: true,
+    // A check that fails is not news. It reports itself as `blocked`, the
+    // banner stays away, and the next hour tries again.
     retry: false,
   });
 

@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 
@@ -175,6 +175,48 @@ test("update banner appears when a newer version exists", async () => {
   });
   renderApp();
   expect(await screen.findByText(/Version 0.5.0 is available/)).toBeInTheDocument();
+});
+
+/// The app is left open for days, so a launch-only check means a release
+/// lands and nobody hears about it until they next restart. It re-checks
+/// every hour, and silently: nothing appears until there is something to
+/// say, and the banner is still the only thing that says it.
+test("a release published while the app is open is noticed within the hour", async () => {
+  // Only the scheduling primitives. Faking microtasks/rAF/performance as
+  // well deadlocks React's scheduler against `act`, which reads as a
+  // five-second timeout with no clue attached.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  });
+  let checks = 0;
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update") {
+      checks += 1;
+      // Nothing on launch; a release lands between the first and second.
+      return checks === 1 ? { available: null, blocked: null } : { available: "9.9.9", blocked: null };
+    }
+  });
+  // The clock is driven by hand rather than by `findBy*`: under fake
+  // timers those two both want to own it and neither makes progress.
+  const tick = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+  try {
+    renderApp();
+    await tick(50);
+    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(checks).toBe(1);
+    expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
+
+    await tick(60 * 60 * 1000 + 1_000);
+    expect(checks).toBeGreaterThan(1);
+    expect(screen.getByText(/Version 9.9.9 is available/)).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 /// A check that could not run is not the same as being up to date, and the
