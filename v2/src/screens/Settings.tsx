@@ -112,9 +112,16 @@ export default function Settings({ org, project }: { org: string; project: strin
 
 
   return (
-    // Two columns on wide windows (Changelog fills the otherwise-empty right
-    // half); below lg everything stacks into the original single column.
-    <div className="grid max-w-lg gap-8 lg:max-w-4xl lg:grid-cols-2 lg:items-start">
+    // Two columns on wide windows; below lg everything stacks into the
+    // original single column.
+    //
+    // The settings column stops growing at 28rem - none of its controls get
+    // better with more room - and the right panel takes whatever is left, so
+    // a wide window turns dead space into visible changelog/log lines rather
+    // than margin. The 24rem floor on the right track matters at the lg
+    // boundary: without it the fixed left track would claim its full 28rem
+    // first and squeeze the panel narrower than the old even split.
+    <div className="grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,28rem)_minmax(24rem,1fr)] lg:items-start">
       <div className="space-y-8">
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Appearance</h2>

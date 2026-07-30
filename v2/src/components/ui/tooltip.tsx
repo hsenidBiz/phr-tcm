@@ -20,6 +20,13 @@
 // Placement defaults to above the trigger; an element can ask for another
 // side with `data-tip-side="right"` (or left/bottom).
 //
+// Placement is taken from the trigger's rect, which is only a good anchor
+// while the trigger is roughly pointer-sized. On something big - a board
+// card, a work item's description - the centre of the rect can be a long
+// way from the mouse, and the bubble reads as belonging to something else
+// entirely. So a large trigger anchors to the pointer instead; see
+// `anchorBox`.
+//
 // Known gap: a `disabled` button fires no pointer events at all, so this
 // never sees it and the browser keeps showing its native tooltip. That is
 // the right fallback - the text still reaches the user - and it is why
@@ -40,10 +47,55 @@ const OFFSET = 8;
 const MARGIN = 8;
 /** Where the text lives while we have taken it off `title`. */
 const PARK = "data-tip-text";
+/** Past this, a trigger stops being a useful anchor on that axis: the
+ * bubble placed from its centre can land nowhere near the pointer. Sized
+ * so that ordinary controls - buttons, rail icons, toolbar rows, table
+ * cells - stay rect-anchored and keep the placement they have today,
+ * while cards and prose blocks fall to the pointer. */
+const BIG_TRIGGER = 200;
 
 type Point = { top: number; left: number };
+/** Viewport coordinates of the mouse. */
+export type Pointer = { x: number; y: number };
+/** The parts of a DOMRect this file uses - so tests can pass literals. */
+type Rect = {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
 
-export function place(rect: DOMRect, bubble: DOMRect, side: TooltipSide): Point {
+/**
+ * The rect the bubble is placed against: normally the trigger itself, but
+ * on an axis where the trigger is large it collapses onto the pointer.
+ *
+ * Only the oversized axis collapses. A wide, short card keeps its top
+ * edge, so the bubble still sits clear above the card - just above the
+ * part of it being pointed at, rather than above its middle. A block
+ * that is big both ways has nothing worth clearing and anchors fully to
+ * the mouse.
+ */
+export function anchorBox(rect: Rect, pointer?: Pointer | null): Rect {
+  if (!pointer) return rect;
+  const wide = rect.width > BIG_TRIGGER;
+  const tall = rect.height > BIG_TRIGGER;
+  if (!wide && !tall) return rect;
+  const left = wide ? pointer.x : rect.left;
+  const top = tall ? pointer.y : rect.top;
+  const width = wide ? 0 : rect.width;
+  const height = tall ? 0 : rect.height;
+  return { top, left, width, height, right: left + width, bottom: top + height };
+}
+
+export function place(
+  trigger: Rect,
+  bubble: Rect,
+  side: TooltipSide,
+  pointer?: Pointer | null,
+): Point {
+  const rect = anchorBox(trigger, pointer);
   const centerY = rect.top + rect.height / 2 - bubble.height / 2;
   const centerX = rect.left + rect.width / 2 - bubble.width / 2;
   const raw: Record<TooltipSide, Point> = {
@@ -76,6 +128,11 @@ export function TooltipLayer() {
   const anchor = useRef<HTMLElement | null>(null);
   const bubble = useRef<HTMLDivElement | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  // Latest mouse position, for the large-trigger case in `anchorBox`. Kept
+  // current by pointermove rather than read once on entry: the pointer
+  // wanders for the length of the open delay, and where it comes to REST
+  // is where the bubble belongs.
+  const pointer = useRef<Pointer | null>(null);
 
   useEffect(() => {
     /** Give the text back, so the element is unchanged once we let go. */
@@ -98,7 +155,12 @@ export function TooltipLayer() {
       setPos(null);
     };
 
+    const onMove = (e: PointerEvent) => {
+      pointer.current = { x: e.clientX, y: e.clientY };
+    };
+
     const onOver = (e: PointerEvent) => {
+      onMove(e);
       const target = e.target as Element | null;
       const el = target?.closest?.("[title]") as HTMLElement | null;
       if (!el) {
@@ -134,6 +196,7 @@ export function TooltipLayer() {
     };
 
     document.addEventListener("pointerover", onOver, true);
+    document.addEventListener("pointermove", onMove, { capture: true, passive: true });
     document.addEventListener("pointerout", onOut, true);
     // Anything that moves the trigger invalidates the position; closing
     // is cheaper and less startling than chasing it.
@@ -144,6 +207,7 @@ export function TooltipLayer() {
     window.addEventListener("blur", hide);
     return () => {
       document.removeEventListener("pointerover", onOver, true);
+      document.removeEventListener("pointermove", onMove, true);
       document.removeEventListener("pointerout", onOut, true);
       document.removeEventListener("pointerdown", hide, true);
       window.removeEventListener("scroll", hide, true);
@@ -159,7 +223,12 @@ export function TooltipLayer() {
   useEffect(() => {
     if (!open || !anchor.current || !bubble.current) return;
     setPos(
-      place(anchor.current.getBoundingClientRect(), bubble.current.getBoundingClientRect(), open.side),
+      place(
+        anchor.current.getBoundingClientRect(),
+        bubble.current.getBoundingClientRect(),
+        open.side,
+        pointer.current,
+      ),
     );
   }, [open]);
 

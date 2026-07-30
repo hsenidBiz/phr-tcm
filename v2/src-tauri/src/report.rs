@@ -3,7 +3,13 @@
 //! the command in lib.rs does the fetching and the temp-file/open part.
 
 use crate::ado_testplan::TestPoint;
+use crate::webtheme::PagePalette;
 use std::collections::HashMap;
+
+// The palette types moved to `webtheme` when the test case pages started
+// sharing them; re-exported so `report::ReportPalette` still resolves for
+// the command layer and the generated bindings.
+pub use crate::webtheme::ReportPalette;
 
 /// Comment + linked bug ids for a failed point's last result.
 #[derive(Debug, Clone, Default)]
@@ -63,99 +69,6 @@ fn outcome_label(outcome: &str) -> String {
     }
 }
 
-/// The app's palette, handed over when a report is opened so the page in
-/// the browser matches the app the user just came from.
-///
-/// The values are read live from the running UI's CSS variables rather
-/// than duplicated here, so a new theme (or an accent preset composed on
-/// top of one) needs no change in Rust. Every field falls back to the
-/// original light styling if it arrives empty, which is what happens for
-/// any caller that doesn't supply a palette.
-#[derive(Debug, Clone, serde::Deserialize, specta::Type)]
-pub struct ReportPalette {
-    pub bg: String,
-    pub surface: String,
-    pub surface_2: String,
-    pub text: String,
-    pub muted: String,
-    pub faint: String,
-    pub border: String,
-    pub accent: String,
-    pub success: String,
-    pub danger: String,
-    pub warning: String,
-    /// Drives `color-scheme`, so form controls and scrollbars follow too.
-    pub dark: bool,
-}
-
-impl Default for ReportPalette {
-    /// The report's original light styling.
-    fn default() -> Self {
-        Self {
-            bg: "#f3f5f8".into(),
-            surface: "#ffffff".into(),
-            surface_2: "#eef1f5".into(),
-            text: "#1f2530".into(),
-            muted: "#5b6472".into(),
-            faint: "#8a93a1".into(),
-            border: "#e8ecf1".into(),
-            accent: "#15803d".into(),
-            success: "#16a34a".into(),
-            danger: "#dc2626".into(),
-            warning: "#d97706".into(),
-            dark: false,
-        }
-    }
-}
-
-impl ReportPalette {
-    /// Replace any empty field with the light default: a half-populated
-    /// palette must never render unreadable text on an unstyled page.
-    fn filled(&self) -> Self {
-        let d = Self::default();
-        let or = |v: &str, fallback: &str| {
-            let v = v.trim();
-            if v.is_empty() { fallback.to_string() } else { v.to_string() }
-        };
-        Self {
-            bg: or(&self.bg, &d.bg),
-            surface: or(&self.surface, &d.surface),
-            surface_2: or(&self.surface_2, &d.surface_2),
-            text: or(&self.text, &d.text),
-            muted: or(&self.muted, &d.muted),
-            faint: or(&self.faint, &d.faint),
-            border: or(&self.border, &d.border),
-            accent: or(&self.accent, &d.accent),
-            success: or(&self.success, &d.success),
-            danger: or(&self.danger, &d.danger),
-            warning: or(&self.warning, &d.warning),
-            dark: self.dark,
-        }
-    }
-
-    fn vars(&self) -> String {
-        let p = self.filled();
-        format!(
-            ":root {{ color-scheme: {scheme};\n\
-             --bg: {bg}; --surface: {surface}; --surface-2: {surface_2};\n\
-             --text: {text}; --muted: {muted}; --faint: {faint}; --border: {border};\n\
-             --accent: {accent}; --success: {success}; --danger: {danger}; --warning: {warning}; }}",
-            scheme = if p.dark { "dark" } else { "light" },
-            bg = p.bg,
-            surface = p.surface,
-            surface_2 = p.surface_2,
-            text = p.text,
-            muted = p.muted,
-            faint = p.faint,
-            border = p.border,
-            accent = p.accent,
-            success = p.success,
-            danger = p.danger,
-            warning = p.warning,
-        )
-    }
-}
-
 /// Everything here is expressed against the variables above, so the same
 /// stylesheet serves every theme. Cards carry a real border as well as a
 /// shadow - a drop shadow is invisible on a black background, and the
@@ -205,7 +118,7 @@ pub fn build_report_html(
     points: &[TestPoint],
     failures: &HashMap<i32, FailureInfo>,
     generated_at: &str,
-    palette: &ReportPalette,
+    palette: &PagePalette,
 ) -> String {
     let total = points.len();
     let mut counts: HashMap<String, usize> = HashMap::new();
@@ -305,8 +218,8 @@ pub fn build_report_html(
     };
 
     format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>{t}</title><style>{vars}{CSS}</style></head>
-<body><div class="page">
+        r#"<!doctype html><html lang="en" data-scheme="{scheme}"><head><meta charset="utf-8"><title>{t}</title><style>{vars}{CSS}</style></head>
+<body>{switch}<div class="page">
 <h1>Execution report — {t}</h1>
 <div class="sub">{org} / {proj}</div>
 <div class="headline"><span class="rate">{pass_rate}%</span><span>pass rate over {executed} executed of {total} cases</span></div>
@@ -315,8 +228,11 @@ pub fn build_report_html(
 <table><thead><tr><th>Id</th><th>Test case</th><th>Last outcome</th></tr></thead><tbody>{rows}</tbody></table>
 {failures_section}
 <div class="footer">Generated {generated_at} by Test Case Manager</div>
-</div></body></html>"#,
-        vars = palette.vars(),
+</div><script>{switch_js}</script></body></html>"#,
+        scheme = palette.initial_scheme(),
+        vars = palette.css(),
+        switch = crate::webtheme::SWITCH_HTML,
+        switch_js = crate::webtheme::SWITCH_JS,
         t = esc(title),
         org = esc(org),
         proj = esc(project),

@@ -20,6 +20,7 @@ import { duplicateWarning, validateCase } from "../lib/validate";
 import AstryxIsland from "./AstryxIsland";
 import InlineDiff from "./InlineDiff";
 import Combobox from "./ui/combobox";
+import { pagePalette } from "../lib/reportTheme";
 import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
@@ -203,6 +204,9 @@ export default function QueueSection({
           label: fileName(w.path),
           comment: w.comment ?? "",
         })),
+        // Read at click time so the page opens in the theme in front of
+        // the user; it carries both schemes and its own switch.
+        pagePalette(),
       );
       if (r.status === "error") throw new Error(r.error);
     },

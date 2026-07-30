@@ -22,23 +22,31 @@ fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Written entirely against the theme variables `webtheme` emits, so the
+/// one stylesheet serves every app theme and both schemes.
+///
+/// Two habits from that conversion are worth keeping if this is edited:
+/// the tinted chips and focus rings are `color-mix` against the live
+/// accent rather than the fixed blues/greens/violets they used to be, and
+/// every card carries a real border as well as its shadow - a drop shadow
+/// is invisible on the OLED theme's black, and the page would otherwise
+/// come apart into floating text.
 const HTML_CSS: &str = r#"
-:root { color-scheme: light; }
 * { box-sizing: border-box; }
 body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px 16px;
-       background: #f3f5f8; color: #1f2530; }
+       background: var(--bg); color: var(--text); }
 .page { max-width: 900px; margin: 0 auto; }
 h1 { font-size: 22px; margin: 0 0 4px; }
-.subtitle { color: #5c6675; font-size: 13px; margin: 0 0 24px; }
-.case { background: #fff; border: 1px solid #dde3ec; border-radius: 10px;
+.subtitle { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+.case { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
         padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(20,30,50,.05);
         page-break-inside: avoid; }
 .case h2 { font-size: 16px; margin: 0 0 8px; }
-.case .wid { color: #2a7ab8; font-weight: 600; margin-right: 6px; }
+.case .wid { color: var(--accent); font-weight: 600; margin-right: 6px; }
 /* Position in the set, so a reviewer can say "case 7" out loud. Tabular
    figures keep the titles aligned once the count passes nine. Counted in
    the page, never stored - it is not a property of the test case. */
-.case .seq { color: #8a94a6; font-weight: 600; margin-right: 8px;
+.case .seq { color: var(--faint); font-weight: 600; margin-right: 8px;
              font-variant-numeric: tabular-nums; }
 .meta { margin: 0 0 10px; }
 /* One labelled row per kind, label column aligned so the three rows read
@@ -47,42 +55,50 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .metarow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 /* Auto-width, not a fixed column: the chips sit right beside their label
    instead of across a gap sized for the longest label. */
-.metalabel { flex: 0 0 auto; font-size: 11.5px; font-weight: 600; color: #44506a; }
+.metalabel { flex: 0 0 auto; font-size: 11.5px; font-weight: 600; color: var(--muted); }
 .metavals { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 1 1 200px; }
 .chip { font-size: 11.5px; border-radius: 999px; padding: 2px 10px;
-        background: #eef2f8; color: #44506a; border: 1px solid #dbe2ee; }
-.chip.status { background: #e8f3ea; color: #2f6b3c; border-color: #cfe5d4; }
-.chip.module { background: #f0eafa; color: #5b3e9e; border-color: #e0d5f2; }
-.pre { font-size: 13px; background: #f7f9fc; border-left: 3px solid #b9c6da;
+        background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+/* The two chips that MEAN something keep a colour of their own; the rest
+   stay neutral so the coloured ones are still worth looking at. */
+.chip.status { background: color-mix(in srgb, var(--success) 14%, transparent);
+               color: var(--success);
+               border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.chip.module { background: color-mix(in srgb, var(--accent) 14%, transparent);
+               color: var(--accent);
+               border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.pre { font-size: 13px; background: var(--surface-2); border-left: 3px solid var(--border);
        padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
-.pre b { color: #44506a; }
-.pre .none { color: #8a94a6; font-style: italic; }
+.pre b { color: var(--muted); }
+.pre .none { color: var(--faint); font-style: italic; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; background: #f0f3f8; color: #44506a; font-size: 12px;
-     padding: 6px 10px; border: 1px solid #e1e7f0; }
-td { padding: 7px 10px; border: 1px solid #e7ecf3; vertical-align: top;
+th { text-align: left; background: var(--surface-2); color: var(--muted); font-size: 12px;
+     padding: 6px 10px; border: 1px solid var(--border); }
+td { padding: 7px 10px; border: 1px solid var(--border); vertical-align: top;
      white-space: pre-wrap; }
-td.num { width: 34px; text-align: center; color: #7c8698; }
-.searchbar { position: sticky; top: 0; z-index: 5; background: #f3f5f8;
+td.num { width: 34px; text-align: center; color: var(--faint); }
+.searchbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
              display: flex; align-items: center; gap: 12px; padding: 10px 0 14px; }
 #tc-search { flex: 1; font: inherit; font-size: 14px; padding: 9px 14px;
-             border: 1px solid #c9d3e2; border-radius: 8px; background: #fff;
+             border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
              color: inherit; outline: none; }
-#tc-search:focus { border-color: #2a7ab8; box-shadow: 0 0 0 3px rgba(42,122,184,.15); }
-#tc-count { color: #5c6675; font-size: 12.5px; white-space: nowrap; }
-.no-match { color: #5c6675; font-size: 14px; text-align: center;
-            padding: 28px 0; border: 1px dashed #c9d3e2; border-radius: 10px; }
+#tc-search:focus { border-color: var(--accent);
+                   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+#tc-count { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.no-match { color: var(--muted); font-size: 14px; text-align: center;
+            padding: 28px 0; border: 1px dashed var(--border); border-radius: 10px; }
 .hidden { display: none !important; }
-.note { margin-top: 12px; border-top: 1px dashed #c9d3e2; padding-top: 10px; }
+.note { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
 .note label { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px;
-              font-weight: 600; color: #3c4657; margin-bottom: 4px; }
-.note-status { font-weight: 400; font-size: 12px; color: #2a7ab8; }
+              font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+.note-status { font-weight: 400; font-size: 12px; color: var(--accent); }
 .note-box { width: 100%; min-height: 44px; resize: vertical; font: inherit;
-            font-size: 13px; color: inherit; background: #f7f9fc;
-            border: 1px solid #c9d3e2; border-radius: 8px; padding: 8px 10px;
+            font-size: 13px; color: inherit; background: var(--surface-2);
+            border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
             outline: none; }
-.note-box:focus { border-color: #2a7ab8; box-shadow: 0 0 0 3px rgba(42,122,184,.15); }
-.note-status.bad { color: #b3261e; }
+.note-box:focus { border-color: var(--accent);
+                  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.note-status.bad { color: var(--danger); }
 /* The whole-set comments column. A <details> so collapsing costs no
    JavaScript, and the two-column layout only appears when there is room
    for it - below that the panel stacks above the cases, where it is still
@@ -94,22 +110,29 @@ td.num { width: 34px; text-align: center; color: #7c8698; }
   .shell { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
   .aside { position: sticky; top: 12px; }
 }
-.aside { background: #fff; border: 1px solid #dde3ec; border-radius: 10px;
+.aside { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
          box-shadow: 0 1px 3px rgba(20,30,50,.05); }
 .aside > summary { cursor: pointer; list-style: none; padding: 12px 16px;
-                   font-size: 13px; font-weight: 600; color: #3c4657;
+                   font-size: 13px; font-weight: 600; color: var(--muted);
                    display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .aside > summary::-webkit-details-marker { display: none; }
-.aside > summary::after { content: '\25be'; color: #8a94a6; transition: transform .15s ease; }
+.aside > summary::after { content: '\25be'; color: var(--faint); transition: transform .15s ease; }
 .aside:not([open]) > summary::after { transform: rotate(-90deg); }
 .aside-body { padding: 0 16px 14px; }
-.aside .file + .file { margin-top: 14px; padding-top: 14px; border-top: 1px dashed #dde3ec; }
-.aside .filename { font-size: 11.5px; font-weight: 600; color: #44506a;
+.aside .file + .file { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.aside .filename { font-size: 11.5px; font-weight: 600; color: var(--muted);
                    word-break: break-all; margin-bottom: 5px;
                    display: flex; align-items: baseline; gap: 8px; }
 .aside .note-box { min-height: 96px; }
-@media print { body { background: #fff; padding: 0; }
-               .case { box-shadow: none; border-color: #ccc; }
+/* Print goes back to ink on paper whatever the screen was showing: a dark
+   page prints as a black rectangle, or as nothing once the printer drops
+   the background and leaves white text on white. */
+@media print { :root, :root[data-scheme="dark"] { color-scheme: light;
+                 --bg: #fff; --surface: #fff; --surface-2: #f4f6f9;
+                 --text: #1f2530; --muted: #44506a; --faint: #8a94a6;
+                 --border: #ccc; }
+               body { background: #fff; padding: 0; }
+               .case { box-shadow: none; }
                .searchbar { display: none; }
                .shell { display: block; }
                .aside { display: none; }
@@ -278,6 +301,7 @@ pub fn export_queue_to_html(
     path: &str,
     subtitle: &str,
     ctx: Option<CommentCtx>,
+    palette: &crate::webtheme::PagePalette,
 ) -> Result<(), String> {
     // The side column only exists for a draft that came from files. Without
     // it the page keeps its original single centred column.
@@ -291,10 +315,17 @@ pub fn export_queue_to_html(
 
     let mut parts: Vec<String> = vec![
         "<!DOCTYPE html>".into(),
-        "<html lang=\"en\"><head><meta charset=\"utf-8\">".into(),
+        format!(
+            "<html lang=\"en\" data-scheme=\"{}\"><head><meta charset=\"utf-8\">",
+            palette.initial_scheme()
+        ),
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">".into(),
         format!("<title>Test Cases ({})</title>", queue.len()),
-        format!("<style>{HTML_CSS}</style></head><body>{shell_open}<div class='page'>"),
+        format!(
+            "<style>{vars}{HTML_CSS}</style></head><body>{switch}{shell_open}<div class='page'>",
+            vars = palette.css(),
+            switch = crate::webtheme::SWITCH_HTML,
+        ),
         "<h1>Test Cases</h1>".into(),
         format!(
             "<p class='subtitle'>{}</p>",
@@ -446,6 +477,7 @@ pub fn export_queue_to_html(
     }
 
     parts.push(format!("<script>{HTML_JS}</script>"));
+    parts.push(format!("<script>{}</script>", crate::webtheme::SWITCH_JS));
     if let Some(c) = &ctx {
         let org = match c {
             CommentCtx::Ado(a) => a.org.clone(),

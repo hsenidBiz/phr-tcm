@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { GitPullRequest, RefreshCw } from "lucide-react";
+import { Check, GitPullRequest, RefreshCw } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
@@ -100,7 +100,17 @@ function Card({
               >
                 <GitPullRequest size={10} className="shrink-0" />
                 <span className="truncate">{l.repo}</span>
-                {l.status === "active" ? "●" : "✓"}
+                {/* The status mark is geometry, not a glyph. As text, "●"
+                    carries its ink about 1.5px below the repo name's at
+                    this size and "✓" about half that - they sit low next
+                    to the label however the line is aligned, because the
+                    offset is inside the glyph, not the box. A shaped span
+                    and an SVG both centre exactly on the flex line. */}
+                {l.status === "active" ? (
+                  <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                ) : (
+                  <Check size={11} aria-hidden className="shrink-0" />
+                )}
               </button>
             ))}
           </span>

@@ -167,7 +167,7 @@ export const commands = {
 	 *  work item id get a comment box that autosaves back into the app via
 	 *  the loopback note listener.
 	 */
-	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes })),
+	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes, palette })),
 	/**
 	 *  The same page for a DRAFT queue. Every case gets a comment box - drafts
 	 *  have no work item id to key an app-side note by, and the comment belongs
@@ -177,7 +177,7 @@ export const commands = {
 	 *  `owners` is the file each queued case came from, aligned with `queue`;
 	 *  an empty entry means the case was typed by hand and has no file.
 	 */
-	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[]) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, owners, files })),
+	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, owners, files, palette })),
 	/**
 	 *  The whole-set comment held in a JSON file, for prefilling the panel.
 	 *  A file that has none - or can't be read - simply has no comment.
@@ -244,9 +244,10 @@ export const commands = {
 	 *  renders the failures-first HTML to a temp file and opens the browser.
 	 *  GET-only against ADO; writes only the local temp file.
 	 *  `palette` is the app's live theme, so the page opens looking like the
-	 *  app the user just came from rather than a hardcoded light page.
+	 *  app the user just came from rather than a hardcoded light page - and
+	 *  carries the other scheme too, for the switch in the page's corner.
 	 */
-	viewExecutionReport: (organization: string, project: string, planId: number, suiteIds: number[], title: string, palette: ReportPalette) => typedError<null, string>(__TAURI_INVOKE("view_execution_report", { organization, project, planId, suiteIds, title, palette })),
+	viewExecutionReport: (organization: string, project: string, planId: number, suiteIds: number[], title: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_execution_report", { organization, project, planId, suiteIds, title, palette })),
 	/**  Read any file for attaching to a result (name + base64 bytes). */
 	readFileB64: (path: string) => typedError<RunAttachmentOut, string>(__TAURI_INVOKE("read_file_b64", { path })),
 	/**
@@ -644,6 +645,14 @@ export type Org = {
 	url: string,
 };
 
+/**  Both schemes a page can wear, and which one it opens in. */
+export type PagePalette = {
+	light: ReportPalette,
+	dark: ReportPalette,
+	/**  True when the app is currently dark, so the page opens to match. */
+	dark_first: boolean,
+};
+
 export type PbiHit = {
 	id: number,
 	title: string,
@@ -791,16 +800,7 @@ export type RepoRef = {
 	name: string,
 };
 
-/**
- *  The app's palette, handed over when a report is opened so the page in
- *  the browser matches the app the user just came from.
- * 
- *  The values are read live from the running UI's CSS variables rather
- *  than duplicated here, so a new theme (or an accent preset composed on
- *  top of one) needs no change in Rust. Every field falls back to the
- *  original light styling if it arrives empty, which is what happens for
- *  any caller that doesn't supply a palette.
- */
+/**  One scheme's worth of colour, named for the app's own tokens. */
 export type ReportPalette = {
 	bg: string,
 	surface: string,

@@ -11,7 +11,6 @@ import {
   ChevronRight,
   ExternalLink,
   GitBranch,
-  GitPullRequest,
   RefreshCw,
   Rocket,
 } from "lucide-react";
@@ -225,7 +224,9 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
         ) : (
           <ChevronRight size={14} className="mt-1 shrink-0 text-muted" />
         )}
-        <GitPullRequest size={15} className="mt-0.5 shrink-0 text-accent" />
+        {/* No pull-request glyph here: every row on this tab is a pull
+            request, so the icon repeated the heading rather than telling
+            the rows apart. The chevron already carries the affordance. */}
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium text-text">

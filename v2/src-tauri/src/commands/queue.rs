@@ -79,8 +79,12 @@ pub fn export_queue_json(path: String, queue: Vec<model::TestCase>) -> Result<()
 #[tauri::command]
 #[specta::specta]
 pub fn export_queue_html(path: String, queue: Vec<model::TestCase>, subtitle: String) -> Result<(), String> {
-    // A saved-to-disk export is shared/archived - no autosaving note boxes.
-    import_parser::export_queue_to_html(&queue, &path, &subtitle, None)
+    // A saved-to-disk export is shared/archived - no autosaving note boxes,
+    // and no palette either: a file that leaves this machine opens in the
+    // neutral light styling rather than in whatever theme the sender
+    // happened to be using. The page's own switch still gets the reader to
+    // dark in one click.
+    import_parser::export_queue_to_html(&queue, &path, &subtitle, None, &Default::default())
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -368,6 +372,7 @@ pub fn view_queue_html(
     subtitle: String,
     organization: String,
     notes: std::collections::HashMap<String, String>,
+    palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
     let path = std::env::temp_dir().join(format!(
         "test-cases-{}-{}.html",
@@ -389,6 +394,7 @@ pub fn view_queue_html(
         &path_str,
         &subtitle,
         note_ctx.as_ref().map(import_parser::CommentCtx::Ado),
+        &palette,
     )?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
@@ -408,6 +414,7 @@ pub fn view_draft_html(
     subtitle: String,
     owners: Vec<String>,
     files: Vec<import_parser::DraftFile>,
+    palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
     let path = std::env::temp_dir().join(format!(
         "test-cases-draft-{}-{}.html",
@@ -426,6 +433,7 @@ pub fn view_draft_html(
         &path_str,
         &subtitle,
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
+        &palette,
     )?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }

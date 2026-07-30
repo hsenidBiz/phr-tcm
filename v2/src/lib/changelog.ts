@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.6",
+    date: "2026-07-30",
+    items: [
+      "View in Browser now opens in the app's theme, the way the execution report already did - and both pages carry a light/dark switch in the corner, so a tab you left open last night is one click from readable this morning. Your accent colour stays put in either mode.",
+      "Settings: the changelog panel now grows into the space on the right instead of stopping halfway and leaving a margin. On a narrow window nothing changes.",
+      "Sign in: while waiting for the browser, the button's icon was white and its label was dark. Both are white now.",
+      "Work Manager: the button that takes you back to the test cases shows a flask instead of the board icon it was showing in both directions.",
+      "Board cards: the dot and tick on a linked pull request sat a little low against the repository name. They are centred now.",
+      "Pull Requests: dropped the pull-request icon from each row - every row in that tab is a pull request, so it was only repeating the heading.",
+      "Run Tests: with every group collapsed, the Test case / Last outcome / History header no longer sits above an empty table.",
+      "Tooltips on large things - a board card, a work item's description - now appear next to the pointer instead of at the middle of whatever you are hovering. Small controls are unchanged.",
+    ],
+  },
+  {
     version: "1.17.5",
     date: "2026-07-30",
     items: [

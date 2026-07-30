@@ -265,7 +265,8 @@ pub async fn run_history(
 /// renders the failures-first HTML to a temp file and opens the browser.
 /// GET-only against ADO; writes only the local temp file.
 /// `palette` is the app's live theme, so the page opens looking like the
-/// app the user just came from rather than a hardcoded light page.
+/// app the user just came from rather than a hardcoded light page - and
+/// carries the other scheme too, for the switch in the page's corner.
 #[tauri::command]
 #[specta::specta]
 pub async fn view_execution_report(
@@ -275,7 +276,7 @@ pub async fn view_execution_report(
     plan_id: i32,
     suite_ids: Vec<i32>,
     title: String,
-    palette: report::ReportPalette,
+    palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
     let client = ado::AdoClient::new(token);

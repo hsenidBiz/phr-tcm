@@ -45,8 +45,9 @@ const CASE_ITEMS: Item<Section>[] = [
 ];
 
 export const WORK_ITEMS: Item<WorkSection>[] = [
-  // The same glyph, in the same accent, that heads every row in the
-  // Pull Requests panel - GitBranch there is only the branch-name mark.
+  // The rail is where this glyph earns its place - it tells the section
+  // apart from the others. Inside the panel every row is a pull request,
+  // so the same icon there said nothing and has gone.
   { id: "prs", label: "Pull Requests", icon: GitPullRequest, tone: "nav-ico nav-ico-prs" },
   { id: "board", label: "Board", icon: KanbanSquare, tone: "nav-ico nav-ico-board" },
   { id: "create", label: "New Work Item", icon: FilePlus2, tone: "nav-ico nav-ico-create" },

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Settings as SettingsIcon } from "lucide-react";
-import { IconBoard } from "../lib/actionIcons";
+import { IconBoard, IconTestCases } from "../lib/actionIcons";
 import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
@@ -132,7 +132,10 @@ export default function ContextBar({
           title={workMode ? "Test Case Manager" : "Work Manager (Beta)"}
           onClick={onToggleWork}
         >
-          <IconBoard aria-hidden />
+          {/* The icon names the DESTINATION, same as the label: a board
+              on the way out to Work Manager, the flask on the way back.
+              A board glyph in both directions read as "you are here". */}
+          {workMode ? <IconTestCases aria-hidden /> : <IconBoard aria-hidden />}
           {/* Icon-only below lg so the button never crowds the PBI picker. */}
           <span className="hidden lg:inline">
             {workMode ? "Test Case Manager" : "Work Manager (Beta)"}

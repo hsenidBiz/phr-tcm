@@ -10,7 +10,7 @@ import { Select } from "../../components/ui/select";
 import HistoryDots from "../../components/HistoryDots";
 import ScanProgress from "../../components/ScanProgress";
 import { cn } from "../../lib/cn";
-import { reportPalette } from "../../lib/reportTheme";
+import { pagePalette } from "../../lib/reportTheme";
 import { CACHE, persistentQuery } from "../../lib/persistentQuery";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
@@ -157,8 +157,9 @@ export default function RunPanel({
           [suite.data!.suite_id],
           `PBI #${pbiId} — ${pbiTitle}`,
           // Read at click time, so the report matches the theme in front
-          // of the user rather than whatever was set at startup.
-          reportPalette(),
+          // of the user rather than whatever was set at startup. Both
+          // schemes go along, for the switch in the page's corner.
+          pagePalette(),
         ),
       ),
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
@@ -206,6 +207,14 @@ export default function RunPanel({
       pts: indices.map((i) => filtered[i]),
     }));
   }, [filtered, grouped]);
+
+  // A collapsed group renders none of its rows, so with every group shut
+  // the table is nothing but group headings - and a "Test case / Last
+  // outcome / History" header sitting above them labels columns that
+  // aren't there. It comes back with the first group the user opens.
+  const anyRowsShown = sections.some(
+    ({ name, pts }) => pts.length > 0 && !(name && collapsedGroups.has(name)),
+  );
 
   // Click toggles a row; shift+click selects the whole range from the
   // last clicked row, in the visible (filtered/grouped) order.
@@ -347,13 +356,15 @@ export default function RunPanel({
 
       {points.data && points.data.length > 0 && (
         <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-xs text-muted">
-              <th className="px-2 py-1 font-medium">Test case</th>
-              <th className="px-2 py-1 font-medium">Last outcome</th>
-              <th className="px-2 py-1 font-medium">History</th>
-            </tr>
-          </thead>
+          {anyRowsShown && (
+            <thead>
+              <tr className="border-b border-border text-left text-xs text-muted">
+                <th className="px-2 py-1 font-medium">Test case</th>
+                <th className="px-2 py-1 font-medium">Last outcome</th>
+                <th className="px-2 py-1 font-medium">History</th>
+              </tr>
+            </thead>
+          )}
           <tbody>
             {sections.map(({ name, pts }) => (
               <Fragment key={name || "__all"}>

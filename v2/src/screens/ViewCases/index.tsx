@@ -15,6 +15,7 @@ import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap, unwrapStr } from "../../lib/ipc";
+import { pagePalette } from "../../lib/reportTheme";
 import { toTestCase } from "../../lib/testCaseConvert";
 import CaseDetail from "./CaseDetail";
 import CommentModal from "./CommentModal";
@@ -144,6 +145,9 @@ export default function ViewCases({
           pbiId != null ? `PBI #${pbiId}` : "",
           org,
           notes,
+          // Read at click time so the page opens in the theme in front of
+          // the user; it carries both schemes and its own switch.
+          pagePalette(),
         ),
       ),
     onError: (e) => toast.error(`Could not open the report: ${e.message ?? e}`),

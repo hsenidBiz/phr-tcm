@@ -191,7 +191,8 @@ fn html_export_carries_cases_and_search() {
         comment: String::new(),
     }];
     let path = tmp_path("report.html");
-    v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None).unwrap();
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None, &Default::default())
+        .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("Login &lt;works&gt;")); // escaped
     assert!(html.contains("Open &amp; go"));
@@ -201,6 +202,75 @@ fn html_export_carries_cases_and_search() {
     assert!(html.contains("None")); // empty prerequisites block still shown
     assert!(html.contains("PBI #7")); // subtitle
     assert!(!html.contains("class='note-box'")); // no note ctx -> no comment boxes
+}
+
+/// The page opens in a browser, so it wears the app's theme - and carries
+/// the other scheme plus a switch, because the tab outlives the theme the
+/// app was in when it opened.
+#[test]
+fn the_test_case_page_is_themed_and_can_be_flipped() {
+    let queue = vec![v2_lib::model::TestCase {
+        title: "Login".into(),
+        steps: vec![],
+        tags: String::new(),
+        automation_status: "Planned".into(),
+        module_value: String::new(),
+        preconditions: String::new(),
+        update_id: None,
+        comment: String::new(),
+    }];
+    // Spelled out rather than `..Default::default()`: that default is the
+    // LIGHT palette, so a partial dark fixture inherits #1f2530 text onto
+    // a black page - a page this test would then have called themed.
+    let oled = v2_lib::webtheme::ReportPalette {
+        bg: "#000000".into(),
+        surface: "#0b0b0d".into(),
+        surface_2: "#141418".into(),
+        text: "#e5e7eb".into(),
+        muted: "#9ca3af".into(),
+        faint: "#6b7280".into(),
+        border: "#27272a".into(),
+        accent: "#22c55e".into(),
+        success: "#22c55e".into(),
+        danger: "#ef4444".into(),
+        warning: "#f59e0b".into(),
+        dark: true,
+    };
+    let path = tmp_path("report-themed.html");
+    v2_lib::import_parser::export_queue_to_html(
+        &queue,
+        &path,
+        "",
+        None,
+        &v2_lib::webtheme::PagePalette {
+            light: Default::default(),
+            dark: oled,
+            dark_first: true,
+        },
+    )
+    .unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    assert!(html.contains(r#"data-scheme="dark""#), "opens in the app's scheme");
+    assert!(html.contains("--bg: #000000"), "the app's palette reaches the page");
+    // Text and background have to come from the SAME scheme, or the page
+    // opens as light-grey text on black.
+    let dark_vars = html.split(r#":root[data-scheme="dark"]"#).nth(1).unwrap();
+    assert!(dark_vars.contains("--text: #e5e7eb"), "dark text with the dark background");
+    assert!(html.contains(r#":root[data-scheme="dark"]"#), "the other scheme ships too");
+    assert!(html.contains(r#"id="scheme-switch""#));
+    // The stylesheet has to CONSUME the variables. It was written in fixed
+    // hex, and a single leftover literal is an element that stays light on
+    // a black page - so the check is that none survive in the rules.
+    assert!(html.contains("background: var(--bg)"));
+    let css = html.split("</style>").next().unwrap();
+    let rules = css.split(r#":root[data-scheme="dark"]"#).nth(1).unwrap();
+    for leftover in ["#f3f5f8", "#dde3ec", "#2a7ab8", "#44506a", "#c9d3e2"] {
+        assert!(
+            !rules.contains(leftover),
+            "hardcoded {leftover} left in the stylesheet - it will not follow the theme"
+        );
+    }
 }
 
 #[test]
@@ -236,6 +306,7 @@ fn html_export_with_note_ctx_adds_autosaving_comment_boxes() {
         &path,
         "",
         Some(v2_lib::import_parser::CommentCtx::Ado(&ctx)),
+        &Default::default(),
     )
     .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();

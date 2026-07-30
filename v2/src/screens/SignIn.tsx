@@ -62,13 +62,16 @@ export default function SignIn({
           Sign in with your Microsoft account to manage Azure DevOps test
           cases, runs, and work items.
         </p>
-        <Button disabled={signingIn} onClick={onSignIn}>
-          {/* White to match the label, not the button's on-accent token.
-              ShinyText paints itself white so it can shine, and an icon
-              following the token instead sat black beside white text. This
-              screen is fixed branding either way - the flask, the threads
-              and the wordmark are all light on dark whatever theme is on. */}
-          <IconSignIn aria-hidden className="text-white" />
+        {/* White on the button, not the on-accent token: ShinyText paints
+            itself white so it can shine, and anything following the token
+            sat dark beside it. The colour belongs on the button rather than
+            the icon - as an icon-only rule it left the plain-text "Waiting
+            for browser" label on the token, so the two halves of the same
+            button disagreed. This screen is fixed branding either way: the
+            flask, the threads and the wordmark are all light on dark
+            whatever theme is on. */}
+        <Button className="text-white" disabled={signingIn} onClick={onSignIn}>
+          <IconSignIn aria-hidden />
           {signingIn ? (
             "Waiting for browser"
           ) : (

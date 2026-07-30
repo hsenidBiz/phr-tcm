@@ -37,7 +37,10 @@ export function getThemeChoice(): ThemeChoice {
   return "system";
 }
 
-function darkPref(): ThemeId {
+/** The dark theme the light/dark toggle goes back to - the last dark one
+ * the user picked, or Slate. Exported because the browser pages carry a
+ * dark scheme too, and it should be the same dark the app would give. */
+export function darkPref(): ThemeId {
   const t = localStorage.getItem(DARK_PREF_KEY);
   const theme = THEMES.find((x) => x.id === t);
   return theme?.dark ? theme.id : "slate";
