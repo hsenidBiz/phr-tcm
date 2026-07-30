@@ -1,4 +1,6 @@
-//! Pull-request panel reads (Work Manager). GET only.
+//! Pull-request panel commands (Work Manager). Reads, plus the one write:
+//! `set_pr_thread_status` resolves or reopens a review comment thread, with
+//! the allowed status values pinned at this boundary.
 
 use crate::ado_git;
 use crate::state::get_fresh_token;

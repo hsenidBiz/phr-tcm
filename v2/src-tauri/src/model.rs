@@ -33,9 +33,13 @@ pub struct TestCase {
     /// page during review, and rendered as markdown there.
     ///
     /// Like `comment`, it round-trips through the JSON and is NEVER sent
-    /// to Azure DevOps - both are guarded by the same sentinel test. The
-    /// two are separate on purpose: `comment` is the reviewer's own
-    /// scratchpad and is editable in the page; this is the reference
+    /// to Azure DevOps. Two tests hold that: the `NoCommentInBody` matcher
+    /// on the create mock, and `app_only_fields_never_reach_a_request_body`,
+    /// which scans `ado/endpoints.rs` so the rule also covers the update
+    /// path and any write function added later.
+    ///
+    /// The two fields are separate on purpose: `comment` is the reviewer's
+    /// own scratchpad and is editable in the page; this is the reference
     /// material they read while writing one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reviewer_notes: String,

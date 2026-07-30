@@ -12,6 +12,16 @@
 
 use crate::model::TestCase;
 
+/// First non-empty value among `keys`, using the file importer's own
+/// lookup so the two paths cannot disagree about what a key means.
+fn pick(v: &serde_json::Value, keys: &[&str]) -> String {
+    crate::import_parser::json_value(v, keys)
+        .map(crate::import_parser::value_to_string)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
 #[derive(Debug, Clone)]
 pub enum Op {
     SetTags(String),
@@ -288,16 +298,12 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                             .as_i64()
                             .or_else(|| rv["update_id"].as_i64())
                             .map(|n| n as i32),
-                        comment: rv["comment"].as_str().unwrap_or("").to_string(),
-                        // Same aliases the file importer accepts, so a case
-                        // inserted by an assistant keeps its review context
-                        // whichever spelling it used.
-                        reviewer_notes: rv["reviewer_notes"]
-                            .as_str()
-                            .or_else(|| rv["reviewerNotes"].as_str())
-                            .or_else(|| rv["Reviewer Notes"].as_str())
-                            .unwrap_or("")
-                            .to_string(),
+                        // The file importer's own alias lists, not a copy of
+                        // them: the copy that used to live here was already
+                        // one spelling short, and a case inserted by an
+                        // assistant just lost its review context silently.
+                        comment: pick(rv, &crate::import_parser::COMMENT_KEYS),
+                        reviewer_notes: pick(rv, &crate::import_parser::REVIEWER_NOTES_KEYS),
                     });
                 }
                 if cases.is_empty() {

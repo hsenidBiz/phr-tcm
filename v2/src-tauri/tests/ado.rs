@@ -517,6 +517,58 @@ fn client_source_has_no_delete_calls() {
     }
 }
 
+/// `comment` and `reviewer_notes` are the app's own. They round-trip
+/// through the exported JSON and must never become an ADO field.
+///
+/// The `NoCommentInBody` matcher below is mounted on exactly one mock -
+/// the POST that creates a case. Every update test builds from
+/// `sample_tc()`, which leaves both fields empty, so a stray
+/// `fields.push(("Custom.ReviewerNotes", ...))` in
+/// `update_test_case_from_model` would have shipped green. This scans the
+/// source the way the DELETE rule is scanned: a wiremock matcher cannot
+/// survive someone adding a new write function, and a scan can.
+#[test]
+fn app_only_fields_never_reach_a_request_body() {
+    let src = include_str!("../src/ado/endpoints.rs");
+
+    // Every TestCase field the request builders may read. Adding an entry
+    // is a deliberate decision to send something to Azure DevOps.
+    const MAPPABLE: [&str; 7] = [
+        "title",
+        "steps",
+        "tags",
+        "automation_status",
+        "module_value",
+        "preconditions",
+        "update_id",
+    ];
+
+    let bytes = src.as_bytes();
+    for (i, _) in src.match_indices("tc.") {
+        // "etc." and friends are not field reads.
+        if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+            continue;
+        }
+        let rest = &src[i + 3..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(rest.len());
+        let field = &rest[..end];
+        assert!(
+            MAPPABLE.contains(&field),
+            "endpoints.rs reads tc.{field}. If that is one of the app-only fields it must \
+             never reach ADO; if it is genuinely a new ADO field, add it to MAPPABLE on purpose."
+        );
+    }
+
+    // And the app-only names appear nowhere in request-building code at
+    // all, under any spelling of the binding.
+    assert!(
+        !src.contains("reviewer_notes"),
+        "reviewer_notes must not appear in request-building code"
+    );
+}
+
 /// The one sanctioned exception, and it is held to a TIGHTER rule than the
 /// files above rather than a looser one.
 ///

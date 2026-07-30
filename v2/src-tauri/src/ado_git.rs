@@ -1,7 +1,15 @@
-//! Pull-request reads for the Work Manager's PR panel: repositories,
-//! "awaiting your review", "mine", and active-on-repo lists. GET only -
-//! voting, completing and abandoning stay in Azure DevOps; this module
-//! never writes anything, and no DELETE, ever (scanned by tests/ado.rs).
+//! Pull requests for the Work Manager's PR panel: repositories, "awaiting
+//! your review", "mine", active-on-repo lists, and the review threads on a
+//! PR.
+//!
+//! Almost all reads. The single write is `set_pr_thread_status`, which
+//! resolves or reopens one comment thread - the one thing the panel would
+//! otherwise send you to the browser for. Voting, completing and
+//! abandoning stay in Azure DevOps deliberately.
+//!
+//! No DELETE, ever, and that half IS enforced: `tests/ado.rs` scans this
+//! file's source. The read-only half is not enforceable by a scan, so it
+//! is a claim in a comment - keep it true by hand.
 
 use crate::ado::{AdoClient, AdoError};
 use serde::Serialize;
@@ -407,11 +415,6 @@ impl AdoClient {
             .collect())
     }
 
-    /// One page (PR_PAGE_SIZE) of a repository's PRs, by ADO status
-    /// ("active" | "completed" | "abandoned" | "all") and `skip` offset.
-    /// Paged on purpose: completed history is unbounded, and even active
-    /// lists on a busy repo don't need to arrive all at once. A page
-    /// shorter than PR_PAGE_SIZE means there is no next page. Read only.
     /// The review conversation on one PR: human comment threads only,
     /// oldest activity first, each with where it is anchored and whether it
     /// is resolved.
@@ -531,6 +534,11 @@ impl AdoClient {
         Ok(saved["status"].as_str().unwrap_or(status).to_string())
     }
 
+    /// One page (PR_PAGE_SIZE) of a repository's PRs, by ADO status
+    /// ("active" | "completed" | "abandoned" | "all") and `skip` offset.
+    /// Paged on purpose: completed history is unbounded, and even active
+    /// lists on a busy repo don't need to arrive all at once. A page
+    /// shorter than PR_PAGE_SIZE means there is no next page. Read only.
     pub async fn repo_pull_requests(
         &self,
         org: &str,

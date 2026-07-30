@@ -285,7 +285,20 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
     Ok((test_cases, warnings))
 }
 
-fn json_value<'a>(d: &'a serde_json::Value, keys: &[&str]) -> Option<&'a serde_json::Value> {
+/// Spellings accepted for the reviewer's own scratchpad.
+///
+/// Shared with `transform.rs` rather than copied into it: that copy had
+/// already drifted, and the failure mode is silent - notes an assistant
+/// wrote under the other spelling just do not arrive.
+pub(crate) const COMMENT_KEYS: [&str; 2] = ["comment", "notes"];
+
+/// Spellings accepted for the review context. An assistant told to add
+/// "Reviewer Notes" writes the label it was given, and a file an author
+/// typed by hand is not going to match one exact spelling.
+pub(crate) const REVIEWER_NOTES_KEYS: [&str; 4] =
+    ["reviewer_notes", "reviewerNotes", "Reviewer Notes", "review_notes"];
+
+pub(crate) fn json_value<'a>(d: &'a serde_json::Value, keys: &[&str]) -> Option<&'a serde_json::Value> {
     for k in keys {
         match d.get(k) {
             Some(serde_json::Value::Null) | None => continue,
@@ -296,7 +309,7 @@ fn json_value<'a>(d: &'a serde_json::Value, keys: &[&str]) -> Option<&'a serde_j
     None
 }
 
-fn value_to_string(v: &serde_json::Value) -> String {
+pub(crate) fn value_to_string(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Number(n) => n.to_string(),
@@ -411,22 +424,17 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             .trim()
             .to_string();
         // In-app note (round-trips through the JSON export; never sent to ADO).
-        let comment = json_value(&raw_v, &["comment", "notes"])
+        let comment = json_value(&raw_v, &COMMENT_KEYS)
             .map(value_to_string)
             .unwrap_or_default()
             .trim()
             .to_string();
-        // Review context, same rules. The aliases matter: an assistant told
-        // to add "Reviewer Notes" writes the label it was given, and a file
-        // an author typed by hand is not going to match one exact spelling.
-        let reviewer_notes = json_value(
-            &raw_v,
-            &["reviewer_notes", "reviewerNotes", "Reviewer Notes", "review_notes"],
-        )
-        .map(value_to_string)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        // Review context, same rules and the same alias list.
+        let reviewer_notes = json_value(&raw_v, &REVIEWER_NOTES_KEYS)
+            .map(value_to_string)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         let raw_steps = match obj.get("steps") {
             None | Some(serde_json::Value::Null) => vec![],
