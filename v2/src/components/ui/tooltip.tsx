@@ -141,15 +141,23 @@ export function TooltipLayer() {
   const via = useRef<Claim>("pointer");
 
   useEffect(() => {
-    /** Give the text back, so the element is unchanged once we let go. */
+    /** Give the text back, so the element is unchanged once we let go.
+     *
+     * Unless something wrote a title while we were holding it. A control
+     * whose label toggles on its own click - collapse/expand, show/hide -
+     * re-renders under the still-hovered pointer, and React writes the NEW
+     * title onto the parked element. Stamping the parked copy back then
+     * leaves the tooltip permanently one state behind, and nothing repairs
+     * it: React's record already matches what it wrote, so the next render
+     * is a no-op. A present `title` means we are no longer the owner. */
     const restore = () => {
       const el = anchor.current;
       if (el?.isConnected) {
         const parked = el.getAttribute(PARK);
-        if (parked !== null) {
+        if (parked !== null && !el.hasAttribute("title")) {
           el.setAttribute("title", parked);
-          el.removeAttribute(PARK);
         }
+        el.removeAttribute(PARK);
       }
       anchor.current = null;
     };
@@ -221,8 +229,10 @@ export function TooltipLayer() {
       const target = e.target as Element | null;
       const el = target?.closest?.("[title],[" + PARK + "]") as HTMLElement | null;
       if (!el) {
-        // Left the tooltipped element for something that has none.
-        if (anchor.current) hide();
+        // Left the tooltipped element for something that has none - which
+        // a keyboard-opened tooltip survives, exactly as in `onOut`. Only
+        // moving focus closes that one, and the mouse is not driving.
+        if (anchor.current && via.current !== "focus") hide();
         return;
       }
       claim(el);

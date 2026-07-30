@@ -1,8 +1,9 @@
 import { MessageSquare, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { TestCaseFull } from "../../bindings";
 import { Button } from "../../components/ui/button";
+import { useFocusTrap } from "../../components/ui/focusTrap";
 import { Textarea } from "../../components/ui/input";
 import { IconCancel, IconConfirm, IconEdit, IconRemove } from "../../lib/actionIcons";
 
@@ -22,8 +23,16 @@ export default function CommentModal({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note);
 
-  // Escape stays on the WINDOW: the dialog is not focused when it opens,
-  // so a handler on its own element would never see the key.
+  // `aria-modal` below is a promise that the rest of the page is inert;
+  // this is what keeps it. Deliberately just the trap and not `ui/modal`:
+  // that one closes on a backdrop click, and this dialog holds an unsaved
+  // comment, so it must not.
+  const panel = useRef<HTMLDivElement>(null);
+  useFocusTrap(panel);
+
+  // Escape stays on the WINDOW rather than on the panel: it has to fire
+  // while focus is on any control inside, and a window listener sees them
+  // all without depending on where the trap put it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -46,7 +55,11 @@ export default function CommentModal({
       aria-label={`Comment for #${c.id}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
     >
-      <div className="modal-in w-full max-w-md rounded-lg border border-border bg-surface shadow-2xl">
+      <div
+        ref={panel}
+        tabIndex={-1}
+        className="modal-in w-full max-w-md rounded-lg border border-border bg-surface shadow-2xl focus:outline-none"
+      >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <MessageSquare size={14} className="shrink-0 text-accent" />
           <span className="truncate text-sm font-semibold text-text">

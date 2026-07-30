@@ -60,6 +60,11 @@ export default function CaseEditor({
 
   const saveCase = useMutation({
     mutationFn: async () => {
+      // Pin what is being sent. `onSuccess` runs with the LATEST render's
+      // `tc`, so typing during the round trip made the success toast name a
+      // title Azure DevOps does not hold and set the revert baseline to an
+      // edit that was never saved - which made Discard disappear on it.
+      const sent = tc;
       // `original.steps_xml` is the Steps field as Azure DevOps holds it.
       // Passing it lets the save leave Steps out of the patch when they were
       // not edited - without it, saving a case you only retitled rewrites
@@ -68,16 +73,17 @@ export default function CaseEditor({
       const r = await commands.updateTestCase(
         org,
         project,
-        tc,
+        sent,
         moduleRef,
         preconditionsRef,
         original.steps_xml,
       );
       if (r.status === "error") throw new Error(r.error);
+      return sent;
     },
-    onSuccess: () => {
-      toast.success(`Updated #${original.id}: ${tc.title}`);
-      setBaseline(tc); // what is now in Azure DevOps is the thing to revert to
+    onSuccess: (sent) => {
+      toast.success(`Updated #${original.id}: ${sent.title}`);
+      setBaseline(sent); // what is now in Azure DevOps is the thing to revert to
       onSaved();
     },
     onError: (e) => toast.error(`Save failed: ${e.message}`),

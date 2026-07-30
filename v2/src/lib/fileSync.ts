@@ -41,8 +41,13 @@ export function keysFor(list: TestCase[]): string[] {
   });
 }
 
+// Two separators, and both are load-bearing. The between-steps one was
+// a RAW control byte, which is invisible in a diff and reads as an empty
+// join - so it gets written as an escape. Without it, splitting a step
+// mid-word gives the same signature as the unsplit pair, and the edit
+// reports as no change at all.
 const stepsSig = (c: TestCase) =>
-  c.steps.map((s) => `${s.action}\u0000${s.expected}`).join("");
+  c.steps.map((s) => `${s.action}\u0000${s.expected}`).join("\u0001");
 
 /** One field that differs, with both sides - the report renders the actual
  * words that changed, not just the field's name. Knowing "Title changed"

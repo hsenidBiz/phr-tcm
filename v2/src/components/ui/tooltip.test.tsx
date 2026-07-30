@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { expect, test } from "vitest";
 import { Tooltip, TooltipLayer, anchorBox, place } from "./tooltip";
 
@@ -193,6 +193,49 @@ test("a stray mouse movement does not close a tooltip opened by Tab", async () =
   fireEvent.pointerMove(document.body, { clientX: 900, clientY: 900, bubbles: true });
   expect(screen.getByRole("tooltip")).toBeInTheDocument();
   expect(btn).not.toHaveAttribute("title");
+
+  // pointerover onto something with no title of its own is the path that
+  // was NOT guarded; pointerMove alone passes against the broken code.
+  fireEvent.pointerOver(document.body, { clientX: 900, clientY: 900, bubbles: true });
+  expect(screen.getByRole("tooltip")).toBeInTheDocument();
+  expect(btn).not.toHaveAttribute("title");
+});
+
+/** A control whose label toggles on its own click re-renders under the
+ *  still-hovered pointer, so React writes the NEW title onto the element
+ *  this layer is holding. Handing the parked copy back then leaves the
+ *  tooltip permanently one state behind - and nothing repairs it, because
+ *  React's record already matches what it wrote. Live on the sidebar
+ *  collapse button, the board's Hide/Open, and the case-list selector. */
+test("a title changed while the layer held it is not stamped back", async () => {
+  function Toggle() {
+    const [open, setOpen] = useState(true);
+    return (
+      <button title={open ? "Collapse" : "Expand"} onClick={() => setOpen((v) => !v)}>
+        T
+      </button>
+    );
+  }
+  withLayer(<Toggle />);
+  const btn = screen.getByRole("button");
+
+  hover(btn);
+  await waitFor(() => expect(btn).not.toHaveAttribute("title"));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Collapse");
+
+  // Click without leaving: the bubble goes, the layer keeps the title, and
+  // React re-renders the button with the opposite label.
+  fireEvent.pointerDown(btn, { bubbles: true });
+  fireEvent.click(btn);
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+
+  // Now leave. What comes back must be what React last wanted.
+  fireEvent.pointerOut(btn, { relatedTarget: document.body, bubbles: true });
+  await waitFor(() => expect(btn).toHaveAttribute("title", "Expand"));
+
+  // And the next hover shows that, not the label from before the click.
+  hover(btn);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Expand");
 });
 
 /** Chromium suppresses a disabled control's CLICK events, not its pointer

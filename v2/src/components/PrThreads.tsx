@@ -71,9 +71,15 @@ function Thread({
       <div className="flex items-center gap-2">
         {/* The file is the first thing a reviewer looks for, and it is the
             part most likely to be long - so it truncates from the LEFT,
-            keeping the filename rather than the repository root. */}
+            keeping the filename rather than the repository root.
+
+            `dir="rtl"` is what moves the ellipsis to the front, but it also
+            reorders the neutral characters at the edges: every path came out
+            as "src/lib/thing.ts/" with its leading slash at the END. The
+            inner LTR isolate fixes the ordering while the outer direction
+            still decides which end overflows. */}
         <span className="min-w-0 flex-1 truncate text-left text-[11px] text-muted" dir="rtl">
-          {where}
+          <bdi dir="ltr">{where}</bdi>
         </span>
         <span
           className={cn(
