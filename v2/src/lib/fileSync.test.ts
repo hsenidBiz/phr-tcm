@@ -28,7 +28,11 @@ const tc = (title: string, over: Partial<TestCase> = {}): TestCase => ({
 test("an added case is appended and reported", () => {
   const r = syncFromFile([tc("A")], [tc("A")], [tc("A"), tc("B")]);
   expect(r.queue.map((c) => c.title)).toEqual(["A", "B"]);
-  expect(r.changes).toEqual([{ kind: "added", key: "t:b", title: "B", fields: [], steps: [] }]);
+  expect(r.changes).toEqual([
+    // `full` is the case AS IT NOW STANDS, so the report can show it end
+    // to end rather than only the fragment that moved.
+    { kind: "added", key: "t:b", title: "B", fields: [], steps: [], full: tc("B") },
+  ]);
 });
 
 test("an edited case is replaced in place, keeping its position", () => {
@@ -47,6 +51,8 @@ test("an edited case is replaced in place, keeping its position", () => {
       // A step added at the end, reported as the step itself rather than
       // as the words "Steps (1 → 2)".
       steps: [{ index: 1, kind: "added", new: { action: "then", expected: "done" } }],
+      // The post-sync case, not the one the queue held before it.
+      full: edited,
     },
   ]);
 });
@@ -85,6 +91,7 @@ test("an in-app edit that the file overwrites is reported as changed", () => {
       // the thing the user needs to notice.
       fields: [{ name: "Module", old: "Payments", new: "" }],
       steps: [],
+      full: fileCase,
     },
   ]);
   expect(r.queue[0].module_value).toBe("");
@@ -107,6 +114,7 @@ test("update_id is the identity when present, so a retitle is one change", () =>
       title: "New name",
       fields: [{ name: "Title", old: "Old name", new: "New name" }],
       steps: [],
+      full: after[0],
     },
   ]);
   expect(r.queue).toHaveLength(1);
@@ -216,9 +224,16 @@ test("patchWatch touches one file and leaves the rest alone", () => {
 
 test("the notification counts what moved, not what it was called", () => {
   const n = syncNotification("login-cases.json", [
-    { kind: "added", key: "t:a", title: "A", fields: [], steps: [] },
-    { kind: "added", key: "t:b", title: "B", fields: [], steps: [] },
-    { kind: "changed", key: "t:c", title: "C", fields: [{ name: "Title", old: "c", new: "C" }], steps: [] },
+    { kind: "added", key: "t:a", title: "A", fields: [], steps: [], full: tc("A") },
+    { kind: "added", key: "t:b", title: "B", fields: [], steps: [], full: tc("B") },
+    {
+      kind: "changed",
+      key: "t:c",
+      title: "C",
+      fields: [{ name: "Title", old: "c", new: "C" }],
+      steps: [],
+      full: tc("C"),
+    },
   ]);
   expect(n.title).toBe("login-cases.json was updated");
   expect(n.body).toContain("2 added");

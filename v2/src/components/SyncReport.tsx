@@ -8,10 +8,11 @@
 // see what an assistant changed is to diff the file yourself. Closing it
 // is now a decision, not a timeout.
 
-import { FilePlus2, FileMinus2, FilePen, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FilePlus2, FileMinus2, FilePen, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "../lib/cn";
 import { countBy, type SyncChange } from "../lib/fileSync";
+import CaseStepsTable from "./CaseStepsTable";
 import InlineDiff from "./InlineDiff";
 import StepDiffLines from "./StepDiffLines";
 
@@ -36,6 +37,16 @@ export default function SyncReport({
   onDismiss: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Which cases have their full step list showing. Per case, like the
+  // review list: a report covering twenty cases should not become twenty
+  // step tables because you wanted to read one of them.
+  const [openCases, setOpenCases] = useState<Set<string>>(new Set());
+  const toggleCase = (id: string) =>
+    setOpenCases((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   if (changes.length === 0 && warnings === 0) return null;
 
@@ -84,11 +95,29 @@ export default function SyncReport({
         <ul className="mt-2 space-y-2 border-t border-accent/20 pt-2">
           {changes.map((c) => {
             const { icon: Icon, tone } = KIND[c.kind];
+            const id = `${c.kind}:${c.key}`;
+            const showing = openCases.has(id);
             return (
-              <li key={`${c.kind}:${c.key}`} className="flex items-start gap-2 text-xs">
+              <li key={id} className="flex items-start gap-2 text-xs">
                 <Icon size={13} className={cn("mt-0.5 shrink-0", tone)} />
                 <div className="min-w-0 flex-1 space-y-1">
-                  <span className="break-words text-text">{c.title}</span>
+                  {/* The case's own toggle, next to its title - the same
+                      affordance the review list has, for the same reason.
+                      The diff below says what moved; this says what the
+                      case now IS, which is the only way to judge whether a
+                      step still follows from the one before it. */}
+                  <button
+                    className="flex w-full items-start gap-1 text-left hover:text-accent"
+                    aria-expanded={showing}
+                    onClick={() => toggleCase(id)}
+                  >
+                    {showing ? (
+                      <ChevronDown size={12} className="mt-0.5 shrink-0 text-muted" />
+                    ) : (
+                      <ChevronRight size={12} className="mt-0.5 shrink-0 text-muted" />
+                    )}
+                    <span className="min-w-0 break-words text-text">{c.title}</span>
+                  </button>
                   {/* The point of the panel: not "Title changed" but the
                       words that changed. Same InlineDiff and StepDiffLines
                       the submit review uses, so a file edit and a pending
@@ -106,6 +135,14 @@ export default function SyncReport({
                       {c.steps.map((d) => (
                         <StepDiffLines key={`${d.kind}:${d.index}`} d={d} />
                       ))}
+                    </div>
+                  )}
+                  {showing && (
+                    <div className="overflow-hidden rounded border border-border/60">
+                      <CaseStepsTable
+                        steps={c.full.steps}
+                        preconditions={c.full.preconditions}
+                      />
                     </div>
                   )}
                 </div>

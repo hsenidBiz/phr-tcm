@@ -21,6 +21,7 @@ import AstryxIsland from "./AstryxIsland";
 import InlineDiff from "./InlineDiff";
 import Combobox from "./ui/combobox";
 import { pagePalette } from "../lib/reportTheme";
+import CaseStepsTable from "./CaseStepsTable";
 import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
@@ -661,34 +662,10 @@ export default function QueueSection({
                 )}
                 {expandedSteps.has(i) && (
                   <div className="border-t border-border">
-                    {tc.preconditions && (
-                      <p className="whitespace-pre-wrap border-b border-border/60 px-3 py-2 text-xs text-muted">
-                        <span className="font-semibold">Preconditions: </span>
-                        {tc.preconditions}
-                      </p>
-                    )}
-                    {tc.steps.length > 0 ? (
-                      <table className="w-full border-collapse text-xs">
-                        <thead>
-                          <tr className="text-left text-faint">
-                            <th className="w-8 px-3 py-1 font-medium">#</th>
-                            <th className="px-3 py-1 font-medium">Action</th>
-                            <th className="px-3 py-1 font-medium">Expected</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {tc.steps.map((s, si) => (
-                            <tr key={si} className="border-t border-border/40 align-top">
-                              <td className="px-3 py-1 text-faint">{si + 1}</td>
-                              <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
-                              <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <p className="px-3 py-2 text-xs text-muted">This test case has no steps.</p>
-                    )}
+                    {/* Shared with the watched-file change report, which
+                        needed the same "read the case start to finish"
+                        view - see CaseStepsTable. */}
+                    <CaseStepsTable steps={tc.steps} preconditions={tc.preconditions} />
                   </div>
                 )}
                 {diff && !diff.noop && expandedDiffs.has(i) && (

@@ -109,6 +109,17 @@ export type SyncChange = {
   fields: FieldChange[];
   /** Populated for "changed" only. */
   steps: StepDiff[];
+  /** The whole case, so the report can show it the way the review list
+   * does - in order, start to finish.
+   *
+   * The diff alone answers "what moved"; it cannot answer "what was step 3
+   * again", and on a case where step 4 only makes sense after step 3 that
+   * is the question a reviewer actually has. Held on the change rather than
+   * looked up in the queue later so the report stays a true snapshot of the
+   * moment the file landed.
+   *
+   * For a removed case this is the case as it was before it went. */
+  full: TestCase;
 };
 
 export type SyncResult = {
@@ -147,7 +158,7 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
       keptKeys.push(k);
       return true;
     }
-    changes.push({ kind: "removed", key: k, title: c.title, fields: [], steps: [] });
+    changes.push({ kind: "removed", key: k, title: c.title, fields: [], steps: [], full: c });
     return false;
   });
 
@@ -170,7 +181,7 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
     // the moment steps moved out into their own diff, an edit that
     // touched nothing but the steps stopped being applied at all.
     if (fields.length === 0 && stepDiffs.length === 0) return c;
-    changes.push({ kind: "changed", key: k, title: fresh.title, fields, steps: stepDiffs });
+    changes.push({ kind: "changed", key: k, title: fresh.title, fields, steps: stepDiffs, full: fresh });
     return fresh;
   });
 
@@ -180,7 +191,7 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
     if (present.has(k)) return;
     present.add(k);
     synced.push(c);
-    changes.push({ kind: "added", key: k, title: c.title, fields: [], steps: [] });
+    changes.push({ kind: "added", key: k, title: c.title, fields: [], steps: [], full: c });
   });
 
   return { queue: synced, changes, snapshot: next };
