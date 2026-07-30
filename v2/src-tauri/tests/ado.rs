@@ -257,6 +257,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         preconditions: "Logged out".into(),
         update_id: None,
         comment: String::new(),
+        reviewer_notes: String::new(),
     }
 }
 
@@ -269,7 +270,7 @@ async fn create_test_case_posts_json_patch() {
         .and(wiremock::matchers::body_partial_json(serde_json::json!([
             {"op": "add", "path": "/fields/System.Title", "value": "My case"}
         ])))
-        // The in-app comment must NEVER be sent to ADO in any form.
+        // Neither app-only note may EVER be sent to ADO, in any form.
         .and(NoCommentInBody)
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 777})))
         .mount(&server)
@@ -277,6 +278,7 @@ async fn create_test_case_posts_json_patch() {
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let mut tc = sample_tc();
     tc.comment = "IN-APP-ONLY sentinel".into();
+    tc.reviewer_notes = "REVIEWER-ONLY sentinel".into();
     let id = client
         .create_test_case("org", "proj", &tc, Some("Custom.Module"), "Area\\Sub", "It\\1", Some("Custom.Prec"))
         .await
@@ -284,12 +286,17 @@ async fn create_test_case_posts_json_patch() {
     assert_eq!(id, 777);
 }
 
-/// Matcher rejecting any request whose body carries the in-app comment
-/// sentinel - the guard that `TestCase.comment` stays out of ADO payloads.
+/// Matcher rejecting any request carrying either app-only note's sentinel.
+///
+/// `comment` and `reviewer_notes` both live on TestCase, both round-trip
+/// through the exported JSON, and neither has an Azure DevOps field. The
+/// only thing standing between "app-only" and a field mapping added in
+/// passing is this matcher, so it names both.
 struct NoCommentInBody;
 impl wiremock::Match for NoCommentInBody {
     fn matches(&self, request: &wiremock::Request) -> bool {
-        !String::from_utf8_lossy(&request.body).contains("IN-APP-ONLY sentinel")
+        let body = String::from_utf8_lossy(&request.body);
+        !body.contains("IN-APP-ONLY sentinel") && !body.contains("REVIEWER-ONLY sentinel")
     }
 }
 

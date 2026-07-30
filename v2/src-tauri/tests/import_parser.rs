@@ -147,6 +147,7 @@ fn json_export_round_trips_through_the_importer() {
             preconditions: "Logged out".into(),
             update_id: Some(77),
             comment: "Flaky on Fridays - re-check with QA".into(),
+            reviewer_notes: "## Source\n\nSpec **3.2**, AC-4. Out of scope: SSO.".into(),
         },
         TestCase {
             title: "New one".into(),
@@ -176,6 +177,69 @@ fn json_export_round_trips_through_the_importer() {
     assert_eq!(cases[0].comment, "Flaky on Fridays - re-check with QA");
     assert_eq!(cases[1].comment, "");
     assert_eq!(cases[1].update_id, None);
+    // Reviewer notes ride the same road: written out, read back, markdown
+    // untouched on the way through - the file is the transport, not the
+    // renderer.
+    assert_eq!(
+        cases[0].reviewer_notes,
+        "## Source\n\nSpec **3.2**, AC-4. Out of scope: SSO."
+    );
+    assert_eq!(cases[1].reviewer_notes, "");
+
+    // And neither app-only field is written when it is empty, so a draft
+    // an assistant round-trips does not grow keys nobody asked for.
+    let second = &doc["test_cases"][1];
+    assert!(second.get("comment").is_none(), "{second}");
+    assert!(second.get("reviewer_notes").is_none(), "{second}");
+}
+
+/// The reviewer-facing half: notes reach the browser page as RENDERED
+/// markdown, in their own panel, and the page still carries the ordinary
+/// comment boxes alongside them.
+#[test]
+fn reviewer_notes_render_as_markdown_in_the_review_page() {
+    let queue = vec![TestCase {
+        title: "Login".into(),
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        automation_status: "Planned".into(),
+        reviewer_notes: "## Where this came from\n\n\
+                         Covers [AC-4](https://spec.invalid/auth#ac4).\n\n\
+                         - `POST /session` only\n- SSO is **out of scope**\n\n\
+                         <img src=x onerror=alert(1)>"
+            .into(),
+        ..Default::default()
+    }];
+    let path = tmp_path("reviewer-notes.html");
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default())
+        .unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    assert!(
+        html.contains("<summary>Reviewer notes</summary>"),
+        "the panel is labelled"
+    );
+    assert!(html.contains("<details class='rev' open>"), "and open by default");
+    assert!(html.contains("<h5>Where this came from</h5>"), "markdown headings render: {html}");
+    assert!(html.contains(r#"<a href="https://spec.invalid/auth#ac4""#), "links render");
+    assert!(html.contains("<strong>out of scope</strong>"));
+    assert!(html.contains("<code>POST /session</code>"));
+    // The note is remote-authored text in a page opened from a temp file.
+    assert!(!html.contains("onerror"), "HTML in a note must not survive: {html}");
+
+    // A case with no notes gets no panel at all - an empty labelled box on
+    // every card would be worse than nothing.
+    let bare = vec![TestCase {
+        title: "No notes".into(),
+        steps: vec![Step { action: "Open".into(), expected: "".into() }],
+        automation_status: "Planned".into(),
+        ..Default::default()
+    }];
+    let path2 = tmp_path("reviewer-notes-none.html");
+    v2_lib::import_parser::export_queue_to_html(&bare, &path2, "", None, &Default::default())
+        .unwrap();
+    // Checked against the MARKUP, not the words: "Reviewer notes" also
+    // appears in the stylesheet's own comment, which every page carries.
+    assert!(!std::fs::read_to_string(&path2).unwrap().contains("<details class='rev'"));
 }
 
 #[test]
@@ -189,6 +253,7 @@ fn html_export_carries_cases_and_search() {
         preconditions: "".into(),
         update_id: Some(42),
         comment: String::new(),
+        reviewer_notes: String::new(),
     }];
     let path = tmp_path("report.html");
     v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None, &Default::default())
@@ -218,6 +283,7 @@ fn the_test_case_page_is_themed_and_can_be_flipped() {
         preconditions: String::new(),
         update_id: None,
         comment: String::new(),
+        reviewer_notes: String::new(),
     }];
     // Spelled out rather than `..Default::default()`: that default is the
     // LIGHT palette, so a partial dark fixture inherits #1f2530 text onto

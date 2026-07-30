@@ -1,6 +1,6 @@
 [package]
 name = "v2"
-version = "1.17.10"
+version = "1.18.0"
 description = "Bulk-create and edit Azure DevOps Test Cases"
 authors = ["Avin Alwis"]
 edition = "2021"
@@ -61,6 +61,7 @@ tauri-plugin-clipboard-manager = "2.3.2"
 # watched import file costs nothing while it sits still - see filewatch.rs.
 notify = "8.2.0"
 tauri-plugin-notification = "2.3.3"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 
 # One window only. Desktop-only because the mechanism it uses (a named
 # object the first process owns) has no meaning on mobile - see run().

@@ -3,6 +3,7 @@ import { ExternalLink, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { cn } from "../lib/cn";
@@ -232,7 +233,11 @@ export default function WorkItemDrawer({
     onError: (e) => toast.error(`Save failed: ${e.message}`),
   });
 
-  return (
+  // Portalled for the same reason as ui/modal.tsx and CommentModal: this
+  // is opened from the board, which renders inside AnimatedContent, and a
+  // `fixed` overlay inside that GSAP transform is positioned against the
+  // scrollable wrapper rather than the viewport.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -604,6 +609,7 @@ export default function WorkItemDrawer({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

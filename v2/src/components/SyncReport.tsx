@@ -1,18 +1,19 @@
 // What the watched file just did to the queue, shown the way a diff is:
-// counts at a glance, per-case detail on demand, colour by kind.
+// counts at a glance, per-case detail on demand, colour by kind - and for
+// a changed case, the words that actually changed.
 //
-// Temporary by design - the caller drops it after a while, because the
-// queue itself is the durable record. It stays put while it is open so a
-// report cannot vanish mid-read.
+// It stays until it is dismissed. It used to expire on a timer, on the
+// reasoning that the queue is the durable record; but the report is the
+// only place the EDIT is visible at all - once it goes, the only way to
+// see what an assistant changed is to diff the file yourself. Closing it
+// is now a decision, not a timeout.
 
 import { FilePlus2, FileMinus2, FilePen, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { cn } from "../lib/cn";
 import { countBy, type SyncChange } from "../lib/fileSync";
-
-/** Long enough to notice and read the counts, short enough that the panel
- * doesn't become permanent furniture. */
-const LINGER_MS = 45_000;
+import InlineDiff from "./InlineDiff";
+import StepDiffLines from "./StepDiffLines";
 
 const KIND = {
   added: { icon: FilePlus2, tone: "text-success", sign: "+", word: "added" },
@@ -35,16 +36,6 @@ export default function SyncReport({
   onDismiss: () => void;
 }) {
   const [open, setOpen] = useState(false);
-
-  // Expiry lives here, not in the caller, because only this component
-  // knows whether the detail list is open - and pulling a report out from
-  // under someone who is reading it would be the whole point missed.
-  // `onDismiss` must be stable or the timer restarts every render.
-  useEffect(() => {
-    if (open || (changes.length === 0 && warnings === 0)) return;
-    const t = setTimeout(onDismiss, LINGER_MS);
-    return () => clearTimeout(t);
-  }, [open, changes, warnings, onDismiss]);
 
   if (changes.length === 0 && warnings === 0) return null;
 
@@ -90,18 +81,34 @@ export default function SyncReport({
       </div>
 
       {open && (
-        <ul className="mt-2 space-y-1 border-t border-accent/20 pt-2">
+        <ul className="mt-2 space-y-2 border-t border-accent/20 pt-2">
           {changes.map((c) => {
             const { icon: Icon, tone } = KIND[c.kind];
             return (
               <li key={`${c.kind}:${c.key}`} className="flex items-start gap-2 text-xs">
                 <Icon size={13} className={cn("mt-0.5 shrink-0", tone)} />
-                <span className="min-w-0 flex-1 break-words text-text">
-                  {c.title}
-                  {c.fields.length > 0 && (
-                    <span className="text-muted"> — {c.fields.join(", ")}</span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <span className="break-words text-text">{c.title}</span>
+                  {/* The point of the panel: not "Title changed" but the
+                      words that changed. Same InlineDiff and StepDiffLines
+                      the submit review uses, so a file edit and a pending
+                      update read identically. */}
+                  {c.fields.map((f) => (
+                    <div key={f.name} className="flex flex-wrap gap-x-2 break-words">
+                      <span className="shrink-0 text-faint">{f.name}</span>
+                      <span className="min-w-0 whitespace-pre-wrap text-text">
+                        <InlineDiff old={f.old} next={f.new} emptyLabel="(empty)" />
+                      </span>
+                    </div>
+                  ))}
+                  {c.steps.length > 0 && (
+                    <div className="space-y-0.5">
+                      {c.steps.map((d) => (
+                        <StepDiffLines key={`${d.kind}:${d.index}`} d={d} />
+                      ))}
+                    </div>
                   )}
-                </span>
+                </div>
               </li>
             );
           })}

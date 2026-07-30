@@ -1,5 +1,6 @@
 import { MessageSquare, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { TestCaseFull } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
@@ -21,6 +22,8 @@ export default function CommentModal({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note);
 
+  // Escape stays on the WINDOW: the dialog is not focused when it opens,
+  // so a handler on its own element would never see the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -29,7 +32,14 @@ export default function CommentModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  // PORTALLED to <body>, like ui/modal.tsx and for the same reason: this
+  // renders inside AnimatedContent, whose GSAP transform makes any
+  // descendant `position: fixed` resolve against that scrollable wrapper
+  // instead of the viewport. Without the portal the backdrop covered only
+  // the screen area and the dialog centred inside it - so opening a
+  // comment from a case far down a long list put the dialog off-screen,
+  // with the backdrop still swallowing clicks.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -112,6 +122,7 @@ export default function CommentModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

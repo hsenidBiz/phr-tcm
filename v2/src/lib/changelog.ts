@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.0",
+    date: "2026-07-30",
+    items: [
+      "Reviewer notes. A new optional field in the JSON - \"reviewer_notes\" - for saying where a test case came from: the spec section, the acceptance criterion it covers, what was deliberately left out. It opens automatically in the browser review page, above the steps and alongside the usual comment boxes, and it is written in markdown, so headings, lists, tables and links to the spec all work. Like the in-app comment, it never reaches Azure DevOps.",
+      "The AI writing guide now asks for reviewer notes explicitly, so an assistant filling in a draft knows to cite the spec rather than restate the test.",
+      "The change report for a watched file now shows what actually changed, word by word, instead of naming the field. It uses the same green-and-red diff as the review gate, so a file edit and a pending update read the same way.",
+      "That report no longer disappears on a timer. It was the only place an edit was visible at all - closing it is now your decision.",
+      "The action ⇒ expected-result arrow in a step diff is bolder and accent-coloured, so a long step line reads as two halves at a glance.",
+      "\"1 field change\" now reads \"Click to view 1 field changing\" - it was always a button that opens the diff, and it did not look like one.",
+      "The comment dialog in View Test Cases could open off-screen when you had scrolled down a long list. So could the work item drawer on the board. Both are fixed.",
+      "Remove all in Import now also stops watching the files that fed the queue, instead of leaving them armed to refill it.",
+    ],
+  },
+  {
     version: "1.17.10",
     date: "2026-07-30",
     items: [

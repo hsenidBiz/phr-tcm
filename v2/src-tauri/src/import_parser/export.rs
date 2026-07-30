@@ -15,7 +15,13 @@ to null to CREATE a new test case. 'title' is required (max 255 chars). \
 'expected' may be an empty string. 'automation_status' must be exactly \
 'Not Automated' or 'Planned'. 'tags' is a single semicolon-separated \
 string - commas are not allowed in tags. 'module' and 'preconditions' \
-are free text and may be empty strings.";
+are free text and may be empty strings. Two optional fields never reach \
+Azure DevOps and exist only in this file: 'comment', a short in-app note, \
+and 'reviewer_notes', context for whoever reviews the case - which part \
+of the spec it comes from, the acceptance criterion it covers, anything \
+deliberately out of scope. 'reviewer_notes' is rendered as MARKDOWN when \
+the cases are opened in a browser, so headings, lists, tables and links \
+to the spec all work.";
 
 pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
     let records: Vec<serde_json::Value> = queue
@@ -38,6 +44,9 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
             // caller never wrote (a transform must be idempotent in shape).
             if !tc.comment.is_empty() {
                 rec["comment"] = serde_json::json!(tc.comment);
+            }
+            if !tc.reviewer_notes.is_empty() {
+                rec["reviewer_notes"] = serde_json::json!(tc.reviewer_notes);
             }
             rec
         })

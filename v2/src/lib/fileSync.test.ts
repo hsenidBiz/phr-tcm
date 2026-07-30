@@ -28,7 +28,7 @@ const tc = (title: string, over: Partial<TestCase> = {}): TestCase => ({
 test("an added case is appended and reported", () => {
   const r = syncFromFile([tc("A")], [tc("A")], [tc("A"), tc("B")]);
   expect(r.queue.map((c) => c.title)).toEqual(["A", "B"]);
-  expect(r.changes).toEqual([{ kind: "added", key: "t:b", title: "B", fields: [] }]);
+  expect(r.changes).toEqual([{ kind: "added", key: "t:b", title: "B", fields: [], steps: [] }]);
 });
 
 test("an edited case is replaced in place, keeping its position", () => {
@@ -39,7 +39,15 @@ test("an edited case is replaced in place, keeping its position", () => {
   expect(r.queue.map((c) => c.title)).toEqual(["A", "B", "C"]); // no reshuffle
   expect(r.queue[1].steps).toHaveLength(2);
   expect(r.changes).toEqual([
-    { kind: "changed", key: "t:b", title: "B", fields: ["Steps (1 → 2)"] },
+    {
+      kind: "changed",
+      key: "t:b",
+      title: "B",
+      fields: [],
+      // A step added at the end, reported as the step itself rather than
+      // as the words "Steps (1 → 2)".
+      steps: [{ index: 1, kind: "added", new: { action: "then", expected: "done" } }],
+    },
   ]);
 });
 
@@ -67,7 +75,18 @@ test("an in-app edit that the file overwrites is reported as changed", () => {
   const fileCase = tc("A");
   const editedInApp = tc("A", { module_value: "Payments" });
   const r = syncFromFile([editedInApp], [fileCase], [fileCase]);
-  expect(r.changes).toEqual([{ kind: "changed", key: "t:a", title: "A", fields: ["Module"] }]);
+  expect(r.changes).toEqual([
+    {
+      kind: "changed",
+      key: "t:a",
+      title: "A",
+      // Old is what the QUEUE showed, new is what the file just imposed -
+      // so this reads as "your in-app Payments is being cleared", which is
+      // the thing the user needs to notice.
+      fields: [{ name: "Module", old: "Payments", new: "" }],
+      steps: [],
+    },
+  ]);
   expect(r.queue[0].module_value).toBe("");
 });
 
@@ -82,7 +101,13 @@ test("update_id is the identity when present, so a retitle is one change", () =>
   const after = [tc("New name", { update_id: 42 })];
   const r = syncFromFile(before, before, after);
   expect(r.changes).toEqual([
-    { kind: "changed", key: "id:42", title: "New name", fields: ["Title"] },
+    {
+      kind: "changed",
+      key: "id:42",
+      title: "New name",
+      fields: [{ name: "Title", old: "Old name", new: "New name" }],
+      steps: [],
+    },
   ]);
   expect(r.queue).toHaveLength(1);
 });
@@ -102,7 +127,7 @@ test("the returned snapshot is what the NEXT edit compares against", () => {
   expect(second.changes).toEqual([]);
 });
 
-test("changedFields names every field the queue shows", () => {
+test("changedFields reports both sides of every field the queue shows", () => {
   const a = tc("A");
   const b = tc("B", {
     tags: "smoke",
@@ -111,13 +136,24 @@ test("changedFields names every field the queue shows", () => {
     preconditions: "Signed in",
     update_id: 9,
   });
+  // Names AND values: "Title changed" still means opening the file to see
+  // what it changed to, which is the whole complaint this answers.
   expect(changedFields(a, b)).toEqual([
-    "Title",
-    "Tags",
-    "Automation status",
-    "Module",
-    "Preconditions",
-    "Work item id",
+    { name: "Title", old: "A", new: "B" },
+    { name: "Tags", old: "", new: "smoke" },
+    { name: "Automation status", old: "Not Automated", new: "Planned" },
+    { name: "Module", old: "", new: "Payments" },
+    { name: "Preconditions", old: "", new: "Signed in" },
+    { name: "Work item id", old: "", new: "9" },
+  ]);
+});
+
+test("an assistant filling in reviewer notes is a reported change", () => {
+  const notes = "## Source\n\nSpec 3.2, AC-4.";
+  const before = tc("A");
+  const after = tc("A", { reviewer_notes: notes });
+  expect(changedFields(before, after)).toEqual([
+    { name: "Reviewer notes", old: "", new: notes },
   ]);
 });
 
@@ -180,9 +216,9 @@ test("patchWatch touches one file and leaves the rest alone", () => {
 
 test("the notification counts what moved, not what it was called", () => {
   const n = syncNotification("login-cases.json", [
-    { kind: "added", key: "t:a", title: "A", fields: [] },
-    { kind: "added", key: "t:b", title: "B", fields: [] },
-    { kind: "changed", key: "t:c", title: "C", fields: ["Title"] },
+    { kind: "added", key: "t:a", title: "A", fields: [], steps: [] },
+    { kind: "added", key: "t:b", title: "B", fields: [], steps: [] },
+    { kind: "changed", key: "t:c", title: "C", fields: [{ name: "Title", old: "c", new: "C" }], steps: [] },
   ]);
   expect(n.title).toBe("login-cases.json was updated");
   expect(n.body).toContain("2 added");

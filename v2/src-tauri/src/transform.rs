@@ -289,6 +289,15 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                             .or_else(|| rv["update_id"].as_i64())
                             .map(|n| n as i32),
                         comment: rv["comment"].as_str().unwrap_or("").to_string(),
+                        // Same aliases the file importer accepts, so a case
+                        // inserted by an assistant keeps its review context
+                        // whichever spelling it used.
+                        reviewer_notes: rv["reviewer_notes"]
+                            .as_str()
+                            .or_else(|| rv["reviewerNotes"].as_str())
+                            .or_else(|| rv["Reviewer Notes"].as_str())
+                            .unwrap_or("")
+                            .to_string(),
                     });
                 }
                 if cases.is_empty() {

@@ -21,6 +21,7 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
         preconditions: pre.into(),
         update_id: None,
         comment: String::new(),
+        reviewer_notes: String::new(),
     }
 }
 

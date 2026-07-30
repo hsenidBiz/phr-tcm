@@ -8,6 +8,7 @@
 // snapshot parsed from that same file.
 
 import type { TestCase } from "../bindings";
+import type { StepDiff } from "./caseDiff";
 
 /** Identity across re-parses. A kept work-item id is exact; without one
  * the title is the only stable handle we have, so renaming an id-less case
@@ -43,24 +44,54 @@ export function keysFor(list: TestCase[]): string[] {
 const stepsSig = (c: TestCase) =>
   c.steps.map((s) => `${s.action}\u0000${s.expected}`).join("");
 
-/** Human-readable names of what differs, for the change report. */
-export function changedFields(before: TestCase, after: TestCase): string[] {
-  const out: string[] = [];
-  if (before.title.trim() !== after.title.trim()) out.push("Title");
-  if (before.tags.trim() !== after.tags.trim()) out.push("Tags");
-  if (before.automation_status !== after.automation_status) out.push("Automation status");
-  if (before.module_value.trim() !== after.module_value.trim()) out.push("Module");
-  if (before.preconditions.trim() !== after.preconditions.trim()) out.push("Preconditions");
-  // The in-app note round-trips through the JSON, so an assistant can edit
-  // it even though it never reaches Azure DevOps.
-  if ((before.comment ?? "").trim() !== (after.comment ?? "").trim()) out.push("Comment");
-  if ((before.update_id ?? null) !== (after.update_id ?? null)) out.push("Work item id");
-  if (stepsSig(before) !== stepsSig(after)) {
-    out.push(
-      before.steps.length === after.steps.length
-        ? `Steps (${after.steps.length})`
-        : `Steps (${before.steps.length} → ${after.steps.length})`,
-    );
+/** One field that differs, with both sides - the report renders the actual
+ * words that changed, not just the field's name. Knowing "Title changed"
+ * still means opening the file to find out what it changed to. */
+export type FieldChange = { name: string; old: string; new: string };
+
+/** What differs between two versions of the same case, field by field.
+ * Steps are reported separately by `changedSteps` - they are a list, and
+ * "Steps (4)" was the least useful line in the whole report. */
+export function changedFields(before: TestCase, after: TestCase): FieldChange[] {
+  const out: FieldChange[] = [];
+  const push = (name: string, o: string, n: string) => {
+    if (o.trim() !== n.trim()) out.push({ name, old: o, new: n });
+  };
+  push("Title", before.title, after.title);
+  push("Tags", before.tags, after.tags);
+  push("Automation status", before.automation_status, after.automation_status);
+  push("Module", before.module_value, after.module_value);
+  push("Preconditions", before.preconditions, after.preconditions);
+  // Both app-only notes round-trip through the JSON, so an assistant can
+  // edit either even though neither reaches Azure DevOps. Reviewer notes
+  // especially: an assistant filling them in IS the change worth seeing.
+  push("Comment", before.comment ?? "", after.comment ?? "");
+  push("Reviewer notes", before.reviewer_notes ?? "", after.reviewer_notes ?? "");
+  if ((before.update_id ?? null) !== (after.update_id ?? null)) {
+    out.push({
+      name: "Work item id",
+      old: before.update_id == null ? "" : String(before.update_id),
+      new: after.update_id == null ? "" : String(after.update_id),
+    });
+  }
+  return out;
+}
+
+/** Step-by-step difference, in the shape the review gate already renders
+ * (`StepDiffLines`) - so a file edit and a pending update are read the
+ * same way instead of in two invented formats. */
+export function changedSteps(before: TestCase, after: TestCase): StepDiff[] {
+  if (stepsSig(before) === stepsSig(after)) return [];
+  const out: StepDiff[] = [];
+  const max = Math.max(before.steps.length, after.steps.length);
+  for (let i = 0; i < max; i++) {
+    const o = before.steps[i];
+    const n = after.steps[i];
+    if (n && !o) out.push({ index: i, kind: "added", new: n });
+    else if (!n && o) out.push({ index: i, kind: "removed", old: o });
+    else if (o && n && (o.action !== n.action || o.expected !== n.expected)) {
+      out.push({ index: i, kind: "changed", old: o, new: n });
+    }
   }
   return out;
 }
@@ -70,7 +101,9 @@ export type SyncChange = {
   key: string;
   title: string;
   /** Populated for "changed" only. */
-  fields: string[];
+  fields: FieldChange[];
+  /** Populated for "changed" only. */
+  steps: StepDiff[];
 };
 
 export type SyncResult = {
@@ -109,7 +142,7 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
       keptKeys.push(k);
       return true;
     }
-    changes.push({ kind: "removed", key: k, title: c.title, fields: [] });
+    changes.push({ kind: "removed", key: k, title: c.title, fields: [], steps: [] });
     return false;
   });
 
@@ -125,8 +158,14 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
     if (!fresh) return c;
     unclaimed.delete(k);
     const fields = changedFields(c, fresh);
-    if (fields.length === 0) return c;
-    changes.push({ kind: "changed", key: k, title: fresh.title, fields });
+    const stepDiffs = changedSteps(c, fresh);
+    // BOTH, or a steps-only edit is thrown away. This guard used to read
+    // `fields.length === 0` alone, which was correct only while
+    // changedFields folded a "Steps (1 -> 2)" entry into the field list;
+    // the moment steps moved out into their own diff, an edit that
+    // touched nothing but the steps stopped being applied at all.
+    if (fields.length === 0 && stepDiffs.length === 0) return c;
+    changes.push({ kind: "changed", key: k, title: fresh.title, fields, steps: stepDiffs });
     return fresh;
   });
 
@@ -136,7 +175,7 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
     if (present.has(k)) return;
     present.add(k);
     synced.push(c);
-    changes.push({ kind: "added", key: k, title: c.title, fields: [] });
+    changes.push({ kind: "added", key: k, title: c.title, fields: [], steps: [] });
   });
 
   return { queue: synced, changes, snapshot: next };

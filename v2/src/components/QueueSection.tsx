@@ -50,6 +50,7 @@ export default function QueueSection({
   setQueue,
   flash,
   watches = [],
+  onQueueCleared,
 }: {
   org: string;
   project: string;
@@ -63,6 +64,11 @@ export default function QueueSection({
    * the browser view knows which file to be written back into. Manual
    * Entry passes none - its cases live only in the app. */
   watches?: WatchedFile[];
+  /** Called when Remove all empties the queue. The Import screen uses it
+   * to stop watching the files that fed it: the queue was the only reason
+   * those watches existed, so leaving them armed means a later save to a
+   * finished file quietly refills a queue the user deliberately emptied. */
+  onQueueCleared?: () => void;
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
@@ -442,6 +448,7 @@ export default function QueueSection({
             onClick={() => {
               const n = queue.length;
               setQueue([]);
+              onQueueCleared?.();
               toast.info(`Removed ${n} queued case${n === 1 ? "" : "s"}.`);
             }}
           >

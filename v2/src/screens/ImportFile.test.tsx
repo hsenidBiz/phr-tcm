@@ -272,9 +272,11 @@ test("an edit on disk lands in the queue and is reported", async () => {
   expect(screen.getByText("+1 added")).toBeInTheDocument();
   expect(screen.getByText("~1 changed")).toBeInTheDocument();
 
-  // The detail names the case and exactly which fields moved.
+  // The detail shows the step that arrived, not the words "Steps (1 → 2)".
+  // Knowing the count changed still means opening the file to see what the
+  // new step says, which is the whole reason this renders a diff now.
   fireEvent.click(screen.getByRole("button", { name: "Show details" }));
-  expect(await screen.findByText(/Steps \(1 → 2\)/)).toBeInTheDocument();
+  expect(await screen.findByText(/then/)).toBeInTheDocument();
 });
 
 /** The watcher only reports changes from the moment it starts, so an edit

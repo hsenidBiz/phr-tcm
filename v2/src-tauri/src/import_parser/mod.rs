@@ -275,8 +275,10 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             module_value,
             preconditions,
             update_id,
-            // The spreadsheet format has no comment column - JSON only.
+            // The spreadsheet format carries neither of the app-only
+            // notes - both are JSON only.
             comment: String::new(),
+            reviewer_notes: String::new(),
         });
     }
 
@@ -414,6 +416,17 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             .unwrap_or_default()
             .trim()
             .to_string();
+        // Review context, same rules. The aliases matter: an assistant told
+        // to add "Reviewer Notes" writes the label it was given, and a file
+        // an author typed by hand is not going to match one exact spelling.
+        let reviewer_notes = json_value(
+            &raw_v,
+            &["reviewer_notes", "reviewerNotes", "Reviewer Notes", "review_notes"],
+        )
+        .map(value_to_string)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
 
         let raw_steps = match obj.get("steps") {
             None | Some(serde_json::Value::Null) => vec![],
@@ -487,6 +500,7 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             preconditions,
             update_id,
             comment,
+            reviewer_notes,
         });
     }
 

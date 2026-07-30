@@ -103,7 +103,10 @@ test("steps diff positionally: changed, added, removed", () => {
     current(),
   );
   expect(removed.steps.removed).toBe(1);
-  expect(diffSummary(removed)).toBe("1 step change");
+  // Phrased as an invitation, because the summary IS the button that
+  // opens the diff - "1 step change" read as a statement and left the
+  // detail undiscovered.
+  expect(diffSummary(removed)).toBe("Click to view 1 step changing");
 });
 
 test("a project with no Module field is not promised a Module change", () => {

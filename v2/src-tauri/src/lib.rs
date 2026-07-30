@@ -19,6 +19,7 @@ pub mod events;
 pub mod filewatch;
 pub mod import_parser;
 pub mod intake;
+pub mod markdown;
 pub mod mcp;
 pub mod model;
 pub mod note_server;

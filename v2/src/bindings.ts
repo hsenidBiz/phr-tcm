@@ -1101,6 +1101,19 @@ export type TestCase_Deserialize = {
 	 *  a transform must be idempotent in shape).
 	 */
 	comment?: string,
+	/**
+	 *  Context for whoever REVIEWS this case - what in the spec it comes
+	 *  from, which acceptance criterion it covers, what was deliberately
+	 *  left out. Written by hand or by an assistant, read in the browser
+	 *  page during review, and rendered as markdown there.
+	 * 
+	 *  Like `comment`, it round-trips through the JSON and is NEVER sent
+	 *  to Azure DevOps - both are guarded by the same sentinel test. The
+	 *  two are separate on purpose: `comment` is the reviewer's own
+	 *  scratchpad and is editable in the page; this is the reference
+	 *  material they read while writing one.
+	 */
+	reviewer_notes?: string,
 };
 
 export type TestCase_Serialize = {
@@ -1122,6 +1135,19 @@ export type TestCase_Serialize = {
 	 *  a transform must be idempotent in shape).
 	 */
 	comment?: string,
+	/**
+	 *  Context for whoever REVIEWS this case - what in the spec it comes
+	 *  from, which acceptance criterion it covers, what was deliberately
+	 *  left out. Written by hand or by an assistant, read in the browser
+	 *  page during review, and rendered as markdown there.
+	 * 
+	 *  Like `comment`, it round-trips through the JSON and is NEVER sent
+	 *  to Azure DevOps - both are guarded by the same sentinel test. The
+	 *  two are separate on purpose: `comment` is the reviewer's own
+	 *  scratchpad and is editable in the page; this is the reference
+	 *  material they read while writing one.
+	 */
+	reviewer_notes?: string,
 };
 
 export type TestPlan = {

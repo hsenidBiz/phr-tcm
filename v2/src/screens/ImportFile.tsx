@@ -488,6 +488,14 @@ export default function ImportFile({
         setQueue={setQueue}
         flash={flash}
         watches={watches}
+        // Remove all means "I am done with this import". The watches only
+        // existed to keep that queue in step with the files, so leaving
+        // them armed would let the next save to a finished file quietly
+        // refill a queue that was deliberately emptied. The cases are
+        // already gone, so this drops the watches and nothing else.
+        onQueueCleared={() => {
+          if (watches.length > 0) dropWatch(watches, false);
+        }}
       />
 
       {dropping && (

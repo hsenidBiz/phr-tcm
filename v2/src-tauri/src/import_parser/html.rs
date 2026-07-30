@@ -88,6 +88,41 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
 .no-match { color: var(--muted); font-size: 14px; text-align: center;
             padding: 28px 0; border: 1px dashed var(--border); border-radius: 10px; }
 .hidden { display: none !important; }
+/* Reviewer notes: the spec context, sitting between the prerequisites and
+   the steps. Tinted with the accent and given a left rule so it reads as
+   commentary ABOUT the case rather than part of it - a reviewer scanning
+   steps should be able to skip it, and a reviewer hunting for the
+   requirement should be able to find it without reading anything else. */
+.rev { margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+       border-left: 3px solid var(--accent); border-radius: 6px;
+       background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.rev > summary { cursor: pointer; list-style: none; padding: 6px 12px;
+                 font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+                 text-transform: uppercase; color: var(--accent); }
+.rev > summary::-webkit-details-marker { display: none; }
+.rev > summary::after { content: ' \25be'; }
+.rev:not([open]) > summary::after { content: ' \25b8'; }
+.rev-body { padding: 0 12px 10px; font-size: 13px; color: var(--text); }
+/* The note's own markdown. Kept tight - it is an aside, not a document. */
+.rev-body > :first-child { margin-top: 0; }
+.rev-body > :last-child { margin-bottom: 0; }
+.rev-body h4, .rev-body h5, .rev-body h6 { font-size: 12.5px; margin: 10px 0 4px; }
+.rev-body p, .rev-body ul, .rev-body ol { margin: 0 0 8px; }
+.rev-body ul, .rev-body ol { padding-left: 20px; }
+.rev-body li { margin: 2px 0; }
+.rev-body code { background: var(--surface-2); border-radius: 3px; padding: 0 3px;
+                 font-family: Consolas, monospace; font-size: 12px; }
+.rev-body pre { background: var(--surface-2); border-radius: 4px; padding: 8px 10px;
+                overflow-x: auto; margin: 0 0 8px; }
+.rev-body pre code { background: none; padding: 0; }
+.rev-body blockquote { margin: 0 0 8px; padding-left: 10px;
+                       border-left: 2px solid var(--border); color: var(--muted); }
+.rev-body table { font-size: 12px; margin-bottom: 8px; }
+.rev-body a { color: var(--accent); }
+/* A link the renderer refused (javascript:, data:) keeps its text but must
+   not look clickable. */
+.rev-body .md-badlink { color: var(--muted); text-decoration: line-through; }
+.rev-body .md-noimg { color: var(--muted); font-style: italic; }
 .note { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
 .note label { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px;
               font-weight: 600; color: var(--muted); margin-bottom: 4px; }
@@ -127,6 +162,12 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
 /* Print goes back to ink on paper whatever the screen was showing: a dark
    page prints as a black rectangle, or as nothing once the printer drops
    the background and leaves white text on white. */
+/* Reviewer notes print: they are the reason the reviewer has the page in
+   front of them, so they are NOT hidden like the comment boxes are - and
+   a collapsed <details> would otherwise print as just its heading. */
+@media print { .rev { break-inside: avoid; }
+               .rev[open] > summary, .rev > summary { color: #444; }
+               .rev-body { display: block !important; } }
 @media print { :root, :root[data-scheme="dark"] { color-scheme: light;
                  --bg: #fff; --surface: #fff; --surface-2: #f4f6f9;
                  --text: #1f2530; --muted: #44506a; --faint: #8a94a6;
@@ -399,6 +440,24 @@ pub fn export_queue_to_html(
             esc(prereq)
         };
         parts.push(format!("<p class='pre'><b>Prerequisites:</b> {prereq_html}</p>"));
+
+        // Reviewer notes: where this case came from in the spec. Open by
+        // default - the whole reason the field exists is that matching a
+        // case to its requirement is the slow part of a review, and notes
+        // behind a closed disclosure would not be read. Still a <details>
+        // so a long note can be folded away once it has been used.
+        //
+        // Rendered as markdown, and read-only: it is the reference the
+        // reviewer reads, while the comment box below is what they write.
+        // Its markdown is turned into HTML in Rust, with any HTML in the
+        // SOURCE dropped rather than filtered - see crate::markdown.
+        if !tc.reviewer_notes.trim().is_empty() {
+            parts.push(format!(
+                "<details class='rev' open><summary>Reviewer notes</summary>\
+                 <div class='rev-body'>{}</div></details>",
+                crate::markdown::to_html(&tc.reviewer_notes)
+            ));
+        }
 
         if !tc.steps.is_empty() {
             parts.push("<table><tr><th>#</th><th>Action</th><th>Expected result</th></tr>".into());
