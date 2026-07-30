@@ -435,7 +435,7 @@ function RunNode({
           </span>
           <span className="truncate font-medium text-text">{b.name}</span>
           <span className="id-mono shrink-0 text-xs text-faint">{b.number}</span>
-          <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+          <span className="pill-label shrink-0 rounded bg-surface-2 px-1.5 text-[10px] text-muted">
             {b.is_validation ? "PR validation" : "CI after merge"}
           </span>
         </button>

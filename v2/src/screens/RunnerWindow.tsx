@@ -552,7 +552,7 @@ export default function RunnerWindow() {
                         key={o}
                         title={o}
                         className={cn(
-                          "rounded px-1.5 py-0.5 text-[10px] font-semibold",
+                          "pill-label rounded px-1.5 text-[10px] font-semibold",
                           st.stepOutcomes[i] === o ? outcomeBtn[o] : "bg-surface-2 text-muted",
                         )}
                         onClick={() =>

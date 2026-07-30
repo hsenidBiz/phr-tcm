@@ -57,6 +57,72 @@ test("expands a case via the chevron and saves edits via update_test_case", asyn
   expect(updated.tc?.update_id).toBe(201);
 });
 
+/** Discard is the way out of a half-made edit. It only exists once there
+ *  is something to discard, and it puts the loaded values back. */
+test("Discard changes appears only when edited, and reverts the edit", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_project_tags") return [];
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText("Expand #201"));
+
+  const title = await screen.findByLabelText("Case title");
+  expect(screen.queryByRole("button", { name: /Discard changes/ })).not.toBeInTheDocument();
+
+  fireEvent.change(title, { target: { value: "Valid login v2" } });
+  fireEvent.click(screen.getByRole("button", { name: /Discard changes/ }));
+
+  expect((await screen.findByLabelText("Case title")).getAttribute("value")).toBe("Valid login");
+  // Back to clean, so the button retires with the change it undid.
+  expect(screen.queryByRole("button", { name: /Discard changes/ })).not.toBeInTheDocument();
+});
+
+/** A step edit is a change too - the dirty check has to see into the steps
+ *  array, not just compare the scalar fields. */
+test("Discard also notices and reverts a step edit", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_project_tags") return [];
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText("Expand #201"));
+
+  const step = await screen.findByLabelText("Step 1 action");
+  fireEvent.change(step, { target: { value: "Open the login page" } });
+  fireEvent.click(await screen.findByRole("button", { name: /Discard changes/ }));
+
+  expect((await screen.findByLabelText("Step 1 action")).getAttribute("value")).toBe("Open page");
+});
+
+/** After a save, the loaded values are stale - Azure DevOps holds what was
+ *  just written. Discard must not offer to put the pre-save version back. */
+test("a saved edit is the new baseline, not something to discard", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "update_test_case") return null;
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText("Expand #201"));
+
+  fireEvent.change(await screen.findByLabelText("Case title"), {
+    target: { value: "Valid login v2" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /Discard changes/ })).not.toBeInTheDocument(),
+  );
+  expect((await screen.findByLabelText("Case title")).getAttribute("value")).toBe("Valid login v2");
+});
+
 test("invalid edits disable save with a reason", async () => {
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];

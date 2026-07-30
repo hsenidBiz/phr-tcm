@@ -87,6 +87,11 @@ function Card({
               <button
                 key={l.pr_id}
                 className={cn(
+                  // No pill-label here, unlike the other pills: this one is
+                  // a flex row holding an icon and a dot as well as text,
+                  // and those are already centred. pill-label shifts the
+                  // whole content box, so it would fix the label by putting
+                  // the icons 2px low.
                   "flex max-w-32 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
                   l.status === "active"
                     ? "bg-accent-soft text-accent"

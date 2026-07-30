@@ -88,12 +88,12 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
   return (
     <div className="space-y-1.5 rounded-md border border-border bg-bg p-2">
       <div className="flex items-center gap-2">
-        <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", tone(b.status, b.result))}>
+        <span className={cn("pill-label rounded-full px-1.5 text-[10px] font-medium", tone(b.status, b.result))}>
           {label(b.result || b.status)}
         </span>
         <span className="truncate text-text">{b.name}</span>
         <span className="id-mono shrink-0 text-faint">{b.number}</span>
-        <span className="shrink-0 rounded bg-surface-2 px-1 py-0.5 text-[10px] text-muted">
+        <span className="pill-label shrink-0 rounded bg-surface-2 px-1 text-[10px] text-muted">
           {b.is_validation ? "PR validation" : "CI"}
         </span>
         {b.web_url && (
@@ -116,7 +116,7 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
           {b.stages.map((s, i) => (
             <span
               key={i}
-              className={cn("rounded px-1.5 py-0.5 text-[10px]", tone(s.state, s.result))}
+              className={cn("pill-label rounded px-1.5 text-[10px]", tone(s.state, s.result))}
               title={`Stage ${s.name}: ${label(s.result || s.state)}`}
             >
               {s.name}
@@ -132,7 +132,7 @@ function BuildCard({ b, total }: { b: PrBuild; total: number }) {
           {b.deployments.map((d, i) => (
             <span
               key={i}
-              className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium", tone(d.status))}
+              className={cn("pill-label rounded-full px-1.5 text-[10px] font-medium", tone(d.status))}
               title={`${d.release} → ${d.environment}: ${label(d.status)}${
                 d.on ? ` (${new Date(d.on).toLocaleString()})` : ""
               }`}
@@ -233,19 +233,19 @@ function PrRow({ pr, org, project }: { pr: PullRequest; org: string; project: st
               <span className="id-mono text-faint">!{pr.id}</span> {pr.title}
             </span>
             {pr.is_draft && (
-              <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted">
+              <span className="pill-label rounded-full bg-surface-2 px-2 text-[10px] font-medium text-muted">
                 Draft
               </span>
             )}
             {pr.has_conflicts && (
-              <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning">
+              <span className="pill-label rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
                 Conflicts
               </span>
             )}
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             {/* Same repo-pill treatment as the board's PR chips. */}
-            <span className="rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
+            <span className="pill-label rounded-full bg-accent-soft px-1.5 text-[10px] font-medium text-accent">
               {pr.repo}
             </span>
             <span className="flex items-center gap-1">

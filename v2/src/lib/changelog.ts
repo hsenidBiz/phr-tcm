@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.8",
+    date: "2026-07-30",
+    items: [
+      "Update Test Cases: an edited case now offers Discard changes next to Save, which puts the loaded values back. It appears only once you have changed something, covers the steps as well as the fields, and the toast that follows has an Undo in case the click was a mistake.",
+      "Update Test Cases: a collapsed group holding a highlighted case shows the same pulsing dot View Test Cases got.",
+      "Pull Requests: the repository name and the other small labels sat about a pixel and a half high in their pills. Measured at 4x rather than by eye, corrected in one place, and every pill of that size now uses it - Draft, Conflicts, build status, stages, deployments, the board's type badge and the runner's step buttons.",
+    ],
+  },
+  {
     version: "1.17.7",
     date: "2026-07-30",
     items: [

@@ -146,6 +146,12 @@ export default function ExistingCases({
     if (ids.length) setAnchor(ids[0]);
   };
 
+  /** How many of a group's cases are highlighted - drives the collapsed
+   * group's marker. Counted rather than a boolean so the label can say
+   * how much is hidden in there. */
+  const selectedInGroup = (items: TestCaseFull[]) =>
+    items.reduce((n, c) => (selected.has(c.id) ? n + 1 : n), 0);
+
   const selectedCases = list.filter((c) => selected.has(c.id));
 
   /** Only titles change: the case's own steps_xml goes back untouched, so
@@ -302,13 +308,24 @@ export default function ExistingCases({
                 {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
               </button>
               <button
-                className="group"
+                className="group flex items-center gap-2"
                 title="Select all test cases in this group"
                 onClick={() => toggleGroup(items)}
               >
                 <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                   {group} ({items.length})
                 </span>
+                {/* Same marker as View Test Cases: folding a group hides its
+                    rows and the highlight with them, so the heading has to
+                    say something is still selected in there. */}
+                {collapsedGroups.has(group) && selectedInGroup(items) > 0 && (
+                  <span
+                    className="selection-dot"
+                    role="status"
+                    aria-label={`${selectedInGroup(items)} of ${items.length} selected in ${group}`}
+                    title={`${selectedInGroup(items)} selected in this group`}
+                  />
+                )}
               </button>
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>

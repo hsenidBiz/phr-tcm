@@ -617,6 +617,44 @@ table {
   }
 }
 
+/* Small label pills - repo names, Draft, Conflicts, environments, states.
+   Their text reads as riding high, and it is not an illusion: CSS centres
+   the FONT's em box, and the em box reserves descender space that words
+   like "demo-web" or "Draft" never spend. Measured on the PR panel's repo
+   pill by counting ink rows in a 4x screenshot, not by eye or by font
+   maths: the glyphs sat 7 device pixels - 1.75 CSS px on a 17.3px pill -
+   above centre, which is about a tenth of the box.
+
+   The correction is a 2px downward nudge, done by moving padding from the
+   bottom to the top so the pill's HEIGHT does not change and it still
+   lines up with its neighbours. Whole pixels because glyph baselines snap
+   to them; half a pixel here moves nothing.
+
+   It lives in ONE place on purpose. The board rail's vertical Open button
+   is the cautionary tale: correct pixel tuning, spelled out at the call
+   site, and nothing to stop the next pill being tuned differently or not
+   at all. Pills that use this must NOT also set py-*; this owns the
+   vertical padding.
+
+   A label that does carry a descender ("gyp") ends up a hair low. That is
+   the right trade - descenders are rare in these labels, and the
+   alternative is per-string tuning, which cannot be consistent. */
+   Scope: the 10px label pills only, replacing their py-0.5. Deliberately
+   NOT generalised to the 12px controls - the same measurement there gave
+   contradictory answers between methods, and an unverified nudge on a
+   control nobody complained about is how a "fix" becomes a regression.
+   If a second size is ever wanted, measure it the same way first (a 6x
+   element screenshot, counting ink rows) and add a variant here rather
+   than tuning a number at a call site.
+
+   Not for a pill that also holds an icon: this shifts the whole content
+   box, so a correctly-centred glyph would go down with the text. The
+   board card's PR chip is the example, and says so at its call site. */
+.pill-label {
+  padding-top: 4px;
+  padding-bottom: 0;
+}
+
 /* "There is a highlighted item folded up in here." Shown beside a group
    name in View Test Cases when the group is COLLAPSED and holds at least
    one selected case - selection is otherwise invisible once the rows are
