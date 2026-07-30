@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
@@ -13,6 +13,7 @@ import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
 import DateField from "./ui/datefield";
+import { useFocusTrap } from "./ui/focusTrap";
 import MarkdownField from "./MarkdownField";
 import { Input } from "./ui/input";
 import { Select } from "./ui/select";
@@ -140,6 +141,12 @@ export default function WorkItemDrawer({
   const [docTab, setDocTab] = useState("");
   const [bottomTab, setBottomTab] = useState<"discussion" | "history">("discussion");
 
+  // `aria-modal` below promises the rest of the page is inert. Without a
+  // trap a keyboard user tabs straight out to the sidebar behind the
+  // drawer and can unmount it - discarding whatever is in `draft`.
+  const panel = useRef<HTMLDivElement>(null);
+  useFocusTrap(panel);
+
   // Esc closes (X too); no overlay-click close so edits can't be lost by a
   // stray click.
   useEffect(() => {
@@ -244,7 +251,11 @@ export default function WorkItemDrawer({
       aria-label={`Work item ${itemId}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 md:px-10 md:py-6"
     >
-      <div className="modal-in flex h-full w-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl">
+      <div
+        ref={panel}
+        tabIndex={-1}
+        className="modal-in flex h-full w-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl focus:outline-none"
+      >
         {/* The modal covers the window's title-bar drag region, so its own
             header doubles as one - drag it to move the window (buttons and
             the title text opt out so they stay clickable/selectable). */}
@@ -415,7 +426,9 @@ export default function WorkItemDrawer({
                   onChange={(v) => setDraft({ ...draft, description: v })}
                   editing={isEditing("")}
                   onStartEditing={() => startEditing("")}
-                  // Rendered from the user's own local draft only.
+                  // The draft is seeded from the REMOTE item, so this is
+                  // somebody else's text on first render, not the user's
+                  // own. `renderMarkdown` sanitises for that reason.
                   renderHtml={renderMd}
                 />
               ) : (
