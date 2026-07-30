@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.4",
+    date: "2026-07-30",
+    items: [
+      "The change report for a watched file now lets you read a whole test case, not just the part that changed. Each case has a chevron next to its title; clicking it opens that case's steps in order, numbered, with its preconditions above them - the same view, and now literally the same component, as the button beside a case in Review. Knowing what step 3 said is usually the only way to judge an edit to step 4, and until now the only way to get it was to go and open the file.",
+    ],
+  },
+  {
     version: "1.18.3",
     date: "2026-07-30",
     items: [
