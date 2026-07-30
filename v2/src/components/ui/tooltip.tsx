@@ -147,41 +147,75 @@ export function TooltipLayer() {
       }
       anchor.current = null;
     };
-    const hide = () => {
+    /** Take the bubble down, but stay in possession of the `title`.
+     *
+     * These are two different things and conflating them is what let the
+     * OS bubble back in. Pressing or hitting Escape dismisses OUR tooltip
+     * while the pointer is still sitting on the trigger - hand the title
+     * back at that moment and the browser simply draws its own a second
+     * later, which is the "sometimes the default tooltip appears" report.
+     * Suppression is released by LEAVING the element, and nothing else. */
+    const hideBubble = () => {
       window.clearTimeout(timer.current);
       timer.current = undefined;
-      restore();
       setOpen(null);
       setPos(null);
+    };
+    const hide = () => {
+      hideBubble();
+      restore();
     };
 
     const onMove = (e: PointerEvent) => {
       pointer.current = { x: e.clientX, y: e.clientY };
+      // Self-correcting release. Suppression now outlives the bubble, so
+      // the one thing that must never fail is noticing the pointer has
+      // left - otherwise a `title` stays parked on an element nobody is
+      // hovering. pointerout normally does it, but it is not guaranteed
+      // when the element moves out from under a still cursor (a scroll, a
+      // re-render). A rect check on the element we are already holding
+      // costs one clean-layout read and closes that hole.
+      const held = anchor.current;
+      if (!held) return;
+      const r = held.getBoundingClientRect();
+      const inside =
+        e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      if (!inside) hide();
     };
 
-    const onOver = (e: PointerEvent) => {
-      onMove(e);
-      const target = e.target as Element | null;
-      const el = target?.closest?.("[title]") as HTMLElement | null;
-      if (!el) {
-        // Left the tooltipped element for something that has none.
-        if (anchor.current) hide();
-        return;
-      }
-      if (el === anchor.current) return;
+    /** Take possession of an element's `title`, and schedule the bubble. */
+    const claim = (from: Element | null) => {
+      const el = from?.closest?.("[title]") as HTMLElement | null;
+      if (!el || el === anchor.current) return;
       const text = (el.getAttribute("title") ?? "").trim();
       if (!text) return;
-
       hide();
       anchor.current = el;
-      // Taking `title` off is what stops the OS bubble appearing on top
-      // of ours; it goes back the moment the pointer leaves.
+      // Taking `title` off is what stops the OS bubble appearing on top of
+      // ours. Note this works for DISABLED controls too: Chromium
+      // suppresses their CLICK events, not their pointer events, so they
+      // are seen here like anything else. (An earlier comment here claimed
+      // the opposite and accepted the native bubble as a fallback - it was
+      // wrong, and measured wrong: pointerover fires with the disabled
+      // element as target.)
       el.setAttribute(PARK, text);
       el.removeAttribute("title");
       timer.current = window.setTimeout(
         () => setOpen({ text, side: sideOf(el) }),
         OPEN_DELAY_MS,
       );
+    };
+
+    const onOver = (e: PointerEvent) => {
+      pointer.current = { x: e.clientX, y: e.clientY };
+      const target = e.target as Element | null;
+      const el = target?.closest?.("[title],[" + PARK + "]") as HTMLElement | null;
+      if (!el) {
+        // Left the tooltipped element for something that has none.
+        if (anchor.current) hide();
+        return;
+      }
+      claim(el);
     };
 
     const onOut = (e: PointerEvent) => {
@@ -191,8 +225,10 @@ export function TooltipLayer() {
       if (anchor.current) hide();
     };
 
+    // Escape and a press both dismiss the bubble, and both leave the
+    // pointer exactly where it was - so they must NOT hand the title back.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") hide();
+      if (e.key === "Escape") hideBubble();
     };
 
     document.addEventListener("pointerover", onOver, true);
@@ -200,18 +236,21 @@ export function TooltipLayer() {
     document.addEventListener("pointerout", onOut, true);
     // Anything that moves the trigger invalidates the position; closing
     // is cheaper and less startling than chasing it.
-    document.addEventListener("pointerdown", hide, true);
-    window.addEventListener("scroll", hide, true);
-    window.addEventListener("resize", hide);
+    document.addEventListener("pointerdown", hideBubble, true);
+    window.addEventListener("scroll", hideBubble, true);
+    window.addEventListener("resize", hideBubble);
     window.addEventListener("keydown", onKey);
+    // Focus loss is the one dismissal that DOES release: the pointer may
+    // be anywhere by the time the window comes back, and a title parked on
+    // an element nobody is hovering is a title quietly missing from the DOM.
     window.addEventListener("blur", hide);
     return () => {
       document.removeEventListener("pointerover", onOver, true);
       document.removeEventListener("pointermove", onMove, true);
       document.removeEventListener("pointerout", onOut, true);
-      document.removeEventListener("pointerdown", hide, true);
-      window.removeEventListener("scroll", hide, true);
-      window.removeEventListener("resize", hide);
+      document.removeEventListener("pointerdown", hideBubble, true);
+      window.removeEventListener("scroll", hideBubble, true);
+      window.removeEventListener("resize", hideBubble);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", hide);
       hide();

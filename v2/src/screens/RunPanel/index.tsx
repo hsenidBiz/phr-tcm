@@ -301,7 +301,7 @@ export default function RunPanel({
             className="rounded p-0.5 text-muted hover:text-accent"
             onClick={refreshSuite}
           >
-            <RefreshCw size={12} />
+            <RefreshCw size={12} className={suite.isFetching ? "animate-spin" : undefined} />
           </button>
           {suite.isFetching && <span>(re-detecting)</span>}
         </p>

@@ -267,7 +267,10 @@ impl AdoClient {
 }
 
 /// ADO's back-off hint, defaulting to 5s when it doesn't send one.
-fn retry_after(resp: &reqwest::Response) -> u32 {
+// pub(crate) so the recycle-bin delete - which has its own sender rather
+// than going through this funnel - can map 429 the same way everything
+// else does, instead of reporting a throttle as an unexplained status.
+pub(crate) fn retry_after(resp: &reqwest::Response) -> u32 {
     resp.headers()
         .get("Retry-After")
         .and_then(|v| v.to_str().ok())

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderTree, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -144,6 +144,8 @@ export default function Suites({
   // every dev reload) re-scanned from scratch. Now the seed paints
   // instantly and only revalidates once it is hours old; Refresh still
   // forces a true re-scan.
+  // In-flight outcome refetches across every mounted SuitePoints child.
+  const pointsFetching = useIsFetching({ queryKey: ["points"] });
   const plans = useQuery({
     queryKey: ["plans-suites", org, project],
     ...persistentQuery({
@@ -348,7 +350,14 @@ export default function Suites({
             qc.invalidateQueries({ queryKey: ["points"] });
           }}
         >
-          <RefreshCw size={14} />
+          {/* Both keys are invalidated, so the spin has to watch both. The
+              outcome queries live one-per-suite inside SuitePoints, out of
+              reach here - useIsFetching counts them by key, which is the
+              same key this button just invalidated. */}
+          <RefreshCw
+            size={14}
+            className={plans.isFetching || pointsFetching > 0 ? "animate-spin" : undefined}
+          />
         </button>
         <Input
           aria-label="Search suites"

@@ -136,6 +136,12 @@ export default function ViewCases({
     if (ids.length) setAnchor(ids[0]);
   };
 
+  /** How many of a group's cases are highlighted - drives the collapsed
+   * group's marker. Counted rather than a boolean so the label can say
+   * how much is hidden in there. */
+  const selectedInGroup = (items: TestCaseFull[]) =>
+    items.reduce((n, c) => (selected.has(c.id) ? n + 1 : n), 0);
+
   const chosen = selected.size > 0 ? visible.filter((c) => selected.has(c.id)) : visible;
   const viewHtml = useMutation({
     mutationFn: () =>
@@ -190,7 +196,9 @@ export default function ViewCases({
           className="rounded p-1 text-muted hover:text-accent"
           onClick={() => qc.invalidateQueries({ queryKey })}
         >
-          <RefreshCw size={14} />
+          {/* The refetch keeps the old rows on screen while it runs, so the
+              spin is the ONLY sign the click did anything. */}
+          <RefreshCw size={14} className={cases.isFetching ? "animate-spin" : undefined} />
         </button>
         <div className="ml-auto">
           <Button
@@ -265,13 +273,26 @@ export default function ViewCases({
                 {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
               </button>
               <button
-                className="group"
+                className="group flex items-center gap-2"
                 title="Select all test cases in this group"
                 onClick={() => toggleGroup(items)}
               >
                 <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                   {group} ({items.length})
                 </span>
+                {/* Collapsed groups hide their rows, and with them the only
+                    sign that anything inside is selected - so the count
+                    surfaces on the heading instead. Shown for ONE selected
+                    case as much as for all of them: the question it answers
+                    is "did I leave something highlighted in there". */}
+                {collapsedGroups.has(group) && selectedInGroup(items) > 0 && (
+                  <span
+                    className="selection-dot"
+                    role="status"
+                    aria-label={`${selectedInGroup(items)} of ${items.length} selected in ${group}`}
+                    title={`${selectedInGroup(items)} selected in this group`}
+                  />
+                )}
               </button>
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>

@@ -263,7 +263,7 @@ export default function Settings({ org, project }: { org: string; project: strin
           the releases feed.
         </p>
         <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
-          <IconRefresh aria-hidden />
+          <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
           {check.isPending ? "Checking" : "Check for updates"}
         </Button>
       </section>
@@ -397,24 +397,32 @@ export default function Settings({ org, project }: { org: string; project: strin
         )}
       </section>
 
+      {/* Sizing and padding belong on the Modal, not inside it: the panel
+          itself is only a bordered surface, so a child with no className
+          sat flush against the border and shrink-wrapped to its text.
+          Same shape as every other dialog in the app. */}
       {reporting && (
-        <Modal onClose={() => setReporting(false)}>
-          <div className="space-y-3">
+        <Modal
+          onClose={() => setReporting(false)}
+          className="flex max-h-[85vh] w-full max-w-lg flex-col gap-4 p-5"
+        >
+          <div className="shrink-0 space-y-1.5">
             <h2 className="text-sm font-semibold text-text">Report a bug in this app</h2>
-            <p className="text-sm text-muted">
+            <p className="text-sm leading-relaxed text-muted">
               This opens a prefilled issue on GitHub for you to check and submit -
               nothing is sent from the app. Your organization, project and work
               item names are removed from the log first.
             </p>
-            <Textarea
-              aria-label="What happened"
-              className="h-28 w-full"
-              autoFocus
-              placeholder="What were you doing, and what happened instead?"
-              value={bugText}
-              onChange={(e) => setBugText(e.target.value)}
-            />
-            <div className="flex justify-end gap-2">
+          </div>
+          <Textarea
+            aria-label="What happened"
+            className="h-32 w-full shrink-0"
+            autoFocus
+            placeholder="What were you doing, and what happened instead?"
+            value={bugText}
+            onChange={(e) => setBugText(e.target.value)}
+          />
+          <div className="flex shrink-0 justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setReporting(false)}>
                 <IconCancel aria-hidden />
                 Cancel
@@ -444,7 +452,6 @@ export default function Settings({ org, project }: { org: string; project: strin
                 <IconBug aria-hidden />
                 Open the issue
               </Button>
-            </div>
           </div>
         </Modal>
       )}

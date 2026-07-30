@@ -110,10 +110,55 @@ test("it closes on leave, on Escape and on a press", async () => {
   fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
 
+  // Leaving first is not incidental: Escape and a press dismiss the bubble
+  // but keep hold of the trigger, so it stays dismissed until the pointer
+  // actually goes somewhere else. See the suppression test below.
+  leave(btn);
   hover(btn);
   await screen.findByRole("tooltip");
   fireEvent.pointerDown(btn);
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+});
+
+/** The whole point of parking `title` is that the OS never draws its own
+ * bubble. Dismissing ours while the pointer is still on the trigger used
+ * to hand the title straight back, and the browser drew one a second
+ * later - which read as "sometimes the old tooltip appears". */
+test("dismissing the bubble does not hand the title back while still hovered", async () => {
+  withLayer(<button title="Still suppressed">X</button>);
+  const btn = screen.getByRole("button");
+
+  hover(btn);
+  await screen.findByRole("tooltip");
+  expect(btn).not.toHaveAttribute("title");
+
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  expect(btn).not.toHaveAttribute("title");
+  expect(btn).toHaveAttribute("data-tip-text", "Still suppressed");
+
+  fireEvent.pointerDown(btn);
+  expect(btn).not.toHaveAttribute("title");
+
+  // Leaving is the ONLY thing that releases it.
+  leave(btn);
+  await waitFor(() => expect(btn).toHaveAttribute("title", "Still suppressed"));
+});
+
+/** Chromium suppresses a disabled control's CLICK events, not its pointer
+ * events - so the layer sees them like anything else and the native bubble
+ * never gets a chance. This was previously documented as an accepted gap. */
+test("a disabled control's title is suppressed too", async () => {
+  withLayer(
+    <button disabled title="Pick a PBI first">
+      Create
+    </button>,
+  );
+  const btn = screen.getByRole("button");
+
+  hover(btn);
+  await waitFor(() => expect(btn).not.toHaveAttribute("title"));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Pick a PBI first");
 });
 
 test("the explicit wrapper just labels its child", async () => {

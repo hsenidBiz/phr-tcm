@@ -129,6 +129,29 @@ test("card clicks drive multi-select and unlock the bulk toolbar", async () => {
   expect([...updatedIds].sort()).toEqual([201, 202]);
 });
 
+/** Backing out of a bulk dialog must not undo the work of choosing what to
+ *  bulk-edit. Power Rename's close handler used to clear the selection, so
+ *  Cancel left the user re-picking every case to try again. */
+test("cancelling Power Rename keeps the selection", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase, secondCase];
+    if (cmd === "list_project_tags") return [];
+  });
+  renderCases();
+
+  fireEvent.click(await screen.findByText("Valid login"));
+  fireEvent.click(screen.getByText("Invalid login"), { ctrlKey: true });
+  expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Power Rename" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Cancel/ }));
+
+  expect(screen.getByText("2 selected")).toBeInTheDocument();
+  // And the dialog really did close, so this is not just a stale render.
+  expect(screen.queryByRole("button", { name: /Cancel/ })).not.toBeInTheDocument();
+});
+
 test("search narrows the list by title, id or tag", async () => {
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];

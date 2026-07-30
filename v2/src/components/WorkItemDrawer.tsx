@@ -551,7 +551,12 @@ export default function WorkItemDrawer({
                       )}
                       type="number"
                       min="0"
-                      step="0.5"
+                      // "any", not a 0.5 grid: these map to ADO Double
+                      // fields that happily hold 6.8, and a step the value
+                      // does not land on makes the input :invalid - which
+                      // is what raised the browser's own "Please enter a
+                      // valid value" bubble over our tooltip.
+                      step="any"
                       value={draft[key]}
                       onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
                     />

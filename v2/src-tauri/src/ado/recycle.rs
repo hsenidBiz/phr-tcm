@@ -57,8 +57,17 @@ const WORK_ITEM_DELETE: u32 = 8192;
 pub struct DeleteOutcome {
     pub id: i32,
     pub deleted: bool,
-    /// Why not, when it was not. Empty on success.
-    pub error: String,
+    /// Why not, when it was not. `None` on success.
+    ///
+    /// The error travels STRUCTURED rather than as a string. It used to be
+    /// `e.to_string()`, which for an unmapped status renders as the four
+    /// characters "http" plus a number - so a user reporting a failure
+    /// could only say "it gives http 400", and the sentence Azure DevOps
+    /// sent explaining which rule or constraint refused was read off the
+    /// wire and dropped one line later. The frontend's `describeAdoError`
+    /// already knows how to lift `message` out of that body; handing it
+    /// the real error is what lets it.
+    pub error: Option<AdoError>,
 }
 
 impl AdoClient {
@@ -108,7 +117,15 @@ impl AdoClient {
                 "token": format!("$PROJECT:vstfs:///Classification/TeamProject/{project_id}"),
                 "permissions": WORK_ITEM_DELETE,
             }],
-            "alwaysAllowAdministrators": true,
+            // FALSE on purpose: this asks Azure DevOps for the literal ACL
+            // answer. `true` tells it to pass anyone in an Administrators
+            // group whatever their ACL says - which is the one input in
+            // this request that can bias it toward yes, in a check whose
+            // whole stated posture is to fail closed. Getting this wrong in
+            // the `false` direction costs a missing button; getting it
+            // wrong in the `true` direction offers a delete that cannot
+            // work. Those are not symmetrical.
+            "alwaysAllowAdministrators": false,
         });
         let answer = self
             .post_json(
@@ -146,19 +163,22 @@ impl AdoClient {
 
         let mut out = Vec::with_capacity(ids.len());
         for &id in ids {
-            // Built from an i32, so nothing here is caller-controlled text,
-            // and it carries only api-version - the recoverable form. See
-            // this file's header for the parameter that is deliberately
-            // absent, and the test that keeps it absent.
+            // The id is an i32, so the one segment that names WHAT gets
+            // deleted cannot carry arbitrary text. `org` and `project` are
+            // caller-supplied strings - a previous version of this comment
+            // claimed otherwise, which is worth correcting in the one file
+            // whose safety argument is that it is short enough to audit by
+            // reading. They are the same two strings every other endpoint
+            // interpolates, and the query carries only api-version - the
+            // recoverable form. See this file's header for the parameter
+            // that is deliberately absent, and the test that keeps it so.
             let url = format!(
                 "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
                 self.base_url, org, project, id
             );
             match self.send_recycle_delete(&url, id).await {
-                Ok(()) => out.push(DeleteOutcome { id, deleted: true, error: String::new() }),
-                Err(e) => {
-                    out.push(DeleteOutcome { id, deleted: false, error: e.to_string() });
-                }
+                Ok(()) => out.push(DeleteOutcome { id, deleted: true, error: None }),
+                Err(e) => out.push(DeleteOutcome { id, deleted: false, error: Some(e) }),
             }
         }
         Ok(out)
@@ -167,6 +187,13 @@ impl AdoClient {
     /// The request itself. Paced and logged like every other call - a delete
     /// is the LAST thing that should be missing from the log the user pastes
     /// into a bug report.
+    ///
+    /// The body is read BEFORE the status is matched, and logged with it.
+    /// Previously the log line carried the status alone and the body was
+    /// only read inside the catch-all arm, so a refusal Azure DevOps had
+    /// explained in full arrived as a bare number - in the log and in the
+    /// UI both. For the one irreversible thing this app does, "400" with
+    /// no sentence is not a diagnosis.
     async fn send_recycle_delete(&self, url: &str, id: i32) -> Result<(), AdoError> {
         super::throttle::pace().await;
         let started = std::time::Instant::now();
@@ -182,16 +209,31 @@ impl AdoClient {
                 AdoError::Network(e.to_string())
             })?;
         let status = resp.status().as_u16();
-        crate::applog::info(format!(
-            "DELETE work item #{id} -> {status} in {} ms (recycle bin)",
-            started.elapsed().as_millis()
-        ));
+        let retry_after = super::transport::retry_after(&resp);
+        // `text()` consumes the response, so it has to happen once, here -
+        // not inside one arm of the match below.
+        let body = resp.text().await.unwrap_or_default();
+        let ms = started.elapsed().as_millis();
+        let line = format!("DELETE work item #{id} -> {status} in {ms} ms (recycle bin)");
+        if (200..=299).contains(&status) {
+            crate::applog::info(line);
+        } else {
+            // Same cap the frontend applies before putting a body in front
+            // of a user - enough for Azure DevOps' sentence, not enough for
+            // an error page.
+            let mut why = body.trim().chars().take(400).collect::<String>();
+            if why.is_empty() {
+                why = "(no response body)".into();
+            }
+            crate::applog::warn(format!("{line}: {why}"));
+        }
         match status {
             200..=299 => Ok(()),
             401 => Err(AdoError::Unauthorized),
             403 => Err(AdoError::Forbidden),
             404 => Err(AdoError::NotFound),
-            s => Err(AdoError::Http { status: s, body: resp.text().await.unwrap_or_default() }),
+            429 => Err(AdoError::RateLimited { retry_after_secs: retry_after }),
+            s => Err(AdoError::Http { status: s, body }),
         }
     }
 }

@@ -2,7 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type DeleteOutcome } from "../bindings";
-import { unwrap } from "../lib/ipc";
+import { describeAdoError, unwrap } from "../lib/ipc";
 import { IconCancel, IconRemove } from "../lib/actionIcons";
 import { Button } from "./ui/button";
 import { Modal } from "./ui/modal";
@@ -80,7 +80,14 @@ export default function DeleteConfirm({
           {failures.map((f) => (
             <li key={f.id} className="rounded border border-border px-2 py-1.5">
               <span className="id-mono text-faint">#{f.id}</span>
-              <span className="ml-2 text-danger">{f.error}</span>
+              {/* describeAdoError lifts Azure DevOps' own `message` out of
+                  the response body. Before this the Rust side flattened
+                  the error to a string first, so an unmapped status
+                  arrived here as the literal text "http 400" and the
+                  explanation ADO had sent was never shown to anyone. */}
+              <span className="ml-2 text-danger">
+                {f.error ? describeAdoError(f.error) : "Unknown error."}
+              </span>
             </li>
           ))}
         </ul>
@@ -99,9 +106,16 @@ export default function DeleteConfirm({
         <h2 className="text-sm font-semibold text-text">
           Delete {cases.length} test case{cases.length === 1 ? "" : "s"}?
         </h2>
+        {/* Deliberately not an absolute promise. This app only ever asks
+            Azure DevOps for the recoverable delete - that part is ours to
+            guarantee and it is enforced by test. What happens next is
+            Azure DevOps', and its own documentation is not consistent
+            about test cases specifically, so the app does not swear to an
+            outcome it does not control and cannot check. */}
         <p className="mt-1 text-xs text-muted">
-          These move to the recycle bin in Azure DevOps, where an administrator can restore them.
-          This app cannot put them back, and it never deletes anything permanently.
+          This app only ever asks for the recoverable delete - it never requests a permanent
+          one. Recovering them is then up to an administrator in Azure DevOps, and this app
+          cannot put them back. Treat it as one-way from here.
         </p>
       </div>
 

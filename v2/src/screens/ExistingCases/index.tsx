@@ -218,7 +218,7 @@ export default function ExistingCases({
           className="rounded p-1 text-muted hover:text-accent"
           onClick={refresh}
         >
-          <RefreshCw size={14} />
+          <RefreshCw size={14} className={cases.isFetching ? "animate-spin" : undefined} />
         </button>
         {/* Viewing (incl. the browser report) lives in the View Test Cases
             tab now - this screen stays focused on editing. */}
@@ -380,14 +380,16 @@ export default function ExistingCases({
       {renameOpen && (
         <PowerRenameDialog
           target={renameTarget}
-          onClose={() => {
-            setRenameOpen(false);
-            setSelected(new Set());
-          }}
+          // Closing is not finishing. This used to clear the selection on
+          // the way out, which meant Cancel threw away the very selection
+          // the user had just built in order to rename it - and left them
+          // re-picking every case to try again.
+          onClose={() => setRenameOpen(false)}
           onDone={() => {
             // Same reason Bulk Edit collapses them: an expanded editor still
             // holds the pre-rename title and would put it back on save.
             if (openId != null && selected.has(openId)) setOpenId(null);
+            setSelected(new Set());
             refresh();
           }}
         />

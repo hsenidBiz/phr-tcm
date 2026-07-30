@@ -37,12 +37,16 @@ test("every case is listed by id and title before anything happens", () => {
   expect(screen.getByRole("button", { name: /Delete 2/ })).toBeInTheDocument();
 });
 
-/** The app has no permanent delete, and the wording has to say so - a user
- *  deciding whether to press this needs to know it is recoverable. */
-test("it says where they go and who can bring them back", () => {
+/** The app never REQUESTS a permanent delete, and the wording has to say
+ *  so. What it must NOT do is promise recovery: that is Azure DevOps' to
+ *  give, its documentation is not consistent about test cases, and this
+ *  app cannot check the outcome. Pinning the old absolute wording here is
+ *  what would keep an unverifiable guarantee alive. */
+test("it promises only what the app itself controls", () => {
   mount();
-  expect(screen.getByText(/recycle bin/i)).toBeInTheDocument();
-  expect(screen.getByText(/never deletes anything permanently/i)).toBeInTheDocument();
+  expect(screen.getByText(/never requests a permanent/i)).toBeInTheDocument();
+  expect(screen.getByText(/one-way from here/i)).toBeInTheDocument();
+  expect(screen.queryByText(/never deletes anything permanently/i)).not.toBeInTheDocument();
 });
 
 test("cancel sends nothing", () => {
@@ -63,7 +67,7 @@ test("delete sends exactly the listed ids", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "delete_test_cases") {
       sent = args;
-      return CASES.map((c) => ({ id: c.id, deleted: true, error: "" }));
+      return CASES.map((c) => ({ id: c.id, deleted: true, error: null }));
     }
     return null;
   });
@@ -81,8 +85,8 @@ test("a partial failure names what was left behind and stays open", async () => 
   mockIPC((cmd) => {
     if (cmd === "delete_test_cases") {
       return [
-        { id: 5001, deleted: true, error: "" },
-        { id: 5002, deleted: false, error: "You do not have permission." },
+        { id: 5001, deleted: true, error: null },
+        { id: 5002, deleted: false, error: { kind: "Forbidden" } },
       ];
     }
     return null;
@@ -91,9 +95,43 @@ test("a partial failure names what was left behind and stays open", async () => 
   fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
 
   expect(await screen.findByText(/1 could not be deleted/)).toBeInTheDocument();
-  expect(screen.getByText("You do not have permission.")).toBeInTheDocument();
+  expect(screen.getByText(/don't have permission/i)).toBeInTheDocument();
   expect(screen.getByText("#5002")).toBeInTheDocument();
   expect(onClose).not.toHaveBeenCalled();
+});
+
+/** The regression this panel was built wrong for. Azure DevOps refuses some
+ *  deletes with a 400 and a sentence saying why; the outcome used to be
+ *  flattened to a string in Rust, whose Display for that variant is the
+ *  bare text "http 400". The user could report the number and nothing else.
+ *  The explanation has to reach this list. */
+test("Azure DevOps' own explanation is what the failure list shows", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "delete_test_cases") {
+      return [
+        {
+          id: 5001,
+          deleted: false,
+          error: {
+            kind: "Http",
+            detail: {
+              status: 400,
+              body: JSON.stringify({
+                message: "VS402625: Work item 5001 cannot be deleted because it is in use.",
+              }),
+            },
+          },
+        },
+        { id: 5002, deleted: true, error: null },
+      ];
+    }
+    return null;
+  });
+  mount();
+  fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
+
+  expect(await screen.findByText(/cannot be deleted because it is in use/)).toBeInTheDocument();
+  expect(screen.queryByText(/http 400/i)).not.toBeInTheDocument();
 });
 
 /** When EVERY delete fails there is no "rest" that was recycled, and the
@@ -102,7 +140,7 @@ test("a partial failure names what was left behind and stays open", async () => 
 test("an all-failed delete claims nothing and keeps the selection", async () => {
   mockIPC((cmd) => {
     if (cmd === "delete_test_cases") {
-      return CASES.map((c) => ({ id: c.id, deleted: false, error: "You do not have permission." }));
+      return CASES.map((c) => ({ id: c.id, deleted: false, error: { kind: "Forbidden" } }));
     }
     return null;
   });

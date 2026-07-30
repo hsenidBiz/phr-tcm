@@ -138,7 +138,66 @@ async fn one_failure_does_not_stop_the_others_and_is_named() {
     assert!(out[0].deleted && out[2].deleted, "the others still went");
     assert!(!out[1].deleted);
     assert_eq!(out[1].id, 2, "the failure names the item");
-    assert!(!out[1].error.is_empty(), "and says why");
+    assert!(matches!(out[1].error, Some(AdoError::Forbidden)), "and says why");
+}
+
+/// The reason Azure DevOps gives has to REACH the caller.
+///
+/// This is the branch that broke in the field. A 400 - which is what Azure
+/// DevOps uses to refuse the request rather than the caller - carries its
+/// explanation in the body, and the outcome used to flatten the error with
+/// `to_string()`. `AdoError::Http`'s Display is `"http {status}"`, so a
+/// user hit a refusal Azure DevOps had described in a full sentence and
+/// could only report "it gives http 400". The old assertion here was
+/// `!error.is_empty()`, which "http 400" satisfies - so the test agreed the
+/// failure "says why" while saying nothing.
+#[tokio::test]
+async fn an_unmapped_failure_carries_azure_devops_own_explanation() {
+    let server = MockServer::start().await;
+    with_permission(&server, true).await;
+    Mock::given(method("DELETE"))
+        .and(path("/o/p/_apis/wit/workitems/7"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "message": "VS402625: Work item 7 cannot be deleted because it is in use."
+        })))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .delete_test_cases_to_recycle_bin("o", "p", &[7])
+        .await
+        .unwrap();
+
+    assert!(!out[0].deleted);
+    let Some(AdoError::Http { status, body }) = &out[0].error else {
+        panic!("a 400 must arrive as Http, structured - got {:?}", out[0].error);
+    };
+    assert_eq!(*status, 400);
+    // The BODY is the whole point: the frontend's describeAdoError lifts
+    // `message` out of it. A status with an empty body is the bug.
+    assert!(
+        body.contains("cannot be deleted because it is in use"),
+        "the explanation was dropped; the user gets a bare status again: {body:?}"
+    );
+}
+
+/// A throttled delete must not be reported as a permission problem or as an
+/// unexplained status - it is the one failure that is worth simply retrying.
+#[tokio::test]
+async fn a_throttled_delete_is_reported_as_rate_limiting() {
+    let server = MockServer::start().await;
+    with_permission(&server, true).await;
+    Mock::given(method("DELETE"))
+        .and(path("/o/p/_apis/wit/workitems/9"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "7"))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .delete_test_cases_to_recycle_bin("o", "p", &[9])
+        .await
+        .unwrap();
+    assert!(matches!(out[0].error, Some(AdoError::RateLimited { retry_after_secs: 7 })));
 }
 
 
@@ -180,5 +239,14 @@ async fn the_permission_asked_for_is_work_item_delete_on_the_project() {
     assert_eq!(
         e["token"].as_str(),
         Some("$PROJECT:vstfs:///Classification/TeamProject/proj-guid-1")
+    );
+    // The literal ACL answer. `true` here asks Azure DevOps to pass anyone
+    // in an Administrators group whatever their ACL says - the only field
+    // in this body that can bias a fail-closed check toward yes, and the
+    // only one that used to go unasserted.
+    assert_eq!(
+        body["alwaysAllowAdministrators"].as_bool(),
+        Some(false),
+        "the gate must not ask for the administrator bypass"
     );
 }

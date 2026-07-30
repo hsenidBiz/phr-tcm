@@ -449,8 +449,19 @@ export type DbServerConfig = {
 export type DeleteOutcome = {
 	id: number,
 	deleted: boolean,
-	/**  Why not, when it was not. Empty on success. */
-	error: string,
+	/**
+	 *  Why not, when it was not. `None` on success.
+	 * 
+	 *  The error travels STRUCTURED rather than as a string. It used to be
+	 *  `e.to_string()`, which for an unmapped status renders as the four
+	 *  characters "http" plus a number - so a user reporting a failure
+	 *  could only say "it gives http 400", and the sentence Azure DevOps
+	 *  sent explaining which rule or constraint refused was read off the
+	 *  wire and dropped one line later. The frontend's `describeAdoError`
+	 *  already knows how to lift `message` out of that body; handing it
+	 *  the real error is what lets it.
+	 */
+	error: AdoError | null,
 };
 
 /**  One environment a release carried this build into. */

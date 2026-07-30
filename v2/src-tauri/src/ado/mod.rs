@@ -117,7 +117,10 @@ pub struct BugTypeInfo {
     pub has_severity: bool,
 }
 
-#[derive(Debug, thiserror::Error, Serialize, specta::Type)]
+// Clone so a failed operation can be REPORTED as well as returned -
+// DeleteOutcome carries the real error per item instead of a flattened
+// string, and that struct is Clone.
+#[derive(Debug, Clone, thiserror::Error, Serialize, specta::Type)]
 #[serde(tag = "kind", content = "detail")]
 pub enum AdoError {
     #[error("unauthorized")]

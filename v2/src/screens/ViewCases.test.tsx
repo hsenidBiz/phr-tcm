@@ -146,3 +146,34 @@ test("Group by title folds cases under shared prefixes and persists collapse", a
   expect(screen.getByText("Checkout")).toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem("tcm-v2-view-collapsed-groups")!)).toEqual(["Login"]);
 });
+
+/** Folding a group hides the highlight along with the rows, so the heading
+ * has to say that something is still selected in there. */
+test("a collapsed group marks that it still holds a highlighted case", async () => {
+  mockCases();
+  renderView();
+  await screen.findByText("Login - valid");
+  fireEvent.click(screen.getByRole("checkbox")); // Group by title
+
+  // Expanded and unselected: nothing to announce.
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  // ONE case selected, not the whole group - the marker is about "did I
+  // leave something highlighted", not about completeness.
+  fireEvent.click(screen.getByText("Login - valid"));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument(); // still expanded
+
+  fireEvent.click(screen.getByLabelText("Collapse group Login"));
+  const dot = screen.getByRole("status");
+  expect(dot).toHaveAccessibleName("1 of 2 selected in Login");
+
+  // The untouched sibling group stays unmarked when it collapses too -
+  // "Checkout" has no shared prefix, so it lands in Ungrouped.
+  fireEvent.click(screen.getByLabelText("Collapse group Ungrouped"));
+  expect(screen.getAllByRole("status")).toHaveLength(1);
+
+  // Clearing the selection retires the marker while still collapsed.
+  fireEvent.click(screen.getByRole("button", { name: /Login \(2\)/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Login \(2\)/ }));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});

@@ -13,6 +13,22 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.7",
+    date: "2026-07-30",
+    items: [
+      "A failed delete now tells you what Azure DevOps actually said. It was showing \"http 400\" - the app's own name for the status - while the sentence Azure DevOps sent explaining the refusal was read off the wire and thrown away one line later. The reason is now shown in the failure list and written to the log.",
+      "The delete permission check no longer asks Azure DevOps for the administrator bypass. It now gets the literal answer for your account, which is what the check was always described as doing.",
+      "The delete confirmation no longer promises that deleted cases can be restored. The app only ever asks for the recoverable delete - that part is guaranteed and enforced by test - but recovery is Azure DevOps' to give, and its own documentation is not consistent about test cases.",
+      "Switching organization or project now clears the list of cases handed over from Test Suites. It used to survive the switch, so Update Test Cases could show one project's cases while every action aimed at another.",
+      "Power Rename: Cancel keeps your selection instead of clearing it, so backing out no longer means picking every case again.",
+      "View Test Cases: a collapsed group that still holds a highlighted case now shows a pulsing dot beside its name.",
+      "The refresh icon now spins while it is refreshing, in View Test Cases, Update Test Cases, Run Tests, Test Suites, and when checking for updates. Only three of the eight did before.",
+      "Remaining, Original and Completed accept decimals. They were pinned to half-hour steps, so a value like 6.8 raised the browser's own \"enter a valid value\" bubble.",
+      "The browser's plain tooltip no longer slips through in place of the app's. Dismissing a tooltip with Escape or a click used to hand the text straight back to the browser while your pointer was still on the control, which drew the old-style one a second later.",
+      "Report a bug: the dialog had no padding, so its contents sat against the border.",
+    ],
+  },
+  {
     version: "1.17.6",
     date: "2026-07-30",
     items: [
