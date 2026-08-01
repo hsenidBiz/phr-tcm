@@ -88,6 +88,19 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
 .no-match { color: var(--muted); font-size: 14px; text-align: center;
             padding: 28px 0; border: 1px dashed var(--border); border-radius: 10px; }
 .hidden { display: none !important; }
+/* Reviewer-notes toggle. It lives in the sticky search bar rather than
+   beside a case, so it is reachable from anywhere in a long page - the
+   reviewer who wants the notes gone is usually halfway down when they
+   decide that, and a control that has scrolled away is no control. */
+#tc-notes { font: inherit; font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+            border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+            border-radius: 8px; white-space: nowrap; color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 8%, transparent); }
+#tc-notes:hover { border-color: var(--accent); }
+#tc-notes[aria-pressed='true'] { color: var(--muted); background: var(--surface-2);
+                                 border-color: var(--border); }
+/* One rule, on the body, so nothing has to be walked to hide them. */
+body.notes-off .rev { display: none !important; }
 /* Reviewer notes: the spec context, sitting between the prerequisites and
    the steps. Tinted with the accent and given a left rule so it reads as
    commentary ABOUT the case rather than part of it - a reviewer scanning
@@ -208,6 +221,34 @@ const HTML_JS: &str = r#"
     if (e.key === 'Escape') { input.value = ''; apply(); }
   });
   apply();
+
+  // Reviewer notes on/off. One class on <body>; the CSS does the rest, so
+  // nothing has to be walked and it costs the same on a 600-case page as
+  // on a 3-case one.
+  var notesBtn = document.getElementById('tc-notes');
+  if (notesBtn) {
+    var KEY = 'tcm-report-notes-off';
+    // The page is opened from a temp file, and a file:// origin can refuse
+    // storage outright - so the preference is best-effort and the button
+    // still works without it.
+    function remember(off) {
+      try { localStorage.setItem(KEY, off ? '1' : '0'); } catch (e) {}
+    }
+    function recall() {
+      try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+    }
+    function paint(off) {
+      document.body.classList.toggle('notes-off', off);
+      notesBtn.setAttribute('aria-pressed', off ? 'true' : 'false');
+      notesBtn.textContent = off ? 'Show reviewer notes' : 'Hide reviewer notes';
+    }
+    paint(recall());
+    notesBtn.addEventListener('click', function () {
+      var off = !document.body.classList.contains('notes-off');
+      paint(off);
+      remember(off);
+    });
+  }
 })();
 "#;
 
@@ -378,6 +419,14 @@ pub fn export_queue_to_html(
         ),
         "<div class='searchbar'>".into(),
         "<input id='tc-search' type='search' placeholder='Search title, ID, tags, steps, prerequisites...' aria-label='Search test cases'>".into(),
+        // Only when at least one case HAS notes - a button that hides
+        // nothing is just another thing to read.
+        if queue.iter().any(|tc| !tc.reviewer_notes.trim().is_empty()) {
+            "<button id='tc-notes' type='button' aria-pressed='false'>Hide reviewer notes</button>"
+                .to_string()
+        } else {
+            String::new()
+        },
         "<span id='tc-count'></span></div>".into(),
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),
     ];

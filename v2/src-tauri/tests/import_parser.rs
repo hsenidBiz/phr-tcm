@@ -1,7 +1,7 @@
 //! Golden vectors ported 1:1 from v1 tests/test_import_parser.py.
 
 use std::collections::HashMap;
-use v2_lib::import_parser::{
+use v2_lib::import_parser::{export_queue_to_html, 
     export_queue_to_json, parse_file, parse_rows,
     EXCEL_HEADERS,
 };
@@ -201,6 +201,44 @@ fn json_export_round_trips_through_the_importer() {
     assert_eq!(doc["test_cases"][0]["id"], serde_json::json!(77));
 }
 
+/// A reviewer who wants the notes out of the way is usually halfway down
+/// a long page when they decide that, so the control lives in the sticky
+/// search bar - one that has scrolled away is no control.
+#[test]
+fn the_report_can_hide_its_reviewer_notes() {
+    let with_notes = vec![TestCase {
+        title: "Has notes".into(),
+        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        automation_status: "Not Automated".into(),
+        reviewer_notes: "Spec: Step10.md 7.7".into(),
+        ..Default::default()
+    }];
+    let path = tmp_path("notes-toggle.html");
+    export_queue_to_html(&with_notes, &path, "", None, &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    // The button is in the sticky bar, not beside a case.
+    let bar = html.split("class='searchbar'").nth(1).expect("search bar");
+    let bar = bar.split("</div>").next().unwrap();
+    assert!(bar.contains("id='tc-notes'"), "toggle belongs in the sticky bar: {bar}");
+    // Pressed state is exposed, so it is a real toggle to a screen reader.
+    assert!(html.contains("aria-pressed="), "{html}");
+    // And one rule does the hiding, rather than walking the DOM.
+    assert!(html.contains("body.notes-off .rev"), "{html}");
+
+    // No notes anywhere: no button. A control that hides nothing is just
+    // another thing to read.
+    let without = vec![TestCase {
+        title: "No notes".into(),
+        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        automation_status: "Not Automated".into(),
+        ..Default::default()
+    }];
+    let path2 = tmp_path("notes-toggle-none.html");
+    export_queue_to_html(&without, &path2, "", None, &Default::default()).unwrap();
+    let plain = std::fs::read_to_string(&path2).unwrap();
+    assert!(!plain.contains("id='tc-notes'"), "nothing to hide, so no button");
+}
 /// The reviewer-facing half: notes reach the browser page as RENDERED
 /// markdown, in their own panel, and the page still carries the ordinary
 /// comment boxes alongside them.
