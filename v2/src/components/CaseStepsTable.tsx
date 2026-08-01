@@ -9,16 +9,29 @@
 // table would have drifted the first time either was touched.
 
 import type { Step } from "../bindings";
+import { renderMarkdown } from "../lib/markdown";
 
 export default function CaseStepsTable({
   steps,
   preconditions,
+  reviewerNotes,
 }: {
   steps: Step[];
   /** Rendered above the table when present - a step often only makes sense
    * given the state the case starts in. */
   preconditions?: string;
+  /** Where the case came from: the spec section or the code symbol behind
+   * it. Shown above the steps, the same place and order the browser review
+   * page puts it, because that is where a reviewer looks for it.
+   *
+   * Until now this field existed everywhere EXCEPT the app: it round-trips
+   * through the JSON, renders in the browser page, and shows up in a change
+   * diff - but no screen displayed it. Someone who received a shared draft,
+   * which is exactly who the field is written for, could not read it
+   * without exporting to a browser first. */
+  reviewerNotes?: string;
 }) {
+  const notes = reviewerNotes?.trim();
   return (
     <>
       {preconditions ? (
@@ -26,6 +39,20 @@ export default function CaseStepsTable({
           <span className="font-semibold">Preconditions: </span>
           {preconditions}
         </p>
+      ) : null}
+      {notes ? (
+        <div className="border-b border-border/60 px-3 py-2">
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">
+            Reviewer notes
+          </p>
+          {/* Markdown, like everywhere else this field is shown - a citation
+              carries a link and sometimes a quote. `renderMarkdown`
+              sanitises; see lib/markdown.ts for why that is not optional. */}
+          <div
+            className="md-preview text-xs text-muted"
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(notes) }}
+          />
+        </div>
       ) : null}
       {steps.length > 0 ? (
         <table className="w-full border-collapse text-xs">

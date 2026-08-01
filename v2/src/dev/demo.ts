@@ -760,9 +760,21 @@ function applyPatches() {
         cases: [
           {
             update_id: null, title: "Shared - reviewer sanity check", tags: "demo; shared",
-            automation_status: "Not Automated", module_value: "", preconditions: "",
+            automation_status: "Not Automated", module_value: "",
+            preconditions: "A demo user exists",
             comment: "Shared by a teammate for review.",
-            steps: [{ action: "Open the app", expected: "It opens" }],
+            // The one flow reviewer notes are written FOR: a draft sent to
+            // somebody else to review. Expanding the case in the queue is
+            // where they now show, so the demo carries a real-shaped one -
+            // a pointer to the source, not an essay about the test.
+            reviewer_notes:
+              "Spec: **Step10-ManagePerformanceCycle.md** 7.7 (AC-3)\n\n" +
+              "Code: `IndexModel.CanCopyFromPreviousCycle`\n\n" +
+              "Out of scope: SSO sign-in.",
+            steps: [
+              { action: "Open the app", expected: "It opens" },
+              { action: "Open the shared draft", expected: "The case is listed" },
+            ],
           },
         ],
         warnings: [],

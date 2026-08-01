@@ -142,6 +142,7 @@ export default function SyncReport({
                       <CaseStepsTable
                         steps={c.full.steps}
                         preconditions={c.full.preconditions}
+                        reviewerNotes={c.full.reviewer_notes}
                       />
                     </div>
                   )}

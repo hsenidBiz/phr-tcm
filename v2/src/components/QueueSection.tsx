@@ -665,7 +665,11 @@ export default function QueueSection({
                     {/* Shared with the watched-file change report, which
                         needed the same "read the case start to finish"
                         view - see CaseStepsTable. */}
-                    <CaseStepsTable steps={tc.steps} preconditions={tc.preconditions} />
+                    <CaseStepsTable
+                      steps={tc.steps}
+                      preconditions={tc.preconditions}
+                      reviewerNotes={tc.reviewer_notes}
+                    />
                   </div>
                 )}
                 {diff && !diff.noop && expandedDiffs.has(i) && (
