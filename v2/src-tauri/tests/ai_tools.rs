@@ -3,7 +3,8 @@
 //! the same way it would read the real home/appdata dirs.
 
 use v2_lib::ai_tools::{
-    claude_cli_candidates, command_dir, command_files, command_markdown, detect, merge_entry,
+    claude_cli_candidates, command_dir, command_files, command_files_for, command_markdown,
+    detect, merge_entry,
     remove_entry, tcm_server, McpServer, COMMAND_MARKER, COMMANDS, DB_SERVER, TCM_SERVER,
 };
 
@@ -111,6 +112,44 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
                 c.stem
             );
         }
+    }
+}
+
+/// A tool switched off in the app must lose its command. The tool side
+/// already refuses a disabled tool twice - filtered from `tools/list`,
+/// refused again on call for clients working from a cached list - but the
+/// picker was still offering it, and the picker is where a person looks.
+#[test]
+fn a_disabled_tool_loses_its_command() {
+    let all = command_files("C:/Users/Sam");
+    let some = command_files_for("C:/Users/Sam", &["validate_cases".to_string()]);
+    assert_eq!(some.len(), all.len() - 1);
+    assert!(
+        !some.iter().any(|(p, _)| p.ends_with("validate.md")),
+        "the command for a switched-off tool must not be written"
+    );
+    // And everything else stays - disabling one must not clear the set.
+    assert!(some.iter().any(|(p, _)| p.ends_with("write.md")));
+
+    // Nothing disabled is the whole set, so the plain call is unchanged.
+    assert_eq!(command_files_for("C:/Users/Sam", &[]).len(), all.len());
+}
+
+/// Every command names the tool it reaches, and that name has to be the
+/// one the MCP server actually exposes - a typo here silently makes the
+/// command un-disableable, because nothing would ever match it.
+#[test]
+fn each_command_names_a_real_tool() {
+    // The tool list as `mcp.rs` declares it. Checked by scanning that
+    // file rather than by copying the names, so the two cannot drift.
+    let mcp = include_str!("../src/mcp.rs");
+    for c in COMMANDS {
+        assert!(
+            mcp.contains(&format!("\"name\": \"{}\"", c.tool)),
+            "/tcm:{} points at {:?}, which mcp.rs does not expose",
+            c.stem,
+            c.tool
+        );
     }
 }
 

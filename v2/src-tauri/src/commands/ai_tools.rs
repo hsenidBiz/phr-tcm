@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::ai_tools::{
-    atomic_write, command_dir, command_files, detect, is_installed, legacy_command_path,
+    atomic_write, command_dir, command_files, command_files_for, detect, is_installed,
+    legacy_command_path,
     merge_entry, remove_entry, tcm_server, DetectedTool, McpServer, COMMAND_MARKER, DB_SERVER,
     TOOL_SPECS,
 };
@@ -208,6 +209,25 @@ fn unregister_server(id: &str, server_name: &str) -> Result<(), String> {
 /// One failure does not abandon the rest - a single unwritable file should
 /// cost that command, not all ten - but the first reason is reported.
 fn write_command() -> Result<(), String> {
+    write_commands_for(&[])
+}
+
+/// Bring `~/.claude/commands/tcm/` into line with which tools are on.
+///
+/// Public so `set_bridge_context` can call it when the AI Bridge tab's
+/// toggles move. A no-op unless the directory already exists: somebody who
+/// never registered should not acquire a command set because they changed
+/// an unrelated setting.
+pub fn sync_commands(disabled: &[String]) {
+    if !command_dir(&home_dir()).is_dir() {
+        return;
+    }
+    if let Err(e) = write_commands_for(disabled) {
+        crate::applog::warn(format!("could not sync the Claude Code commands: {e}"));
+    }
+}
+
+fn write_commands_for(disabled: &[String]) -> Result<(), String> {
     let home = home_dir();
 
     // An earlier version wrote one top-level file. Leaving it would put
@@ -222,8 +242,18 @@ fn write_command() -> Result<(), String> {
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
 
+    // A tool switched off loses its command; switched back on, it returns.
+    // Only ours is removed - see the marker check below.
+    let wanted = command_files_for(&home, disabled);
+    for (path, _) in command_files(&home) {
+        let keep = wanted.iter().any(|(p, _)| *p == path);
+        if !keep && matches!(std::fs::read_to_string(&path), Ok(t) if t.contains(COMMAND_MARKER)) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
     let mut first_error: Option<String> = None;
-    for (path, contents) in command_files(&home) {
+    for (path, contents) in wanted {
         if matches!(std::fs::read_to_string(&path), Ok(t) if !t.contains(COMMAND_MARKER)) {
             let msg = format!(
                 "{} already exists and was not written by this app - left alone",

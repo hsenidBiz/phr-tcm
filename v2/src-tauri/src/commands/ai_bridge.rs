@@ -89,8 +89,22 @@ pub fn set_bridge_context(
             project,
             module_ref,
             preconditions_ref,
-            disabled_tools,
+            disabled_tools: disabled_tools.clone(),
         };
+    }
+    // A tool switched off in the AI Bridge tab loses its slash command too.
+    // The tool side already refuses a disabled tool twice - filtered from
+    // tools/list, refused again on call - but the picker was still offering
+    // it, and the picker is where a person actually looks.
+    //
+    // Only when the set has really moved: this command also fires on an
+    // org or project change, and rewriting ten files for that would be ten
+    // pointless writes.
+    static LAST: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    if last.as_deref() != Some(disabled_tools.as_slice()) {
+        *last = Some(disabled_tools.clone());
+        crate::commands::ai_tools::sync_commands(&disabled_tools);
     }
 }
 
