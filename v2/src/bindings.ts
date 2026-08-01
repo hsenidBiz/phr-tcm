@@ -88,7 +88,10 @@ export const commands = {
 	appLogs: (limit: number) => __TAURI_INVOKE<LogLine[]>("app_logs", { limit }),
 	/**  Folder holding the daily log files, for "Open log folder". */
 	appLogDir: () => __TAURI_INVOKE<string>("app_log_dir"),
-	/**  Download the pending update and restart into it. */
+	/**
+	 *  Download the pending update and restart into it, streaming
+	 *  `UpdateProgress` so the banner can show how much is left.
+	 */
 	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
 	/**
 	 *  Start the background check for newly assigned work items. Idempotent:
@@ -318,6 +321,7 @@ export const events = {
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
+	updateProgress: makeEvent<UpdateProgress>("update-progress"),
 	watchedFileChanged: makeEvent<WatchedFileChanged>("watched-file-changed"),
 	workAssigned: makeEvent<WorkAssigned>("work-assigned"),
 };
@@ -1209,6 +1213,22 @@ export type TimelineTask = {
 	 *  pending step, or one whose logs have been cleaned up).
 	 */
 	log_id: number,
+};
+
+/**
+ *  Emitted while an update package downloads, so the banner can show a bar
+ *  instead of a spinner that says nothing about how long is left.
+ * 
+ *  `total` is exact - the size the release feed gives. `downloaded` is that
+ *  share of it implied by `percent`, which Velopack floors to the nearest
+ *  5%, so it steps rather than counts. Bytes are f64 because u64 is not
+ *  exportable over these bindings; an installer is nowhere near the limit
+ *  where a double stops being exact.
+ */
+export type UpdateProgress = {
+	percent: number,
+	downloaded: number | null,
+	total: number | null,
 };
 
 /**

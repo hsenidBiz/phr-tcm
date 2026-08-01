@@ -46,6 +46,21 @@ pub struct WatchedFileChanged {
     pub stamp: String,
 }
 
+/// Emitted while an update package downloads, so the banner can show a bar
+/// instead of a spinner that says nothing about how long is left.
+///
+/// `total` is exact - the size the release feed gives. `downloaded` is that
+/// share of it implied by `percent`, which Velopack floors to the nearest
+/// 5%, so it steps rather than counts. Bytes are f64 because u64 is not
+/// exportable over these bindings; an installer is nowhere near the limit
+/// where a double stops being exact.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct UpdateProgress {
+    pub percent: i32,
+    pub downloaded: f64,
+    pub total: f64,
+}
+
 /// Emitted when `begin_test_case_writing` settles on where the finished
 /// JSON will be written. The frontend starts watching that path straight
 /// away, so the file folds into the queue the moment the assistant writes

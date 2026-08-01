@@ -5,6 +5,7 @@ import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
+import { formatByteProgress } from "./lib/bytes";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { cacheEntry, claimCacheFor } from "./lib/localCache";
@@ -221,12 +222,39 @@ export default function App() {
     retry: false,
   });
 
+  // How far the update package has got. Null until the first event, which
+  // is also the first moment the size is known - the backend has to re-ask
+  // the feed before it can say how big the download is.
+  const [dl, setDl] = useState<{ percent: number; downloaded: number; total: number } | null>(null);
+
   const applyUpdate = useMutation({
     mutationFn: async () => {
-      const r = await commands.applyUpdate();
-      if (r.status === "error") throw new Error(r.error);
+      setDl(null);
+      // The byte fields cross as f64, which the bindings widen to
+      // `number | null` because a double can be NaN. A byte count cast from
+      // a u64 never is - the fallback is here so the display cannot be, not
+      // because it is expected to fire.
+      const un = await events.updateProgress.listen((e) =>
+        setDl({
+          percent: e.payload.percent,
+          downloaded: e.payload.downloaded ?? 0,
+          total: e.payload.total ?? 0,
+        }),
+      );
+      try {
+        const r = await commands.applyUpdate();
+        if (r.status === "error") throw new Error(r.error);
+      } finally {
+        // On success the app restarts into the new build, so this only
+        // really matters on the failure path - but leaking a listener per
+        // failed attempt is how a retry ends up updating state twice.
+        detach(un);
+      }
     },
-    onError: (e) => toast.error(`Update failed: ${e.message}`),
+    onError: (e) => {
+      setDl(null);
+      toast.error(`Update failed: ${e.message}`);
+    },
   });
 
   const signIn = useMutation({
@@ -515,12 +543,46 @@ export default function App() {
         )}
 
         {update.data?.available && (
-          <div className="flex items-center justify-between border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
-            <span>Version {update.data.available} is available.</span>
-            <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
-              <IconRefresh aria-hidden className={applyUpdate.isPending ? "animate-spin" : undefined} />
-              {applyUpdate.isPending ? "Updating" : "Restart to update"}
-            </Button>
+          <div className="border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <span>Version {update.data.available} is available.</span>
+              <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
+                <IconRefresh aria-hidden className={applyUpdate.isPending ? "animate-spin" : undefined} />
+                {applyUpdate.isPending ? "Updating" : "Restart to update"}
+              </Button>
+            </div>
+            {applyUpdate.isPending && (
+              <div className="mt-2 flex items-center gap-3">
+                <div
+                  role="progressbar"
+                  aria-label={`Downloading version ${update.data.available}`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  // Omitted, not zero, until the first event: an indeterminate
+                  // bar is what "we do not know yet" means to a screen reader,
+                  // and 0% would be a claim.
+                  aria-valuenow={dl ? dl.percent : undefined}
+                  aria-valuetext={dl ? formatByteProgress(dl.downloaded, dl.total) : undefined}
+                  className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent/20"
+                >
+                  <div
+                    className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                    style={{ width: `${dl?.percent ?? 0}%` }}
+                  />
+                </div>
+                {/* Tabular figures: the numerator changes every few seconds
+                    and proportional digits make the whole line jitter. */}
+                <span className="shrink-0 tabular-nums text-xs text-muted">
+                  {!dl
+                    ? "Preparing…"
+                    : dl.percent >= 100
+                      ? "Installing…"
+                      : dl.total > 0
+                        ? formatByteProgress(dl.downloaded, dl.total)
+                        : `${dl.percent}%`}
+                </span>
+              </div>
+            )}
           </div>
         )}
 

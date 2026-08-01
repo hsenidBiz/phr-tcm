@@ -59,7 +59,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::DraftCommentSaved,
             events::DraftGeneralCommentSaved,
             events::WorkAssigned,
-            events::IntakeOutputPath
+            events::IntakeOutputPath,
+            events::UpdateProgress
         ])
         .commands(collect_commands![
             misc::ping,

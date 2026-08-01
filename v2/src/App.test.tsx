@@ -284,6 +284,52 @@ test("a release published while the app is open is noticed within the hour", asy
   }
 });
 
+/// The download is the part of an update that takes real time, and a
+/// spinner says nothing about how much of it is left. The bar and the byte
+/// pair both come from the SAME event - so what is checked here is that a
+/// progress event reaches the screen, and that the two states either side
+/// of it (nothing yet, finished) do not read as bytes that never arrived.
+test("the update banner shows how much of the package has downloaded", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auth_status") return { signed_in: false, account: null };
+      if (cmd === "check_update") return { available: "0.5.0", blocked: null };
+      // Never resolves: the download is still in flight for the whole test,
+      // which is exactly the window the bar exists for.
+      if (cmd === "apply_update") return new Promise(() => {});
+    },
+    { shouldMockEvents: true },
+  );
+  renderApp();
+  fireEvent.click(await screen.findByRole("button", { name: /restart to update/i }));
+
+  // Before the first event there is no size to report - and 0% would be a
+  // claim, not a measurement.
+  const bar = await screen.findByRole("progressbar");
+  expect(bar).not.toHaveAttribute("aria-valuenow");
+  expect(screen.getByText("Preparing…")).toBeInTheDocument();
+
+  const { emit } = await import("@tauri-apps/api/event");
+  const send = (percent: number, downloaded: number, total: number) =>
+    act(async () => {
+      await emit("update-progress", { percent, downloaded, total });
+    });
+
+  await send(35, 8_678_112, 24.8 * 1024 ** 2);
+  await vi.waitFor(() => {
+    expect(screen.getByText("8.3 MB of 24.8 MB")).toBeInTheDocument();
+  });
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "35");
+
+  // At 100% the bytes are all in and the wait is the install, not a
+  // download - saying "24.8 MB of 24.8 MB" while nothing moves reads as a
+  // stall.
+  await send(100, 24.8 * 1024 ** 2, 24.8 * 1024 ** 2);
+  await vi.waitFor(() => {
+    expect(screen.getByText("Installing…")).toBeInTheDocument();
+  });
+});
+
 /// A check that could not run is not the same as being up to date, and the
 /// banner must not treat it as either - it has nothing to offer. The
 /// difference is told to the person who ASKED, in the toast.

@@ -54,13 +54,23 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
     })
 }
 
-/// Download the pending update and restart into it.
+/// Download the pending update and restart into it, streaming
+/// `UpdateProgress` so the banner can show how much is left.
 #[tauri::command]
 #[specta::specta]
 pub async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let emitter = app.clone();
         let state = app.state::<updater::UpdateState>();
-        updater::download_and_apply(&state)
+        updater::download_and_apply(&state, move |p| {
+            use tauri_specta::Event as _;
+            let _ = crate::events::UpdateProgress {
+                percent: p.percent as i32,
+                downloaded: p.downloaded as f64,
+                total: p.total as f64,
+            }
+            .emit(&emitter);
+        })
     })
     .await
     .map_err(|e| e.to_string())?

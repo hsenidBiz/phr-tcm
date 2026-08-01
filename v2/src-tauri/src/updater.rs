@@ -62,7 +62,40 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
     }
 }
 
+/// How far a download has got, as the app reports it to the user.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Progress {
+    /// 0-100, straight from Velopack.
+    pub percent: i16,
+    /// Bytes, DERIVED from `percent` (see `bytes_at`) - not a byte counter.
+    pub downloaded: u64,
+    /// Bytes, exact: the size the release feed gives for the package.
+    pub total: u64,
+}
+
+/// The byte figure behind a percentage of a known total.
+///
+/// Velopack's downloader counts real bytes but only reports whole percent
+/// floored to the nearest 5 (`download.rs`), so this is a lower bound that
+/// can lag the true count by up to 5% of the package. The TOTAL is exact -
+/// it comes from the feed, not from this - which is what makes the pair
+/// worth showing: "12.5 MB of 24.8 MB" is honest about the destination even
+/// when the numerator is stepping.
+pub fn bytes_at(percent: i16, total: u64) -> u64 {
+    let p = percent.clamp(0, 100) as u64;
+    // Multiply before dividing: `total / 100 * p` throws away the remainder
+    // on every package whose size is not a multiple of 100.
+    (total / 100).saturating_mul(p) + (total % 100) * p / 100
+}
+
 /// Download the pending update and restart into it.
+///
+/// `on_progress` is called from the download thread as well as from this
+/// one, so it has to be cheap and thread-safe - emitting a Tauri event is
+/// both. It is always called at least twice: once at 0% (which is how the
+/// UI learns the size before a single byte lands) and once at 100% before
+/// the restart, so a package that was already on disk still resolves the
+/// bar instead of leaving it stuck at zero.
 ///
 /// # Why this asks the feed again instead of trusting `pending`
 ///
@@ -80,7 +113,10 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
 /// there until someone notices it, so the info behind it can be an hour old
 /// - and two releases half an hour apart is enough to break it. Re-asking
 /// costs one request and removes the whole class of staleness.
-pub fn download_and_apply(state: &UpdateState) -> Result<(), String> {
+pub fn download_and_apply(
+    state: &UpdateState,
+    on_progress: impl Fn(Progress) + Send + Sync + 'static,
+) -> Result<(), String> {
     let um = manager().ok_or("not a Velopack install")?;
 
     let info = match um.check_for_updates() {
@@ -114,8 +150,31 @@ pub fn download_and_apply(state: &UpdateState) -> Result<(), String> {
     // you whether the feed is unreachable or whether it moved out from
     // under a stale banner, and that distinction is the whole bug above.
     let version = info.TargetFullRelease.Version.clone();
-    um.download_updates(&info, None)
-        .map_err(|e| format!("could not download {version}: {e}"))?;
+    let total = info.TargetFullRelease.Size;
+
+    let report = std::sync::Arc::new(on_progress);
+    report(Progress { percent: 0, downloaded: 0, total });
+
+    // Velopack sends percentages synchronously from inside the read loop, so
+    // anything slow on the receiving end would throttle the download itself.
+    // Draining on our own thread keeps the two apart.
+    let (tx, rx) = std::sync::mpsc::channel::<i16>();
+    let pump = {
+        let report = std::sync::Arc::clone(&report);
+        std::thread::spawn(move || {
+            for percent in rx {
+                report(Progress { percent, downloaded: bytes_at(percent, total), total });
+            }
+        })
+    };
+
+    // `download_updates` owns the sender and drops it on return, which ends
+    // the loop above - so the join cannot outlive the download.
+    let downloaded = um.download_updates(&info, Some(tx));
+    let _ = pump.join();
+    downloaded.map_err(|e| format!("could not download {version}: {e}"))?;
+
+    report(Progress { percent: 100, downloaded: total, total });
     um.apply_updates_and_restart(&info.TargetFullRelease)
         .map_err(|e| format!("could not apply {version}: {e}"))
 }
