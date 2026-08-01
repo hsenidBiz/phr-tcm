@@ -13,6 +13,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.7",
+    date: "2026-08-01",
+    items: [
+      "Registering with Claude Code now installs a slash command for every tool, grouped under \"tcm:\" - /tcm:write to start a job, and /tcm:validate, /tcm:optimize, /tcm:examples, /tcm:wiki and the rest for a single step. Starting a test-case session no longer means remembering a tool name. They are removed again when you unregister.",
+      "The AI assistant is now asked how you want the set organised: so that reading the cases walks down the specification, or so that whoever runs them changes environment as little as possible. It is a required question, because the two are different files and only you know which job this one is for.",
+      "That answer now does something. The optimizer used to regroup the cases whatever you wanted, so a set meant to be read against a document could not get the navigation and expected-result tidy-up without also being shuffled out of order. It can now be told to leave the order alone and do the rest.",
+      "The browser report can hide reviewer notes. The button sits in the search bar that stays on screen as you scroll, because the point at which the notes get in the way is usually halfway down a long page. Your choice is remembered.",
+      "The browser report now notices when the test cases behind it have changed. It shows a bar offering to refresh rather than reloading on its own - reloading would cost you your place on a long page, the sections you had opened, and any comment you were still typing.",
+      "Fixed: re-opening the report after adding or removing a case wrote a different file, so a tab you already had open never showed the change.",
+    ],
+  },
+  {
     version: "1.18.6",
     date: "2026-07-30",
     items: [
