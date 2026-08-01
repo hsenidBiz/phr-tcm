@@ -682,6 +682,21 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         "# Writing test cases for Test Case Manager ({org}/{project})\n\n\
         Produce a JSON array of test cases. The developer imports it via the\n\
         Import File tab, reviews, then creates - you never write to Azure DevOps.\n\n\
+        ## Use these tools; do not rebuild them\n\
+        Do NOT write your own script, generator or one-off parser to produce,\n\
+        transform, validate or reformat test cases. Use the tools: they carry\n\
+        THIS project's live rules - the allowed Module values, the tags\n\
+        already in use, the exact field contract, and what a kept `id` means\n\
+        on the way back in. A hand-rolled equivalent gets those subtly wrong,\n\
+        and wrongly in a way nobody sees: the file still looks right.\n\n\
+        This has already cost a real draft. A set too large for `validate_cases`\n\
+        led to a workaround being written instead, and it reported a pass over\n\
+        cases it had never checked.\n\n\
+        If a tool genuinely cannot do what you need, STOP and say so. Name the\n\
+        tool, what you needed it to do, and what it did instead - then ask the\n\
+        developer whether a tool should be added for it. That is a decision for\n\
+        them, and a missing capability they hear about gets fixed for everyone.\n\
+        Routing around it silently fixes it for nobody and hides the gap.\n\n\
         ## Format\n\
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
         `{{\"action\", \"expected\"}}`), `tags` (semicolon-separated, never commas),\n\

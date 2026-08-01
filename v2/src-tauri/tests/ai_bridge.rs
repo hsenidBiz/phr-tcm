@@ -178,6 +178,29 @@ async fn guide_carries_format_rules_and_live_modules() {
     );
     // And a shape to copy, not just a prohibition.
     assert!(notes.contains("Spec:") && notes.contains("Code:"), "{notes}");
+
+    // Reaching for a hand-rolled generator when a tool falls short is not
+    // hypothetical: a draft too large for validate_cases once led to a
+    // workaround that reported a pass over cases it never checked. The
+    // guide has to forbid it AND say what to do instead, or the
+    // prohibition just leaves the assistant stuck.
+    let rebuild = body
+        .split("## Use these tools")
+        .nth(1)
+        .and_then(|rest| rest.split("## Format").next())
+        .expect("the guide still tells the assistant not to rebuild the tools");
+    assert!(rebuild.contains("Do NOT write your own"), "{rebuild}");
+    assert!(
+        rebuild.contains("generator") && rebuild.contains("validate"),
+        "names what not to rebuild: {rebuild}"
+    );
+    // The escape hatch, and that it routes to the developer rather than
+    // to a workaround.
+    assert!(rebuild.contains("STOP"), "{rebuild}");
+    assert!(
+        rebuild.contains("ask the") && rebuild.contains("developer"),
+        "a blocked assistant has to ask, not improvise: {rebuild}"
+    );
 }
 
 #[tokio::test]
