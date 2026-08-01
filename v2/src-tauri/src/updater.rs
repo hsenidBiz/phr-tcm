@@ -8,7 +8,10 @@ use velopack::{sources, UpdateCheck, UpdateInfo, UpdateManager};
 
 /// v2 has its own releases repo so v1's and v2's "latest release" (which is
 /// what Velopack's HttpSource reads) can never fight over the update feed.
-const RELEASES_URL: &str =
+pub const REPO_URL: &str = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases";
+
+/// The `latest/download/` mirror. Kept only as a fallback - see `sources`.
+pub const RELEASES_URL: &str =
     "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases/releases/latest/download/";
 
 #[derive(Default)]
@@ -16,10 +19,46 @@ pub struct UpdateState {
     pub pending: Mutex<Option<UpdateInfo>>,
 }
 
-fn manager() -> Option<UpdateManager> {
-    let source = sources::HttpSource::new(RELEASES_URL);
-    // Errors here mean "not a Velopack install" (dev build) - no update UX.
-    UpdateManager::new(source, None, None).ok()
+/// Where to look for releases, in the order they are tried.
+///
+/// # Why the GitHub API comes first
+///
+/// `latest/download/` is a MOVING pointer, and a download takes two
+/// requests through it: one for the feed, one for the package. Those two
+/// can disagree. Measured on 2026-08-01, minutes after 1.18.10 was
+/// published: a client fetched a feed still naming 1.18.9, then asked
+/// `latest/download/...1.18.9-full.nupkg` and got a 404, because `latest`
+/// had already moved on and 1.18.9's asset only exists under 1.18.9's own
+/// release. Re-checking immediately before the download (1.18.4) narrowed
+/// that window but could not close it - both requests still go through the
+/// same moving pointer, and the feed is served through a cache.
+///
+/// `GithubSource` reads the releases list from the API and downloads each
+/// asset from ITS OWN release's url, which never moves. A feed one release
+/// behind then downloads a file that still exists instead of 404ing.
+///
+/// The old mirror stays as a second try: it needs only github.com, so a
+/// network that allows the site but blocks `api.github.com` keeps working
+/// exactly as well as it did before.
+fn sources() -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
+    vec![
+        (
+            "github api",
+            // No token: the releases repo is public, and this ships to
+            // machines we do not control - there is nothing safe to embed.
+            Box::new(sources::GithubSource::new(REPO_URL, None, false)),
+        ),
+        ("latest/download", Box::new(sources::HttpSource::new(RELEASES_URL))),
+    ]
+}
+
+/// One manager per reachable source. Empty means "not a Velopack install"
+/// (a dev build), which is the app's cue to offer no update UX at all.
+fn managers() -> Vec<(&'static str, UpdateManager)> {
+    sources()
+        .into_iter()
+        .filter_map(|(name, src)| UpdateManager::new_boxed(src, None, None).ok().map(|um| (name, um)))
+        .collect()
 }
 
 /// The outcome of an update check - all THREE of them.
@@ -38,27 +77,39 @@ pub struct UpdateStatus {
 }
 
 /// Looks for a newer release, storing the UpdateInfo for apply.
+///
+/// A source that ANSWERS settles it, whichever way it answers - "you are up
+/// to date" is a real answer and the fallback is not asked to second-guess
+/// it. Only a source that could not be reached moves on to the next.
 pub fn check(state: &UpdateState) -> UpdateStatus {
-    let Some(um) = manager() else {
+    let mans = managers();
+    if mans.is_empty() {
         return UpdateStatus {
             available: None,
             blocked: Some("This build does not update itself - it was not installed by the installer.".into()),
         };
-    };
-    match um.check_for_updates() {
-        Ok(UpdateCheck::UpdateAvailable(info)) => {
-            let version = info.TargetFullRelease.Version.clone();
-            *state.pending.lock().unwrap() = Some(*info);
-            UpdateStatus { available: Some(version), blocked: None }
-        }
-        Ok(_) => UpdateStatus::default(),
-        Err(e) => {
-            crate::applog::warn(format!("update check failed: {e}"));
-            UpdateStatus {
-                available: None,
-                blocked: Some(format!("Could not reach the update feed: {e}")),
+    }
+    let mut last = None;
+    for (name, um) in mans {
+        match um.check_for_updates() {
+            Ok(UpdateCheck::UpdateAvailable(info)) => {
+                let version = info.TargetFullRelease.Version.clone();
+                *state.pending.lock().unwrap() = Some(*info);
+                return UpdateStatus { available: Some(version), blocked: None };
+            }
+            Ok(_) => return UpdateStatus::default(),
+            Err(e) => {
+                crate::applog::warn(format!("update check failed via {name}: {e}"));
+                last = Some(e.to_string());
             }
         }
+    }
+    UpdateStatus {
+        available: None,
+        blocked: Some(format!(
+            "Could not reach the update feed: {}",
+            last.unwrap_or_else(|| "no source answered".into())
+        )),
     }
 }
 
@@ -99,26 +150,61 @@ pub fn bytes_at(percent: i16, total: u64) -> u64 {
 ///
 /// # Why this asks the feed again instead of trusting `pending`
 ///
-/// `RELEASES_URL` ends in `/releases/latest/download/`, which is a MOVING
-/// target: it serves the assets of whatever release is newest right now.
-/// The stored `UpdateInfo` names an exact file - `...-1.18.3-full.nupkg` -
-/// and the moment a newer release is published, that file is no longer
-/// under `latest` and the download 404s. Measured, not guessed: with 1.18.4
-/// published, `latest/download/...1.18.4-full.nupkg` answers 200 and
-/// `...1.18.3-full.nupkg` answers 404.
+/// The stored `UpdateInfo` can be an hour old - the check runs hourly and
+/// the banner then sits there until someone notices it - so the version it
+/// names may already have been superseded. Re-asking costs one request.
 ///
-/// That was survivable when the app only checked at launch, because the
-/// banner appeared and was clicked within about the same minute. It stopped
-/// being survivable when the check moved to hourly: the banner now sits
-/// there until someone notices it, so the info behind it can be an hour old
-/// - and two releases half an hour apart is enough to break it. Re-asking
-/// costs one request and removes the whole class of staleness.
+/// It is no longer load-bearing the way it was in 1.18.4, when it was the
+/// only defence against `latest/download/` moving out from under a stale
+/// banner. `sources` explains why that defence could never be complete and
+/// what replaced it.
+///
+/// # Why each source gets its own attempt
+///
+/// A source that can find the feed but not the package is exactly the 404
+/// that started all this. Trying the next source with the same
+/// `UpdateInfo` costs one more request and turns that into a download that
+/// works, because the two sources resolve the same filename differently.
 pub fn download_and_apply(
     state: &UpdateState,
     on_progress: impl Fn(Progress) + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let um = manager().ok_or("not a Velopack install")?;
+    let mans = managers();
+    if mans.is_empty() {
+        return Err("not a Velopack install".into());
+    }
 
+    let report = std::sync::Arc::new(on_progress);
+    let mut last = String::new();
+    for (name, um) in mans {
+        match try_source(&um, state, &report) {
+            Ok(()) => return Ok(()), // never returns: the app restarts
+            Err(Refusal::UpToDate) => {
+                *state.pending.lock().unwrap() = None;
+                return Err("This build is already up to date.".into());
+            }
+            Err(Refusal::Failed(e)) => {
+                crate::applog::warn(format!("update via {name} failed: {e}"));
+                last = e;
+            }
+        }
+    }
+    Err(last)
+}
+
+/// Why one source did not produce a running new version.
+enum Refusal {
+    /// The feed says there is nothing newer. Every source would say the
+    /// same, so this stops the loop instead of continuing it.
+    UpToDate,
+    Failed(String),
+}
+
+fn try_source(
+    um: &UpdateManager,
+    state: &UpdateState,
+    report: &std::sync::Arc<impl Fn(Progress) + Send + Sync + 'static>,
+) -> Result<(), Refusal> {
     let info = match um.check_for_updates() {
         Ok(UpdateCheck::UpdateAvailable(fresh)) => {
             let fresh = *fresh;
@@ -128,10 +214,7 @@ pub fn download_and_apply(
         // Already current - someone updated this install another way, or
         // the release was pulled. Saying so is better than downloading
         // nothing and calling it a failure.
-        Ok(_) => {
-            *state.pending.lock().unwrap() = None;
-            return Err("This build is already up to date.".into());
-        }
+        Ok(_) => return Err(Refusal::UpToDate),
         // A re-check that could not run is not itself a reason to refuse.
         // Fall back to what the banner was built from and let the download
         // report its own problem.
@@ -142,7 +225,7 @@ pub fn download_and_apply(
                 .lock()
                 .unwrap()
                 .clone()
-                .ok_or("no update pending - check first")?
+                .ok_or_else(|| Refusal::Failed(format!("no update pending - check first ({e})")))?
         }
     };
 
@@ -152,7 +235,6 @@ pub fn download_and_apply(
     let version = info.TargetFullRelease.Version.clone();
     let total = info.TargetFullRelease.Size;
 
-    let report = std::sync::Arc::new(on_progress);
     report(Progress { percent: 0, downloaded: 0, total });
 
     // Velopack sends percentages synchronously from inside the read loop, so
@@ -172,9 +254,13 @@ pub fn download_and_apply(
     // the loop above - so the join cannot outlive the download.
     let downloaded = um.download_updates(&info, Some(tx));
     let _ = pump.join();
-    downloaded.map_err(|e| format!("could not download {version}: {e}"))?;
+    downloaded.map_err(|e| Refusal::Failed(format!("could not download {version}: {e}")))?;
 
     report(Progress { percent: 100, downloaded: total, total });
+    // The package is on disk now, so a failure here is not something the
+    // next source could fix - but it is still reported as one failure among
+    // the sources rather than specially, because the caller's job is only to
+    // say what went wrong.
     um.apply_updates_and_restart(&info.TargetFullRelease)
-        .map_err(|e| format!("could not apply {version}: {e}"))
+        .map_err(|e| Refusal::Failed(format!("could not apply {version}: {e}")))
 }

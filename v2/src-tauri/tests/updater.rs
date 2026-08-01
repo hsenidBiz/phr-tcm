@@ -3,7 +3,43 @@
 //! The download itself needs a Velopack install to exercise, so what is
 //! pinned here is the arithmetic the user actually reads: "X of Y".
 
-use v2_lib::updater::bytes_at;
+use v2_lib::updater::{bytes_at, REPO_URL, RELEASES_URL};
+
+/// Both urls point at the SAME repo. They drifted apart once already - the
+/// feed was read from one place and this is what stops the package being
+/// fetched from another.
+#[test]
+fn both_urls_name_the_v2_releases_repo() {
+    assert!(RELEASES_URL.starts_with(REPO_URL), "{RELEASES_URL} is not under {REPO_URL}");
+    assert!(REPO_URL.ends_with("azure-devops-test-case-manager-v2-releases"));
+    // v1's repo is a different one, and pointing v2 at it would have the
+    // app offer its users the wrong application entirely.
+    assert!(!REPO_URL.contains("v2-releases/v"), "REPO_URL must be the repo root, not a release");
+}
+
+/// The download that failed for real, reproduced against the live repo.
+///
+/// `latest/download/` serves whatever release is newest, so the moment
+/// 1.18.10 was published, `latest/download/...1.18.9-full.nupkg` started
+/// 404ing while 1.18.9's own release still held the file. Ignored by
+/// default because it needs the network; run with
+/// `cargo test --test updater -- --ignored`.
+#[test]
+#[ignore = "hits github.com"]
+fn a_superseded_version_is_still_downloadable_from_its_own_release() {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("tcm-v2-test")
+        .build()
+        .expect("client");
+    let status = |url: String| client.head(&url).send().expect("request failed").status().as_u16();
+    let file = "AzureDevOpsTestCaseManager.V2-1.18.9-full.nupkg";
+    assert_eq!(status(format!("{RELEASES_URL}{file}")), 404, "latest/ should have moved on");
+    assert_eq!(
+        status(format!("{REPO_URL}/releases/download/v1.18.9/{file}")),
+        200,
+        "the per-release url is the one that does not move"
+    );
+}
 
 #[test]
 fn the_ends_are_exact() {
