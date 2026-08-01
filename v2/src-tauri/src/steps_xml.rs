@@ -12,6 +12,21 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 
+/// Tag names Azure DevOps' rich-text editor actually emits into a step.
+///
+/// The list is the whole trick. ADO stores each step's HTML *escaped*
+/// inside `parameterizedString`, so by the time it has been unescaped, real
+/// markup (`<P>`, `<BR/>`) and text somebody typed (`<cycleId>`) look
+/// exactly alike - there is no structural difference left to use. Matching
+/// against what the editor can actually produce is the only thing that
+/// separates them.
+const HTML_TAGS: [&str; 42] = [
+    "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
+    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
+    "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
+    "td", "th", "thead", "tr",
+];
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct Step {
     pub action: String,
@@ -41,21 +56,6 @@ pub fn build_steps_xml(steps: &[Step]) -> String {
     out.push_str("</steps>");
     out
 }
-
-/// Tag names Azure DevOps' rich-text editor actually emits into a step.
-///
-/// The list is the whole trick. ADO stores each step's HTML *escaped*
-/// inside `parameterizedString`, so by the time it has been unescaped, real
-/// markup (`<P>`, `<BR/>`) and text somebody typed (`<cycleId>`) look
-/// exactly alike - there is no structural difference left to use. Matching
-/// against what the editor can actually produce is the only thing that
-/// separates them.
-const HTML_TAGS: [&str; 42] = [
-    "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
-    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
-    "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
-    "td", "th", "thead", "tr",
-];
 
 /// The index of the `>` that closes a real HTML tag opening at `open`, or
 /// `None` when this `<` is just a less-than sign.

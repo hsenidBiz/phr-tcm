@@ -23,6 +23,19 @@ use crate::steps_xml::Step;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Spellings accepted for the reviewer's own scratchpad.
+///
+/// Shared with `transform.rs` rather than copied into it: that copy had
+/// already drifted, and the failure mode is silent - notes an assistant
+/// wrote under the other spelling just do not arrive.
+pub(crate) const COMMENT_KEYS: [&str; 2] = ["comment", "notes"];
+
+/// Spellings accepted for the review context. An assistant told to add
+/// "Reviewer Notes" writes the label it was given, and a file an author
+/// typed by hand is not going to match one exact spelling.
+pub(crate) const REVIEWER_NOTES_KEYS: [&str; 4] =
+    ["reviewer_notes", "reviewerNotes", "Reviewer Notes", "review_notes"];
+
 pub const EXCEL_HEADERS: [&str; 9] = [
     "TestCaseID",
     "TestCaseName",
@@ -284,19 +297,6 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
 
     Ok((test_cases, warnings))
 }
-
-/// Spellings accepted for the reviewer's own scratchpad.
-///
-/// Shared with `transform.rs` rather than copied into it: that copy had
-/// already drifted, and the failure mode is silent - notes an assistant
-/// wrote under the other spelling just do not arrive.
-pub(crate) const COMMENT_KEYS: [&str; 2] = ["comment", "notes"];
-
-/// Spellings accepted for the review context. An assistant told to add
-/// "Reviewer Notes" writes the label it was given, and a file an author
-/// typed by hand is not going to match one exact spelling.
-pub(crate) const REVIEWER_NOTES_KEYS: [&str; 4] =
-    ["reviewer_notes", "reviewerNotes", "Reviewer Notes", "review_notes"];
 
 pub(crate) fn json_value<'a>(d: &'a serde_json::Value, keys: &[&str]) -> Option<&'a serde_json::Value> {
     for k in keys {

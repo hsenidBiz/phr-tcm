@@ -15,19 +15,20 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Tags change when someone types a new one - slow enough that a stale
+/// read is harmless, fast enough that a week would annoy.
+pub const TAGS_TTL_MS: u64 = 6 * 60 * 60 * 1000;
+
+static DIR: OnceLock<PathBuf> = OnceLock::new();
+
+static MEM: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Entry {
     pub values: Vec<String>,
     /// Unix epoch milliseconds of the last successful fetch.
     pub at_ms: u64,
 }
-
-/// Tags change when someone types a new one - slow enough that a stale
-/// read is harmless, fast enough that a week would annoy.
-pub const TAGS_TTL_MS: u64 = 6 * 60 * 60 * 1000;
-
-static DIR: OnceLock<PathBuf> = OnceLock::new();
-static MEM: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
 
 pub fn tags_key(org: &str, project: &str) -> String {
     format!("{org}/{project}/tags")

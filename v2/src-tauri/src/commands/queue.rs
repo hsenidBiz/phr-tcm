@@ -4,6 +4,21 @@
 use tauri::Manager;
 use tauri_specta::Event;
 
+/// Serialises the read-patch-write that every comment save performs.
+///
+/// Saving a comment reads the whole JSON file, patches one value and writes
+/// it back. Two of those interleaving means the second read happens before
+/// the first write, and the first comment is gone - the box on the page
+/// still shows it, so nobody finds out until the file is reopened.
+///
+/// This became reachable when the note listener started handling
+/// connections off the accept thread: the single-threaded loop used to
+/// serialise these by accident, and that was the only thing stopping it.
+/// The listener has to stay concurrent - one stalled peer must not block
+/// every save - so the guarantee moves here, where it is only ever held
+/// across a file read and a file write.
+static NOTE_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 use crate::events::{
     CaseNoteSaved, DraftCommentSaved, DraftGeneralCommentSaved, PlanCreated, SubmitProgress,
 };
@@ -216,21 +231,6 @@ fn writable(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
     }
     Err("this file is no longer open in the app - reopen the report from the queue".into())
 }
-
-/// Serialises the read-patch-write that every comment save performs.
-///
-/// Saving a comment reads the whole JSON file, patches one value and writes
-/// it back. Two of those interleaving means the second read happens before
-/// the first write, and the first comment is gone - the box on the page
-/// still shows it, so nobody finds out until the file is reopened.
-///
-/// This became reachable when the note listener started handling
-/// connections off the accept thread: the single-threaded loop used to
-/// serialise these by accident, and that was the only thing stopping it.
-/// The listener has to stay concurrent - one stalled peer must not block
-/// every save - so the guarantee moves here, where it is only ever held
-/// across a file read and a file write.
-static NOTE_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Where a comment posted from a report page belongs. The default arm also
 /// catches pages generated before drafts had comments, which send no kind.

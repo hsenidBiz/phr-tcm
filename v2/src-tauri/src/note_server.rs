@@ -16,6 +16,20 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
+/// Which report a revision belongs to.
+///
+/// One counter for everything meant that re-exporting the Import draft
+/// told an open View-Test-Cases page it was stale, which it was not. The
+/// pages are separate documents about separate things; each hears only
+/// about its own.
+pub const REPORT_DRAFT: &str = "draft";
+
+pub const REPORT_QUEUE: &str = "queue";
+
+static DRAFT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+static QUEUE_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// What kind of comment a POST carries. Flat rather than a tagged enum so
 /// the field defaults keep older generated pages (which sent no `kind`)
 /// working against a newer app.
@@ -176,15 +190,6 @@ impl Drop for LiveGuard {
 
 /// Once the whole body (per Content-Length) has arrived, return it.
 
-/// Which report a revision belongs to.
-///
-/// One counter for everything meant that re-exporting the Import draft
-/// told an open View-Test-Cases page it was stale, which it was not. The
-/// pages are separate documents about separate things; each hears only
-/// about its own.
-pub const REPORT_DRAFT: &str = "draft";
-pub const REPORT_QUEUE: &str = "queue";
-
 /// Called whenever a report file is rewritten.
 pub fn bump_revision(kind: &str) {
     slot(kind).fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -203,9 +208,6 @@ fn slot(kind: &str) -> &'static std::sync::atomic::AtomicU64 {
         _ => &DRAFT_REVISION,
     }
 }
-
-static DRAFT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static QUEUE_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The (token, report kind) from a `GET /version?token=...&kind=...`.
 ///

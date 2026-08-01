@@ -25,6 +25,23 @@
 //! halfway through a page. The accent the user is looking at is used for
 //! both schemes; only the surfaces and text change.
 
+/// The switch itself. Fixed to the corner rather than placed in the flow:
+/// these pages have three different layouts (report, single column, two
+/// column) and one control that never moves beats three placements. It
+/// prints as nothing.
+const SWITCH_CSS: &str = include_str!("../web/scheme-switch.css");
+
+/// The switch's markup. `data-scheme` on `<html>` is the single source of
+/// truth; the script only flips it and tries to remember the choice.
+pub const SWITCH_HTML: &str = include_str!("../web/scheme-switch.html");
+
+/// Flips `data-scheme` and remembers it. The remembering is best-effort:
+/// these pages are opened from a temp file, and a `file://` origin has no
+/// usable localStorage in some browsers - which throws rather than
+/// returning null, so every access is guarded. The switch still works for
+/// the life of the tab either way.
+pub const SWITCH_JS: &str = include_str!("../web/scheme-switch.js");
+
 /// One scheme's worth of colour, named for the app's own tokens.
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 pub struct ReportPalette {
@@ -172,23 +189,6 @@ impl PagePalette {
         )
     }
 }
-
-/// The switch itself. Fixed to the corner rather than placed in the flow:
-/// these pages have three different layouts (report, single column, two
-/// column) and one control that never moves beats three placements. It
-/// prints as nothing.
-const SWITCH_CSS: &str = include_str!("../web/scheme-switch.css");
-
-/// The switch's markup. `data-scheme` on `<html>` is the single source of
-/// truth; the script only flips it and tries to remember the choice.
-pub const SWITCH_HTML: &str = include_str!("../web/scheme-switch.html");
-
-/// Flips `data-scheme` and remembers it. The remembering is best-effort:
-/// these pages are opened from a temp file, and a `file://` origin has no
-/// usable localStorage in some browsers - which throws rather than
-/// returning null, so every access is guarded. The switch still works for
-/// the life of the tab either way.
-pub const SWITCH_JS: &str = include_str!("../web/scheme-switch.js");
 
 #[cfg(test)]
 mod tests {

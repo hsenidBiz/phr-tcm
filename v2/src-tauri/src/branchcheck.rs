@@ -27,6 +27,14 @@
 
 use crate::model::TestCase;
 
+/// Words that carry no subject matter, so two sentences sharing only these
+/// are not talking about the same thing.
+const STOPWORDS: [&str; 24] = [
+    "the", "and", "are", "with", "that", "this", "from", "have", "been", "will", "when", "then",
+    "shown", "displayed", "rendered", "visible", "appears", "section", "value", "field", "page",
+    "user", "there", "which",
+];
+
 /// Steps at the very start are setup, not a mid-run environment change.
 const SETUP_STEPS: usize = 2;
 
@@ -58,14 +66,6 @@ fn is_config_change(action: &str) -> bool {
     let verbish = CONFIG_CHANGE.iter().any(|p| a.contains(p)) || a.contains("enable");
     verbish && CONFIG_OBJECT.iter().any(|o| a.contains(o))
 }
-
-/// Words that carry no subject matter, so two sentences sharing only these
-/// are not talking about the same thing.
-const STOPWORDS: [&str; 24] = [
-    "the", "and", "are", "with", "that", "this", "from", "have", "been", "will", "when", "then",
-    "shown", "displayed", "rendered", "visible", "appears", "section", "value", "field", "page",
-    "user", "there", "which",
-];
 
 fn negated(text: &str) -> bool {
     let t = text.to_lowercase();

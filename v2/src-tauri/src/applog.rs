@@ -17,6 +17,15 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Lines kept in memory for the viewer. Older lines stay in the files.
+/// Sized for the request trail: one bulk create of 50 cases is already a
+/// few hundred lines, and the tail has to still hold what came BEFORE the
+/// thing that went wrong.
+const TAIL: usize = 6000;
+
+/// Files older than this are pruned at startup.
+const KEEP_DAYS: u64 = 7;
+
 /// One line, as the viewer renders it.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct LogLine {
@@ -26,14 +35,6 @@ pub struct LogLine {
     pub level: String,
     pub message: String,
 }
-
-/// Lines kept in memory for the viewer. Older lines stay in the files.
-/// Sized for the request trail: one bulk create of 50 cases is already a
-/// few hundred lines, and the tail has to still hold what came BEFORE the
-/// thing that went wrong.
-const TAIL: usize = 6000;
-/// Files older than this are pruned at startup.
-const KEEP_DAYS: u64 = 7;
 
 fn tail() -> &'static Mutex<VecDeque<LogLine>> {
     static T: OnceLock<Mutex<VecDeque<LogLine>>> = OnceLock::new();

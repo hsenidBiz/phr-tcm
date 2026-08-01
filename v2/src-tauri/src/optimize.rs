@@ -22,6 +22,93 @@
 use crate::model::TestCase;
 use crate::steps_xml::Step;
 
+/// Sentence openers that mean "navigate", not "be in this state". These
+/// are what gets promoted out of preconditions into real steps.
+const NAV_MARKERS: &[&str] = &[
+    "user is on",
+    "user has navigated",
+    "navigate to",
+    "navigated to",
+    "go to",
+    "open the",
+    "opened the",
+    // "launch" on its own also claimed "Launch darkly flag PAY-42 is on".
+    "launch the",
+    "launches the",
+];
+
+/// Openers that mean navigation ONLY when the sentence also names a place.
+///
+/// "On the Payments page" is the elliptical form of "the user is on the
+/// Payments page" and belongs in the steps. "On the second attempt the
+/// lockout applies", "At the end of the billing cycle" and "From the
+/// previous run the cart holds 3 items" are setup, and promoting them
+/// turned real conditions into nonsense steps AND dropped them from the
+/// case's setup signature, which is what decides the run order.
+const NAV_MARKERS_NEEDING_PLACE: &[&str] = &["on the", "at the", "from the"];
+
+/// Matched as WHOLE WORDS, never substrings. As a substring test this was
+/// exactly backwards: "performance" contains "form", "review" contains
+/// "view" and "table" contains "tab", so "At the end of the performance
+/// review the rating is locked" counted as naming a place and got promoted
+/// to a navigation step - the precise failure the marker split above was
+/// added to prevent.
+const PLACE_WORDS: &[&str] = &[
+    "page", "screen", "tab", "module", "dialog", "form", "view", "menu", "panel", "portal",
+    "window", "pane", "list", "grid", "board", "editor", "wizard",
+];
+
+/// Openers stripped from an expected result: they restate that we're
+/// testing, rather than saying what the tester should see.
+const EXPECTED_NOISE: &[&str] = &[
+    "verify that ",
+    "verify ",
+    "ensure that ",
+    "ensure ",
+    "check that ",
+    "check ",
+    "confirm that ",
+    "confirm ",
+    "validate that ",
+    "validate ",
+    "it should be that ",
+    "the system should ",
+    "system should ",
+    "the user should see ",
+    "user should see ",
+    "it should ",
+    "should be ",
+    "should ",
+    "expected: ",
+    "expected result: ",
+];
+
+/// Abbreviations that end in a full stop and are followed by more of the
+/// SAME sentence. Without these, "Approx. 30 results are returned" was cut
+/// at the first `". "` and became the single word "Approx".
+const ABBREVIATIONS: &[&str] = &[
+    "approx", "no", "vs", "etc", "fig", "ref", "min", "max", "sec", "mins", "secs", "hrs", "e.g",
+    "i.e", "mr", "mrs", "ms", "dr", "st", "co", "inc", "ltd",
+];
+
+/// True if the case's own first steps already walk in from the entry
+/// point, in which case a preamble would just duplicate them. The first
+/// step matching `entry` itself counts - re-running the optimizer (or
+/// passing an entry the draft already starts with) must be a no-op, not
+/// a second copy of the same step.
+/// How far in to look for a preamble the draft already wrote.
+///
+/// Only `steps.first()` was checked, so a draft that opened with a setup
+/// line - "Ensure the seed data script has run." - and launched at step 2
+/// was judged to have no preamble and got a whole second one prepended:
+/// launch, sign in and navigate, all twice. Bounded rather than the whole
+/// case, so a mid-case "navigate to the report tab" cannot suppress a
+/// preamble that is genuinely needed.
+const PREAMBLE_PROBE: usize = 4;
+
+/// The default entry step when the caller doesn't name one.
+pub const DEFAULT_ENTRY: &str = "Launch the application.";
+
 #[derive(Debug, Default, serde::Serialize)]
 pub struct OptimizeReport {
     /// Setup signatures in execution order - the run sheet's sections.
@@ -79,72 +166,11 @@ pub struct GroupSummary {
     pub cases: usize,
 }
 
-/// Sentence openers that mean "navigate", not "be in this state". These
-/// are what gets promoted out of preconditions into real steps.
-const NAV_MARKERS: &[&str] = &[
-    "user is on",
-    "user has navigated",
-    "navigate to",
-    "navigated to",
-    "go to",
-    "open the",
-    "opened the",
-    // "launch" on its own also claimed "Launch darkly flag PAY-42 is on".
-    "launch the",
-    "launches the",
-];
-
-/// Openers that mean navigation ONLY when the sentence also names a place.
-///
-/// "On the Payments page" is the elliptical form of "the user is on the
-/// Payments page" and belongs in the steps. "On the second attempt the
-/// lockout applies", "At the end of the billing cycle" and "From the
-/// previous run the cart holds 3 items" are setup, and promoting them
-/// turned real conditions into nonsense steps AND dropped them from the
-/// case's setup signature, which is what decides the run order.
-const NAV_MARKERS_NEEDING_PLACE: &[&str] = &["on the", "at the", "from the"];
-
-/// Matched as WHOLE WORDS, never substrings. As a substring test this was
-/// exactly backwards: "performance" contains "form", "review" contains
-/// "view" and "table" contains "tab", so "At the end of the performance
-/// review the rating is locked" counted as naming a place and got promoted
-/// to a navigation step - the precise failure the marker split above was
-/// added to prevent.
-const PLACE_WORDS: &[&str] = &[
-    "page", "screen", "tab", "module", "dialog", "form", "view", "menu", "panel", "portal",
-    "window", "pane", "list", "grid", "board", "editor", "wizard",
-];
-
 fn names_a_place(lowered: &str) -> bool {
     lowered
         .split(|c: char| !c.is_alphanumeric())
         .any(|word| PLACE_WORDS.contains(&word))
 }
-
-/// Openers stripped from an expected result: they restate that we're
-/// testing, rather than saying what the tester should see.
-const EXPECTED_NOISE: &[&str] = &[
-    "verify that ",
-    "verify ",
-    "ensure that ",
-    "ensure ",
-    "check that ",
-    "check ",
-    "confirm that ",
-    "confirm ",
-    "validate that ",
-    "validate ",
-    "it should be that ",
-    "the system should ",
-    "system should ",
-    "the user should see ",
-    "user should see ",
-    "it should ",
-    "should be ",
-    "should ",
-    "expected: ",
-    "expected result: ",
-];
 
 fn squash(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -203,14 +229,6 @@ fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
 fn starts_with_ascii_ci(s: &str, prefix: &str) -> bool {
     s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
-
-/// Abbreviations that end in a full stop and are followed by more of the
-/// SAME sentence. Without these, "Approx. 30 results are returned" was cut
-/// at the first `". "` and became the single word "Approx".
-const ABBREVIATIONS: &[&str] = &[
-    "approx", "no", "vs", "etc", "fig", "ref", "min", "max", "sec", "mins", "secs", "hrs", "e.g",
-    "i.e", "mr", "mrs", "ms", "dr", "st", "co", "inc", "ltd",
-];
 
 /// The end of the first real sentence, or None if the whole string is one.
 fn sentence_break(s: &str) -> Option<usize> {
@@ -545,21 +563,6 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
     (out, consumed)
 }
 
-/// True if the case's own first steps already walk in from the entry
-/// point, in which case a preamble would just duplicate them. The first
-/// step matching `entry` itself counts - re-running the optimizer (or
-/// passing an entry the draft already starts with) must be a no-op, not
-/// a second copy of the same step.
-/// How far in to look for a preamble the draft already wrote.
-///
-/// Only `steps.first()` was checked, so a draft that opened with a setup
-/// line - "Ensure the seed data script has run." - and launched at step 2
-/// was judged to have no preamble and got a whole second one prepended:
-/// launch, sign in and navigate, all twice. Bounded rather than the whole
-/// case, so a mid-case "navigate to the report tab" cannot suppress a
-/// preamble that is genuinely needed.
-const PREAMBLE_PROBE: usize = 4;
-
 fn already_has_preamble(c: &TestCase, entry: &str) -> bool {
     c.steps.iter().take(PREAMBLE_PROBE).any(|s| {
         if norm_step(&s.action) == norm_step(entry) {
@@ -583,9 +586,6 @@ fn normalize_tags(raw: &str) -> String {
     }
     seen.join("; ")
 }
-
-/// The default entry step when the caller doesn't name one.
-pub const DEFAULT_ENTRY: &str = "Launch the application.";
 
 /// Reorganise a draft. `entry` is the first step of every preamble.
 /// Reorganise a draft, regrouping it for the tester.

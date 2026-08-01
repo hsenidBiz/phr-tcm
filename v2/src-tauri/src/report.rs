@@ -13,6 +13,12 @@ use std::collections::HashMap;
 // the command layer and the generated bindings.
 pub use crate::webtheme::ReportPalette;
 
+/// Everything here is expressed against the variables above, so the same
+/// stylesheet serves every theme. Cards carry a real border as well as a
+/// shadow - a drop shadow is invisible on a black background, and the
+/// table would otherwise dissolve into the page on the OLED theme.
+const CSS: &str = include_str!("../web/report-page.css");
+
 /// Comment + linked bug ids for a failed point's last result.
 #[derive(Debug, Clone, Default)]
 pub struct FailureInfo {
@@ -70,12 +76,6 @@ fn outcome_label(outcome: &str) -> String {
         }
     }
 }
-
-/// Everything here is expressed against the variables above, so the same
-/// stylesheet serves every theme. Cards carry a real border as well as a
-/// shadow - a drop shadow is invisible on a black background, and the
-/// table would otherwise dissolve into the page on the OLED theme.
-const CSS: &str = include_str!("../web/report-page.css");
 
 /// Build the self-contained report. `failures` is keyed by point_id.
 /// `generated_at` is injected so the builder stays deterministic in tests.

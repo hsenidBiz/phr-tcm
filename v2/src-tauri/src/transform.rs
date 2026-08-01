@@ -12,6 +12,12 @@
 
 use crate::model::TestCase;
 
+/// The only keys a `where` clause may carry. An unrecognised one used to be
+/// ignored, which left an all-None filter - and `Filter::matches` reads that
+/// as "every case", so one typo turned a targeted edit into a draft-wide
+/// rewrite that reported success.
+const FILTER_KEYS: [&str; 3] = ["title_contains", "has_tag", "module_is"];
+
 /// First non-empty value among `keys`, using the file importer's own
 /// lookup so the two paths cannot disagree about what a key means.
 fn pick(v: &serde_json::Value, keys: &[&str]) -> String {
@@ -142,12 +148,6 @@ fn required_str(v: &serde_json::Value, key: &str, label: &str) -> Result<String,
         )),
     }
 }
-
-/// The only keys a `where` clause may carry. An unrecognised one used to be
-/// ignored, which left an all-None filter - and `Filter::matches` reads that
-/// as "every case", so one typo turned a targeted edit into a draft-wide
-/// rewrite that reported success.
-const FILTER_KEYS: [&str; 3] = ["title_contains", "has_tag", "module_is"];
 
 fn parse_filter(v: &serde_json::Value, label: &str) -> Result<Filter, String> {
     let f = &v["where"];

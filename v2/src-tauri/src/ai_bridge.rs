@@ -8,6 +8,13 @@
 use rand::RngExt;
 use serde::Serialize;
 
+static INTAKE_SINK: std::sync::OnceLock<IntakeSink> = std::sync::OnceLock::new();
+
+/// How many tag names the writing guide inlines before it stops and
+/// points at the dedicated tool. Long enough to be genuinely useful,
+/// short enough not to drown the guide.
+const GUIDE_TAG_LIMIT: usize = 60;
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct BridgeContext {
     pub org: String,
@@ -35,8 +42,6 @@ pub struct BridgeContext {
 /// process (`start_bridge` holds a `running` lock), and this is `None` in
 /// tests, which is what keeps a test run from emitting into a live app.
 type IntakeSink = Box<dyn Fn(String) + Send + Sync>;
-static INTAKE_SINK: std::sync::OnceLock<IntakeSink> = std::sync::OnceLock::new();
-
 /// Called once by the app when the bridge starts. Later calls are ignored.
 pub fn set_intake_sink(f: IntakeSink) {
     let _ = INTAKE_SINK.set(f);
@@ -586,11 +591,6 @@ async fn tags(
         .to_string(),
     )
 }
-
-/// How many tag names the writing guide inlines before it stops and
-/// points at the dedicated tool. Long enough to be genuinely useful,
-/// short enough not to drown the guide.
-const GUIDE_TAG_LIMIT: usize = 60;
 
 /// The org's Module values: configured picklist first, observed values as
 /// the fallback - the same discovery the app's own module picker uses.

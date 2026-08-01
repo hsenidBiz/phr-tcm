@@ -7,25 +7,6 @@
 
 use crate::model::TestCase;
 
-/// JSON for embedding inside a `<script>` element.
-///
-/// `serde_json` leaves `<` alone, which is fine in a .json file and unsafe
-/// here: a test case titled `</script><img onerror=...>` would otherwise
-/// close the script element and run as markup. `<\/` is a valid escape in
-/// both JavaScript and JSON, so the value the page parses is unchanged.
-fn script_json<T: serde::Serialize>(value: &T, fallback: &str) -> String {
-    serde_json::to_string(value)
-        .map(|s| s.replace("</", "<\\/"))
-        .unwrap_or_else(|_| fallback.to_string())
-}
-
-fn esc(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 /// Written entirely against the theme variables `webtheme` emits, so the
 /// one stylesheet serves every app theme and both schemes.
 ///
@@ -47,6 +28,25 @@ const HTML_JS: &str = include_str!("../../web/cases-page.js");
 /// may have moved, or an assistant may have renamed the case out from
 /// under it. "Saved ✓" has to mean saved.
 const NOTE_JS: &str = include_str!("../../web/cases-notes.js");
+
+/// JSON for embedding inside a `<script>` element.
+///
+/// `serde_json` leaves `<` alone, which is fine in a .json file and unsafe
+/// here: a test case titled `</script><img onerror=...>` would otherwise
+/// close the script element and run as markup. `<\/` is a valid escape in
+/// both JavaScript and JSON, so the value the page parses is unchanged.
+fn script_json<T: serde::Serialize>(value: &T, fallback: &str) -> String {
+    serde_json::to_string(value)
+        .map(|s| s.replace("</", "<\\/"))
+        .unwrap_or_else(|_| fallback.to_string())
+}
+
+fn esc(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
 
 /// Context for comment boxes on a page of EXISTING Azure DevOps cases.
 /// Their comments are a personal scratchpad held by the app, keyed by work
