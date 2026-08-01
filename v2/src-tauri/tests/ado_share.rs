@@ -6,6 +6,55 @@ use v2_lib::ado_share::{draft_file_name, parse_share_link};
 use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// What actually crosses a share link.
+///
+/// `share_queue` serialises the queue with `queue_to_json_string` and
+/// `share_draft` uploads that string verbatim; `fetch_shared_queue` writes
+/// it back to a temp file and reads it with `parse_file`, the same importer
+/// a file import uses. So the payload contract is exactly this pair, and
+/// the app-only fields have to survive it - a reviewer note is most of the
+/// value of sending a draft to somebody else for review.
+#[test]
+fn a_shared_draft_carries_the_app_only_fields() {
+    let queue = vec![v2_lib::model::TestCase {
+        title: "Copy from Previous - hidden on a published cycle".into(),
+        steps: vec![v2_lib::steps_xml::Step {
+            action: "Open the published cycle.".into(),
+            expected: "No Copy from Previous button is shown.".into(),
+        }],
+        automation_status: "Not Automated".into(),
+        reviewer_notes: "Spec: Step10-ManagePerformanceCycle.md 7.7 (AC-3)".into(),
+        comment: "Ask Priya whether Restricted counts here.".into(),
+        ..Default::default()
+    }];
+
+    // 1. Exactly what share_queue hands to share_draft.
+    let json = v2_lib::import_parser::queue_to_json_string(&queue).unwrap();
+
+    // 2. share_draft posts it unchanged, so the bytes on the attachment
+    //    are these bytes.
+    let dir = std::env::temp_dir().join("tcm-v2-share-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}-shared.json", std::process::id()));
+    std::fs::write(&path, &json).unwrap();
+
+    // 3. What fetch_shared_queue does with the download.
+    let (cases, warnings) =
+        v2_lib::import_parser::parse_file(path.to_str().unwrap()).unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(cases.len(), 1);
+    assert_eq!(
+        cases[0].reviewer_notes,
+        "Spec: Step10-ManagePerformanceCycle.md 7.7 (AC-3)",
+        "the recipient must get the reviewer notes"
+    );
+    assert_eq!(
+        cases[0].comment,
+        "Ask Priya whether Restricted counts here.",
+        "and the in-app comment"
+    );
+}
 #[tokio::test]
 async fn share_uploads_the_json_and_attaches_it_to_the_pbi() {
     let server = MockServer::start().await;
