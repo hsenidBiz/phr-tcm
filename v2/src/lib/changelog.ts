@@ -13,6 +13,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.6",
+    date: "2026-07-30",
+    items: [
+      "Fixed a silent data loss: anything in angle brackets was deleted from a step on the way back from Azure DevOps. A SQL step written as \"WHERE performance_cycle_id = <cycleId>\" came back as \"WHERE performance_cycle_id =\" - a query the tester cannot run, in a step whose whole purpose is to run it. One reported set lost 62 fragments across 20 cases, with the file still valid and the text still reading plausibly enough to skim past. Placeholders, spec quotes naming an element, and a bare less-than in \"start_date < GETUTCDATE()\" all survive now; real formatting markup is still stripped.",
+      "Reviewer notes are now shown in the app. Expanding a queued case shows them above the steps, rendered as markdown - the same place and order the browser review page uses. Until now the field existed everywhere except the app, so whoever received a draft for review, which is exactly who it is written for, had to open it in a browser to read it.",
+      "A file an AI assistant writes now imports itself. When the assistant asks where the JSON should go, the app starts watching that path straight away, so the finished file lands in the queue with its change report instead of waiting to be imported by hand. The second and later edits already worked this way; the first one was the last manual step.",
+      "Fixed: registering the MCP server with Claude Code failed on machines where Claude Code works perfectly well in a terminal or in VS Code. The app looked for the command on the system PATH, and the native installer does not put it there. It is now found where the installers actually place it, and failing that the app writes the configuration itself.",
+      "Registering also installs a /tcm-testcases command, so writing test cases starts from the command list rather than from remembering a tool name. It is removed again when you unregister.",
+      "The draft checker warns about two more things: text that Azure DevOps will read as markup and drop, and a case that looks like it covers both branches of a condition at once - a negative folded in as an extra step is covered, but invisible to anyone auditing by title.",
+      "Fixed: the expected-result trimmer removed short parentheticals, so \"The badge reads Rejected (Edit) in red\" became \"Rejected\" - and \"Rejected (Edit)\" is the literal value from the spec, so the trim did not shorten the assertion, it made it wrong. Longer asides are still trimmed.",
+      "Fixed: an AI edit no longer adds an empty \"id\" to every case that did not have one, and reviewer notes written as \"review_notes\" (or a comment written as \"notes\") are now read from an assistant's edit as well as from a file - previously one path accepted them and the other silently dropped them.",
+      "The writing guide now teaches two rules: one test case per branch of a condition, and use the tools rather than writing a script to generate cases - and if a tool cannot do what is needed, say so and ask, rather than working around it.",
+    ],
+  },
+  {
     version: "1.18.5",
     date: "2026-07-30",
     items: [
