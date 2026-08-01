@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::ai_tools::{
-    atomic_write, detect, is_installed, merge_entry, remove_entry, tcm_server, DetectedTool,
-    McpServer, DB_SERVER, TOOL_SPECS,
+    atomic_write, detect, is_installed, merge_entry, remove_entry, skill_markdown, skill_path,
+    tcm_server, DetectedTool, McpServer, DB_SERVER, SKILL_MARKER, TOOL_SPECS,
 };
 
 #[cfg(windows)]
@@ -132,7 +132,17 @@ fn register_server(id: &str, server: &McpServer) -> Result<(), String> {
     }
 
     if spec.id == "claude-code" {
-        return register_claude_code(server);
+        register_claude_code(server)?;
+        // Best-effort, and deliberately after the server is in: a
+        // skill pointing at tools that are not registered would be
+        // worse than no skill. A failure here does not undo a
+        // registration that worked.
+        if server.name == crate::ai_tools::TCM_SERVER {
+            if let Err(e) = write_skill() {
+                crate::applog::warn(format!("could not write the Claude Code skill: {e}"));
+            }
+        }
+        return Ok(());
     }
 
     let config_path: PathBuf = (spec.config_path)(&home_dir(), &appdata_dir());
@@ -165,6 +175,11 @@ fn unregister_server(id: &str, server_name: &str) -> Result<(), String> {
         .ok_or_else(|| format!("unknown AI tool id: {id}"))?;
 
     if spec.id == "claude-code" {
+        if server_name == crate::ai_tools::TCM_SERVER {
+            if let Err(e) = remove_skill() {
+                crate::applog::warn(format!("could not remove the Claude Code skill: {e}"));
+            }
+        }
         return unregister_claude_code(server_name);
     }
 
@@ -180,9 +195,88 @@ fn unregister_server(id: &str, server_name: &str) -> Result<(), String> {
     }
 }
 
+/// Drop the skill next to the registration so the tools get picked up from
+/// an ordinary request instead of having to be named.
+///
+/// Refuses to overwrite a SKILL.md this app did not write. The path is
+/// predictable and shared with whatever else the user keeps in
+/// `~/.claude/skills`; replacing somebody's own skill because it happens to
+/// sit under our name is not a trade to make on their behalf. Same rule the
+/// intake plan file follows.
+fn write_skill() -> Result<(), String> {
+    let path = skill_path(&home_dir());
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        if !existing.contains(SKILL_MARKER) {
+            return Err(format!(
+                "{} already exists and was not written by this app - left alone",
+                path.display()
+            ));
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    atomic_write(&path, &skill_markdown())
+}
+
+/// Take it away again with the registration - a skill describing tools that
+/// are no longer connected is worse than none.
+fn remove_skill() -> Result<(), String> {
+    let path = skill_path(&home_dir());
+    match std::fs::read_to_string(&path) {
+        // Ours: remove the file and the directory we made for it.
+        Ok(existing) if existing.contains(SKILL_MARKER) => {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+            if let Some(parent) = path.parent() {
+                // Only if empty - remove_dir refuses otherwise, which is
+                // exactly the guard wanted.
+                let _ = std::fs::remove_dir(parent);
+            }
+            Ok(())
+        }
+        // Somebody else's, or not there at all.
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("failed to read {}: {e}", path.display())),
+    }
+}
+
 fn unregister_claude_code(server_name: &str) -> Result<(), String> {
+    // Mirrors register: resolve the CLI, fall back to PATH, and failing
+    // both take the entry out of ~/.claude.json ourselves. A machine that
+    // could only be registered by the config route has to be
+    // unregisterable by it too, or Remove reports success and leaves the
+    // server in place.
+    match claude_cli() {
+        Some(cli) => run_claude_mcp_remove(&cli, server_name),
+        None => match run_claude_mcp_remove(&PathBuf::from("claude"), server_name) {
+            Ok(()) => Ok(()),
+            Err(_) => unregister_claude_code_via_config(server_name),
+        },
+    }
+}
+
+fn unregister_claude_code_via_config(server_name: &str) -> Result<(), String> {
+    let path = PathBuf::from(home_dir()).join(".claude.json");
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        // Nothing to remove from is the state the user asked for.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    match remove_entry(&existing, "mcpServers", server_name)? {
+        Some(updated) => atomic_write(&path, &updated),
+        None => Ok(()),
+    }
+}
+
+fn run_claude_mcp_remove(cli: &std::path::Path, server_name: &str) -> Result<(), String> {
     let mut command = Command::new("cmd");
-    command.args(["/C", "claude", "mcp", "remove", "--scope", "user", server_name]);
+    command.arg("/C");
+    command.arg(cli);
+    command.args(["mcp", "remove", "--scope", "user", server_name]);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -207,9 +301,56 @@ fn unregister_claude_code(server_name: &str) -> Result<(), String> {
 /// of the app's cwd. `claude` is a `.cmd` shim on Windows, hence `cmd /C`.
 /// Environment pairs go through `-e`, which is how the CLI carries the
 /// database server's connection settings.
+/// The Claude Code CLI's absolute path, or None when it is not where the
+/// installers put it. See `ai_tools::claude_cli_candidates` for why this
+/// does not simply trust PATH.
+fn claude_cli() -> Option<PathBuf> {
+    crate::ai_tools::claude_cli_candidates(&home_dir(), &appdata_dir())
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+/// Write the server straight into `~/.claude.json`, the file
+/// `claude mcp add --scope user` would have written.
+///
+/// The last resort, and the one that cannot fail for want of a CLI. Same
+/// `merge_entry` + `atomic_write` every other tool already registers
+/// through, so it preserves the rest of that file rather than replacing
+/// it - and `~/.claude.json` holds a great deal more than MCP servers.
+fn register_claude_code_via_config(server: &McpServer) -> Result<(), String> {
+    let path = PathBuf::from(home_dir()).join(".claude.json");
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    let updated = merge_entry(&existing, "mcpServers", server)?;
+    atomic_write(&path, &updated)
+}
+
 fn register_claude_code(server: &McpServer) -> Result<(), String> {
+    // Prefer the CLI - it owns the config's schema and will keep working
+    // if that schema moves - but only when we can name it absolutely.
+    if let Some(cli) = claude_cli() {
+        return run_claude_mcp_add(&cli, server);
+    }
+    // No CLI where the installers put it. `claude` may still be on PATH
+    // for an install we do not know about; if it is not, edit the file
+    // ourselves rather than telling the user their working Claude Code
+    // is not there.
+    match run_claude_mcp_add(&PathBuf::from("claude"), server) {
+        Ok(()) => Ok(()),
+        Err(_) => register_claude_code_via_config(server),
+    }
+}
+
+fn run_claude_mcp_add(cli: &std::path::Path, server: &McpServer) -> Result<(), String> {
+    // Still via `cmd /C`: the npm install is a `.cmd` shim, which cannot be
+    // executed directly.
     let mut command = Command::new("cmd");
-    command.args(["/C", "claude", "mcp", "add", "--scope", "user"]);
+    command.arg("/C");
+    command.arg(cli);
+    command.args(["mcp", "add", "--scope", "user"]);
     for (k, v) in &server.env {
         command.arg("-e");
         command.arg(format!("{k}={v}"));
