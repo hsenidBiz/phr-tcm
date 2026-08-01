@@ -29,7 +29,6 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
         .iter()
         .map(|tc| {
             let mut rec = serde_json::json!({
-                "id": tc.update_id,
                 "title": tc.title,
                 "tags": tc.tags,
                 "automation_status": tc.automation_status,
@@ -39,6 +38,16 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
                     "action": s.action, "expected": s.expected
                 })).collect::<Vec<_>>(),
             });
+            // An id only appears when there IS one. `id: null` and no `id`
+            // both mean "create", so emitting the null said nothing - but a
+            // caller who passed 14 cases with no id got 14 back carrying a
+            // key they never wrote, which makes confirming that a bulk
+            // transform did only what it claimed mean reading past a shape
+            // change on every case. Same rule as the two notes below; it
+            // was only ever applied to them.
+            if let Some(id) = tc.update_id {
+                rec["id"] = serde_json::json!(id);
+            }
             // In-app note: round-trips through this file, never sent to
             // ADO - and only present when non-empty, so a tool that
             // round-trips a caller's draft does not inject a field the

@@ -3,8 +3,9 @@
 //! vectors. Semantics preserved exactly:
 //! - step ids start at 2; `last` == last step id
 //! - empty steps list builds the single placeholder step
-//! - parse strips anything tag-shaped (a literal "<placeholder>" typed by a
-//!   user does not survive a round-trip - same as v1)
+//! - parse strips REAL HTML markup only. v1 removed every `<...>` run, so a
+//!   literal "<cycleId>" a user typed did not survive a round-trip; that was
+//!   silent data loss, and `strip_tags` explains what replaced it.
 //! - malformed XML parses to an empty list, never an error
 
 use quick_xml::events::Event;
@@ -41,23 +42,98 @@ pub fn build_steps_xml(steps: &[Step]) -> String {
     out
 }
 
-/// Replace every `<...>` run with a space (v1 strips tags after unescaping,
-/// so even user-typed angle-bracket text is removed).
-fn strip_tags(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => {
-                in_tag = true;
-                out.push(' ');
-            }
-            '>' if in_tag => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
+/// Tag names Azure DevOps' rich-text editor actually emits into a step.
+///
+/// The list is the whole trick. ADO stores each step's HTML *escaped*
+/// inside `parameterizedString`, so by the time it has been unescaped, real
+/// markup (`<P>`, `<BR/>`) and text somebody typed (`<cycleId>`) look
+/// exactly alike - there is no structural difference left to use. Matching
+/// against what the editor can actually produce is the only thing that
+/// separates them.
+const HTML_TAGS: [&str; 42] = [
+    "a", "b", "big", "blockquote", "br", "caption", "center", "code", "col", "colgroup", "dd",
+    "div", "dl", "dt", "em", "font", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "li",
+    "ol", "p", "pre", "s", "small", "span", "strike", "strong", "sub", "sup", "table", "tbody",
+    "td", "th", "thead", "tr",
+];
+
+/// The index of the `>` that closes a real HTML tag opening at `open`, or
+/// `None` when this `<` is just a less-than sign.
+fn html_tag_end(c: &[char], open: usize) -> Option<usize> {
+    let mut i = open + 1;
+    if i < c.len() && c[i] == '/' {
+        i += 1;
+    }
+    let name_start = i;
+    while i < c.len() && c[i].is_ascii_alphanumeric() {
+        i += 1;
+    }
+    // "a < b" and "start_date < GETUTCDATE()": no name, so no tag.
+    if i == name_start {
+        return None;
+    }
+    let name: String = c[name_start..i].iter().collect::<String>().to_ascii_lowercase();
+    if !HTML_TAGS.contains(&name.as_str()) {
+        return None;
+    }
+    // Attributes may quote a '>' (`<img alt="a>b">`), so track quoting
+    // rather than scanning for the first '>'.
+    let mut quote: Option<char> = None;
+    while i < c.len() {
+        match (quote, c[i]) {
+            (Some(q), ch) if ch == q => quote = None,
+            (Some(_), _) => {}
+            (None, ch @ ('"' | '\'')) => quote = Some(ch),
+            (None, '>') => return Some(i),
+            // An unterminated `<p` followed by another `<` was never a tag.
+            (None, '<') => return None,
+            (None, _) => {}
         }
+        i += 1;
+    }
+    None
+}
+
+/// Remove real HTML markup, and only that.
+///
+/// This used to delete every `<...>` run, which is what v1 did and what
+/// this module's doc comment used to promise. It cost a developer 62
+/// fragments across 20 test cases: SQL steps written as
+/// `WHERE performance_cycle_id = <cycleId>` came back as
+/// `WHERE performance_cycle_id =` - a query the tester cannot run, in a
+/// step whose entire purpose is to run it. Silently, with the file still
+/// valid and the text still reading plausibly enough to skim past.
+///
+/// So `<cycleId>`, `<next assessment stage>` and `a < b` now survive, while
+/// `<P>` and `<BR/>` still go. A spec quote naming a real HTML element
+/// (`<div>`, `<img>`, and note `<textarea>` is NOT in the list precisely
+/// because a rich-text editor never emits one) is the residual ambiguity -
+/// the app cannot tell that from markup, and `validate_cases` warns about
+/// it instead.
+fn strip_tags(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '<' {
+            if let Some(end) = html_tag_end(&chars, i) {
+                out.push(' ');
+                i = end + 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
     }
     out
+}
+
+/// Whether `text` contains something `strip_tags` will treat as markup.
+/// Used by `validate_cases` so an author quoting `<div>` from a spec finds
+/// out before the round trip eats it, rather than during review.
+pub fn contains_html_markup(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    (0..chars.len()).any(|i| chars[i] == '<' && html_tag_end(&chars, i).is_some())
 }
 
 fn collapse_ws(s: &str) -> String {

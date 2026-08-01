@@ -191,6 +191,14 @@ fn json_export_round_trips_through_the_importer() {
     let second = &doc["test_cases"][1];
     assert!(second.get("comment").is_none(), "{second}");
     assert!(second.get("reviewer_notes").is_none(), "{second}");
+    // Nor `id`. It used to be written as `null` for every case that did not
+    // have one, which says exactly what saying nothing says - while making
+    // a caller who passed 14 id-less cases read past an added key on all 14
+    // to confirm their bulk edit did only what it claimed.
+    assert!(second.get("id").is_none(), "{second}");
+    // A case that HAS an id still carries it - that is the whole update
+    // contract.
+    assert_eq!(doc["test_cases"][0]["id"], serde_json::json!(77));
 }
 
 /// The reviewer-facing half: notes reach the browser page as RENDERED

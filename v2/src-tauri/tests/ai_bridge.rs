@@ -73,6 +73,72 @@ async fn ado_stub() -> (MockServer, AdoClient) {
     (server, client)
 }
 
+/// The two warnings that came out of round-2 feedback, exercised through
+/// the route rather than against the checker directly - the wiring is the
+/// part that was missing, not the detection.
+#[tokio::test]
+async fn validate_warns_about_markup_and_merged_branches() {
+    let draft = serde_json::json!({
+        "test_cases": [
+            {
+                "title": "Quote a spec element",
+                "automation_status": "Not Automated",
+                "steps": [
+                    { "action": "Open the reject popup.", "expected": "A <textarea> is shown." },
+                    { "action": "Read the body.", "expected": "It is <div> wrapped." }
+                ]
+            },
+            {
+                "title": "Actions and Measures visibility",
+                "automation_status": "Not Automated",
+                "steps": [
+                    { "action": "Sign in as the manager.", "expected": "The dashboard is shown." },
+                    { "action": "Open the appraisal.", "expected": "The form is shown." },
+                    { "action": "Expand the goal row.", "expected": "An Actions and Measures section is shown." },
+                    { "action": "Turn off the action_measure_enabled setting.", "expected": "Saved." },
+                    { "action": "Expand the goal row again.", "expected": "No Actions and Measures section is shown." }
+                ]
+            },
+            {
+                "title": "A plain case with a placeholder",
+                "automation_status": "Not Automated",
+                "steps": [
+                    { "action": "Run SELECT * FROM t WHERE id = <cycleId>;", "expected": "One row is returned." }
+                ]
+            }
+        ]
+    })
+    .to_string();
+
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.18.6").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["error"], serde_json::Value::Null, "{body}");
+    assert_eq!(v["cases"], 3, "{body}");
+    let warnings = v["warnings"].as_array().unwrap();
+    let all = warnings
+        .iter()
+        .map(|w| w.as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    // A real element name will be eaten by the round trip; say so.
+    assert!(
+        all.contains("Quote a spec element") && all.contains("HTML tag name"),
+        "expected a markup warning, got: {all}"
+    );
+    // The merged positive/negative.
+    assert!(
+        all.contains("Actions and Measures visibility") && all.contains("both branches"),
+        "expected a merged-branch warning, got: {all}"
+    );
+    // And the ordinary case stays quiet - <cycleId> survives now, so
+    // warning about it would be noise.
+    assert!(
+        !all.contains("A plain case with a placeholder"),
+        "a safe placeholder must not warn: {all}"
+    );
+}
 #[tokio::test]
 async fn guide_carries_format_rules_and_live_modules() {
     let (server, client) = ado_stub().await;

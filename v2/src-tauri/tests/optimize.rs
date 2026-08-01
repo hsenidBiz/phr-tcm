@@ -25,6 +25,60 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
     }
 }
 
+/// A short parenthetical is usually part of the UI string being asserted,
+/// not commentary on it. `The badge reads Rejected (Edit) in red` was
+/// trimmed to `Rejected` - and `Rejected (Edit)` is the literal value from
+/// the spec's status-derivation table, so the trim did not shorten the
+/// assertion, it falsified it: a badge reading plain `Rejected` now passes.
+#[test]
+fn a_short_parenthetical_is_a_ui_string_not_an_aside() {
+    assert_eq!(
+        clean_expected("The badge reads Rejected (Edit) in red"),
+        "The badge reads Rejected (Edit) in red."
+    );
+    assert_eq!(clean_expected("The field is labelled Reason (optional)"), "The field is labelled Reason (optional).");
+    // Three words or more is commentary, and still goes.
+    assert_eq!(
+        clean_expected("A count is shown (e.g. \"5 employees\")"),
+        "A count is shown."
+    );
+    assert_eq!(
+        clean_expected("The total updates (as configured in Settings)"),
+        "The total updates."
+    );
+}
+
+/// Declining to add an entry step is correct when the draft already walks
+/// in - but it used to be invisible. A caller who passed `entry` got
+/// `preamble_steps_added: 0`, no entry step and no reason, which is
+/// indistinguishable from the parameter being ignored.
+#[test]
+fn a_declined_entry_step_says_why() {
+    let c = case(
+        "Approve a request",
+        "",
+        "",
+        vec![
+            Step {
+                action: "In the PMS Module, open Performance Management from the main menu.".into(),
+                expected: "The list is shown.".into(),
+            },
+            Step { action: "Click Approve.".into(), expected: "It is approved.".into() },
+        ],
+    );
+    let (_out, report) = optimize(
+        vec![c],
+        Some("In the PMS Module, open Performance Management from the main menu."),
+    );
+    assert_eq!(report.preamble_steps_added, 0, "nothing should be prepended");
+    assert!(
+        report.notes.iter().any(|n| n.contains("entry step omitted")
+            && n.contains("Approve a request")),
+        "the report has to say the entry was declined and for which case: {:?}",
+        report.notes
+    );
+}
+
 // ---------------------------------------------------------------- expected
 
 #[test]

@@ -397,6 +397,50 @@ async fn validate_json(
     };
     let out = match parsed {
         Ok((cases, mut warnings)) => {
+            // Text that a round trip through Azure DevOps will read as
+            // markup and remove. `<cycleId>` and friends now survive, but a
+            // spec quote naming a real element - "<div>", "<img>" - is
+            // genuinely indistinguishable from the rich-text editor's own
+            // output, so the author gets told here instead of finding out
+            // by diffing an export against their own source.
+            for (i, tc) in cases.iter().enumerate() {
+                let mut hits: Vec<String> = Vec::new();
+                for (n, s) in tc.steps.iter().enumerate() {
+                    for (what, text) in [("action", &s.action), ("expected", &s.expected)] {
+                        if crate::steps_xml::contains_html_markup(text) {
+                            hits.push(format!("step {} {what}", n + 1));
+                        }
+                    }
+                }
+                if crate::steps_xml::contains_html_markup(&tc.preconditions) {
+                    hits.push("preconditions".to_string());
+                }
+                if !hits.is_empty() {
+                    warnings.push(format!(
+                        "Test case {} ('{}'): {} contains an HTML tag name in angle brackets, \
+                         which Azure DevOps stores as markup and will drop on the way back. \
+                         Placeholders like <cycleId> are safe; a literal element name is not - \
+                         write it as `code`, or in braces.",
+                        i + 1,
+                        tc.title,
+                        hits.join(", ")
+                    ));
+                }
+
+                // A negative folded into its positive is covered but not
+                // visible: nobody auditing by title can see it was tested.
+                if let Some(why) = crate::branchcheck::both_branches_reason(tc) {
+                    warnings.push(format!(
+                        "Test case {} ('{}') appears to cover both branches of a condition - {}. \
+                         Consider splitting it into a positive and a negative, each with a title \
+                         stating its own branch. If the transition IS the behaviour under test, \
+                         leave it.",
+                        i + 1,
+                        tc.title,
+                        why
+                    ));
+                }
+            }
             if let Some(c) = client {
                 let allowed = allowed_modules(ctx, c).await;
                 // Say so rather than pass silently: "no warnings" has to
@@ -632,6 +676,22 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         does need an argument made, that is a `comment`, not this.\n\n\
         Cite; never paraphrase from memory. Rendered as MARKDOWN, so a wiki\n\
         link works - but a bare citation line needs no formatting at all.\n\n\
+        ## One branch per case\n\
+        When the spec says a thing is shown ONLY when X, that is two test\n\
+        cases, not one. Write the positive and the negative separately, each\n\
+        with a title stating its own branch, and have each name its\n\
+        counterpart in `reviewer_notes` so neither reads as a duplicate.\n\n\
+        Never fold the negative in as an extra step of the positive - do not\n\
+        turn a setting off half way through a case to check the other branch.\n\
+        It is covered that way, but it is INVISIBLE: someone auditing titles\n\
+        against a large backlog cannot see the negative was tested, and the\n\
+        case leaves the environment different from how it found it.\n\
+        `validate_cases` warns when a case looks like both branches at once.\n\n\
+        Two things a merged case hides, both real: a title claiming a button\n\
+        is hidden from the Manager AND the Reviewer when the case only ever\n\
+        signs in as one of them, and a weak negative - one unrated goal out\n\
+        of two, where four out of five would have caught an implementation\n\
+        that passes on any rating.\n\n\
         ## Allowed Module values (live)\n{module_lines}\n\n\
         ## Tags this project already uses\n\
         Reuse these wherever one fits - a near-duplicate ('smoke-test' next to\n\

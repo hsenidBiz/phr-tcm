@@ -260,14 +260,32 @@ pub fn clean_expected(raw: &str) -> String {
         return s;
     }
 
-    // Drop parenthetical and bracketed asides.
+    // Drop parenthetical and bracketed asides - but only the ones long
+    // enough to BE asides.
+    //
+    // A short parenthetical is usually part of a literal UI string, not
+    // commentary on it: "The badge reads Rejected (Edit) in red" was being
+    // trimmed to "Rejected", and "Rejected (Edit)" is the exact value from
+    // the spec's status table. That does not make the expected result
+    // shorter, it makes it WRONG - the tester now passes a badge reading
+    // "Rejected". "Reason (optional)" is the same shape.
+    //
+    // The two mistakes are not equally bad. Keeping a genuine aside costs a
+    // few words; dropping a UI string costs the assertion. So the rule errs
+    // toward keeping: three words or more is an aside, one or two is a
+    // label. `(e.g. "5 employees")` is three and still goes.
     for (open, close) in [('(', ')'), ('[', ']')] {
-        while let (Some(a), Some(b)) = (s.find(open), s.find(close)) {
-            if b < a {
-                break;
+        let mut from = 0;
+        while let Some(a) = s[from..].find(open).map(|i| i + from) {
+            let Some(b) = s[a..].find(close).map(|i| i + a) else { break };
+            let inner = &s[a + open.len_utf8()..b];
+            if inner.split_whitespace().count() >= 3 {
+                s = format!("{}{}", &s[..a], &s[b + close.len_utf8()..]);
+                s = squash(&s);
+                from = 0; // indices moved
+            } else {
+                from = b + close.len_utf8();
             }
-            s = format!("{}{}", &s[..a], &s[b + close.len_utf8()..]);
-            s = squash(&s);
         }
     }
 
@@ -661,7 +679,19 @@ pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, Op
         // entry - preconditions are left completely untouched. The earlier
         // version stripped unconditionally, which silently destroyed
         // sign-in context that was never re-emitted.
-        if !already_has_preamble(&c, entry) {
+        if already_has_preamble(&c, entry) {
+            // Skipping is right - the draft already walks in, and adding a
+            // second preamble is the duplication this check exists to stop.
+            // But silence made a supplied `entry` look like it had been
+            // ignored: preamble_steps_added: 0, no entry step, no reason
+            // given. Say which case declined it and why.
+            if !entry.trim().is_empty() {
+                report.notes.push(format!(
+                    "'{}': entry step omitted - the case already opens with navigation or sign-in.",
+                    c.title
+                ));
+            }
+        } else {
             let (pre, consumed) = preamble_steps(&c, entry);
             // Subtractive, as well as the probe above - but only against
             // the case's OPENING steps, not all of them.

@@ -38,12 +38,53 @@ fn round_trip_preserves_action_and_expected() {
     );
 }
 
+/// Real markup still goes. ADO stores each step's HTML escaped inside
+/// `parameterizedString`, so this is what the rich-text editor's own output
+/// looks like coming back.
 #[test]
-fn parse_strips_angle_bracket_markup() {
-    // Same as v1: ADO stores step text as HTML, so anything tag-shaped is
-    // stripped - a literal "<placeholder>" does not survive a round-trip.
-    let parsed = parse_steps_xml(&build_steps_xml(&[step("Enter <credentials> here", "")]));
-    assert_eq!(parsed[0].action, "Enter here");
+fn parse_strips_real_html_markup() {
+    let parsed = parse_steps_xml(&build_steps_xml(&[step(
+        "<DIV><P>Click <B>Login</B></P></DIV>",
+        "<P>Dashboard shown</P><BR/>",
+    )]));
+    assert_eq!(parsed[0].action, "Click Login");
+    assert_eq!(parsed[0].expected, "Dashboard shown");
+}
+
+/// The regression this replaced a test for. v1 deleted every `<...>` run,
+/// and so did this port - which cost a developer 62 fragments across 20
+/// cases. A SQL step written as `WHERE performance_cycle_id = <cycleId>`
+/// came back as `WHERE performance_cycle_id =`: silent, still valid JSON,
+/// and still readable enough to skim past in review.
+#[test]
+fn angle_bracket_text_a_user_typed_survives_the_round_trip() {
+    let cases = [
+        // The reported payload, near enough verbatim.
+        (
+            "Run: SELECT stage_status_id FROM perf_cp_stage_status WHERE performance_cycle_id = <cycleId> AND timeline_stage_id = <stageId>;",
+            "Rows are returned for <cycle id> and <employee>.",
+        ),
+        // A spec quote naming an element the editor never emits.
+        ("The popup body is a <textarea> labelled \"Reason (optional)\".", ""),
+        // Multi-word: not tag-shaped at all, but the old scan ate it too.
+        ("Pick <next assessment stage> from the list.", ""),
+        // A bare less-than must not swallow the rest of the sentence.
+        ("Check start_date < GETUTCDATE() and confirm a < b holds.", ""),
+    ];
+    for (action, expected) in cases {
+        let parsed = parse_steps_xml(&build_steps_xml(&[step(action, expected)]));
+        assert_eq!(parsed[0].action, action, "action changed");
+        assert_eq!(parsed[0].expected, expected, "expected changed");
+    }
+}
+
+/// Preconditions take a different road out of Azure DevOps (`html_to_text`,
+/// which strips before unescaping) - so it was already lossless. Pinned so
+/// the two paths cannot diverge again.
+#[test]
+fn precondition_text_keeps_its_angle_brackets_too() {
+    assert_eq!(html_to_text("A cycle exists with id &lt;cycleId&gt;"), "A cycle exists with id <cycleId>");
+    assert_eq!(html_to_text("<P>A cycle exists</P>"), "A cycle exists");
 }
 
 #[test]
