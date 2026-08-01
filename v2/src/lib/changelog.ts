@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.9",
+    date: "2026-08-01",
+    items: [
+      "Switching a tool off in the AI Bridge tab now removes its slash command as well, and switching it back on brings the command back. The tool itself was already refused when it was off - it disappeared from the assistant's tool list and was turned down again if it tried anyway - but the command stayed in the picker, which is the one place you would actually look for it.",
+    ],
+  },
+  {
     version: "1.18.8",
     date: "2026-08-01",
     items: [
