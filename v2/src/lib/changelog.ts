@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.8",
+    date: "2026-08-01",
+    items: [
+      "Reviewer notes now lead with what the case actually checks - one or two plain sentences anyone can read - followed by where the requirement lives. They no longer repeat where the set came from or what its scope was: you settle both once when the writing starts, and reading them again on every case only stood between you and the part that was about the case in front of you.",
+      "The \"View in browser\" report on View Test Cases now notices when the cases behind it have changed, and offers to refresh - the same bar the Import draft report got last release.",
+      "Fixed: that report was written to a file named after how many cases it held, so changing the selection wrote a different file and the tab you already had open never showed it.",
+      "The two reports no longer talk over each other: re-exporting the draft used to be able to tell an open View Test Cases page that it was out of date when nothing about it had changed.",
+    ],
+  },
+  {
     version: "1.18.7",
     date: "2026-08-01",
     items: [
