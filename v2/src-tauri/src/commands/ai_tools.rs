@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::ai_tools::{
-    atomic_write, detect, is_installed, merge_entry, remove_entry, skill_markdown, skill_path,
-    tcm_server, DetectedTool, McpServer, DB_SERVER, SKILL_MARKER, TOOL_SPECS,
+    atomic_write, detect, is_installed, merge_entry, remove_entry, command_markdown, command_path,
+    tcm_server, DetectedTool, McpServer, DB_SERVER, COMMAND_MARKER, TOOL_SPECS,
 };
 
 #[cfg(windows)]
@@ -134,12 +134,12 @@ fn register_server(id: &str, server: &McpServer) -> Result<(), String> {
     if spec.id == "claude-code" {
         register_claude_code(server)?;
         // Best-effort, and deliberately after the server is in: a
-        // skill pointing at tools that are not registered would be
-        // worse than no skill. A failure here does not undo a
+        // command pointing at tools that are not registered would be
+        // worse than no command. A failure here does not undo a
         // registration that worked.
         if server.name == crate::ai_tools::TCM_SERVER {
-            if let Err(e) = write_skill() {
-                crate::applog::warn(format!("could not write the Claude Code skill: {e}"));
+            if let Err(e) = write_command() {
+                crate::applog::warn(format!("could not write the Claude Code command: {e}"));
             }
         }
         return Ok(());
@@ -176,8 +176,8 @@ fn unregister_server(id: &str, server_name: &str) -> Result<(), String> {
 
     if spec.id == "claude-code" {
         if server_name == crate::ai_tools::TCM_SERVER {
-            if let Err(e) = remove_skill() {
-                crate::applog::warn(format!("could not remove the Claude Code skill: {e}"));
+            if let Err(e) = remove_command() {
+                crate::applog::warn(format!("could not remove the Claude Code command: {e}"));
             }
         }
         return unregister_claude_code(server_name);
@@ -195,18 +195,18 @@ fn unregister_server(id: &str, server_name: &str) -> Result<(), String> {
     }
 }
 
-/// Drop the skill next to the registration so the tools get picked up from
-/// an ordinary request instead of having to be named.
+/// Drop the command next to the registration, so `/tcm-testcases` is in the
+/// picker instead of a tool name somebody has to remember.
 ///
-/// Refuses to overwrite a SKILL.md this app did not write. The path is
+/// Refuses to overwrite a file this app did not write. The path is
 /// predictable and shared with whatever else the user keeps in
-/// `~/.claude/skills`; replacing somebody's own skill because it happens to
-/// sit under our name is not a trade to make on their behalf. Same rule the
-/// intake plan file follows.
-fn write_skill() -> Result<(), String> {
-    let path = skill_path(&home_dir());
+/// `~/.claude/commands`; replacing somebody's own command because it happens
+/// to sit under our name is not a trade to make on their behalf. Same rule
+/// the intake plan file follows.
+fn write_command() -> Result<(), String> {
+    let path = command_path(&home_dir());
     if let Ok(existing) = std::fs::read_to_string(&path) {
-        if !existing.contains(SKILL_MARKER) {
+        if !existing.contains(COMMAND_MARKER) {
             return Err(format!(
                 "{} already exists and was not written by this app - left alone",
                 path.display()
@@ -217,16 +217,16 @@ fn write_skill() -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
-    atomic_write(&path, &skill_markdown())
+    atomic_write(&path, &command_markdown())
 }
 
-/// Take it away again with the registration - a skill describing tools that
-/// are no longer connected is worse than none.
-fn remove_skill() -> Result<(), String> {
-    let path = skill_path(&home_dir());
+/// Take it away again with the registration - a command pointing at tools
+/// that are no longer connected is worse than none.
+fn remove_command() -> Result<(), String> {
+    let path = command_path(&home_dir());
     match std::fs::read_to_string(&path) {
         // Ours: remove the file and the directory we made for it.
-        Ok(existing) if existing.contains(SKILL_MARKER) => {
+        Ok(existing) if existing.contains(COMMAND_MARKER) => {
             std::fs::remove_file(&path)
                 .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
             if let Some(parent) = path.parent() {

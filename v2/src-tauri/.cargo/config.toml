@@ -1,0 +1,26 @@
+# Keep a build or a test run from taking the whole machine.
+#
+# `cargo test` pegged a 24-core desktop at 100% and made the rest of it
+# unusable for the couple of minutes it took. The wrapper in
+# `scripts/capped.ps1` already caps things at 70% by processor affinity, but
+# it only helps the commands somebody remembers to route through it - and a
+# plain `cargo test`, which is what anyone types, went uncapped.
+#
+# So the cap lives with the crate instead. Both levers are needed: `jobs`
+# bounds the rustc processes cargo spawns (by far the heavier half), and
+# RUST_TEST_THREADS bounds the threads each test binary then runs its own
+# tests on. Capping only the first still left 28 suites fanning out across
+# every core.
+
+[build]
+# Negative means "all cores MINUS this", so it scales with the machine
+# instead of hard-coding one desktop's core count: 8 free of 24 here (~70%),
+# and still sensible on a smaller box.
+jobs = -8
+
+[env]
+# `[env]` reaches the processes cargo launches, which is what test binaries
+# are. 16 matches capped.ps1's 70% of this machine; unlike `jobs` there is
+# no relative form, so it is a ceiling rather than a fraction - harmless on
+# a smaller machine, where the real limit is the core count anyway.
+RUST_TEST_THREADS = "16"

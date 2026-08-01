@@ -3,8 +3,8 @@
 //! the same way it would read the real home/appdata dirs.
 
 use v2_lib::ai_tools::{
-    claude_cli_candidates, detect, merge_entry, remove_entry, skill_markdown, skill_path,
-    tcm_server, McpServer, DB_SERVER, SKILL_MARKER, TCM_SERVER,
+    claude_cli_candidates, detect, merge_entry, remove_entry, command_markdown, command_path,
+    tcm_server, McpServer, DB_SERVER, COMMAND_MARKER, TCM_SERVER,
 };
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
@@ -64,20 +64,21 @@ fn the_claude_cli_is_looked_for_where_the_installers_put_it() {
     assert!(shown[0].ends_with("Sam/.local/bin/claude.exe"), "{shown:?}");
 }
 
-/// The skill is what makes the tools reachable without naming them, so
-/// its frontmatter has to carry the situations worth matching.
+/// The command is what makes the tools reachable without naming them, so
+/// its frontmatter has to carry a description worth showing in the picker.
 #[test]
-fn the_skill_names_when_to_use_it_and_points_at_the_live_guide() {
-    let md = skill_markdown();
+fn the_command_describes_itself_and_points_at_the_live_guide() {
+    let md = command_markdown();
     assert!(md.starts_with("---\n"), "needs YAML frontmatter: {md}");
     assert!(md.contains(&format!("name: {TCM_SERVER}")), "{md}");
 
     let front = md.split("---").nth(1).expect("frontmatter");
-    // The description is what an assistant matches against; it has to name
-    // the request, not the tool.
+    // The description is what shows in the picker, so it has to name the
+    // job rather than the tool.
     assert!(front.contains("description:"), "{front}");
     assert!(front.to_lowercase().contains("test cases"), "{front}");
-    assert!(front.to_lowercase().contains("pbi"), "{front}");
+    // Arguments reach the prompt, so `/tcm-testcases 145664` works.
+    assert!(md.contains("$ARGUMENTS"), "{md}");
 
     // A pointer, not a second copy of the rules. If this ever starts
     // restating the format, the module list or the tag list, it will be
@@ -86,18 +87,18 @@ fn the_skill_names_when_to_use_it_and_points_at_the_live_guide() {
     for copied in ["Not Automated", "semicolon", "automation_status", "reviewer_notes"] {
         assert!(
             !md.contains(copied),
-            "the skill must point at the guide, not duplicate it - found {copied:?}"
+            "the command must point at the guide, not duplicate it - found {copied:?}"
         );
     }
     // And it identifies itself, so removal never touches a file the user
     // wrote at the same path.
-    assert!(md.contains(SKILL_MARKER), "{md}");
+    assert!(md.contains(COMMAND_MARKER), "{md}");
 }
 
 #[test]
-fn the_skill_lands_where_claude_code_looks_for_skills() {
-    let p = skill_path("C:/Users/Sam").display().to_string().replace('\\', "/");
-    assert_eq!(p, format!("C:/Users/Sam/.claude/skills/{TCM_SERVER}/SKILL.md"));
+fn the_command_lands_where_claude_code_looks_for_commands() {
+    let p = command_path("C:/Users/Sam").display().to_string().replace('\\', "/");
+    assert_eq!(p, format!("C:/Users/Sam/.claude/commands/{TCM_SERVER}.md"));
 }
 #[test]
 fn merge_entry_creates_key_and_entry_on_empty_object() {

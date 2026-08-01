@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "v2"
 version = "1.18.5"
 description = "Bulk-create and edit Azure DevOps Test Cases"
@@ -71,3 +71,17 @@ tauri-plugin-single-instance = "2"
 [dev-dependencies]
 wiremock = "0.6.5"
 
+
+# The test profile links 27 separate integration binaries, and on Windows
+# the expensive, heavily-threaded part of each link is generating the PDB -
+# which is why the process pegging the machine during `cargo test` is
+# link.exe, not rustc. Capping cargo's job count alone does not help much:
+# each of those concurrent links is itself multi-threaded.
+#
+# Dropping debug info costs nothing that a test run uses. Panic locations
+# come from the panic metadata compiled into the binary, not from the PDB,
+# so a failure still reports `tests\foo.rs:77:9` exactly as before - only a
+# step debugger would notice, and that is `cargo build`'s profile, which is
+# deliberately left alone.
+[profile.test]
+debug = 0
