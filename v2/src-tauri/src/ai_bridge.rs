@@ -711,24 +711,28 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         to Azure DevOps. Include `id` ONLY to update that exact work item;\n\
         omit it to create.\n\n\
         ## reviewer_notes\n\
-        Optional, also never sent to Azure DevOps, and the most useful thing\n\
-        you can add - but ONLY if it stays short. It is a POINTER to where\n\
-        the requirement lives, not an explanation of it. A reviewer reads one\n\
-        of these per case while checking dozens, so a paragraph costs more\n\
-        time than it saves and buries the citation that made it worth\n\
-        reading.\n\n\
-        ONE OR TWO LINES. Cite the source and stop:\n\
-        - `Spec: Step10-ManagePerformanceCycle.md 7.7 (AC-3)`\n\
-        - `Code: IndexModel.CanCopyFromPreviousCycle`\n\
-        - `Out of scope: SSO` - only when you deliberately left something out\n\
-        - one short quote ONLY when the exact wording IS the requirement\n\n\
-        Do NOT restate the test, explain your reasoning, describe what the\n\
-        app does, or justify a decision at length. The steps already say what\n\
-        is being tested; anything longer is prose the reviewer must read\n\
-        before reaching the reference they actually wanted. If a case really\n\
-        does need an argument made, that is a `comment`, not this.\n\n\
+        Optional, never sent to Azure DevOps, and the most useful thing you\n\
+        can add. Two parts, in this order, and nothing else:\n\n\
+        1. **What this case checks**, in one or two plain sentences that\n\
+        someone who has not read the spec would understand. Not the steps\n\
+        retold - the point, in ordinary words.\n\
+        2. **Where the requirement lives**: `Spec: Step10-ManagePerformanceCycle.md\n\
+        7.7 (AC-3)`, `Code: IndexModel.CanCopyFromPreviousCycle`, or both.\n\n\
+        Add `Out of scope: SSO` only when THIS case deliberately leaves\n\
+        something out, and one short quote only when the exact wording IS\n\
+        the requirement.\n\n\
+        Leave OUT, every time:\n\
+        - Where the cases came from as a body of work - \"Source:\n\
+        implementation (authority = app)\", \"written from the spec\". The\n\
+        developer chose that at intake and already knows it; repeating it\n\
+        per case is the same sentence on every case.\n\
+        - The SET's scope. That was agreed once, in the plan. A note is\n\
+        about ONE case.\n\
+        - A walk through the steps. They are directly above the note.\n\
+        - Your reasoning, or a decision argued at length. If a case really\n\
+        needs an argument made, that is a `comment`, not this.\n\n\
         Cite; never paraphrase from memory. Rendered as MARKDOWN, so a wiki\n\
-        link works - but a bare citation line needs no formatting at all.\n\n\
+        link works - but two sentences and a citation need no formatting.\n\n\
         ## One branch per case\n\
         When the spec says a thing is shown ONLY when X, that is two test\n\
         cases, not one. Write the positive and the negative separately, each\n\

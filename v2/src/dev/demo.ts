@@ -764,13 +764,16 @@ function applyPatches() {
             preconditions: "A demo user exists",
             comment: "Shared by a teammate for review.",
             // The one flow reviewer notes are written FOR: a draft sent to
-            // somebody else to review. Expanding the case in the queue is
-            // where they now show, so the demo carries a real-shaped one -
-            // a pointer to the source, not an essay about the test.
+            // somebody else to review. Shaped the way the guide asks - what
+            // the case checks in plain words, then where the requirement
+            // lives - and deliberately silent about where the SET came
+            // from, which the developer settled at intake.
             reviewer_notes:
+              "Checks that a cycle which has already been published cannot be " +
+              "copied from again, so its settings cannot be overwritten by " +
+              "accident.\n\n" +
               "Spec: **Step10-ManagePerformanceCycle.md** 7.7 (AC-3)\n\n" +
-              "Code: `IndexModel.CanCopyFromPreviousCycle`\n\n" +
-              "Out of scope: SSO sign-in.",
+              "Code: `IndexModel.CanCopyFromPreviousCycle`",
             steps: [
               { action: "Open the app", expected: "It opens" },
               { action: "Open the shared draft", expected: "The case is listed" },

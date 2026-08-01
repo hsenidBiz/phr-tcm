@@ -17,11 +17,12 @@ to null to CREATE a new test case. 'title' is required (max 255 chars). \
 string - commas are not allowed in tags. 'module' and 'preconditions' \
 are free text and may be empty strings. Two optional fields never reach \
 Azure DevOps and exist only in this file: 'comment', a short in-app note, \
-and 'reviewer_notes', a POINTER to where the requirement lives - one or \
-two lines naming the spec section or the code symbol, plus an 'Out of \
-scope:' line only if something was deliberately left out. Keep it short: \
-it is read once per case during review, so do not restate the test or \
-explain the reasoning behind it. 'reviewer_notes' is rendered as MARKDOWN \
+and 'reviewer_notes': one or two plain sentences saying what THIS case \
+checks, in words anyone would understand, then where the requirement \
+lives (the spec section or the code symbol). Add an 'Out of scope:' line \
+only if this case deliberately leaves something out. Leave out where the \
+cases came from as a body of work and the scope of the whole set - both \
+were agreed once and repeating them per case is noise on every case. 'reviewer_notes' is rendered as MARKDOWN \
 when the cases are opened in a browser, so a link to the spec works.";
 
 pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {

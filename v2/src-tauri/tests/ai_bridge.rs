@@ -160,24 +160,44 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(body.contains("Login") && body.contains("Payroll"), "live modules");
     assert!(body.contains("optimize_cases"), "the guide points at the optimizer");
 
-    // Reviewer notes have to be told to stay SHORT. Asked only for "the
-    // spec section, the acceptance criterion, a quote and what was out of
-    // scope", an assistant dutifully wrote a paragraph per case - correct,
-    // and slower to read than the steps it was annotating. The brief is a
-    // pointer, and the guide has to say so or the notes drift back.
+    // Reviewer notes are two things and no more: what this case checks,
+    // in words anyone can read, and where the requirement lives. Both
+    // halves are pinned because the field has drifted twice - first into
+    // paragraphs of reasoning, then into per-case boilerplate repeating
+    // where the SET came from, which the developer had already settled at
+    // intake and was reading on every single case.
     let notes = body
         .split("## reviewer_notes")
         .nth(1)
-        .and_then(|rest| rest.split("## Allowed Module values").next())
+        .and_then(|rest| rest.split("## One branch per case").next())
         .expect("the guide still has a reviewer_notes section");
-    assert!(notes.contains("POINTER"), "says what the field is FOR: {notes}");
-    assert!(notes.contains("ONE OR TWO LINES"), "bounds the length: {notes}");
+
+    // 1. Say what it checks, plainly.
     assert!(
-        notes.contains("Do NOT restate the test"),
-        "names the failure mode it guards against: {notes}"
+        notes.contains("What this case checks"),
+        "the note has to start with the point of the case: {notes}"
     );
-    // And a shape to copy, not just a prohibition.
+    assert!(
+        notes.contains("plain sentences"),
+        "and in terms a non-specialist can read: {notes}"
+    );
+
+    // 2. Then the pointer - a shape to copy, not just a prohibition.
     assert!(notes.contains("Spec:") && notes.contains("Code:"), "{notes}");
+
+    // And the three things that must NOT be in it.
+    assert!(
+        notes.contains("Leave OUT"),
+        "the exclusions have to be stated, not implied: {notes}"
+    );
+    assert!(
+        notes.contains("authority = app"),
+        "names the provenance boilerplate it is banning, by example: {notes}"
+    );
+    assert!(
+        notes.contains("SET's scope"),
+        "a note is about one case, not the whole set: {notes}"
+    );
 
     // Reaching for a hand-rolled generator when a tool falls short is not
     // hypothetical: a draft too large for validate_cases once led to a
