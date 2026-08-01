@@ -19,6 +19,7 @@ fn good(dir: &std::path::Path, spec: &std::path::Path) -> IntakeAnswers {
         output_path: dir.join("cases.json").to_string_lossy().to_string(),
         spec_paths: vec![spec.to_string_lossy().to_string()],
         sections: "3.1-3.4".into(),
+        ordering: "tester".into(),
         examples_pbi: Some(144714),
         check_examples: true,
         authority: "spec-wins".into(),
@@ -38,13 +39,15 @@ fn the_checklist_leads_with_what_is_expensive_to_get_wrong() {
     assert!(fields.contains(&"spec_paths"));
     assert!(fields.contains(&"authority"));
 
-    // The three that cannot be guessed are the required ones.
+    // The ones that cannot be guessed are the required ones. `ordering`
+    // joined them because the two orders are different files and only
+    // the developer knows which job this one is for.
     let required: Vec<&str> = qs
         .iter()
         .filter(|q| q.required)
         .map(|q| q.field.as_str())
         .collect();
-    assert_eq!(required, vec!["output_path", "spec_paths", "authority"]);
+    assert_eq!(required, vec!["output_path", "spec_paths", "authority", "ordering"]);
     // Every question explains itself - the assistant is meant to relay
     // the "why", not just the prompt.
     assert!(qs.iter().all(|q| !q.why.trim().is_empty()));
@@ -238,6 +241,7 @@ async fn phase_two_writes_the_plan_when_the_answers_are_sound() {
         "output_path": out.to_string_lossy(),
         "spec_paths": [spec.to_string_lossy()],
         "authority": "spec-wins",
+        "ordering": "tester",
     })
     .to_string();
     let (status, body) =
@@ -254,4 +258,44 @@ async fn phase_two_writes_the_plan_when_the_answers_are_sound() {
     assert!(std::fs::read_to_string(written).unwrap().contains("Orders"));
     assert!(v["note"].as_str().unwrap().contains("get their agreement"));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+
+/// Which order the set is FOR is the developer's call, and nothing in
+/// the cases reveals it - so it is asked, and asked as a required
+/// question rather than guessed at.
+#[test]
+fn ordering_is_asked_and_checked() {
+    let asked = questions();
+    let q = asked.iter().find(|q| q.field == "ordering").expect("ordering is asked");
+    assert!(q.required, "an unanswered ordering would be silently guessed");
+    assert!(q.ask.contains("spec") && q.ask.contains("tester"), "{}", q.ask);
+
+    let dir = temp_dir("ordering");
+    let spec = dir.join("spec.md");
+    std::fs::write(&spec, "x").unwrap();
+
+    let mut a = good(&dir, &spec);
+    a.ordering = "sideways".into();
+    assert!(
+        problems(&a, &[]).iter().any(|p| p.contains("ordering")),
+        "an unknown ordering has to be refused"
+    );
+
+    a.ordering = String::new();
+    assert!(
+        problems(&a, &[]).iter().any(|p| p.contains("ordering is required")),
+        "a missing ordering has to be asked for"
+    );
+
+    // And the answer has to reach the plan, or asking it changed nothing.
+    a.ordering = "spec".into();
+    let plan = plan_markdown(&a, "Feature");
+    assert!(plan.contains("document order"), "{plan}");
+    assert!(plan.contains("reorder=false"), "the plan must tell it not to regroup: {plan}");
+
+    a.ordering = "tester".into();
+    let plan = plan_markdown(&a, "Feature");
+    assert!(!plan.contains("reorder=false"), "{plan}");
+    assert!(plan.contains("changes environment as little as possible"), "{plan}");
 }

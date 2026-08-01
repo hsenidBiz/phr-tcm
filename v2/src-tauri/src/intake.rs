@@ -49,6 +49,13 @@ pub struct IntakeAnswers {
     pub module: String,
     #[serde(default)]
     pub automation_status: String,
+    /// "spec" | "tester" - what the finished set is ordered FOR.
+    ///
+    /// The developer's call, not the assistant's: `optimize_cases` reorders
+    /// for the tester by default, and on a set meant to be read against the
+    /// document that reorder is the wrong answer.
+    #[serde(default)]
+    pub ordering: String,
     /// Anything explicitly NOT to be covered.
     #[serde(default)]
     pub out_of_scope: String,
@@ -99,6 +106,12 @@ pub fn questions() -> Vec<Question> {
             "authority",
             "If the specification and the running build disagree, which wins - \"spec\", \"app\", or \"spec-wins\" (read both, spec decides)?",
             "The single most expensive thing to get wrong: writing against a build that was still in development means rewriting every case.",
+            true,
+        ),
+        q(
+            "ordering",
+            "How should the finished set be organised - \"spec\", so reading the cases walks straight down the specification, or \"tester\", so whoever runs them changes environment as little as possible?",
+            "The two orders are different sets on the page, and only the developer knows which job this file is for - reviewing against a document, or handing to someone to execute. `optimize_cases` reorders for the tester unless told otherwise.",
             true,
         ),
         q(
@@ -187,6 +200,17 @@ pub fn problems(a: &IntakeAnswers, allowed_modules: &[String]) -> Vec<String> {
         )),
     }
 
+    // Same shape as `authority`, and required for the same reason: it is a
+    // decision about what the file is FOR, and only the developer knows.
+    match a.ordering.trim() {
+        "spec" | "tester" => {}
+        "" => out.push(
+            "ordering is required - ask whether the set is for reading against the spec (\"spec\") or for running (\"tester\")."
+                .into(),
+        ),
+        other => out.push(format!("ordering '{other}' is not one of: spec, tester.")),
+    }
+
     let status = a.automation_status.trim();
     if !status.is_empty() && status != "Not Automated" && status != "Planned" {
         out.push(format!(
@@ -241,6 +265,23 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
         "app" => "The implemented application - describe what it actually does.",
         _ => "Both, and the specification wins where they disagree.",
     };
+    // The ordering answer changes what step 2 of the plan tells the
+    // assistant to do, so it is resolved to both a description and an
+    // instruction rather than being printed raw.
+    let for_tester = a.ordering.trim() != "spec";
+    let ordering = if for_tester {
+        "For the tester - grouped so whoever runs them changes environment as little as possible."
+    } else {
+        "For the spec - the cases walk down the specification in document order."
+    };
+    let optimize_step = if for_tester {
+        "Run `optimize_cases` to spell out navigation, trim expected results \
+         and order the cases so the tester changes environment as little as possible."
+    } else {
+        "Run `optimize_cases` with `reorder=false` - it will spell out navigation \
+         and trim expected results, and leave the cases in document order. Do NOT \
+         let it regroup them; this set is read against the spec."
+    };
     let specs = if a.spec_paths.iter().all(|p| p.trim().is_empty()) {
         "- (none given)".to_string()
     } else {
@@ -269,6 +310,7 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
          **Specifications**\n{specs}\n\n\
          **Sections in scope:** {sections}\n\n\
          **Authority:** {authority}\n\n\
+         **Ordered:** {ordering}\n\n\
          **Out of scope**\n{out_of_scope}\n\n\
          ## Existing coverage\n\n{examples}\n\n\
          ## Output\n\n\
@@ -279,8 +321,7 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
          ## Notes from the developer\n\n{notes}\n\n\
          ## Before handing the file over\n\n\
          1. Draft against the sources above - nothing outside them.\n\
-         2. Run `optimize_cases` to spell out navigation, trim expected results \
-         and order the cases so the tester changes environment as little as possible.\n\
+         2. {optimize_step}\n\
          3. Run `validate_cases` (pass `path` for a large draft) and fix every warning.\n\
          4. Raise any contradiction found in the specs here rather than \
          resolving it silently.\n",
@@ -288,6 +329,8 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
         specs = specs,
         sections = if a.sections.trim().is_empty() { "everything in the documents above" } else { a.sections.trim() },
         authority = authority,
+        ordering = ordering,
+        optimize_step = optimize_step,
         out_of_scope = bullets(&a.out_of_scope),
         examples = examples,
         output = a.output_path.trim(),

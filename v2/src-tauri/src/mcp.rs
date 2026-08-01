@@ -110,6 +110,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
                 "spec_paths": { "type": "array", "items": { "type": "string" }, "description": "Full paths to the specification documents the cases come from" },
                 "sections": { "type": "string", "description": "Which parts of those documents are in scope" },
                 "authority": { "type": "string", "description": "\"spec\", \"app\", or \"spec-wins\" - which source decides when they disagree" },
+                "ordering": { "type": "string", "description": "\"spec\" (cases walk down the specification) or \"tester\" (grouped so the tester changes environment as little as possible)" },
                 "examples_pbi": { "type": "integer", "description": "PBI holding existing cases to learn style from and check for duplicates" },
                 "check_examples": { "type": "boolean", "description": "Whether to read those existing cases at all" },
                 "tags": { "type": "string", "description": "Semicolon-separated" },
@@ -141,6 +142,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
                 "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
                 "entry": { "type": "string", "description": "First step of every preamble, e.g. \"Launch the HRM portal.\" (default: \"Launch the application.\"). A non-launch entry (e.g. opening a module) is placed AFTER the sign-in step." },
                 "dry_run": { "type": "boolean", "description": "Return only the report of what would change - inspect it before committing to the transformed JSON" },
+                "reorder": { "type": "boolean", "description": "Default true: regroup the cases so the tester changes environment as little as possible. Pass false for a set that is meant to be read against the specification in document order - navigation and expected results are still cleaned up, the order is left alone." },
             }), &["json"]),
         },
         {
@@ -268,6 +270,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             }
             if args["dry_run"].as_bool().unwrap_or(false) {
                 params.push("dry_run=true".to_string());
+            }
+            // Only sent when explicitly false - the bridge defaults to
+            // reordering, and an absent flag has to mean the same thing.
+            if args["reorder"].as_bool() == Some(false) {
+                params.push("reorder=false".to_string());
             }
             let target = if params.is_empty() {
                 "/optimize".to_string()

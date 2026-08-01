@@ -178,7 +178,12 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
     };
     let entry = q(target, "entry");
     let dry_run = matches!(q(target, "dry_run").as_deref(), Some("true") | Some("1"));
-    let (optimized, report) = crate::optimize::optimize(cases, entry.as_deref());
+    // Default true: regrouping for the tester is what this tool is mostly
+    // for. `reorder=false` is what a spec-ordered set passes, so it still
+    // gets the navigation and expected-result work without being shuffled.
+    let reorder = !matches!(q(target, "reorder").as_deref(), Some("false") | Some("0"));
+    let (optimized, report) =
+        crate::optimize::optimize_with(cases, entry.as_deref(), reorder);
     if dry_run {
         // Report only: the caller inspects what WOULD change before
         // committing to the transformed JSON.

@@ -588,7 +588,27 @@ fn normalize_tags(raw: &str) -> String {
 pub const DEFAULT_ENTRY: &str = "Launch the application.";
 
 /// Reorganise a draft. `entry` is the first step of every preamble.
+/// Reorganise a draft, regrouping it for the tester.
 pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, OptimizeReport) {
+    optimize_with(cases, entry, true)
+}
+
+/// As `optimize`, but `reorder` decides whether the cases are regrouped.
+///
+/// A set written to be read against a specification is in document order on
+/// purpose, and regrouping it by setup destroys the one property that made
+/// it reviewable - the reader can no longer walk the spec and the file side
+/// by side. Which of the two a set is for is asked at intake (`ordering`),
+/// because it is the developer's call and nothing in the cases reveals it.
+///
+/// Everything else still runs either way: navigation is still spelled out,
+/// expected results are still trimmed, duplicate titles are still collapsed.
+/// Only the final regrouping is skipped.
+pub fn optimize_with(
+    cases: Vec<TestCase>,
+    entry: Option<&str>,
+    reorder: bool,
+) -> (Vec<TestCase>, OptimizeReport) {
     let entry = entry.map(str::trim).filter(|e| !e.is_empty()).unwrap_or(DEFAULT_ENTRY);
     let mut report = OptimizeReport {
         switches_before: count_switches(&cases),
@@ -742,7 +762,12 @@ pub fn optimize(cases: Vec<TestCase>, entry: Option<&str>) -> (Vec<TestCase>, Op
         cleaned.push(c);
     }
 
-    // 3. Group by setup, then chain the groups nearest-neighbour.
+    // 3. Group by setup, then chain the groups nearest-neighbour - unless
+    //    the caller wants the order it gave us kept.
+    if !reorder {
+        report.switches_after = count_switches(&cleaned);
+        return (cleaned, report);
+    }
     let mut groups: Vec<(String, Vec<TestCase>)> = vec![];
     for c in cleaned {
         let key = setup_key(&c);

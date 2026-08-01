@@ -79,6 +79,48 @@ fn a_declined_entry_step_says_why() {
     );
 }
 
+/// A set written to be read against a specification is in document order
+/// on purpose, and regrouping it by setup destroys the one property that
+/// made it reviewable. Everything else still has to happen.
+#[test]
+fn reorder_false_keeps_document_order_but_still_cleans_up() {
+    let mk = |title: &str, pre: &str| {
+        case(
+            title,
+            "",
+            pre,
+            vec![Step { action: "Click Submit.".into(), expected: "Verify that it saves".into() }],
+        )
+    };
+    // Deliberately alternating setups: the tester ordering would group
+    // these into A,A,B and the spec ordering must not.
+    let cases = vec![
+        mk("First - spec 3.1", "Signed in as the manager"),
+        mk("Second - spec 3.2", "Signed in as the employee"),
+        mk("Third - spec 3.3", "Signed in as the manager"),
+    ];
+
+    let (kept, _) = v2_lib::optimize::optimize_with(cases.clone(), None, false);
+    assert_eq!(
+        kept.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
+        vec!["First - spec 3.1", "Second - spec 3.2", "Third - spec 3.3"],
+        "document order has to survive"
+    );
+    // The rest of the pass still ran: the expected result was trimmed.
+    assert!(
+        kept.iter().all(|c| c.steps.iter().all(|s| !s.expected.to_lowercase().starts_with("verify"))),
+        "reorder=false must not switch the rest of the optimizer off"
+    );
+
+    // And the default still regroups, or the flag would be meaningless.
+    let (grouped, _) = v2_lib::optimize::optimize_with(cases, None, true);
+    assert_ne!(
+        grouped.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(),
+        vec!["First - spec 3.1", "Second - spec 3.2", "Third - spec 3.3"],
+        "the tester ordering should have moved something"
+    );
+}
+
 // ---------------------------------------------------------------- expected
 
 #[test]
