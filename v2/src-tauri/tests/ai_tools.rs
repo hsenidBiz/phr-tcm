@@ -3,8 +3,8 @@
 //! the same way it would read the real home/appdata dirs.
 
 use v2_lib::ai_tools::{
-    claude_cli_candidates, detect, merge_entry, remove_entry, command_markdown, command_path,
-    tcm_server, McpServer, DB_SERVER, COMMAND_MARKER, TCM_SERVER,
+    claude_cli_candidates, command_dir, command_files, command_markdown, detect, merge_entry,
+    remove_entry, tcm_server, McpServer, COMMAND_MARKER, COMMANDS, DB_SERVER, TCM_SERVER,
 };
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
@@ -47,7 +47,7 @@ impl Drop for TempDir {
 #[test]
 fn the_claude_cli_is_looked_for_where_the_installers_put_it() {
     let c = claude_cli_candidates("C:/Users/Sam", "C:/Users/Sam/AppData/Roaming");
-    let shown: Vec<String> = c.iter().map(|p| p.display().to_string().replace('\\', "/")).collect();
+    let shown: Vec<String> = c.iter().map(|p| p.display().to_string().replace(std::path::MAIN_SEPARATOR, "/")).collect();
 
     // The native install - the one that was failing.
     assert!(
@@ -64,41 +64,67 @@ fn the_claude_cli_is_looked_for_where_the_installers_put_it() {
     assert!(shown[0].ends_with("Sam/.local/bin/claude.exe"), "{shown:?}");
 }
 
-/// The command is what makes the tools reachable without naming them, so
-/// its frontmatter has to carry a description worth showing in the picker.
+/// One command per tool is the point - the set is only reachable without
+/// naming things if all of it is in the picker - so every tool the MCP
+/// server exposes needs an entry, and each needs a description worth
+/// showing.
 #[test]
-fn the_command_describes_itself_and_points_at_the_live_guide() {
-    let md = command_markdown();
-    assert!(md.starts_with("---\n"), "needs YAML frontmatter: {md}");
-    assert!(md.contains(&format!("name: {TCM_SERVER}")), "{md}");
+fn every_tool_gets_a_command_and_each_describes_itself() {
+    // Kept in step with mcp.rs by hand; a tool added there without one
+    // here is a tool nobody can reach from the picker.
+    const TOOLS: [&str; 10] = [
+        "write", "guide", "examples", "validate", "optimize", "transform", "tags", "pbis",
+        "wiki", "page",
+    ];
+    let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
+    assert_eq!(stems, TOOLS, "one command per tool, in call order");
 
-    let front = md.split("---").nth(1).expect("frontmatter");
-    // The description is what shows in the picker, so it has to name the
-    // job rather than the tool.
-    assert!(front.contains("description:"), "{front}");
-    assert!(front.to_lowercase().contains("test cases"), "{front}");
-    // Arguments reach the prompt, so `/tcm-testcases 145664` works.
-    assert!(md.contains("$ARGUMENTS"), "{md}");
-
-    // A pointer, not a second copy of the rules. If this ever starts
-    // restating the format, the module list or the tag list, it will be
-    // stale the first time get_writing_guide changes.
-    assert!(md.contains("get_writing_guide"), "{md}");
-    for copied in ["Not Automated", "semicolon", "automation_status", "reviewer_notes"] {
+    for c in COMMANDS {
+        let md = command_markdown(c);
+        assert!(md.starts_with("---
+"), "{} needs frontmatter: {md}", c.stem);
+        assert!(md.contains(&format!("name: {}", c.stem)), "{md}");
+        // Quoted, always. Two descriptions read naturally with a colon in
+        // them, and an unquoted colon makes the frontmatter unparseable -
+        // YAML reads it as a second mapping key. Claude Code happens to be
+        // lenient enough to show it anyway, which is what made it worth
+        // catching: nothing complains until something stricter reads it.
         assert!(
-            !md.contains(copied),
-            "the command must point at the guide, not duplicate it - found {copied:?}"
+            md.contains(&format!("description: \"{}\"", c.desc)),
+            "description must be a quoted scalar: {md}"
         );
+        assert!(!c.desc.is_empty(), "{} has nothing to show in the picker", c.stem);
+        // Identifies itself, so removal never touches a file the user
+        // wrote at the same path.
+        assert!(md.contains(COMMAND_MARKER), "{md}");
+        // Anything taking input has to pass it on, or the argument is
+        // silently dropped.
+        if !c.hint.is_empty() {
+            assert!(md.contains("$ARGUMENTS"), "{} takes a hint but ignores it: {md}", c.stem);
+        }
+        // A pointer, not a second copy of the rules: anything restating
+        // the guide is stale the first time the guide changes.
+        for copied in ["Not Automated", "semicolon", "automation_status"] {
+            assert!(
+                !md.contains(copied),
+                "{} duplicates the guide - found {copied:?}",
+                c.stem
+            );
+        }
     }
-    // And it identifies itself, so removal never touches a file the user
-    // wrote at the same path.
-    assert!(md.contains(COMMAND_MARKER), "{md}");
 }
 
+/// Namespaced, so ten entries group as `tcm:*` rather than scattering
+/// through a picker that already has other things in it.
 #[test]
-fn the_command_lands_where_claude_code_looks_for_commands() {
-    let p = command_path("C:/Users/Sam").display().to_string().replace('\\', "/");
-    assert_eq!(p, format!("C:/Users/Sam/.claude/commands/{TCM_SERVER}.md"));
+fn the_commands_land_in_their_own_namespace() {
+    let dir = command_dir("C:/Users/Sam").display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
+    assert_eq!(dir, "C:/Users/Sam/.claude/commands/tcm");
+
+    let files = command_files("C:/Users/Sam");
+    assert_eq!(files.len(), COMMANDS.len());
+    let first = files[0].0.display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
+    assert_eq!(first, "C:/Users/Sam/.claude/commands/tcm/write.md");
 }
 #[test]
 fn merge_entry_creates_key_and_entry_on_empty_object() {

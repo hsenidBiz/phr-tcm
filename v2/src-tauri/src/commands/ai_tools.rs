@@ -8,8 +8,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::ai_tools::{
-    atomic_write, detect, is_installed, merge_entry, remove_entry, command_markdown, command_path,
-    tcm_server, DetectedTool, McpServer, DB_SERVER, COMMAND_MARKER, TOOL_SPECS,
+    atomic_write, command_dir, command_files, detect, is_installed, legacy_command_path,
+    merge_entry, remove_entry, tcm_server, DetectedTool, McpServer, COMMAND_MARKER, DB_SERVER,
+    TOOL_SPECS,
 };
 
 #[cfg(windows)]
@@ -195,52 +196,71 @@ fn unregister_server(id: &str, server_name: &str) -> Result<(), String> {
     }
 }
 
-/// Drop the command next to the registration, so `/tcm-testcases` is in the
-/// picker instead of a tool name somebody has to remember.
+/// Drop the commands next to the registration, so the whole tool set is in
+/// the picker under `tcm:` instead of a name somebody has to remember.
 ///
-/// Refuses to overwrite a file this app did not write. The path is
+/// Refuses to overwrite a file this app did not write. The paths are
 /// predictable and shared with whatever else the user keeps in
-/// `~/.claude/commands`; replacing somebody's own command because it happens
-/// to sit under our name is not a trade to make on their behalf. Same rule
-/// the intake plan file follows.
+/// `~/.claude/commands`; replacing somebody's own command because it
+/// happens to sit under our name is not a trade to make on their behalf.
+/// Same rule the intake plan file follows.
+///
+/// One failure does not abandon the rest - a single unwritable file should
+/// cost that command, not all ten - but the first reason is reported.
 fn write_command() -> Result<(), String> {
-    let path = command_path(&home_dir());
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        if !existing.contains(COMMAND_MARKER) {
-            return Err(format!(
+    let home = home_dir();
+
+    // An earlier version wrote one top-level file. Leaving it would put
+    // `/tcm-testcases` in the picker beside the namespaced set, pointing at
+    // the same thing. Only ours is removed.
+    let legacy = legacy_command_path(&home);
+    if matches!(std::fs::read_to_string(&legacy), Ok(t) if t.contains(COMMAND_MARKER)) {
+        let _ = std::fs::remove_file(&legacy);
+    }
+
+    let dir = command_dir(&home);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+
+    let mut first_error: Option<String> = None;
+    for (path, contents) in command_files(&home) {
+        if matches!(std::fs::read_to_string(&path), Ok(t) if !t.contains(COMMAND_MARKER)) {
+            let msg = format!(
                 "{} already exists and was not written by this app - left alone",
                 path.display()
-            ));
+            );
+            first_error.get_or_insert(msg);
+            continue;
+        }
+        if let Err(e) = atomic_write(&path, &contents) {
+            first_error.get_or_insert(e);
         }
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
-    atomic_write(&path, &command_markdown())
 }
 
-/// Take it away again with the registration - a command pointing at tools
+/// Take them away again with the registration - a command pointing at tools
 /// that are no longer connected is worse than none.
 fn remove_command() -> Result<(), String> {
-    let path = command_path(&home_dir());
-    match std::fs::read_to_string(&path) {
-        // Ours: remove the file and the directory we made for it.
-        Ok(existing) if existing.contains(COMMAND_MARKER) => {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
-            if let Some(parent) = path.parent() {
-                // Only if empty - remove_dir refuses otherwise, which is
-                // exactly the guard wanted.
-                let _ = std::fs::remove_dir(parent);
-            }
-            Ok(())
+    let home = home_dir();
+    for path in command_files(&home)
+        .into_iter()
+        .map(|(p, _)| p)
+        .chain(std::iter::once(legacy_command_path(&home)))
+    {
+        // Ours only: a file at one of these paths that we did not write
+        // belongs to the user.
+        if matches!(std::fs::read_to_string(&path), Ok(t) if t.contains(COMMAND_MARKER)) {
+            let _ = std::fs::remove_file(&path);
         }
-        // Somebody else's, or not there at all.
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("failed to read {}: {e}", path.display())),
     }
+    // Only if empty - `remove_dir` refuses otherwise, which is exactly the
+    // guard wanted when the user has put something of their own in there.
+    let _ = std::fs::remove_dir(command_dir(&home));
+    Ok(())
 }
 
 fn unregister_claude_code(server_name: &str) -> Result<(), String> {
