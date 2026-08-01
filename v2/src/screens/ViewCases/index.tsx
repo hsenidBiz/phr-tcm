@@ -46,6 +46,8 @@ export default function ViewCases({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes(org));
+  // Whether the browser report has been opened - see the re-export effect.
+  const [reportOpen, setReportOpen] = useState(false);
   // Seeded once, but work item ids are org-scoped and so is the store. On
   // an org switch the previous org's notes stayed on screen - and saving
   // one then wrote it under the NEW org's key, copying notes across orgs.
@@ -156,8 +158,42 @@ export default function ViewCases({
           pagePalette(),
         ),
       ),
+    onSuccess: () => setReportOpen(true),
     onError: (e) => toast.error(`Could not open the report: ${e.message ?? e}`),
   });
+
+  // Keep an already-open report in step with what is on screen.
+  //
+  // The page is a file on disk, so nothing pushes to it: the app rewrites
+  // the same file and bumps the revision the page polls, and the page then
+  // OFFERS a refresh rather than taking one - reloading under a reviewer
+  // costs them their place on a long page and any comment still inside its
+  // autosave debounce.
+  //
+  // Only once they have opened it: re-exporting a report nobody asked for
+  // would write a temp file every time the selection changed.
+  useEffect(() => {
+    if (!reportOpen || chosen.length === 0) return;
+    // Debounced: selecting a run of cases lands as a burst, and each one
+    // would otherwise rewrite the file.
+    const t = window.setTimeout(() => {
+      void commands
+        .viewQueueHtml(
+          chosen.map(toTestCase),
+          pbiId != null ? `PBI #${pbiId}` : "",
+          org,
+          notes,
+          pagePalette(),
+        )
+        // Silent: this refreshes something the user is not necessarily
+        // looking at, and the report they have is still readable.
+        .catch(() => {});
+    }, 800);
+    return () => window.clearTimeout(t);
+    // Deliberately keyed on the CASES, not on `notes` - a comment typed
+    // in the report must not bounce back and rewrite the page under it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chosen, reportOpen]);
 
   // Comments typed in the browser report autosave into localStorage via the
   // App-level listener - re-read them when the user comes back to the app.

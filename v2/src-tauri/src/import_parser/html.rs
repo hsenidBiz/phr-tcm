@@ -249,7 +249,8 @@ const HTML_JS: &str = r#"
       go.addEventListener('click', function () { location.reload(); });
       setInterval(function () {
         if (document.hidden || stale.classList.contains('show')) { return; }
-        fetch('http://127.0.0.1:' + NOTE_PORT + '/version?token=' + encodeURIComponent(NOTE_TOKEN))
+        fetch('http://127.0.0.1:' + NOTE_PORT + '/version?token=' + encodeURIComponent(NOTE_TOKEN)
+              + '&kind=' + encodeURIComponent(REPORT_KIND))
           .then(function (r) { return r.json(); })
           .then(function (v) {
             // null means the app did not recognise this page; that is not
@@ -406,6 +407,16 @@ impl CommentCtx<'_> {
         match self {
             CommentCtx::Ado(c) => &c.token,
             CommentCtx::Draft(c) => &c.token,
+        }
+    }
+
+    /// Which report this page is, so it polls for its OWN revision. The two
+    /// are separate documents about separate things: re-exporting a draft
+    /// must not tell a page of existing cases that it is out of date.
+    fn report_kind(&self) -> &'static str {
+        match self {
+            CommentCtx::Ado(_) => crate::note_server::REPORT_QUEUE,
+            CommentCtx::Draft(_) => crate::note_server::REPORT_DRAFT,
         }
     }
 }
@@ -640,11 +651,12 @@ pub fn export_queue_to_html(
             // REPORT_REV is the revision this file was written at. The page
             // compares it with what the app reports now; they diverge the
             // moment the report is re-exported behind an open tab.
-            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var REPORT_REV={};var DRAFT_CASES={};var DRAFT_FILES={};{NOTE_JS}</script>",
+            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var REPORT_REV={};var REPORT_KIND={};var DRAFT_CASES={};var DRAFT_FILES={};{NOTE_JS}</script>",
             c.port(),
             script_json(&c.token(), "\"\""),
             script_json(&org, "\"\""),
-            crate::note_server::revision(),
+            crate::note_server::revision(c.report_kind()),
+            script_json(&c.report_kind(), "\"draft\""),
             script_json(&draft_cases, "[]"),
             script_json(&file_paths, "[]"),
         ));

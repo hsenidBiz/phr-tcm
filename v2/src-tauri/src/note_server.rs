@@ -113,9 +113,9 @@ pub fn start(
                                 break;
                             }
                             if let Some(body) = body_if_complete(&buf) {
-                                if let Some(asked) = request_version_token(&buf) {
+                                if let Some((asked, kind)) = request_version(&buf) {
                                     version = Some(if asked == *token {
-                                        format!("{{\"revision\":{}}}", revision())
+                                        format!("{{\"revision\":{}}}", revision(&kind))
                                     } else {
                                         // Same shape, no number: a page without
                                         // the secret learns nothing and still parses.
@@ -175,38 +175,64 @@ impl Drop for LiveGuard {
 }
 
 /// Once the whole body (per Content-Length) has arrived, return it.
-/// How many times the report has been re-exported this run.
+
+/// Which report a revision belongs to.
 ///
-/// The browser page is a file on disk: once it is open, nothing tells
-/// it that the queue behind it moved on. It polls this instead, and
-/// offers a refresh when the number it was rendered at stops matching.
-/// A counter rather than a content hash, because the only question is
-/// "is what you are looking at still current" - and a counter cannot
-/// collide.
-static REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// One counter for everything meant that re-exporting the Import draft
+/// told an open View-Test-Cases page it was stale, which it was not. The
+/// pages are separate documents about separate things; each hears only
+/// about its own.
+pub const REPORT_DRAFT: &str = "draft";
+pub const REPORT_QUEUE: &str = "queue";
 
-/// Called whenever the report file is rewritten.
-pub fn bump_revision() {
-    REVISION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+/// Called whenever a report file is rewritten.
+pub fn bump_revision(kind: &str) {
+    slot(kind).fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
-pub fn revision() -> u64 {
-    REVISION.load(std::sync::atomic::Ordering::SeqCst)
+pub fn revision(kind: &str) -> u64 {
+    slot(kind).load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// The token from a `GET /version?token=...`, if that is what this is.
+/// Fixed slots rather than a map: there are two report kinds, both known
+/// at compile time, and a lock on the read path would be paid by every
+/// poll from every open page.
+fn slot(kind: &str) -> &'static std::sync::atomic::AtomicU64 {
+    match kind {
+        REPORT_QUEUE => &QUEUE_REVISION,
+        _ => &DRAFT_REVISION,
+    }
+}
+
+static DRAFT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static QUEUE_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The (token, report kind) from a `GET /version?token=...&kind=...`.
 ///
 /// Token-checked like the note route, and for the same reason: this port
 /// is on loopback with `Access-Control-Allow-Origin: *`, so any page the
 /// user visits can reach it if it guesses the port. There is little to
 /// learn from a counter, but "only pages this app generated get answers"
 /// is a cheaper rule to keep than a list of exceptions to it.
-pub fn request_version_token(buf: &[u8]) -> Option<String> {
+///
+/// A missing `kind` means the draft report - pages written before the
+/// split do not send one, and answering them wrongly would be worse than
+/// answering them at all.
+pub fn request_version(buf: &[u8]) -> Option<(String, String)> {
     let text = String::from_utf8_lossy(buf);
     let first = text.lines().next()?;
     let rest = first.strip_prefix("GET /version")?;
-    let query = rest.split_whitespace().next().unwrap_or("");
-    Some(query.strip_prefix("?token=")?.to_string())
+    let query = rest.split_whitespace().next().unwrap_or("").trim_start_matches('?');
+    let mut token = None;
+    let mut kind = REPORT_DRAFT.to_string();
+    for pair in query.split('&') {
+        match pair.split_once('=') {
+            Some(("token", v)) => token = Some(v.to_string()),
+            Some(("kind", v)) if !v.is_empty() => kind = v.to_string(),
+            _ => {}
+        }
+    }
+    Some((token?, kind))
 }
 
 fn body_if_complete(buf: &[u8]) -> Option<String> {

@@ -374,11 +374,11 @@ pub fn view_queue_html(
     notes: std::collections::HashMap<String, String>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    let path = std::env::temp_dir().join(format!(
-        "test-cases-{}-{}.html",
-        std::process::id(),
-        queue.len()
-    ));
+    // Stable per run, for the same reason the draft report is: a name
+    // carrying `queue.len()` writes a DIFFERENT file the moment a case is
+    // added or removed, so the tab already open could never see the change
+    // however hard the page looked for it.
+    let path = std::env::temp_dir().join(format!("test-cases-{}.html", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
     let note_ctx = (!organization.is_empty())
         .then(|| ensure_note_server(&app))
@@ -396,6 +396,8 @@ pub fn view_queue_html(
         note_ctx.as_ref().map(import_parser::CommentCtx::Ado),
         &palette,
     )?;
+    // And tell a page already open on these cases that it is behind.
+    crate::note_server::bump_revision(crate::note_server::REPORT_QUEUE);
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -437,8 +439,8 @@ pub fn view_draft_html(
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
         &palette,
     )?;
-    // Tell any page already open that what it is showing is now behind.
-    crate::note_server::bump_revision();
+    // Tell a draft page already open that what it is showing is now behind.
+    crate::note_server::bump_revision(crate::note_server::REPORT_DRAFT);
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 

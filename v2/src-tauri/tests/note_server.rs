@@ -148,33 +148,46 @@ fn a_silent_connection_does_not_stop_anyone_else_saving() {
 /// asks whether what it is showing is still current. Token-checked like
 /// the note route, because this port answers any page that guesses it.
 #[test]
-fn a_version_poll_is_recognised_and_carries_its_token() {
-    use v2_lib::note_server::{bump_revision, request_version_token, revision};
+fn a_version_poll_is_recognised_and_carries_its_token_and_kind() {
+    use v2_lib::note_server::{
+        bump_revision, request_version, revision, REPORT_DRAFT, REPORT_QUEUE,
+    };
 
-    let req = b"GET /version?token=abc123 HTTP/1.1
+    let req = b"GET /version?token=abc123&kind=queue HTTP/1.1
 Host: x
 
 ";
     assert_eq!(
-        request_version_token(req).as_deref(),
-        Some("abc123"),
+        request_version(req),
+        Some(("abc123".to_string(), "queue".to_string())),
         "a version poll has to be told apart from a note post"
     );
 
-    // A note POST is not a version poll.
-    let note = b"POST /note HTTP/1.1
-Host: x
+    // No kind means the draft report: pages written before the split do
+    // not send one, and answering them wrongly is worse than not at all.
+    let old = b"GET /version?token=abc123 HTTP/1.1
 
-{}";
-    assert!(request_version_token(note).is_none());
-    // Nor is a bare GET without the secret.
-    assert!(request_version_token(b"GET /version HTTP/1.1
+";
+    assert_eq!(request_version(old).unwrap().1, REPORT_DRAFT);
+
+    // A note POST is not a version poll, nor is a GET without the secret.
+    assert!(request_version(b"POST /note HTTP/1.1
+
+{}").is_none());
+    assert!(request_version(b"GET /version HTTP/1.1
 
 ").is_none());
 
-    // The counter only moves when the report is rewritten, which is what
-    // makes a difference from the baked-in number mean 'you are behind'.
-    let before = revision();
-    bump_revision();
-    assert_eq!(revision(), before + 1);
+    // The two reports are separate documents about separate things:
+    // re-exporting a draft must NOT tell a page of existing cases that it
+    // is behind. One counter for both did exactly that.
+    let draft_before = revision(REPORT_DRAFT);
+    let queue_before = revision(REPORT_QUEUE);
+    bump_revision(REPORT_DRAFT);
+    assert_eq!(revision(REPORT_DRAFT), draft_before + 1);
+    assert_eq!(
+        revision(REPORT_QUEUE),
+        queue_before,
+        "a draft re-export must not age the existing-cases report"
+    );
 }
