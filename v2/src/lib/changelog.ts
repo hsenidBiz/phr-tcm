@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.11",
+    date: "2026-08-01",
+    items: [
+      "Fixed the update banner failing with a 404. If a newer release went out while the banner was sitting there, the app asked for the version it had been told about at an address that only ever holds the newest one - so the file it wanted was no longer there. Each update is now fetched from its own release, which does not move, and a second route is tried if the first cannot be reached.",
+    ],
+  },
+  {
     version: "1.18.10",
     date: "2026-08-01",
     items: [
