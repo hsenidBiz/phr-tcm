@@ -102,6 +102,8 @@ pub fn start(
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
                 let mut outcome = Err("the app did not understand that request".to_string());
+                // Answered instead of `outcome` when this is a version poll.
+                let mut version: Option<String> = None;
                 loop {
                     match stream.read(&mut chunk) {
                         Ok(0) => break,
@@ -111,6 +113,16 @@ pub fn start(
                                 break;
                             }
                             if let Some(body) = body_if_complete(&buf) {
+                                if let Some(asked) = request_version_token(&buf) {
+                                    version = Some(if asked == *token {
+                                        format!("{{\"revision\":{}}}", revision())
+                                    } else {
+                                        // Same shape, no number: a page without
+                                        // the secret learns nothing and still parses.
+                                        "{\"revision\":null}".to_string()
+                                    });
+                                    break;
+                                }
                                 if let Some(note) = request_note(&buf, &body) {
                                     // The listener is on loopback with
                                     // Access-Control-Allow-Origin: *, so any
@@ -132,7 +144,7 @@ pub fn start(
                         Err(_) => break,
                     }
                 }
-                let body = reply_body(&outcome);
+                let body = version.unwrap_or_else(|| reply_body(&outcome));
                 // Always close after one request.
                 let _ = stream.write_all(
                     format!(
@@ -163,6 +175,40 @@ impl Drop for LiveGuard {
 }
 
 /// Once the whole body (per Content-Length) has arrived, return it.
+/// How many times the report has been re-exported this run.
+///
+/// The browser page is a file on disk: once it is open, nothing tells
+/// it that the queue behind it moved on. It polls this instead, and
+/// offers a refresh when the number it was rendered at stops matching.
+/// A counter rather than a content hash, because the only question is
+/// "is what you are looking at still current" - and a counter cannot
+/// collide.
+static REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Called whenever the report file is rewritten.
+pub fn bump_revision() {
+    REVISION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn revision() -> u64 {
+    REVISION.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The token from a `GET /version?token=...`, if that is what this is.
+///
+/// Token-checked like the note route, and for the same reason: this port
+/// is on loopback with `Access-Control-Allow-Origin: *`, so any page the
+/// user visits can reach it if it guesses the port. There is little to
+/// learn from a counter, but "only pages this app generated get answers"
+/// is a cheaper rule to keep than a list of exceptions to it.
+pub fn request_version_token(buf: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(buf);
+    let first = text.lines().next()?;
+    let rest = first.strip_prefix("GET /version")?;
+    let query = rest.split_whitespace().next().unwrap_or("");
+    Some(query.strip_prefix("?token=")?.to_string())
+}
+
 fn body_if_complete(buf: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(buf);
     let (head, body) = text.split_once("\r\n\r\n")?;

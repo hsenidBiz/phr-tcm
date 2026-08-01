@@ -416,11 +416,13 @@ pub fn view_draft_html(
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    let path = std::env::temp_dir().join(format!(
-        "test-cases-draft-{}-{}.html",
-        std::process::id(),
-        queue.len()
-    ));
+    // Stable per run, deliberately: the name used to carry `queue.len()`,
+    // so re-exporting after an edit that changed the count wrote a DIFFERENT
+    // file and the tab the developer already had open never saw it. One name
+    // per process means a re-export lands on the page they are looking at,
+    // which is what makes the refresh offer mean anything.
+    let path = std::env::temp_dir()
+        .join(format!("test-cases-draft-{}.html", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
     let ctx = ensure_note_server(&app).map(|port| import_parser::DraftNoteCtx {
         port,
@@ -435,6 +437,8 @@ pub fn view_draft_html(
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
         &palette,
     )?;
+    // Tell any page already open that what it is showing is now behind.
+    crate::note_server::bump_revision();
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 

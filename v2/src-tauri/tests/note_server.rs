@@ -143,3 +143,38 @@ fn a_silent_connection_does_not_stop_anyone_else_saving() {
         started.elapsed()
     );
 }
+
+/// The browser report is a file on disk, so nothing can push to it - it
+/// asks whether what it is showing is still current. Token-checked like
+/// the note route, because this port answers any page that guesses it.
+#[test]
+fn a_version_poll_is_recognised_and_carries_its_token() {
+    use v2_lib::note_server::{bump_revision, request_version_token, revision};
+
+    let req = b"GET /version?token=abc123 HTTP/1.1
+Host: x
+
+";
+    assert_eq!(
+        request_version_token(req).as_deref(),
+        Some("abc123"),
+        "a version poll has to be told apart from a note post"
+    );
+
+    // A note POST is not a version poll.
+    let note = b"POST /note HTTP/1.1
+Host: x
+
+{}";
+    assert!(request_version_token(note).is_none());
+    // Nor is a bare GET without the secret.
+    assert!(request_version_token(b"GET /version HTTP/1.1
+
+").is_none());
+
+    // The counter only moves when the report is rewritten, which is what
+    // makes a difference from the baked-in number mean 'you are behind'.
+    let before = revision();
+    bump_revision();
+    assert_eq!(revision(), before + 1);
+}

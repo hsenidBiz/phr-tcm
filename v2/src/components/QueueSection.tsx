@@ -168,6 +168,9 @@ export default function QueueSection({
   // One row at a time is editable in place; queue-length changes (remove,
   // import, submit) shift indices, so any of them closes the editor.
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  // Whether the browser report has been opened this session - see the
+  // re-export effect below.
+  const [reportOpen, setReportOpen] = useState(false);
   useEffect(() => {
     setEditingIdx(null);
   }, [queue.length]);
@@ -242,8 +245,47 @@ export default function QueueSection({
       );
       if (r.status === "error") throw new Error(r.error);
     },
+    onSuccess: () => setReportOpen(true),
     onError: (e) => toast.error(`Could not open the report: ${e.message}`),
   });
+
+  // Keep an already-open report in step with the queue.
+  //
+  // The page is a file on disk: nothing pushes to it, so the app
+  // rewrites the same file and bumps a revision the page polls. It then
+  // OFFERS a refresh rather than taking one - reloading under a reviewer
+  // costs them their scroll position, every section they had opened, and
+  // any comment still inside its autosave debounce.
+  //
+  // Only after they have opened it once: re-exporting for a report
+  // nobody asked for would write a temp file on every keystroke.
+  useEffect(() => {
+    if (!reportOpen || queue.length === 0) return;
+    // Debounced, because a rename or a bulk edit lands as a burst of
+    // queue updates and each one would otherwise rewrite the file.
+    const t = window.setTimeout(() => {
+      void commands
+        .viewDraftHtml(
+          queue,
+          `PBI #${pbiId}`,
+          ownerPaths(queue, watches),
+          watches.map((w) => ({
+            path: w.path,
+            label: fileName(w.path),
+            comment: w.comment ?? "",
+          })),
+          pagePalette(),
+        )
+        // Silent on failure: this is a background refresh of something
+        // the developer is not necessarily looking at, and the report
+        // they have is still readable.
+        .catch(() => {});
+    }, 800);
+    return () => window.clearTimeout(t);
+    // watches/pbiId are read, not depended on: a watch comment changing
+    // is not a reason to rewrite the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue, reportOpen]);
 
   /**
    * Push a comment edited on the card into the JSON file the case came

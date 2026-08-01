@@ -101,6 +101,18 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
                                  border-color: var(--border); }
 /* One rule, on the body, so nothing has to be walked to hide them. */
 body.notes-off .rev { display: none !important; }
+/* "The cases changed" bar. It offers a refresh rather than taking one:
+   reloading under a reviewer costs them their scroll position, every
+   section they had opened, and any comment still inside its autosave
+   debounce. Nothing moves until they say so. */
+#tc-stale { position: sticky; top: 0; z-index: 6; display: none;
+            align-items: center; gap: 12px; padding: 10px 14px; margin: 0 0 12px;
+            border: 1px solid var(--accent); border-radius: 8px;
+            background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+#tc-stale.show { display: flex; }
+#tc-stale button { font: inherit; font-size: 12.5px; padding: 6px 12px; cursor: pointer;
+                   border: 1px solid var(--accent); border-radius: 7px;
+                   background: var(--accent); color: var(--bg); }
 /* Reviewer notes: the spec context, sitting between the prerequisites and
    the steps. Tinted with the accent and given a left rule so it reads as
    commentary ABOUT the case rather than part of it - a reviewer scanning
@@ -225,6 +237,32 @@ const HTML_JS: &str = r#"
   // Reviewer notes on/off. One class on <body>; the CSS does the rest, so
   // nothing has to be walked and it costs the same on a 600-case page as
   // on a 3-case one.
+  // Is what you are looking at still current? The page is a file on disk,
+  // so nothing pushes to it - it asks. Only when the app's note listener is
+  // there to ask (REPORT_REV is defined on report pages, not on a plain
+  // export), and only while the tab is visible, so a forgotten tab is not
+  // polling all afternoon.
+  if (typeof REPORT_REV === 'number' && typeof NOTE_PORT !== 'undefined') {
+    var stale = document.getElementById('tc-stale');
+    var go = document.getElementById('tc-stale-go');
+    if (stale && go) {
+      go.addEventListener('click', function () { location.reload(); });
+      setInterval(function () {
+        if (document.hidden || stale.classList.contains('show')) { return; }
+        fetch('http://127.0.0.1:' + NOTE_PORT + '/version?token=' + encodeURIComponent(NOTE_TOKEN))
+          .then(function (r) { return r.json(); })
+          .then(function (v) {
+            // null means the app did not recognise this page; that is not
+            // staleness and must not be reported as it.
+            if (typeof v.revision === 'number' && v.revision !== REPORT_REV) {
+              stale.classList.add('show');
+            }
+          })
+          .catch(function () { /* app closed, or no listener - stay quiet */ });
+      }, 4000);
+    }
+  }
+
   var notesBtn = document.getElementById('tc-notes');
   if (notesBtn) {
     var KEY = 'tcm-report-notes-off';
@@ -417,6 +455,9 @@ pub fn export_queue_to_html(
                 esc(subtitle)
             }
         ),
+        // Above the search bar and sticky in its own right, so it is seen
+        // whether the reviewer is at the top of the page or the bottom.
+        "<div id='tc-stale' role='status'><span>The test cases have changed since this page was opened.</span><button type='button' id='tc-stale-go'>Refresh</button></div>".into(),
         "<div class='searchbar'>".into(),
         "<input id='tc-search' type='search' placeholder='Search title, ID, tags, steps, prerequisites...' aria-label='Search test cases'>".into(),
         // Only when at least one case HAS notes - a button that hides
@@ -596,10 +637,14 @@ pub fn export_queue_to_html(
             .map(|f| serde_json::json!({ "path": f.path }))
             .collect();
         parts.push(format!(
-            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var DRAFT_CASES={};var DRAFT_FILES={};{NOTE_JS}</script>",
+            // REPORT_REV is the revision this file was written at. The page
+            // compares it with what the app reports now; they diverge the
+            // moment the report is re-exported behind an open tab.
+            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var REPORT_REV={};var DRAFT_CASES={};var DRAFT_FILES={};{NOTE_JS}</script>",
             c.port(),
             script_json(&c.token(), "\"\""),
             script_json(&org, "\"\""),
+            crate::note_server::revision(),
             script_json(&draft_cases, "[]"),
             script_json(&file_paths, "[]"),
         ));
