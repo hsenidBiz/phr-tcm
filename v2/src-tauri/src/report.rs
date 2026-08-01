@@ -1,6 +1,8 @@
 //! Execution report HTML (spec: Execution Depth & Trust, C). Pure builder
 //! over already-fetched points + failure details so it is fully testable;
 //! the command in lib.rs does the fetching and the temp-file/open part.
+//!
+//! The stylesheet is `src-tauri/web/report-page.css`.
 
 use crate::ado_testplan::TestPoint;
 use crate::webtheme::PagePalette;
@@ -73,41 +75,7 @@ fn outcome_label(outcome: &str) -> String {
 /// stylesheet serves every theme. Cards carry a real border as well as a
 /// shadow - a drop shadow is invisible on a black background, and the
 /// table would otherwise dissolve into the page on the OLED theme.
-const CSS: &str = r#"
-* { box-sizing: border-box; }
-body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px 16px;
-       background: var(--bg); color: var(--text); }
-.page { max-width: 900px; margin: 0 auto; }
-h1 { font-size: 22px; margin: 0 0 4px; }
-.sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
-.headline { display: flex; gap: 24px; align-items: baseline; margin-bottom: 12px; }
-.rate { font-size: 40px; font-weight: 700; }
-.bar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; margin: 8px 0 4px;
-       background: var(--surface-2); }
-.bar span { display: block; height: 100%; }
-.legend { font-size: 12px; color: var(--muted); margin-bottom: 24px; }
-.passed { background: var(--success); } .failed { background: var(--danger); }
-.blocked { background: var(--warning); } .notapplicable { background: var(--faint); }
-.neverrun { background: var(--border); }
-table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px;
-        overflow: hidden; border: 1px solid var(--border); font-size: 14px; }
-th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-tr:last-child td { border-bottom: none; }
-th { background: var(--surface-2); font-size: 12px; text-transform: uppercase;
-     letter-spacing: .03em; color: var(--muted); }
-.o-failed { color: var(--danger); font-weight: 600; } .o-passed { color: var(--success); }
-.o-blocked { color: var(--warning); } .o-notapplicable, .o-neverrun { color: var(--faint); }
-h2 { font-size: 16px; margin: 28px 0 8px; }
-.fail { background: var(--surface); border: 1px solid var(--border);
-        border-left: 4px solid var(--danger); border-radius: 6px;
-        padding: 10px 14px; margin-bottom: 8px; }
-.fail .name { font-weight: 600; }
-.fail .comment { color: var(--muted); font-size: 13px; margin-top: 4px; white-space: pre-wrap; }
-.fail .bugs a { color: var(--danger); font-size: 13px; margin-right: 8px; }
-.mono { font-family: Consolas, monospace; color: var(--faint); font-size: 12px; }
-.footer { color: var(--faint); font-size: 12px; margin-top: 24px; }
-a { color: var(--accent); }
-"#;
+const CSS: &str = include_str!("../web/report-page.css");
 
 /// Build the self-contained report. `failures` is keyed by point_id.
 /// `generated_at` is injected so the builder stays deterministic in tests.

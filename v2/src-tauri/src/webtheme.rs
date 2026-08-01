@@ -1,6 +1,9 @@
 //! Palettes for the pages this app opens in a REAL browser - the
 //! execution report and the test case view/export.
 //!
+//! The switch's own css/html/js are files under `src-tauri/web/` (see the
+//! README there); this module holds only the palette logic.
+//!
 //! Two things are going on here.
 //!
 //! **The page arrives in the app's theme.** The values are read live from
@@ -174,60 +177,18 @@ impl PagePalette {
 /// these pages have three different layouts (report, single column, two
 /// column) and one control that never moves beats three placements. It
 /// prints as nothing.
-const SWITCH_CSS: &str = r#"
-.scheme-switch { position: fixed; top: 12px; right: 12px; z-index: 20;
-                 display: flex; align-items: center; gap: 6px;
-                 font: inherit; font-size: 12px; cursor: pointer;
-                 padding: 6px 12px; border-radius: 999px;
-                 color: var(--muted); background: var(--surface);
-                 border: 1px solid var(--border); }
-.scheme-switch:hover { color: var(--accent); border-color: var(--accent); }
-.scheme-switch svg { width: 14px; height: 14px; }
-/* One button, two glyphs: whichever scheme is showing hides its own icon
-   so the button always pictures where it will TAKE you. */
-:root[data-scheme="dark"] .scheme-switch .to-dark,
-:root:not([data-scheme="dark"]) .scheme-switch .to-light { display: none; }
-@media print { .scheme-switch { display: none; } }
-"#;
+const SWITCH_CSS: &str = include_str!("../web/scheme-switch.css");
 
 /// The switch's markup. `data-scheme` on `<html>` is the single source of
 /// truth; the script only flips it and tries to remember the choice.
-pub const SWITCH_HTML: &str = r#"<button class="scheme-switch" type="button" id="scheme-switch" aria-label="Switch between light and dark">
-<span class="to-dark" aria-hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></span>
-<span class="to-light" aria-hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg></span>
-<span class="scheme-label">Dark</span></button>"#;
+pub const SWITCH_HTML: &str = include_str!("../web/scheme-switch.html");
 
 /// Flips `data-scheme` and remembers it. The remembering is best-effort:
 /// these pages are opened from a temp file, and a `file://` origin has no
 /// usable localStorage in some browsers - which throws rather than
 /// returning null, so every access is guarded. The switch still works for
 /// the life of the tab either way.
-pub const SWITCH_JS: &str = r#"
-(function () {
-  var root = document.documentElement;
-  var KEY = 'tcm-page-scheme';
-  var store = function (v) { try { localStorage.setItem(KEY, v); } catch (e) { /* file:// */ } };
-  var remembered = null;
-  try { remembered = localStorage.getItem(KEY); } catch (e) { /* file:// */ }
-  if (remembered === 'dark' || remembered === 'light') root.setAttribute('data-scheme', remembered);
-  var btn = document.getElementById('scheme-switch');
-  var label = btn && btn.querySelector('.scheme-label');
-  var paint = function () {
-    var dark = root.getAttribute('data-scheme') === 'dark';
-    if (label) label.textContent = dark ? 'Light' : 'Dark';
-    if (btn) btn.setAttribute('aria-pressed', dark ? 'true' : 'false');
-  };
-  if (btn) {
-    btn.addEventListener('click', function () {
-      var next = root.getAttribute('data-scheme') === 'dark' ? 'light' : 'dark';
-      root.setAttribute('data-scheme', next);
-      store(next);
-      paint();
-    });
-  }
-  paint();
-})();
-"#;
+pub const SWITCH_JS: &str = include_str!("../web/scheme-switch.js");
 
 #[cfg(test)]
 mod tests {

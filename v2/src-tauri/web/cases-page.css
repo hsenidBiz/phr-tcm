@@ -1,0 +1,172 @@
+
+* { box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px 16px;
+       background: var(--bg); color: var(--text); }
+.page { max-width: 900px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.subtitle { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+.case { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+        padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(20,30,50,.05);
+        page-break-inside: avoid; }
+.case h2 { font-size: 16px; margin: 0 0 8px; }
+.case .wid { color: var(--accent); font-weight: 600; margin-right: 6px; }
+/* Position in the set, so a reviewer can say "case 7" out loud. Tabular
+   figures keep the titles aligned once the count passes nine. Counted in
+   the page, never stored - it is not a property of the test case. */
+.case .seq { color: var(--faint); font-weight: 600; margin-right: 8px;
+             font-variant-numeric: tabular-nums; }
+.meta { margin: 0 0 10px; }
+/* One labelled row per kind, label column aligned so the three rows read
+   as a small table. The label wraps above its values on narrow screens
+   rather than squeezing them. */
+.metarow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+/* Auto-width, not a fixed column: the chips sit right beside their label
+   instead of across a gap sized for the longest label. */
+.metalabel { flex: 0 0 auto; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.metavals { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; flex: 1 1 200px; }
+.chip { font-size: 11.5px; border-radius: 999px; padding: 2px 10px;
+        background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+/* The two chips that MEAN something keep a colour of their own; the rest
+   stay neutral so the coloured ones are still worth looking at. */
+.chip.status { background: color-mix(in srgb, var(--success) 14%, transparent);
+               color: var(--success);
+               border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.chip.module { background: color-mix(in srgb, var(--accent) 14%, transparent);
+               color: var(--accent);
+               border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.pre { font-size: 13px; background: var(--surface-2); border-left: 3px solid var(--border);
+       padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
+.pre b { color: var(--muted); }
+.pre .none { color: var(--faint); font-style: italic; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; background: var(--surface-2); color: var(--muted); font-size: 12px;
+     padding: 6px 10px; border: 1px solid var(--border); }
+td { padding: 7px 10px; border: 1px solid var(--border); vertical-align: top;
+     white-space: pre-wrap; }
+td.num { width: 34px; text-align: center; color: var(--faint); }
+.searchbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
+             display: flex; align-items: center; gap: 12px; padding: 10px 0 14px; }
+#tc-search { flex: 1; font: inherit; font-size: 14px; padding: 9px 14px;
+             border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+             color: inherit; outline: none; }
+#tc-search:focus { border-color: var(--accent);
+                   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+#tc-count { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.no-match { color: var(--muted); font-size: 14px; text-align: center;
+            padding: 28px 0; border: 1px dashed var(--border); border-radius: 10px; }
+.hidden { display: none !important; }
+/* Reviewer-notes toggle. It lives in the sticky search bar rather than
+   beside a case, so it is reachable from anywhere in a long page - the
+   reviewer who wants the notes gone is usually halfway down when they
+   decide that, and a control that has scrolled away is no control. */
+#tc-notes { font: inherit; font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+            border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+            border-radius: 8px; white-space: nowrap; color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 8%, transparent); }
+#tc-notes:hover { border-color: var(--accent); }
+#tc-notes[aria-pressed='true'] { color: var(--muted); background: var(--surface-2);
+                                 border-color: var(--border); }
+/* One rule, on the body, so nothing has to be walked to hide them. */
+body.notes-off .rev { display: none !important; }
+/* "The cases changed" bar. It offers a refresh rather than taking one:
+   reloading under a reviewer costs them their scroll position, every
+   section they had opened, and any comment still inside its autosave
+   debounce. Nothing moves until they say so. */
+#tc-stale { position: sticky; top: 0; z-index: 6; display: none;
+            align-items: center; gap: 12px; padding: 10px 14px; margin: 0 0 12px;
+            border: 1px solid var(--accent); border-radius: 8px;
+            background: color-mix(in srgb, var(--accent) 12%, var(--bg)); }
+#tc-stale.show { display: flex; }
+#tc-stale button { font: inherit; font-size: 12.5px; padding: 6px 12px; cursor: pointer;
+                   border: 1px solid var(--accent); border-radius: 7px;
+                   background: var(--accent); color: var(--bg); }
+/* Reviewer notes: the spec context, sitting between the prerequisites and
+   the steps. Tinted with the accent and given a left rule so it reads as
+   commentary ABOUT the case rather than part of it - a reviewer scanning
+   steps should be able to skip it, and a reviewer hunting for the
+   requirement should be able to find it without reading anything else. */
+.rev { margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+       border-left: 3px solid var(--accent); border-radius: 6px;
+       background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.rev > summary { cursor: pointer; list-style: none; padding: 6px 12px;
+                 font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+                 text-transform: uppercase; color: var(--accent); }
+.rev > summary::-webkit-details-marker { display: none; }
+.rev > summary::after { content: ' \25be'; }
+.rev:not([open]) > summary::after { content: ' \25b8'; }
+.rev-body { padding: 0 12px 10px; font-size: 13px; color: var(--text); }
+/* The note's own markdown. Kept tight - it is an aside, not a document. */
+.rev-body > :first-child { margin-top: 0; }
+.rev-body > :last-child { margin-bottom: 0; }
+.rev-body h4, .rev-body h5, .rev-body h6 { font-size: 12.5px; margin: 10px 0 4px; }
+.rev-body p, .rev-body ul, .rev-body ol { margin: 0 0 8px; }
+.rev-body ul, .rev-body ol { padding-left: 20px; }
+.rev-body li { margin: 2px 0; }
+.rev-body code { background: var(--surface-2); border-radius: 3px; padding: 0 3px;
+                 font-family: Consolas, monospace; font-size: 12px; }
+.rev-body pre { background: var(--surface-2); border-radius: 4px; padding: 8px 10px;
+                overflow-x: auto; margin: 0 0 8px; }
+.rev-body pre code { background: none; padding: 0; }
+.rev-body blockquote { margin: 0 0 8px; padding-left: 10px;
+                       border-left: 2px solid var(--border); color: var(--muted); }
+.rev-body table { font-size: 12px; margin-bottom: 8px; }
+.rev-body a { color: var(--accent); }
+/* A link the renderer refused (javascript:, data:) keeps its text but must
+   not look clickable. */
+.rev-body .md-badlink { color: var(--muted); text-decoration: line-through; }
+.rev-body .md-noimg { color: var(--muted); font-style: italic; }
+.note { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.note label { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px;
+              font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+.note-status { font-weight: 400; font-size: 12px; color: var(--accent); }
+.note-box { width: 100%; min-height: 44px; resize: vertical; font: inherit;
+            font-size: 13px; color: inherit; background: var(--surface-2);
+            border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+            outline: none; }
+.note-box:focus { border-color: var(--accent);
+                  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.note-status.bad { color: var(--danger); }
+/* The whole-set comments column. A <details> so collapsing costs no
+   JavaScript, and the two-column layout only appears when there is room
+   for it - below that the panel stacks above the cases, where it is still
+   the first thing read. */
+.shell { max-width: 1280px; margin: 0 auto; display: grid; gap: 24px;
+         grid-template-columns: minmax(0, 1fr); }
+.shell .page { max-width: none; margin: 0; }
+@media (min-width: 1120px) {
+  .shell { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+  .aside { position: sticky; top: 12px; }
+}
+.aside { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+         box-shadow: 0 1px 3px rgba(20,30,50,.05); }
+.aside > summary { cursor: pointer; list-style: none; padding: 12px 16px;
+                   font-size: 13px; font-weight: 600; color: var(--muted);
+                   display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.aside > summary::-webkit-details-marker { display: none; }
+.aside > summary::after { content: '\25be'; color: var(--faint); transition: transform .15s ease; }
+.aside:not([open]) > summary::after { transform: rotate(-90deg); }
+.aside-body { padding: 0 16px 14px; }
+.aside .file + .file { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.aside .filename { font-size: 11.5px; font-weight: 600; color: var(--muted);
+                   word-break: break-all; margin-bottom: 5px;
+                   display: flex; align-items: baseline; gap: 8px; }
+.aside .note-box { min-height: 96px; }
+/* Print goes back to ink on paper whatever the screen was showing: a dark
+   page prints as a black rectangle, or as nothing once the printer drops
+   the background and leaves white text on white. */
+/* Reviewer notes print: they are the reason the reviewer has the page in
+   front of them, so they are NOT hidden like the comment boxes are - and
+   a collapsed <details> would otherwise print as just its heading. */
+@media print { .rev { break-inside: avoid; }
+               .rev[open] > summary, .rev > summary { color: #444; }
+               .rev-body { display: block !important; } }
+@media print { :root, :root[data-scheme="dark"] { color-scheme: light;
+                 --bg: #fff; --surface: #fff; --surface-2: #f4f6f9;
+                 --text: #1f2530; --muted: #44506a; --faint: #8a94a6;
+                 --border: #ccc; }
+               body { background: #fff; padding: 0; }
+               .case { box-shadow: none; }
+               .searchbar { display: none; }
+               .shell { display: block; }
+               .aside { display: none; }
+               .note { display: none; } }
