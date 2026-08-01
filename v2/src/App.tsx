@@ -64,6 +64,29 @@ import { IconRefresh } from "./lib/actionIcons";
 /** How often to look for a new release, in the background. */
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
 
+/**
+ * Stop listening, without letting the teardown throw.
+ *
+ * The event plugin's `unlisten` reaches into
+ * `window.__TAURI_EVENT_PLUGIN_INTERNALS__`, which only the Tauri runtime
+ * fills in. Anywhere else - jsdom, a browser preview - calling it rejects,
+ * and an unhandled rejection out of a React cleanup is attributed to
+ * whatever test happened to be unmounting, so one listener took several
+ * unrelated tests down with it.
+ *
+ * There is nothing to recover from here either way: the listener is going
+ * away with the component.
+ */
+function detach(unlisten: (() => void) | undefined): void {
+  if (!unlisten) return;
+  try {
+    // May return a promise (it does in @tauri-apps/api) or nothing.
+    void Promise.resolve(unlisten() as unknown).catch(() => {});
+  } catch {
+    // Threw synchronously instead - same conclusion.
+  }
+}
+
 const TITLES: Record<Section, string> = {
   manual: "Manual Entry",
   import: "Import File",
@@ -402,11 +425,11 @@ export default function App() {
       })
       .then((f) => {
         if (live) unlisten = f;
-        else f();
+        else detach(f);
       });
     return () => {
       live = false;
-      unlisten?.();
+      detach(unlisten);
     };
   }, [signedIn, org, pbiId]);
 
