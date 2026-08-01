@@ -46,6 +46,15 @@ pub struct WatchedFileChanged {
     pub stamp: String,
 }
 
+/// Emitted when `begin_test_case_writing` settles on where the finished
+/// JSON will be written. The frontend starts watching that path straight
+/// away, so the file folds into the queue the moment the assistant writes
+/// it instead of waiting to be imported by hand.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct IntakeOutputPath {
+    pub path: String,
+}
+
 /// Emitted when the HTML report's comment box autosaves a note back over
 /// the loopback listener - the frontend writes it into local storage.
 #[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]

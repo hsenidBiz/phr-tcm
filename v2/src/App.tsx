@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { lazy, Suspense, useEffect, useRef, useState, type ComponentType, useSyncExternalStore } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
+import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
@@ -168,6 +169,7 @@ export default function App() {
     beforeSettings.current = { section, workMode };
     goToSection("settings");
   };
+
 
   const status = useQuery({
     queryKey: ["auth"],
@@ -370,6 +372,44 @@ export default function App() {
   // (never creates a plan/suite - creation stays on the Run screen),
   // seed the same cache RunPanel uses, then prefetch its test points.
   const pbiId = pbi?.id;
+  // `begin_test_case_writing` ends with the developer having said where
+  // the finished JSON goes. Register that path as a watched file NOW, so
+  // the assistant's first write folds into the queue on its own - the
+  // second and later writes already did, and needing to import the first
+  // one by hand was the only manual step left in the loop.
+  //
+  // Registration lives here rather than in ImportFile because only the
+  // active screen is mounted: intake usually finishes while the developer
+  // is on the AI Bridge tab, and a listener inside Import would never see
+  // the event. ImportFile arms the OS watcher and checks the file once on
+  // mount, so a file that lands while you are elsewhere is picked up when
+  // you open the tab.
+  useEffect(() => {
+    if (!signedIn || !org || !pbiId) return;
+    let unlisten: (() => void) | undefined;
+    let live = true;
+    void events.intakeOutputPath
+      .listen((e) => {
+        const path = e.payload.path?.trim();
+        if (!path) return;
+        const list = loadWatches(org, pbiId);
+        // Re-running begin with the same answers must not reset a file
+        // already being followed - that would drop its snapshot and make
+        // the next edit read as though the whole file were new.
+        if (list.some((w) => w.path === path)) return;
+        saveWatches(org, pbiId, upsertWatch(list, { path, stamp: "", snapshot: [] }));
+        toast.info(`Watching ${path.split(/[\\/]/).pop()} - it will import itself when written.`);
+      })
+      .then((f) => {
+        if (live) unlisten = f;
+        else f();
+      });
+    return () => {
+      live = false;
+      unlisten?.();
+    };
+  }, [signedIn, org, pbiId]);
+
   useEffect(() => {
     if (!signedIn || !org || !project || pbiId == null) return;
     const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;

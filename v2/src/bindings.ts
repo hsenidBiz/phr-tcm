@@ -314,6 +314,7 @@ export const events = {
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
+	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
@@ -622,6 +623,16 @@ export type ImportResult_Serialize = {
 export type InlineImage = {
 	url: string,
 	data: string,
+};
+
+/**
+ *  Emitted when `begin_test_case_writing` settles on where the finished
+ *  JSON will be written. The frontend starts watching that path straight
+ *  away, so the file folds into the queue the moment the assistant writes
+ *  it instead of waiting to be imported by hand.
+ */
+export type IntakeOutputPath = {
+	path: string,
 };
 
 /**  An iteration path plus its sprint window, for DevOps-style pickers. */

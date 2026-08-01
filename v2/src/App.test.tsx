@@ -168,6 +168,71 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   expect(bridgeStarted).toBeGreaterThan(0);
 });
 
+/// The last manual step in the AI loop. `begin_test_case_writing` already
+/// makes the developer say where the JSON goes, so the app can start
+/// watching that path before the assistant has written a line - and the
+/// existing watcher then folds the file in by itself.
+test("the path from begin_test_case_writing starts being watched", async () => {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "ai",
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      workMode: false,
+    }),
+  );
+  // `shouldMockEvents` is the supported way to make the mock's `emit` reach
+  // handlers registered by `listen`; without it the two never connect, and
+  // `plugin:event|listen` must be left to the mock rather than stubbed here.
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
+      if (cmd === "check_update") return null;
+      if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+      if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+      if (cmd === "list_test_case_fields") return [];
+      return undefined;
+    },
+    { shouldMockEvents: true },
+  );
+
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  // Nothing is watched until intake settles on a path.
+  expect(localStorage.getItem("tcm-v2-watch:acme/42")).toBeNull();
+
+  const { emit } = await import("@tauri-apps/api/event");
+  const deliver = (path: string) =>
+    act(async () => {
+      await emit("intake-output-path", { path });
+    });
+
+  await deliver("C:/drafts/login-cases.json");
+  await vi.waitFor(() => {
+    const raw = localStorage.getItem("tcm-v2-watch:acme/42");
+    expect(raw).toBeTruthy();
+    expect(JSON.parse(raw as string)).toEqual([
+      { path: "C:/drafts/login-cases.json", stamp: "", snapshot: [] },
+    ]);
+  });
+
+  // Re-running begin with the same answers must not reset a file already
+  // being followed: that would drop its snapshot, and the next edit would
+  // read as though every case in the file were new.
+  localStorage.setItem(
+    "tcm-v2-watch:acme/42",
+    JSON.stringify([
+      { path: "C:/drafts/login-cases.json", stamp: "abc", snapshot: [{ title: "kept" }] },
+    ]),
+  );
+  await deliver("C:/drafts/login-cases.json");
+  const after = JSON.parse(localStorage.getItem("tcm-v2-watch:acme/42") as string);
+  expect(after[0].stamp).toBe("abc");
+  expect(after[0].snapshot).toHaveLength(1);
+});
 test("update banner appears when a newer version exists", async () => {
   mockIPC((cmd) => {
     if (cmd === "auth_status") return { signed_in: false, account: null };

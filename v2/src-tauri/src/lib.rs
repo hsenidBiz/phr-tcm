@@ -58,7 +58,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::WatchedFileChanged,
             events::DraftCommentSaved,
             events::DraftGeneralCommentSaved,
-            events::WorkAssigned
+            events::WorkAssigned,
+            events::IntakeOutputPath
         ])
         .commands(collect_commands![
             misc::ping,

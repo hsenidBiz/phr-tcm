@@ -20,6 +20,34 @@ pub struct BridgeContext {
     pub disabled_tools: Vec<String>,
 }
 
+/// Where `/begin` announces the path the assistant is about to write to.
+///
+/// The developer answers "where should the finished JSON go?" in the intake
+/// questions, so the app knows the exact path before a single case exists.
+/// Telling the UI lets it start watching that path immediately, and the
+/// watcher then folds the file into the queue the moment it appears -
+/// turning "write the file, then go and import it by hand" into just
+/// writing the file.
+///
+/// A process-wide sink rather than a parameter on `route`, because `route`
+/// is the seam every bridge test calls and threading a handle through it
+/// would rewrite all of them for one arm. There is exactly one bridge per
+/// process (`start_bridge` holds a `running` lock), and this is `None` in
+/// tests, which is what keeps a test run from emitting into a live app.
+type IntakeSink = Box<dyn Fn(String) + Send + Sync>;
+static INTAKE_SINK: std::sync::OnceLock<IntakeSink> = std::sync::OnceLock::new();
+
+/// Called once by the app when the bridge starts. Later calls are ignored.
+pub fn set_intake_sink(f: IntakeSink) {
+    let _ = INTAKE_SINK.set(f);
+}
+
+fn announce_intake_path(path: &str) {
+    if let Some(f) = INTAKE_SINK.get() {
+        f(path.to_string());
+    }
+}
+
 /// Per-launch shared secret for the handshake file (32 hex chars).
 pub fn new_token() -> String {
     let mut rng = rand::rng();
@@ -313,6 +341,11 @@ async fn begin_writing(
             ));
         }
     }
+
+    // The answers are validated by here - `output_path` ends in .json and
+    // its folder exists - so this is a real place a file is about to
+    // appear. Watching starts now, before the assistant has written a line.
+    announce_intake_path(answers.output_path.trim());
 
     let plan = crate::intake::plan_markdown(&answers, &feature);
     let plan_path = crate::intake::plan_path(&answers.output_path);

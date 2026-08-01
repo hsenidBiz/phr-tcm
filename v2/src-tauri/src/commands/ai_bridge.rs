@@ -49,6 +49,15 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
             get_fresh_token(&app).await.ok().map(crate::ado::AdoClient::new)
         })
     });
+    // Let `/begin` tell the UI where the assistant is about to write, so the
+    // Import tab can watch that path before the file exists. Set once - the
+    // bridge only ever starts once per process.
+    let app_for_intake = app.clone();
+    crate::ai_bridge::set_intake_sink(Box::new(move |path| {
+        use tauri_specta::Event as _;
+        let _ = crate::events::IntakeOutputPath { path }.emit(&app_for_intake);
+    }));
+
     let (port, _token) = crate::ai_bridge::start_listener(
         Arc::clone(&shared),
         Some(factory),
