@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.10",
+    date: "2026-08-01",
+    items: [
+      "Downloading an update now shows a progress bar and how much of the package has arrived - \"8.3 MB of 24.8 MB\" - instead of a spinner that told you nothing about whether the wait was five seconds or five minutes. The size is the real one from the release feed; the amount downloaded moves in steps rather than counting smoothly, because that is the resolution the downloader reports.",
+    ],
+  },
+  {
     version: "1.18.9",
     date: "2026-08-01",
     items: [
