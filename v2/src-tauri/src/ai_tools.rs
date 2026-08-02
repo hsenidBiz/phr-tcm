@@ -138,6 +138,20 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        stem: "failures",
+        tool: "get_run_failures",
+        desc: "Show what failed in a PBI's latest runs, with the tester's comments",
+        hint: "[PBI id]",
+        body: &[
+            "Call `get_run_failures` for: $ARGUMENTS",
+            "",
+            "Each failure carries the tester's comment and any linked bugs - that is what",
+            "actually broke, in their words. To write regression cases from it, read the",
+            "failed case itself with `get_test_cases` first, then extend the coverage",
+            "instead of restating the case that already failed.",
+        ],
+    },
+    CommandSpec {
         stem: "validate",
         tool: "validate_cases",
         desc: "Check a draft with the app's real importer",

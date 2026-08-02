@@ -136,6 +136,13 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["pbi_id"]),
         },
         {
+            "name": "get_run_failures",
+            "description": "The failed cases from a PBI's latest test runs, each with the tester's failure comment and any bugs they linked. Use this to write regression cases for what actually broke: read the failure, read the failed case itself with get_test_cases, then extend the coverage rather than restating it.",
+            "inputSchema": schema(serde_json::json!({
+                "pbi_id": { "type": "integer", "description": "Work item id of the PBI whose runs to read" },
+            }), &["pbi_id"]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
             "inputSchema": schema(serde_json::json!({
@@ -261,6 +268,10 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 target.push_str("&titles_only=true");
             }
             call("GET", &target, "")
+        }
+        "get_run_failures" => {
+            let pbi = args["pbi_id"].as_i64().unwrap_or(0);
+            call("GET", &format!("/run-failures?pbi={pbi}"), "")
         }
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");

@@ -152,6 +152,10 @@ pub async fn route(
             200,
             serde_json::json!({ "disabled": ctx.disabled_tools }).to_string(),
         ),
+        ("GET", "/run-failures") => match client {
+            Some(c) => run_failures(ctx, c, target).await,
+            None => (503, "sign in to Test Case Manager first".into()),
+        },
         ("GET", "/search-pbis") => match client {
             Some(c) => search_pbis(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
@@ -853,6 +857,99 @@ async fn test_cases(
         }
         Err(e) => (502, format!("Azure DevOps error: {e:?}")),
     }
+}
+
+/// How many failures get their comment + linked bugs fetched. Each one is
+/// its own request; a suite with 80 failures is a suite with a bigger
+/// problem than missing detail text.
+const RUN_FAILURE_DETAIL_CAP: usize = 10;
+
+/// The failed cases from a PBI's latest runs, with each failure's comment
+/// and linked bugs - what an assistant needs to draft regression cases.
+///
+/// GET-only end to end: `find_pbi_requirement_suite` is the find-ONLY
+/// scan, never the find-or-create one. A PBI with no suite is an answer
+/// ("this PBI has never had a run"), not a reason to create anything -
+/// this is the bridge, and the bridge does not write to Azure DevOps.
+async fn run_failures(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    target: &str,
+) -> (u16, String) {
+    let Some(pbi) = q(target, "pbi").and_then(|v| v.parse::<i32>().ok()) else {
+        return (400, "pass ?pbi=<work item id> (find one with search_pbis)".into());
+    };
+    // No area path here: the scan only uses it to order plans, and it
+    // checks every plan regardless, so "" costs at most a slower hit.
+    let suite = match client
+        .find_pbi_requirement_suite(&ctx.org, &ctx.project, pbi, "")
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return (
+                200,
+                serde_json::json!({
+                    "pbi": pbi,
+                    "failures": [],
+                    "note": "This PBI has no test suite, so it has never had a test run - there are no failures to read.",
+                })
+                .to_string(),
+            )
+        }
+        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+    };
+    let points = match client
+        .get_test_points(&ctx.org, &ctx.project, suite.plan_id, suite.suite_id, &[])
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+    };
+
+    let total = points.len();
+    let failed: Vec<_> = points
+        .into_iter()
+        .filter(|p| p.last_outcome.eq_ignore_ascii_case("failed"))
+        .collect();
+    let failed_total = failed.len();
+
+    let mut failures: Vec<serde_json::Value> = vec![];
+    for p in failed.iter().take(RUN_FAILURE_DETAIL_CAP) {
+        // The comment is where the tester wrote what actually went wrong -
+        // fetched per result, best-effort: a failure whose detail cannot be
+        // read is still a failure worth naming.
+        let (comment, bug_ids) = match (p.last_run_id, p.last_result_id) {
+            (Some(run), Some(res)) => client
+                .get_result_report_info(&ctx.org, &ctx.project, run, res)
+                .await
+                .unwrap_or_default(),
+            _ => Default::default(),
+        };
+        failures.push(serde_json::json!({
+            "case_id": p.test_case_id,
+            "title": p.test_case_name,
+            "configuration": p.config_name,
+            "run_id": p.last_run_id,
+            "comment": comment,
+            "bug_ids": bug_ids,
+        }));
+    }
+
+    let mut out = serde_json::json!({
+        "pbi": pbi,
+        "plan": { "id": suite.plan_id, "name": suite.plan_name },
+        "cases_in_suite": total,
+        "failed": failed_total,
+        "failures": failures,
+        "note": "Each failure's `comment` is what the tester wrote when it failed, and `bug_ids` are the bugs they linked. To write regression cases for these, start with begin_test_case_writing as usual - and read the failed case itself via get_test_cases so the regression case extends it instead of restating it.",
+    });
+    if failed_total > RUN_FAILURE_DETAIL_CAP {
+        out["truncated"] = serde_json::json!(format!(
+            "{failed_total} cases are failed; details fetched for the first {RUN_FAILURE_DETAIL_CAP}."
+        ));
+    }
+    (200, out.to_string())
 }
 
 /// PBI search so the AI can anchor examples/output to the right item.

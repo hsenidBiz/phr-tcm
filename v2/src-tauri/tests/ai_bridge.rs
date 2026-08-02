@@ -530,3 +530,117 @@ fn a_malformed_request_is_told_apart_from_an_unfinished_one() {
     let flood = vec![b'x'; 17 * 1024];
     assert!(matches!(parse_http(&flood), Parsed::Malformed));
 }
+
+/// The failure-reading loop, end to end against wiremock: plan scan (find
+/// only, never create), points, and the per-failure detail with the
+/// tester's comment and linked bugs.
+#[tokio::test]
+async fn run_failures_returns_failed_cases_with_comment_and_bugs() {
+    let (server, client) = ado_stub().await;
+
+    // One plan, whose suite list holds PBI 42's requirement suite.
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 9, "name": "Web - Auth Plan", "areaPath": "Web", "rootSuite": { "id": 90 } }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 91, "name": "42 : Login flow", "suiteType": "requirementTestSuite", "requirementId": 42 }]
+        })))
+        .mount(&server)
+        .await;
+    // Three points: one failed, one passed, one never run.
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {
+                    "id": 7,
+                    "testCaseReference": { "id": 201, "name": "Valid login" },
+                    "configuration": { "name": "Windows 10" },
+                    "results": { "outcome": "failed", "lastTestRunId": 3, "lastResultId": 30 }
+                },
+                {
+                    "id": 8,
+                    "testCaseReference": { "id": 202, "name": "Invalid login" },
+                    "configuration": { "name": "Windows 10" },
+                    "results": { "outcome": "passed", "lastTestRunId": 3, "lastResultId": 31 }
+                },
+                {
+                    "id": 9,
+                    "testCaseReference": { "id": 203, "name": "Session timeout" },
+                    "configuration": { "name": "Windows 10" },
+                    "results": { "outcome": "unspecified" }
+                }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    // The failed result's report info: the tester's comment + a linked bug.
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/test/Runs/3/Results/30"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "comment": "Redirect loops back to the sign-in page on the second attempt.",
+            "associatedBugs": [{ "id": "777" }]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=42", "", "1.18.11").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["failed"], 1, "only the failed point counts - passed and never-run do not");
+    assert_eq!(v["failures"].as_array().unwrap().len(), 1);
+    let f = &v["failures"][0];
+    assert_eq!(f["case_id"], 201);
+    assert_eq!(f["title"], "Valid login");
+    assert_eq!(f["comment"], "Redirect loops back to the sign-in page on the second attempt.");
+    assert_eq!(f["bug_ids"][0], 777);
+    assert_eq!(v["plan"]["name"], "Web - Auth Plan");
+    assert_eq!(v["cases_in_suite"], 3);
+}
+
+/// A PBI with no requirement suite is an ANSWER, not an error - and above
+/// all not a reason to create one. The bridge never writes to Azure DevOps.
+#[tokio::test]
+async fn run_failures_on_a_pbi_with_no_suite_says_so_without_creating_one() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 9, "name": "Web - Auth Plan", "areaPath": "Web", "rootSuite": { "id": 90 } }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [] })))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=42", "", "1.18.11").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["failures"].as_array().unwrap().len(), 0);
+    assert!(v["note"].as_str().unwrap().contains("never had a test run"));
+    // No POST reached the mock server - wiremock 404s any unmatched
+    // request, and a create would have errored the route before this line.
+}
+
+#[tokio::test]
+async fn run_failures_requires_a_pbi_and_a_signed_in_client() {
+    let (status, _) = route(&ctx(), None, "GET", "/run-failures?pbi=42", "", "1.18.11").await;
+    assert_eq!(status, 503, "no client means sign in first");
+
+    let (_, client) = ado_stub().await;
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-failures", "", "1.18.11").await;
+    assert_eq!(status, 400);
+    assert!(body.contains("?pbi="));
+}

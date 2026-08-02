@@ -51,6 +51,7 @@ fn tools_list_names_every_tool() {
             "begin_test_case_writing",
             "get_writing_guide",
             "get_test_cases",
+            "get_run_failures",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -197,5 +198,5 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 10);
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 11);
 }
