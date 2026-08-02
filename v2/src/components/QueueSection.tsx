@@ -114,7 +114,7 @@ export default function QueueSection({
     queryFn: () => unwrap(commands.pbiTestCases(org, pbiId)),
     retry: false,
   });
-  const existingTitles = (existing.data ?? []).map((t) => t.title);
+  const existingCases = (existing.data ?? []).map((t) => ({ id: t.id, title: t.title }));
 
   // Diff-preview (spec EDT-B): once the review gate opens, fetch the
   // current server values for every queued UPDATE in one batch so rows
@@ -509,7 +509,7 @@ export default function QueueSection({
   };
 
   const problems = queue.map((tc) => validateCase(tc));
-  const duplicates = queue.map((tc) => duplicateWarning(tc, existingTitles));
+  const duplicates = queue.map((tc) => duplicateWarning(tc, existingCases));
   const hasBlockers = problems.some(Boolean);
 
   return (
