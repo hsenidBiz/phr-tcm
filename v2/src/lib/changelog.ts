@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.12",
+    date: "2026-08-02",
+    items: [
+      "Run Tests has a \"Re-run N failures\" button whenever cases failed last time - it opens the runner over exactly those cases, so re-testing after a fix no longer means re-selecting them by hand.",
+      "The runner opens each case with its last outcome already selected. Only what changed needs a click: pre-selected marks count toward Finish like clicked ones, a never-run case still opens blank, and anything you mark yourself is never overwritten.",
+      "Review now warns when a queued title looks like an existing case in different words - it names the case it resembles and how similar it is. It is a warning, never a block, and the one-word-apart siblings (Approve/Reject, PDF/CSV) deliberately stay silent.",
+      "AI assistants get a new read-only tool, get_run_failures: the failed cases from a PBI's latest runs with the tester's comments and linked bugs, for drafting regression cases. Comes with a /tcm:failures command and its own switch in the AI Bridge tab.",
+    ],
+  },
+  {
     version: "1.18.11",
     date: "2026-08-01",
     items: [
