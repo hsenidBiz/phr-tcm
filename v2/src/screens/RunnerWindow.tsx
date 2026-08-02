@@ -207,6 +207,32 @@ export default function RunnerWindow() {
     startRef.current = Date.now();
   }, [idx]);
 
+  // Every case opens with its LAST outcome already selected. A tester
+  // re-running a suite only touches what changed: a case that passed last
+  // time and passed again needs no click at all, and the lit button is
+  // itself the "this failed last time" indicator while re-testing.
+  //
+  // Pre-selected marks count toward Finish exactly like clicked ones - that
+  // is the point - and the footer's "N/M marked" plus "Finish (N)" say how
+  // many will be recorded before anything is sent. Never-run cases stay
+  // unmarked, and a mark the tester has already made is never overwritten,
+  // so a refetch of points mid-session cannot undo a decision.
+  useEffect(() => {
+    if (!points.data || !cases.data) return;
+    setStates((s) => {
+      let changed = false;
+      const next = { ...s };
+      for (const p of points.data) {
+        if (p.test_case_id == null || next[p.test_case_id]?.outcome) continue;
+        const last = OUTCOMES.find((o) => o.toLowerCase() === p.last_outcome.toLowerCase());
+        if (!last) continue; // never run - a blank slate stays blank
+        next[p.test_case_id] = { ...emptyState(), ...next[p.test_case_id], outcome: last };
+        changed = true;
+      }
+      return changed ? next : s;
+    });
+  }, [points.data, cases.data]);
+
   const patch = (caseId: number, p: Partial<CaseState>) =>
     setStates((s) => ({ ...s, [caseId]: { ...emptyState(), ...s[caseId], ...p } }));
 

@@ -100,6 +100,93 @@ test("plays a case, records an outcome, submits per-point with step results", as
   expect(o.step_outcomes).toEqual(["Passed", null]);
 });
 
+/// A tester re-running a suite only touches what changed: every case opens
+/// with its last outcome already selected, and pre-selected marks count
+/// toward Finish exactly like clicked ones.
+test("each case opens with its last outcome pre-selected, and it counts", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Invalid login" }];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "failed",
+          last_run_id: 3,
+          last_result_id: 30,
+        },
+        {
+          point_id: 8,
+          test_case_id: 202,
+          test_case_name: "Invalid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    if (cmd === "get_result_detail") return { outcome: "failed", comment: "" };
+    if (cmd === "result_screenshots") return [];
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+
+  // Case 201 failed last time: the Failed button arrives lit (the outcome
+  // classes, not the unselected border) and the mark is already counted.
+  await vi.waitFor(() => {
+    expect(screen.getByRole("button", { name: "Failed" })).toHaveClass("bg-danger");
+  });
+  expect(screen.getByText("1/2 marked")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Finish \(1\)/ })).toBeInTheDocument();
+
+  // Case 202 has never run: it must arrive with NOTHING selected - a blank
+  // slate is information too.
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Invalid login");
+  expect(screen.getByRole("button", { name: "Failed" })).not.toHaveClass("bg-danger");
+  expect(screen.getByRole("button", { name: "Passed" })).not.toHaveClass("bg-success");
+});
+
+/// The pre-selection is a starting point, never an override: once the
+/// tester marks a case, a later refetch of the points must not undo it.
+test("a mark the tester makes wins over the pre-selection", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "failed",
+          last_run_id: 3,
+          last_result_id: 30,
+        },
+      ];
+    if (cmd === "get_result_detail") return { outcome: "failed", comment: "" };
+    if (cmd === "result_screenshots") return [];
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+  await vi.waitFor(() => {
+    expect(screen.getByRole("button", { name: "Failed" })).toHaveClass("bg-danger");
+  });
+
+  // The fix landed and this time it passes.
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  expect(screen.getByRole("button", { name: "Passed" })).toHaveClass("bg-success");
+  expect(screen.getByRole("button", { name: "Failed" })).not.toHaveClass("bg-danger");
+});
+
 test("session caseIds restrict the runner's case list", async () => {
   localStorage.setItem(
     "tcm-v2-runner-session",
