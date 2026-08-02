@@ -160,6 +160,81 @@ test("row clicks select cases for a targeted runner session", async () => {
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
 });
 
+/// The normal rhythm after a fix lands: re-test just what failed. The
+/// button hands the runner exactly the failed cases, so nobody re-selects
+/// them by hand from memory of the last run.
+test("re-run failures hands the runner exactly the failed cases", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  // One failed point in the fixture (case 201); "Invalid login" was never
+  // run, and never-run is not failed.
+  fireEvent.click(screen.getByRole("button", { name: /Re-run 1 failure$/ }));
+
+  // openRunnerWindow persists the session before it opens the window - the
+  // handoff IS the localStorage write, so that is what proves the restriction.
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.caseIds).toEqual([201]);
+  expect(session.planId).toBe(9);
+});
+
+/// A case holds one point per configuration, so two failed configs of the
+/// same case are still ONE case to re-run - and the runner takes case ids.
+test("re-run failures counts cases, not points", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 3,
+            last_result_id: 30,
+          },
+          {
+            point_id: 9,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 11",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 3,
+            last_result_id: 31,
+          },
+          {
+            point_id: 10,
+            test_case_id: 205,
+            test_case_name: "Session timeout",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "passed",
+            last_run_id: 3,
+            last_result_id: 32,
+          },
+        ];
+    }
+  });
+  renderPanel();
+  await screen.findByText("Session timeout");
+
+  fireEvent.click(screen.getByRole("button", { name: /Re-run 1 failure$/ }));
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.caseIds).toEqual([201]);
+});
+
 test("shift+click selects the whole range between two rows", async () => {
   mockAll();
   renderPanel();

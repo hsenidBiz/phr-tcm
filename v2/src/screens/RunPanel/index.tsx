@@ -177,6 +177,18 @@ export default function RunPanel({
       caseIds,
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
+  // The cases whose LAST outcome is Failed - the set a tester re-runs after
+  // a fix lands. Built from every point, not the filtered view: the button
+  // says "the failures", and a text filter narrowing the table must not
+  // silently narrow what gets re-run. Deduped because a case can hold one
+  // point per configuration, and the runner wants case ids, not points.
+  const failedCaseIds = useMemo(() => {
+    const ids = (points.data ?? [])
+      .filter((p) => p.last_outcome.toLowerCase() === "failed" && p.test_case_id != null)
+      .map((p) => p.test_case_id as number);
+    return [...new Set(ids)];
+  }, [points.data]);
+
   const filtered = useMemo(
     () =>
       (points.data ?? []).filter((p) => {
@@ -276,6 +288,12 @@ export default function RunPanel({
               <IconOpenWindow aria-hidden />
               Open runner window
             </Button>
+            {failedCaseIds.length > 0 && (
+              <Button size="sm" onClick={() => openRunner(failedCaseIds)}>
+                <IconRun aria-hidden />
+                Re-run {failedCaseIds.length} failure{failedCaseIds.length === 1 ? "" : "s"}
+              </Button>
+            )}
           </div>
         )}
       </div>
