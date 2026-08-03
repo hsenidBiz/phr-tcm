@@ -731,6 +731,33 @@ table {
   opacity: 1;
 }
 
+/* Hover life: each glyph does its own small thing - the eye blinks, the
+   update arrow spins, the import file rises. Once per hover entry, short
+   enough to finish before the click lands, and gone entirely for anyone
+   who asked the OS for less motion. transform-only, so nothing reflows. */
+@keyframes ico-blink { 0%, 100% { transform: scaleY(1); } 45% { transform: scaleY(0.12); } 70% { transform: scaleY(1); } }
+@keyframes ico-spin { to { transform: rotate(-360deg); } }
+@keyframes ico-write { 0%, 100% { transform: rotate(0); } 30% { transform: rotate(-12deg) translateY(-1px); } 70% { transform: rotate(6deg); } }
+@keyframes ico-rise { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-3px); } }
+@keyframes ico-pop { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.18); } }
+@keyframes ico-sway { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-9deg); } 75% { transform: rotate(9deg); } }
+@keyframes ico-pull { 0%, 100% { transform: translateY(0); } 35% { transform: translateY(2px); } 70% { transform: translateY(-2px); } }
+@keyframes ico-shuffle { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-2px); } 70% { transform: translateX(2px); } }
+
+.group:hover .nav-ico-manual { animation: ico-write 0.45s ease; }
+.group:hover .nav-ico-import { animation: ico-rise 0.45s ease; }
+.group:hover .nav-ico-edit { animation: ico-spin 0.55s ease; }
+.group:hover .nav-ico-view { animation: ico-blink 0.5s ease; }
+.group:hover .nav-ico-run { animation: ico-pop 0.4s ease; }
+.group:hover .nav-ico-suites { animation: ico-sway 0.5s ease; }
+.group:hover .nav-ico-ai { animation: ico-sway 0.5s ease; }
+.group:hover .nav-ico-prs { animation: ico-pull 0.5s ease; }
+.group:hover .nav-ico-board { animation: ico-shuffle 0.5s ease; }
+.group:hover .nav-ico-create { animation: ico-pop 0.4s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .group:hover [class*="nav-ico-"] { animation: none; }
+}
+
 /* Tooltip entrance: a short fade with a hair of travel, so it reads as
    appearing rather than blinking into place. Portalled to <body>, so it
    can never affect the layout it points at. */

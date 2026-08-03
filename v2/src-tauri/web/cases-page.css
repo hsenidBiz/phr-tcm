@@ -34,6 +34,16 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .chip.module { background: color-mix(in srgb, var(--accent) 14%, transparent);
                color: var(--accent);
                border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+/* What importing this case will DO, mirroring the queue rows in the app:
+   NEW creates a work item (green, like the app's NEW badge), UPDATE writes
+   over the one whose #id sits beside it (amber, like the app's). In the
+   title line so it reads before the title does. */
+.chip.op-new { background: color-mix(in srgb, var(--success) 16%, transparent);
+               color: var(--success); font-weight: 600; margin-right: 8px;
+               border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.chip.op-update { background: color-mix(in srgb, var(--warning) 16%, transparent);
+                  color: var(--warning); font-weight: 600; margin-right: 8px;
+                  border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
 .pre { font-size: 13px; background: var(--surface-2); border-left: 3px solid var(--border);
        padding: 8px 12px; margin: 0 0 12px; white-space: pre-wrap; }
 .pre b { color: var(--muted); }
@@ -66,8 +76,20 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
 #tc-notes:hover { border-color: var(--accent); }
 #tc-notes[aria-pressed='true'] { color: var(--muted); background: var(--surface-2);
                                  border-color: var(--border); }
-/* One rule, on the body, so nothing has to be walked to hide them. */
-body.notes-off .rev { display: none !important; }
+/* One rule, on the body, so nothing has to be walked to hide them - and a
+   grid-row collapse rather than display:none, so they close with a motion
+   that says WHERE they went instead of blinking out of existence. The same
+   collapsed state serves the sticky Hide button (body class) and each
+   note's own x (per-wrapper class). visibility rides the transition so a
+   collapsed note also leaves the tab order; on a browser too old to
+   animate an fr unit it simply snaps shut, which is what it did before. */
+.rev-wrap { display: grid; grid-template-rows: 1fr; margin: 0 0 12px;
+            transition: grid-template-rows .28s ease, opacity .22s ease,
+                        margin .28s ease, visibility 0s linear .28s; }
+body.notes-off .rev-wrap, .rev-wrap.rev-closed {
+  grid-template-rows: 0fr; opacity: 0; margin: 0; visibility: hidden; }
+body:not(.notes-off) .rev-wrap:not(.rev-closed) { transition-delay: 0s; }
+.rev-wrap > .rev { overflow: hidden; min-height: 0; }
 /* "The cases changed" bar. It offers a refresh rather than taking one:
    reloading under a reviewer costs them their scroll position, every
    section they had opened, and any comment still inside its autosave
@@ -85,12 +107,23 @@ body.notes-off .rev { display: none !important; }
    commentary ABOUT the case rather than part of it - a reviewer scanning
    steps should be able to skip it, and a reviewer hunting for the
    requirement should be able to find it without reading anything else. */
-.rev { margin: 0 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+.rev { border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
        border-left: 3px solid var(--accent); border-radius: 6px;
        background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .rev > summary { cursor: pointer; list-style: none; padding: 6px 12px;
                  font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
-                 text-transform: uppercase; color: var(--accent); }
+                 text-transform: uppercase; color: var(--accent);
+                 display: flex; align-items: center; gap: 4px; }
+/* The x hides this ONE case's notes; the sticky Show button brings every
+   note back, including these. Kept quiet until the row is hovered so a
+   page of twenty notes is not a page of twenty x buttons. */
+.rev-close { margin-left: auto; font: inherit; font-size: 14px; line-height: 1;
+             cursor: pointer; border: 0; border-radius: 4px; padding: 1px 6px;
+             color: var(--faint); background: none; opacity: 0;
+             transition: opacity .15s ease; }
+.rev > summary:hover .rev-close, .rev-close:focus-visible { opacity: 1; }
+.rev-close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+@media print { .rev-close { display: none; } }
 .rev > summary::-webkit-details-marker { display: none; }
 .rev > summary::after { content: ' \25be'; }
 .rev:not([open]) > summary::after { content: ' \25b8'; }

@@ -591,7 +591,11 @@ export default function App() {
         <main
           className={
             signedIn && workMode
-              ? "flex min-h-0 flex-1 flex-col overflow-hidden p-6"
+              ? // No bottom padding in work mode: the board's columns own
+                // the full height, and a padded strip under them read as a
+                // gap at the bottom of the screen - boards run flush to the
+                // edge, the way every kanban surface does.
+                "flex min-h-0 flex-1 flex-col overflow-hidden px-6 pt-6"
               : "min-h-0 flex-1 overflow-y-auto p-6"
           }
         >

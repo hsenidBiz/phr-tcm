@@ -210,6 +210,42 @@ test("session caseIds restrict the runner's case list", async () => {
   expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
 });
 
+/// The runner offers the same verdicts ADO's own runner does - including
+/// Paused, for a case someone had to stop half way through. It records
+/// like any other outcome.
+test("Paused is offered and submits as a real outcome", async () => {
+  let submitted: { outcomes?: Array<Record<string, unknown>> } = {};
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    if (cmd === "submit_test_run") {
+      submitted = args as typeof submitted;
+      return { run_id: 300, web_url: "", outcomes_unrecorded: [], extras_failed: [] };
+    }
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByRole("button", { name: "Paused" }));
+  expect(screen.getByRole("button", { name: "Paused" })).toHaveClass("bg-muted");
+  fireEvent.click(screen.getByRole("button", { name: /Finish \(1\)/ }));
+  await vi.waitFor(() => expect(submitted.outcomes).toBeTruthy());
+  expect(submitted.outcomes![0].outcome).toBe("Paused");
+});
+
 test("File bug appears only after a failure", async () => {
   mockIPC((cmd) => {
     if (cmd === "run_history") return [];

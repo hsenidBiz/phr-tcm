@@ -21,7 +21,8 @@ pub struct RunAttachment {
 #[derive(serde::Deserialize, specta::Type)]
 pub struct PointOutcome {
     pub point_id: i32,
-    /// Passed / Failed / Blocked / NotApplicable.
+    /// Passed / Failed / Paused / Blocked / NotApplicable - the verdicts
+    /// Azure DevOps's own runner offers, and all real TestOutcome values.
     pub outcome: String,
     pub comment: Option<String>,
     pub duration_ms: Option<i32>,

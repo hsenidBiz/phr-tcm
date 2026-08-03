@@ -28,7 +28,10 @@ import {
   IconSnip,
 } from "../lib/actionIcons";
 
-const OUTCOMES = ["Passed", "Failed", "Blocked", "NotApplicable"] as const;
+// The same verdicts Azure DevOps's own runner offers: Pass, Fail, Pause,
+// Block, Not applicable - "Paused" is a real TestOutcome the API records,
+// for a case someone had to stop half way through and means to resume.
+const OUTCOMES = ["Passed", "Failed", "Paused", "Blocked", "NotApplicable"] as const;
 type Outcome = (typeof OUTCOMES)[number] | "";
 
 type CaseState = {
@@ -47,6 +50,9 @@ function emptyState(): CaseState {
 const outcomeBtn: Record<string, string> = {
   Passed: "bg-success text-on-accent",
   Failed: "bg-danger text-on-accent",
+  // Neutral-dark, not a fourth traffic-light colour: paused is "no verdict
+  // yet", and it must not read as a sibling of pass/fail at a glance.
+  Paused: "bg-muted text-on-accent",
   Blocked: "bg-warning text-on-accent",
   NotApplicable: "bg-surface-2 text-muted",
 };
@@ -54,6 +60,7 @@ const outcomeBtn: Record<string, string> = {
 const outcomeBadge: Record<string, string> = {
   passed: "bg-success/15 text-success",
   failed: "bg-danger/15 text-danger",
+  paused: "bg-muted/15 text-muted",
   blocked: "bg-warning/15 text-warning",
   notapplicable: "bg-surface-2 text-muted",
 };

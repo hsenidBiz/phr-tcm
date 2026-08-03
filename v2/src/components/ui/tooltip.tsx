@@ -139,6 +139,12 @@ export function TooltipLayer() {
    * it. The two are released by different things, and only the hover one
    * has a meaningful pointer position to place the bubble against. */
   const via = useRef<Claim>("pointer");
+  /** Watches the HELD element for React writing a fresh `title` onto it.
+   * A control whose label toggles on its own click - collapse/expand -
+   * re-renders under the still-hovered pointer; without this, that fresh
+   * title sits on the element while the pointer rests on it, and the OS
+   * draws its own bubble a second later. See the note in `restore`. */
+  const retitle = useRef<MutationObserver | null>(null);
 
   useEffect(() => {
     /** Give the text back, so the element is unchanged once we let go.
@@ -151,6 +157,8 @@ export function TooltipLayer() {
      * it: React's record already matches what it wrote, so the next render
      * is a no-op. A present `title` means we are no longer the owner. */
     const restore = () => {
+      retitle.current?.disconnect();
+      retitle.current = null;
       const el = anchor.current;
       if (el?.isConnected) {
         const parked = el.getAttribute(PARK);
@@ -218,6 +226,25 @@ export function TooltipLayer() {
       // element as target.)
       el.setAttribute(PARK, text);
       el.removeAttribute("title");
+      // The one hole in "we hold the title": a label that toggles on its
+      // own click. React re-renders under the still-hovered pointer and
+      // writes the NEW title onto the element we parked - the pointer
+      // never moves, so no event fires, and a second later the OS draws
+      // its native bubble over the freshly-clicked control. Watch for the
+      // title coming back and take it over again; if our bubble is open
+      // (keyboard focus keeps it open through a click), its text follows
+      // the label instead of going stale.
+      retitle.current?.disconnect();
+      retitle.current = new MutationObserver(() => {
+        const held = anchor.current;
+        if (!held) return;
+        const fresh = held.getAttribute("title");
+        if (fresh === null) return; // our own removeAttribute below
+        held.setAttribute(PARK, fresh);
+        held.removeAttribute("title");
+        setOpen((o) => (o ? { ...o, text: fresh } : o));
+      });
+      retitle.current.observe(el, { attributes: true, attributeFilter: ["title"] });
       timer.current = window.setTimeout(
         () => setOpen({ text, side: sideOf(el) }),
         OPEN_DELAY_MS,

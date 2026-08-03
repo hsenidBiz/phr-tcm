@@ -30,6 +30,29 @@ static DRAFT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 
 static QUEUE_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Where each kind's report file currently lives, so `GET /report` can
+/// serve the fresh content back to a page updating itself in place. Same
+/// fixed-slot reasoning as the revisions.
+static DRAFT_PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+static QUEUE_PATH: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn path_slot(kind: &str) -> &'static std::sync::Mutex<Option<String>> {
+    match kind {
+        REPORT_QUEUE => &QUEUE_PATH,
+        _ => &DRAFT_PATH,
+    }
+}
+
+/// Called by whoever writes a report file, alongside `bump_revision`.
+pub fn set_report_path(kind: &str, path: &str) {
+    *path_slot(kind).lock().unwrap_or_else(|e| e.into_inner()) = Some(path.to_string());
+}
+
+pub fn report_path(kind: &str) -> Option<String> {
+    path_slot(kind).lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// What kind of comment a POST carries. Flat rather than a tagged enum so
 /// the field defaults keep older generated pages (which sent no `kind`)
 /// working against a newer app.
@@ -118,6 +141,8 @@ pub fn start(
                 let mut outcome = Err("the app did not understand that request".to_string());
                 // Answered instead of `outcome` when this is a version poll.
                 let mut version: Option<String> = None;
+                // Answered as text/html when this is a report pull.
+                let mut report: Option<Result<String, ()>> = None;
                 loop {
                     match stream.read(&mut chunk) {
                         Ok(0) => break,
@@ -134,6 +159,23 @@ pub fn start(
                                         // Same shape, no number: a page without
                                         // the secret learns nothing and still parses.
                                         "{\"revision\":null}".to_string()
+                                    });
+                                    break;
+                                }
+                                if let Some((asked, kind)) = request_report(&buf) {
+                                    // The fresh page content, for a report
+                                    // updating itself in place. Token-guarded
+                                    // like everything else on this port; the
+                                    // content is the same file already sitting
+                                    // in the requester's own temp directory,
+                                    // but the rule "only pages this app
+                                    // generated get answers" stays whole.
+                                    report = Some(if asked == *token {
+                                        report_path(&kind)
+                                            .and_then(|p| std::fs::read_to_string(p).ok())
+                                            .ok_or(())
+                                    } else {
+                                        Err(())
                                     });
                                     break;
                                 }
@@ -158,11 +200,23 @@ pub fn start(
                         Err(_) => break,
                     }
                 }
-                let body = version.unwrap_or_else(|| reply_body(&outcome));
+                // Status/type vary by route now: a report pull answers
+                // text/html, and its failure is a 404 the page treats as
+                // "fall back to the refresh banner" rather than a JSON
+                // body it would try to parse.
+                let (status_line, content_type, body) = match report {
+                    Some(Ok(html)) => ("200 OK", "text/html; charset=utf-8", html),
+                    Some(Err(())) => ("404 Not Found", "text/plain", String::new()),
+                    None => (
+                        "200 OK",
+                        "application/json",
+                        version.unwrap_or_else(|| reply_body(&outcome)),
+                    ),
+                };
                 // Always close after one request.
                 let _ = stream.write_all(
                     format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                        "HTTP/1.1 {status_line}\r\nContent-Type: {content_type}\r\n\
                          Access-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\
                          Connection: close\r\n\r\n{body}",
                         body.len()
@@ -224,6 +278,26 @@ pub fn request_version(buf: &[u8]) -> Option<(String, String)> {
     let text = String::from_utf8_lossy(buf);
     let first = text.lines().next()?;
     let rest = first.strip_prefix("GET /version")?;
+    let query = rest.split_whitespace().next().unwrap_or("").trim_start_matches('?');
+    let mut token = None;
+    let mut kind = REPORT_DRAFT.to_string();
+    for pair in query.split('&') {
+        match pair.split_once('=') {
+            Some(("token", v)) => token = Some(v.to_string()),
+            Some(("kind", v)) if !v.is_empty() => kind = v.to_string(),
+            _ => {}
+        }
+    }
+    Some((token?, kind))
+}
+
+/// The (token, report kind) from a `GET /report?token=...&kind=...` - the
+/// page pulling fresh content to swap itself in place. Same parsing and
+/// the same token rule as `request_version`.
+pub fn request_report(buf: &[u8]) -> Option<(String, String)> {
+    let text = String::from_utf8_lossy(buf);
+    let first = text.lines().next()?;
+    let rest = first.strip_prefix("GET /report")?;
     let query = rest.split_whitespace().next().unwrap_or("").trim_start_matches('?');
     let mut token = None;
     let mut kind = REPORT_DRAFT.to_string();

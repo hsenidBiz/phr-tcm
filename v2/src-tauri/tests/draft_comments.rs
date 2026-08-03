@@ -276,13 +276,17 @@ fn a_hostile_title_cannot_escape_the_card_or_the_script() {
     // against the markup region only: the other copy lives inside a
     // <script>, where `<img` is an inert run of characters in a JS string
     // and asserting over the whole document would flag it wrongly.
-    let markup = html.split("<script>").next().expect("cards precede the scripts");
+    // Split on "<script" (no bracket): the #tc-data JSON block opens with
+    // `<script type='application/json'>`, and its content is inert text to
+    // the parser - a `<img` inside it is data, not markup. The markup
+    // region is everything before the first script of ANY kind.
+    let markup = html.split("<script").next().expect("cards precede the scripts");
     assert!(!markup.contains("<img"), "markup reached the card");
     assert!(markup.contains("&lt;img src=x"));
 
     // In the SCRIPT the only way out is a literal `</script`, so that is
     // what is escaped. Counting the tags proves none was smuggled in.
-    assert_eq!(html.matches("</script>").count(), html.matches("<script>").count());
+    assert_eq!(html.matches("</script>").count(), html.matches("<script").count());
     assert!(html.contains(r"<\/script>"), "the JSON copy must be escaped");
 }
 
@@ -301,6 +305,9 @@ fn cases_are_numbered_from_one_in_page_order() {
     assert!(html.contains("<span class='seq'>2</span>"));
     assert!(html.contains("<span class='seq'>3</span>"));
     assert_eq!(html.matches("class='seq'").count(), 3);
-    // The number sits beside the work item id, not instead of it.
-    assert!(html.contains("<span class='seq'>1</span><span class='wid'>#42</span>"));
+    // The number sits beside the operation badge and the work item id,
+    // not instead of them.
+    assert!(html.contains(
+        "<span class='seq'>1</span><span class='chip op-update'>UPDATE</span><span class='wid'>#42</span>"
+    ));
 }

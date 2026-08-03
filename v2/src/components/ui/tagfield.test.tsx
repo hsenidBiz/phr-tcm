@@ -41,3 +41,30 @@ test("Enter adds a brand-new tag not in the suggestions", () => {
   fireEvent.keyDown(input, { key: "Enter" });
   expect(screen.getByTestId("val").textContent).toBe("smoke; custom-tag");
 });
+
+/// Tabbing THROUGH the form must not detonate a dropdown on the way past -
+/// the Module combobox is the reference: its trigger opens on click and
+/// keys only. The list opens by typing, clicking, or ArrowDown; Escape
+/// closes it and is swallowed only while it is showing, so an Escape on a
+/// closed field still reaches the dialog that contains it.
+test("keyboard focus does not open the list; ArrowDown does; Escape closes it", () => {
+  render(<Harness suggestions={["smoke", "regression", "sanity"]} />);
+  const input = screen.getByLabelText("Tags");
+
+  // Tab lands in the field: nothing opens.
+  fireEvent.focus(input);
+  expect(screen.queryByRole("button", { name: "regression" })).not.toBeInTheDocument();
+
+  // ArrowDown opens the list deliberately.
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  expect(screen.getByRole("button", { name: "regression" })).toBeInTheDocument();
+
+  // Escape closes it again.
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("button", { name: "regression" })).not.toBeInTheDocument();
+
+  // And an Enter with the list closed adds nothing - it belongs to the
+  // form, not to an invisible dropdown row.
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(screen.getByTestId("val").textContent).toBe("smoke");
+});

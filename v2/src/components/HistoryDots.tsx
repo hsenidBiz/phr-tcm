@@ -5,6 +5,7 @@ import { outcomeLabel } from "../screens/RunPanel";
 const DOT: Record<string, string> = {
   passed: "bg-success",
   failed: "bg-danger",
+  paused: "bg-muted",
   blocked: "bg-warning",
   notapplicable: "bg-faint",
 };

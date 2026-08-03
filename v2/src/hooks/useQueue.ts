@@ -3,6 +3,22 @@ import type { TestCase } from "../bindings";
 
 const draftKey = (org: string, pbiId: number) => `tcm-v2-draft:${org}/${pbiId}`;
 
+/** Direct draft access for code that outlives the screen - the submit
+ * finishing after navigation writes the pruned queue here, and the next
+ * mount of useQueue loads it. */
+export function loadDraftQueue(org: string, pbiId: number): TestCase[] {
+  return loadDraft(org, pbiId);
+}
+
+export function saveDraftQueue(org: string, pbiId: number, queue: TestCase[]): void {
+  try {
+    if (queue.length === 0) localStorage.removeItem(draftKey(org, pbiId));
+    else localStorage.setItem(draftKey(org, pbiId), JSON.stringify(queue));
+  } catch {
+    // storage unavailable -> session-only
+  }
+}
+
 function loadDraft(org: string, pbiId: number): TestCase[] {
   try {
     const raw = localStorage.getItem(draftKey(org, pbiId));

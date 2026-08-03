@@ -43,6 +43,22 @@ pub struct TestCase {
     /// material they read while writing one.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reviewer_notes: String,
+    /// This case's 1-based position when the set is read AGAINST THE SPEC -
+    /// cases walking down the document, so a reviewer scrolls the spec and
+    /// the file together. Stamped by the optimizer from the order the
+    /// draft was written in; app-only, like the two notes above - never
+    /// sent to Azure DevOps (`app_only_fields_never_reach_a_request_body`
+    /// covers it by scanning the write path).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_order: Option<u32>,
+    /// This case's 1-based position when the set is run BY A TESTER -
+    /// grouped so cases sharing a setup run together and the environment
+    /// changes as few times as possible. Stamped by the optimizer's
+    /// grouping pass. Both orders live in the same file so neither reading
+    /// costs the other; the array order is just whichever one the file was
+    /// last saved in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tester_order: Option<u32>,
 }
 
 impl TestCase {

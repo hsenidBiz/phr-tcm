@@ -8,6 +8,7 @@ import { Button } from "../components/ui/button";
 import { SHOW_CHANGELOG_EVENT } from "../lib/changelog";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { isDemoMode, toggleDemoMode } from "./demo";
+import { latencyMs, setLatencyMs, LATENCY_STEPS } from "./latency";
 
 /** Remembered panel position - by default it sits bottom-left, which covers
  * the sidebar's collapse button, so it is draggable by the grip handle. */
@@ -50,6 +51,7 @@ export default function DevPanel({
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [latency, setLatency] = useState(latencyMs);
 
   const [pos, setPos] = useState<{ x: number; y: number } | null>(loadPos);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -153,6 +155,30 @@ export default function DevPanel({
             <Button size="sm" variant={isDemoMode() ? "danger" : "outline"} onClick={toggleDemoMode}>
               {isDemoMode() ? "Disable demo data (reloads)" : "Enable demo data (reloads)"}
             </Button>
+          </div>
+
+          <div className="space-y-1">
+            <p className="font-semibold text-text">Fake latency</p>
+            <p className="text-muted">
+              Every command answers this much later, so loading states are
+              seen instead of imagined. Applies to the next request - no reload.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {LATENCY_STEPS.map((ms) => (
+                <Button
+                  key={ms}
+                  size="sm"
+                  variant={latency === ms ? "danger" : "outline"}
+                  aria-pressed={latency === ms}
+                  onClick={() => {
+                    setLatencyMs(ms);
+                    setLatency(ms);
+                  }}
+                >
+                  {ms === 0 ? "Off" : ms < 1000 ? `${ms}ms` : `${ms / 1000}s`}
+                </Button>
+              ))}
+            </div>
           </div>
 
           <div className="space-y-0.5 text-muted">

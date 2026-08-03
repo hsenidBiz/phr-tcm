@@ -59,6 +59,14 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
             if !tc.reviewer_notes.is_empty() {
                 rec["reviewer_notes"] = serde_json::json!(tc.reviewer_notes);
             }
+            // The two sort orders, present only when known - same shape
+            // rule as the notes above.
+            if let Some(n) = tc.spec_order {
+                rec["spec_order"] = serde_json::json!(n);
+            }
+            if let Some(n) = tc.tester_order {
+                rec["tester_order"] = serde_json::json!(n);
+            }
             rec
         })
         .collect();
@@ -77,4 +85,27 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
 /// (export_formats.export_records_to_json) - re-importable via parse_file.
 pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String> {
     std::fs::write(path, queue_to_json_string(queue)?).map_err(|e| e.to_string())
+}
+
+/// Replace an existing draft document's `test_cases` with `cases`, keeping
+/// every OTHER top-level key exactly as written - the general `comments`,
+/// and anything this app has never heard of. A bulk edit owns the cases;
+/// it does not own the file.
+///
+/// A bare array, or a file that no longer parses, comes back in the
+/// standard wrapper shape: for those there is nothing else to preserve,
+/// and the wrapper is the repair rather than a loss.
+pub fn merge_cases_into_draft(old_text: &str, cases: &[TestCase]) -> Result<String, String> {
+    let fresh = queue_to_json_string(cases)?;
+    match serde_json::from_str::<serde_json::Value>(old_text) {
+        Ok(mut doc) if doc.is_object() => {
+            let fresh_doc: serde_json::Value =
+                serde_json::from_str(&fresh).map_err(|e| e.to_string())?;
+            doc["test_cases"] = fresh_doc["test_cases"].clone();
+            let mut text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+            text.push('\n');
+            Ok(text)
+        }
+        _ => Ok(fresh),
+    }
 }

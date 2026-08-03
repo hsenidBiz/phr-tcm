@@ -28,6 +28,7 @@ export { outcomeLabel };
 const outcomeColor: Record<string, string> = {
   passed: "text-success",
   failed: "text-danger",
+  paused: "text-muted",
   blocked: "text-warning",
   notapplicable: "text-faint",
 };
@@ -36,6 +37,7 @@ const outcomeColor: Record<string, string> = {
 const outcomeRowTint: Record<string, string> = {
   passed: "bg-success/10",
   failed: "bg-danger/10",
+  paused: "bg-muted/10",
   blocked: "bg-warning/10",
   notapplicable: "bg-surface-2/60",
 };
@@ -60,7 +62,17 @@ export default function RunPanel({
     () => localStorage.getItem("tcm-v2-group-points") === "on",
   );
   const [anchor, setAnchor] = useState<number | null>(null); // shift-range start
-  const [expanded, setExpanded] = useState<number | null>(null); // open point_id
+  // Open previews, PLURAL (point ids) - same model as View Test Cases:
+  // several can be open for comparison, an open one survives its group
+  // being collapsed, and the sticky Close all clears the lot.
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggleExpanded = (pointId: number) =>
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(pointId)) next.delete(pointId);
+      else next.add(pointId);
+      return next;
+    });
   const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
     "tcm-v2-run-collapsed-groups",
   );
@@ -177,17 +189,9 @@ export default function RunPanel({
       caseIds,
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
-  // The cases whose LAST outcome is Failed - the set a tester re-runs after
-  // a fix lands. Built from every point, not the filtered view: the button
-  // says "the failures", and a text filter narrowing the table must not
-  // silently narrow what gets re-run. Deduped because a case can hold one
-  // point per configuration, and the runner wants case ids, not points.
-  const failedCaseIds = useMemo(() => {
-    const ids = (points.data ?? [])
-      .filter((p) => p.last_outcome.toLowerCase() === "failed" && p.test_case_id != null)
-      .map((p) => p.test_case_id as number);
-    return [...new Set(ids)];
-  }, [points.data]);
+  // No dedicated re-run-failures button (it existed for one release): the
+  // outcome filter + a group-header click selects the failed set in two
+  // clicks, and one path into a selective run is easier to trust than two.
 
   const filtered = useMemo(
     () =>
@@ -221,13 +225,17 @@ export default function RunPanel({
     }));
   }, [filtered, grouped]);
 
-  // A collapsed group renders none of its rows, so with every group shut
-  // the table is nothing but group headings - and a "Test case / Last
-  // outcome / History" header sitting above them labels columns that
-  // aren't there. It comes back with the first group the user opens.
-  const anyRowsShown = sections.some(
-    ({ name, pts }) => pts.length > 0 && !(name && collapsedGroups.has(name)),
-  );
+  // A collapsed group hides its LIST, not the case someone is reading:
+  // rows with an open preview stay rendered until closed - their own
+  // chevron, or the sticky Close all. Same rule as View Test Cases.
+  const visibleRows = (name: string, pts: TestPoint[]) =>
+    name && collapsedGroups.has(name) ? pts.filter((p) => expanded.has(p.point_id)) : pts;
+
+  // With every group shut and nothing held open, the table is nothing but
+  // group headings - and a "Test case / Last outcome / History" header
+  // sitting above them labels columns that aren't there. It comes back
+  // with the first row that shows.
+  const anyRowsShown = sections.some(({ name, pts }) => visibleRows(name, pts).length > 0);
 
   // Click toggles a row; shift+click selects the whole range from the
   // last clicked row, in the visible (filtered/grouped) order.
@@ -288,12 +296,6 @@ export default function RunPanel({
               <IconOpenWindow aria-hidden />
               Open runner window
             </Button>
-            {failedCaseIds.length > 0 && (
-              <Button size="sm" onClick={() => openRunner(failedCaseIds)}>
-                <IconRun aria-hidden />
-                Re-run {failedCaseIds.length} failure{failedCaseIds.length === 1 ? "" : "s"}
-              </Button>
-            )}
           </div>
         )}
       </div>
@@ -352,6 +354,7 @@ export default function RunPanel({
             <option value="">All outcomes</option>
             <option value="passed">Passed</option>
             <option value="failed">Failed</option>
+            <option value="paused">Paused</option>
             <option value="blocked">Blocked</option>
             <option value="notapplicable">Not Applicable</option>
             <option value="none">Never run</option>
@@ -405,20 +408,37 @@ export default function RunPanel({
                           )}
                         </button>
                         <button
-                          className="group"
+                          className="group flex items-center gap-2"
                           title="Select all test cases in this group"
                           onClick={() => toggleSection(pts)}
                         >
                           <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                             {name} ({pts.length})
                           </span>
+                          {/* Same marker as View / Update Test Cases:
+                              folding a group hides its rows and the row
+                              highlight with them, so the heading has to say
+                              something is still selected in there. */}
+                          {(() => {
+                            const inGroup = pts.filter(
+                              (p) => p.test_case_id != null && selected.has(p.test_case_id),
+                            ).length;
+                            return collapsedGroups.has(name) && inGroup > 0 ? (
+                              <span
+                                className="selection-dot"
+                                role="status"
+                                aria-label={`${inGroup} of ${pts.length} selected in ${name}`}
+                                title={`${inGroup} selected in this group`}
+                              />
+                            ) : null;
+                          })()}
                         </button>
                         <span aria-hidden className="h-px flex-1 bg-border" />
                       </div>
                     </td>
                   </tr>
                 )}
-                {(name && collapsedGroups.has(name) ? [] : pts).map((p) => (
+                {visibleRows(name, pts).map((p) => (
               <Fragment key={p.point_id}>
               <tr
                 className={cn(
@@ -432,15 +452,15 @@ export default function RunPanel({
               >
                 <td className="px-2 py-1 text-text">
                   <button
-                    aria-label={expanded === p.point_id ? "Collapse test case" : "Expand test case"}
-                    title={expanded === p.point_id ? "Hide steps" : "Show steps & last result"}
+                    aria-label={expanded.has(p.point_id) ? "Collapse test case" : "Expand test case"}
+                    title={expanded.has(p.point_id) ? "Hide steps" : "Show steps & last result"}
                     className="mr-1 align-middle text-muted hover:text-accent"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setExpanded((id) => (id === p.point_id ? null : p.point_id));
+                      toggleExpanded(p.point_id);
                     }}
                   >
-                    {expanded === p.point_id ? (
+                    {expanded.has(p.point_id) ? (
                       <ChevronDown size={14} />
                     ) : (
                       <ChevronRight size={14} />
@@ -464,7 +484,7 @@ export default function RunPanel({
                   />
                 </td>
               </tr>
-              {expanded === p.point_id && (
+              {expanded.has(p.point_id) && (
                 <tr>
                   <td colSpan={3} className="p-0">
                     <CasePreview org={org} project={project} point={p} />
@@ -489,6 +509,26 @@ export default function RunPanel({
           action bar. Same trap as ui/modal.tsx, CommentModal and
           WorkItemDrawer. Rendering at <body> makes `fixed` mean the
           viewport again, so it stays put while the table scrolls. */}
+      {/* Sticky Close all for open previews, bottom LEFT - the selection
+          bar owns the right corner, so the two can show together without
+          covering each other. Portalled for the same AnimatedContent
+          reason as the bar below. */}
+      {expanded.size > 0 &&
+        createPortal(
+          <div className="fixed bottom-6 left-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
+            <Button
+              size="sm"
+              variant="outline"
+              className="rounded-full"
+              onClick={() => setExpanded(new Set())}
+            >
+              <X size={14} aria-hidden />
+              Close all ({expanded.size})
+            </Button>
+          </div>,
+          document.body,
+        )}
+
       {suite.data &&
         selected.size > 0 &&
         createPortal(

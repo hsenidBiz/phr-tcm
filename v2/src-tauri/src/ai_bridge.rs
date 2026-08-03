@@ -220,7 +220,7 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
             // simply not in the output, so silence here read as success
             // over a draft that had quietly got shorter.
             "import_warnings": import_warnings,
-            "note": "Hand this JSON to the developer as the file to import. The report explains what was reordered and why. Check import_warnings - a case listed there was NOT read and is not in this output.",
+            "note": "Hand this JSON to the developer as the file to import. Every case now carries spec_order and tester_order - keep both fields exactly as set; the app flips the queue between the two readings. The report explains what was reordered and why. Check import_warnings - a case listed there was NOT read and is not in this output.",
         })
         .to_string(),
     )
@@ -444,6 +444,9 @@ async fn validate_json(
     };
     let out = match parsed {
         Ok((cases, mut warnings)) => {
+            // Judgement calls, kept OUT of `warnings` so "fix every
+            // warning" stays followable as written.
+            let mut advisories: Vec<String> = Vec::new();
             // Text that a round trip through Azure DevOps will read as
             // markup and remove. `<cycleId>` and friends now survive, but a
             // spec quote naming a real element - "<div>", "<img>" - is
@@ -476,8 +479,15 @@ async fn validate_json(
 
                 // A negative folded into its positive is covered but not
                 // visible: nobody auditing by title can see it was tested.
+                //
+                // An ADVISORY, not a warning - round 3 feedback. The tool's
+                // own instruction is "fix every warning", and a judgement
+                // call that cannot be cleanly cleared devalues the channel
+                // it shares: authors learn to skim past all of it,
+                // including the import-blocking warnings that were always
+                // reliable.
                 if let Some(why) = crate::branchcheck::both_branches_reason(tc) {
-                    warnings.push(format!(
+                    advisories.push(format!(
                         "Test case {} ('{}') appears to cover both branches of a condition - {}. \
                          Consider splitting it into a positive and a negative, each with a title \
                          stating its own branch. If the transition IS the behaviour under test, \
@@ -513,11 +523,23 @@ async fn validate_json(
                     }
                 }
             }
-            serde_json::json!({
+            let mut doc = serde_json::json!({
                 "cases": cases.len(),
                 "warnings": warnings,
                 "error": serde_json::Value::Null,
-            })
+            });
+            // Only present when there are any, and self-describing: the
+            // register matters. A warning must be fixed; an advisory must
+            // be READ, decided, and the decision said out loud.
+            if !advisories.is_empty() {
+                doc["advisories"] = serde_json::json!(advisories);
+                doc["advisories_note"] = serde_json::json!(
+                    "Advisories are judgement calls, not defects: read each one, decide, and \
+                     tell the developer what you decided and why. They do not need to be \
+                     'fixed' the way warnings do."
+                );
+            }
+            doc
         }
         Err(e) => serde_json::json!({ "cases": 0, "warnings": [], "error": e }),
     };
@@ -769,6 +791,13 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         steps, trims expected results to the outcome, and reorders the cases so\n\
         the tester changes environment as few times as possible. Hand back the\n\
         JSON it returns.\n\
+        \n\
+        Write your draft IN SPEC ORDER - cases walking down the document, so a\n\
+        reviewer can scroll the spec and the file together. The optimizer then\n\
+        stamps every case with BOTH orders: `spec_order` (the order you wrote)\n\
+        and `tester_order` (its grouped run sequence). Keep those two fields\n\
+        exactly as it set them - do not renumber them by hand, and do not strip\n\
+        them; the app uses them to flip the queue between the two readings.\n\
         4. Call `validate_cases` and fix every warning. For a large draft,\n\
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\

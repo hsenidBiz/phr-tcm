@@ -15,7 +15,7 @@ pub mod comments;
 mod export;
 mod html;
 
-pub use export::{export_queue_to_json, queue_to_json_string};
+pub use export::{export_queue_to_json, merge_cases_into_draft, queue_to_json_string};
 pub use html::{export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx};
 
 use crate::model::{TestCase, MAX_TITLE_LEN, VALID_STATUSES};
@@ -288,10 +288,12 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             module_value,
             preconditions,
             update_id,
-            // The spreadsheet format carries neither of the app-only
-            // notes - both are JSON only.
+            // The spreadsheet format carries none of the app-only fields -
+            // the notes and both sort orders are JSON only.
             comment: String::new(),
             reviewer_notes: String::new(),
+            spec_order: None,
+            tester_order: None,
         });
     }
 
@@ -435,6 +437,25 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             .unwrap_or_default()
             .trim()
             .to_string();
+        // The two sort orders. Stamped by the optimizer, but hand-written
+        // values are read the same way - a junk value warns rather than
+        // silently vanishing, because a file that LOOKS ordered and is not
+        // would be sorted into nonsense with no explanation.
+        let mut read_order = |keys: &[&str]| -> Option<u32> {
+            let v = json_value(&raw_v, keys)?;
+            match v.as_u64().filter(|n| *n > 0 && *n <= u32::MAX as u64) {
+                Some(n) => Some(n as u32),
+                None => {
+                    warnings.push(format!(
+                        "{label} ('{title}'): '{}' must be a positive whole number - ignored.",
+                        keys[0]
+                    ));
+                    None
+                }
+            }
+        };
+        let spec_order = read_order(&["spec_order", "specOrder"]);
+        let tester_order = read_order(&["tester_order", "testerOrder"]);
 
         let raw_steps = match obj.get("steps") {
             None | Some(serde_json::Value::Null) => vec![],
@@ -509,6 +530,8 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             update_id,
             comment,
             reviewer_notes,
+            spec_order,
+            tester_order,
         });
     }
 

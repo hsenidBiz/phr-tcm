@@ -1,9 +1,10 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import type { TestCase } from "../bindings";
+import type { WatchedFile } from "../lib/fileSync";
 import QueueSection from "./QueueSection";
 
 afterEach(() => {
@@ -20,21 +21,47 @@ function makeCase(overrides: Partial<TestCase> = {}): TestCase {
     module_value: "",
     preconditions: "",
     update_id: null,
+    spec_order: null,
+    tester_order: null,
     ...overrides,
   };
 }
 
 /** Owns the queue state the way ManualEntry / ImportFile do. */
-function Harness({ initial }: { initial: TestCase[] }) {
+function Harness({
+  initial,
+  watches,
+  onWatchPatched,
+}: {
+  initial: TestCase[];
+  watches?: WatchedFile[];
+  onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
+}) {
   const [queue, setQueue] = useState<TestCase[]>(initial);
-  return <QueueSection org="acme" project="Web" pbiId={42} queue={queue} setQueue={setQueue} />;
+  return (
+    <QueueSection
+      org="acme"
+      project="Web"
+      pbiId={42}
+      queue={queue}
+      setQueue={setQueue}
+      watches={watches}
+      onWatchPatched={onWatchPatched}
+    />
+  );
 }
 
-function renderQueue(initial: TestCase[]) {
+function renderQueue(
+  initial: TestCase[],
+  extra?: {
+    watches?: WatchedFile[];
+    onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
+  },
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Harness initial={initial} />
+      <Harness initial={initial} watches={extra?.watches} onWatchPatched={extra?.onWatchPatched} />
     </QueryClientProvider>,
   );
 }
@@ -118,6 +145,201 @@ test("removing a row closes any open editor (indices shift)", async () => {
 
   expect(screen.queryByLabelText("Case title")).not.toBeInTheDocument();
   expect(screen.getByText("Second case")).toBeInTheDocument();
+});
+
+/// The upload takes minutes and the person watching it is exactly the
+/// person who wanders to another tab. The bar reads MODULE-scope phase, so
+/// a fresh mount shows a submit some other mount started - which is the
+/// whole reported bug: navigating away reset the bar to nothing.
+test("a fresh mount shows a submit already in flight", async () => {
+  const { submitStarted, submitProgressed, submitFinished } = await import("../lib/submitRun");
+  baseMocks();
+  submitStarted("acme", 42, 10);
+  submitProgressed(3, 10, "Login works");
+  try {
+    renderQueue([makeCase()]);
+    expect(await screen.findByText(/Processing 3\/10/)).toBeInTheDocument();
+  } finally {
+    submitFinished();
+  }
+});
+
+/// And a submit for a DIFFERENT scope stays invisible - PBI 7's progress
+/// must never render over PBI 42's queue.
+test("another PBI's submit does not show here", async () => {
+  const { submitStarted, submitFinished } = await import("../lib/submitRun");
+  baseMocks();
+  submitStarted("acme", 7, 5);
+  try {
+    renderQueue([makeCase()]);
+    await screen.findByText("Login works");
+    expect(screen.queryByText(/Processing/)).not.toBeInTheDocument();
+  } finally {
+    submitFinished();
+  }
+});
+
+/// Selecting rows arms the bulk bar; Remove writes the survivors back into
+/// the file the removed cases came from - the file must say what the queue
+/// says, or the next external save quietly reverts the removal.
+test("bulk remove updates the queue AND the owning .json file", async () => {
+  const a = makeCase({ title: "From file A" });
+  const b = makeCase({ title: "Also from file A" });
+  const hand = makeCase({ title: "Typed by hand" });
+  const saved: Array<{ path: string; titles: string[] }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") {
+      const p = args as { path: string; cases: TestCase[] };
+      saved.push({ path: p.path, titles: p.cases.map((c) => c.title) });
+      return "stamp-2";
+    }
+    return undefined;
+  });
+  const patched: Array<{ path: string; stamp?: string }> = [];
+  renderQueue([a, b, hand], {
+    watches: [{ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [a, b] }],
+    onWatchPatched: (path, fields) => patched.push({ path, stamp: fields.stamp }),
+  });
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select From file A" }));
+  fireEvent.click(screen.getByRole("button", { name: /Remove 1/ }));
+
+  // The queue lost the case; the file was rewritten WITHOUT it but keeps
+  // its other case; the watch fingerprint moved forward.
+  expect(screen.queryByText("From file A")).not.toBeInTheDocument();
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].path).toBe("C:/drafts/a.json");
+  expect(saved[0].titles).toEqual(["Also from file A"]);
+  await waitFor(() => expect(patched).toEqual([{ path: "C:/drafts/a.json", stamp: "stamp-2" }]));
+});
+
+/// The bulk edit dialog hands back one pure edit. The observable contract
+/// is the write-back: the owning file receives the selected case CHANGED
+/// and the unselected one exactly as it was.
+test("bulk edit applies to the selection and leaves unselected rows alone", async () => {
+  const picked = makeCase({ title: "Picked", automation_status: "Not Automated" });
+  const alone = makeCase({ title: "Left alone", automation_status: "Not Automated" });
+  const saved: Array<Record<string, string>> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") {
+      const p = args as { cases: TestCase[] };
+      for (const c of p.cases) saved.push({ title: c.title, status: c.automation_status });
+      return "stamp-2";
+    }
+    return undefined;
+  });
+  renderQueue([picked, alone], {
+    watches: [{ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [picked, alone] }],
+    onWatchPatched: () => {},
+  });
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Picked" }));
+  fireEvent.click(screen.getByRole("button", { name: /Bulk edit/ }));
+
+  expect(await screen.findByText(/Bulk edit 1 queued draft/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/Automation status/), {
+    target: { value: "Planned" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Apply to 1/ }));
+
+  await waitFor(() => expect(saved).toHaveLength(2));
+  expect(saved).toEqual([
+    { title: "Picked", status: "Planned" },
+    { title: "Left alone", status: "Not Automated" },
+  ]);
+});
+
+/// With a selection, Power Rename covers exactly the selected rows - and
+/// the rename reaches the owning file, because a renamed case whose file
+/// still holds the old title is reverted by the file's next save.
+test("power rename scoped to the selection writes the file back", async () => {
+  const a = makeCase({ title: "Old name" });
+  const b = makeCase({ title: "Untouched" });
+  const saved: Array<{ titles: string[] }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") {
+      const p = args as { cases: TestCase[] };
+      saved.push({ titles: p.cases.map((c) => c.title) });
+      return "stamp-2";
+    }
+    return undefined;
+  });
+  renderQueue([a, b], {
+    watches: [{ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [a, b] }],
+    onWatchPatched: () => {},
+  });
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select Old name" }));
+  // The bulk bar's rename button carries the count - proof of the scoping.
+  fireEvent.click(screen.getByRole("button", { name: /Power Rename 1/ }));
+  const dialog = await screen.findByText(/1 selected draft/);
+  expect(dialog).toBeInTheDocument();
+});
+
+/// An optimized file carries both readings; the queue can be laid out in
+/// either. The sort is real - the queue's order is the creation order.
+test("the queue flips between tester order and spec order", async () => {
+  baseMocks();
+  renderQueue([
+    makeCase({ title: "Walks the spec first", spec_order: 1, tester_order: 3 }),
+    makeCase({ title: "Runs first for the tester", spec_order: 3, tester_order: 1 }),
+    makeCase({ title: "Middle either way", spec_order: 2, tester_order: 2 }),
+  ]);
+
+  const TITLE = /Walks the spec first|Runs first for the tester|Middle either way/;
+  // The matcher can land on a row container whose text also carries the
+  // NEW badge and the steps count - extract just the title for comparing.
+  const titles = () => screen.getAllByText(TITLE).map((el) => el.textContent?.match(TITLE)?.[0]);
+
+  fireEvent.click(screen.getByRole("button", { name: "For testing" }));
+  expect(titles()).toEqual([
+    "Runs first for the tester",
+    "Middle either way",
+    "Walks the spec first",
+  ]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Down the spec" }));
+  expect(titles()).toEqual([
+    "Walks the spec first",
+    "Middle either way",
+    "Runs first for the tester",
+  ]);
+});
+
+/// A partial sort would interleave ordered cases with ones that have no
+/// opinion - which is neither reading. Cases typed by hand have no orders,
+/// so a mixed queue offers the buttons disabled, and an unordered queue
+/// not at all.
+test("the order buttons need every case to carry the field", async () => {
+  baseMocks();
+  const { unmount } = renderQueue([
+    makeCase({ title: "Stamped", spec_order: 1, tester_order: 1 }),
+    makeCase({ title: "Hand-typed" }),
+  ]);
+  expect(screen.getByRole("button", { name: "For testing" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Down the spec" })).toBeDisabled();
+  unmount();
+
+  renderQueue([makeCase(), makeCase({ title: "Also plain" })]);
+  expect(screen.queryByRole("button", { name: "For testing" })).not.toBeInTheDocument();
 });
 
 test("a case's in-app comment shows on the row and is editable in the editor", async () => {

@@ -360,6 +360,29 @@ pub fn save_draft_comment(
     crate::filewatch::write_watched(&watch_state(&app), &path, &patched)
 }
 
+/// Replace a draft file's test cases with the given list - the write-back
+/// behind bulk edits on the queue, so the file a case came from says what
+/// the queue says. Everything ELSE in the file survives: the top-level
+/// general comments, and any key this app does not know about, stay
+/// exactly as written. Returns the file's new fingerprint so the caller
+/// can move its watch snapshot forward - the watcher stays silent about
+/// our own write, so nothing else would.
+#[tauri::command]
+#[specta::specta]
+pub fn save_draft_cases(
+    app: tauri::AppHandle,
+    path: String,
+    cases: Vec<model::TestCase>,
+) -> Result<String, String> {
+    // Same guard as the comment writers: a bulk edit and a comment box
+    // autosave can reach the same file, and read-patch-write from both at
+    // once loses one of them silently.
+    let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    let old = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
+    let out = import_parser::merge_cases_into_draft(&old, &cases)?;
+    crate::filewatch::write_watched(&watch_state(&app), &path, &out)
+}
+
 /// Render the queue's HTML report to a temp file and open it in the
 /// default browser - v1's "View" behaviour, no save dialog. Cases with a
 /// work item id get a comment box that autosaves back into the app via
@@ -396,7 +419,9 @@ pub fn view_queue_html(
         note_ctx.as_ref().map(import_parser::CommentCtx::Ado),
         &palette,
     )?;
-    // And tell a page already open on these cases that it is behind.
+    // And tell a page already open on these cases that it is behind - and
+    // where to pull the fresh content from.
+    crate::note_server::set_report_path(crate::note_server::REPORT_QUEUE, &path_str);
     crate::note_server::bump_revision(crate::note_server::REPORT_QUEUE);
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
@@ -418,15 +443,46 @@ pub fn view_draft_html(
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
+    let path_str = render_draft_html(&app, queue, subtitle, owners, files, palette)?;
+    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Re-render the draft page WITHOUT opening a browser. This is what the
+/// background keep-in-step refresh calls: it used to share `view_draft_html`
+/// with the button, and the `open_path` at the end of that meant every
+/// comment save and every queue change opened ANOTHER tab on the same file.
+/// A page already open learns about the rewrite from its revision poll and
+/// pulls the new content itself; nothing here should touch the browser.
+#[tauri::command]
+#[specta::specta]
+pub fn refresh_draft_html(
+    app: tauri::AppHandle,
+    queue: Vec<model::TestCase>,
+    subtitle: String,
+    owners: Vec<String>,
+    files: Vec<import_parser::DraftFile>,
+    palette: crate::webtheme::PagePalette,
+) -> Result<(), String> {
+    render_draft_html(&app, queue, subtitle, owners, files, palette).map(|_| ())
+}
+
+fn render_draft_html(
+    app: &tauri::AppHandle,
+    queue: Vec<model::TestCase>,
+    subtitle: String,
+    owners: Vec<String>,
+    files: Vec<import_parser::DraftFile>,
+    palette: crate::webtheme::PagePalette,
+) -> Result<String, String> {
     // Stable per run, deliberately: the name used to carry `queue.len()`,
     // so re-exporting after an edit that changed the count wrote a DIFFERENT
     // file and the tab the developer already had open never saw it. One name
     // per process means a re-export lands on the page they are looking at,
-    // which is what makes the refresh offer mean anything.
+    // which is what makes the live update land on the right document.
     let path = std::env::temp_dir()
         .join(format!("test-cases-draft-{}.html", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
-    let ctx = ensure_note_server(&app).map(|port| import_parser::DraftNoteCtx {
+    let ctx = ensure_note_server(app).map(|port| import_parser::DraftNoteCtx {
         port,
         token: note_token().to_string(),
         owners,
@@ -439,9 +495,12 @@ pub fn view_draft_html(
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
         &palette,
     )?;
-    // Tell a draft page already open that what it is showing is now behind.
+    // Where an open page can pull the fresh content from, and the signal
+    // that it should: the poll sees the revision move, fetches /report,
+    // and swaps itself in place.
+    crate::note_server::set_report_path(crate::note_server::REPORT_DRAFT, &path_str);
     crate::note_server::bump_revision(crate::note_server::REPORT_DRAFT);
-    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
+    Ok(path_str)
 }
 
 /// Serial creation loop ported from v1 CreationWorker: one item at a time,

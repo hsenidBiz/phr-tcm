@@ -5,7 +5,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type DbServerConfig } from "../bindings";
 import { copyText } from "../lib/clipboard";
+import { buildConnString, EMPTY_FIELDS, isRepresentable, parseConnString, type ConnFields } from "../lib/connString";
 import { Button } from "../components/ui/button";
+import { Checkbox } from "../components/ui/checkbox";
 import { Switch } from "../components/ui/switch";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
@@ -85,6 +87,21 @@ export default function AiBridge() {
     setDb(next);
     saveDbConfig(next);
   };
+
+  // The connection-string FIELDS are a view over the stored string: parsed
+  // out on every render, rebuilt on every keystroke. No second copy of the
+  // secret, and a string saved before this form existed appears already
+  // filled in. The raw editor opens automatically for a string the fields
+  // cannot faithfully represent, so it is never silently rewritten.
+  // An EMPTY config starts from the defaults (trust the certificate - the
+  // company DB's is self-signed); an existing string is read as written,
+  // where an absent flag genuinely means off.
+  const conn = db.connection_string.trim()
+    ? parseConnString(db.connection_string)
+    : { ...EMPTY_FIELDS };
+  const editConn = (patch: Partial<ConnFields>) =>
+    editDb({ connection_string: buildConnString({ ...conn, ...patch }) });
+  const [rawConn, setRawConn] = useState(() => !isRepresentable(db.connection_string));
 
   const registerDb = useMutation({
     mutationFn: (id: string) => unwrapStr(commands.registerDbServer(id, db)),
@@ -363,19 +380,104 @@ export default function AiBridge() {
             </Select>
           </label>
 
-          <label className="block text-xs text-muted">
-            CONNECTION_STRING
-            <Input
-              aria-label="Connection string"
-              // Masked on screen; it still travels into each tool's MCP
-              // config, which is how MCP passes environment to a server.
-              type="password"
-              className="id-mono mt-1 w-full py-1.5 text-xs"
-              placeholder="Server=host,1433;Database=…;User Id=…;Password=…;TrustServerCertificate=True;"
-              value={db.connection_string}
-              onChange={(e) => editDb({ connection_string: e.target.value })}
-            />
-          </label>
+          {/* CONNECTION_STRING, built from fields rather than typed whole.
+              The stored value is still the single string the MCP server
+              receives - these inputs are a view over it, parsed out on
+              every render and rebuilt on every keystroke, so a string
+              saved before this form existed appears already filled in.
+              The raw editor stays available for a string the fields
+              cannot faithfully represent - which is also the mode the
+              form OPENS in for such a string, so it is never silently
+              rewritten into something simpler. */}
+          <div className="space-y-2 rounded-md border border-border/60 p-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted">CONNECTION_STRING</span>
+              <label className="flex items-center gap-1.5 text-[11px] text-faint">
+                <Checkbox
+                  ariaLabel="Edit connection string as text"
+                  checked={rawConn}
+                  onCheckedChange={setRawConn}
+                />
+                Edit as one string
+              </label>
+            </div>
+            {rawConn ? (
+              <Input
+                aria-label="Connection string"
+                // Masked on screen; it still travels into each tool's MCP
+                // config, which is how MCP passes environment to a server.
+                type="password"
+                className="id-mono w-full py-1.5 text-xs"
+                placeholder="Server=host,1433;Database=…;User Id=…;Password=…;TrustServerCertificate=True;"
+                value={db.connection_string}
+                onChange={(e) => editDb({ connection_string: e.target.value })}
+              />
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <label className="min-w-0 flex-1 text-xs text-muted">
+                    Server host
+                    <Input
+                      aria-label="Database host"
+                      className="mt-1 w-full py-1.5 text-xs"
+                      placeholder="phrx-db.internal"
+                      value={conn.host}
+                      onChange={(e) => editConn({ host: e.target.value })}
+                    />
+                  </label>
+                  <label className="w-20 text-xs text-muted">
+                    Port
+                    <Input
+                      aria-label="Database port"
+                      className="mt-1 w-full py-1.5 text-xs"
+                      placeholder="1433"
+                      value={conn.port}
+                      onChange={(e) => editConn({ port: e.target.value })}
+                    />
+                  </label>
+                </div>
+                <label className="block text-xs text-muted">
+                  Database
+                  <Input
+                    aria-label="Database name"
+                    className="mt-1 w-full py-1.5 text-xs"
+                    value={conn.database}
+                    onChange={(e) => editConn({ database: e.target.value })}
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <label className="min-w-0 flex-1 text-xs text-muted">
+                    User
+                    <Input
+                      aria-label="Database user"
+                      className="mt-1 w-full py-1.5 text-xs"
+                      value={conn.user}
+                      onChange={(e) => editConn({ user: e.target.value })}
+                    />
+                  </label>
+                  <label className="min-w-0 flex-1 text-xs text-muted">
+                    Password
+                    <Input
+                      aria-label="Database password"
+                      type="password"
+                      className="mt-1 w-full py-1.5 text-xs"
+                      value={conn.password}
+                      onChange={(e) => editConn({ password: e.target.value })}
+                    />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  <Checkbox
+                    ariaLabel="Trust the server certificate"
+                    checked={conn.trustCert}
+                    onCheckedChange={(v) => editConn({ trustCert: v })}
+                  />
+                  Trust the server certificate
+                  <span className="text-faint">(company DB uses a self-signed one)</span>
+                </label>
+              </>
+            )}
+          </div>
 
           <label className="block text-xs text-muted">
             SCHEMA_FILTER <span className="text-faint">(optional)</span>

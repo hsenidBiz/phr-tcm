@@ -762,33 +762,58 @@ pub fn optimize_with(
         cleaned.push(c);
     }
 
-    // 3. Group by setup, then chain the groups nearest-neighbour - unless
-    //    the caller wants the order it gave us kept.
+    // 3. BOTH orders are recorded on every case, whatever the caller asked
+    //    the array to be: spec_order is the order the draft was written in
+    //    (the reading that walks down the specification), tester_order is
+    //    the grouped sequence computed below. `reorder` only decides which
+    //    of the two the returned ARRAY follows - it no longer costs the
+    //    other one, which used to be simply destroyed.
+    for (i, c) in cleaned.iter_mut().enumerate() {
+        c.spec_order = Some(i as u32 + 1);
+    }
+    let (sequence, groups) = tester_sequence(&cleaned);
+    for (rank, &i) in sequence.iter().enumerate() {
+        cleaned[i].tester_order = Some(rank as u32 + 1);
+    }
+
     if !reorder {
         report.switches_after = count_switches(&cleaned);
         return (cleaned, report);
     }
-    let mut groups: Vec<(String, Vec<TestCase>)> = vec![];
-    for c in cleaned {
-        let key = setup_key(&c);
+    report.groups = groups;
+    let mut slots: Vec<Option<TestCase>> = cleaned.into_iter().map(Some).collect();
+    let ordered: Vec<TestCase> = sequence.iter().map(|&i| slots[i].take().expect("sequence is a permutation")).collect();
+
+    report.switches_after = count_switches(&ordered);
+    (ordered, report)
+}
+
+/// The tester's sequence over `cases`, as indices: grouped by setup, groups
+/// chained nearest-neighbour, biggest group first. Pure - the caller
+/// decides whether to reorder the array by it or only to record it.
+fn tester_sequence(cases: &[TestCase]) -> (Vec<usize>, Vec<GroupSummary>) {
+    let mut groups: Vec<(String, Vec<usize>)> = vec![];
+    for (i, c) in cases.iter().enumerate() {
+        let key = setup_key(c);
         match groups.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, list)) => list.push(c),
-            None => groups.push((key, vec![c])),
+            Some((_, list)) => list.push(i),
+            None => groups.push((key, vec![i])),
         }
     }
     // Start with the biggest group: the longest uninterrupted run.
     groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
 
-    let mut ordered: Vec<TestCase> = vec![];
+    let mut sequence: Vec<usize> = vec![];
+    let mut summaries: Vec<GroupSummary> = vec![];
     if !groups.is_empty() {
         let mut remaining = groups;
         let mut current = remaining.remove(0);
         loop {
-            report.groups.push(GroupSummary {
-                setup: current.1.first().map(setup_label).unwrap_or_default(),
+            summaries.push(GroupSummary {
+                setup: current.1.first().map(|&i| setup_label(&cases[i])).unwrap_or_default(),
                 cases: current.1.len(),
             });
-            ordered.extend(current.1);
+            sequence.extend(current.1);
             if remaining.is_empty() {
                 break;
             }
@@ -805,7 +830,5 @@ pub fn optimize_with(
             current = remaining.remove(best);
         }
     }
-
-    report.switches_after = count_switches(&ordered);
-    (ordered, report)
+    (sequence, summaries)
 }

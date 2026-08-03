@@ -108,22 +108,30 @@ export default function TagField({
             setOpen(true);
             setActive(0);
           }}
-          onFocus={() => setOpen(true)}
+          // Deliberately NO onFocus opener: tabbing through the form must
+          // not detonate a dropdown on the way past (the Module combobox
+          // is the reference behavior - its trigger opens on click/keys
+          // only). The list opens by clicking, typing, or ArrowDown.
           onKeyDown={(e) => {
             const rows = options.length + (showCreate ? 1 : 0);
             if (e.key === "ArrowDown") {
               e.preventDefault();
-              setActive((a) => Math.min(a + 1, rows - 1));
+              if (!open) setOpen(true);
+              else setActive((a) => Math.min(a + 1, rows - 1));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setActive((a) => Math.max(a - 1, 0));
             } else if (e.key === "Enter") {
               e.preventDefault();
+              if (!open) return;
               if (active < options.length) addTag(options[active]);
               else if (showCreate) addTag(query.trim());
             } else if (e.key === "Backspace" && !query && tags.length) {
               removeTag(tags[tags.length - 1]);
-            } else if (e.key === "Escape") {
+            } else if (e.key === "Escape" && open) {
+              // Ours to swallow only while the list is showing: an Escape
+              // on a closed field belongs to whatever dialog contains it.
+              e.stopPropagation();
               setOpen(false);
             }
           }}

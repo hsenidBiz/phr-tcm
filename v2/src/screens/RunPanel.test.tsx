@@ -160,79 +160,84 @@ test("row clicks select cases for a targeted runner session", async () => {
   expect(screen.queryByRole("button", { name: /Run 1 in runner/ })).not.toBeInTheDocument();
 });
 
-/// The normal rhythm after a fix lands: re-test just what failed. The
-/// button hands the runner exactly the failed cases, so nobody re-selects
-/// them by hand from memory of the last run.
-test("re-run failures hands the runner exactly the failed cases", async () => {
+/// Re-testing after a fix goes filter -> select -> run, on purpose: the
+/// dedicated re-run button lasted one release before it came out again.
+/// One path into a selective run is easier to trust than two, so this
+/// pins that the path actually works for the failure case.
+test("filtering by Failed and selecting the rows starts a failures-only run", async () => {
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
+  expect(screen.queryByRole("button", { name: /Re-run/ })).not.toBeInTheDocument();
 
-  // One failed point in the fixture (case 201); "Invalid login" was never
-  // run, and never-run is not failed.
-  fireEvent.click(screen.getByRole("button", { name: /Re-run 1 failure$/ }));
+  // Filter to failures: the never-run case leaves the table.
+  fireEvent.change(screen.getByLabelText("Filter by last outcome"), {
+    target: { value: "failed" },
+  });
+  expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
 
-  // openRunnerWindow persists the session before it opens the window - the
-  // handoff IS the localStorage write, so that is what proves the restriction.
+  // Select what's left and run it.
+  fireEvent.click(screen.getByText("Valid login"));
+  fireEvent.click(screen.getByRole("button", { name: /Run 1 in runner/ }));
   const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
   expect(session.caseIds).toEqual([201]);
   expect(session.planId).toBe(9);
 });
 
-/// A case holds one point per configuration, so two failed configs of the
-/// same case are still ONE case to re-run - and the runner takes case ids.
-test("re-run failures counts cases, not points", async () => {
-  mockIPC((cmd) => {
-    switch (cmd) {
-      case "plugin:event|listen":
-        return 1;
-      case "plugin:event|unlisten":
-        return null;
-      case "run_history":
-        return [];
-      case "ensure_pbi_suite":
-        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
-      case "list_test_points":
-        return [
-          {
-            point_id: 7,
-            test_case_id: 201,
-            test_case_name: "Valid login",
-            config_name: "Windows 10",
-            tester: "",
-            last_outcome: "failed",
-            last_run_id: 3,
-            last_result_id: 30,
-          },
-          {
-            point_id: 9,
-            test_case_id: 201,
-            test_case_name: "Valid login",
-            config_name: "Windows 11",
-            tester: "",
-            last_outcome: "failed",
-            last_run_id: 3,
-            last_result_id: 31,
-          },
-          {
-            point_id: 10,
-            test_case_id: 205,
-            test_case_name: "Session timeout",
-            config_name: "Windows 10",
-            tester: "",
-            last_outcome: "passed",
-            last_run_id: 3,
-            last_result_id: 32,
-          },
-        ];
-    }
-  });
+/** Folding a group hides the highlight along with the rows, so the heading
+ * has to say that something is still selected in there - the same marker
+ * View Test Cases and Update Test Cases carry. */
+test("a collapsed group marks that it still holds selected cases", async () => {
+  mockAll();
   renderPanel();
-  await screen.findByText("Session timeout");
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText(/Group by title/i) ?? screen.getByText("Group by title"));
 
-  fireEvent.click(screen.getByRole("button", { name: /Re-run 1 failure$/ }));
-  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
-  expect(session.caseIds).toEqual([201]);
+  // Expanded and unselected: nothing to announce.
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  // Select one case, still expanded: the highlighted row itself is the
+  // indicator, so the heading stays quiet.
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  // Collapse the group: the rows and their highlight vanish, the dot
+  // takes over.
+  fireEvent.click(screen.getByLabelText(/Collapse group/));
+  const dot = screen.getByRole("status");
+  expect(dot.getAttribute("aria-label")).toMatch(/1 of 2 selected/);
+
+  // Clearing the selection retires the marker while still collapsed.
+  fireEvent.click(screen.getByRole("button", { name: /\(2\)/ }));
+  fireEvent.click(screen.getByRole("button", { name: /\(2\)/ }));
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+/** Same model as View Test Cases: previews are plural, an open one
+ * survives its group being collapsed, and the sticky Close all clears
+ * the lot. */
+test("open previews survive a group collapse until Close all", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByText("Group by title"));
+
+  expect(screen.queryByRole("button", { name: /Close all/ })).not.toBeInTheDocument();
+
+  // Open both previews at once.
+  fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
+  fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
+  expect(screen.getByRole("button", { name: /Close all \(2\)/ })).toBeInTheDocument();
+
+  // Collapse the group: both held-open rows stay on screen.
+  fireEvent.click(screen.getByLabelText(/Collapse group/));
+  expect(screen.getByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Invalid login")).toBeInTheDocument();
+
+  // Close all folds the group completely and the button retires.
+  fireEvent.click(screen.getByRole("button", { name: /Close all \(2\)/ }));
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Close all/ })).not.toBeInTheDocument();
 });
 
 test("shift+click selects the whole range between two rows", async () => {

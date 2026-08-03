@@ -28,11 +28,13 @@
 use crate::model::TestCase;
 
 /// Words that carry no subject matter, so two sentences sharing only these
-/// are not talking about the same thing.
-const STOPWORDS: [&str; 24] = [
+/// are not talking about the same thing. "step"/"steps" joined the list in
+/// round 3: every case in a wizard-shaped set says "the Goals step", so the
+/// word pairs a navigation preamble with whatever assertion follows it.
+const STOPWORDS: [&str; 26] = [
     "the", "and", "are", "with", "that", "this", "from", "have", "been", "will", "when", "then",
     "shown", "displayed", "rendered", "visible", "appears", "section", "value", "field", "page",
-    "user", "there", "which",
+    "user", "there", "which", "step", "steps",
 ];
 
 /// Steps at the very start are setup, not a mid-run environment change.
@@ -92,6 +94,44 @@ fn overlap(a: &[String], b: &[String]) -> usize {
     a.iter().filter(|w| b.contains(w)).count()
 }
 
+/// Adjacent content-word pairs - the cheap stand-in for a noun phrase.
+fn bigrams(words: &[String]) -> Vec<(&str, &str)> {
+    words.windows(2).map(|w| (w[0].as_str(), w[1].as_str())).collect()
+}
+
+/// Whether two expectations are about the SAME THING, not merely wordy in
+/// the same register. Round 3 measured the old 2-shared-words rule at 15
+/// warnings on a clean 63-case set, 0 actionable: absence of one element
+/// was being paired with presence of a DIFFERENT element because both
+/// mentioned the row they live in. Sharing a two-word phrase ("revision
+/// tag" with "revision tag") - or three content words, for a reworded
+/// phrase - is what "the same thing" looks like in step prose.
+fn same_subject(a: &[String], b: &[String]) -> bool {
+    let pairs = bigrams(a);
+    bigrams(b).iter().any(|p| pairs.contains(p)) || overlap(a, b) >= 3
+}
+
+/// An arrival line - "The Assessment Wizard opens on the Goals step" - is
+/// the navigation preamble reporting where the case now stands, not an
+/// assertion a negative can contradict. Every case in a set carries one,
+/// so pairing against it flags a large fraction of any well-formed set.
+fn arrival(text: &str) -> bool {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w == "opens")
+}
+
+/// A title that already names its branch - "... Is Not Offered ...",
+/// "... Without ...", "... Hidden ..." - is an author declaring this the
+/// single negative case, usually because it was ALREADY split. Warning it
+/// to split again is backwards.
+fn title_declares_branch(title: &str) -> bool {
+    let t = format!(" {} ", title.to_lowercase());
+    [" not ", " no ", " never ", " without ", " hidden ", " cannot "]
+        .iter()
+        .any(|m| t.contains(m))
+}
+
 /// Why a case looks like it holds both branches, or `None` when it does not.
 ///
 /// Returns the reason so the warning can name the evidence - a bare
@@ -108,7 +148,13 @@ pub fn both_branches_reason(c: &TestCase) -> Option<String> {
         }
     }
 
-    // Signal 2: one expectation asserts a thing and another denies it.
+    // Signal 2: one expectation asserts a thing and another denies THE SAME
+    // thing. Skipped wholesale for a title that already declares its branch
+    // - that author has split, and this warning would ask them to split the
+    // split.
+    if title_declares_branch(&c.title) {
+        return None;
+    }
     let expectations: Vec<(usize, &str)> = c
         .steps
         .iter()
@@ -125,10 +171,10 @@ pub fn both_branches_reason(c: &TestCase) -> Option<String> {
             continue;
         }
         for (j, pos) in &expectations {
-            if i == j || negated(pos) {
+            if i == j || negated(pos) || arrival(pos) {
                 continue;
             }
-            if overlap(&neg_words, &topic_words(pos)) >= 2 {
+            if same_subject(&neg_words, &topic_words(pos)) {
                 return Some(format!(
                     "step {} expects something that step {} expects the absence of",
                     j + 1,
@@ -216,5 +262,99 @@ mod tests {
             ("Clear the required field.", "The Submit button is disabled."),
         ]);
         assert_eq!(both_branches_reason(&disabled_control), None);
+    }
+
+    /// Round 3's three worked false positives, pinned verbatim. The old
+    /// rule paired an absence with the presence of a DIFFERENT element
+    /// because both mentioned the row they live in: 15 warnings on a
+    /// clean 63-case set, 0 actionable.
+    #[test]
+    fn absence_of_one_element_next_to_presence_of_others_is_not_a_merge() {
+        let c = case(&[
+            ("Sign in as the manager.", "The dashboard is shown."),
+            ("Open the assessment.", "The wizard is shown."),
+            (
+                "Expand the goal row.",
+                "The row expands and no Actions & Measures section is rendered inside it.",
+            ),
+            (
+                "Read the expanded row.",
+                "The description, target date and KPI details are shown as normal.",
+            ),
+        ]);
+        assert_eq!(both_branches_reason(&c), None);
+    }
+
+    /// One claim stated from both sides for clarity is one claim.
+    /// Splitting it would produce two cases neither of which asserts it.
+    #[test]
+    fn a_single_assertion_phrased_as_a_contrast_is_not_a_merge() {
+        let c = case(&[
+            ("Sign in.", "The dashboard is shown."),
+            ("Open the objectives group.", "The group is shown."),
+            ("Read the objective row.", "A rating and comment control is offered once per objective."),
+            (
+                "Expand the key results.",
+                "The key results carry no rating controls of their own - rating is captured at \
+                 the objective level only.",
+            ),
+        ]);
+        assert_eq!(both_branches_reason(&c), None);
+    }
+
+    /// The navigation preamble every case carries must not pair with the
+    /// first real assertion after it - that flags a large fraction of any
+    /// well-formed set.
+    #[test]
+    fn the_navigation_preamble_is_not_the_positive_branch() {
+        let c = case(&[
+            ("Sign in as the manager.", "The dashboard is shown."),
+            ("Open the assessment for the stage.", "The assessment list is shown."),
+            (
+                "Click the Goals stage.",
+                "The Assessment Wizard opens on the Goals step for that stage.",
+            ),
+            (
+                "Leave one goal unrated and click Continue.",
+                "Continue is blocked and the Goals step indicator is not green.",
+            ),
+        ]);
+        assert_eq!(both_branches_reason(&c), None);
+    }
+
+    /// A title that already names its branch is an author who has ALREADY
+    /// split - warning them to split again is backwards.
+    #[test]
+    fn a_title_declaring_its_branch_is_never_asked_to_split_again() {
+        let c = TestCase {
+            title: "Delete Is Not Offered to the Employee on an Attachment Uploaded by the Manager"
+                .into(),
+            steps: [
+                ("Sign in as the employee.", "The dashboard is shown."),
+                ("Open the attachments list.", "The manager's file and the employee's own file are both listed."),
+                ("Read the manager's file row.", "No Delete control is shown on the manager's file."),
+                ("Read the employee's own file row.", "A Delete control is shown on the employee's own file."),
+            ]
+            .iter()
+            .map(|(a, e)| Step { action: (*a).into(), expected: (*e).into() })
+            .collect(),
+            automation_status: "Not Automated".into(),
+            ..Default::default()
+        };
+        // Deliberately checks both files in one list - co-location is what
+        // catches Delete being rendered per-section rather than per-row.
+        assert_eq!(both_branches_reason(&c), None);
+    }
+
+    /// And the tightening must not have killed the real catch: the same
+    /// element asserted present and absent, under a neutral title.
+    #[test]
+    fn the_same_element_present_and_absent_is_still_flagged() {
+        let c = case(&[
+            ("Sign in.", "The dashboard is shown."),
+            ("Open the wizard on a content step.", "The Reject button is shown in the footer."),
+            ("Move to the goal-planning step.", "The Reject button is not shown in the footer."),
+        ]);
+        assert!(both_branches_reason(&c).is_some());
     }
 }

@@ -53,6 +53,70 @@ test("the native title is suppressed while hovered and restored after", async ()
   expect(btn).not.toHaveAttribute("data-tip-text");
 });
 
+/** The collapse/expand class of bug: a control whose label toggles on its
+ * own click re-renders under a still-hovered pointer, and React writes the
+ * NEW title onto the element the layer had parked. The pointer never
+ * moves, so no event fires - and with a title back on a hovered element,
+ * the OS draws its own bubble a second later. The layer must notice the
+ * title returning and take it over again, without a single pointer event. */
+test("a label that toggles on click stays suppressed under a still pointer", async () => {
+  function Toggler() {
+    const [collapsed, setCollapsed] = useState(false);
+    return (
+      <button
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        T
+      </button>
+    );
+  }
+  withLayer(<Toggler />);
+  const btn = screen.getByRole("button");
+
+  hover(btn);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Collapse sidebar");
+
+  // The click: our bubble is dismissed, React writes the new label.
+  fireEvent.pointerDown(btn, { bubbles: true });
+  fireEvent.click(btn);
+
+  // NO pointer movement follows. The fresh title must be re-parked, not
+  // left sitting on the hovered element for the OS bubble to find.
+  await waitFor(() => expect(btn).not.toHaveAttribute("title"));
+  expect(btn).toHaveAttribute("data-tip-text", "Expand sidebar");
+
+  // And leaving hands back the CURRENT label, not the stale one.
+  leave(btn);
+  await waitFor(() => expect(btn).toHaveAttribute("title", "Expand sidebar"));
+});
+
+/** Keyboard flavor of the same bug: a focus-opened bubble stays open
+ * through an Enter press, so its text has to follow the label. */
+test("a focus-opened tooltip's text follows the label through a toggle", async () => {
+  function Toggler() {
+    const [on, setOn] = useState(false);
+    return (
+      <button title={on ? "Hide notes" : "Show notes"} onClick={() => setOn((o) => !o)}>
+        T
+      </button>
+    );
+  }
+  withLayer(<Toggler />);
+  const btn = screen.getByRole("button");
+  // jsdom's focus() does not set :focus-visible; simulate a keyboard focus
+  // by dispatching focusin after matching is stubbed via keyboard Tab.
+  btn.focus();
+  Object.defineProperty(btn, "matches", { value: (s: string) => s === ":focus-visible" });
+  fireEvent.focusIn(btn);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Show notes");
+
+  fireEvent.click(btn);
+  await waitFor(() =>
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Hide notes"),
+  );
+});
+
 /** The reason this is delegated rather than a wrapper: a wrapper element
  * inside the sidebar's flex rail stopped the collapsed rail resolving its
  * width. Nothing may be added around the trigger. */

@@ -258,6 +258,8 @@ fn sample_tc() -> v2_lib::model::TestCase {
         update_id: None,
         comment: String::new(),
         reviewer_notes: String::new(),
+        spec_order: None,
+        tester_order: None,
     }
 }
 

@@ -127,10 +127,24 @@ async fn validate_warns_about_markup_and_merged_branches() {
         all.contains("Quote a spec element") && all.contains("HTML tag name"),
         "expected a markup warning, got: {all}"
     );
-    // The merged positive/negative.
+    // The merged positive/negative - an ADVISORY, not a warning, since
+    // round 3: "fix every warning" must stay followable as written, and a
+    // judgement call in that channel devalues the warnings that are not.
+    assert!(!all.contains("both branches"), "the split suggestion must not be a warning: {all}");
+    let advisories = v["advisories"]
+        .as_array()
+        .expect("advisories key present when the branch check fires")
+        .iter()
+        .map(|w| w.as_str().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(" | ");
     assert!(
-        all.contains("Actions and Measures visibility") && all.contains("both branches"),
-        "expected a merged-branch warning, got: {all}"
+        advisories.contains("Actions and Measures visibility") && advisories.contains("both branches"),
+        "expected a merged-branch advisory, got: {advisories}"
+    );
+    assert!(
+        v["advisories_note"].as_str().unwrap_or_default().contains("judgement"),
+        "{body}"
     );
     // And the ordinary case stays quiet - <cycleId> survives now, so
     // warning about it would be noise.
@@ -138,6 +152,28 @@ async fn validate_warns_about_markup_and_merged_branches() {
         !all.contains("A plain case with a placeholder"),
         "a safe placeholder must not warn: {all}"
     );
+}
+
+/// A clean draft gets no advisories KEY at all - an empty list would read
+/// as "the check ran and might have said something", and the shape of a
+/// clean response should not change because a new check exists.
+#[tokio::test]
+async fn a_clean_draft_carries_no_advisories_key() {
+    let draft = serde_json::json!({
+        "test_cases": [{
+            "title": "Submit saves the form",
+            "automation_status": "Not Automated",
+            "steps": [
+                { "action": "Sign in.", "expected": "The dashboard is shown." },
+                { "action": "Click Submit.", "expected": "A confirmation is shown." }
+            ]
+        }]
+    })
+    .to_string();
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.18.12").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("advisories").is_none(), "{body}");
 }
 #[tokio::test]
 async fn guide_carries_format_rules_and_live_modules() {

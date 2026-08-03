@@ -148,6 +148,8 @@ fn json_export_round_trips_through_the_importer() {
             update_id: Some(77),
             comment: "Flaky on Fridays - re-check with QA".into(),
             reviewer_notes: "## Source\n\nSpec **3.2**, AC-4. Out of scope: SSO.".into(),
+            spec_order: None,
+            tester_order: None,
         },
         TestCase {
             title: "New one".into(),
@@ -201,6 +203,172 @@ fn json_export_round_trips_through_the_importer() {
     assert_eq!(doc["test_cases"][0]["id"], serde_json::json!(77));
 }
 
+/// The two sort orders ride the JSON like the notes do: written when
+/// present, absent when not, read back exactly - and a junk value warns
+/// instead of silently vanishing, because a file that LOOKS ordered and is
+/// not would be sorted into nonsense with no explanation.
+#[test]
+fn sort_orders_round_trip_and_junk_values_warn() {
+    let queue = vec![
+        TestCase {
+            title: "Ordered".into(),
+            steps: vec![Step { action: "Do".into(), expected: String::new() }],
+            automation_status: "Not Automated".into(),
+            spec_order: Some(2),
+            tester_order: Some(1),
+            ..Default::default()
+        },
+        TestCase {
+            title: "Unordered".into(),
+            steps: vec![Step { action: "Go".into(), expected: String::new() }],
+            automation_status: "Not Automated".into(),
+            ..Default::default()
+        },
+    ];
+    let path = tmp_path("orders.json");
+    export_queue_to_json(&queue, &path).unwrap();
+
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(doc["test_cases"][0]["spec_order"], serde_json::json!(2));
+    assert_eq!(doc["test_cases"][0]["tester_order"], serde_json::json!(1));
+    // Absent, not null: same shape rule as the notes and `id`.
+    assert!(doc["test_cases"][1].get("spec_order").is_none());
+    assert!(doc["test_cases"][1].get("tester_order").is_none());
+
+    let (cases, warnings) = parse_file(&path).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(cases[0].spec_order, Some(2));
+    assert_eq!(cases[0].tester_order, Some(1));
+    assert_eq!(cases[1].spec_order, None);
+
+    // Junk: a string, a zero, a negative - each is refused with a warning,
+    // never read as an order.
+    let junk = serde_json::json!({ "test_cases": [
+        { "title": "A", "automation_status": "Not Automated",
+          "steps": [{ "action": "x" }], "spec_order": "first", "tester_order": 0 },
+    ]})
+    .to_string();
+    let path2 = tmp_path("orders-junk.json");
+    std::fs::write(&path2, junk).unwrap();
+    let (cases, warnings) = parse_file(&path2).unwrap();
+    assert_eq!(cases[0].spec_order, None);
+    assert_eq!(cases[0].tester_order, None);
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(warnings[0].contains("spec_order"), "{warnings:?}");
+}
+
+/// The browser view says what importing each case will DO - the same
+/// UPDATE/NEW distinction the queue rows carry. Draft pages only: cases
+/// already living in Azure DevOps are neither.
+#[test]
+fn the_draft_page_badges_each_case_new_or_update() {
+    let queue = vec![
+        TestCase {
+            title: "Creates fresh".into(),
+            steps: vec![Step { action: "x".into(), expected: String::new() }],
+            automation_status: "Not Automated".into(),
+            ..Default::default()
+        },
+        TestCase {
+            title: "Writes over 77".into(),
+            steps: vec![Step { action: "x".into(), expected: String::new() }],
+            automation_status: "Not Automated".into(),
+            update_id: Some(77),
+            ..Default::default()
+        },
+    ];
+    let path = tmp_path("op-badges.html");
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default())
+        .unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("op-new"), "a case without an id creates: {html}");
+    assert!(html.contains("op-update"), "a case with an id updates");
+    // The UPDATE chip sits beside the id it will write over.
+    assert!(html.contains("<span class='chip op-update'>UPDATE</span><span class='wid'>#77</span>"));
+
+    // The page of EXISTING cases carries no operation chips.
+    let note_ctx = v2_lib::import_parser::NoteCtx {
+        port: 1,
+        token: "t".into(),
+        org: "acme".into(),
+        notes: Default::default(),
+    };
+    let path2 = tmp_path("op-badges-ado.html");
+    v2_lib::import_parser::export_queue_to_html(
+        &queue,
+        &path2,
+        "",
+        Some(v2_lib::import_parser::CommentCtx::Ado(&note_ctx)),
+        &Default::default(),
+    )
+    .unwrap();
+    let ado = std::fs::read_to_string(&path2).unwrap();
+    // Assert on the chip MARKUP, not the bare class names - the shared
+    // stylesheet defines .op-new/.op-update on every page, including this
+    // one where no chip is ever rendered.
+    assert!(
+        !ado.contains("<span class='chip op-new'>") && !ado.contains("<span class='chip op-update'>"),
+        "existing cases are neither"
+    );
+}
+
+/// A bulk edit owns the CASES, not the file: writing them back must leave
+/// every other top-level key - the general comments, keys this app has
+/// never heard of - exactly as the file had them.
+#[test]
+fn merging_cases_back_preserves_the_rest_of_the_file() {
+    let original = serde_json::json!({
+        "format": "azure-devops-test-cases",
+        "comments": { "general": "Reviewed by QA on Friday" },
+        "somebody_elses_key": [1, 2, 3],
+        "test_cases": [
+            { "title": "Old title", "automation_status": "Not Automated",
+              "steps": [{ "action": "x" }] },
+        ],
+    })
+    .to_string();
+    let edited = vec![TestCase {
+        title: "Renamed by bulk edit".into(),
+        steps: vec![Step { action: "x".into(), expected: String::new() }],
+        automation_status: "Not Automated".into(),
+        tags: "smoke".into(),
+        ..Default::default()
+    }];
+
+    let out = v2_lib::import_parser::merge_cases_into_draft(&original, &edited).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["test_cases"][0]["title"], "Renamed by bulk edit");
+    assert_eq!(doc["test_cases"][0]["tags"], "smoke");
+    assert_eq!(doc["comments"]["general"], "Reviewed by QA on Friday", "{out}");
+    assert_eq!(doc["somebody_elses_key"], serde_json::json!([1, 2, 3]));
+
+    // And the result re-imports: the write-back must never produce a file
+    // the importer itself would refuse.
+    let path = tmp_path("merged.json");
+    std::fs::write(&path, &out).unwrap();
+    let (cases, warnings) = parse_file(&path).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(cases[0].title, "Renamed by bulk edit");
+}
+
+/// A bare-array draft has nothing to preserve; it comes back in the
+/// standard wrapper shape, which is the repair rather than a loss.
+#[test]
+fn merging_into_a_bare_array_produces_the_wrapper_shape() {
+    let edited = vec![TestCase {
+        title: "A".into(),
+        steps: vec![Step { action: "x".into(), expected: String::new() }],
+        automation_status: "Not Automated".into(),
+        ..Default::default()
+    }];
+    let out =
+        v2_lib::import_parser::merge_cases_into_draft("[{\"title\":\"A\"}]", &edited).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["format"], "azure-devops-test-cases");
+    assert_eq!(doc["test_cases"][0]["title"], "A");
+}
+
 /// A reviewer who wants the notes out of the way is usually halfway down
 /// a long page when they decide that, so the control lives in the sticky
 /// search bar - one that has scrolled away is no control.
@@ -211,6 +379,8 @@ fn the_report_can_hide_its_reviewer_notes() {
         steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
         automation_status: "Not Automated".into(),
         reviewer_notes: "Spec: Step10.md 7.7".into(),
+        spec_order: None,
+        tester_order: None,
         ..Default::default()
     }];
     let path = tmp_path("notes-toggle.html");
@@ -223,8 +393,21 @@ fn the_report_can_hide_its_reviewer_notes() {
     assert!(bar.contains("id='tc-notes'"), "toggle belongs in the sticky bar: {bar}");
     // Pressed state is exposed, so it is a real toggle to a screen reader.
     assert!(html.contains("aria-pressed="), "{html}");
-    // And one rule does the hiding, rather than walking the DOM.
-    assert!(html.contains("body.notes-off .rev"), "{html}");
+    // And one rule does the hiding, rather than walking the DOM - as a
+    // grid-row collapse, so the notes close with a motion instead of
+    // blinking out of existence.
+    assert!(html.contains("body.notes-off .rev-wrap"), "{html}");
+    assert!(html.contains("grid-template-rows: 0fr"), "the hide must animate: {html}");
+
+    // Each note also carries its own x, which collapses just that case's
+    // notes - and the global Show resurrects them all, so a note cannot be
+    // lost to a forgotten click.
+    assert!(html.contains("class='rev-close'"), "{html}");
+    assert!(html.contains("rev-closed"), "{html}");
+    assert!(
+        html.contains("aria-label='Hide these reviewer notes'"),
+        "the x needs a name for screen readers: {html}"
+    );
 
     // No notes anywhere: no button. A control that hides nothing is just
     // another thing to read.
@@ -253,6 +436,8 @@ fn reviewer_notes_render_as_markdown_in_the_review_page() {
                          - `POST /session` only\n- SSO is **out of scope**\n\n\
                          <img src=x onerror=alert(1)>"
             .into(),
+        spec_order: None,
+        tester_order: None,
         ..Default::default()
     }];
     let path = tmp_path("reviewer-notes.html");
@@ -260,9 +445,16 @@ fn reviewer_notes_render_as_markdown_in_the_review_page() {
         .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
 
+    // The label opens the summary; the per-note close button lives inside
+    // it too, so an exact "<summary>...</summary>" match would be asserting
+    // a layout this page deliberately does not have.
     assert!(
-        html.contains("<summary>Reviewer notes</summary>"),
+        html.contains("<summary>Reviewer notes"),
         "the panel is labelled"
+    );
+    assert!(
+        html.contains("class='rev-close'"),
+        "each note carries its own close control"
     );
     assert!(html.contains("<details class='rev' open>"), "and open by default");
     assert!(html.contains("<h5>Where this came from</h5>"), "markdown headings render: {html}");
@@ -300,6 +492,8 @@ fn html_export_carries_cases_and_search() {
         update_id: Some(42),
         comment: String::new(),
         reviewer_notes: String::new(),
+        spec_order: None,
+        tester_order: None,
     }];
     let path = tmp_path("report.html");
     v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None, &Default::default())
@@ -330,6 +524,8 @@ fn the_test_case_page_is_themed_and_can_be_flipped() {
         update_id: None,
         comment: String::new(),
         reviewer_notes: String::new(),
+        spec_order: None,
+        tester_order: None,
     }];
     // Spelled out rather than `..Default::default()`: that default is the
     // LIGHT palette, so a partial dark fixture inherits #1f2530 text onto

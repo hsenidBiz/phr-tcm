@@ -22,6 +22,8 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
         update_id: None,
         comment: String::new(),
         reviewer_notes: String::new(),
+        spec_order: None,
+        tester_order: None,
     }
 }
 
@@ -119,6 +121,59 @@ fn reorder_false_keeps_document_order_but_still_cleans_up() {
         vec!["First - spec 3.1", "Second - spec 3.2", "Third - spec 3.3"],
         "the tester ordering should have moved something"
     );
+}
+
+/// `reorder` decides only which order the ARRAY follows - it no longer
+/// costs the other one. Both readings are stamped on every case, agree
+/// between the two calls, and each is a complete 1..=N numbering.
+#[test]
+fn both_orders_are_stamped_whatever_the_array_order_is() {
+    let mk = |title: &str, pre: &str| {
+        case(title, "", pre, vec![Step { action: "Click.".into(), expected: String::new() }])
+    };
+    // Alternating setups so spec order and tester order genuinely differ.
+    let draft = vec![
+        mk("First", "Signed in as the manager"),
+        mk("Second", "Signed in as the employee"),
+        mk("Third", "Signed in as the manager"),
+    ];
+
+    let by_title = |list: &[v2_lib::model::TestCase]| {
+        list.iter()
+            .map(|c| (c.title.clone(), (c.spec_order, c.tester_order)))
+            .collect::<std::collections::HashMap<_, _>>()
+    };
+
+    let (spec_array, _) = v2_lib::optimize::optimize_with(draft.clone(), None, false);
+    let (tester_array, _) = v2_lib::optimize::optimize_with(draft, None, true);
+
+    // The stamps are the same numbers regardless of which array order the
+    // caller asked for - they describe the SET, not the file layout.
+    assert_eq!(by_title(&spec_array), by_title(&tester_array));
+
+    // spec_order follows the document; tester_order groups the managers.
+    let m = by_title(&spec_array);
+    assert_eq!(m["First"].0, Some(1));
+    assert_eq!(m["Second"].0, Some(2));
+    assert_eq!(m["Third"].0, Some(3));
+    let manager_ranks = [m["First"].1.unwrap(), m["Third"].1.unwrap()];
+    assert_eq!(
+        (manager_ranks[0] as i64 - manager_ranks[1] as i64).abs(),
+        1,
+        "the two manager cases must be adjacent in the tester reading: {m:?}"
+    );
+
+    // Each reading is a full permutation of 1..=3 - a duplicate or a gap
+    // would sort into nonsense.
+    for pick in [0usize, 1] {
+        let mut ranks: Vec<u32> = m.values().map(|v| [v.0, v.1][pick].unwrap()).collect();
+        ranks.sort_unstable();
+        assert_eq!(ranks, vec![1, 2, 3]);
+    }
+
+    // And the tester array really is laid out in tester_order.
+    let laid_out: Vec<u32> = tester_array.iter().map(|c| c.tester_order.unwrap()).collect();
+    assert_eq!(laid_out, vec![1, 2, 3], "reorder=true lays the file out in the tester reading");
 }
 
 // ---------------------------------------------------------------- expected

@@ -30,6 +30,10 @@ window.addEventListener("contextmenu", (e) => {
 if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
   const { maybeEnableDemoMode } = await import("./dev/demo");
   maybeEnableDemoMode();
+  // Latency wraps AFTER the demo patches, so real IPC and the demo fakes
+  // both answer through the same configurable delay (DevPanel knob).
+  const { applyDevLatency } = await import("./dev/latency");
+  applyDevLatency();
 }
 
 // The compact always-on-top runner opens as a second webview window on the

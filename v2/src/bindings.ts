@@ -196,6 +196,25 @@ export const commands = {
 	 *  Mirrors what the report page's box does, for the queue card.
 	 */
 	saveDraftComment: (path: string, id: number | null, title: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_draft_comment", { path, id, title, text })),
+	/**
+	 *  Replace a draft file's test cases with the given list - the write-back
+	 *  behind bulk edits on the queue, so the file a case came from says what
+	 *  the queue says. Everything ELSE in the file survives: the top-level
+	 *  general comments, and any key this app does not know about, stay
+	 *  exactly as written. Returns the file's new fingerprint so the caller
+	 *  can move its watch snapshot forward - the watcher stays silent about
+	 *  our own write, so nothing else would.
+	 */
+	saveDraftCases: (path: string, cases: TestCase_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("save_draft_cases", { path, cases })),
+	/**
+	 *  Re-render the draft page WITHOUT opening a browser. This is what the
+	 *  background keep-in-step refresh calls: it used to share `view_draft_html`
+	 *  with the button, and the `open_path` at the end of that meant every
+	 *  comment save and every queue change opened ANOTHER tab on the same file.
+	 *  A page already open learns about the rewrite from its revision poll and
+	 *  pulls the new content itself; nothing here should touch the browser.
+	 */
+	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, owners, files, palette })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
@@ -712,7 +731,10 @@ export type PlanWithSuites = {
 
 export type PointOutcome = {
 	point_id: number,
-	/**  Passed / Failed / Blocked / NotApplicable. */
+	/**
+	 *  Passed / Failed / Paused / Blocked / NotApplicable - the verdicts
+	 *  Azure DevOps's own runner offers, and all real TestOutcome values.
+	 */
 	outcome: string,
 	comment: string | null,
 	duration_ms: number | null,
@@ -1133,6 +1155,24 @@ export type TestCase_Deserialize = {
 	 *  material they read while writing one.
 	 */
 	reviewer_notes?: string,
+	/**
+	 *  This case's 1-based position when the set is read AGAINST THE SPEC -
+	 *  cases walking down the document, so a reviewer scrolls the spec and
+	 *  the file together. Stamped by the optimizer from the order the
+	 *  draft was written in; app-only, like the two notes above - never
+	 *  sent to Azure DevOps (`app_only_fields_never_reach_a_request_body`
+	 *  covers it by scanning the write path).
+	 */
+	spec_order?: number | null,
+	/**
+	 *  This case's 1-based position when the set is run BY A TESTER -
+	 *  grouped so cases sharing a setup run together and the environment
+	 *  changes as few times as possible. Stamped by the optimizer's
+	 *  grouping pass. Both orders live in the same file so neither reading
+	 *  costs the other; the array order is just whichever one the file was
+	 *  last saved in.
+	 */
+	tester_order?: number | null,
 };
 
 export type TestCase_Serialize = {
@@ -1171,6 +1211,24 @@ export type TestCase_Serialize = {
 	 *  material they read while writing one.
 	 */
 	reviewer_notes?: string,
+	/**
+	 *  This case's 1-based position when the set is read AGAINST THE SPEC -
+	 *  cases walking down the document, so a reviewer scrolls the spec and
+	 *  the file together. Stamped by the optimizer from the order the
+	 *  draft was written in; app-only, like the two notes above - never
+	 *  sent to Azure DevOps (`app_only_fields_never_reach_a_request_body`
+	 *  covers it by scanning the write path).
+	 */
+	spec_order?: number | null,
+	/**
+	 *  This case's 1-based position when the set is run BY A TESTER -
+	 *  grouped so cases sharing a setup run together and the environment
+	 *  changes as few times as possible. Stamped by the optimizer's
+	 *  grouping pass. Both orders live in the same file so neither reading
+	 *  costs the other; the array order is just whichever one the file was
+	 *  last saved in.
+	 */
+	tester_order?: number | null,
 };
 
 export type TestPlan = {

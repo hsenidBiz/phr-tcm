@@ -139,6 +139,10 @@ pub fn export_queue_to_html(
         Some(CommentCtx::Draft(d)) => &d.files,
         _ => &[],
     };
+    // A page of DRAFTS - cases not yet written to Azure DevOps. The plain
+    // export (no ctx) is a draft too; only the Ado page shows cases that
+    // already exist, where "what will importing do" is not a question.
+    let draft_page = !matches!(&ctx, Some(CommentCtx::Ado(_)));
     let shell_open = if files.is_empty() { "" } else { "<div class='shell'>" };
     // Identity of each draft box, resolved by the app when the note lands.
     let mut draft_cases: Vec<serde_json::Value> = vec![];
@@ -187,11 +191,25 @@ pub fn export_queue_to_html(
             .update_id
             .map(|id| format!("<span class='wid'>#{id}</span>"))
             .unwrap_or_default();
+        // What importing this case will DO - the same UPDATE/NEW badge the
+        // queue rows carry, so a reviewer reading the page knows which
+        // cases will touch existing work items and which will create.
+        // Draft pages only: on a page of cases that already live in Azure
+        // DevOps the question does not arise.
+        let op = if draft_page {
+            if tc.update_id.is_some() {
+                "<span class='chip op-update'>UPDATE</span>"
+            } else {
+                "<span class='chip op-new'>NEW</span>"
+            }
+        } else {
+            ""
+        };
         // Numbered by position in the page, and NOT renumbered when the
         // search filter hides some: "case 7" has to mean the same thing
         // before and after someone types in the box.
         parts.push(format!(
-            "<h2><span class='seq'>{}</span>{wid}{}</h2>",
+            "<h2><span class='seq'>{}</span>{op}{wid}{}</h2>",
             idx + 1,
             esc(&tc.title)
         ));
@@ -251,10 +269,18 @@ pub fn export_queue_to_html(
         // reviewer reads, while the comment box below is what they write.
         // Its markdown is turned into HTML in Rust, with any HTML in the
         // SOURCE dropped rather than filtered - see crate::markdown.
+        // The wrapper div exists for the closing animation: a grid row can
+        // animate 1fr -> 0fr, a <details> cannot animate its own height.
+        // The x collapses just this case's notes; the sticky Hide button
+        // collapses them all, and Show brings every note back, including
+        // individually closed ones - one button that undoes everything
+        // beats remembering which x was clicked where.
         if !tc.reviewer_notes.trim().is_empty() {
             parts.push(format!(
-                "<details class='rev' open><summary>Reviewer notes</summary>\
-                 <div class='rev-body'>{}</div></details>",
+                "<div class='rev-wrap'><details class='rev' open><summary>Reviewer notes\
+                 <button type='button' class='rev-close' aria-label='Hide these reviewer notes' \
+                 title='Hide these reviewer notes'>&#215;</button></summary>\
+                 <div class='rev-body'>{}</div></details></div>",
                 crate::markdown::to_html(&tc.reviewer_notes)
             ));
         }
@@ -309,6 +335,24 @@ pub fn export_queue_to_html(
         }
         parts.push("</div>".into());
     }
+    // Comment-box identities ride INSIDE the swappable content as inert
+    // JSON, not as script vars outside it. When the page pulls a fresh
+    // copy of itself and swaps in place, the boxes it adopts come with the
+    // identities that match them - a rename must not leave a comment box
+    // addressing the title a case had when the tab was opened. A JSON
+    // script block never executes, so importing it into the live document
+    // cannot double-run anything.
+    if ctx.is_some() {
+        let file_paths: Vec<serde_json::Value> =
+            files.iter().map(|f| serde_json::json!({ "path": f.path })).collect();
+        parts.push(format!(
+            "<script type='application/json' id='tc-data'>{}</script>",
+            script_json(
+                &serde_json::json!({ "cases": draft_cases, "files": file_paths }),
+                "{\"cases\":[],\"files\":[]}",
+            )
+        ));
+    }
     parts.push("</div>".into());
 
     // The whole-set comments, one box per file, collapsible and out of the
@@ -342,22 +386,19 @@ pub fn export_queue_to_html(
             CommentCtx::Ado(a) => a.org.clone(),
             CommentCtx::Draft(_) => String::new(),
         };
-        let file_paths: Vec<serde_json::Value> = files
-            .iter()
-            .map(|f| serde_json::json!({ "path": f.path }))
-            .collect();
         parts.push(format!(
             // REPORT_REV is the revision this file was written at. The page
             // compares it with what the app reports now; they diverge the
-            // moment the report is re-exported behind an open tab.
-            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var REPORT_REV={};var REPORT_KIND={};var DRAFT_CASES={};var DRAFT_FILES={};{NOTE_JS}</script>",
+            // moment the report is re-exported behind an open tab. The
+            // comment-box identities are NOT here any more - they live in
+            // the #tc-data JSON block inside the page, so a live swap
+            // carries them along with the boxes they describe.
+            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var REPORT_REV={};var REPORT_KIND={};{NOTE_JS}</script>",
             c.port(),
             script_json(&c.token(), "\"\""),
             script_json(&org, "\"\""),
             crate::note_server::revision(c.report_kind()),
             script_json(&c.report_kind(), "\"draft\""),
-            script_json(&draft_cases, "[]"),
-            script_json(&file_paths, "[]"),
         ));
     }
     parts.push("</body></html>".into());

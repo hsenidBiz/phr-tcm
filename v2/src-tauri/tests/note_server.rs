@@ -191,3 +191,32 @@ Host: x
         "a draft re-export must not age the existing-cases report"
     );
 }
+
+/// The live-update pull: `GET /report` parses like `/version`, and the
+/// path registry keeps the two report kinds apart - a draft page pulling
+/// fresh content must never be handed the existing-cases page.
+#[test]
+fn report_requests_parse_and_the_path_registry_keeps_kinds_apart() {
+    use v2_lib::note_server::{report_path, request_report, set_report_path, REPORT_DRAFT, REPORT_QUEUE};
+
+    let req = b"GET /report?token=abc123&kind=queue HTTP/1.1\r\n\r\n";
+    let (token, kind) = request_report(req).expect("parses");
+    assert_eq!(token, "abc123");
+    assert_eq!(kind, "queue");
+
+    // Kind defaults to the draft page, like /version - older pages sent
+    // no kind and must keep getting the answer they always got.
+    let bare = b"GET /report?token=abc123 HTTP/1.1\r\n\r\n";
+    assert_eq!(request_report(bare).unwrap().1, REPORT_DRAFT);
+
+    // No token, no parse - the token rule is the same one every route on
+    // this port keeps.
+    assert!(request_report(b"GET /report HTTP/1.1\r\n\r\n").is_none());
+    // And a version poll is not a report pull.
+    assert!(request_report(b"GET /version?token=t HTTP/1.1\r\n\r\n").is_none());
+
+    set_report_path(REPORT_DRAFT, "C:/tmp/draft.html");
+    set_report_path(REPORT_QUEUE, "C:/tmp/queue.html");
+    assert_eq!(report_path(REPORT_DRAFT).as_deref(), Some("C:/tmp/draft.html"));
+    assert_eq!(report_path(REPORT_QUEUE).as_deref(), Some("C:/tmp/queue.html"));
+}

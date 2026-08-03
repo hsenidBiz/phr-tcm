@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
@@ -10,8 +10,18 @@ import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
-import { caseKey, fileName, keysFor, ownerPaths, type WatchedFile } from "../lib/fileSync";
+import { caseKey, fileName, keysFor, ownerPaths, saveWatches, type WatchedFile } from "../lib/fileSync";
+import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { pruneCreated } from "../lib/queuePrune";
+import {
+  queueWriterFor,
+  registerQueueWriter,
+  submitFinished,
+  submitPhaseSnapshot,
+  submitProgressed,
+  submitStarted,
+  subscribeSubmit,
+} from "../lib/submitRun";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
@@ -22,10 +32,12 @@ import InlineDiff from "./InlineDiff";
 import Combobox from "./ui/combobox";
 import { pagePalette } from "../lib/reportTheme";
 import CaseStepsTable from "./CaseStepsTable";
+import QueueBulkEditDialog from "./QueueBulkEditDialog";
 import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { Select } from "./ui/select";
 import {
   IconBack,
@@ -52,6 +64,7 @@ export default function QueueSection({
   flash,
   watches = [],
   onQueueCleared,
+  onWatchPatched,
 }: {
   org: string;
   project: string;
@@ -70,12 +83,38 @@ export default function QueueSection({
    * those watches existed, so leaving them armed means a later save to a
    * finished file quietly refills a queue the user deliberately emptied. */
   onQueueCleared?: () => void;
+  /** Called after a bulk change is written back into a watched file, with
+   * the file's new fingerprint and snapshot - the owner of the watch list
+   * moves it forward so the watcher stays silent about our own write. */
+  onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
   const [reviewing, setReviewing] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // Progress lives at MODULE scope (lib/submitRun), not in this component:
+  // the upload takes minutes and the person watching it is exactly the
+  // person who wanders to another tab meanwhile. Any mount of this screen
+  // reads the same phase, so coming back shows the bar where it really is.
+  const phase = useSyncExternalStore(subscribeSubmit, submitPhaseSnapshot);
+  const progress = phase && phase.org === org && phase.pbiId === pbiId ? phase : null;
+
+  // While mounted, this screen's own setQueue handles the post-submit
+  // prune (through React state, as always). When it is NOT mounted at the
+  // finish, the fallback in the mutation writes the persisted draft
+  // directly - a created case still sitting in a queue is one Create away
+  // from a duplicate work item.
+  useEffect(
+    () =>
+      registerQueueWriter({
+        org,
+        pbiId,
+        setQueue: (updater) => setQueue(updater),
+        onCleared: () => onQueueCleared?.(),
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [org, pbiId],
+  );
   const [areaPath, setAreaPath] = useState("");
   const [iterationPath, setIterationPath] = useState("");
 
@@ -186,8 +225,6 @@ export default function QueueSection({
       return next;
     });
 
-  const unlistenRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => unlistenRef.current?.(), []);
 
   // Share-for-review: the draft travels through ADO as a PBI attachment
   // (one-time-use link; nothing is created in ADO). The link lands on the
@@ -251,11 +288,15 @@ export default function QueueSection({
 
   // Keep an already-open report in step with the queue.
   //
-  // The page is a file on disk: nothing pushes to it, so the app
-  // rewrites the same file and bumps a revision the page polls. It then
-  // OFFERS a refresh rather than taking one - reloading under a reviewer
-  // costs them their scroll position, every section they had opened, and
-  // any comment still inside its autosave debounce.
+  // The page is a file on disk: nothing pushes to it, so the app rewrites
+  // the same file and bumps a revision the page polls; the page then
+  // pulls the fresh content over the loopback listener and swaps itself
+  // in place - no reload, no lost scroll position.
+  //
+  // REFRESH, never VIEW: this used to call the same command as the
+  // button, and the open_path at the end of that meant every comment
+  // save and every queue change opened ANOTHER browser tab on a file the
+  // reviewer already had open.
   //
   // Only after they have opened it once: re-exporting for a report
   // nobody asked for would write a temp file on every keystroke.
@@ -265,7 +306,7 @@ export default function QueueSection({
     // queue updates and each one would otherwise rewrite the file.
     const t = window.setTimeout(() => {
       void commands
-        .viewDraftHtml(
+        .refreshDraftHtml(
           queue,
           `PBI #${pbiId}`,
           ownerPaths(queue, watches),
@@ -344,9 +385,9 @@ export default function QueueSection({
       if (toSend.length === 0) {
         return { results: [], sent: [], sentFor: pbiId, skipped, skippedRows };
       }
-      setProgress({ done: 0, total: toSend.length });
+      submitStarted(org, pbiId, toSend.length);
       const unProgress = await events.submitProgress.listen((e) => {
-        setProgress({ done: e.payload.index + 1, total: e.payload.total });
+        submitProgressed(e.payload.index + 1, e.payload.total, e.payload.title);
       });
       // Fired before the upload loop when the PBI had no test plan and one
       // was created on the fly - surface it so plans never appear silently.
@@ -355,155 +396,279 @@ export default function QueueSection({
           `This PBI had no test plan - created "${e.payload.plan_name}" first, now uploading the test cases.`,
         );
       });
-      unlistenRef.current = () => {
-        unProgress();
-        unPlan();
-      };
-      const r = await commands.submitQueue(
-        org,
-        project,
-        pbiId,
-        toSend,
-        prefs.moduleRef,
-        prefs.preconditionsRef,
-        areaPath || null,
-        iterationPath || null,
-      );
-      if (r.status === "error") throw new Error(r.error);
-      // The exact rows that were sent, and the PBI they were sent for.
-      // onSuccess runs later, by which time the user may have switched PBI
-      // or a watched file may have rewritten the queue - so neither the
-      // indices nor "the current queue" still mean what they meant here.
-      // `sent` is the FILTERED list: every result index is an index into
-      // it, and pruneCreated matches on that list. Passing the full queue
-      // here would shift every index by the number skipped.
-      return { results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows };
+      try {
+        const r = await commands.submitQueue(
+          org,
+          project,
+          pbiId,
+          toSend,
+          prefs.moduleRef,
+          prefs.preconditionsRef,
+          areaPath || null,
+          iterationPath || null,
+        );
+        if (r.status === "error") throw new Error(r.error);
+        // The outcome is applied HERE, inside the promise, not in
+        // onSuccess: the hook's callbacks die with the component, and the
+        // person who navigated away mid-upload still needs the created
+        // cases OUT of their queue when the loop finishes. `sent` is the
+        // FILTERED list: every result index is an index into it, and
+        // pruneCreated matches on that list.
+        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows });
+        return { results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows };
+      } finally {
+        // Inside the promise for the same reason: onSettled may never run.
+        detach(unProgress);
+        detach(unPlan);
+        submitFinished();
+      }
     },
-    onSettled: () => {
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-      setProgress(null);
-    },
-    onSuccess: ({ results, sent, sentFor, skipped, skippedRows }) => {
+    // Only the parts a mounted screen can show. Everything that must
+    // happen - pruning, toasts, invalidations - already ran inside the
+    // mutation itself, because these callbacks die with the component.
+    onSuccess: ({ results }) => {
       setResults(results);
       setReviewing(false);
-      // Keep failed items AND anything the loop never reached (cancelled).
-      const done = results.filter((r) => r.action !== "failed");
-      const ok = done.length;
-      const failedCount = results.length - ok;
-
-      if (sentFor !== pbiId) {
-        // The queue on screen is not the one that was submitted. Leave it
-        // completely alone and say so, rather than guess.
-        toast.info(
-          `${ok} test case(s) processed for PBI #${sentFor}. Switch back to it to see what is left.`,
-        );
-      } else {
-        // The whole calculation lives in lib/queuePrune.ts, with the four
-        // ways it has been wrong written down as tests. It was inline here
-        // for all four of them, on a path with no test at all.
-        let stranded = 0;
-        let emptied = false;
-        setQueue((q) => {
-          const pruned = pruneCreated(sent, q, results);
-          stranded = pruned.unmatched;
-          let next = pruned.queue;
-          // The rows deliberately skipped are finished too - nothing was
-          // written because nothing needed to be. Leaving them queued
-          // would end an 81-case submit with 71 still on screen and no
-          // way to tell them from work outstanding.
-          //
-          // Pruned through the same tested function rather than a key
-          // filter: two cases can share a title, and matching by key alone
-          // is exactly how this went wrong four times before.
-          if (skippedRows.length > 0) {
-            next = pruneCreated(
-              skippedRows,
-              next,
-              skippedRows.map((_, index) => ({ index, action: "skipped" })),
-            ).queue;
-          }
-          emptied = next.length === 0;
-          return next;
-        });
-        // A finished import has nothing left to watch. The files fed this
-        // queue; with the queue gone, a later save to one of them would
-        // refill a list the user has already dealt with.
-        if (emptied && stranded === 0) onQueueCleared?.();
-        if (failedCount === 0 && stranded === 0) {
-          toast.success(
-            skipped > 0
-              ? `${ok} test case(s) processed, ${skipped} already up to date.`
-              : `${ok} test case(s) processed.`,
-          );
-        } else if (failedCount > 0) {
-          toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
-        }
-        if (stranded > 0) {
-          // Never silent: a created case still sitting in the queue is one
-          // Create away from a duplicate work item, and this app cannot
-          // delete one.
-          toast.warning(
-            `${stranded} case(s) were created but could not be matched back to the queue - ` +
-              `check the queue before creating again, or you will get duplicates.`,
-            { duration: 20000 },
-          );
-        }
-      }
-      qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
-      qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });
     },
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
   });
+
+  /** Everything a finished submit owes the user, wherever they are now.
+   * Runs inside the mutation promise, so navigating away cannot skip it. */
+  function applyOutcome({
+    results,
+    sent,
+    sentFor,
+    skipped,
+    skippedRows,
+  }: {
+    results: SubmitItemResult[];
+    sent: TestCase[];
+    sentFor: number;
+    skipped: number;
+    skippedRows: TestCase[];
+  }) {
+    // Keep failed items AND anything the loop never reached (cancelled).
+    const done = results.filter((r) => r.action !== "failed");
+    const ok = done.length;
+    const failedCount = results.length - ok;
+
+    // The whole calculation lives in lib/queuePrune.ts, with the four
+    // ways it has been wrong written down as tests.
+    let stranded = 0;
+    let emptied = false;
+    const prune = (q: TestCase[]) => {
+      const pruned = pruneCreated(sent, q, results);
+      stranded = pruned.unmatched;
+      let next = pruned.queue;
+      // The rows deliberately skipped are finished too - nothing was
+      // written because nothing needed to be. Pruned through the same
+      // tested function rather than a key filter: two cases can share a
+      // title, and matching by key alone went wrong four times before.
+      if (skippedRows.length > 0) {
+        next = pruneCreated(
+          skippedRows,
+          next,
+          skippedRows.map((_, index) => ({ index, action: "skipped" })),
+        ).queue;
+      }
+      emptied = next.length === 0;
+      return next;
+    };
+
+    const writer = queueWriterFor(org, sentFor);
+    if (writer) {
+      // The submitted queue is on screen (this mount or a fresh one):
+      // through React state, exactly as it always went.
+      writer.setQueue(prune);
+      if (emptied && stranded === 0) writer.onCleared();
+    } else {
+      // Nobody is looking at that queue right now - the user navigated
+      // away, or switched PBI. The persisted draft is the queue they will
+      // see on return; prune THAT, so a created case is never still
+      // sitting in a queue one Create away from a duplicate.
+      saveDraftQueue(org, sentFor, prune(loadDraftQueue(org, sentFor)));
+      // A finished import has nothing left to watch: with the queue gone,
+      // a later save to one of its files would refill a list already
+      // dealt with. (Any live backend watcher reconciles on next mount.)
+      if (emptied && stranded === 0) saveWatches(org, sentFor, []);
+    }
+
+    if (failedCount === 0 && stranded === 0) {
+      toast.success(
+        skipped > 0
+          ? `${ok} test case(s) processed, ${skipped} already up to date.`
+          : `${ok} test case(s) processed.`,
+      );
+    } else if (failedCount > 0) {
+      toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
+    }
+    if (stranded > 0) {
+      // Never silent: a created case still sitting in the queue is one
+      // Create away from a duplicate work item, and this app cannot
+      // delete one.
+      toast.warning(
+        `${stranded} case(s) were created but could not be matched back to the queue - ` +
+          `check the queue before creating again, or you will get duplicates.`,
+        { duration: 20000 },
+      );
+    }
+    qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
+    qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });
+  }
+
+  /** Stop listening without letting jsdom's missing event internals turn a
+   * cleanup into an unhandled rejection - same shape as App's detach. */
+  function detach(unlisten: (() => void) | undefined): void {
+    if (!unlisten) return;
+    try {
+      void Promise.resolve(unlisten() as unknown).catch(() => {});
+    } catch {
+      // threw synchronously - same conclusion
+    }
+  }
 
   // Same occurrence-aware keys the file sync reports changes under, so a
   // second case sharing a title still lights up its own row.
   const rowKeys = keysFor(queue);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
-  /** Renaming drafts touches nothing outside this list - they are in memory
-   *  until Create runs - so undo here can never fail.
+  // Selection is by POSITION, like Power Rename: drafts have no id, and a
+  // bulk edit can make two share a title, so the title is not an identity
+  // that survives the operation being applied. Any change in queue LENGTH
+  // drops the selection - after a removal or a file sync the indices point
+  // at different cases, and a stale selection silently bulk-edits the
+  // wrong rows.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selAnchor, setSelAnchor] = useState<number | null>(null);
+  useEffect(() => {
+    setSelected(new Set());
+    setSelAnchor(null);
+  }, [queue.length]);
+
+  const toggleSelect = (i: number, shift: boolean) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (shift && selAnchor != null) {
+        const [lo, hi] = selAnchor < i ? [selAnchor, i] : [i, selAnchor];
+        for (let k = lo; k <= hi; k++) next.add(k);
+      } else if (next.has(i)) {
+        next.delete(i);
+      } else {
+        next.add(i);
+      }
+      return next;
+    });
+    setSelAnchor(i);
+  };
+
+  /** Write bulk changes back into the files the cases came from, so the
+   * file says what the queue says - otherwise the next external save of
+   * that file would quietly revert the bulk edit.
+   *
+   * `next` is aligned with `prev` (null = removed); ownership is computed
+   * from the PRE-edit queue, because ownership is matched by title-derived
+   * keys and a rename is exactly the operation that breaks that match.
+   * Only files owning a changed case are written; each write returns the
+   * file's new fingerprint, and the watch snapshot moves forward with it
+   * so the watcher stays silent about our own write. */
+  const writeBackOwned = async (
+    prev: TestCase[],
+    next: (TestCase | null)[],
+    changed: Set<number>,
+  ) => {
+    if (watches.length === 0) return;
+    const owners = ownerPaths(prev, watches);
+    const files = new Map<string, { slice: TestCase[]; touched: boolean }>();
+    prev.forEach((_, i) => {
+      const p = owners[i];
+      if (!p) return;
+      const f = files.get(p) ?? { slice: [], touched: false };
+      const out = next[i];
+      if (out) f.slice.push(out);
+      if (changed.has(i)) f.touched = true;
+      files.set(p, f);
+    });
+    for (const [path, f] of files) {
+      if (!f.touched) continue;
+      const r = await commands.saveDraftCases(path, f.slice);
+      if (r.status === "error") {
+        // The queue HAS changed - saying so beats pretending nothing did.
+        toast.warning(
+          `The queue was updated, but ${fileName(path)} could not be: ${r.error}. ` +
+            `The file still has the old values.`,
+          { duration: 15000 },
+        );
+      } else {
+        onWatchPatched?.(path, { stamp: r.data, snapshot: f.slice });
+      }
+    }
+  };
+
+  const bulkApply = async (edit: (tc: TestCase) => TestCase) => {
+    const prev = queue;
+    const chosen = new Set(selected);
+    const next: (TestCase | null)[] = prev.map((tc, i) => (chosen.has(i) ? edit(tc) : tc));
+    setQueue(next.filter((x): x is TestCase => x != null));
+    await writeBackOwned(prev, next, chosen);
+    toast.success(`Updated ${chosen.size} queued case${chosen.size === 1 ? "" : "s"}.`);
+  };
+
+  const bulkRemove = async () => {
+    const prev = queue;
+    const removing = new Set(selected);
+    const kept = prev.filter((_, i) => !removing.has(i));
+    setQueue(kept);
+    await writeBackOwned(
+      prev,
+      prev.map((tc, i) => (removing.has(i) ? null : tc)),
+      removing,
+    );
+    if (kept.length === 0) onQueueCleared?.();
+    toast.info(`Removed ${removing.size} queued case${removing.size === 1 ? "" : "s"}.`);
+  };
+
+  /** Renaming drafts touches only this list and the files they came from,
+   *  so undo here can never fail against Azure DevOps.
    *
    *  Rows are matched back to drafts by POSITION. A draft has no work item
    *  id and a rename can make two of them share a title, so the title is
-   *  not an identity that survives the very operation being applied. */
+   *  not an identity that survives the very operation being applied. With
+   *  a selection active, the dialog covers just the selected rows - the
+   *  scope list maps the dialog's row indices back to queue positions. */
+  const renameScope =
+    selected.size > 0 ? [...selected].sort((a, b) => a - b) : queue.map((_, i) => i);
   const renameTarget: RenameTarget = {
-    label: "the queued drafts",
-    cases: queue.map((tc) => ({ id: tc.update_id, title: tc.title })),
+    label:
+      selected.size > 0
+        ? `${selected.size} selected draft${selected.size === 1 ? "" : "s"}`
+        : "the queued drafts",
+    cases: renameScope.map((qi) => ({ id: queue[qi].update_id, title: queue[qi].title })),
     undoable: true,
     apply: async (rows) => {
-      // By POSITION, not by title. Title matching failed in exactly the
-      // case this feature makes likely: rename one draft onto another's
-      // title and the two stop being distinguishable, so Undo put the old
-      // title back on whichever one it reached first and left titles
-      // sitting on the wrong steps - reported as "Put back 1 title".
-      const byIndex = new Map(rows.map((r) => [r.index, r]));
-      // Every row must be accounted for, so the loop is driven by ROWS as
-      // well as by the queue. Walking only the queue meant a row whose
-      // index no longer exists - the queue shrank while the dialog was
-      // open - was never visited, so it counted as succeeded and Undo then
-      // had nothing to put back for it.
-      const written = new Set<number>();
+      // Every row must be accounted for: one that no longer maps to a
+      // draft, or whose draft no longer carries the title the preview
+      // showed - the queue can move under an open dialog - is reported,
+      // never written onto whatever sits there now.
       const failed: typeof rows = [];
-      setQueue((q) =>
-        q.map((tc, i) => {
-          const row = byIndex.get(i);
-          if (!row) return tc;
-          // The queue can move underneath an open dialog - a watched file
-          // syncing, another tab adding a case. If this is no longer the
-          // draft the preview showed, leave it alone and report it rather
-          // than writing that title onto something else.
-          if (tc.title !== row.before) {
-            failed.push(row);
-            return tc;
-          }
-          written.add(row.index);
-          return { ...tc, title: row.after };
-        }),
-      );
-      for (const r of rows) {
-        if (!written.has(r.index) && !failed.includes(r)) failed.push(r);
+      const prev = queue;
+      const next: (TestCase | null)[] = prev.map((tc) => tc);
+      const changed = new Set<number>();
+      for (const row of rows) {
+        const qi = renameScope[row.index];
+        const tc = qi != null ? prev[qi] : undefined;
+        if (!tc || tc.title !== row.before) {
+          failed.push(row);
+          continue;
+        }
+        next[qi] = { ...tc, title: row.after };
+        changed.add(qi);
       }
+      setQueue(next.filter((x): x is TestCase => x != null));
+      // The rename reaches the files too - Undo comes back through here
+      // with the rows reversed, so it writes the files back as well.
+      await writeBackOwned(prev, next, changed);
       return failed;
     },
   };
@@ -551,6 +716,20 @@ export default function QueueSection({
             variant="outline"
             size="sm"
             disabled={queue.length === 0 || submit.isPending}
+            onClick={() => setRenameOpen(true)}
+          >
+            <IconRename aria-hidden />
+            Power Rename
+          </Button>
+          {/* Last on purpose, and red on approach: this is the destroy
+              action in a row of build actions, so it sits at the far end
+              where a fast hand does not land on it by habit, and announces
+              itself before the click. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="hover:border-danger hover:bg-danger/10 hover:text-danger"
+            disabled={queue.length === 0 || submit.isPending}
             onClick={() => {
               const n = queue.length;
               setQueue([]);
@@ -560,15 +739,6 @@ export default function QueueSection({
           >
             <IconRemove aria-hidden />
             Remove all
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={queue.length === 0 || submit.isPending}
-            onClick={() => setRenameOpen(true)}
-          >
-            <IconRename aria-hidden />
-            Power Rename
           </Button>
         </div>
       </div>
@@ -581,6 +751,63 @@ export default function QueueSection({
         />
       )}
 
+      {bulkOpen && (
+        <QueueBulkEditDialog
+          org={org}
+          project={project}
+          count={selected.size}
+          onClose={() => setBulkOpen(false)}
+          onApply={(edit) => {
+            setBulkOpen(false);
+            void bulkApply(edit);
+          }}
+        />
+      )}
+
+      {/* The two readings of an optimized file: grouped so a tester changes
+          environment as little as possible, or walking down the spec so a
+          reviewer scrolls the document and the queue together. Only offered
+          when EVERY case carries the field - a partial sort would interleave
+          ordered cases with ones that have no opinion, which is neither
+          reading. Reordering is real, not a view: the queue's order is the
+          order the cases are created in. */}
+      {/* Shown as soon as ANY case carries an order - a bar that only
+          appears when everything is already stamped would hide the reason
+          the buttons are disabled, which is the one thing a mixed queue
+          needs explained. */}
+      {queue.length > 1 &&
+        (["tester_order", "spec_order"] as const).some((k) => queue.some((tc) => tc[k] != null)) && (
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <span>Order:</span>
+            {(
+              [
+                ["tester_order", "For testing", "Cases sharing a setup run together"],
+                ["spec_order", "Down the spec", "Cases follow the specification document"],
+              ] as const
+            ).map(([key, label, hint]) => {
+              const available = queue.every((tc) => tc[key] != null);
+              const active =
+                available && queue.every((tc, i) => i === 0 || (queue[i - 1][key] ?? 0) <= (tc[key] ?? 0));
+              return (
+                <Button
+                  key={key}
+                  variant="outline"
+                  size="sm"
+                  disabled={!available}
+                  aria-pressed={active}
+                  title={available ? hint : "Not every queued case carries this order - run optimize_cases to stamp both"}
+                  className={active ? "border-accent text-accent" : undefined}
+                  onClick={() =>
+                    setQueue((q) => [...q].sort((a, b) => (a[key] ?? 0) - (b[key] ?? 0)))
+                  }
+                >
+                  {label}
+                </Button>
+              );
+            })}
+          </div>
+        )}
+
       {queue.length === 0 && (
         <AstryxIsland>
           <EmptyState
@@ -588,6 +815,47 @@ export default function QueueSection({
             description="Add test cases above - they gather here for review before anything is created in Azure DevOps."
           />
         </AstryxIsland>
+      )}
+
+      {/* Bulk actions over a selection. Shift+click a checkbox to select a
+          range. Every action here also updates the .json file each case
+          came from - the file and the queue must not disagree. */}
+      {queue.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface-2/50 px-3 py-1.5 text-xs">
+          <label className="flex items-center gap-2 text-muted">
+            <Checkbox
+              ariaLabel="Select all queued cases"
+              checked={selected.size === queue.length && queue.length > 0}
+              onCheckedChange={(v) =>
+                setSelected(v ? new Set(queue.map((_, i) => i)) : new Set())
+              }
+            />
+            {selected.size > 0
+              ? `${selected.size} of ${queue.length} selected`
+              : "Select cases for bulk actions"}
+          </label>
+          {selected.size > 0 && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setBulkOpen(true)}>
+                <IconConfirm aria-hidden />
+                Bulk edit
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setRenameOpen(true)}>
+                <IconRename aria-hidden />
+                Power Rename {selected.size}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="hover:border-danger hover:bg-danger/10 hover:text-danger"
+                onClick={() => bulkRemove()}
+              >
+                <IconRemove aria-hidden />
+                Remove {selected.size}
+              </Button>
+            </>
+          )}
+        </div>
       )}
 
       {queue.length > 0 && (
@@ -618,6 +886,22 @@ export default function QueueSection({
               >
                 <div className="flex items-center justify-between px-3 py-1.5">
                   <span className="text-text">
+                    {/* Capture-phase wrapper: the checkbox's own click never
+                        fires, so shift-ranges can be read off the event. */}
+                    <span
+                      className="mr-2 inline-block align-middle"
+                      onClickCapture={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        toggleSelect(i, e.shiftKey);
+                      }}
+                    >
+                      <Checkbox
+                        ariaLabel={`Select ${tc.title}`}
+                        checked={selected.has(i)}
+                        onCheckedChange={() => {}}
+                      />
+                    </span>
                     <button
                       aria-label={
                         expandedSteps.has(i) ? `Collapse steps of ${tc.title}` : `Expand steps of ${tc.title}`

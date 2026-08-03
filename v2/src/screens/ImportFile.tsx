@@ -498,6 +498,12 @@ export default function ImportFile({
           if (watches.length > 0) dropWatch(watches, false);
           setReport(null);
         }}
+        // A bulk change was written into a watched file: move the watch's
+        // fingerprint and snapshot forward so the watcher stays silent
+        // about our own write, and ownership keeps matching the new titles.
+        onWatchPatched={(path, fields) =>
+          setWatches((prev) => patchWatch(prev, path, fields))
+        }
       />
 
       {dropping && (

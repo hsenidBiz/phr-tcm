@@ -208,13 +208,21 @@ test("configuring the database server persists it and enables registration", asy
   fireEvent.change(await screen.findByLabelText("Database server executable"), {
     target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
   });
-  fireEvent.change(screen.getByLabelText("Connection string"), {
-    target: { value: "Server=db,1433;Database=HR;User Id=sa;Password=p@ss;" },
-  });
+  // The connection string is BUILT from fields - nobody types the whole
+  // thing. The stored value is still the single string the server gets.
+  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "db" } });
+  fireEvent.change(screen.getByLabelText("Database port"), { target: { value: "1433" } });
+  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "HR" } });
+  fireEvent.change(screen.getByLabelText("Database user"), { target: { value: "sa" } });
+  fireEvent.change(screen.getByLabelText("Database password"), { target: { value: "p@ss" } });
   fireEvent.change(screen.getByLabelText("Schema filter"), { target: { value: "dbo,hr" } });
 
   // Kept locally so another editor can be registered without retyping.
-  expect(localStorage.getItem("tcm-v2-db-mcp")).toContain("PeoplesHR.DBMCPServer.exe");
+  const stored = localStorage.getItem("tcm-v2-db-mcp") as string;
+  expect(stored).toContain("PeoplesHR.DBMCPServer.exe");
+  expect(JSON.parse(stored).connection_string).toBe(
+    "Server=db,1433;Database=HR;User Id=sa;Password=p@ss;TrustServerCertificate=True;",
+  );
 
   // Two Register buttons now: ours and the database server's.
   const buttons = await screen.findAllByRole("button", { name: "Register" });
@@ -228,12 +236,49 @@ test("configuring the database server persists it and enables registration", asy
   expect(payload.config.connection_string).toContain("Password=p@ss");
 });
 
-test("the connection string is not shown in plain text", async () => {
+test("the password is not shown in plain text, in either editing mode", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
     if (cmd === "detect_ai_tools") return DB_TOOLS;
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-  const field = await screen.findByLabelText("Connection string");
-  expect(field).toHaveAttribute("type", "password");
+  const pw = await screen.findByLabelText("Database password");
+  expect(pw).toHaveAttribute("type", "password");
+
+  // The raw single-string editor holds the password too, so it is masked
+  // just as it was before the builder existed.
+  fireEvent.click(screen.getByRole("checkbox", { name: "Edit connection string as text" }));
+  expect(screen.getByLabelText("Connection string")).toHaveAttribute("type", "password");
+});
+
+/// A string saved before this form existed appears already parsed into the
+/// fields - nobody re-enters a working configuration.
+test("a stored connection string pre-fills the builder fields", async () => {
+  localStorage.setItem(
+    "tcm-v2-db-mcp",
+    JSON.stringify({
+      exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
+      db_type: "mssql",
+      connection_string:
+        "Server=phrx-db.internal,1433;Database=PHRX;User Id=reader;Password=old;TrustServerCertificate=True;",
+      schema_filter: "",
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByLabelText("Database host")).toHaveValue("phrx-db.internal");
+  expect(screen.getByLabelText("Database port")).toHaveValue("1433");
+  expect(screen.getByLabelText("Database name")).toHaveValue("PHRX");
+  expect(screen.getByLabelText("Database user")).toHaveValue("reader");
+
+  // Editing ONE field keeps the rest: change the password, the host stays.
+  fireEvent.change(screen.getByLabelText("Database password"), { target: { value: "new" } });
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp") as string);
+  expect(stored.connection_string).toBe(
+    "Server=phrx-db.internal,1433;Database=PHRX;User Id=reader;Password=new;TrustServerCertificate=True;",
+  );
 });

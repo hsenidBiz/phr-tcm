@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
 import CountUp from "../../components/CountUp";
@@ -41,7 +42,19 @@ export default function ViewCases({
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
   const [search, setSearch] = useState("");
-  const [openId, setOpenId] = useState<number | null>(null);
+  // Open detail views, PLURAL: comparing two cases side by side is the
+  // normal reason to expand a second one, and "Close all" only means
+  // something once several can be open. An open detail also survives its
+  // GROUP being collapsed - collapsing tidies the list away, and the case
+  // someone is actively reading is not list, it is their work.
+  const [openIds, setOpenIds] = useState<Set<number>>(new Set());
+  const toggleOpen = (id: number) =>
+    setOpenIds((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [commentCase, setCommentCase] = useState<TestCaseFull | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [anchor, setAnchor] = useState<number | null>(null);
@@ -333,9 +346,20 @@ export default function ViewCases({
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>
           )}
-          {group && collapsedGroups.has(group) ? null : (
+          {/* A collapsed group hides its LIST, not the case someone is
+              reading: rows with an open detail stay rendered until the
+              reader closes them - their own chevron, or the sticky Close
+              all. Collapsing is tidying, and tidying must not snatch away
+              the thing being studied. */}
+          {(group && collapsedGroups.has(group)
+            ? items.filter((c) => openIds.has(c.id))
+            : items
+          ).length === 0 ? null : (
             <ul className="space-y-1">
-              {items.map((c) => (
+              {(group && collapsedGroups.has(group)
+                ? items.filter((c) => openIds.has(c.id))
+                : items
+              ).map((c) => (
                 <li
                   key={c.id}
                   className={cn(
@@ -345,7 +369,7 @@ export default function ViewCases({
                       : "border-border hover:border-border-strong",
                   )}
                   onClick={(e) => handleCardClick(c, e)}
-                  onDoubleClick={() => setOpenId((o) => (o === c.id ? null : c.id))}
+                  onDoubleClick={() => toggleOpen(c.id)}
                 >
                   <div className="flex items-center gap-2 px-3 py-2 text-sm">
                     <button
@@ -353,10 +377,10 @@ export default function ViewCases({
                       className="text-muted hover:text-accent"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setOpenId((o) => (o === c.id ? null : c.id));
+                        toggleOpen(c.id);
                       }}
                     >
-                      {openId === c.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      {openIds.has(c.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
                     <span className="id-mono text-faint">#{c.id}</span>
                     <span className="text-text">{c.title}</span>
@@ -380,7 +404,7 @@ export default function ViewCases({
                       {c.steps.length} steps · {c.automation_status}
                     </span>
                   </div>
-                  {openId === c.id && (
+                  {openIds.has(c.id) && (
                     <CaseDetail
                       c={c}
                       note={notes[String(c.id)] ?? ""}
@@ -393,6 +417,24 @@ export default function ViewCases({
           )}
         </div>
       ))}
+
+      {/* Sticky whenever anything is open - the reader may be several
+          screens deep in a long detail when they want it all gone, and a
+          control that has scrolled away is no control. Bottom LEFT, and
+          portalled to <body> for the same reason as Run Tests' action bar:
+          this screen renders inside AnimatedContent, whose GSAP transform
+          would make `fixed` mean the scroll region instead of the
+          viewport. */}
+      {openIds.size > 0 &&
+        createPortal(
+          <div className="fixed bottom-6 left-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
+            <Button size="sm" variant="outline" className="rounded-full" onClick={() => setOpenIds(new Set())}>
+              <IconClear aria-hidden />
+              Close all ({openIds.size})
+            </Button>
+          </div>,
+          document.body,
+        )}
 
       {commentCase && (
         <CommentModal

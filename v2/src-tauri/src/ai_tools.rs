@@ -162,6 +162,8 @@ pub const COMMANDS: &[CommandSpec] = &[
             "It runs Test Case Manager's REAL importer, so a pass means the app will read the",
             "file the way you expect. Pass a `path` for anything large rather than inlining",
             "it. Fix every warning and validate again - do not explain a warning away.",
+            "`advisories` are different: judgement calls, not defects. Read each one, decide,",
+            "and tell the developer what you decided and why.",
         ],
     },
     CommandSpec {

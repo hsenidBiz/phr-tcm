@@ -304,6 +304,10 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                         // assistant just lost its review context silently.
                         comment: pick(rv, &crate::import_parser::COMMENT_KEYS),
                         reviewer_notes: pick(rv, &crate::import_parser::REVIEWER_NOTES_KEYS),
+                        // A case inserted mid-draft has no position in
+                        // either reading yet; the next optimize stamps both.
+                        spec_order: None,
+                        tester_order: None,
                     });
                 }
                 if cases.is_empty() {
