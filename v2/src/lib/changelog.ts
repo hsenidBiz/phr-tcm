@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.1",
+    date: "2026-08-03",
+    items: [
+      "The runner records each verdict in Azure DevOps the moment you click Next, like ADO's own runner - a session you close half way keeps everything already recorded, with the run left In Progress. Finish still completes the run; a record that fails retries on the next Next and again at Finish.",
+      "Every dropdown is now the app's own themed menu instead of the operating system's - same look as the searchable pickers, with a check on the chosen row and full keyboard support.",
+    ],
+  },
+  {
     version: "1.19.0",
     date: "2026-08-03",
     items: [
