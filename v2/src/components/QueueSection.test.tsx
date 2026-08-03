@@ -249,9 +249,8 @@ test("bulk edit applies to the selection and leaves unselected rows alone", asyn
   fireEvent.click(screen.getByRole("button", { name: /Bulk edit/ }));
 
   expect(await screen.findByText(/Bulk edit 1 queued draft/)).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText(/Automation status/), {
-    target: { value: "Planned" },
-  });
+  fireEvent.click(screen.getByLabelText(/Automation status/));
+  fireEvent.click(screen.getByRole("option", { name: "Planned" }));
   fireEvent.click(screen.getByRole("button", { name: /Apply to 1/ }));
 
   await waitFor(() => expect(saved).toHaveLength(2));

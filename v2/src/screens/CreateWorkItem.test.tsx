@@ -52,10 +52,13 @@ test("the full form reaches create_work_item, including the parent PBI", async (
   });
   renderScreen();
 
-  fireEvent.change(await screen.findByLabelText("Work item type"), { target: { value: "Bug" } });
+  fireEvent.click(await screen.findByLabelText("Work item type"));
+  fireEvent.click(screen.getByRole("option", { name: "Bug" }));
   fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Session timeout broken" } });
-  fireEvent.change(await screen.findByLabelText("Assign to"), { target: { value: "kim@acme.com" } });
-  fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "1" } });
+  fireEvent.click(await screen.findByLabelText("Assign to"));
+  fireEvent.click(screen.getByRole("option", { name: "Kim Lee" }));
+  fireEvent.click(screen.getByLabelText("Priority"));
+  fireEvent.click(screen.getByRole("option", { name: "1" }));
   fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Repro: idle 30min" } });
 
   // Parent PBI via the search picker.
@@ -78,5 +81,5 @@ test("the full form reaches create_work_item, including the parent PBI", async (
   expect(await screen.findByText("#9001")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Create another" }));
   expect(screen.getByLabelText("Title")).toHaveValue("");
-  expect(screen.getByLabelText("Work item type")).toHaveValue("Bug"); // context kept
+  expect(screen.getByLabelText("Work item type")).toHaveTextContent("Bug"); // context kept
 });

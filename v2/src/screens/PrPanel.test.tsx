@@ -85,7 +85,8 @@ test("picking a repo fetches its active PRs and persists the choice", async () =
   renderPanel();
   await screen.findByText("Awaiting your review");
 
-  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r2" } });
+  fireEvent.click(screen.getByLabelText("Repository"));
+  fireEvent.click(await screen.findByRole("option", { name: "api" }));
   expect(await screen.findByText(/Active on api/)).toBeInTheDocument();
   expect(await screen.findByText("!9")).toBeInTheDocument();
   expect(asked).toBe("r2");
@@ -102,7 +103,8 @@ test("your own PR in the selected repo is not duplicated under Active on X", asy
   });
   renderPanel();
   await screen.findByText("!20"); // your PR loads first (overview)
-  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r1" } });
+  fireEvent.click(screen.getByLabelText("Repository"));
+  fireEvent.click(await screen.findByRole("option", { name: "web" }));
   // Wait for the repo's active list to load (the stranger's PR appears).
   await screen.findByText("!21");
 
@@ -195,10 +197,8 @@ test("the completed filter runs a separate query and titles the group", async ()
     }
   });
   renderPanel();
-  // The repo list loads async - selecting before its <option> exists is a
-  // no-op, so wait for it.
-  await screen.findByRole("option", { name: "web" });
-  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r1" } });
+  fireEvent.click(screen.getByLabelText("Repository"));
+  fireEvent.click(await screen.findByRole("option", { name: "web" }));
   // Titles render as "!<id> <title>" across sibling nodes, so match the id.
   expect(await screen.findByText("!9")).toBeInTheDocument();
 
@@ -341,8 +341,8 @@ test("a full page offers Load more, which fetches the next skip", async () => {
     }
   });
   renderPanel();
-  await screen.findByRole("option", { name: "web" });
-  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "r1" } });
+  fireEvent.click(screen.getByLabelText("Repository"));
+  fireEvent.click(await screen.findByRole("option", { name: "web" }));
 
   expect(await screen.findByText("!100")).toBeInTheDocument();
   const more = await screen.findByRole("button", { name: "Load more" });

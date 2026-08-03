@@ -187,9 +187,8 @@ test("card clicks drive multi-select and unlock the bulk toolbar", async () => {
 
   // Bulk edit both: pick a status, apply serially.
   fireEvent.click(screen.getByRole("button", { name: "Bulk edit" }));
-  fireEvent.change(screen.getByLabelText(/Automation status/), {
-    target: { value: "Not Automated" },
-  });
+  fireEvent.click(screen.getByLabelText(/Automation status/));
+  fireEvent.click(screen.getByRole("option", { name: "Not Automated" }));
   fireEvent.click(screen.getByRole("button", { name: "Apply to 2" }));
   await waitFor(() => expect(updatedIds).toHaveLength(2));
   expect([...updatedIds].sort()).toEqual([201, 202]);

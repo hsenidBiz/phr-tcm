@@ -233,9 +233,8 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
   const findings = screen.getByLabelText("Initial Findings (markdown)");
   expect(findings).toHaveValue("null ref");
   fireEvent.change(findings, { target: { value: "null ref in save path" } });
-  fireEvent.change(screen.getByLabelText("Root Cause Category"), {
-    target: { value: "Code Defect" },
-  });
+  fireEvent.click(screen.getByLabelText("Root Cause Category"));
+  fireEvent.click(screen.getByRole("option", { name: "Code Defect" }));
 
   // The empty Preventive Measures page is editable too.
   fireEvent.click(screen.getByRole("button", { name: "Preventive Measures" }));

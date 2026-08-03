@@ -171,9 +171,8 @@ test("filtering by Failed and selecting the rows starts a failures-only run", as
   expect(screen.queryByRole("button", { name: /Re-run/ })).not.toBeInTheDocument();
 
   // Filter to failures: the never-run case leaves the table.
-  fireEvent.change(screen.getByLabelText("Filter by last outcome"), {
-    target: { value: "failed" },
-  });
+  fireEvent.click(screen.getByLabelText("Filter by last outcome"));
+  fireEvent.click(screen.getByRole("option", { name: "Failed" }));
   expect(screen.queryByText("Invalid login")).not.toBeInTheDocument();
 
   // Select what's left and run it.
