@@ -51,153 +51,150 @@ pub async fn list_test_points(
         .await
 }
 
-/// Full manual-run lifecycle ported from v1 run_screen submission: create a
-/// run seeded from the points, map each point to its auto-created result,
-/// PATCH outcomes, complete the run. Returns the run's web URL.
+/// A live run's identity plus every point's result row, so the runner can
+/// PATCH one case at a time as the tester advances.
+#[derive(serde::Serialize, specta::Type)]
+pub struct RunStarted {
+    pub run_id: i32,
+    pub web_url: String,
+    /// point_id -> result_id, flattened to pairs for the bindings.
+    pub results: Vec<PointResult>,
+    /// Points Azure DevOps created no result row for - marks against these
+    /// can NEVER be recorded in this run, and the runner says so up front
+    /// instead of discovering it at the end.
+    pub unmatched: Vec<i32>,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct PointResult {
+    pub point_id: i32,
+    pub result_id: i32,
+}
+
+/// Open a run over the session's points WITHOUT completing it - the
+/// incremental half of what submit_test_run did in one shot. The runner
+/// calls this lazily on the first recorded outcome, then `record_result`
+/// per case as the tester clicks Next, then `finish_test_run`.
+///
+/// A run left open (window closed mid-session) stays In Progress in Azure
+/// DevOps - which is what ADO's own runner does with a paused session,
+/// and every already-recorded outcome is already saved.
 #[tauri::command]
 #[specta::specta]
-pub async fn submit_test_run(
+pub async fn start_test_run(
     app: tauri::AppHandle,
     organization: String,
     project: String,
     plan_id: i32,
     run_name: String,
-    outcomes: Vec<PointOutcome>,
-) -> Result<ado_testplan::RunCreated, ado::AdoError> {
+    point_ids: Vec<i32>,
+) -> Result<RunStarted, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     let client = ado::AdoClient::new(token);
-    let point_ids: Vec<i32> = outcomes.iter().map(|o| o.point_id).collect();
     let run = client
         .create_test_run(&organization, &project, plan_id, &run_name, &point_ids)
         .await?;
-    let results = client
-        .get_run_results(&organization, &project, run.run_id)
-        .await?;
-    // Every marked outcome must find its result. A filter_map here dropped
-    // any that did not, with no error and no log line, and the run was then
-    // reported as fully recorded - so a tester's result simply never
-    // existed. Refuse instead: the run has been created either way, and
-    // saying which cases are missing is the only way to act on it.
-    let mut updates: Vec<ado_testplan::OutcomeUpdate> = Vec::with_capacity(outcomes.len());
-    let mut unmatched: Vec<i32> = vec![];
-    for o in &outcomes {
-        match results.iter().find(|r| r.point_id == Some(o.point_id)) {
-            Some(result) => updates.push(ado_testplan::OutcomeUpdate {
-                id: result.result_id,
-                outcome: o.outcome.clone(),
-                comment: o.comment.clone(),
-                duration_ms: o.duration_ms,
-                bug_ids: o.bug_ids.clone(),
-            }),
-            None => unmatched.push(o.point_id),
-        }
-    }
-    // Save what CAN be saved, FIRST.
-    //
-    // This used to return here the moment anything was unmatched, which was
-    // worse than the silent filter_map it replaced: two unmatched points out
-    // of eight meant none of the eight were written, complete_test_run never
-    // ran so the run sat In Progress, and the message told the tester not to
-    // mark again - so the six good results were lost as well, and the advice
-    // kept them lost. Record the six, then say which two are missing.
-    if !updates.is_empty() {
-        client
-            .update_run_results(&organization, &project, run.run_id, &updates)
-            .await?;
-    }
+    let rows = client.get_run_results(&organization, &project, run.run_id).await?;
+    let results: Vec<PointResult> = rows
+        .iter()
+        .filter_map(|r| r.point_id.map(|p| PointResult { point_id: p, result_id: r.result_id }))
+        .collect();
+    let unmatched = point_ids
+        .iter()
+        .copied()
+        .filter(|p| !results.iter().any(|r| r.point_id == *p))
+        .collect();
+    Ok(RunStarted { run_id: run.run_id, web_url: run.web_url, results, unmatched })
+}
 
-    if !unmatched.is_empty() {
-        crate::applog::error(format!(
-            "run {} has no result rows for test point(s) {unmatched:?} - {} of {} outcomes could not be recorded",
-            run.run_id,
-            unmatched.len(),
-            outcomes.len(),
-        ));
-    }
-    // Nothing at all was recorded: completing the run would leave an empty
-    // Completed run in Azure DevOps and tell the tester their marks landed.
-    // Erroring here costs nothing, because nothing was written - and the
-    // runner keeps the marks so they can be sent again.
-    if updates.is_empty() {
-        return Err(ado::AdoError::Http {
-            status: 0,
-            body: format!(
-                "Azure DevOps created no result row for any of the {} marked case(s), so \
-                 nothing was recorded. Run #{} exists but is empty - mark them again rather \
-                 than looking for results in it.",
-                outcomes.len(),
-                run.run_id,
-            ),
-        });
-    }
-
-    // Attachment and per-step failures, reported SEPARATELY from outcomes
-    // that were never recorded. They were briefly the same list, and its
-    // consumer frames every entry as "the outcomes were recorded, but this
-    // did not attach - add it in Azure DevOps". Both halves of that are
-    // false for a lost outcome.
-    let mut extras_failed: Vec<String> = vec![];
-
-    // Per-step outcomes + screenshots are additive and best-effort (v1
-    // semantics): a failure here never loses the recorded outcomes. It was
-    // also never REPORTED, so a tester who marked five steps individually
-    // and attached a screenshot of the failure had no way to know that none
-    // of it arrived. These genuinely ARE "recorded, but this did not
-    // attach" - which is why an unrecorded outcome must not share the list.
-    for o in &outcomes {
-        let Some(result) = results.iter().find(|r| r.point_id == Some(o.point_id)) else {
-            continue;
-        };
-        if let (Some(ids), Some(step_ocs)) = (&o.step_ids, &o.step_outcomes) {
-            if let Some(details) =
-                ado_testplan::build_iteration_details(ids, step_ocs, &o.outcome)
-            {
-                if let Err(e) = client
-                    .update_result_steps(
-                        &organization,
-                        &project,
-                        run.run_id,
-                        result.result_id,
-                        details,
-                    )
-                    .await
-                {
-                    crate::applog::warn(format!(
-                        "run {}: per-step marks for point {} were not saved: {e}",
-                        run.run_id, o.point_id
-                    ));
-                    extras_failed.push(format!("step-by-step marks for test point {}", o.point_id));
-                }
-            }
-        }
-        if let Some(files) = &o.attachments {
-            for att in files {
-                if let Err(e) = client
-                    .add_result_attachment(
-                        &organization,
-                        &project,
-                        run.run_id,
-                        result.result_id,
-                        &att.b64,
-                        &att.file_name,
-                        "",
-                    )
-                    .await
-                {
-                    crate::applog::warn(format!(
-                        "run {}: attachment {} for point {} was not saved: {e}",
-                        run.run_id, att.file_name, o.point_id
-                    ));
-                    extras_failed.push(format!("{} (test point {})", att.file_name, o.point_id));
-                }
-            }
-        }
-    }
-
+/// Record ONE case's outcome into a live run - the write behind the Next
+/// button. Idempotent by nature: going back and changing a verdict PATCHes
+/// the same result row again. Per-step marks and attachments are additive
+/// and best-effort exactly as in the batch flow; a failure there never
+/// loses the recorded outcome, and the returned list names what did not
+/// attach.
+#[tauri::command]
+#[specta::specta]
+pub async fn record_result(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: i32,
+    result_id: i32,
+    outcome: PointOutcome,
+) -> Result<Vec<String>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
     client
-        .complete_test_run(&organization, &project, run.run_id)
+        .update_run_results(
+            &organization,
+            &project,
+            run_id,
+            &[ado_testplan::OutcomeUpdate {
+                id: result_id,
+                outcome: outcome.outcome.clone(),
+                comment: outcome.comment.clone(),
+                duration_ms: outcome.duration_ms,
+                bug_ids: outcome.bug_ids.clone(),
+            }],
+        )
         .await?;
-    Ok(ado_testplan::RunCreated { outcomes_unrecorded: unmatched, extras_failed, ..run })
+
+    let mut extras_failed: Vec<String> = vec![];
+    if let (Some(ids), Some(step_ocs)) = (&outcome.step_ids, &outcome.step_outcomes) {
+        if let Some(details) = ado_testplan::build_iteration_details(ids, step_ocs, &outcome.outcome)
+        {
+            if let Err(e) = client
+                .update_result_steps(&organization, &project, run_id, result_id, details)
+                .await
+            {
+                crate::applog::warn(format!(
+                    "run {run_id}: per-step marks for point {} were not saved: {e}",
+                    outcome.point_id
+                ));
+                extras_failed.push(format!("step-by-step marks for test point {}", outcome.point_id));
+            }
+        }
+    }
+    if let Some(files) = &outcome.attachments {
+        for att in files {
+            if let Err(e) = client
+                .add_result_attachment(
+                    &organization,
+                    &project,
+                    run_id,
+                    result_id,
+                    &att.b64,
+                    &att.file_name,
+                    "",
+                )
+                .await
+            {
+                crate::applog::warn(format!(
+                    "run {run_id}: attachment {} for point {} was not saved: {e}",
+                    att.file_name, outcome.point_id
+                ));
+                extras_failed.push(format!("{} (test point {})", att.file_name, outcome.point_id));
+            }
+        }
+    }
+    Ok(extras_failed)
+}
+
+/// Close a live run. Refused for a run nothing was recorded into - the
+/// runner tracks that and never calls this before the first record.
+#[tauri::command]
+#[specta::specta]
+pub async fn finish_test_run(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    run_id: i32,
+) -> Result<(), ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .complete_test_run(&organization, &project, run_id)
+        .await
 }
 
 #[tauri::command]

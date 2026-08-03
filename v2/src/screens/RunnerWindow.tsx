@@ -379,110 +379,176 @@ export default function RunnerWindow() {
     }
   }
 
+  // ---- Incremental recording: Next writes the case being left. -------
+  //
+  // The run opens LAZILY on the first recorded outcome and stays open (In
+  // Progress in Azure DevOps - exactly what ADO's own runner does with a
+  // paused session) until Finish completes it. Every recorded outcome is
+  // already saved the moment it was recorded, so closing the window loses
+  // nothing that was marked and advanced past.
+  //
+  // A record that fails stays unsynced and retries on the next navigation
+  // and again at Finish - recording must never trap the tester on a case.
+  // Records are chained one-at-a-time so two Nexts cannot interleave the
+  // run creation or land out of order.
+  const runRef = useRef<{ runId: number; byPoint: Map<number, number> } | null>(null);
+  const startingRef = useRef<Promise<{ runId: number; byPoint: Map<number, number> }> | null>(null);
+  const syncedRef = useRef<Record<number, string>>({});
+  const recordFailures = useRef<Map<number, string>>(new Map());
+  const droppedRef = useRef<Set<number>>(new Set());
+  const chainRef = useRef<Promise<void>>(Promise.resolve());
+
+  const ensureRun = () => {
+    if (runRef.current) return Promise.resolve(runRef.current);
+    if (!startingRef.current) {
+      startingRef.current = (async () => {
+        // Reuse the points the window already loaded; fetch only if the
+        // first Next lands before that query resolves.
+        const pts =
+          points.data ??
+          (await unwrap(
+            commands.listTestPoints(session!.org, session!.project, session!.planId, session!.suiteId),
+          ));
+        const sessionIds = new Set(list.map((c) => c.id));
+        const pointIds = pts
+          .filter((p) => p.test_case_id != null && sessionIds.has(p.test_case_id))
+          .map((p) => p.point_id);
+        if (pointIds.length === 0) throw new Error("None of these cases have a test point.");
+        const started = await unwrap(
+          commands.startTestRun(
+            session!.org,
+            session!.project,
+            session!.planId,
+            `${session!.pbi.title} - manual run`,
+            pointIds,
+          ),
+        );
+        const run = {
+          runId: started.run_id,
+          byPoint: new Map(started.results.map((r) => [r.point_id, r.result_id])),
+        };
+        runRef.current = run;
+        return run;
+      })().catch((e) => {
+        // A failed start must not poison every later attempt - clear the
+        // single-flight slot so the next Next tries again.
+        startingRef.current = null;
+        throw e;
+      });
+    }
+    return startingRef.current;
+  };
+
+  /** Record one case's current marks, if they changed since last recorded.
+   * Queued behind any record already in flight. */
+  const syncCase = (c: TestCaseFull) => {
+    const s = states[c.id];
+    if (!s?.outcome) return;
+    const marked = Object.keys(s.stepOutcomes);
+    const payload = {
+      point_id: 0, // filled below once the point resolves
+      outcome: s.outcome as string,
+      comment: s.comment || null,
+      duration_ms: s.elapsedMs || null,
+      step_ids: marked.length ? c.step_ids : null,
+      step_outcomes: marked.length ? c.steps.map((_, i) => s.stepOutcomes[i] || null) : null,
+      attachments: s.attachments.length ? s.attachments : null,
+      bug_ids: s.bugIds.length ? s.bugIds : null,
+    };
+    const snap = JSON.stringify(payload);
+    if (syncedRef.current[c.id] === snap) return; // already recorded as-is
+    chainRef.current = chainRef.current.then(async () => {
+      try {
+        const run = await ensureRun();
+        const point = (points.data ?? []).find((p) => p.test_case_id === c.id);
+        const resultId = point && run.byPoint.get(point.point_id);
+        if (!point || resultId == null) {
+          // Not in the suite, or ADO made no result row: this run can
+          // never hold a mark for it. Remembered for the Finish summary,
+          // said once rather than on every pass.
+          if (!droppedRef.current.has(c.id)) {
+            droppedRef.current.add(c.id);
+            toast.warning(
+              `${c.title} is not in this run - it has no test point, so its mark cannot be recorded.`,
+              { duration: 10000 },
+            );
+          }
+          return;
+        }
+        const extras = await unwrap(
+          commands.recordResult(session!.org, session!.project, run.runId, resultId, {
+            ...payload,
+            point_id: point.point_id,
+          }),
+        );
+        syncedRef.current[c.id] = snap;
+        recordFailures.current.delete(c.id);
+        // Additive extras that did not stick - same register as the batch
+        // flow: recorded, but this did not attach.
+        for (const x of extras) {
+          toast.warning(`Recorded, but this did not attach: ${x}. Add it in Azure DevOps.`, {
+            duration: 10000,
+          });
+        }
+      } catch (e) {
+        recordFailures.current.set(c.id, (e as Error).message);
+        toast.error(
+          `${c.title}: not recorded yet (${(e as Error).message}). It will retry on the next Next or on Finish.`,
+          { duration: 8000 },
+        );
+      }
+    });
+  };
+
+  /** Navigation is also the save: the case being LEFT is recorded. */
+  const goTo = (next: number) => {
+    if (current) syncCase(current);
+    setIdx(next);
+  };
+
   const finish = useMutation({
     mutationFn: async () => {
-      const outcomes = list
-        .map((c) => ({ c, s: states[c.id] }))
-        .filter(({ s }) => s?.outcome)
-        .map(({ c, s }) => {
-          const marked = Object.keys(s.stepOutcomes);
-          return {
-            point_id: 0, // filled below once points resolve
-            case: c,
-            outcome: s.outcome as string,
-            comment: s.comment || null,
-            duration_ms: s.elapsedMs || null,
-            step_ids: marked.length ? c.step_ids : null,
-            step_outcomes: marked.length
-              ? c.steps.map((_, i) => s.stepOutcomes[i] || null)
-              : null,
-            attachments: s.attachments.length ? s.attachments : null,
-            bug_ids: s.bugIds.length ? s.bugIds : null,
-          };
-        });
-      if (outcomes.length === 0) throw new Error("Mark at least one case first.");
+      // Flush everything marked - the current case, and any earlier
+      // failure that has not been retried since.
+      for (const c of list) syncCase(c);
+      await chainRef.current;
 
-      // Resolve point ids for the chosen cases.
-      const pts = await unwrap(
-        commands.listTestPoints(session!.org, session!.project, session!.planId, session!.suiteId),
+      const recorded = Object.keys(syncedRef.current).length;
+      if (recorded === 0 || !runRef.current) {
+        const stuck = recordFailures.current.size;
+        throw new Error(
+          stuck > 0
+            ? "Nothing could be recorded - check the connection and press Finish again."
+            : "Mark at least one case first.",
+        );
+      }
+      const failures = [...recordFailures.current.entries()];
+      await unwrap(
+        commands.finishTestRun(session!.org, session!.project, runRef.current.runId),
       );
-      const byCase = new Map(pts.map((p) => [p.test_case_id, p.point_id]));
-      // Membership, not a `?? 0` sentinel: a real point id of 0 would
-      // otherwise be indistinguishable from "this case has no point".
-      const dropped = outcomes.filter((o) => !byCase.has(o.case.id)).map((o) => o.case.title);
-      const resolved = outcomes
-        .filter((o) => byCase.has(o.case.id))
-        .map(({ case: c, ...rest }) => ({ ...rest, point_id: byCase.get(c.id)! }));
-      if (resolved.length === 0) throw new Error("None of the marked cases have a test point.");
-
-      const run = await unwrap(
-        commands.submitTestRun(
-          session!.org,
-          session!.project,
-          session!.planId,
-          `${session!.pbi.title} - manual run`,
-          resolved,
-        ),
-      );
-      // A PARTIAL drop used to pass silently: only an all-dropped run
-      // errored, so a tester who marked eight cases and had two without a
-      // point was told the run was recorded and lost those two results.
-      return {
-        recorded: resolved.length - run.outcomes_unrecorded.length,
-        dropped,
-        unrecorded: run.outcomes_unrecorded,
-        extrasFailed: run.extras_failed,
-      };
+      return { recorded, failures, dropped: droppedRef.current.size };
     },
-    onSuccess: ({ recorded, dropped, unrecorded, extrasFailed }) => {
-      // Each message is guarded by the list it describes. They were briefly
-      // chained, with the last one reached by FALL-THROUGH - so an
-      // unrecorded-only run printed the suite message too, with
-      // "0 could not be:" and no names, contradicting the accurate warning
-      // just above it. A message must never be able to fire about a list
-      // that is empty.
-
-      // Marked, but Azure DevOps had no result row: NOT recorded, and not
-      // something that can be added over there. It has to be marked again
-      // in here - which is the opposite of the attachment message below.
-      if (unrecorded.length > 0) {
+    onSuccess: ({ recorded, failures, dropped }) => {
+      if (failures.length > 0) {
+        // The run is complete; these marks are NOT in it. Saying which is
+        // the only way to act on it.
         toast.warning(
-          `${recorded} result(s) recorded. ${unrecorded.length} could NOT be - Azure DevOps ` +
-            `created no result row for test point(s) ${unrecorded.join(", ")}. Mark those ` +
-            `cases again here; they are not in the run.`,
+          `${recorded} result(s) recorded, but ${failures.length} could not be: ` +
+            failures.map(([id, e]) => `#${id} (${e})`).join(", ") +
+            ". The run is completed without them.",
           { duration: 20000 },
         );
+        return; // stay open so the tester can read what happened
       }
-
-      // Not in the suite at all, so there was never a test point for them.
-      if (dropped.length > 0) {
-        const one = dropped.length === 1;
+      if (dropped > 0) {
         toast.warning(
-          `${recorded} result(s) recorded, but ${dropped.length} could not be: ` +
-            `${dropped.join(", ")} - ${one ? "it is" : "they are"} not in this suite, so there ` +
-            `is no test point to record against. Add ${one ? "it" : "them"} to the suite and ` +
-            `mark again.`,
-          { duration: 20000 },
+          `${recorded} result(s) recorded. ${dropped} case(s) had no test point and are not in the run.`,
+          { duration: 15000 },
         );
+        return;
       }
-
-      // Attached AFTER the outcomes are saved, so these genuinely are
-      // "recorded, but this did not attach".
-      if (extrasFailed.length > 0) {
-        toast.warning(
-          `The outcomes were recorded, but this did not attach: ${extrasFailed.join(", ")}. ` +
-            `Add it in Azure DevOps.`,
-          { duration: 20000 },
-        );
-      }
-
-      // Only a completely clean run closes the window. Anything else leaves
-      // it open so the tester can read what happened - and the Finish
-      // button is latched, so it cannot be sent a second time.
-      if (dropped.length === 0 && unrecorded.length === 0 && extrasFailed.length === 0) {
-        toast.success("Run recorded. Closing runner.");
-        setTimeout(() => getCurrentWindow().close(), 600);
-      }
+      toast.success("Run recorded. Closing runner.");
+      setTimeout(() => getCurrentWindow().close(), 600);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -703,7 +769,7 @@ export default function RunnerWindow() {
       )}
 
       <footer className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
-        <Button variant="ghost" size="sm" disabled={idx === 0} onClick={() => setIdx((i) => i - 1)}>
+        <Button variant="ghost" size="sm" disabled={idx === 0} onClick={() => goTo(idx - 1)}>
           <IconBack aria-hidden />
           Prev
         </Button>
@@ -711,7 +777,7 @@ export default function RunnerWindow() {
           variant="ghost"
           size="sm"
           disabled={idx >= list.length - 1}
-          onClick={() => setIdx((i) => i + 1)}
+          onClick={() => goTo(idx + 1)}
         >
           <IconNext aria-hidden />
           Next

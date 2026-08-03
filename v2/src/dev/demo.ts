@@ -333,17 +333,32 @@ function applyPatches() {
     },
     runHistory: () =>
       ok([...historyByCase.entries()].map(([test_case_id, outcomes]): CaseHistory => ({ test_case_id, outcomes }))),
-    submitTestRun: (_o: string, _p: string, _plan: number, _name: string, outcomes: { point_id: number; outcome: string }[]) => {
+    // The incremental protocol the runner speaks now: open lazily, record
+    // per case as the tester advances, complete at Finish.
+    startTestRun: (_o: string, _p: string, _plan: number, _name: string, pointIds: number[]) => {
       const runId = nextRunId++;
-      for (const oc of outcomes) {
-        const caseId = oc.point_id - 40000;
-        pointState.set(caseId, { outcome: oc.outcome.toLowerCase(), runId });
-        const hist = historyByCase.get(caseId) ?? [];
-        hist.unshift({ outcome: oc.outcome, completed_date: new Date().toISOString(), run_id: runId });
-        historyByCase.set(caseId, hist.slice(0, 5));
-      }
-      return ok({ run_id: runId, web_url: "https://example.invalid/demo-run", outcomes_unrecorded: [], extras_failed: [] });
+      return ok({
+        run_id: runId,
+        web_url: "https://example.invalid/demo-run",
+        results: pointIds.map((point_id) => ({ point_id, result_id: point_id + 100 })),
+        unmatched: [],
+      });
     },
+    recordResult: (
+      _o: string,
+      _p: string,
+      runId: number,
+      _resultId: number,
+      outcome: { point_id: number; outcome: string },
+    ) => {
+      const caseId = outcome.point_id - 40000;
+      pointState.set(caseId, { outcome: outcome.outcome.toLowerCase(), runId });
+      const hist = historyByCase.get(caseId) ?? [];
+      hist.unshift({ outcome: outcome.outcome, completed_date: new Date().toISOString(), run_id: runId });
+      historyByCase.set(caseId, hist.slice(0, 5));
+      return ok([]);
+    },
+    finishTestRun: () => ok(null),
     getResultDetail: () => ok({ outcome: "Failed", comment: "Demo failure comment" }),
     resultFailureDetail: () => ok({ comment: "Demo: step 3 timed out waiting for the redirect.", bug_ids: [2003] }),
     resultScreenshots: () => ok([]),

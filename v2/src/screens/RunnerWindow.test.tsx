@@ -58,8 +58,11 @@ function renderRunner() {
   );
 }
 
-test("plays a case, records an outcome, submits per-point with step results", async () => {
-  let submitted: { runName?: string; outcomes?: Array<Record<string, unknown>> } = {};
+/** The incremental protocol, end to end: the run opens lazily, the case's
+ * marks land via record_result, and Finish completes the run - the same
+ * three commands Next-driven recording uses. */
+test("plays a case, records it into a lazily-opened run, and Finish completes it", async () => {
+  const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
   mockIPC((cmd, args) => {
     if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full") return [fullCase];
@@ -76,10 +79,22 @@ test("plays a case, records an outcome, submits per-point with step results", as
           last_result_id: null,
         },
       ];
-    if (cmd === "submit_test_run") {
-      const a = args as { runName: string; outcomes: Array<Record<string, unknown>> };
-      submitted = { runName: a.runName, outcomes: a.outcomes };
-      return { run_id: 300, web_url: "https://x/run/300" };
+    if (cmd === "start_test_run") {
+      calls.push({ cmd, args: args as Record<string, unknown> });
+      return {
+        run_id: 300,
+        web_url: "https://x/run/300",
+        results: [{ point_id: 7, result_id: 70 }],
+        unmatched: [],
+      };
+    }
+    if (cmd === "record_result") {
+      calls.push({ cmd, args: args as Record<string, unknown> });
+      return [];
+    }
+    if (cmd === "finish_test_run") {
+      calls.push({ cmd, args: args as Record<string, unknown> });
+      return null;
     }
   });
   renderRunner();
@@ -91,13 +106,93 @@ test("plays a case, records an outcome, submits per-point with step results", as
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   fireEvent.click(screen.getByRole("button", { name: /Finish \(1\)/ }));
 
-  await vi.waitFor(() => expect(submitted.outcomes).toBeTruthy());
-  expect(submitted.runName).toBe("Login flow - manual run");
-  const o = submitted.outcomes![0];
+  await vi.waitFor(() => expect(calls.some((c) => c.cmd === "finish_test_run")).toBe(true));
+  const start = calls.find((c) => c.cmd === "start_test_run")!;
+  expect(start.args.runName).toBe("Login flow - manual run");
+  expect(start.args.pointIds).toEqual([7]);
+  const rec = calls.find((c) => c.cmd === "record_result")!;
+  expect(rec.args.resultId).toBe(70);
+  const o = rec.args.outcome as Record<string, unknown>;
   expect(o.point_id).toBe(7);
   expect(o.outcome).toBe("Passed");
   expect(o.step_ids).toEqual(["2", "3"]);
   expect(o.step_outcomes).toEqual(["Passed", null]);
+  expect(calls.map((c) => c.cmd)).toEqual(["start_test_run", "record_result", "finish_test_run"]);
+});
+
+/** The point of the feature: clicking NEXT records the case being left,
+ * before any Finish - a session abandoned half way has everything it
+ * passed through already saved in Azure DevOps. */
+test("Next records the outcome immediately, without waiting for Finish", async () => {
+  const recorded: Array<Record<string, unknown>> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Invalid login" }];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+        {
+          point_id: 8,
+          test_case_id: 202,
+          test_case_name: "Invalid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    if (cmd === "start_test_run")
+      return {
+        run_id: 300,
+        web_url: "",
+        results: [
+          { point_id: 7, result_id: 70 },
+          { point_id: 8, result_id: 80 },
+        ],
+        unmatched: [],
+      };
+    if (cmd === "record_result") {
+      recorded.push(args as Record<string, unknown>);
+      return [];
+    }
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+  // Recorded on navigation - no Finish anywhere in sight.
+  await vi.waitFor(() => expect(recorded).toHaveLength(1));
+  expect(recorded[0].resultId).toBe(70);
+  expect((recorded[0].outcome as Record<string, unknown>).outcome).toBe("Failed");
+
+  // Going BACK and changing the verdict re-records the same row.
+  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await vi.waitFor(() => expect(recorded).toHaveLength(2));
+  expect(recorded[1].resultId).toBe(70);
+  expect((recorded[1].outcome as Record<string, unknown>).outcome).toBe("Passed");
+
+  // An UNCHANGED case is not re-sent on the way past.
+  fireEvent.click(screen.getByRole("button", { name: "Prev" }));
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(recorded).toHaveLength(2);
 });
 
 /// A tester re-running a suite only touches what changed: every case opens
@@ -213,8 +308,8 @@ test("session caseIds restrict the runner's case list", async () => {
 /// The runner offers the same verdicts ADO's own runner does - including
 /// Paused, for a case someone had to stop half way through. It records
 /// like any other outcome.
-test("Paused is offered and submits as a real outcome", async () => {
-  let submitted: { outcomes?: Array<Record<string, unknown>> } = {};
+test("Paused is offered and records as a real outcome", async () => {
+  const recorded: Array<Record<string, unknown>> = [];
   mockIPC((cmd, args) => {
     if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full") return [fullCase];
@@ -231,10 +326,13 @@ test("Paused is offered and submits as a real outcome", async () => {
           last_result_id: null,
         },
       ];
-    if (cmd === "submit_test_run") {
-      submitted = args as typeof submitted;
-      return { run_id: 300, web_url: "", outcomes_unrecorded: [], extras_failed: [] };
+    if (cmd === "start_test_run")
+      return { run_id: 300, web_url: "", results: [{ point_id: 7, result_id: 70 }], unmatched: [] };
+    if (cmd === "record_result") {
+      recorded.push(args as Record<string, unknown>);
+      return [];
     }
+    if (cmd === "finish_test_run") return null;
   });
   renderRunner();
   await screen.findByText("Valid login");
@@ -242,8 +340,8 @@ test("Paused is offered and submits as a real outcome", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Paused" }));
   expect(screen.getByRole("button", { name: "Paused" })).toHaveClass("bg-muted");
   fireEvent.click(screen.getByRole("button", { name: /Finish \(1\)/ }));
-  await vi.waitFor(() => expect(submitted.outcomes).toBeTruthy());
-  expect(submitted.outcomes![0].outcome).toBe("Paused");
+  await vi.waitFor(() => expect(recorded).toHaveLength(1));
+  expect((recorded[0].outcome as Record<string, unknown>).outcome).toBe("Paused");
 });
 
 test("File bug appears only after a failure", async () => {

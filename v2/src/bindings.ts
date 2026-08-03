@@ -50,11 +50,30 @@ export const commands = {
 	listTestPoints: (organization: string, project: string, planId: number, suiteId: number) => typedError<TestPoint[], AdoError>(__TAURI_INVOKE("list_test_points", { organization, project, planId, suiteId })),
 	resultFailureDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultFailureDetail, AdoError>(__TAURI_INVOKE("result_failure_detail", { organization, project, runId, resultId })),
 	/**
-	 *  Full manual-run lifecycle ported from v1 run_screen submission: create a
-	 *  run seeded from the points, map each point to its auto-created result,
-	 *  PATCH outcomes, complete the run. Returns the run's web URL.
+	 *  Open a run over the session's points WITHOUT completing it - the
+	 *  incremental half of what submit_test_run did in one shot. The runner
+	 *  calls this lazily on the first recorded outcome, then `record_result`
+	 *  per case as the tester clicks Next, then `finish_test_run`.
+	 * 
+	 *  A run left open (window closed mid-session) stays In Progress in Azure
+	 *  DevOps - which is what ADO's own runner does with a paused session,
+	 *  and every already-recorded outcome is already saved.
 	 */
-	submitTestRun: (organization: string, project: string, planId: number, runName: string, outcomes: PointOutcome[]) => typedError<RunCreated, AdoError>(__TAURI_INVOKE("submit_test_run", { organization, project, planId, runName, outcomes })),
+	startTestRun: (organization: string, project: string, planId: number, runName: string, pointIds: number[]) => typedError<RunStarted, AdoError>(__TAURI_INVOKE("start_test_run", { organization, project, planId, runName, pointIds })),
+	/**
+	 *  Record ONE case's outcome into a live run - the write behind the Next
+	 *  button. Idempotent by nature: going back and changing a verdict PATCHes
+	 *  the same result row again. Per-step marks and attachments are additive
+	 *  and best-effort exactly as in the batch flow; a failure there never
+	 *  loses the recorded outcome, and the returned list names what did not
+	 *  attach.
+	 */
+	recordResult: (organization: string, project: string, runId: number, resultId: number, outcome: PointOutcome) => typedError<string[], AdoError>(__TAURI_INVOKE("record_result", { organization, project, runId, resultId, outcome })),
+	/**
+	 *  Close a live run. Refused for a run nothing was recorded into - the
+	 *  runner tracks that and never calls this before the first record.
+	 */
+	finishTestRun: (organization: string, project: string, runId: number) => typedError<null, AdoError>(__TAURI_INVOKE("finish_test_run", { organization, project, runId })),
 	fetchBoard: (organization: string, project: string, area: string | null, pbiId: number | null, currentSprint: boolean) => typedError<BoardData, AdoError>(__TAURI_INVOKE("fetch_board", { organization, project, area, pbiId, currentSprint })),
 	/**
 	 *  Move a board item into a column: resolves the target state exactly like
@@ -750,6 +769,11 @@ export type PointOutcome = {
 	bug_ids: number[] | null,
 };
 
+export type PointResult = {
+	point_id: number,
+	result_id: number,
+};
+
 /**  A build run tied to a pull request, with its stages and deployments. */
 export type PrBuild = {
 	id: number,
@@ -948,38 +972,27 @@ export type RunAttachmentOut = {
 	b64: string,
 };
 
-export type RunCreated = {
-	run_id: number,
-	web_url: string,
-	/**
-	 *  Marked outcomes Azure DevOps had no result row for, so they were
-	 *  never recorded at all.
-	 * 
-	 *  Deliberately NOT folded into `extras_failed`. These were briefly
-	 *  reported through that list, whose one consumer wraps everything in
-	 *  "The outcomes were recorded, but this did not attach - add it in
-	 *  Azure DevOps." Both halves of that sentence are false for a lost
-	 *  outcome: it was not recorded, and it cannot be added there - it has
-	 *  to be marked again here. A channel whose framing contradicts the
-	 *  item is worse than no channel.
-	 */
-	outcomes_unrecorded: number[],
-	/**
-	 *  Per-step marks and attachments that did NOT make it onto the run.
-	 * 
-	 *  These are attached after the outcomes are already recorded, so a
-	 *  failure here must not fail the run - but it was not reported
-	 *  either, and a tester who marked five steps individually and
-	 *  attached a screenshot of the failure had no way to know none of it
-	 *  arrived. Each entry names what was lost, for which case.
-	 */
-	extras_failed: string[],
-};
-
 export type RunOutcome = {
 	outcome: string,
 	completed_date: string,
 	run_id: number,
+};
+
+/**
+ *  A live run's identity plus every point's result row, so the runner can
+ *  PATCH one case at a time as the tester advances.
+ */
+export type RunStarted = {
+	run_id: number,
+	web_url: string,
+	/**  point_id -> result_id, flattened to pairs for the bindings. */
+	results: PointResult[],
+	/**
+	 *  Points Azure DevOps created no result row for - marks against these
+	 *  can NEVER be recorded in this run, and the runner says so up front
+	 *  instead of discovering it at the end.
+	 */
+	unmatched: number[],
 };
 
 export type ScreenShot = {
