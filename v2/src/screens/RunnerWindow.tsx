@@ -596,9 +596,14 @@ export default function RunnerWindow() {
             ))}
           </ol>
 
+          {/* shrink-0 + min-h: the scroll column above may compress its flex
+              children on a short screen, and this box was the one that got
+              crushed to a sliver. It now keeps its height and scrolls with
+              the rest; resize-y lets it grow taller while the width stays
+              fixed to the column. */}
           <Textarea
             aria-label="Comment"
-            className="h-16 w-full text-sm"
+            className="h-16 min-h-16 w-full shrink-0 resize-y text-sm"
             placeholder="Comment (optional)"
             value={st.comment}
             onChange={(e) => patch(current.id, { comment: e.target.value })}
