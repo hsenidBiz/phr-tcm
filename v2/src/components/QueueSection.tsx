@@ -10,7 +10,7 @@ import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
-import { caseKey, fileName, keysFor, ownerPaths, saveWatches, type WatchedFile } from "../lib/fileSync";
+import { caseKey, fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { pruneCreated } from "../lib/queuePrune";
 import {
@@ -22,6 +22,8 @@ import {
   submitStarted,
   subscribeSubmit,
 } from "../lib/submitRun";
+import { noteSyncPairs, stampFileSlices } from "../lib/queueStamp";
+import { loadNotes, saveNote } from "../lib/caseNotes";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
@@ -115,6 +117,21 @@ export default function QueueSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org, pbiId],
   );
+  // A case imported WITH its work item id and a comment is a comment
+  // about a case that already lives in Azure DevOps - surface it in View
+  // Test Cases too. Fill only EMPTY slots: a note typed in View is never
+  // overwritten by a file import.
+  useEffect(() => {
+    const notes = loadNotes(org);
+    for (const tc of queue) {
+      const comment = tc.comment ?? "";
+      if (tc.update_id != null && comment.trim() && !notes[String(tc.update_id)]) {
+        saveNote(org, tc.update_id, comment);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue, org]);
+
   const [areaPath, setAreaPath] = useState("");
   const [iterationPath, setIterationPath] = useState("");
 
@@ -414,7 +431,7 @@ export default function QueueSection({
         // cases OUT of their queue when the loop finishes. `sent` is the
         // FILTERED list: every result index is an index into it, and
         // pruneCreated matches on that list.
-        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows });
+        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows, prevQueue: queue });
         return { results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
@@ -441,12 +458,14 @@ export default function QueueSection({
     sentFor,
     skipped,
     skippedRows,
+    prevQueue,
   }: {
     results: SubmitItemResult[];
     sent: TestCase[];
     sentFor: number;
     skipped: number;
     skippedRows: TestCase[];
+    prevQueue: TestCase[];
   }) {
     // Keep failed items AND anything the loop never reached (cancelled).
     const done = results.filter((r) => r.action !== "failed");
@@ -513,6 +532,51 @@ export default function QueueSection({
         { duration: 20000 },
       );
     }
+    // The FILES learn what the submit made real: every succeeded case is
+    // written back with its work item id and exactly the uploaded content,
+    // so re-importing the file yields no-op updates instead of a duplicate
+    // set. Failed cases stay as drafts. Comments are never the price:
+    // per-case comments ride on the cases, and the file-level comments
+    // block survives because merge_cases_into_draft keeps every top-level
+    // key it does not own.
+    const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id }));
+    void (async () => {
+      const known = watches.length > 0 ? watches : loadWatches(org, sentFor);
+      if (known.length > 0) {
+        const files = stampFileSlices(prevQueue, ownerPaths(prevQueue, known), sent, outcomes);
+        for (const [path, f] of files) {
+          if (!f.changed) continue;
+          const r = await commands.saveDraftCases(path, f.slice);
+          if (r.status === "error") {
+            toast.warning(
+              `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
+                `Importing it again would create duplicates - fix the file before re-importing.`,
+              { duration: 20000 },
+            );
+            continue;
+          }
+          // Mounted: through the owner's state, as bulk edits do. Away:
+          // straight into the persisted watch list - a state setter on an
+          // unmounted screen never runs its persist step.
+          if (queueWriterFor(org, sentFor) && onWatchPatched) {
+            onWatchPatched(path, { stamp: r.data, snapshot: f.slice });
+          } else {
+            saveWatches(
+              org,
+              sentFor,
+              patchWatch(loadWatches(org, sentFor), path, { stamp: r.data, snapshot: f.slice }),
+            );
+          }
+        }
+      }
+      // And the same comment now shows on the case where it LIVES: the
+      // View Test Cases notes store learns every succeeded case's comment
+      // under its (new) work item id.
+      for (const pair of noteSyncPairs(sent, outcomes)) {
+        saveNote(org, pair.id, pair.comment);
+      }
+    })();
+
     qc.invalidateQueries({ queryKey: ["pbi-tcs", org, sentFor] });
     qc.invalidateQueries({ queryKey: ["pbi-tc-titles", org, sentFor] });
   }
