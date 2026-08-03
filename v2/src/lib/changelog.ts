@@ -13,6 +13,29 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.0",
+    date: "2026-08-03",
+    items: [
+      "The browser view no longer opens a new tab every time a comment is saved or the queue changes - and it now updates ITSELF in place when the cases change: no refresh, scroll and search kept, never while you are typing a comment.",
+      "The browser view badges each draft case NEW or UPDATE (beside the work item id it will write over), so a reviewer can see what importing will do.",
+      "Uploading test cases keeps its progress bar when you visit another tab - come back and it is exactly where the upload is. Finishing while you are away still removes the created cases from the queue.",
+      "The queue has multi-select: tick cases (shift+click for a range) for bulk edit, Power Rename over just the selection, or bulk remove - every change is also written back into the .json file the cases came from.",
+      "Import files can carry BOTH sort orders - one that follows the spec for reviewing, one grouped by setup for testing - and the queue can flip between them. The AI tools stamp both automatically.",
+      "The runner offers Paused, like Azure DevOps's own runner, and every case opens with its last outcome pre-selected there too.",
+      "View Test Cases and Run Tests can hold several cases open at once, with a sticky Close all bottom-left - and collapsing a group keeps the cases you are reading on screen.",
+      "The split-this-case suggestion in validate_cases fires far less often (measured at 15 false warnings on a clean 63-case set; the three failure shapes are now excluded) and moved to a separate 'advisories' channel so real warnings keep their authority.",
+      "The company database's connection string is built from fields - host, database, user, password - instead of typed as one long line. A stored string appears already filled in.",
+      "Smaller: boards run flush to the bottom, Remove all sits last with a red hover, sidebar icons animate on hover, the collapse button's tooltip no longer goes stale, tabbing through Manual Entry no longer pops the tags list open, Run Tests marks collapsed groups that still hold selected cases, and the one-release-old Re-run failures button is gone - filter by Failed, select, run.",
+    ],
+  },
+  {
+    version: "1.18.13",
+    date: "2026-08-03",
+    items: [
+      "The runner's comment box survives short screens and resizes vertically.",
+    ],
+  },
+  {
     version: "1.18.12",
     date: "2026-08-02",
     items: [
