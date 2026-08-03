@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.2",
+    date: "2026-08-03",
+    items: [
+      "After uploading, the .json file the cases came from is updated in place: created cases get their new work item IDs and every case holds exactly what was uploaded - so importing the same file again changes nothing instead of creating duplicates. Comments in the file are untouched.",
+      "Comments now agree across the app: a comment on an uploaded case appears in View Test Cases under its work item, and importing a file whose cases already carry IDs fills in any comments View did not have. A note typed in View is never overwritten.",
+    ],
+  },
+  {
     version: "1.19.1",
     date: "2026-08-03",
     items: [
