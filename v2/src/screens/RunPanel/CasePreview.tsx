@@ -4,9 +4,12 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useState } from "react";
 import { toast } from "sonner";
-import { commands, type TestPoint } from "../../bindings";
+import { commands, type RunOutcome, type TestPoint } from "../../bindings";
+import { outcomeLabel } from "../../lib/outcomes";
 import { unwrap } from "../../lib/ipc";
+import { History } from "lucide-react";
 
 
 /** Read-only expansion of a Run Tests row: the case's steps plus the last
@@ -16,11 +19,19 @@ export default function CasePreview({
   org,
   project,
   point,
+  history = [],
 }: {
   org: string;
   project: string;
   point: TestPoint;
+  /** Last-N outcomes for this case, newest first - the dots' data, handed
+   * down so the expansion can open the runs BEHIND the dots. */
+  history?: RunOutcome[];
 }) {
+  // Everything before the newest result. The panel exists for exactly the
+  // cases that have a past - one lone result has no history to show.
+  const prior = history.slice(1);
+  const [showHistory, setShowHistory] = useState(false);
   const caseId = point.test_case_id;
   const steps = useQuery({
     queryKey: ["run-case-steps", org, caseId],
@@ -77,6 +88,30 @@ export default function CasePreview({
         </div>
       )}
 
+      {prior.length > 0 && (
+        <div>
+          {/* Same pattern as the PR panel's pipeline view: a button that
+              opens the record behind the summary, fetched only when asked. */}
+          <button
+            className="flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
+            aria-expanded={showHistory}
+            onClick={() => setShowHistory((v) => !v)}
+          >
+            <History size={12} aria-hidden />
+            {showHistory
+              ? "Hide execution history"
+              : `Execution history (${prior.length} earlier result${prior.length === 1 ? "" : "s"})`}
+          </button>
+          {showHistory && (
+            <ul className="mt-2 space-y-1.5">
+              {prior.map((o, i) => (
+                <HistoryEntry key={`${o.run_id}-${o.result_id}-${i}`} org={org} project={project} entry={o} />
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {steps.isLoading && <p className="text-xs text-muted">Loading steps…</p>}
       {steps.isError && <p className="text-xs text-danger">{steps.error.message}</p>}
       {tc &&
@@ -106,3 +141,49 @@ export default function CasePreview({
   );
 }
 
+
+/** One earlier result: verdict, when, which run - and the comment behind
+ * it, fetched only once this row is on screen. */
+function HistoryEntry({
+  org,
+  project,
+  entry,
+}: {
+  org: string;
+  project: string;
+  entry: RunOutcome;
+}) {
+  const detail = useQuery({
+    queryKey: ["run-fail", org, project, entry.run_id, entry.result_id],
+    queryFn: () =>
+      unwrap(commands.resultFailureDetail(org, project, entry.run_id, entry.result_id)),
+    staleTime: Infinity, // a finished result never changes
+    retry: false,
+  });
+  const tone: Record<string, string> = {
+    passed: "text-success",
+    failed: "text-danger",
+    paused: "text-muted",
+    blocked: "text-warning",
+  };
+  const comment = detail.data?.comment?.trim();
+  return (
+    <li className="rounded-md border border-border/60 bg-surface px-2.5 py-1.5">
+      <p className="text-xs">
+        <span className={tone[entry.outcome.toLowerCase()] ?? "text-faint"}>
+          {outcomeLabel(entry.outcome)}
+        </span>
+        <span className="text-faint">
+          {" "}
+          · {entry.completed_date ? entry.completed_date.slice(0, 10) : "no date"} · run #
+          {entry.run_id}
+        </span>
+      </p>
+      {detail.isLoading && <p className="text-[11px] text-faint">Loading comment…</p>}
+      {comment && <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-muted">{comment}</p>}
+      {detail.data && !comment && (
+        <p className="text-[11px] text-faint">No comment recorded.</p>
+      )}
+    </li>
+  );
+}

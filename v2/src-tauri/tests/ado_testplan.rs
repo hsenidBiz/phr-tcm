@@ -347,7 +347,7 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
         .and(path("/o/p/_apis/test/Runs/3/results"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "value": [
-                {"outcome": "Failed", "completedDate": "2026-07-12T10:05:00Z", "testCase": {"id": "201"}},
+                {"id": 9001, "outcome": "Failed", "completedDate": "2026-07-12T10:05:00Z", "testCase": {"id": "201"}},
                 {"outcome": "Unspecified", "testCase": {"id": "201"}},
                 {"outcome": "Passed", "completedDate": "2026-07-12T10:06:00Z", "testCase": {"id": "202"}}
             ]
@@ -388,6 +388,9 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
     assert_eq!(c201.outcomes.len(), 5);
     assert_eq!(c201.outcomes[0].outcome, "Failed");
     assert_eq!(c201.outcomes[0].run_id, 3);
+    // The result row id rides along, so a history view can fetch a PRIOR
+    // result's comment - the point itself only carries the latest.
+    assert_eq!(c201.outcomes[0].result_id, 9001);
     assert_eq!(c201.outcomes[1].outcome, "Passed");
     assert_eq!(c201.outcomes[1].run_id, 2);
     let c202 = &history[1];

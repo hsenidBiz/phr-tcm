@@ -487,7 +487,12 @@ export default function RunPanel({
               {expanded.has(p.point_id) && (
                 <tr>
                   <td colSpan={3} className="p-0">
-                    <CasePreview org={org} project={project} point={p} />
+                    <CasePreview
+                      org={org}
+                      project={project}
+                      point={p}
+                      history={p.test_case_id != null ? (historyByCase.get(p.test_case_id) ?? []) : []}
+                    />
                   </td>
                 </tr>
               )}

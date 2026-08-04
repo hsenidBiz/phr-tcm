@@ -30,8 +30,8 @@ function mockAll() {
           {
             test_case_id: 201,
             outcomes: [
-              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7 },
-              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6 },
+              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7, result_id: 70 },
+              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6, result_id: 60 },
             ],
           },
         ];
@@ -144,6 +144,95 @@ test("expanding a row shows the case steps and the last failure detail", async (
   // Collapsing hides it again.
   fireEvent.click(screen.getByLabelText("Collapse test case"));
   expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
+});
+
+/// "Similar to what we did for pipeline": the dots summarize, and a
+/// button inside the expansion opens the runs behind them - each prior
+/// result with its own comment, fetched only when the panel is opened.
+test("an expanded row can open the execution history behind the dots", async () => {
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [
+          {
+            test_case_id: 201,
+            outcomes: [
+              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7, result_id: 70 },
+              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6, result_id: 60 },
+              { outcome: "Blocked", completed_date: "2026-07-10T10:00:00Z", run_id: 5, result_id: 50 },
+            ],
+          },
+        ];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "failed",
+            last_run_id: 7,
+            last_result_id: 70,
+          },
+        ];
+      case "test_cases_by_ids":
+        return [
+          {
+            id: 201,
+            title: "Valid login",
+            tags: "",
+            automation_status: "Not Automated",
+            steps: [{ action: "Open login page", expected: "Form shown" }],
+            step_ids: ["2"],
+            module_value: "",
+            preconditions: "",
+          },
+        ];
+      case "result_failure_detail": {
+        const a = args as { runId: number; resultId: number };
+        // The latest result's detail is the danger box; the PRIOR ones are
+        // what the history panel fetches - each by its own result id.
+        if (a.runId === 6 && a.resultId === 60)
+          return { comment: "Passed after the hotfix", bug_ids: [] };
+        if (a.runId === 5 && a.resultId === 50) return { comment: "", bug_ids: [] };
+        return { comment: "Timed out waiting for redirect", bug_ids: [] };
+      }
+    }
+  });
+  renderPanel();
+
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText("Expand test case"));
+  await screen.findByText("Open login page");
+
+  // Two results predate the current one; the newest is NOT in the list.
+  const toggle = screen.getByRole("button", { name: /Execution history \(2 earlier results\)/ });
+  fireEvent.click(toggle);
+  expect(await screen.findByText("Passed after the hotfix")).toBeInTheDocument();
+  expect(screen.getByText(/2026-07-11 · run #6/)).toBeInTheDocument();
+  expect(screen.getByText(/2026-07-10 · run #5/)).toBeInTheDocument();
+  expect(await screen.findByText("No comment recorded.")).toBeInTheDocument();
+
+  // And it folds away again.
+  fireEvent.click(screen.getByRole("button", { name: /Hide execution history/ }));
+  expect(screen.queryByText("Passed after the hotfix")).not.toBeInTheDocument();
+});
+
+/// A case with exactly one result has no past to show - the button
+/// would only ever open an empty list, so it never renders.
+test("a single-result case offers no execution history button", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getAllByLabelText("Expand test case")[1]); // case 202: no history at all
+  expect(screen.queryByRole("button", { name: /Execution history/ })).not.toBeInTheDocument();
 });
 
 test("row clicks select cases for a targeted runner session", async () => {

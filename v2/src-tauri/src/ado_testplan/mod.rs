@@ -123,6 +123,10 @@ pub struct RunOutcome {
     pub outcome: String,
     pub completed_date: String,
     pub run_id: i32,
+    /// The result row inside that run, so an execution-history view can
+    /// pull the comment and linked bugs for a PRIOR result, not just the
+    /// latest one the point itself carries.
+    pub result_id: i32,
 }
 
 /// One test case's recent outcomes (newest first, capped at 5).

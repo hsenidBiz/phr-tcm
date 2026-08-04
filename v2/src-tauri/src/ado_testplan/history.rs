@@ -100,6 +100,7 @@ impl AdoClient {
                             .unwrap_or_default()
                             .to_string(),
                         run_id: *run_id,
+                        result_id: r["id"].as_i64().unwrap_or_default() as i32,
                     });
                 }
             }
