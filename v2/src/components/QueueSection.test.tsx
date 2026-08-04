@@ -179,6 +179,31 @@ test("another PBI's submit does not show here", async () => {
   }
 });
 
+/// Offline, the deliberate network writes PAUSE with a reason instead of
+/// failing with a toast - and everything local (edit, remove, export)
+/// stays usable.
+test("offline disables the network writes and says why", async () => {
+  baseMocks();
+  Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+  window.dispatchEvent(new Event("offline"));
+  try {
+    renderQueue([makeCase()]);
+    const share = screen.getByRole("button", { name: /Share for review/ });
+    expect(share).toBeDisabled();
+    expect(share).toHaveAttribute("title", expect.stringContaining("No internet"));
+    // Local work is untouched by the gate.
+    expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Export JSON/ })).toBeEnabled();
+
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    window.dispatchEvent(new Event("online"));
+    await waitFor(() => expect(share).toBeEnabled());
+  } finally {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    window.dispatchEvent(new Event("online"));
+  }
+});
+
 /// Selecting rows arms the bulk bar; Remove writes the survivors back into
 /// the file the removed cases came from - the file must say what the queue
 /// says, or the next external save quietly reverts the removal.

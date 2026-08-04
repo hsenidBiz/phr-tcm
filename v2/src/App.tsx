@@ -6,6 +6,7 @@ import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
 import { formatByteProgress } from "./lib/bytes";
+import { onlineSnapshot, subscribeOnline } from "./lib/network";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { cacheEntry, claimCacheFor } from "./lib/localCache";
@@ -226,6 +227,11 @@ export default function App() {
   // is also the first moment the size is known - the backend has to re-ask
   // the feed before it can say how big the download is.
   const [dl, setDl] = useState<{ percent: number; downloaded: number; total: number } | null>(null);
+
+  // One shared signal for "the machine has no network". Reads pause via
+  // React Query's own networkMode; the banner below is the part that
+  // tells the HUMAN, and the write surfaces gate themselves on it.
+  const online = useSyncExternalStore(subscribeOnline, onlineSnapshot);
 
   const applyUpdate = useMutation({
     mutationFn: async () => {
@@ -540,6 +546,13 @@ export default function App() {
             onOpenSettings={toggleSettings}
             settingsOpen={section === "settings" && !workMode}
           />
+        )}
+
+        {!online && (
+          <div className="border-b border-warning/40 bg-warning/10 px-6 py-2 text-sm text-warning">
+            No internet connection - network actions are paused until it returns. Drafts,
+            comments and everything local keep working.
+          </div>
         )}
 
         {update.data?.available && (

@@ -344,6 +344,80 @@ test("Paused is offered and records as a real outcome", async () => {
   expect((recorded[0].outcome as Record<string, unknown>).outcome).toBe("Paused");
 });
 
+/** Offline, the runner PAUSES instead of failing: Next defers the record
+ * silently (the mark is kept), Finish is disabled with the reason, and
+ * the connection returning flushes everything unsent. */
+test("offline defers records and the reconnect flushes them", async () => {
+  const recorded: Array<Record<string, unknown>> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Invalid login" }];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7,
+          test_case_id: 201,
+          test_case_name: "Valid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+        {
+          point_id: 8,
+          test_case_id: 202,
+          test_case_name: "Invalid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+    if (cmd === "start_test_run")
+      return {
+        run_id: 300,
+        web_url: "",
+        results: [
+          { point_id: 7, result_id: 70 },
+          { point_id: 8, result_id: 80 },
+        ],
+        unmatched: [],
+      };
+    if (cmd === "record_result") {
+      recorded.push(args as Record<string, unknown>);
+      return [];
+    }
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+
+  // The network dies.
+  Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+  window.dispatchEvent(new Event("offline"));
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    // Deferred, not attempted - a record now is known-doomed.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(recorded).toHaveLength(0);
+    // And Finish says why it is off.
+    expect(screen.getByRole("button", { name: /Finish/ })).toBeDisabled();
+
+    // The connection returns: everything unsent flushes on its own.
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    window.dispatchEvent(new Event("online"));
+    await vi.waitFor(() => expect(recorded).toHaveLength(1));
+    expect((recorded[0].outcome as Record<string, unknown>).outcome).toBe("Failed");
+  } finally {
+    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    window.dispatchEvent(new Event("online"));
+  }
+});
+
 test("File bug appears only after a failure", async () => {
   mockIPC((cmd) => {
     if (cmd === "run_history") return [];

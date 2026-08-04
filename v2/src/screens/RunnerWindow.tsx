@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Pin, PinOff, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
 import AstryxIsland from "../components/AstryxIsland";
@@ -15,6 +15,7 @@ import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
+import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { getTheme } from "../lib/theme";
 import { outcomeLabel } from "./RunPanel";
 import {
@@ -107,6 +108,7 @@ export default function RunnerWindow() {
   // preconditions block never showed. Same detection as the main window
   // (shared localStorage cache, auto-picked from the field list otherwise).
   const { prefs } = useFieldRefs(session?.org ?? "", session?.project ?? "");
+  const online = useSyncExternalStore(subscribeOnline, onlineSnapshot);
 
   const cases = useQuery({
     queryKey: [
@@ -489,6 +491,12 @@ export default function RunnerWindow() {
     };
     const snap = JSON.stringify(payload);
     if (syncedRef.current[c.id] === snap) return; // already recorded as-is
+    // Offline: DEFER, silently. The mark is kept, the tester keeps
+    // moving, and the reconnect listener below flushes everything unsent
+    // - a record attempted now is known-doomed and would only add a
+    // failure toast per case to a connection problem the banner already
+    // explains.
+    if (!onlineSnapshot()) return;
     chainRef.current = chainRef.current.then(async () => {
       try {
         const run = await ensureRun();
@@ -531,6 +539,15 @@ export default function RunnerWindow() {
       }
     });
   };
+
+  // The connection coming back flushes every marked-but-unsent case.
+  useEffect(() => {
+    return subscribeOnline(() => {
+      if (!onlineSnapshot()) return;
+      for (const c of list) syncCase(c);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list, states]);
 
   /** Navigation is also the save: the case being LEFT is recorded. */
   const goTo = (next: number) => {
@@ -857,7 +874,11 @@ export default function RunnerWindow() {
           // DevOps run with all the same outcomes recorded twice - and
           // this app cannot delete a run. The window stays open so the
           // tester can read what failed; it just cannot be sent again.
-          disabled={markedCount === 0 || finish.isPending || finish.isSuccess}
+          // Also gated offline: Finish COMPLETES the run in Azure DevOps,
+          // which cannot happen on a dead connection - the marks are all
+          // kept, and the reconnect flush sends anything unsent first.
+          disabled={markedCount === 0 || finish.isPending || finish.isSuccess || !online}
+          title={online ? undefined : OFFLINE_HINT}
           onClick={() => finish.mutate()}
         >
           <IconFinish aria-hidden />

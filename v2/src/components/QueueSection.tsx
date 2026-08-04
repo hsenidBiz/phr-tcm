@@ -23,6 +23,7 @@ import {
   subscribeSubmit,
 } from "../lib/submitRun";
 import { noteSyncPairs, stampFileSlices } from "../lib/queueStamp";
+import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { loadNotes, saveNote } from "../lib/caseNotes";
 import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
@@ -100,6 +101,11 @@ export default function QueueSection({
   // reads the same phase, so coming back shows the bar where it really is.
   const phase = useSyncExternalStore(subscribeSubmit, submitPhaseSnapshot);
   const progress = phase && phase.org === org && phase.pbiId === pbiId ? phase : null;
+  // Writes PAUSE while offline instead of failing: attempting a submit on
+  // a dead connection is known-doomed, and a paused button with a reason
+  // beats an error toast. Reads pause on their own (React Query's
+  // networkMode) and resume when the connection returns.
+  const online = useSyncExternalStore(subscribeOnline, onlineSnapshot);
 
   // While mounted, this screen's own setQueue handles the post-submit
   // prune (through React state, as always). When it is NOT mounted at the
@@ -760,8 +766,8 @@ export default function QueueSection({
           <Button
             variant="outline"
             size="sm"
-            disabled={queue.length === 0 || share.isPending}
-            title="Upload the draft as a one-time share link a teammate can import for review"
+            disabled={queue.length === 0 || share.isPending || !online}
+            title={online ? "Upload the draft as a one-time share link a teammate can import for review" : OFFLINE_HINT}
             onClick={() => share.mutate()}
           >
             <IconShare aria-hidden />
@@ -1173,7 +1179,8 @@ export default function QueueSection({
               return (
                 <>
                   <Button
-                    disabled={queue.length === 0 || hasBlockers || submit.isPending}
+                    disabled={queue.length === 0 || hasBlockers || submit.isPending || !online}
+                    title={online ? undefined : OFFLINE_HINT}
                     onClick={() => arm(true)}
                   >
                     <IconConfirm aria-hidden />
@@ -1199,7 +1206,8 @@ export default function QueueSection({
                 </p>
                 <div className="flex items-center gap-2">
                   <Button
-                    disabled={submit.isPending}
+                    disabled={submit.isPending || !online}
+                    title={online ? undefined : OFFLINE_HINT}
                     onClick={() => {
                       arm(false);
                       submit.mutate();
