@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, events, type EnsuredSuite, type TestPoint } from "../../bindings";
+import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
@@ -115,6 +116,21 @@ export default function RunPanel({
       un.then((f) => f()).catch(() => {});
     };
   }, []);
+
+  // Live repaint: the runner announces every recorded (or reset) point as
+  // the tester clicks Next; patch the cached rows in place so the tint and
+  // outcome column follow the session without refetching the whole suite.
+  useEffect(() => {
+    const un = onPointRecorded((p) => {
+      if (p.org !== org || p.project !== project) return;
+      qc.setQueriesData<TestPoint[] | undefined>({ queryKey: ["points"] }, (rows) =>
+        patchPointRows(rows, p),
+      );
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [org, project, qc]);
 
   const refreshSuite = () => {
     try {

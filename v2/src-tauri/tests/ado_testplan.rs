@@ -451,3 +451,37 @@ async fn run_results_are_read_across_every_page() {
     // A point from the second page must be findable, which is the whole point.
     assert!(results.iter().any(|r| r.point_id == Some(1230)));
 }
+
+#[tokio::test]
+async fn reset_points_patches_reset_to_active() {
+    // The deselect path: resetToActive is ADO's own "reset test" - assert
+    // the exact verb, path and body so this can never drift into something
+    // destructive or silently wrong.
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/test/Plans/5/Suites/9/points/101,102"))
+        .and(wiremock::matchers::body_partial_json(serde_json::json!({
+            "resetToActive": true
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client
+        .reset_points_to_active("org", "proj", 5, 9, &[101, 102])
+        .await
+        .unwrap();
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn reset_points_with_no_ids_makes_no_request() {
+    let server = MockServer::start().await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client
+        .reset_points_to_active("org", "proj", 5, 9, &[])
+        .await
+        .unwrap();
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

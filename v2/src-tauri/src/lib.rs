@@ -82,6 +82,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             runs::result_failure_detail,
             runs::start_test_run,
             runs::record_result,
+            runs::reset_test_points,
             runs::finish_test_run,
             board::fetch_board,
             board::move_board_item,

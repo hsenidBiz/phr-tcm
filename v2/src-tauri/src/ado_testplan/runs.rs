@@ -64,6 +64,37 @@ impl AdoClient {
         Ok(points)
     }
 
+    /// PATCH the given test points back to Active - ADO's own "reset test"
+    /// mechanism (resetToActive). The point's outcome reads as never-run
+    /// afterwards; nothing is deleted, and past run results stay intact.
+    pub async fn reset_points_to_active(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+        suite_id: i32,
+        point_ids: &[i32],
+    ) -> Result<(), AdoError> {
+        if point_ids.is_empty() {
+            return Ok(());
+        }
+        let ids_csv = point_ids
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let url = format!(
+            "{}/test/Plans/{}/Suites/{}/points/{}?api-version=7.1",
+            self.tp_base(org, project),
+            plan_id,
+            suite_id,
+            ids_csv
+        );
+        self.patch_plain_json(url, &serde_json::json!({"resetToActive": true}))
+            .await?;
+        Ok(())
+    }
+
     /// POST a manual test run seeded from the given point ids; ADO creates
     /// one result per point and the run starts InProgress.
     pub async fn create_test_run(

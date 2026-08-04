@@ -70,6 +70,12 @@ export const commands = {
 	 */
 	recordResult: (organization: string, project: string, runId: number, resultId: number, outcome: PointOutcome) => typedError<string[], AdoError>(__TAURI_INVOKE("record_result", { organization, project, runId, resultId, outcome })),
 	/**
+	 *  Reset test points to Active - the write behind DESELECTING a verdict in
+	 *  the runner. ADO's own "reset test" (resetToActive): the point reads as
+	 *  never-run afterwards. PATCH only; past run results are never deleted.
+	 */
+	resetTestPoints: (organization: string, project: string, planId: number, suiteId: number, pointIds: number[]) => typedError<null, AdoError>(__TAURI_INVOKE("reset_test_points", { organization, project, planId, suiteId, pointIds })),
+	/**
 	 *  Close a live run. Refused for a run nothing was recorded into - the
 	 *  runner tracks that and never calls this before the first record.
 	 */

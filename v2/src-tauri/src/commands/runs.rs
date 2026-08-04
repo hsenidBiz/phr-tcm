@@ -197,6 +197,25 @@ pub async fn finish_test_run(
         .await
 }
 
+/// Reset test points to Active - the write behind DESELECTING a verdict in
+/// the runner. ADO's own "reset test" (resetToActive): the point reads as
+/// never-run afterwards. PATCH only; past run results are never deleted.
+#[tauri::command]
+#[specta::specta]
+pub async fn reset_test_points(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    plan_id: i32,
+    suite_id: i32,
+    point_ids: Vec<i32>,
+) -> Result<(), ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .reset_points_to_active(&organization, &project, plan_id, suite_id, &point_ids)
+        .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_result_detail(

@@ -14,6 +14,7 @@ import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
+import { emitPointRecorded } from "../lib/runnerBus";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { getTheme } from "../lib/theme";
@@ -490,11 +491,57 @@ export default function RunnerWindow() {
     return startingRef.current;
   };
 
+  /** Leaving a case whose lit verdict was clicked OFF: push ADO's own
+   * "reset test" so the point reads Active again - same deferred, chained,
+   * retry-on-Next model as recording. Skipped when there is nothing to
+   * reset (never recorded this session and never run before either). */
+  const queueReset = (c: TestCaseFull) => {
+    const point = (points.data ?? []).find((p) => p.test_case_id === c.id);
+    if (!point) return;
+    const synced = syncedRef.current[c.id];
+    if (!synced && !point.last_outcome) return; // already a blank slate
+    if (synced === "RESET") return; // this clear is already recorded
+    chainRef.current = chainRef.current.then(async () => {
+      try {
+        await unwrap(
+          commands.resetTestPoints(
+            session!.org,
+            session!.project,
+            session!.planId,
+            session!.suiteId,
+            [point.point_id],
+          ),
+        );
+        syncedRef.current[c.id] = "RESET";
+        recordFailures.current.delete(c.id);
+        emitPointRecorded({
+          org: session!.org,
+          project: session!.project,
+          planId: session!.planId,
+          suiteId: session!.suiteId,
+          testCaseId: c.id,
+          outcome: "",
+          runId: null,
+          resultId: null,
+        });
+      } catch (e) {
+        recordFailures.current.set(c.id, (e as Error).message);
+        toast.error(
+          `${c.title}: could not reset to Active (${(e as Error).message}). It will retry on the next Next or on Finish.`,
+          { duration: 8000 },
+        );
+      }
+    });
+  };
+
   /** Record one case's current marks, if they changed since last recorded.
    * Queued behind any record already in flight. */
   const syncCase = (c: TestCaseFull) => {
     const s = states[c.id];
-    if (!s?.outcome) return;
+    if (!s?.outcome) {
+      if (s?.cleared) queueReset(c);
+      return;
+    }
     const marked = Object.keys(s.stepOutcomes);
     const payload = {
       point_id: 0, // filled below once the point resolves
@@ -540,6 +587,17 @@ export default function RunnerWindow() {
         );
         syncedRef.current[c.id] = snap;
         recordFailures.current.delete(c.id);
+        // Tell the main window so the Run Tests table repaints this row now.
+        emitPointRecorded({
+          org: session!.org,
+          project: session!.project,
+          planId: session!.planId,
+          suiteId: session!.suiteId,
+          testCaseId: c.id,
+          outcome: s.outcome as string,
+          runId: run.runId,
+          resultId,
+        });
         // Additive extras that did not stick - same register as the batch
         // flow: recorded, but this did not attach.
         for (const x of extras) {
