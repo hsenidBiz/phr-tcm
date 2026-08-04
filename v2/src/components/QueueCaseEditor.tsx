@@ -29,6 +29,8 @@ export default function QueueCaseEditor({
 }) {
   const [tc, setTc] = useState<TestCase>(original);
   const problem = validateCase(tc);
+  // Same-shape objects edited only by spreads: string compare works.
+  const dirty = JSON.stringify(tc) !== JSON.stringify(original);
 
   return (
     <div className="space-y-2 border-t border-border p-3">
@@ -83,7 +85,12 @@ export default function QueueCaseEditor({
       <StepsEditor steps={tc.steps} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
 
       <div className="flex items-center gap-3">
-        <Button size="sm" disabled={Boolean(problem)} onClick={() => onSave(tc)}>
+        <Button
+          size="sm"
+          disabled={Boolean(problem) || !dirty}
+          title={dirty ? undefined : "Nothing changed yet"}
+          onClick={() => onSave(tc)}
+        >
           <IconConfirm aria-hidden />
           Save to queue
         </Button>

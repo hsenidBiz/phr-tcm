@@ -86,6 +86,8 @@ export default function CommentModal({
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
+                  disabled={draft === note}
+                  title={draft === note ? "Nothing changed yet" : undefined}
                   onClick={() => {
                     onSave(draft);
                     setEditing(false);

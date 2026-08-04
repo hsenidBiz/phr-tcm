@@ -138,7 +138,14 @@ export default function CaseEditor({
       <StepsEditor steps={tc.steps} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
 
       <div className="flex items-center gap-3">
-        <Button size="sm" disabled={Boolean(problem) || saveCase.isPending} onClick={() => saveCase.mutate()}>
+        <Button
+          size="sm"
+          // An untouched case has nothing to send - a live Save on it
+          // only offers a no-op PATCH to Azure DevOps.
+          disabled={Boolean(problem) || saveCase.isPending || !dirty}
+          title={dirty ? undefined : "Nothing changed yet"}
+          onClick={() => saveCase.mutate()}
+        >
           <IconConfirm aria-hidden />
           {saveCase.isPending ? "Saving" : "Save changes"}
         </Button>
