@@ -2,11 +2,12 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import CreateWorkItem from "./CreateWorkItem";
+import CreateWorkItem, { clearWorkItemDraft } from "./CreateWorkItem";
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  clearWorkItemDraft();
 });
 
 function renderScreen() {
@@ -82,4 +83,36 @@ test("the full form reaches create_work_item, including the parent PBI", async (
   fireEvent.click(screen.getByRole("button", { name: "Create another" }));
   expect(screen.getByLabelText("Title")).toHaveValue("");
   expect(screen.getByLabelText("Work item type")).toHaveTextContent("Bug"); // context kept
+});
+
+/// Switching sections remounts every screen - that is what animates them
+/// in - so a half-written item must live PAST the component. A trip to
+/// the Board and back should read like the user never left.
+test("a half-written form survives leaving the screen and coming back", async () => {
+  baseMocks();
+  const first = renderScreen();
+  fireEvent.change(await screen.findByLabelText("Title"), {
+    target: { value: "Half-written task" },
+  });
+  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Notes so far" } });
+  first.unmount();
+
+  renderScreen();
+  expect(await screen.findByLabelText("Title")).toHaveValue("Half-written task");
+  expect(screen.getByLabelText("Description")).toHaveValue("Notes so far");
+});
+
+/// The flip side: once the item exists, the draft must NOT keep the
+/// submitted content - a form still holding it would invite creating
+/// the same item twice from a later visit.
+test("a created item's content does not linger in the draft", async () => {
+  baseMocks();
+  const first = renderScreen();
+  fireEvent.change(await screen.findByLabelText("Title"), { target: { value: "Ship it" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+  await screen.findByText("#9001");
+  first.unmount();
+
+  renderScreen();
+  expect(await screen.findByLabelText("Title")).toHaveValue("");
 });

@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { commands, type CreatedItem, type PbiHit } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
@@ -18,22 +18,64 @@ import { Select } from "../components/ui/select";
 import { unwrap } from "../lib/ipc";
 import { cached } from "../lib/localCache";
 import { iterationDetails } from "../lib/iterations";
-import { IconAdd, IconOpenInBrowser } from "../lib/actionIcons";
+import { IconAdd, IconCopy, IconOpenInBrowser } from "../lib/actionIcons";
+import { copyText } from "../lib/clipboard";
 
 const TYPES = ["Task", "Bug", "Product Backlog Item"];
 
+// The half-written item lives at module scope, because the screen itself
+// does not survive leaving it: switching sections remounts every screen
+// (that is what animates them in), and a form wiped by a quick trip to
+// the Board reads as data loss. Session-only on purpose - a stale draft
+// resurfacing days later would be worse than retyping.
+type Draft = {
+  wiType: string;
+  title: string;
+  assignee: string;
+  area: string;
+  iteration: string;
+  priority: string;
+  tags: string;
+  description: string;
+  parent: PbiHit | null;
+};
+const BLANK: Draft = {
+  wiType: "Task",
+  title: "",
+  assignee: "",
+  area: "",
+  iteration: "",
+  priority: "",
+  tags: "",
+  description: "",
+  parent: null,
+};
+let draft: Draft = { ...BLANK };
+
+/** Test-only: module state outlives unmounts by design, so suites reset
+ * it between tests the same way they clear localStorage. */
+export function clearWorkItemDraft() {
+  draft = { ...BLANK };
+}
+
 export default function CreateWorkItem({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
-  const [wiType, setWiType] = useState("Task");
-  const [title, setTitle] = useState("");
-  const [assignee, setAssignee] = useState("");
-  const [area, setArea] = useState("");
-  const [iteration, setIteration] = useState("");
-  const [priority, setPriority] = useState("");
-  const [tags, setTags] = useState("");
-  const [description, setDescription] = useState("");
-  const [parent, setParent] = useState<PbiHit | null>(null);
+  const [wiType, setWiType] = useState(draft.wiType);
+  const [title, setTitle] = useState(draft.title);
+  const [assignee, setAssignee] = useState(draft.assignee);
+  const [area, setArea] = useState(draft.area);
+  const [iteration, setIteration] = useState(draft.iteration);
+  const [priority, setPriority] = useState(draft.priority);
+  const [tags, setTags] = useState(draft.tags);
+  const [description, setDescription] = useState(draft.description);
+  const [parent, setParent] = useState<PbiHit | null>(draft.parent);
   const [created, setCreated] = useState<CreatedItem | null>(null);
+
+  // Mirror every keystroke into the module draft, so whatever is on
+  // screen when the user wanders off is exactly what greets them back.
+  useEffect(() => {
+    draft = { wiType, title, assignee, area, iteration, priority, tags, description, parent };
+  }, [wiType, title, assignee, area, iteration, priority, tags, description, parent]);
 
   const members = useQuery({
     // Same key + cache as the drawer: one members fetch serves both.
@@ -77,20 +119,23 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
     onSuccess: (item) => {
       setCreated(item);
       toast.success(`Created ${wiType} #${item.id}`);
+      // The per-item content clears the moment the item exists - if the
+      // user leaves from the "Created" screen and comes back later, a
+      // form still holding the submitted title would invite creating the
+      // same item twice. The contextual choices (type, area, iteration,
+      // parent) stay for the next item.
+      setTitle("");
+      setTags("");
+      setDescription("");
       // Any open board should show the new item on next visit.
       qc.invalidateQueries({ queryKey: ["board"] });
     },
     onError: (e) => toast.error(`Create failed: ${e.message}`),
   });
 
-  const resetForKeep = () => {
-    // "Create another" keeps the contextual choices (type, area, iteration,
-    // parent) and clears only the per-item content.
-    setTitle("");
-    setTags("");
-    setDescription("");
-    setCreated(null);
-  };
+  // The per-item content already cleared on success; this just swaps the
+  // confirmation back for the form, contextual choices intact.
+  const resetForKeep = () => setCreated(null);
 
   if (!org || !project) {
     return (
@@ -115,6 +160,18 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
           >
             <IconOpenInBrowser aria-hidden />
             Open in Azure DevOps
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              copyText(created.url)
+                .then(() => toast.success("Link copied."))
+                .catch(() => toast.error("Could not copy to clipboard."))
+            }
+          >
+            <IconCopy aria-hidden />
+            Copy link
           </Button>
           <Button size="sm" onClick={resetForKeep}>
             <IconAdd aria-hidden />
