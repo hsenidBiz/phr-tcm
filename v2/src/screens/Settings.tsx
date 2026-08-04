@@ -10,7 +10,7 @@ import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Modal } from "../components/ui/modal";
-import { Textarea } from "../components/ui/input";
+import { Input, Textarea } from "../components/ui/input";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
@@ -70,6 +70,7 @@ export default function Settings({ org, project }: { org: string; project: strin
   // reporter reviews the prefilled issue and presses the button, which
   // is also why this feature needs no GitHub credential.
   const [reporting, setReporting] = useState(false);
+  const [bugTitle, setBugTitle] = useState("");
   const [bugText, setBugText] = useState("");
   const logs = useQuery({
     queryKey: ["app-logs"],
@@ -414,10 +415,21 @@ export default function Settings({ org, project }: { org: string; project: strin
               item names are removed from the log first.
             </p>
           </div>
+          {/* Header and description are SEPARATE boxes: with one box, the
+              first line of whatever was typed silently became the issue
+              title. Leaving the header blank still derives one from the
+              description, so the quick path keeps working. */}
+          <Input
+            aria-label="Bug title"
+            className="w-full shrink-0"
+            autoFocus
+            placeholder="One line for the issue list (optional - taken from the description if blank)"
+            value={bugTitle}
+            onChange={(e) => setBugTitle(e.target.value)}
+          />
           <Textarea
             aria-label="What happened"
             className="h-32 w-full shrink-0"
-            autoFocus
             placeholder="What were you doing, and what happened instead?"
             value={bugText}
             onChange={(e) => setBugText(e.target.value)}
@@ -431,13 +443,14 @@ export default function Settings({ org, project }: { org: string; project: strin
                 size="sm"
                 onClick={() => {
                   void commands
-                    .prepareBugReport(bugText, org, project)
+                    .prepareBugReport(bugTitle, bugText, org, project)
                     .then((r) => {
                       if (r.status === "error") {
                         toast.error(`Could not prepare the report: ${r.error}`);
                         return;
                       }
                       setReporting(false);
+                      setBugTitle("");
                       setBugText("");
                       void openUrl(r.data.url);
                       // The log is a separate file because GitHub cannot take

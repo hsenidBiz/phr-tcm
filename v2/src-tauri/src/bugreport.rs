@@ -165,6 +165,18 @@ pub fn issue_url(title: &str, body: &str) -> String {
     )
 }
 
+/// The title the issue actually gets: the reporter's own header when they
+/// wrote one, otherwise derived from the description - typing only a
+/// description must keep working exactly as it always has.
+pub fn effective_title(explicit: &str, description: &str) -> String {
+    let t = explicit.trim();
+    if t.is_empty() {
+        title(description)
+    } else {
+        t.chars().take(80).collect()
+    }
+}
+
 /// A one-line title from the reporter's own words, so the issue list is
 /// readable without opening anything.
 pub fn title(description: &str) -> String {

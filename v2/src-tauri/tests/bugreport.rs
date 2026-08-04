@@ -125,3 +125,23 @@ fn the_issue_url_targets_the_public_releases_repo_and_encodes_its_payload() {
     assert!(url.contains("%26") && url.contains("%23"));
     assert!(url.contains("labels=bug"));
 }
+
+/// The reporter's own header wins; a blank one falls back to the derived
+/// first line, so the quick type-and-go path keeps working unchanged.
+#[test]
+fn an_explicit_title_wins_and_a_blank_one_derives() {
+    use v2_lib::bugreport::effective_title;
+    assert_eq!(
+        effective_title("Import loses tags", "Long description\nwith lines"),
+        "Import loses tags"
+    );
+    assert_eq!(
+        effective_title("   ", "First line becomes the title\nrest"),
+        "First line becomes the title"
+    );
+    assert_eq!(effective_title("", ""), "Bug report");
+    // The 80-char cap applies to explicit titles too - the issue list is
+    // the whole reason the title exists.
+    let long = "x".repeat(120);
+    assert_eq!(effective_title(&long, "d").chars().count(), 80);
+}

@@ -154,6 +154,7 @@ pub fn watch_assigned_work(
 #[specta::specta]
 pub fn prepare_bug_report(
     app: tauri::AppHandle,
+    title: String,
     description: String,
     organization: String,
     project: String,
@@ -181,7 +182,7 @@ pub fn prepare_bug_report(
     let body = crate::bugreport::body(&description, &version, &os, &excerpt, truncated, &name);
     crate::applog::info("Prepared a bug report");
     Ok(crate::bugreport::BugReport {
-        url: crate::bugreport::issue_url(&crate::bugreport::title(&description), &body),
+        url: crate::bugreport::issue_url(&crate::bugreport::effective_title(&title, &description), &body),
         log_path: path.to_string_lossy().to_string(),
         truncated,
     })

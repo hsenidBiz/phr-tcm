@@ -14,7 +14,7 @@ export const commands = {
 	 *  point - the log is theirs to check before it goes anywhere public - and
 	 *  it means the app needs no GitHub credential of any kind.
 	 */
-	prepareBugReport: (description: string, organization: string, project: string) => typedError<BugReport, string>(__TAURI_INVOKE("prepare_bug_report", { description, organization, project })),
+	prepareBugReport: (title: string, description: string, organization: string, project: string) => typedError<BugReport, string>(__TAURI_INVOKE("prepare_bug_report", { title, description, organization, project })),
 	authStatus: () => __TAURI_INVOKE<AuthStatus>("auth_status"),
 	signIn: () => typedError<AuthStatus, string>(__TAURI_INVOKE("sign_in")),
 	listProjects: (organization: string) => typedError<Project[], AdoError>(__TAURI_INVOKE("list_projects", { organization })),
@@ -976,6 +976,12 @@ export type RunOutcome = {
 	outcome: string,
 	completed_date: string,
 	run_id: number,
+	/**
+	 *  The result row inside that run, so an execution-history view can
+	 *  pull the comment and linked bugs for a PRIOR result, not just the
+	 *  latest one the point itself carries.
+	 */
+	result_id: number,
 };
 
 /**
