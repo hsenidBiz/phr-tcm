@@ -67,6 +67,16 @@ const outcomeBadge: Record<string, string> = {
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|bmp|webp)$/i;
 
+/** Data-URL mime from the attachment's extension (snips/pastes are png;
+ * Attach file can bring the rest). */
+function mimeFor(name: string): string {
+  if (/\.jpe?g$/i.test(name)) return "image/jpeg";
+  if (/\.gif$/i.test(name)) return "image/gif";
+  if (/\.bmp$/i.test(name)) return "image/bmp";
+  if (/\.webp$/i.test(name)) return "image/webp";
+  return "image/png";
+}
+
 async function readClipboardImageB64(): Promise<string | null> {
   const items = await navigator.clipboard.read();
   for (const item of items) {
@@ -209,6 +219,20 @@ export default function RunnerWindow() {
   }));
   const lightbox = useLightbox({ media: shots });
 
+  // This session's own image attachments get the same fullscreen viewer:
+  // until now they were filename-only chips, so the only way to check WHAT
+  // was snipped was to remove it and snip again. Non-image files (Attach
+  // file accepts anything; recordings are video) keep the plain chip.
+  const sessionImages = st.attachments
+    .map((a, index) => ({ ...a, index }))
+    .filter((a) => IMAGE_EXT.test(a.file_name));
+  const sessionLightbox = useLightbox({
+    media: sessionImages.map((a) => ({
+      src: `data:${mimeFor(a.file_name)};base64,${a.b64}`,
+      alt: a.file_name,
+    })),
+  });
+
   // Per-case timer -> duration_ms. Reset on case switch.
   useEffect(() => {
     startRef.current = Date.now();
@@ -349,6 +373,14 @@ export default function RunnerWindow() {
       setSnipping(false);
       toast.info("No snip detected - use Paste if you captured one.");
     }
+  }
+
+  /** Stop waiting for a snip (overlay dismissed with Esc, or a change of
+   * mind): bumping the token ends the poll loop's current run, and its
+   * final-toast guard stays quiet because the token no longer matches. */
+  function cancelSnip() {
+    snipToken.current++;
+    setSnipping(false);
   }
 
   async function pasteImage() {
@@ -691,8 +723,13 @@ export default function RunnerWindow() {
             >
               <IconRecord aria-hidden />{recording ? "Stop recording" : "Record"}
             </Button>
-            <Button variant="outline" size="sm" disabled={snipping} onClick={snip}>
-              <IconSnip aria-hidden />{snipping ? "Waiting for snip" : "Snip"}
+            <Button
+              variant="outline"
+              size="sm"
+              title={snipping ? "Stop waiting for the snip" : undefined}
+              onClick={snipping ? cancelSnip : snip}
+            >
+              <IconSnip aria-hidden />{snipping ? "Cancel snip" : "Snip"}
             </Button>
             <Button variant="outline" size="sm" onClick={pasteImage}>
               <IconPasteImage aria-hidden />Paste
@@ -712,22 +749,51 @@ export default function RunnerWindow() {
           </div>
 
           {st.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {st.attachments.map((a, i) => (
-                <span
-                  key={i}
-                  className="flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted"
-                >
-                  {a.file_name}
-                  <button
-                    aria-label={`Remove ${a.file_name}`}
-                    className="hover:text-danger"
-                    onClick={() => removeAttachment(current.id, i)}
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
-              ))}
+            <div className="space-y-1">
+              {sessionImages.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {sessionImages.map((a, si) => (
+                    <span key={a.index} className="relative">
+                      <img
+                        alt={a.file_name}
+                        title={`${a.file_name} - click to view`}
+                        className="h-16 cursor-zoom-in rounded border border-border object-cover"
+                        src={`data:${mimeFor(a.file_name)};base64,${a.b64}`}
+                        {...sessionLightbox.getTriggerProps(si)}
+                      />
+                      <button
+                        aria-label={`Remove ${a.file_name}`}
+                        className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-danger"
+                        onClick={() => removeAttachment(current.id, a.index)}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                  <AstryxIsland>{sessionLightbox.element}</AstryxIsland>
+                </div>
+              )}
+              {st.attachments.some((a) => !IMAGE_EXT.test(a.file_name)) && (
+                <div className="flex flex-wrap gap-1">
+                  {st.attachments.map((a, i) =>
+                    IMAGE_EXT.test(a.file_name) ? null : (
+                      <span
+                        key={i}
+                        className="flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted"
+                      >
+                        {a.file_name}
+                        <button
+                          aria-label={`Remove ${a.file_name}`}
+                          className="hover:text-danger"
+                          onClick={() => removeAttachment(current.id, i)}
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
             </div>
           )}
 
