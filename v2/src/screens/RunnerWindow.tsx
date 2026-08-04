@@ -66,6 +66,17 @@ const outcomeBadge: Record<string, string> = {
   notapplicable: "bg-surface-2 text-muted",
 };
 
+// Pre-selection identity for the verdict segments: a small dot says which
+// colour each verdict turns without painting five loud buttons. (The dot
+// hides on the selected segment - its background carries the colour then.)
+const outcomeDot: Record<string, string> = {
+  Passed: "bg-success",
+  Failed: "bg-danger",
+  Paused: "bg-muted",
+  Blocked: "bg-warning",
+  NotApplicable: "bg-faint",
+};
+
 const IMAGE_EXT = /\.(png|jpe?g|gif|bmp|webp)$/i;
 
 /** Data-URL mime from the attachment's extension (snips/pastes are png;
@@ -718,11 +729,22 @@ export default function RunnerWindow() {
             ))}
           </ol>
 
-          {/* shrink-0 + min-h: the scroll column above may compress its flex
-              children on a short screen, and this box was the one that got
-              crushed to a sliver. It now keeps its height and scrolls with
-              the rest; resize-y lets it grow taller while the width stays
-              fixed to the column. */}
+          {/* Evidence card: the comment, the capture tools, and the
+              attachments they produce are one activity - documenting what
+              happened - so they live in one labelled card instead of three
+              loose rows floating between the steps and the verdict. shrink-0
+              keeps the card from being crushed on short screens. */}
+          <div className="shrink-0 space-y-2 rounded-md border border-border p-2">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs font-semibold text-muted">Evidence · optional</span>
+            {st.attachments.length > 0 && (
+              <span className="text-[11px] text-faint">
+                {st.attachments.length} attached
+              </span>
+            )}
+          </div>
+          {/* min-h + resize-y survive from the short-screen fix: the box can
+              never collapse, and grows taller while the width stays fixed. */}
           <Textarea
             aria-label="Comment"
             className="h-16 min-h-16 w-full shrink-0 resize-y text-sm"
@@ -831,27 +853,38 @@ export default function RunnerWindow() {
               <AstryxIsland>{lightbox.element}</AstryxIsland>
             </div>
           )}
+          </div>
+        </div>
+      )}
 
+      <footer className="shrink-0 space-y-2 border-t border-border bg-surface px-3 py-2">
+        {/* The verdict is this screen's primary action, so it is pinned here
+            under the scroll area - a long case can never hide it. Passed and
+            Failed get double width (they are nearly all the clicks); the
+            other three stay reachable but read as secondary. */}
+        {current && (
           <div className="flex gap-1">
             {OUTCOMES.map((o) => (
               <button
                 key={o}
                 className={cn(
-                  "flex-1 rounded-md py-1.5 text-xs font-semibold",
+                  "flex items-center justify-center gap-1.5 rounded-md py-2 text-xs font-semibold",
+                  o === "Passed" || o === "Failed" ? "flex-[2]" : "flex-1",
                   st.outcome === o ? outcomeBtn[o] : "border border-border text-muted hover:text-text",
                 )}
                 onClick={() =>
                   patch(current.id, { outcome: o, elapsedMs: Date.now() - startRef.current })
                 }
               >
+                {st.outcome !== o && (
+                  <span aria-hidden className={cn("size-1.5 rounded-full", outcomeDot[o])} />
+                )}
                 {outcomeLabel(o)}
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      <footer className="flex items-center gap-2 border-t border-border bg-surface px-3 py-2">
+        )}
+        <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" disabled={idx === 0} onClick={() => goTo(idx - 1)}>
           <IconBack aria-hidden />
           Prev
@@ -888,6 +921,7 @@ export default function RunnerWindow() {
               ? "Recorded"
               : `Finish (${markedCount})`}
         </Button>
+        </div>
       </footer>
 
       {bugFor && (
