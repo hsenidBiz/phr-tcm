@@ -13,6 +13,31 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.4",
+    date: "2026-08-04",
+    items: [
+      "Target Date now saves to the field Azure DevOps actually shows (Microsoft.VSTS.Scheduling.TargetDate) - before, the drawer wrote FinishDate, which this process never displays, so the edit vanished.",
+      "The New Work Item form survives leaving the screen: a trip to the Board and back keeps everything typed. Creating the item clears its content so it cannot be submitted twice by accident.",
+      "Save buttons everywhere disable until something actually changed, with a 'Nothing changed yet' hint - no more no-op saves to ADO or needless JSON churn.",
+      "Work items gained a Copy link button beside Open in Azure DevOps - in the drawer header and on the just-created panel.",
+      "Assigned to in the work item drawer is now a searchable picker, and the board's assignee filter (and every long checkbox dropdown) gets a search box.",
+      "Board PR chips are cached on disk: they paint instantly from the last visit while refreshing in the background, and the very first load shows a small loading note in the toolbar.",
+      "Run Tests: an expanded case with earlier results gains an Execution history button - each prior run with its outcome, date, run number, and the comment recorded with it.",
+      "Work item History shows avatars again - they now load through the app's signed-in session instead of a bare image request ADO refuses.",
+      "Reporting a bug has separate Title and Description boxes; a blank title still derives from the description's first line.",
+      "With no internet connection the app says so in a banner, pauses reads, and blocks writes with a hint instead of letting them fail - the runner catches up the moment the connection returns.",
+    ],
+  },
+  {
+    // Backfill: published from another machine without an entry.
+    version: "1.19.3",
+    date: "2026-08-04",
+    items: [
+      "Runner: Esc-ing the Windows snip overlay no longer leaves the runner stuck 'Waiting for snip' - the button stays live as Cancel snip.",
+      "Runner: snipped and attached images show as thumbnails that open in the fullscreen viewer, instead of filename-only chips.",
+    ],
+  },
+  {
     version: "1.19.2",
     date: "2026-08-03",
     items: [
