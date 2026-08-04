@@ -37,14 +37,30 @@ const FILTERS: { id: HistoryFilter; label: string }[] = [
 
 /** Initials disc, matching the comments list's fallback. */
 function Who({ name, avatar }: { name: string; avatar: string }) {
+  // The avatar URL needs the bearer token, which a bare <img src> can't
+  // carry - so it goes through the same authenticated fetch the comments
+  // list uses, and the initials disc covers the wait and any failure.
+  const img = useQuery({
+    queryKey: ["avatar", avatar],
+    queryFn: () => commands.avatarB64(avatar),
+    enabled: Boolean(avatar),
+    staleTime: Infinity,
+    retry: false,
+  });
   const initials = name
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase() ?? "")
     .join("");
-  if (avatar) {
-    return <img src={avatar} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />;
+  if (img.data) {
+    return (
+      <img
+        src={`data:image/png;base64,${img.data}`}
+        alt=""
+        className="h-6 w-6 shrink-0 rounded-full object-cover"
+      />
+    );
   }
   return (
     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[10px] font-semibold text-muted">
