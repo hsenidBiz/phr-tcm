@@ -78,7 +78,7 @@ pub struct WorkItemDetail {
     pub completed_work: Option<f64>,
     pub original_estimate: Option<f64>,
     pub start_date: String,
-    pub finish_date: String,
+    pub target_date: String,
     /// Description (or ReproSteps for Bugs) flattened to plain text for the
     /// editor; saving wraps it back into a div like v1's preconditions.
     pub description_text: String,

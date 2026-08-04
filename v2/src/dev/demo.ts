@@ -191,7 +191,7 @@ const detailFor = (b: BoardData["items"][number]): WorkItemDetail => ({
   completed_work: 1,
   original_estimate: 3,
   start_date: "2026-07-10T00:00:00Z",
-  finish_date: "2026-07-15T00:00:00Z",
+  target_date: "2026-07-15T00:00:00Z",
   description_text: "Demo description. Nothing here is real.",
   description_html: "<div><b>Demo description.</b> Nothing here is real.<ul><li>bullet one</li><li>bullet two</li></ul></div>",
   description_field: b.work_item_type === "Bug" ? "Microsoft.VSTS.TCM.ReproSteps" : "System.Description",
@@ -718,7 +718,7 @@ function applyPatches() {
         rev(9, "Avin Alwis", at(0, 9), [
           f("System.State", "State", "Resolved", "QA Ready"),
           f("System.Reason", "Reason", "Moved out of state Resolved", "Moved out of state In Progress"),
-          f("Microsoft.VSTS.Scheduling.FinishDate", "Finish Date", "2026-07-24T07:58:55Z", "2026-07-24T09:28:31Z"),
+          f("Microsoft.VSTS.Scheduling.TargetDate", "Target Date", "2026-07-24T07:58:55Z", "2026-07-24T09:28:31Z"),
         ]),
         rev(8, "Avin Alwis", at(0, 8), [], { links_added: ["Related link"] }),
         rev(7, "Dilshan Kaviratne", at(1, 16), [], { links_added: ["Commit link"] }),

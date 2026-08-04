@@ -15,6 +15,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
+import { persistentQuery } from "../lib/persistentQuery";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
 
@@ -272,11 +273,19 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
 
   // Work-item -> PR chips, resolved PR-side (one list + one small call per
   // PR). Best-effort decoration: failures just mean no chips.
+  // Persisted like points/run-history: the chips paint instantly from the
+  // last visit's answer while a background refetch brings them current.
+  // 5 min stale keeps the previous throttle - resolving is one list plus
+  // a small call per PR, not something to redo on every mount.
   const prLinks = useQuery({
     queryKey: ["board-prs", org, project],
-    queryFn: () => unwrap(commands.boardPrLinks(org, project)),
+    ...persistentQuery({
+      key: `board-prs:${org}/${project}`,
+      fetcher: () => unwrap(commands.boardPrLinks(org, project)),
+      ttlMs: 7 * 24 * 60 * 60_000,
+      staleMs: 5 * 60_000,
+    }),
     enabled: Boolean(org && project),
-    staleTime: 5 * 60_000,
     retry: false,
   });
   const prByItem = useMemo(() => {
@@ -457,6 +466,15 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           >
             <RefreshCw size={14} className={board.isFetching ? "animate-spin" : undefined} />
           </button>
+          {/* Only the FIRST-ever load - once the disk cache has an answer,
+              chips paint instantly and the background refresh needs no
+              announcement. */}
+          {prLinks.isFetching && !prLinks.data && (
+            <span role="status" className="flex items-center gap-1.5 text-xs text-faint">
+              <RefreshCw size={12} className="animate-spin" aria-hidden />
+              Loading pull requests…
+            </span>
+          )}
           <label className="flex items-center gap-1.5 text-xs text-muted" title="Only items in the current sprint (project default team's iteration)">
             <Checkbox
               checked={thisSprint}

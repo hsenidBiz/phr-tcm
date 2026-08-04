@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, X } from "lucide-react";
+import { Copy, ExternalLink, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, type WorkItemDetail } from "../bindings";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
+import { copyText } from "../lib/clipboard";
 import { cached } from "../lib/localCache";
 import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
@@ -16,6 +17,7 @@ import DateField from "./ui/datefield";
 import { useFocusTrap } from "./ui/focusTrap";
 import MarkdownField from "./MarkdownField";
 import { Input } from "./ui/input";
+import Combobox from "./ui/combobox";
 import { Select } from "./ui/select";
 import { Skeleton } from "./ui/skeleton";
 import CommentsPanel from "./CommentsPanel";
@@ -31,7 +33,7 @@ type Draft = {
   completed: string;
   original: string;
   startDate: string;
-  finishDate: string;
+  targetDate: string;
   description: string;
   /** Every field on the extra form pages (Bug: RCA / Preventive Measures),
    * keyed by reference name - markdown for html fields, raw otherwise. */
@@ -59,7 +61,7 @@ function toDraft(d: WorkItemDetail): Draft {
     completed: d.completed_work?.toString() ?? "",
     original: d.original_estimate?.toString() ?? "",
     startDate: d.start_date.slice(0, 10),
-    finishDate: d.finish_date.slice(0, 10),
+    targetDate: d.target_date.slice(0, 10),
     description: d.description_html?.trim()
       ? htmlToMd(d.description_html)
       : d.description_text,
@@ -201,7 +203,7 @@ export default function WorkItemDrawer({
       push("Microsoft.VSTS.Scheduling.CompletedWork", dr.completed, orig.completed);
       push("Microsoft.VSTS.Scheduling.OriginalEstimate", dr.original, orig.original);
       push("Microsoft.VSTS.Scheduling.StartDate", dr.startDate, orig.startDate);
-      push("Microsoft.VSTS.Scheduling.FinishDate", dr.finishDate, orig.finishDate);
+      push("Microsoft.VSTS.Scheduling.TargetDate", dr.targetDate, orig.targetDate);
       if (dr.description !== orig.description) {
         // The description is authored as markdown and stored in ADO as the
         // rendered HTML (breaks: single newlines become <br>, like v1).
@@ -240,6 +242,38 @@ export default function WorkItemDrawer({
     onError: (e) => toast.error(`Save failed: ${e.message}`),
   });
 
+  // Display names label the assignee picker; unique names stay the stored
+  // value. A display name shared by two people gets its unique name
+  // appended, so both stay selectable. The current assignee is kept in
+  // the list even when the members call does not return them (left the
+  // team, guest account) - otherwise opening the picker would silently
+  // offer to reassign.
+  const assignees = useMemo(() => {
+    const list = [...(members.data ?? [])];
+    const d = detail.data;
+    if (d?.assigned_to_unique && !list.some((m) => m.unique_name === d.assigned_to_unique)) {
+      list.unshift({ display_name: d.assigned_to, unique_name: d.assigned_to_unique });
+    }
+    const counts = new Map<string, number>();
+    for (const m of list) counts.set(m.display_name, (counts.get(m.display_name) ?? 0) + 1);
+    return list.map((m) => ({
+      label:
+        (counts.get(m.display_name) ?? 0) > 1
+          ? `${m.display_name} (${m.unique_name})`
+          : m.display_name,
+      unique: m.unique_name,
+    }));
+  }, [members.data, detail.data]);
+
+  // Both sides come from toDraft and spread-updates, so key order is
+  // stable and a string compare is a sound deep compare. The mutation's
+  // own patch diff stays as the backstop; this just keeps Save honest
+  // about there being anything to send.
+  const dirty =
+    draft != null &&
+    detail.data != null &&
+    JSON.stringify(draft) !== JSON.stringify(toDraft(detail.data));
+
   // Portalled for the same reason as ui/modal.tsx and CommentModal: this
   // is opened from the board, which renders inside AnimatedContent, and a
   // `fixed` overlay inside that GSAP transform is positioned against the
@@ -268,6 +302,20 @@ export default function WorkItemDrawer({
             {detail.data?.work_item_type}
           </span>
           <span className="flex items-center gap-1">
+            <button
+              aria-label="Copy link"
+              title="Copy link"
+              className="rounded p-1 text-muted transition-colors hover:text-accent"
+              onClick={() =>
+                copyText(
+                  `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_workitems/edit/${itemId}`,
+                )
+                  .then(() => toast.success("Link copied."))
+                  .catch(() => toast.error("Could not copy to clipboard."))
+              }
+            >
+              <Copy size={15} />
+            </button>
             <button
               aria-label="Open in Azure DevOps"
               title="Open in Azure DevOps"
@@ -329,26 +377,24 @@ export default function WorkItemDrawer({
                 </label>
                 <label className="block text-xs text-muted">
                   Assigned to
-                  <Select
+                  {/* Combobox, not Select: org member lists run to dozens
+                      of names, and that is exactly the list-size where
+                      typing beats scrolling. Labels are display names;
+                      the draft keeps the unique name underneath. */}
+                  <Combobox
+                    ariaLabel="Assigned to"
                     className="mt-1 w-full"
-                    value={draft.assignedToUnique}
-                    onChange={(e) => setDraft({ ...draft, assignedToUnique: e.target.value })}
-                  >
-                    <option value="">(unassigned)</option>
-                    {detail.data.assigned_to_unique &&
-                      !(members.data ?? []).some(
-                        (m) => m.unique_name === detail.data!.assigned_to_unique,
-                      ) && (
-                        <option value={detail.data.assigned_to_unique}>
-                          {detail.data.assigned_to}
-                        </option>
-                      )}
-                    {(members.data ?? []).map((m) => (
-                      <option key={m.unique_name} value={m.unique_name}>
-                        {m.display_name}
-                      </option>
-                    ))}
-                  </Select>
+                    placeholder="(unassigned)"
+                    loading={members.isLoading}
+                    value={assignees.find((a) => a.unique === draft.assignedToUnique)?.label ?? ""}
+                    options={assignees.map((a) => a.label)}
+                    onChange={(label) =>
+                      setDraft({
+                        ...draft,
+                        assignedToUnique: assignees.find((a) => a.label === label)?.unique ?? "",
+                      })
+                    }
+                  />
                 </label>
                 {(activities.data?.length ?? 0) > 0 && (
                   <label className="block text-xs text-muted">
@@ -590,12 +636,12 @@ export default function WorkItemDrawer({
                   />
                 </div>
                 <div className="text-xs text-muted">
-                  Finish date
+                  Target date
                   <DateField
                     className="mt-1"
-                    ariaLabel="Finish date"
-                    value={draft.finishDate}
-                    onChange={(v) => setDraft({ ...draft, finishDate: v })}
+                    ariaLabel="Target date"
+                    value={draft.targetDate}
+                    onChange={(v) => setDraft({ ...draft, targetDate: v })}
                   />
                 </div>
                 <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-faint">
@@ -614,7 +660,12 @@ export default function WorkItemDrawer({
                 <IconCancel aria-hidden />
                 Close
               </Button>
-              <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+              <Button
+                size="sm"
+                disabled={save.isPending || !dirty}
+                title={dirty ? undefined : "Nothing changed yet"}
+                onClick={() => save.mutate()}
+              >
                 <IconConfirm aria-hidden />
                 {save.isPending ? "Saving" : "Save changes"}
               </Button>

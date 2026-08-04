@@ -4,7 +4,12 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import WorkBoard from "./WorkBoard";
 
-afterEach(() => clearMocks());
+afterEach(() => {
+  clearMocks();
+  // The PR-chip query persists to localStorage now - one test's cached
+  // answer must not seed the next test's initialData.
+  localStorage.clear();
+});
 
 function renderBoard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -119,7 +124,7 @@ test("card click opens the drawer; save patches only dirty fields", async () => 
         completed_work: null,
         original_estimate: null,
         start_date: "",
-        finish_date: "",
+        target_date: "",
         description_text: "old text",
         description_html: "<div>old text</div>",
         description_field: "System.Description",
@@ -170,7 +175,7 @@ test("bug drawer shows RCA / Preventive Measures tabs and saves their edits", as
         completed_work: null,
         original_estimate: null,
         start_date: "",
-        finish_date: "",
+        target_date: "",
         description_text: "repro",
         description_html: "<div>repro</div>",
         description_field: "Microsoft.VSTS.TCM.ReproSteps",
@@ -473,7 +478,7 @@ test("a move blocked by required fields opens the item with those fields named",
         assigned_to: "Avin", assigned_to_unique: "a@x.com", activity: "", tags: "",
         area_path: "P", iteration_path: "P\S1",
         remaining_work: null, completed_work: null, original_estimate: null,
-        start_date: "", finish_date: "",
+        start_date: "", target_date: "",
         description_text: "", description_html: "", description_field: "System.Description",
         extra_pages: [], extra_pages_error: null, inline_images: [],
       };

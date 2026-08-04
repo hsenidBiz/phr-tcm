@@ -3,6 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 import { Checkbox } from "./checkbox";
 
+/** Options past this count get a search box - below it, the whole list
+ * fits on screen and a filter would just push the rows down. */
+const SEARCH_FROM = 8;
+
 /** Checkbox multi-select dropdown (v1 CheckableComboBox parity): the
  * trigger summarizes the selection ("All", "Bug, Task", "3 selected"),
  * the dropdown stays open while toggling rows. Empty selection = all. */
@@ -22,7 +26,16 @@ export default function MultiSelect({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus the search on open, forget the filter on close - a stale query
+  // reopening to "No matches" would look like the options vanished.
+  useEffect(() => {
+    if (open && options.length > SEARCH_FROM) inputRef.current?.focus();
+    if (!open) setQuery("");
+  }, [open, options.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -75,17 +88,40 @@ export default function MultiSelect({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-full min-w-44 rounded-md border border-border bg-surface p-1 shadow-xl">
-          {options.length === 0 && <p className="px-2 py-1.5 text-sm text-muted">No options</p>}
-          {options.map((opt) => (
-            <label
-              key={opt}
-              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-text hover:bg-surface-2"
-            >
-              <Checkbox checked={selected.includes(opt)} onCheckedChange={() => toggle(opt)} />
-              {opt}
-            </label>
-          ))}
+        <div className="absolute left-0 top-full z-40 mt-1 w-full min-w-44 rounded-md border border-border bg-surface shadow-xl">
+          {options.length > SEARCH_FROM && (
+            <div className="border-b border-border p-1.5">
+              <input
+                ref={inputRef}
+                aria-label={ariaLabel ? `Search ${ariaLabel.toLowerCase()}` : "Search options"}
+                className="w-full rounded bg-surface-2 px-2 py-1 text-sm text-text outline-none placeholder:text-faint"
+                placeholder="Search…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setOpen(false);
+                }}
+              />
+            </div>
+          )}
+          <ul className="max-h-64 overflow-y-auto p-1">
+            {options.length === 0 && <li className="px-2 py-1.5 text-sm text-muted">No options</li>}
+            {options
+              .filter((opt) => !query.trim() || opt.toLowerCase().includes(query.trim().toLowerCase()))
+              .map((opt) => (
+                <li key={opt}>
+                  <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-text hover:bg-surface-2">
+                    <Checkbox checked={selected.includes(opt)} onCheckedChange={() => toggle(opt)} />
+                    {opt}
+                  </label>
+                </li>
+              ))}
+            {options.length > 0 &&
+              query.trim() &&
+              !options.some((opt) => opt.toLowerCase().includes(query.trim().toLowerCase())) && (
+                <li className="px-2 py-1.5 text-sm text-muted">No matches</li>
+              )}
+          </ul>
         </div>
       )}
     </div>

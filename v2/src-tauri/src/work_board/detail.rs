@@ -62,7 +62,10 @@ impl AdoClient {
             completed_work: f["Microsoft.VSTS.Scheduling.CompletedWork"].as_f64(),
             original_estimate: f["Microsoft.VSTS.Scheduling.OriginalEstimate"].as_f64(),
             start_date: s("Microsoft.VSTS.Scheduling.StartDate"),
-            finish_date: s("Microsoft.VSTS.Scheduling.FinishDate"),
+            // Target Date, not FinishDate: this org's process shows Target
+            // Date on its forms, so a date written to FinishDate saves
+            // "successfully" into a field nobody can see.
+            target_date: s("Microsoft.VSTS.Scheduling.TargetDate"),
             description_text: crate::steps_xml::html_to_text(&desc_html),
             description_html: desc_html,
             description_field: description_field.to_string(),

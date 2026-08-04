@@ -1368,7 +1368,7 @@ export type WorkItemDetail = {
 	completed_work: number | null,
 	original_estimate: number | null,
 	start_date: string,
-	finish_date: string,
+	target_date: string,
 	/**
 	 *  Description (or ReproSteps for Bugs) flattened to plain text for the
 	 *  editor; saving wraps it back into a div like v1's preconditions.

@@ -60,6 +60,7 @@ fn label_for(reference: &str) -> String {
         "Microsoft.VSTS.Scheduling.OriginalEstimate" => Some("Original Estimate"),
         "Microsoft.VSTS.Scheduling.StartDate" => Some("Start Date"),
         "Microsoft.VSTS.Scheduling.FinishDate" => Some("Finish Date"),
+        "Microsoft.VSTS.Scheduling.TargetDate" => Some("Target Date"),
         "Microsoft.VSTS.TCM.ReproSteps" => Some("Repro Steps"),
         _ => None,
     };
