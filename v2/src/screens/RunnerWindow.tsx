@@ -42,6 +42,11 @@ type CaseState = {
   attachments: RunAttachment[];
   elapsedMs: number;
   bugIds: number[];
+  /** The tester clicked a lit verdict to clear it. The last-outcome
+   * pre-select must not re-apply on the next points refetch (refetches
+   * happen on every window refocus) - an explicit clear is a decision,
+   * not a blank slate. */
+  cleared?: boolean;
 };
 
 function emptyState(): CaseState {
@@ -268,6 +273,7 @@ export default function RunnerWindow() {
       const next = { ...s };
       for (const p of points.data) {
         if (p.test_case_id == null || next[p.test_case_id]?.outcome) continue;
+        if (next[p.test_case_id]?.cleared) continue; // tester explicitly un-marked it
         const last = OUTCOMES.find((o) => o.toLowerCase() === p.last_outcome.toLowerCase());
         if (!last) continue; // never run - a blank slate stays blank
         next[p.test_case_id] = { ...emptyState(), ...next[p.test_case_id], outcome: last };
@@ -714,11 +720,15 @@ export default function RunnerWindow() {
                           "pill-label rounded px-1.5 text-[10px] font-semibold",
                           st.stepOutcomes[i] === o ? outcomeBtn[o] : "bg-surface-2 text-muted",
                         )}
-                        onClick={() =>
-                          patch(current.id, {
-                            stepOutcomes: { ...st.stepOutcomes, [i]: o },
-                          })
-                        }
+                        onClick={() => {
+                          // Same toggle as the overall verdict: clicking the
+                          // lit mark clears it (a cleared step just is not
+                          // recorded, like one never marked).
+                          const next = { ...st.stepOutcomes };
+                          if (next[i] === o) delete next[i];
+                          else next[i] = o;
+                          patch(current.id, { stepOutcomes: next });
+                        }}
                       >
                         {o[0]}
                       </button>
@@ -873,7 +883,14 @@ export default function RunnerWindow() {
                   st.outcome === o ? outcomeBtn[o] : "border border-border text-muted hover:text-text",
                 )}
                 onClick={() =>
-                  patch(current.id, { outcome: o, elapsedMs: Date.now() - startRef.current })
+                  // Click again to un-mark: an unmarked case is simply not
+                  // recorded at Finish (elapsed only updates on selection).
+                  patch(
+                    current.id,
+                    st.outcome === o
+                      ? { outcome: "", cleared: true }
+                      : { outcome: o, cleared: false, elapsedMs: Date.now() - startRef.current },
+                  )
                 }
               >
                 {st.outcome !== o && (
