@@ -557,45 +557,49 @@ export default function App() {
 
         {update.data?.available && (
           <div className="border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
+            {/* One row either way: the version line makes the offer, and
+                once the button is clicked the progress bar takes its slot -
+                the banner never grows a second row mid-download. */}
             <div className="flex items-center justify-between gap-4">
-              <span>Version {update.data.available} is available.</span>
+              {applyUpdate.isPending ? (
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <div
+                    role="progressbar"
+                    aria-label={`Downloading version ${update.data.available}`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    // Omitted, not zero, until the first event: an indeterminate
+                    // bar is what "we do not know yet" means to a screen reader,
+                    // and 0% would be a claim.
+                    aria-valuenow={dl ? dl.percent : undefined}
+                    aria-valuetext={dl ? formatByteProgress(dl.downloaded, dl.total) : undefined}
+                    className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent/20"
+                  >
+                    <div
+                      className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                      style={{ width: `${dl?.percent ?? 0}%` }}
+                    />
+                  </div>
+                  {/* Tabular figures: the numerator changes every few seconds
+                      and proportional digits make the whole line jitter. */}
+                  <span className="shrink-0 tabular-nums text-xs text-muted">
+                    {!dl
+                      ? "Preparing…"
+                      : dl.percent >= 100
+                        ? "Installing…"
+                        : dl.total > 0
+                          ? formatByteProgress(dl.downloaded, dl.total)
+                          : `${dl.percent}%`}
+                  </span>
+                </div>
+              ) : (
+                <span>Version {update.data.available} is available.</span>
+              )}
               <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
                 <IconRefresh aria-hidden className={applyUpdate.isPending ? "animate-spin" : undefined} />
                 {applyUpdate.isPending ? "Updating" : "Restart to update"}
               </Button>
             </div>
-            {applyUpdate.isPending && (
-              <div className="mt-2 flex items-center gap-3">
-                <div
-                  role="progressbar"
-                  aria-label={`Downloading version ${update.data.available}`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  // Omitted, not zero, until the first event: an indeterminate
-                  // bar is what "we do not know yet" means to a screen reader,
-                  // and 0% would be a claim.
-                  aria-valuenow={dl ? dl.percent : undefined}
-                  aria-valuetext={dl ? formatByteProgress(dl.downloaded, dl.total) : undefined}
-                  className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent/20"
-                >
-                  <div
-                    className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
-                    style={{ width: `${dl?.percent ?? 0}%` }}
-                  />
-                </div>
-                {/* Tabular figures: the numerator changes every few seconds
-                    and proportional digits make the whole line jitter. */}
-                <span className="shrink-0 tabular-nums text-xs text-muted">
-                  {!dl
-                    ? "Preparing…"
-                    : dl.percent >= 100
-                      ? "Installing…"
-                      : dl.total > 0
-                        ? formatByteProgress(dl.downloaded, dl.total)
-                        : `${dl.percent}%`}
-                </span>
-              </div>
-            )}
           </div>
         )}
 

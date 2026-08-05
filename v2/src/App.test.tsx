@@ -309,6 +309,12 @@ test("the update banner shows how much of the package has downloaded", async () 
   expect(bar).not.toHaveAttribute("aria-valuenow");
   expect(screen.getByText("Preparing…")).toBeInTheDocument();
 
+  // The bar replaces the offer text on the same row: once the button is
+  // clicked, "is available" has been answered, and the banner should not
+  // grow a second line mid-download.
+  expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /updating/i })).toBeDisabled();
+
   const { emit } = await import("@tauri-apps/api/event");
   const send = (percent: number, downloaded: number, total: number) =>
     act(async () => {
