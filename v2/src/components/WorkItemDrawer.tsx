@@ -159,14 +159,23 @@ export default function WorkItemDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // The draft re-seeds on EVERY detail arrival - after a save the refetched
+  // item is the new baseline, or the dirty check would keep offering to
+  // re-save what just saved. The tab/mode state must NOT: a save also
+  // refetches, and resetting here yanked someone who saved from the RCA
+  // tab back to Description. Those reset only when the item itself changes.
   useEffect(() => {
-    if (detail.data) {
-      setDraft(toDraft(detail.data));
-      setDocTab(""); // back to Description when a different item loads
-      setDescMode("preview");
-      setEditingFields(new Set());
-      setBottomTab("discussion");
-    }
+    if (detail.data) setDraft(toDraft(detail.data));
+  }, [detail.data]);
+
+  const seenItem = useRef<number | null>(null);
+  useEffect(() => {
+    if (!detail.data || seenItem.current === detail.data.id) return;
+    seenItem.current = detail.data.id;
+    setDocTab(""); // back to Description when a different item loads
+    setDescMode("preview");
+    setEditingFields(new Set());
+    setBottomTab("discussion");
   }, [detail.data]);
 
   /** Preview-only: swap authenticated attachment URLs for the data: URIs
