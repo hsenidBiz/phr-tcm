@@ -90,7 +90,11 @@ export default function Combobox({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-full min-w-48 rounded-md border border-border bg-surface shadow-xl">
+        // w-max, not w-full: the trigger's width fits a SELECTED value,
+        // but option lists like iteration paths run much longer - the
+        // panel grows to the longest option (viewport-capped, then the
+        // rows truncate) instead of squeezing everything to the box.
+        <div className="absolute left-0 top-full z-40 mt-1 w-max min-w-full max-w-[min(42rem,calc(100vw-3rem))] rounded-md border border-border bg-surface shadow-xl">
           <div className="border-b border-border p-1.5">
             <input
               ref={inputRef}
