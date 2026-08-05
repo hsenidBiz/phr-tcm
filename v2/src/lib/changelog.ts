@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.5",
+    date: "2026-08-05",
+    items: [
+      "Work item drawer: saving from the RCA tab (or any tab) stays on that tab instead of bouncing back to Description - write mode and open editors survive the save too.",
+      "Dropdown lists grow to fit their longest option, so iteration paths are readable instead of truncating at the box's width.",
+      "The update banner stays one row while downloading: the progress bar takes the version text's place next to the disabled button.",
+    ],
+  },
+  {
     version: "1.19.4",
     date: "2026-08-04",
     items: [
