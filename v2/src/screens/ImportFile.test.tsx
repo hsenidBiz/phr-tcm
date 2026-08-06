@@ -167,8 +167,15 @@ test("import feeds the shared queue; failed items stay queued", async () => {
 });
 
 test("a matching PBI imports straight into the queue", async () => {
+  const calls = { watched: 0 };
   mockIPC((cmd) => {
     if (cmd === "fetch_shared_queue") return sharedFor(42); // same as selected
+    if (cmd === "materialize_shared_draft")
+      return { path: "C:/drafts/shared.json", stamp: "shared-stamp-1" };
+    if (cmd === "watch_file") {
+      calls.watched += 1;
+      return null;
+    }
   });
   renderHosted();
   fireEvent.change(screen.getByLabelText("Share link"), {
@@ -179,11 +186,23 @@ test("a matching PBI imports straight into the queue", async () => {
   expect(await screen.findByText("Shared case")).toBeInTheDocument();
   // No question asked when there is nothing to choose between.
   expect(screen.queryByText("This draft is for a different PBI")).not.toBeInTheDocument();
+  // The share was materialized to a local file AND followed - the whole
+  // point of the fix: a share-link queue now has a file for the id
+  // write-back to land in. Awaiting it also keeps the async chain inside
+  // the test instead of rejecting after teardown.
+  await waitFor(() => expect(calls.watched).toBe(1));
 });
 
 test("a different PBI asks first, and Switch loads into THAT PBI's queue", async () => {
+  const calls = { watched: 0 };
   mockIPC((cmd) => {
     if (cmd === "fetch_shared_queue") return sharedFor(9999); // not the selected 42
+    if (cmd === "materialize_shared_draft")
+      return { path: "C:/drafts/shared.json", stamp: "shared-stamp-1" };
+    if (cmd === "watch_file") {
+      calls.watched += 1;
+      return null;
+    }
   });
   renderHosted();
   fireEvent.change(screen.getByLabelText("Share link"), {
@@ -204,11 +223,19 @@ test("a different PBI asks first, and Switch loads into THAT PBI's queue", async
   expect(screen.getByTestId("current-pbi")).toHaveTextContent("9999");
   expect(localStorage.getItem("tcm-v2-draft:acme/9999")).toContain("Shared case");
   expect(localStorage.getItem("tcm-v2-draft:acme/42")).toBeNull();
+  await waitFor(() => expect(calls.watched).toBe(1));
 });
 
 test("Stay keeps the current PBI and warns about the mismatch", async () => {
+  const calls = { watched: 0 };
   mockIPC((cmd) => {
     if (cmd === "fetch_shared_queue") return sharedFor(9999);
+    if (cmd === "materialize_shared_draft")
+      return { path: "C:/drafts/shared.json", stamp: "shared-stamp-1" };
+    if (cmd === "watch_file") {
+      calls.watched += 1;
+      return null;
+    }
   });
   renderHosted();
   fireEvent.change(screen.getByLabelText("Share link"), {
@@ -221,11 +248,14 @@ test("Stay keeps the current PBI and warns about the mismatch", async () => {
   expect(screen.getByTestId("current-pbi")).toHaveTextContent("42");
   expect(screen.getByText(/shared for PBI #9999/)).toBeInTheDocument();
   expect(localStorage.getItem("tcm-v2-draft:acme/42")).toContain("Shared case");
+  await waitFor(() => expect(calls.watched).toBe(1));
 });
 
 test("Cancel loads nothing anywhere", async () => {
   mockIPC((cmd) => {
     if (cmd === "fetch_shared_queue") return sharedFor(9999);
+    if (cmd === "materialize_shared_draft")
+      return { path: "C:/drafts/shared.json", stamp: "shared-stamp-1" };
   });
   renderHosted();
   fireEvent.change(screen.getByLabelText("Share link"), {

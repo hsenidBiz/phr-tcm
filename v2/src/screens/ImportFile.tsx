@@ -299,6 +299,7 @@ export default function ImportFile({
     // Materialize the share as a real local draft and follow it like any
     // imported file, so the whole stamping machinery just works.
     void commands.materializeSharedDraft(forPbi, data.cases).then((r) => {
+      if (!r || (r.status === "ok" && !r.data)) return; // defensive: mocked/absent backend
       if (r.status === "error") {
         toast.warning(
           `Imported, but the shared draft could not be saved locally: ${r.error}. ` +
