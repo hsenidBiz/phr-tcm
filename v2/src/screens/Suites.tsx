@@ -1,5 +1,7 @@
 import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FolderTree, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, ExternalLink, Folder, FolderOpen, FolderTree, RefreshCw } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { copyText } from "../lib/clipboard";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
@@ -130,10 +132,11 @@ export default function Suites({
   // Folders start collapsed; clicking a folder row toggles it open.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState("");
-  // While searching, matches auto-expand - but the chevron must still be
-  // able to close them, so search mode tracks its own collapsed set
-  // (reset whenever the query changes).
-  const [searchCollapsed, setSearchCollapsed] = useState<Set<number>>(new Set());
+  // Search results start FULLY COLLAPSED - a query for one suite should
+  // show the matching branches, not unfold every plan's tree. The set
+  // tracks what the user opens inside a search (reset when it changes),
+  // without disturbing the normal-mode expansion state.
+  const [searchExpanded, setSearchExpanded] = useState<Set<number>>(new Set());
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
 
   // Scanning every plan is the expensive part - cache the result for the
@@ -171,7 +174,7 @@ export default function Suites({
   );
 
   const q = search.trim().toLowerCase();
-  useEffect(() => setSearchCollapsed(new Set()), [q]);
+  useEffect(() => setSearchExpanded(new Set()), [q]);
   const visibleTrees = useMemo(() => {
     if (!q) return trees;
     return trees
@@ -247,6 +250,10 @@ export default function Suites({
     );
   }
 
+  /** ADO's own deep link to a suite inside the Test Plans hub. */
+  const suiteUrl = (planId: number, suiteId: number) =>
+    `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_testPlans/define?planId=${planId}&suiteId=${suiteId}`;
+
   const chip = (text: string, onClick: () => void) => (
     <span
       role="button"
@@ -267,13 +274,12 @@ export default function Suites({
   const renderNode = (node: SuiteNode, planId: number, depth: number): ReactNode => {
     const s = node.suite;
     const isFolder = node.children.length > 0;
-    // Search mode starts expanded but stays manually collapsible.
-    const isCollapsed = q ? searchCollapsed.has(s.id) : !expanded.has(s.id);
+    // Both modes start collapsed; search mode just keeps its own set so a
+    // query does not disturb what the user had open in the full tree.
+    const isCollapsed = q ? !searchExpanded.has(s.id) : !expanded.has(s.id);
     const allIds = descendantIds(node);
-    // Search mode's set holds COLLAPSED ids, normal mode's holds EXPANDED
-    // ids - either way, toggling membership flips the folder.
     const toggleFolder = () =>
-      (q ? setSearchCollapsed : setExpanded)((c) => {
+      (q ? setSearchExpanded : setExpanded)((c) => {
         const next = new Set(c);
         if (next.has(s.id)) next.delete(s.id);
         else next.add(s.id);
@@ -310,7 +316,41 @@ export default function Suites({
           {s.suite_type === "requirementTestSuite" && (
             <Badge className="shrink-0 bg-accent-soft text-accent">PBI {s.requirement_id}</Badge>
           )}
-          <span className="flex shrink-0 flex-wrap justify-end gap-1">
+          <span className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+            <span
+              role="button"
+              aria-label={`Open ${s.name} in Azure DevOps`}
+              title="Open in Azure DevOps"
+              className={cn(
+                "rounded p-1 text-muted transition-colors hover:text-accent",
+                busy && "pointer-events-none opacity-50",
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                openUrl(suiteUrl(planId, s.id)).catch(() =>
+                  toast.error("Could not open the browser."),
+                );
+              }}
+            >
+              <ExternalLink size={13} />
+            </span>
+            <span
+              role="button"
+              aria-label={`Copy link to ${s.name}`}
+              title="Copy link"
+              className={cn(
+                "rounded p-1 text-muted transition-colors hover:text-accent",
+                busy && "pointer-events-none opacity-50",
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                copyText(suiteUrl(planId, s.id))
+                  .then(() => toast.success("Link copied."))
+                  .catch(() => toast.error("Could not copy to clipboard."));
+              }}
+            >
+              <Copy size={13} />
+            </span>
             {chip("View", () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
             {onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? (
               <>

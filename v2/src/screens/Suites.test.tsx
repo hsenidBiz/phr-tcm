@@ -143,7 +143,7 @@ test("folder Edit cases collects descendant case ids and hands off", async () =>
   await vi.waitFor(() => expect(onEdit).toHaveBeenCalledWith("Regression", [201]));
 });
 
-test("search filters the tree and auto-expands matching branches", async () => {
+test("search filters the tree; results start collapsed and open on demand", async () => {
   baseMock((cmd) => {
     if (cmd === "list_plans_with_suites")
       return [
@@ -172,20 +172,55 @@ test("search filters the tree and auto-expands matching branches", async () => {
   renderSuites();
   await screen.findByText("Regression");
 
-  // A nested match keeps its ancestor folder, expanded, and hides the rest.
+  // A nested match keeps its pruned ancestor folder and hides the rest -
+  // COLLAPSED. A query for one suite should show the matching branches,
+  // not unfold every plan's tree.
   fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "PBI 50" } });
-  expect(screen.getByText("PBI 50 suite")).toBeInTheDocument();
   expect(screen.getByText("Regression")).toBeInTheDocument();
+  expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
   expect(screen.queryByText("Smoke pack")).not.toBeInTheDocument();
 
-  // Auto-expanded folders can still be collapsed (and reopened) mid-search.
-  fireEvent.click(screen.getByText("Regression"));
-  expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
+  // Opening the folder reveals the match; closing folds it again.
   fireEvent.click(screen.getByText("Regression"));
   expect(screen.getByText("PBI 50 suite")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Regression"));
+  expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Search suites"), { target: { value: "zzz" } });
   expect(await screen.findByText(/Nothing matches "zzz"/)).toBeInTheDocument();
+});
+
+/// Every suite row can hand out ADO's own deep link - opened or copied -
+/// so pointing a teammate at a suite no longer means describing the path.
+test("a suite row copies its Azure DevOps link", async () => {
+  // copyText goes through the Tauri clipboard plugin first - capture that
+  // invoke rather than the navigator fallback (same as AiBridge's test).
+  let copied = "";
+  baseMock((cmd, args) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+          ],
+        },
+      ];
+    if (String(cmd).startsWith("plugin:clipboard-manager|")) {
+      copied = JSON.stringify(args);
+      return null;
+    }
+  });
+  renderSuites();
+  await screen.findByText("Regression");
+
+  fireEvent.click(screen.getByLabelText("Copy link to Regression"));
+  await vi.waitFor(() =>
+    expect(copied).toContain(
+      `https://dev.azure.com/acme/Web/_testPlans/define?planId=${PLAN.id}&suiteId=95`,
+    ),
+  );
+  expect(screen.getByLabelText("Open Regression in Azure DevOps")).toBeInTheDocument();
 });
 
 test("empty project shows the friendly message", async () => {
