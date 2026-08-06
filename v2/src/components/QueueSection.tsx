@@ -25,14 +25,12 @@ import {
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { loadNotes, saveNote } from "../lib/caseNotes";
-import { iterationDetails } from "../lib/iterations";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import AstryxIsland from "./AstryxIsland";
 import InlineDiff from "./InlineDiff";
-import Combobox from "./ui/combobox";
 import { pagePalette } from "../lib/reportTheme";
 import CaseStepsTable from "./CaseStepsTable";
 import QueueBulkEditDialog from "./QueueBulkEditDialog";
@@ -41,7 +39,6 @@ import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
-import { Select } from "./ui/select";
 import {
   IconBack,
   IconClear,
@@ -138,9 +135,6 @@ export default function QueueSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue, org]);
 
-  const [areaPath, setAreaPath] = useState("");
-  const [iterationPath, setIterationPath] = useState("");
-
   // Final confirmation stage: the first Confirm click arms the submit and
   // spotlights the PBI chip; only the explicit second click writes.
   const [armed, setArmed] = useState(false);
@@ -164,20 +158,6 @@ export default function QueueSection({
     if (queue.length === 0) setReviewing(false);
     setDupGate(null);
   }, [queue.length]);
-
-  // Classification trees load lazily, only once the review gate opens.
-  const areas = useQuery({
-    queryKey: ["classification", org, project, "areas"],
-    queryFn: () => unwrap(commands.classificationPaths(org, project, "areas")),
-    enabled: reviewing,
-    staleTime: 60 * 60_000,
-  });
-  const iterations = useQuery({
-    queryKey: ["iterations-dated", org, project],
-    queryFn: () => unwrap(commands.listIterations(org, project)),
-    enabled: reviewing,
-    staleTime: 60 * 60_000,
-  });
 
   const existing = useQuery({
     queryKey: ["pbi-tc-titles", org, pbiId],
@@ -404,8 +384,11 @@ export default function QueueSection({
           toSend,
           prefs.moduleRef,
           prefs.preconditionsRef,
-          areaPath || null,
-          iterationPath || null,
+          // Always the PBI's own area and iteration. These were dropdown
+          // overrides once; cases landing anywhere but beside their PBI
+          // was never wanted, so null (= inherit) is now the only value.
+          null,
+          null,
         );
         if (r.status === "error") throw new Error(r.error);
         // The outcome is applied HERE, inside the promise, not in
@@ -1155,36 +1138,6 @@ export default function QueueSection({
               Cancel
             </Button>
           </div>
-        </div>
-      )}
-
-      {reviewing && (
-        <div className="flex flex-wrap gap-3">
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            Area path for new cases
-            <Select
-              className="w-64 py-1.5"
-              value={areaPath}
-              onChange={(e) => setAreaPath(e.target.value)}
-            >
-              <option value="">Same as PBI</option>
-              {(areas.data ?? []).map((p) => (
-                <option key={p}>{p}</option>
-              ))}
-            </Select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-muted">
-            Iteration for new cases
-            <Combobox
-              ariaLabel="Iteration for new cases"
-              className="w-72"
-              placeholder="Same as PBI"
-              value={iterationPath}
-              options={(iterations.data ?? []).map((i) => i.path)}
-              details={iterationDetails(iterations.data ?? [])}
-              onChange={setIterationPath}
-            />
-          </label>
         </div>
       )}
 
