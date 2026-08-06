@@ -9,7 +9,7 @@ import { commands, type WorkItemDetail } from "../bindings";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
 import { copyText } from "../lib/clipboard";
-import { cached } from "../lib/localCache";
+import { cacheEntry, cacheWrite, cached } from "../lib/localCache";
 import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
@@ -98,9 +98,24 @@ export default function WorkItemDrawer({
       const b = label.toLowerCase();
       return a.includes(b) || b.includes(a);
     });
+  // Seeded from disk so a reopened item paints instantly, then
+  // revalidates. Hand-rolled rather than persistentQuery because the
+  // write is SIZE-CAPPED: details carry inline images as data: URIs, and
+  // one multi-megabyte write would trip localStorage's quota handler,
+  // which clears the whole cache to recover - a bad trade for one Bug's
+  // screenshots. Oversized items just skip the seed and load as before.
+  const detailCacheKey = `wi-detail:${org}/${project}/${itemId}`;
   const detail = useQuery({
     queryKey: ["wi-detail", org, project, itemId],
-    queryFn: () => unwrap(commands.workItemDetail(org, project, itemId)),
+    queryFn: async () => {
+      const d = await unwrap(commands.workItemDetail(org, project, itemId));
+      if (JSON.stringify(d).length <= 400_000) cacheWrite(detailCacheKey, d);
+      return d;
+    },
+    initialData: () => cacheEntry<WorkItemDetail>(detailCacheKey, 7 * 24 * 60 * 60_000)?.data,
+    initialDataUpdatedAt: () =>
+      cacheEntry<WorkItemDetail>(detailCacheKey, 7 * 24 * 60 * 60_000)?.at,
+    staleTime: 0,
     retry: false,
   });
 
@@ -159,13 +174,26 @@ export default function WorkItemDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // The draft re-seeds on EVERY detail arrival - after a save the refetched
-  // item is the new baseline, or the dirty check would keep offering to
-  // re-save what just saved. The tab/mode state must NOT: a save also
-  // refetches, and resetting here yanked someone who saved from the RCA
-  // tab back to Description. Those reset only when the item itself changes.
+  // The draft re-seeds when fresh detail arrives - after a save the
+  // refetched item is the new baseline, or the dirty check would keep
+  // offering to re-save what just saved. With the disk seed above, fresh
+  // data can also land while the user is ALREADY TYPING (seed paints,
+  // background refetch finishes seconds later) - so an arrival only
+  // replaces a draft that has no edits. A dirty draft keeps its text; its
+  // save still diffs against the newest detail at save time.
+  const lastSeeded = useRef<Draft | null>(null);
   useEffect(() => {
-    if (detail.data) setDraft(toDraft(detail.data));
+    if (!detail.data) return;
+    const fresh = toDraft(detail.data);
+    setDraft((cur) => {
+      const untouched =
+        cur == null ||
+        lastSeeded.current == null ||
+        JSON.stringify(cur) === JSON.stringify(lastSeeded.current);
+      if (!untouched) return cur;
+      lastSeeded.current = fresh;
+      return fresh;
+    });
   }, [detail.data]);
 
   const seenItem = useRef<number | null>(null);

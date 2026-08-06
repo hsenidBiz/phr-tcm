@@ -4,7 +4,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import WorkItemDrawer from "./WorkItemDrawer";
 
-afterEach(() => clearMocks());
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+});
 
 function renderDrawer() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -104,4 +107,28 @@ test("saving from the RCA tab stays on the RCA tab", async () => {
   );
   // ...and the drawer is still on RCA, not bounced to Description.
   expect(screen.getByText("Root Cause")).toBeInTheDocument();
+});
+
+/// The detail a drawer loads is remembered on disk, so reopening the same
+/// item paints instantly instead of a skeleton - the same seed-then-
+/// revalidate treatment the suite tree and PR chips already get.
+test("a loaded work item is cached for the next open", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "work_item_detail":
+        return detail("Session timeout not enforced");
+      case "list_team_members":
+        return [];
+      case "activity_values":
+        return [];
+      case "work_item_comments":
+        return [];
+    }
+  });
+  renderDrawer();
+  await screen.findByDisplayValue("Session timeout not enforced");
+
+  const raw = localStorage.getItem("tcm-v2-cache:wi-detail:acme/Web/2003");
+  expect(raw).toBeTruthy();
+  expect(JSON.parse(raw as string).data.title).toBe("Session timeout not enforced");
 });

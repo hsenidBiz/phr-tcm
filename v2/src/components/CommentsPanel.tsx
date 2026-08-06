@@ -3,6 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type WorkComment } from "../bindings";
 import { unwrap } from "../lib/ipc";
+import { CACHE, persistentQuery } from "../lib/persistentQuery";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/input";
 import { Skeleton } from "./ui/skeleton";
@@ -83,7 +84,11 @@ export default function CommentsPanel({
 
   const comments = useQuery({
     queryKey: ["wi-comments", org, project, itemId],
-    queryFn: () => unwrap(commands.workItemComments(org, project, itemId)),
+    ...persistentQuery({
+      key: `wi-comments:${org}/${project}/${itemId}`,
+      fetcher: () => unwrap(commands.workItemComments(org, project, itemId)),
+      ...CACHE.outcomes,
+    }),
     retry: false,
   });
 
