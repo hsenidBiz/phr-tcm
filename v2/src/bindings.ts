@@ -111,6 +111,13 @@ export const commands = {
 	 *  bug report can carry what the app actually did.
 	 */
 	appLogs: (limit: number) => __TAURI_INVOKE<LogLine[]>("app_logs", { limit }),
+	/**
+	 *  Frontend UI breadcrumbs - navigation, button clicks - into the same
+	 *  rolling app log the bug report ships, so "what did you do before it
+	 *  broke" answers itself from the report. Length-capped: the log is a
+	 *  diagnostic trail, not a keylogger, and callers only send control names.
+	 */
+	logUi: (message: string) => __TAURI_INVOKE<void>("log_ui", { message }),
 	/**  Folder holding the daily log files, for "Open log folder". */
 	appLogDir: () => __TAURI_INVOKE<string>("app_log_dir"),
 	/**

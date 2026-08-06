@@ -29,6 +29,7 @@ import TitleBar from "./components/TitleBar";
 import UiTour, { START_TOUR_EVENT, tourDone } from "./components/UiTour";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
+import { logUi } from "./lib/uiLog";
 import { loadPrefs, savePrefs } from "./lib/prefs";
 import { getTheme, initTheme } from "./lib/theme";
 import EditCases from "./screens/EditCases";
@@ -175,6 +176,7 @@ export default function App() {
     setCaseSelection(null);
   };
   const goToSection = (s: Section) => {
+    logUi(`nav: ${s}`);
     setSection(s);
     setWorkMode(false); // any tab click exits Work Manager mode
     setCaseSelection(null); // direct navigation returns Edit to PBI mode
@@ -526,7 +528,14 @@ export default function App() {
           Requests first, then the board) instead of the test-case tabs. */}
       {signedIn &&
         (workMode ? (
-          <Sidebar section={workSection} onSelect={setWorkSection} items={WORK_ITEMS} />
+          <Sidebar
+            section={workSection}
+            onSelect={(w) => {
+              logUi(`nav: work/${w}`);
+              setWorkSection(w);
+            }}
+            items={WORK_ITEMS}
+          />
         ) : (
           <Sidebar section={section} onSelect={goToSection} />
         ))}

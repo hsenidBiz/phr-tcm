@@ -92,6 +92,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::check_update,
             misc::set_ado_rate_level,
             misc::app_logs,
+            misc::log_ui,
             misc::app_log_dir,
             misc::apply_update,
             misc::watch_assigned_work,

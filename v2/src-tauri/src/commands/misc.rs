@@ -144,6 +144,17 @@ pub fn watch_assigned_work(
     Ok(())
 }
 
+/// Frontend UI breadcrumbs - navigation, button clicks - into the same
+/// rolling app log the bug report ships, so "what did you do before it
+/// broke" answers itself from the report. Length-capped: the log is a
+/// diagnostic trail, not a keylogger, and callers only send control names.
+#[tauri::command]
+#[specta::specta]
+pub fn log_ui(message: String) {
+    let msg: String = message.chars().take(200).collect();
+    crate::applog::info(format!("[ui] {msg}"));
+}
+
 /// Prepare a bug report about THIS app: scrub the log, write it out, and
 /// build a prefilled GitHub issue for the reporter to review and submit.
 ///
