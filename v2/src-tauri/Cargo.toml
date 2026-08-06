@@ -1,6 +1,6 @@
 [package]
 name = "v2"
-version = "1.19.5"
+version = "1.19.6"
 description = "Bulk-create and edit Azure DevOps Test Cases"
 authors = ["Avin Alwis"]
 edition = "2021"

@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    // Backfill: published from another machine without an entry.
+    version: "1.19.6",
+    date: "2026-08-06",
+    items: [
+      "Runner: clicking a lit verdict clears it, for the whole case and for single steps - and clearing a previously-run case resets the point to Active in ADO (its own 'reset test', nothing deleted).",
+      "Run Tests follows the runner live: every Next repaints that row's outcome in the table immediately, no refetch.",
+      "Runner footer reorganized: comment, capture tools, and attachments live in one Evidence card, with the verdict row pinned below.",
+      "Re-importing a shared or renamed draft can no longer duplicate created cases: shared drafts get a real local file for id write-back, single-card edits write through to the owning file, a fresh duplicate check gates the final Create click, and any case whose new id could not be recorded is called out loudly.",
+    ],
+  },
+  {
     version: "1.19.5",
     date: "2026-08-05",
     items: [
