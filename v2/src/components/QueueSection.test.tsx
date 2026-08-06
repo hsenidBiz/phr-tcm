@@ -382,3 +382,76 @@ test("a case's in-app comment shows on the row and is editable in the editor", a
   expect(await screen.findByText("Re-check with QA")).toBeInTheDocument();
   expect(screen.queryByText("Imported from sprint 12 sheet")).not.toBeInTheDocument();
 });
+
+/// Fix for a real duplicate incident: a single-row Edit that renamed a case
+/// left the FILE with the old title, so the post-submit id stamping could
+/// not find an owner and the created id was recorded nowhere. The editor
+/// now writes through to the owning file exactly like bulk edits do.
+test("single Edit save writes the change through to the owning file", async () => {
+  const a = makeCase({ title: "Original title" });
+  const saved: Array<{ path: string; titles: string[] }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") {
+      const p = args as { path: string; cases: TestCase[] };
+      saved.push({ path: p.path, titles: p.cases.map((c) => c.title) });
+      return "stamp-2";
+    }
+    return undefined;
+  });
+  const patched: Array<{ path: string; stamp?: string }> = [];
+  renderQueue([a], {
+    watches: [{ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [a] }],
+    onWatchPatched: (path, fields) => patched.push({ path, stamp: fields.stamp }),
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Case title"), {
+    target: { value: "Renamed title" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0].path).toBe("C:/drafts/a.json");
+  expect(saved[0].titles).toEqual(["Renamed title"]);
+  await waitFor(() => expect(patched).toEqual([{ path: "C:/drafts/a.json", stamp: "stamp-2" }]));
+});
+
+/// The last safeguard: the final Yes re-checks ADO and STOPS when a case
+/// about to be created already exists by title - 43 duplicates once went
+/// through because the per-row hint was scrollable-past.
+test("duplicate-title creates stop the submit until explicitly allowed", async () => {
+  let submits = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases")
+      return [{ id: 201, title: "Login works", tags: "", automation_status: "Planned" }];
+    if (cmd === "submit_queue") {
+      submits += 1;
+      return [{ index: 0, title: "Login works", action: "created", id: 900, error: null }];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase()]); // a CREATE row titled "Login works"
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
+
+  // The gate trips instead of submitting.
+  expect(await screen.findByText(/Stopped: 1 case/)).toBeInTheDocument();
+  expect(submits).toBe(0);
+
+  // Only the explicit choice goes through.
+  fireEvent.click(screen.getByRole("button", { name: "Create duplicates anyway" }));
+  await waitFor(() => expect(submits).toBe(1));
+});

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TestCase } from "../bindings";
-import { noteSyncPairs, stampFileSlices } from "./queueStamp";
+import { noteSyncPairs, stampFileSlices, unstampedCreated } from "./queueStamp";
 
 const tc = (title: string, over: Partial<TestCase> = {}): TestCase => ({
   title,
@@ -83,5 +83,35 @@ describe("noteSyncPairs", () => {
       { id: 501, comment: "check step 3" },
       { id: 42, comment: "flaky?" },
     ]);
+  });
+});
+
+describe("unstampedCreated", () => {
+  it("names created cases with no owning file", () => {
+    const a = tc("Renamed in app");
+    const b = tc("Still owned");
+    const prev = [a, b];
+    const owners = ["", "C:/drafts/a.json"]; // a lost its owner (renamed)
+    const out = unstampedCreated(prev, owners, prev, [
+      { index: 0, action: "created", id: 900 },
+      { index: 1, action: "created", id: 901 },
+    ]);
+    expect(out).toEqual(["Renamed in app"]);
+  });
+
+  it("flags every create when there is no file at all (shared draft)", () => {
+    const a = tc("From a share link");
+    const out = unstampedCreated([a], [""], [a], [{ index: 0, action: "created", id: 900 }]);
+    expect(out).toEqual(["From a share link"]);
+  });
+
+  it("ignores updates and failures", () => {
+    const a = tc("Updated", { update_id: 55 });
+    const b = tc("Failed");
+    const out = unstampedCreated([a, b], ["", ""], [a, b], [
+      { index: 0, action: "updated", id: 55 },
+      { index: 1, action: "failed", id: null },
+    ]);
+    expect(out).toEqual([]);
   });
 });

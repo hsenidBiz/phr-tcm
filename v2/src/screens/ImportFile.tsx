@@ -289,13 +289,33 @@ export default function ImportFile({
 
   useEffect(() => {
     if (!pendingFor || pbi?.id !== pendingFor.pbiId) return;
-    const { data, extraWarnings } = pendingFor;
+    const { pbiId: forPbi, data, extraWarnings } = pendingFor;
     setQueue((q) => [...q, ...data.cases]);
     setWarnings([...extraWarnings, ...data.warnings]);
     setPendingFor(null);
+    // A share link has no file behind it, so the post-submit id write-back
+    // had nowhere to land - the created ids lived only in Azure DevOps and
+    // a re-import of the same drafts silently created every case again.
+    // Materialize the share as a real local draft and follow it like any
+    // imported file, so the whole stamping machinery just works.
+    void commands.materializeSharedDraft(forPbi, data.cases).then((r) => {
+      if (r.status === "error") {
+        toast.warning(
+          `Imported, but the shared draft could not be saved locally: ${r.error}. ` +
+            `Ids created by a submit will not be recorded anywhere - export JSON after uploading.`,
+          { duration: 15000 },
+        );
+        return;
+      }
+      setWatches((prev) =>
+        upsertWatch(prev, { path: r.data.path, stamp: r.data.stamp, snapshot: data.cases }),
+      );
+      toast.info(`Shared draft saved locally and followed: ${fileName(r.data.path)}`);
+    });
     toast.success(
       `Imported ${data.cases.length} shared case${data.cases.length === 1 ? "" : "s"} for review.`,
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFor, pbi?.id, setQueue]);
 
   // A pasted share link (see ado_share.rs): one-time use - a successful

@@ -177,6 +177,17 @@ export const commands = {
 	 *  are one-time use: a successful import revokes the share.
 	 */
 	fetchSharedQueue: (link: string) => typedError<SharedQueue_Serialize, string>(__TAURI_INVOKE("fetch_shared_queue", { link })),
+	/**
+	 *  Write an imported SHARED draft to a real local file and return its path
+	 *  and fingerprint so the caller can arm a watch on it.
+	 * 
+	 *  A share-link queue used to have no file at all, so the id write-back
+	 *  after a submit had nowhere to land: the created ids lived only in Azure
+	 *  DevOps, and the next import of the same drafts silently created every
+	 *  case again (43 duplicates in one real incident). One stable path per
+	 *  PBI - a newer share for the same PBI replaces the older copy.
+	 */
+	materializeSharedDraft: (pbiId: number, cases: TestCase_Deserialize[]) => typedError<MaterializedDraft, string>(__TAURI_INVOKE("materialize_shared_draft", { pbiId, cases })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -697,6 +708,11 @@ export type LogLine = {
 	/**  "debug" | "info" | "warn" | "error". */
 	level: string,
 	message: string,
+};
+
+export type MaterializedDraft = {
+	path: string,
+	stamp: string,
 };
 
 export type Member = {

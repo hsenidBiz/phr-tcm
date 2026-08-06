@@ -116,6 +116,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::cancel_submit,
             queue::share_queue,
             queue::fetch_shared_queue,
+            queue::materialize_shared_draft,
             queue::export_queue_html,
             discovery::list_project_tags,
             runs::result_screenshots,

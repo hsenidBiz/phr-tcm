@@ -22,7 +22,7 @@ import {
   submitStarted,
   subscribeSubmit,
 } from "../lib/submitRun";
-import { noteSyncPairs, stampFileSlices } from "../lib/queueStamp";
+import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { loadNotes, saveNote } from "../lib/caseNotes";
 import { iterationDetails } from "../lib/iterations";
@@ -144,6 +144,12 @@ export default function QueueSection({
   // Final confirmation stage: the first Confirm click arms the submit and
   // spotlights the PBI chip; only the explicit second click writes.
   const [armed, setArmed] = useState(false);
+  // The last safeguard before anything is written: titles of the CREATE
+  // rows that already exist on the PBI, checked FRESH against ADO at the
+  // final click. Set = the submit is stopped until the user explicitly
+  // chooses. The per-row hint was scrollable-past; 43 duplicates once
+  // sailed through it.
+  const [dupGate, setDupGate] = useState<string[] | null>(null);
   const arm = (on: boolean) => {
     setArmed(on);
     setPbiGlow(on);
@@ -152,9 +158,11 @@ export default function QueueSection({
   useEffect(() => () => setPbiGlow(false), []);
 
   // An emptied queue (Remove all, removing the last item) has nothing to
-  // review - leave review mode so the confirm controls disappear too.
+  // review - leave review mode so the confirm controls disappear too. A
+  // changed queue also invalidates a duplicate check taken against it.
   useEffect(() => {
     if (queue.length === 0) setReviewing(false);
+    setDupGate(null);
   }, [queue.length]);
 
   // Classification trees load lazily, only once the review gate opens.
@@ -351,37 +359,6 @@ export default function QueueSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue, reportOpen]);
 
-  /**
-   * Push a comment edited on the card into the JSON file the case came
-   * from, so the card, the browser view and the file agree.
-   *
-   * Addressed by the case as it was BEFORE the edit: the same form can
-   * rename a case, and the file still holds it under the old title.
-   * Nothing else on the card is written through - an in-app edit has never
-   * propagated to the file, and widening that is not this feature's job.
-   *
-   * A REFUSAL is surfaced. This used to be silent on every failure, with
-   * the reasoning that a transient sync error is noise - fair enough. But
-   * a refusal is not transient: two drafts sharing a title cannot be told
-   * apart in the file, so that comment will NEVER reach it, and the card
-   * would go on showing text the file does not have. The comment stays in
-   * the queue either way, so the toast is informational, not a rollback.
-   */
-  const writeCommentThrough = (before: TestCase, text: string) => {
-    if ((before.comment ?? "") === text) return;
-    const owner = ownerPaths([before], watches)[0];
-    if (!owner) return;
-    void commands
-      .saveDraftComment(owner, before.update_id, before.title, text)
-      .then((r) => {
-        if (r.status === "error") {
-          toast.warning(`Kept in the queue, but not written to the file: ${r.error}`, {
-            duration: 15000,
-          });
-        }
-      })
-      .catch(() => {});
-  };
 
   // A comment typed in that page comes back here, so the card and the
   // browser tab never disagree. The file is already written by the time
@@ -455,6 +432,31 @@ export default function QueueSection({
     },
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
   });
+
+  /** The final-click gate: re-check ADO for the titles of every case about
+   * to be CREATED, and stop the submit if any already exist - the user must
+   * explicitly choose duplicates. Runs against a FRESH fetch (the cached
+   * list can be minutes old, and both real incidents happened inside that
+   * window); an unreachable ADO falls back to the cache rather than
+   * blocking, since the submit itself would surface the outage anyway. */
+  const guardedSubmit = async () => {
+    let titles = existingCases.map((t) => t.title);
+    try {
+      const fresh = await existing.refetch();
+      if (fresh.data) titles = fresh.data.map((t) => t.title);
+    } catch {
+      // keep the cached list
+    }
+    const have = new Set(titles.map((t) => t.trim().toLowerCase()));
+    const dups = queue
+      .filter((tc) => tc.update_id == null && have.has(tc.title.trim().toLowerCase()))
+      .map((tc) => tc.title);
+    if (dups.length > 0) {
+      setDupGate(dups);
+      return;
+    }
+    submit.mutate();
+  };
 
   /** Everything a finished submit owes the user, wherever they are now.
    * Runs inside the mutation promise, so navigating away cannot skip it. */
@@ -548,6 +550,22 @@ export default function QueueSection({
     const outcomes = results.map((r) => ({ index: r.index, action: r.action, id: r.id }));
     void (async () => {
       const known = watches.length > 0 ? watches : loadWatches(org, sentFor);
+      // The other half of the promise "the file learns what the submit made
+      // real": say it LOUDLY when a created case's id could not be recorded
+      // anywhere - no owning file matched it, or there is no file at all.
+      // Both duplicate incidents to date were this situation, silent.
+      const owners = known.length > 0 ? ownerPaths(prevQueue, known) : prevQueue.map(() => "");
+      const orphaned = unstampedCreated(prevQueue, owners, sent, outcomes);
+      if (orphaned.length > 0) {
+        const named = orphaned.slice(0, 3).join("; ");
+        toast.warning(
+          `${orphaned.length} created case(s) have no file recording their new ids ` +
+            `(${named}${orphaned.length > 3 ? "; …" : ""}). Their ids exist only in Azure ` +
+            `DevOps now - importing the same drafts again will create duplicates. ` +
+            `View Test Cases has the created set.`,
+          { duration: 25000 },
+        );
+      }
       if (known.length > 0) {
         const files = stampFileSlices(prevQueue, ownerPaths(prevQueue, known), sent, outcomes);
         for (const [path, f] of files) {
@@ -1048,9 +1066,20 @@ export default function QueueSection({
                     org={org}
                     project={project}
                     onSave={(next) => {
+                      const prev = queue;
                       setQueue((q) => q.map((t, j) => (j === i ? next : t)));
                       setEditingIdx(null);
-                      writeCommentThrough(tc, next.comment ?? "");
+                      // The owning FILE follows the edit, through the same
+                      // machinery as bulk edits. This closes a real duplicate
+                      // trap: ownership is matched by title, so a rename that
+                      // only the queue knew about orphaned the row at stamp
+                      // time - its created id was never written back, and the
+                      // next import of the file created the case again.
+                      void writeBackOwned(
+                        prev,
+                        prev.map((t, j) => (j === i ? next : t)),
+                        new Set([i]),
+                      );
                       toast.success("Queued case updated.");
                     }}
                     onCancel={() => setEditingIdx(null)}
@@ -1175,6 +1204,44 @@ export default function QueueSection({
             ]
               .filter(Boolean)
               .join(" · ");
+            if (dupGate) {
+              return (
+                <div className="w-full space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
+                  <p className="text-sm font-semibold text-text">
+                    Stopped: {dupGate.length} case{dupGate.length === 1 ? "" : "s"} you are about
+                    to CREATE already exist{dupGate.length === 1 ? "s" : ""} on PBI #{pbiId} with
+                    the same title.
+                  </p>
+                  <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-muted">
+                    {dupGate.map((t) => (
+                      <li key={t}>• {t}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-muted">
+                    If these should UPDATE the existing cases, import a file that carries their
+                    ids instead (View Test Cases → Export JSON has them). Creating anyway makes
+                    duplicates, and removing those needs delete permission.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" onClick={() => setDupGate(null)}>
+                      <IconBack aria-hidden />
+                      Stop — take me back
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={submit.isPending || !online}
+                      onClick={() => {
+                        setDupGate(null);
+                        submit.mutate();
+                      }}
+                    >
+                      Create duplicates anyway
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
             if (!armed) {
               return (
                 <>
@@ -1210,7 +1277,9 @@ export default function QueueSection({
                     title={online ? undefined : OFFLINE_HINT}
                     onClick={() => {
                       arm(false);
-                      submit.mutate();
+                      // Not straight to the submit: the duplicate-title gate
+                      // re-checks ADO first and may stop to ask.
+                      void guardedSubmit();
                     }}
                   >
                     <IconConfirm aria-hidden />

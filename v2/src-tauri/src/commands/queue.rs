@@ -194,6 +194,44 @@ pub async fn fetch_shared_queue(
     })
 }
 
+#[derive(serde::Serialize, specta::Type)]
+pub struct MaterializedDraft {
+    pub path: String,
+    pub stamp: String,
+}
+
+/// Write an imported SHARED draft to a real local file and return its path
+/// and fingerprint so the caller can arm a watch on it.
+///
+/// A share-link queue used to have no file at all, so the id write-back
+/// after a submit had nowhere to land: the created ids lived only in Azure
+/// DevOps, and the next import of the same drafts silently created every
+/// case again (43 duplicates in one real incident). One stable path per
+/// PBI - a newer share for the same PBI replaces the older copy.
+#[tauri::command]
+#[specta::specta]
+pub fn materialize_shared_draft(
+    app: tauri::AppHandle,
+    pbi_id: i32,
+    cases: Vec<model::TestCase>,
+) -> Result<MaterializedDraft, String> {
+    let json = import_parser::queue_to_json_string(&cases)?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("shared-drafts");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("shared-pbi-{pbi_id}.json"));
+    let path_str = path.to_string_lossy().to_string();
+    let stamp = crate::filewatch::write_watched(&watch_state(&app), &path_str, &json)?;
+    crate::applog::info(format!(
+        "Materialized a shared draft for PBI #{pbi_id} ({} case(s)) at {path_str}",
+        cases.len()
+    ));
+    Ok(MaterializedDraft { path: path_str, stamp })
+}
+
 /// The secret shared with the report pages this run generates. Minted once,
 /// never written to disk, and only ever embedded in a page the app itself
 /// wrote - see `note_server::start` for what it defends against.

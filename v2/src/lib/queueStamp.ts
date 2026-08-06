@@ -68,6 +68,31 @@ export function stampFileSlices(
   return files;
 }
 
+/** Titles of successfully CREATED cases whose new work item id could not
+ * be written into any file - no owning watch matched them (a rename the
+ * file never learned about), or the queue never had a file at all (a
+ * shared-draft or hand-typed queue). Every one of these is a future
+ * duplicate: the id lives only in Azure DevOps now, and importing the
+ * same draft again will create the case a second time. The caller says
+ * so, loudly - both real incidents (43 and 3 duplicates) happened
+ * because this situation was silent. */
+export function unstampedCreated(
+  prev: TestCase[],
+  owners: string[],
+  sent: TestCase[],
+  results: StampOutcome[],
+): string[] {
+  const out: string[] = [];
+  for (const r of results) {
+    if (r.action !== "created" || r.id == null) continue;
+    const sentCase = sent[r.index];
+    if (!sentCase) continue;
+    const qi = prev.indexOf(sentCase);
+    if (qi < 0 || !owners[qi]) out.push(sentCase.title);
+  }
+  return out;
+}
+
 /** The (id, comment) pairs a finished submit should copy into the View
  * Test Cases notes store - the same comment, now visible on the case
  * where it lives in Azure DevOps. Created cases use their NEW id. */
