@@ -40,6 +40,10 @@ export default function QueueCaseEditor({
           className="flex-1"
           value={tc.title}
           onChange={(e) => setTc((t) => ({ ...t, title: e.target.value }))}
+          onKeyDown={(e) => {
+            // Enter here = the Save button, under the same conditions.
+            if (e.key === "Enter" && dirty && !problem) onSave(tc);
+          }}
         />
         <Select
           aria-label="Automation status"

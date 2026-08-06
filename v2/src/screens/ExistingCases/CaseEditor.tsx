@@ -97,6 +97,13 @@ export default function CaseEditor({
           className="flex-1"
           value={tc.title}
           onChange={(e) => setTc((t) => ({ ...t, title: e.target.value }))}
+          onKeyDown={(e) => {
+            // Enter here = the Save button, under the same conditions.
+            // Only the title: every other field either wants its Enter
+            // (textareas, the tag field) or has no text cursor.
+            if (e.key === "Enter" && dirty && !problem && !saveCase.isPending)
+              saveCase.mutate();
+          }}
         />
         <Select
           aria-label="Automation status"

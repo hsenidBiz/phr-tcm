@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import ExistingCases from "./ExistingCases";
 
 afterEach(() => {
@@ -55,6 +55,32 @@ test("expands a case via the chevron and saves edits via update_test_case", asyn
   await screen.findByText("Valid login"); // list still rendered
   expect(updated.tc?.title).toBe("Valid login v2");
   expect(updated.tc?.update_id).toBe(201);
+});
+
+/// Enter in the title = the Save button, under the same conditions: it
+/// does nothing while the case is untouched, and saves once it is dirty.
+test("Enter in the title saves a dirty case and ignores a clean one", async () => {
+  let saves = 0;
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "update_test_case") {
+      saves++;
+      return null;
+    }
+  });
+  renderCases();
+  await screen.findByText("Valid login");
+  fireEvent.click(screen.getByLabelText("Expand #201"));
+  const title = await screen.findByLabelText("Case title");
+
+  // Untouched: Enter must not fire a no-op PATCH.
+  fireEvent.keyDown(title, { key: "Enter" });
+  expect(saves).toBe(0);
+
+  fireEvent.change(title, { target: { value: "Valid login v2" } });
+  fireEvent.keyDown(title, { key: "Enter" });
+  await vi.waitFor(() => expect(saves).toBe(1));
 });
 
 /** Discard is the way out of a half-made edit. It only exists once there
