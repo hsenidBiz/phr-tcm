@@ -40,6 +40,7 @@ export {
   // Undoing and stopping
   Undo2 as IconUndo,
   X as IconCancel,
+  ChevronsDownUp as IconCollapseAll,
   Eraser as IconClear,
   Trash2 as IconRemove,
   EyeOff as IconStopWatching,

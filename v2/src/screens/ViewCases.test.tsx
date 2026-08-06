@@ -148,23 +148,23 @@ test("Group by title folds cases under shared prefixes and persists collapse", a
 });
 
 /** Several details can be open at once, a collapsed group keeps the case
- * being READ on screen, and the sticky Close all clears the lot -
+ * being READ on screen, and the sticky Collapse all clears the lot -
  * collapsing is tidying, and tidying must not snatch away the thing being
  * studied. */
-test("open details survive a group collapse until Close all", async () => {
+test("open details survive a group collapse until Collapse all", async () => {
   mockCases();
   renderView();
   await screen.findByText("Login - valid");
   fireEvent.click(screen.getByRole("checkbox")); // Group by title
 
   // No open details: no sticky button.
-  expect(screen.queryByRole("button", { name: /Close all/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 
   // Two details open AT ONCE - comparing cases is the point of plural.
   fireEvent.click(screen.getByLabelText("Expand #201"));
   fireEvent.click(screen.getByLabelText("Expand #202"));
   expect(screen.getAllByText("Open login page")).toHaveLength(2);
-  expect(screen.getByRole("button", { name: /Close all \(2\)/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Collapse all \(2\)/ })).toBeInTheDocument();
 
   // Collapse the Login group: the closed sibling rows vanish, the two
   // open details stay exactly where the reader left them.
@@ -177,10 +177,10 @@ test("open details survive a group collapse until Close all", async () => {
   expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
   expect(screen.getByText("Login - locked out")).toBeInTheDocument();
 
-  // Close all clears the rest; the collapsed group is now fully folded.
-  fireEvent.click(screen.getByRole("button", { name: /Close all \(1\)/ }));
+  // Collapse all clears the rest; the collapsed group is now fully folded.
+  fireEvent.click(screen.getByRole("button", { name: /Collapse all \(1\)/ }));
   expect(screen.queryByText("Login - locked out")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Close all/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 });
 
 /** Folding a group hides the highlight along with the rows, so the heading

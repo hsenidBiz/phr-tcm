@@ -20,7 +20,7 @@ import { unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
 import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
-import { IconOpenWindow, IconReport, IconRun } from "../../lib/actionIcons";
+import { IconCollapseAll, IconOpenWindow, IconReport, IconRun } from "../../lib/actionIcons";
 
 
 export { outcomeLabel };
@@ -543,8 +543,8 @@ export default function RunPanel({
               className="rounded-full"
               onClick={() => setExpanded(new Set())}
             >
-              <X size={14} aria-hidden />
-              Close all ({expanded.size})
+              <IconCollapseAll aria-hidden />
+              Collapse all ({expanded.size})
             </Button>
           </div>,
           document.body,

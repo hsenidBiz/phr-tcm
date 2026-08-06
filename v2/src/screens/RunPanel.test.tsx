@@ -302,30 +302,30 @@ test("a collapsed group marks that it still holds selected cases", async () => {
 });
 
 /** Same model as View Test Cases: previews are plural, an open one
- * survives its group being collapsed, and the sticky Close all clears
+ * survives its group being collapsed, and the sticky Collapse all clears
  * the lot. */
-test("open previews survive a group collapse until Close all", async () => {
+test("open previews survive a group collapse until Collapse all", async () => {
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
   fireEvent.click(screen.getByText("Group by title"));
 
-  expect(screen.queryByRole("button", { name: /Close all/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 
   // Open both previews at once.
   fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
   fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
-  expect(screen.getByRole("button", { name: /Close all \(2\)/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Collapse all \(2\)/ })).toBeInTheDocument();
 
   // Collapse the group: both held-open rows stay on screen.
   fireEvent.click(screen.getByLabelText(/Collapse group/));
   expect(screen.getByText("Valid login")).toBeInTheDocument();
   expect(screen.getByText("Invalid login")).toBeInTheDocument();
 
-  // Close all folds the group completely and the button retires.
-  fireEvent.click(screen.getByRole("button", { name: /Close all \(2\)/ }));
+  // Collapse all folds the group completely and the button retires.
+  fireEvent.click(screen.getByRole("button", { name: /Collapse all \(2\)/ }));
   expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Close all/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 });
 
 test("shift+click selects the whole range between two rows", async () => {

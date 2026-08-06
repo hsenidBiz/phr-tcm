@@ -455,3 +455,20 @@ test("duplicate-title creates stop the submit until explicitly allowed", async (
   fireEvent.click(screen.getByRole("button", { name: "Create duplicates anyway" }));
   await waitFor(() => expect(submits).toBe(1));
 });
+
+/// Unfolding steps (or diffs, or the editor) earns a sticky Collapse all
+/// in the bottom-right; clicking it folds everything shut. "Collapse",
+/// not "Close" - nothing is removed.
+test("a sticky Collapse all folds every unfolded row", async () => {
+  renderQueue([makeCase(), makeCase({ title: "Second case" })]);
+
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Expand steps of Login works"));
+  fireEvent.click(screen.getByLabelText("Expand steps of Second case"));
+  const collapse = screen.getByRole("button", { name: /Collapse all \(2\)/ });
+
+  fireEvent.click(collapse);
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Expand steps of Login works")).toBeInTheDocument();
+});

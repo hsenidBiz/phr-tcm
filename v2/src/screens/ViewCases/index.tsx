@@ -20,7 +20,7 @@ import { pagePalette } from "../../lib/reportTheme";
 import { toTestCase } from "../../lib/testCaseConvert";
 import CaseDetail from "./CaseDetail";
 import CommentModal from "./CommentModal";
-import { IconClear, IconOpenInBrowser } from "../../lib/actionIcons";
+import { IconClear, IconCollapseAll, IconOpenInBrowser } from "../../lib/actionIcons";
 
 
 
@@ -428,9 +428,11 @@ export default function ViewCases({
       {openIds.size > 0 &&
         createPortal(
           <div className="fixed bottom-6 left-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
+            {/* "Collapse", not "Close" or an eraser: nothing is deleted,
+                the open detail views just fold shut. */}
             <Button size="sm" variant="outline" className="rounded-full" onClick={() => setOpenIds(new Set())}>
-              <IconClear aria-hidden />
-              Close all ({openIds.size})
+              <IconCollapseAll aria-hidden />
+              Collapse all ({openIds.size})
             </Button>
           </div>,
           document.body,

@@ -3,6 +3,7 @@ import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
 import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
@@ -40,6 +41,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import {
+  IconCollapseAll,
   IconBack,
   IconClear,
   IconConfirm,
@@ -1280,6 +1282,31 @@ export default function QueueSection({
           </Button>
         </div>
       )}
+
+      {/* Sticky Collapse all, bottom RIGHT, once anything in the queue is
+          unfolded (steps, diffs, or the inline editor). Portalled because
+          this renders inside AnimatedContent, whose GSAP transform would
+          make `fixed` mean the scroll region instead of the viewport. */}
+      {(expandedSteps.size + expandedDiffs.size > 0 || editingIdx != null) &&
+        createPortal(
+          <div className="fixed bottom-6 right-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
+            <Button
+              size="sm"
+              variant="outline"
+              className="rounded-full"
+              onClick={() => {
+                setExpandedSteps(new Set());
+                setExpandedDiffs(new Set());
+                setEditingIdx(null);
+              }}
+            >
+              <IconCollapseAll aria-hidden />
+              Collapse all (
+              {expandedSteps.size + expandedDiffs.size + (editingIdx != null ? 1 : 0)})
+            </Button>
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }
