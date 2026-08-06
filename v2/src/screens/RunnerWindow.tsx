@@ -14,6 +14,7 @@ import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../lib/ipc";
+import { blobToB64 } from "../lib/blob";
 import { emitPointRecorded } from "../lib/runnerBus";
 import { loadRunnerPinned, loadRunnerSession, saveRunnerPinned } from "../lib/runnerSession";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
@@ -308,6 +309,28 @@ export default function RunnerWindow() {
         [caseId]: { ...prev, attachments: prev.attachments.filter((_, i) => i !== index) },
       };
     });
+
+  // Ctrl+V anywhere in the runner attaches a clipboard image to the case
+  // on screen. The paste EVENT hands over the image with no permission
+  // prompt - unlike the Paste button's async clipboard read, which some
+  // WebView2 setups refuse - so this is the path that always works.
+  // Skipped while the bug dialog is open: its own paste handler owns it.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (!current || bugFor) return;
+      const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith("image/"));
+      if (!item) return; // text paste - none of our business
+      const blob = item.getAsFile();
+      if (!blob) return;
+      void blobToB64(blob).then((b64) => {
+        addImage(current.id, b64, "pasted");
+        toast.success("Pasted screenshot");
+      });
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.id, bugFor]);
 
   /** Screen recording, like Azure DevOps's own runner: pick a screen or
    * window, record, and the .webm lands as an attachment on THIS case's
@@ -1019,11 +1042,3 @@ export default function RunnerWindow() {
   );
 }
 
-function blobToB64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}

@@ -484,3 +484,25 @@ test("the pin toggle is remembered, and a stored 'off' starts unpinned", async (
   expect(localStorage.getItem("tcm-v2-runner-pinned")).toBe("on");
   expect(screen.getByLabelText("Unpin (allow other windows on top)")).toBeInTheDocument();
 });
+
+/// Ctrl+V is the paste that always works: the event carries the image
+/// with no permission prompt, unlike the Paste button's async clipboard
+/// read, which some WebView2 setups refuse.
+test("pasting an image (Ctrl+V) attaches it to the current case", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  await screen.findByText("Valid login");
+
+  const file = new File([new Uint8Array([137, 80, 78, 71])], "clip.png", { type: "image/png" });
+  fireEvent.paste(window, {
+    clipboardData: { items: [{ type: "image/png", getAsFile: () => file }] },
+  });
+
+  // The attachment lands as this case's next pasted-*.png thumbnail
+  // (the fullscreen viewer holds a second copy of the same image).
+  expect((await screen.findAllByAltText("pasted-201-1.png")).length).toBeGreaterThan(0);
+});

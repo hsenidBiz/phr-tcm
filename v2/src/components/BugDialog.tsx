@@ -1,7 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type TestCaseFull } from "../bindings";
+import { blobToB64 } from "../lib/blob";
 import { unwrapStr } from "../lib/ipc";
 import { Button } from "./ui/button";
 import { Input, Textarea } from "./ui/input";
@@ -36,10 +38,29 @@ export default function BugDialog({
 
   const [title, setTitle] = useState(`Bug: ${testCase.title}`);
   const [repro, setRepro] = useState(defaultRepro);
+  // Screenshots pasted INTO the dialog (Ctrl+V) - evidence of the bug that
+  // was never attached to the run, e.g. a capture sitting on the clipboard.
+  const [pasted, setPasted] = useState<string[]>([]);
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const item = [...e.clipboardData.items].find((i) => i.type.startsWith("image/"));
+    if (!item) return;
+    const blob = item.getAsFile();
+    if (!blob) return;
+    void blobToB64(blob).then((b64) => {
+      setPasted((x) => [...x, b64]);
+      toast.success("Screenshot added to the bug");
+    });
+  };
 
   const file = useMutation({
     mutationFn: () =>
-      unwrapStr(commands.fileBug(org, project, title.trim(), repro, testCase.id, pbiId, screenshots)),
+      unwrapStr(
+        commands.fileBug(org, project, title.trim(), repro, testCase.id, pbiId, [
+          ...screenshots,
+          ...pasted,
+        ]),
+      ),
     onSuccess: (bug) => {
       // The bug exists either way - re-filing over a failed upload would
       // leave a duplicate - but a tester who attached screenshots of the
@@ -58,7 +79,8 @@ export default function BugDialog({
   });
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-lg space-y-3 p-4">
+    <Modal onClose={onClose} className="w-full max-w-lg p-4">
+      <div className="space-y-3" onPaste={onPaste}>
       <h2 className="text-sm font-semibold text-text">File a bug</h2>
       <Input
         aria-label="Bug title"
@@ -72,9 +94,31 @@ export default function BugDialog({
         value={repro}
         onChange={(e) => setRepro(e.target.value)}
       />
+      {pasted.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {pasted.map((b64, i) => (
+            <span key={i} className="relative">
+              <img
+                src={`data:image/png;base64,${b64}`}
+                alt={`Pasted screenshot ${i + 1}`}
+                className="h-14 rounded border border-border object-cover"
+              />
+              <button
+                aria-label={`Remove pasted screenshot ${i + 1}`}
+                className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-surface p-0.5 text-muted hover:text-danger"
+                onClick={() => setPasted((x) => x.filter((_, j) => j !== i))}
+              >
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <p className="text-xs text-muted">
         Links to test case #{testCase.id} and PBI #{pbiId}
-        {screenshots.length > 0 && ` · ${screenshots.length} screenshot(s) attached`}.
+        {screenshots.length + pasted.length > 0 &&
+          ` · ${screenshots.length + pasted.length} screenshot(s) attached`}
+        . Paste (Ctrl+V) to add more.
       </p>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onClose}>
@@ -85,6 +129,7 @@ export default function BugDialog({
           <IconBug aria-hidden />
           {file.isPending ? "Filing" : "File bug"}
         </Button>
+      </div>
       </div>
     </Modal>
   );
