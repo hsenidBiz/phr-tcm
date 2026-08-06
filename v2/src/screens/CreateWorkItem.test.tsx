@@ -62,10 +62,10 @@ test("the full form reaches create_work_item, including the parent PBI", async (
   fireEvent.click(screen.getByRole("option", { name: "1" }));
   fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Repro: idle 30min" } });
 
-  // Parent PBI via the search picker.
+  // Parent PBI via the search picker - no Enter: the search fires as you
+  // type (debounced), which is the behavior under test here too.
   const find = screen.getByLabelText("Find PBI");
   fireEvent.change(find, { target: { value: "Login" } });
-  fireEvent.keyDown(find, { key: "Enter" });
   fireEvent.click(await screen.findByText(/Login flow/));
 
   fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));

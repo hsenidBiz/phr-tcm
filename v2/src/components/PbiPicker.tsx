@@ -30,7 +30,8 @@ function pushRecent(org: string, project: string, pbi: PbiHit) {
 }
 
 /** Global PBI scope in the context bar - v1's Config-screen PBI search.
- * Type, Enter to search, click a hit; everything scopes to the choice. */
+ * Searches as you type (debounced); click a hit and everything scopes to
+ * the choice. */
 export default function PbiPicker({
   org,
   project,
@@ -46,6 +47,22 @@ export default function PbiPicker({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+
+  // Fire the search per keystroke, debounced just enough to skip the
+  // intermediate strings mid-word. React Query dedupes repeats by key, so
+  // backspacing to an earlier query costs nothing.
+  useEffect(() => {
+    const t = text.trim();
+    if (!t) {
+      setQuery("");
+      return;
+    }
+    const h = setTimeout(() => {
+      setQuery(t);
+      setOpen(true);
+    }, 250);
+    return () => clearTimeout(h);
+  }, [text]);
 
   // Click anywhere outside to dismiss. Captured `pointerdown`, not click:
   // it fires before whatever was clicked handles its own press, and it
@@ -99,7 +116,7 @@ export default function PbiPicker({
       <Input
         aria-label="Find PBI"
         className="w-72 py-1.5"
-        placeholder={project ? "Find PBI (Enter to search)" : "Pick a project first"}
+        placeholder={project ? "Find PBI" : "Pick a project first"}
         disabled={!project}
         value={text}
         onChange={(e) => setText(e.target.value)}
@@ -107,6 +124,7 @@ export default function PbiPicker({
           if (!text && recents.length > 0) setOpen(true);
         }}
         onKeyDown={(e) => {
+          // Enter skips the debounce for anyone who still types-and-hits-it.
           if (e.key === "Enter") {
             setQuery(text.trim());
             setOpen(true);
