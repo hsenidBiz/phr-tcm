@@ -3,14 +3,61 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
-/// Every place the Edge installers put msedge.exe, 64-bit first. Same
+/// Which browser the run is watched in. Both are Chromium, so both speak
+/// the same DevTools Protocol and take the same switches - the only thing
+/// that differs is where the installer put the exe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum Browser {
+    Edge,
+    Chrome,
+}
+
+impl Browser {
+    /// Map a stored preference. Anything unrecognised is Edge: this app is
+    /// Windows-first and Edge is the one browser guaranteed to be present,
+    /// so an unknown name should still open something rather than fail.
+    pub fn from_name(name: &str) -> Browser {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "chrome" => Browser::Chrome,
+            _ => Browser::Edge,
+        }
+    }
+
+    fn relative_exe(self) -> &'static str {
+        match self {
+            Browser::Edge => r"Microsoft\Edge\Application\msedge.exe",
+            Browser::Chrome => r"Google\Chrome\Application\chrome.exe",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Browser::Edge => "Microsoft Edge",
+            Browser::Chrome => "Google Chrome",
+        }
+    }
+}
+
+/// Every place this browser's installers put its exe, 64-bit first. Same
 /// shape as `ai_tools::claude_cli_candidates` and for the same reason:
 /// PATH is not trustworthy enough to be the only answer.
-pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<PathBuf> {
+pub fn browser_candidates(
+    which: Browser,
+    program_files: &str,
+    program_files_x86: &str,
+) -> Vec<PathBuf> {
+    let rel = which.relative_exe();
     vec![
-        PathBuf::from(program_files).join(r"Microsoft\Edge\Application\msedge.exe"),
-        PathBuf::from(program_files_x86).join(r"Microsoft\Edge\Application\msedge.exe"),
+        PathBuf::from(program_files).join(rel),
+        PathBuf::from(program_files_x86).join(rel),
     ]
+}
+
+/// Edge specifically. Kept as its own name because it reads better at the
+/// call sites that only ever meant Edge, and its test pins the paths.
+pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<PathBuf> {
+    browser_candidates(Browser::Edge, program_files, program_files_x86)
 }
 
 /// The arguments the run needs: a debugging port to drive it through, a
@@ -50,14 +97,23 @@ fn env_or(key: &str, fallback: &str) -> String {
 
 /// Start Edge. Errors name the thing to fix rather than a code.
 pub fn launch() -> Result<LaunchedBrowser, String> {
-    let candidates = edge_candidates(
+    launch_in(Browser::Edge)
+}
+
+/// Start the chosen browser. The error names the browser the person
+/// asked for, so "not found" is actionable rather than a mystery.
+pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
+    let candidates = browser_candidates(
+        which,
         &env_or("ProgramFiles", r"C:\Program Files"),
         &env_or("ProgramFiles(x86)", r"C:\Program Files (x86)"),
     );
-    let exe = candidates
-        .iter()
-        .find(|p| p.is_file())
-        .ok_or_else(|| "Microsoft Edge was not found in either Program Files".to_string())?;
+    let exe = candidates.iter().find(|p| p.is_file()).ok_or_else(|| {
+        format!(
+            "{} was not found in either Program Files - pick the other browser in Auto Run",
+            which.label()
+        )
+    })?;
 
     let port = free_port()?;
     let profile_dir = std::env::temp_dir().join(format!("tcm-autorun-{port}"));

@@ -8,7 +8,7 @@ use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};
 use crate::browser::actions::{execute, ActionOutcome, Evaluator};
 use crate::browser::cdp::Cdp;
-use crate::browser::launch::{launch, LaunchedBrowser};
+use crate::browser::launch::{launch_in, Browser, LaunchedBrowser};
 use std::path::PathBuf;
 use tauri::Manager;
 
@@ -70,12 +70,13 @@ pub fn safe_run_id(id: &str) -> bool {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn auto_run_open_browser() -> Result<(), String> {
+pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
     let mut slot = SESSION.lock().await;
     if let Some(old) = slot.take() {
         close_session(old);
     }
-    let browser = launch()?;
+    let which = Browser::from_name(&browser_name);
+    let browser = launch_in(which)?;
     // The browser needs a moment to bind its port before it will answer.
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
     let cdp = match Cdp::connect(browser.port).await {
@@ -92,7 +93,7 @@ pub async fn auto_run_open_browser() -> Result<(), String> {
         }
     };
     *slot = Some(Session { browser, cdp });
-    crate::applog::info("Auto-run browser opened");
+    crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
 }
 

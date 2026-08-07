@@ -206,7 +206,7 @@ export const commands = {
 	 *  one fills the form; nothing registers until the explicit click.
 	 */
 	dbServerPresets: () => __TAURI_INVOKE<DbPresetOut[]>("db_server_presets"),
-	autoRunOpenBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser")),
+	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
 	 *  Run one step's actions in order and report every outcome. Actions

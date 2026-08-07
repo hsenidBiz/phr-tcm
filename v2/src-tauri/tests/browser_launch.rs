@@ -54,3 +54,57 @@ fn launch_starts_a_browser_that_answers_on_its_port() {
     assert!(body.contains("webSocketDebuggerUrl"), "got: {body}");
     let _ = b.child.kill();
 }
+
+// ---- Chrome as well as Edge --------------------------------------------
+
+use v2_lib::browser::launch::{browser_candidates, Browser};
+
+/// Chrome installs to the same two Program Files roots, under Google.
+#[test]
+fn chrome_is_looked_for_where_its_installers_put_it() {
+    let found = browser_candidates(
+        Browser::Chrome,
+        r"C:\Program Files",
+        r"C:\Program Files (x86)",
+    );
+    assert_eq!(
+        found,
+        vec![
+            PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            PathBuf::from(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+        ]
+    );
+}
+
+/// Asking for Edge still gets Edge - the existing behaviour is the
+/// default, not something Chrome support quietly replaced.
+#[test]
+fn edge_is_still_reachable_through_the_same_door() {
+    let found = browser_candidates(Browser::Edge, r"C:\PF", r"C:\PF86");
+    assert_eq!(
+        found,
+        edge_candidates(r"C:\PF", r"C:\PF86"),
+        "the enum path and the original helper must agree"
+    );
+}
+
+/// Both browsers are Chromium, so both take the same switches - the
+/// arguments must not have quietly become Edge-specific.
+#[test]
+fn both_browsers_take_the_same_debugging_switches() {
+    let args = launch_args(9444, Path::new(r"C:	mp\p"));
+    assert!(args.contains(&"--remote-debugging-port=9444".to_string()));
+    assert!(!args.iter().any(|a| a.to_lowercase().contains("edge")));
+}
+
+/// A name from settings, mapped once. An unknown value falls back to
+/// Edge rather than failing to launch anything at all - the app is
+/// Windows-first and Edge is the one browser guaranteed present.
+#[test]
+fn a_browser_name_maps_to_its_enum_and_falls_back_to_edge() {
+    assert_eq!(Browser::from_name("chrome"), Browser::Chrome);
+    assert_eq!(Browser::from_name("Chrome"), Browser::Chrome);
+    assert_eq!(Browser::from_name("edge"), Browser::Edge);
+    assert_eq!(Browser::from_name("firefox"), Browser::Edge);
+    assert_eq!(Browser::from_name(""), Browser::Edge);
+}
