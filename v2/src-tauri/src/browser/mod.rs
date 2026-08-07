@@ -7,3 +7,4 @@
 //! use, not a webview stand-in.
 
 pub mod launch;
+pub mod cdp;
