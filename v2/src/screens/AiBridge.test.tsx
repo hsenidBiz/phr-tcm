@@ -205,7 +205,7 @@ test("configuring the database server persists it and enables registration", asy
   });
   renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-  fireEvent.change(await screen.findByLabelText("Database server executable"), {
+  fireEvent.change(await screen.findByLabelText("Database server path"), {
     target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
   });
   // The connection string is BUILT from fields - nobody types the whole

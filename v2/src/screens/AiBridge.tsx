@@ -138,6 +138,17 @@ export default function AiBridge() {
       .catch(() => toast.error("Could not open the file picker."));
   };
 
+  // A native dialog picks EITHER files or folders, never both - so the
+  // folder case gets its own button. Some server layouts are addressed by
+  // their directory rather than a specific file.
+  const pickFolder = () => {
+    open({ multiple: false, directory: true })
+      .then((path) => {
+        if (typeof path === "string") editDb({ exe_path: path });
+      })
+      .catch(() => toast.error("Could not open the folder picker."));
+  };
+
   const exe = bridge.data?.mcp_exe ?? "";
   const installed = (tools.data ?? []).filter((t) => t.installed);
   const dbReady = isDbConfigComplete(db);
@@ -358,18 +369,22 @@ export default function AiBridge() {
         <div className="space-y-2">
           <div className="flex items-end gap-2">
             <label className="min-w-0 flex-1 text-xs text-muted">
-              Server executable
+              Server path (file or folder)
               <Input
-                aria-label="Database server executable"
+                aria-label="Database server path"
                 className="mt-1 w-full py-1.5 text-xs"
-                placeholder="…\PeoplesHR.DBMCPServer.exe"
+                placeholder="…\PeoplesHR.DBMCPServer.exe or its folder"
                 value={db.exe_path}
                 onChange={(e) => editDb({ exe_path: e.target.value })}
               />
             </label>
             <Button size="sm" variant="outline" onClick={pickExe}>
               <IconBrowse aria-hidden />
-              Browse
+              File
+            </Button>
+            <Button size="sm" variant="outline" onClick={pickFolder}>
+              <IconBrowse aria-hidden />
+              Folder
             </Button>
           </div>
 

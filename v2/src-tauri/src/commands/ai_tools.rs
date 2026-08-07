@@ -75,9 +75,14 @@ impl DbServerConfig {
     fn to_server(&self) -> Result<McpServer, String> {
         let exe = self.exe_path.trim();
         if exe.is_empty() {
-            return Err("pick the database MCP server file first".into());
+            return Err("pick the database MCP server first".into());
         }
-        if !std::path::Path::new(exe).is_file() {
+        // Any EXISTING path passes - file or folder. Some server layouts
+        // are addressed by their directory (the extension-less command
+        // resolves against a sibling, or the host runs the folder's
+        // entry point); the check here only catches typos, and rejecting
+        // directories forced hand-editing ~/.claude.json to use one.
+        if !std::path::Path::new(exe).exists() {
             return Err(format!("{exe} does not exist"));
         }
         if self.db_type.trim().is_empty() {
