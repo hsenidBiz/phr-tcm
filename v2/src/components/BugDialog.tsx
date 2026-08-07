@@ -53,13 +53,22 @@ export default function BugDialog({
     });
   };
 
+  /** What gets filed, gathered at CLICK time rather than read out of the
+   * mutation's own closure.
+   *
+   * react-query updates the observer's options in a passive effect, which
+   * runs AFTER the commit that put the pasted thumbnail on screen. A click
+   * landing in that gap - paste, then file before React flushes effects -
+   * ran the PREVIOUS render's mutationFn and filed the bug with no
+   * screenshot at all, silently: the toast still said "Filed bug #N".
+   * `onClick` is updated during the commit itself, so a payload built
+   * there is always the one the person can see. */
+  type BugPayload = { title: string; repro: string; shots: string[] };
+
   const file = useMutation({
-    mutationFn: () =>
+    mutationFn: (p: BugPayload) =>
       unwrapStr(
-        commands.fileBug(org, project, title.trim(), repro, testCase.id, pbiId, [
-          ...screenshots,
-          ...pasted,
-        ]),
+        commands.fileBug(org, project, p.title.trim(), p.repro, testCase.id, pbiId, p.shots),
       ),
     onSuccess: (bug) => {
       // The bug exists either way - re-filing over a failed upload would
@@ -125,7 +134,11 @@ export default function BugDialog({
           <IconCancel aria-hidden />
           Cancel
         </Button>
-        <Button size="sm" disabled={!title.trim() || file.isPending} onClick={() => file.mutate()}>
+        <Button
+          size="sm"
+          disabled={!title.trim() || file.isPending}
+          onClick={() => file.mutate({ title, repro, shots: [...screenshots, ...pasted] })}
+        >
           <IconBug aria-hidden />
           {file.isPending ? "Filing" : "File bug"}
         </Button>
