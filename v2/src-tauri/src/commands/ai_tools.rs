@@ -394,23 +394,40 @@ fn register_claude_code(server: &McpServer) -> Result<(), String> {
     }
 }
 
+/// The argument order for `claude mcp add`, exactly as the CLI's docs
+/// show it: NAME first, then the `-e` pairs, then `--` and the command.
+///
+/// The order is load-bearing, not style. The CLI's `-e/--env` option is
+/// VARIADIC - it keeps consuming arguments until something option-like or
+/// `--` stops it - so env pairs placed before the name swallowed the name
+/// too, and the CLI then bound the server binary to `name` and reported
+/// `missing required argument 'commandOrUrl'`. Only the database server
+/// sends env pairs, which is why registering it was the first to break.
+fn mcp_add_args(server: &McpServer) -> Vec<String> {
+    let mut args = vec![
+        "mcp".into(),
+        "add".into(),
+        "--scope".into(),
+        "user".into(),
+        server.name.clone(),
+    ];
+    for (k, v) in &server.env {
+        args.push("-e".into());
+        args.push(format!("{k}={v}"));
+    }
+    args.push("--".into());
+    args.push(server.command.clone());
+    args.extend(server.args.iter().cloned());
+    args
+}
+
 fn run_claude_mcp_add(cli: &std::path::Path, server: &McpServer) -> Result<(), String> {
     // Still via `cmd /C`: the npm install is a `.cmd` shim, which cannot be
     // executed directly.
     let mut command = Command::new("cmd");
     command.arg("/C");
     command.arg(cli);
-    command.args(["mcp", "add", "--scope", "user"]);
-    for (k, v) in &server.env {
-        command.arg("-e");
-        command.arg(format!("{k}={v}"));
-    }
-    command.arg(&server.name);
-    command.arg("--");
-    command.arg(&server.command);
-    for a in &server.args {
-        command.arg(a);
-    }
+    command.args(mcp_add_args(server));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -424,4 +441,52 @@ fn run_claude_mcp_add(cli: &std::path::Path, server: &McpServer) -> Result<(), S
         return Err(format!("`claude mcp add` failed: {}", stderr.trim()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The regression that broke the database server: env pairs BEFORE the
+    /// name feed the CLI's variadic `-e`, which then eats the name. Pin
+    /// name-first, `--` before the binary, and every env pair in between.
+    #[test]
+    fn mcp_add_puts_the_name_before_the_env_pairs() {
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("DB_TYPE".to_string(), "mssql".to_string());
+        env.insert(
+            "CONNECTION_STRING".to_string(),
+            "Server=tcp:db,1433;Database=PHRX;User Id=ro".to_string(),
+        );
+        let server = McpServer {
+            name: "phr-db-mcp".to_string(),
+            command: r"C:	ools\PeoplesHR.DBMCPServer.exe".to_string(),
+            args: vec![],
+            env,
+        };
+        let args = mcp_add_args(&server);
+
+        let name_at = args.iter().position(|a| a == "phr-db-mcp").unwrap();
+        let first_env = args.iter().position(|a| a == "-e").unwrap();
+        let dashes = args.iter().position(|a| a == "--").unwrap();
+        let cmd_at = args.iter().position(|a| a.ends_with(".exe")).unwrap();
+        assert!(name_at < first_env, "name must come before -e: {args:?}");
+        assert!(first_env < dashes, "-e pairs sit before --: {args:?}");
+        assert!(dashes < cmd_at, "the binary follows --: {args:?}");
+    }
+
+    /// No env pairs (the tcm server): name, then straight to `--`.
+    #[test]
+    fn mcp_add_without_env_is_name_then_command() {
+        let server = McpServer {
+            name: "tcm-testcases".to_string(),
+            command: "v2.exe".to_string(),
+            args: vec!["--mcp".to_string()],
+            env: Default::default(),
+        };
+        assert_eq!(
+            mcp_add_args(&server),
+            vec!["mcp", "add", "--scope", "user", "tcm-testcases", "--", "v2.exe", "--mcp"]
+        );
+    }
 }
