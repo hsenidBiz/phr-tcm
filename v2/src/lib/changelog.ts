@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.7",
+    date: "2026-08-07",
+    items: [
+      "Work item details and comments are cached on disk: reopening an item paints instantly and refreshes in the background.",
+      "Ctrl+V pastes a clipboard screenshot straight into the runner's evidence card - and into the File-a-bug dialog, where pasted images attach to the bug.",
+      "New test cases always land in the PBI's own area and iteration; the override dropdowns are gone.",
+      "The import queue gains a sticky Collapse all button once rows are unfolded; the View/Run buttons rename from 'Close all' to 'Collapse all' with a fold icon.",
+      "Enter in a case editor's title saves it (only when something changed).",
+      "Suite search results start collapsed, and every suite row can open in Azure DevOps or copy its link.",
+      "PBI search fires as you type; the drawer's dropdowns grew search earlier, now the picker keeps pace.",
+      "App log now records navigation and button clicks, so bug reports show what happened before the problem.",
+    ],
+  },
+  {
     // Backfill: published from another machine without an entry.
     version: "1.19.6",
     date: "2026-08-06",
