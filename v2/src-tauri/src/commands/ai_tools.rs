@@ -77,14 +77,12 @@ impl DbServerConfig {
         if exe.is_empty() {
             return Err("pick the database MCP server first".into());
         }
-        // Any EXISTING path passes - file or folder. Some server layouts
-        // are addressed by their directory (the extension-less command
-        // resolves against a sibling, or the host runs the folder's
-        // entry point); the check here only catches typos, and rejecting
-        // directories forced hand-editing ~/.claude.json to use one.
-        if !std::path::Path::new(exe).exists() {
-            return Err(format!("{exe} does not exist"));
-        }
+        // Whatever was picked - the built exe, a published .dll, or the
+        // project folder - resolve it into an invocation an MCP client can
+        // actually spawn. Registering the picked path verbatim once wrote a
+        // DIRECTORY as the command: the client failed to launch it silently
+        // and every tool call died before the server existed.
+        let (command, args) = crate::ai_tools::resolve_db_command(std::path::Path::new(exe))?;
         if self.db_type.trim().is_empty() {
             return Err("DB_TYPE is required".into());
         }
@@ -107,8 +105,8 @@ impl DbServerConfig {
         }
         Ok(McpServer {
             name: DB_SERVER.to_string(),
-            command: exe.to_string(),
-            args: vec![],
+            command,
+            args,
             env,
         })
     }

@@ -416,3 +416,80 @@ fn detect_reports_each_managed_server_separately() {
         "only servers this app manages are reported"
     );
 }
+
+// ---- resolve_db_command: only launchable invocations reach the config ----
+//
+// The real incident: the repo FOLDER was registered as the command, the
+// client could not spawn a directory, and every tool call failed silently.
+
+fn resolve_fixture(name: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "tcm-v2-resolve-{}-{name}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+#[test]
+fn resolve_passes_an_exe_through() {
+    let root = resolve_fixture("exe");
+    let exe = root.join("Server.exe");
+    std::fs::write(&exe, b"mz").unwrap();
+    let (cmd, args) = v2_lib::ai_tools::resolve_db_command(&exe).unwrap();
+    assert_eq!(cmd, exe.to_string_lossy());
+    assert!(args.is_empty());
+}
+
+#[test]
+fn resolve_runs_a_dll_through_dotnet() {
+    let root = resolve_fixture("dll");
+    let dll = root.join("Server.dll");
+    std::fs::write(&dll, b"mz").unwrap();
+    let (cmd, args) = v2_lib::ai_tools::resolve_db_command(&dll).unwrap();
+    assert_eq!(cmd, "dotnet");
+    assert_eq!(args, vec![dll.to_string_lossy().to_string()]);
+}
+
+#[test]
+fn resolve_finds_the_built_exe_inside_a_folder() {
+    let root = resolve_fixture("folder");
+    // The layout from the incident: src/<project>/bin/Debug/net10.0/*.exe,
+    // with an obj/ intermediate and a Tests build that must NOT win.
+    let bin = root.join("src/PeoplesHR.DBMCPServer/bin/Debug/net10.0");
+    let obj = root.join("src/PeoplesHR.DBMCPServer/obj/Debug/net10.0");
+    let tests = root.join("src/PeoplesHR.DBMCPServer.Tests/bin/Debug/net10.0");
+    for d in [&bin, &obj, &tests] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(obj.join("apphost.exe"), b"decoy").unwrap();
+    std::fs::write(tests.join("PeoplesHR.DBMCPServer.exe"), b"testhost").unwrap();
+    let real = bin.join("PeoplesHR.DBMCPServer.exe");
+    std::fs::write(&real, b"server").unwrap();
+
+    let (cmd, args) = v2_lib::ai_tools::resolve_db_command(&root).unwrap();
+    // Separator-agnostic: the fixture path mixes / and \ on Windows.
+    assert_eq!(
+        cmd.replace('/', "\\"),
+        real.to_string_lossy().replace('/', "\\")
+    );
+    assert!(args.is_empty());
+}
+
+#[test]
+fn resolve_refuses_a_folder_with_no_build_and_says_what_to_do() {
+    let root = resolve_fixture("unbuilt");
+    std::fs::create_dir_all(root.join("src/PeoplesHR.DBMCPServer")).unwrap();
+    let err = v2_lib::ai_tools::resolve_db_command(&root).unwrap_err();
+    assert!(err.contains("dotnet build"), "error must say how to fix it: {err}");
+}
+
+#[test]
+fn resolve_refuses_an_unlaunchable_file() {
+    let root = resolve_fixture("csproj");
+    let proj = root.join("Server.csproj");
+    std::fs::write(&proj, b"<Project/>").unwrap();
+    let err = v2_lib::ai_tools::resolve_db_command(&proj).unwrap_err();
+    assert!(err.contains("pick the built server executable"), "{err}");
+}
