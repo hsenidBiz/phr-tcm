@@ -24,6 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Suite search results start collapsed, and every suite row can open in Azure DevOps or copy its link.",
       "PBI search fires as you type; the drawer's dropdowns grew search earlier, now the picker keeps pace.",
       "App log now records navigation and button clicks, so bug reports show what happened before the problem.",
+      "Links inside descriptions and comments open in your own browser instead of carrying the app window away.",
     ],
   },
   {

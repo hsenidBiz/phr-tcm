@@ -6,6 +6,7 @@ import RunnerWindow from "./screens/RunnerWindow";
 import { TooltipLayer } from "./components/ui/tooltip";
 import { initTheme } from "./lib/theme";
 import { initUiClickLog } from "./lib/uiLog";
+import { initExternalLinks } from "./lib/externalLinks";
 import "./index.css";
 
 // refetchOnWindowFocus off: a desktop app loses/regains focus constantly
@@ -17,6 +18,7 @@ const queryClient = new QueryClient({
 });
 initTheme();
 initUiClickLog();
+initExternalLinks();
 
 // Suppress the browser context menu (back / refresh / inspect) everywhere
 // except editable fields, where the native cut/copy/paste menu stays useful.
