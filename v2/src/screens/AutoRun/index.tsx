@@ -5,10 +5,14 @@
 // list is read from it, and the results stay in this app until the
 // feature has earned more trust than that.
 
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
+import { Checkbox } from "../../components/ui/checkbox";
+import { groupIndices } from "../../lib/grouping";
+import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
@@ -97,7 +101,96 @@ export default function AutoRun({
     // throw above, so this is the one place that needs to handle it.
     onError: (e) => toast.error(`Could not import that file: ${e.message}`),
   });
-  const [running, setRunning] = useState<number | null>(null);
+  /** The case ids queued for a run. `null` means no run is open. */
+  const [running, setRunning] = useState<number[] | null>(null);
+  /** Ticked cases, by id. A bulk run is these, in list order. */
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [grouped, setGrouped] = useState(
+    () => localStorage.getItem("tcm-v2-autorun-group") === "on",
+  );
+  const [collapsed, toggleCollapsed] = usePersistedStringSet("tcm-v2-autorun-collapsed");
+
+  const rows = cases.data ?? [];
+  /** Same title-prefix grouping View Test Cases uses, so a person reading
+   * both screens is reading one idea. */
+  const groups = useMemo(
+    () => (grouped ? groupIndices(rows.map((c) => c.title)) : []),
+    [grouped, rows],
+  );
+  const hasScript = (i: number) => Boolean(scripts[i]?.data);
+  /** Only scripted cases can be run, so only they can be ticked. */
+  const runnableIn = (indices: number[]) =>
+    indices.filter(hasScript).map((i) => rows[i].id);
+
+  const toggleOne = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  /** A group heading ticks or clears every scripted case under it. */
+  const toggleGroup = (indices: number[]) => {
+    const ids = runnableIn(indices);
+    const allOn = ids.length > 0 && ids.every((id) => selected.has(id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (allOn) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  };
+
+  /** List order, not click order - the run reads top to bottom the way
+   * the screen does. */
+  const selectedInOrder = rows.filter((c) => selected.has(c.id)).map((c) => c.id);
+
+  /** One case row, by its index in `rows` - grouped and flat both render
+   * the same thing, and `scripts[i]` is indexed the same way. */
+  const row = (i: number) => {
+    const c = rows[i];
+    const ready = hasScript(i);
+    return (
+      <li
+        key={c.id}
+        className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm"
+      >
+        {/* Only a scripted case can be run, so only a scripted case can be
+            ticked - a checkbox that selects something unrunnable would
+            just make the count lie. */}
+        <Checkbox
+          checked={selected.has(c.id)}
+          ariaLabel={`Select #${c.id}`}
+          className={ready ? undefined : "invisible"}
+          onCheckedChange={() => ready && toggleOne(c.id)}
+        />
+        <span className="id-mono text-faint">#{c.id}</span>
+        <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
+        {ready ? (
+          <Badge className="bg-success/15 text-success">Script ready</Badge>
+        ) : (
+          <Badge className="bg-surface-2 text-faint">No script</Badge>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          aria-label={`Edit script for #${c.id}`}
+          onClick={() => setEditing(c.id)}
+        >
+          <IconEdit aria-hidden />
+          Script
+        </Button>
+        {ready && (
+          <Button size="sm" aria-label={`Run #${c.id}`} onClick={() => setRunning([c.id])}>
+            Run
+          </Button>
+        )}
+      </li>
+    );
+  };
 
   if (!org || !pbi) {
     return <p className="text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
@@ -106,11 +199,11 @@ export default function AutoRun({
   return (
     <div className="max-w-3xl space-y-4">
       <p className="rounded-md border border-accent/40 bg-accent-soft px-3 py-2 text-xs text-muted">
-        Runs happen in a real Edge window on this machine and you decide every verdict.
+        Runs happen in a real browser window on this machine and you decide every verdict.
         Nothing is sent to Azure DevOps - results are saved here only.
       </p>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
           variant="outline"
@@ -123,45 +216,83 @@ export default function AutoRun({
         <span className="text-xs text-faint">
           One JSON file can carry every case in this PBI.
         </span>
+        <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-muted">
+          <Checkbox
+            checked={grouped}
+            ariaLabel="Group by title"
+            onCheckedChange={(on) => {
+              setGrouped(on);
+              localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
+            }}
+          />
+          Group by title
+        </label>
       </div>
 
       {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
       {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
 
-      <ul className="space-y-1">
-        {(cases.data ?? []).map((c, i) => (
-          <li
-            key={c.id}
-            className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm"
-          >
-            <span className="id-mono text-faint">#{c.id}</span>
-            <span className="min-w-0 flex-1 truncate text-text">{c.title}</span>
-            {scripts[i]?.data ? (
-              <Badge className="bg-success/15 text-success">Script ready</Badge>
-            ) : (
-              <Badge className="bg-surface-2 text-faint">No script</Badge>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label={`Edit script for #${c.id}`}
-              onClick={() => setEditing(c.id)}
-            >
-              <IconEdit aria-hidden />
-              Script
-            </Button>
-            {scripts[i]?.data && (
-              <Button
-                size="sm"
-                aria-label={`Run #${c.id}`}
-                onClick={() => setRunning(c.id)}
-              >
-                Run
-              </Button>
-            )}
-          </li>
-        ))}
-      </ul>
+      {/* The bar only exists while something is ticked, so the screen is
+          not carrying a permanently disabled button nobody can use. */}
+      {selectedInOrder.length > 0 && (
+        <div className="sticky top-0 z-10 flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-2">
+          <span className="text-sm text-text">
+            {selectedInOrder.length} case{selectedInOrder.length === 1 ? "" : "s"} selected
+          </span>
+          <Button size="sm" className="ml-auto" onClick={() => setRunning(selectedInOrder)}>
+            Run {selectedInOrder.length} selected
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+
+      {grouped ? (
+        groups.map(({ name, indices }) => {
+          const label = name || "Ungrouped";
+          const shut = collapsed.has(label);
+          const ticked = indices.filter((i) => selected.has(rows[i].id)).length;
+          return (
+            <div key={label} className="space-y-1">
+              <div className="flex w-full items-center gap-3 pb-1 pt-2">
+                <span aria-hidden className="h-px flex-1 bg-border" />
+                <button
+                  aria-label={`${shut ? "Expand" : "Collapse"} group ${label}`}
+                  title={shut ? "Expand group" : "Collapse group"}
+                  className="text-muted transition-colors hover:text-accent"
+                  onClick={() => toggleCollapsed(label)}
+                >
+                  {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                </button>
+                <button
+                  className="group flex items-center gap-2"
+                  title="Select every scripted case in this group"
+                  onClick={() => toggleGroup(indices)}
+                >
+                  <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
+                    {label} ({indices.length})
+                  </span>
+                  {/* A collapsed group hides its rows, and with them the
+                      only sign that anything inside is ticked. */}
+                  {shut && ticked > 0 && (
+                    <span
+                      className="selection-dot"
+                      role="status"
+                      aria-label={`${ticked} of ${indices.length} selected in ${label}`}
+                      title={`${ticked} selected in this group`}
+                    />
+                  )}
+                </button>
+                <span aria-hidden className="h-px flex-1 bg-border" />
+              </div>
+              {!shut && <ul className="space-y-1">{indices.map(row)}</ul>}
+            </div>
+          );
+        })
+      ) : (
+        <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
+      )}
 
       <PastRuns />
 
@@ -181,13 +312,15 @@ export default function AutoRun({
 
       {running != null &&
         (() => {
-          const c = (cases.data ?? []).find((x) => x.id === running);
-          if (!c) return null;
+          const picked = running
+            .map((id) => rows.find((x) => x.id === id))
+            .filter((c): c is (typeof rows)[number] => Boolean(c))
+            .map((c) => ({ id: c.id, title: c.title }));
+          if (picked.length === 0) return null;
           return (
             <RunPane
               pbiId={pbi.id}
-              caseId={c.id}
-              title={c.title}
+              cases={picked}
               onClose={() => setRunning(null)}
             />
           );

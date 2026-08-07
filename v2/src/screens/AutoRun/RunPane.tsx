@@ -12,6 +12,7 @@ import { commands, type ActionOutcome, type CaseRecord } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Textarea } from "../../components/ui/input";
+import { Select } from "../../components/ui/select";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
@@ -26,16 +27,35 @@ const verdictTone: Record<string, string> = {
 
 export default function RunPane({
   pbiId,
-  caseId,
-  title,
+  cases,
   onClose,
 }: {
   pbiId: number;
-  caseId: number;
-  title: string;
+  /** The selection, run one after another in this order. One case is a
+   * selection of one - there is no separate single-case path. */
+  cases: { id: number; title: string }[];
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+
+  // Where we are in the selection.
+  const [idx, setIdx] = useState(0);
+  const current = cases[idx] ?? cases[0];
+  const caseId = current?.id ?? 0;
+  const title = current?.title ?? "";
+  const isLast = idx >= cases.length - 1;
+
+  /** Verdicts marked so far. Kept here rather than written per case so a
+   * bulk run is ONE run in the results view, the way a person thinks of
+   * it - and flushed on close as well as on finish, so walking away
+   * half-way through does not throw away the verdicts already given. */
+  const [records, setRecords] = useState<CaseRecord[]>([]);
+
+  /** Which browser to watch in. Remembered, because a person who prefers
+   * Chrome prefers it every time. */
+  const [browserName, setBrowserName] = useState(
+    () => localStorage.getItem("tcm-v2-autorun-browser") ?? "edge",
+  );
 
   const script = useQuery({
     queryKey: ["autorun-script", caseId],
@@ -49,7 +69,7 @@ export default function RunPane({
   const [verdict, setVerdict] = useState("");
   const [note, setNote] = useState("");
 
-  // The browser is a real Edge process with a temp profile directory - it
+  // The browser is a real Edge/Chrome process with a temp profile directory - it
   // has to be closed on every path that ends this session, not just the
   // ones the brief spells out (Close, Save). If the person navigates away
   // instead, this component unmounts without either firing, and the
@@ -75,7 +95,7 @@ export default function RunPane({
   const openBrowser = async () => {
     setBusy(true);
     try {
-      const r = await commands.autoRunOpenBrowser();
+      const r = await commands.autoRunOpenBrowser(browserName);
       if (r.status === "error") {
         toast.error(`Could not open the browser: ${r.error}`);
         return;
@@ -114,13 +134,6 @@ export default function RunPane({
   };
 
   const save = async () => {
-    let idRes: string;
-    try {
-      idRes = await commands.autoRunNewId();
-    } catch (e) {
-      toast.error(`Could not save the result: ${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
     const record: CaseRecord = {
       case_id: caseId,
       title,
@@ -131,32 +144,66 @@ export default function RunPane({
         outcomes: results[s.step_number] ?? [],
       })),
     };
+
+    // More cases to go: bank this verdict and move on WITHOUT writing or
+    // closing the browser. One selection is one run, and the browser
+    // stays open so the next case does not pay for a fresh launch.
+    if (!isLast) {
+      setRecords((r) => [...r, record]);
+      setIdx((i) => i + 1);
+      setResults({});
+      setVerdict("");
+      setNote("");
+      return;
+    }
+
+    if (!(await writeRun([...records, record]))) return;
+    closedRef.current = true;
+    await commands.autoRunCloseBrowser().catch(() => {});
+    onClose();
+  };
+
+  /** The one place a run reaches disk. Returns false when it did not, so
+   * callers can leave the pane open rather than closing over a failure. */
+  const writeRun = async (all: CaseRecord[]): Promise<boolean> => {
+    if (all.length === 0) return true;
+    let id: string;
+    try {
+      id = await commands.autoRunNewId();
+    } catch (e) {
+      toast.error(`Could not save the result: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
     try {
       const r = await commands.autoRunSaveRun({
-        id: idRes,
+        id,
         pbi_id: pbiId,
         started_at: String(Date.now()),
-        cases: [record],
+        cases: all,
       });
       if (r.status === "error") {
         toast.error(`Could not save the result: ${r.error}`);
-        return;
+        return false;
       }
     } catch (e) {
       // Same rethrow hazard as openBrowser/runStep: an Error out of the IPC
       // call would otherwise reject unhandled and leave the person staring
       // at a "Save result" click that appeared to do nothing.
       toast.error(`Could not save the result: ${e instanceof Error ? e.message : String(e)}`);
-      return;
+      return false;
     }
-    toast.success("Result saved on this machine.");
+    toast.success(
+      all.length === 1
+        ? "Result saved on this machine."
+        : `${all.length} results saved on this machine.`,
+    );
     await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
-    closedRef.current = true;
-    await commands.autoRunCloseBrowser().catch(() => {});
-    onClose();
+    return true;
   };
 
   const close = async () => {
+    // Verdicts already marked are not thrown away by walking off.
+    await writeRun(records);
     closedRef.current = true;
     await commands.autoRunCloseBrowser().catch(() => {});
     onClose();
@@ -166,17 +213,43 @@ export default function RunPane({
     <Modal onClose={close} className="w-full max-w-2xl space-y-3 p-4">
       <h2 className="text-sm font-semibold text-text">
         <span className="id-mono text-faint">#{caseId}</span> {title}
+        {cases.length > 1 && (
+          <span className="ml-2 text-xs font-normal text-faint">
+            case {idx + 1} of {cases.length}
+          </span>
+        )}
       </h2>
 
       {!opened ? (
         <div className="space-y-2">
           <p className="text-xs text-muted">
-            A real Edge window opens with a fresh profile. Keep it beside this one and watch
-            each step as it runs.
+            A real browser window opens with a fresh profile. Keep it beside this one and
+            watch each step as it runs.
           </p>
-          <Button size="sm" disabled={busy} onClick={openBrowser}>
-            Open browser
-          </Button>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted">
+              Browser
+              <Select
+                aria-label="Browser to run in"
+                className="ml-2 w-40"
+                value={browserName}
+                onChange={(e) => {
+                  setBrowserName(e.target.value);
+                  try {
+                    localStorage.setItem("tcm-v2-autorun-browser", e.target.value);
+                  } catch {
+                    // storage unavailable - the choice lasts this session
+                  }
+                }}
+              >
+                <option value="edge">Microsoft Edge</option>
+                <option value="chrome">Google Chrome</option>
+              </Select>
+            </label>
+            <Button size="sm" disabled={busy} onClick={openBrowser}>
+              Open browser
+            </Button>
+          </div>
         </div>
       ) : (
         <ul className="max-h-72 space-y-2 overflow-y-auto">
@@ -243,7 +316,7 @@ export default function RunPane({
         </Button>
         <Button size="sm" disabled={!verdict} onClick={save}>
           <IconConfirm aria-hidden />
-          Save result
+          {isLast ? "Save result" : "Save and next case"}
         </Button>
       </div>
     </Modal>
