@@ -283,6 +283,31 @@ test("a stored connection string pre-fills the builder fields", async () => {
   );
 });
 
+/// Picking a shipped environment fills the connection and the schema/type
+/// defaults, and persists like any other explicit edit - the dropdown is
+/// an act, unlike the silent first-run prefill below.
+test("picking a preset fills and persists the connection", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    if (cmd === "db_server_presets")
+      return [
+        { label: "Dev — read only", connection_string: "Server=dev;Database=a;User Id=ro;" },
+        { label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" },
+      ];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("QA — read only"));
+
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-db-mcp") as string);
+  expect(stored.connection_string).toBe("Server=qa;Database=b;User Id=ro;");
+  expect(stored.db_type).toBe("mssql");
+  expect(stored.schema_filter).toBe("PeoplesHR");
+});
+
 /// Shipped defaults fill a NEVER-CONFIGURED form only: a fresh machine
 /// sees them, a machine with its own saved config keeps it, and nothing
 /// registers or persists from the prefill alone.

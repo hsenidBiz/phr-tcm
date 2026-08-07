@@ -201,6 +201,11 @@ export const commands = {
 	 *  only to a form nothing was ever saved into.
 	 */
 	dbServerDefaults: () => __TAURI_INVOKE<DbServerConfig>("db_server_defaults"),
+	/**
+	 *  The shipped environments for the AI Bridge's preset dropdown - picking
+	 *  one fills the form; nothing registers until the explicit click.
+	 */
+	dbServerPresets: () => __TAURI_INVOKE<DbPresetOut[]>("db_server_presets"),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -511,6 +516,11 @@ export type CaseNoteSaved = {
 export type CreatedItem = {
 	id: number,
 	url: string,
+};
+
+export type DbPresetOut = {
+	label: string,
+	connection_string: string,
 };
 
 /**

@@ -120,9 +120,29 @@ pub fn db_server_defaults() -> DbServerConfig {
     DbServerConfig {
         exe_path: crate::db_defaults::DEFAULT_EXE_PATH.to_string(),
         db_type: crate::db_defaults::DEFAULT_DB_TYPE.to_string(),
-        connection_string: crate::db_defaults::DEFAULT_CONNECTION_STRING.to_string(),
+        connection_string: crate::db_defaults::default_connection_string().to_string(),
         schema_filter: crate::db_defaults::DEFAULT_SCHEMA_FILTER.to_string(),
     }
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct DbPresetOut {
+    pub label: String,
+    pub connection_string: String,
+}
+
+/// The shipped environments for the AI Bridge's preset dropdown - picking
+/// one fills the form; nothing registers until the explicit click.
+#[tauri::command]
+#[specta::specta]
+pub fn db_server_presets() -> Vec<DbPresetOut> {
+    crate::db_defaults::DB_PRESETS
+        .iter()
+        .map(|p| DbPresetOut {
+            label: p.label.to_string(),
+            connection_string: p.connection_string.to_string(),
+        })
+        .collect()
 }
 
 #[tauri::command]

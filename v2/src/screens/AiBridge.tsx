@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Database } from "lucide-react";
 import { useEffect, useState } from "react";
+import Combobox from "../components/ui/combobox";
 import { toast } from "sonner";
 import { commands, type DbServerConfig } from "../bindings";
 import { copyText } from "../lib/clipboard";
@@ -96,6 +97,11 @@ export default function AiBridge() {
   const dbDefaults = useQuery({
     queryKey: ["db-defaults"],
     queryFn: () => commands.dbServerDefaults(),
+    staleTime: Infinity,
+  });
+  const dbPresets = useQuery({
+    queryKey: ["db-presets"],
+    queryFn: () => commands.dbServerPresets(),
     staleTime: Infinity,
   });
   useEffect(() => {
@@ -428,6 +434,37 @@ export default function AiBridge() {
               cannot faithfully represent - which is also the mode the
               form OPENS in for such a string, so it is never silently
               rewritten into something simpler. */}
+          {/* Shipped environments: picking one fills the connection (and
+              the schema/type defaults) - an explicit act, so it persists
+              like any edit. The trigger shows which preset the current
+              string IS, or stays blank for a hand-rolled one. */}
+          {(dbPresets.data?.length ?? 0) > 0 && (
+            <label className="block text-xs text-muted">
+              Default connections
+              <Combobox
+                ariaLabel="Default connections"
+                className="mt-1 w-full"
+                placeholder="Pick an environment…"
+                value={
+                  dbPresets.data!.find((p) => p.connection_string === db.connection_string)
+                    ?.label ?? ""
+                }
+                options={dbPresets.data!.map((p) => p.label)}
+                onChange={(label) => {
+                  const preset = dbPresets.data!.find((p) => p.label === label);
+                  if (preset) {
+                    editDb({
+                      connection_string: preset.connection_string,
+                      db_type: "mssql",
+                      schema_filter: "PeoplesHR",
+                    });
+                    setRawConn(!isRepresentable(preset.connection_string));
+                  }
+                }}
+              />
+            </label>
+          )}
+
           <div className="space-y-2 rounded-md border border-border/60 p-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted">CONNECTION_STRING</span>
