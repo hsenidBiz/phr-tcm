@@ -13,6 +13,7 @@ import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconEdit } from "../../lib/actionIcons";
+import PastRuns from "./PastRuns";
 import RunPane from "./RunPane";
 import ScriptEditor from "./ScriptEditor";
 
@@ -97,6 +98,8 @@ export default function AutoRun({
           </li>
         ))}
       </ul>
+
+      <PastRuns />
 
       {editing != null &&
         (() => {

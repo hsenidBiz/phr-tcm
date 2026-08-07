@@ -411,3 +411,48 @@ test("does not close the browser twice when Close is pressed then the pane unmou
 
   await waitFor(() => expect(closeCalls).toBe(1));
 });
+
+test("past runs list newest first with their verdicts", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs")
+      return [
+        {
+          id: "run-2",
+          pbi_id: 42,
+          started_at: "1786000200000",
+          cases: [
+            { case_id: 202, title: "Locked account", verdict: "Passed", note: "", steps: [] },
+          ],
+        },
+        {
+          id: "run-1",
+          pbi_id: 42,
+          started_at: "1786000100000",
+          cases: [
+            { case_id: 201, title: "Valid login", verdict: "Failed", note: "wrong name", steps: [] },
+          ],
+        },
+      ];
+  });
+  renderAutoRun();
+
+  expect(await screen.findByText("Locked account")).toBeInTheDocument();
+  const rows = await screen.findAllByRole("listitem", { name: /run of/i });
+  expect(rows[0]).toHaveTextContent("Passed");
+  expect(rows[1]).toHaveTextContent("Failed");
+  expect(screen.getByText("wrong name")).toBeInTheDocument();
+});
+
+test("no past runs says so rather than showing an empty box", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs") return [];
+  });
+  renderAutoRun();
+  expect(await screen.findByText(/no runs on this machine yet/i)).toBeInTheDocument();
+});
