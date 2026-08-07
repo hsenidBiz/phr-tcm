@@ -456,3 +456,50 @@ test("no past runs says so rather than showing an empty box", async () => {
   renderAutoRun();
   expect(await screen.findByText(/no runs on this machine yet/i)).toBeInTheDocument();
 });
+
+/// The past-runs query has a fixed key that nothing else touches. If
+/// saving a run doesn't invalidate it, a freshly saved verdict is
+/// invisible until the whole screen is left and reopened - the mock
+/// below returns a DIFFERENT list after the save than before it, so
+/// this only passes if a refetch is actually forced.
+test("a saved run appears in past runs without leaving the screen", async () => {
+  let runsNow: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_list_runs") return runsNow;
+    if (cmd === "auto_run_new_id") return "run-1786000000000";
+    if (cmd === "auto_run_open_browser") return null;
+    if (cmd === "auto_run_step") return [{ ok: true, detail: "page contains Dashboard" }];
+    if (cmd === "auto_run_save_run") {
+      runsNow = [
+        {
+          id: "run-1786000000000",
+          pbi_id: 42,
+          started_at: "1786000000000",
+          cases: [
+            { case_id: 201, title: "Valid login", verdict: "Failed", note: "", steps: [] },
+          ],
+        },
+      ];
+      return null;
+    }
+    if (cmd === "auto_run_close_browser") return null;
+  });
+  renderAutoRun();
+
+  await screen.findByText(/no runs on this machine yet/i);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run step 1" }));
+  await screen.findByText("page contains Dashboard");
+  fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+
+  expect(await screen.findAllByRole("listitem", { name: /run of valid login/i })).toHaveLength(1);
+});

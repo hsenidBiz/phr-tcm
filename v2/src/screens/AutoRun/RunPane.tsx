@@ -5,7 +5,7 @@
 // spotted with their eyes, and a red action can be the harness's fault
 // rather than the app's. The human presses the button.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type ActionOutcome, type CaseRecord } from "../../bindings";
@@ -35,6 +35,8 @@ export default function RunPane({
   title: string;
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
+
   const script = useQuery({
     queryKey: ["autorun-script", caseId],
     queryFn: () => unwrapStr(commands.autoRunLoadScript(caseId)),
@@ -65,7 +67,7 @@ export default function RunPane({
     return () => {
       if (openedRef.current && !closedRef.current) {
         closedRef.current = true;
-        void commands.autoRunCloseBrowser();
+        void commands.autoRunCloseBrowser().catch(() => {});
       }
     };
   }, []);
@@ -117,6 +119,7 @@ export default function RunPane({
       return;
     }
     toast.success("Result saved on this machine.");
+    await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
     closedRef.current = true;
     await commands.autoRunCloseBrowser();
     onClose();
