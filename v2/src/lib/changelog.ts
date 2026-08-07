@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.8",
+    date: "2026-08-07",
+    items: [
+      "Registering the company database MCP for Claude Code works again - the CLI's variadic -e option was swallowing the server name, so registration failed with 'missing required argument'.",
+      "The AI writing check no longer flags a contrast as holding both branches when the two sides only share two subjects (a repeated word was double-counted).",
+    ],
+  },
+  {
     version: "1.19.7",
     date: "2026-08-07",
     items: [
