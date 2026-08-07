@@ -6,10 +6,14 @@
 // feature has earned more trust than that.
 
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
+import { IconEdit } from "../../lib/actionIcons";
+import ScriptEditor from "./ScriptEditor";
 
 export default function AutoRun({
   org,
@@ -41,6 +45,8 @@ export default function AutoRun({
     })),
   });
 
+  const [editing, setEditing] = useState<number | null>(null);
+
   if (!org || !pbi) {
     return <p className="text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
   }
@@ -68,9 +74,32 @@ export default function AutoRun({
             ) : (
               <Badge className="bg-surface-2 text-faint">No script</Badge>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label={`Edit script for #${c.id}`}
+              onClick={() => setEditing(c.id)}
+            >
+              <IconEdit aria-hidden />
+              Script
+            </Button>
           </li>
         ))}
       </ul>
+
+      {editing != null &&
+        (() => {
+          const c = (cases.data ?? []).find((x) => x.id === editing);
+          if (!c) return null;
+          return (
+            <ScriptEditor
+              caseId={c.id}
+              title={c.title}
+              steps={c.steps}
+              onClose={() => setEditing(null)}
+            />
+          );
+        })()}
     </div>
   );
 }

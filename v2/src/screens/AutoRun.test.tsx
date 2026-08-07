@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import AutoRun from "./AutoRun";
 
@@ -87,4 +87,60 @@ test("without a PBI it asks for one instead of loading", async () => {
     </QueryClientProvider>,
   );
   expect(await screen.findByText(/pick a pbi/i)).toBeInTheDocument();
+});
+
+/// The script is authored as JSON for now - an assistant will generate
+/// these later, and hand-editing is how the format gets proven first.
+/// Invalid JSON must be refused at the point of saving, not written and
+/// discovered mid-run.
+test("the script editor refuses invalid JSON instead of saving it", async () => {
+  let saved = 0;
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_save_script") {
+      saved++;
+      return null;
+    }
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  const box = await screen.findByLabelText("Action script JSON");
+  fireEvent.change(box, { target: { value: "{ not json" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+
+  expect(await screen.findByText(/not valid json/i)).toBeInTheDocument();
+  expect(saved).toBe(0);
+});
+
+test("a valid script is saved for that case id", async () => {
+  let payload: Record<string, unknown> | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_save_script") {
+      payload = args as Record<string, unknown>;
+      return null;
+    }
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  const box = await screen.findByLabelText("Action script JSON");
+  fireEvent.change(box, {
+    target: {
+      value: JSON.stringify([
+        { step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] },
+      ]),
+    },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+
+  await waitFor(() => expect(payload).not.toBeNull());
+  const script = (payload as unknown as { script: { case_id: number; steps: unknown[] } }).script;
+  expect(script.case_id).toBe(201);
+  expect(script.steps).toHaveLength(1);
 });
