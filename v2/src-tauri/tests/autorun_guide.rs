@@ -82,3 +82,13 @@ fn the_root_round_trips_for_callers_without_an_app_handle() {
     set_root(dir.clone());
     assert_eq!(configured_root(), Some(dir));
 }
+
+#[test]
+fn the_shipped_sample_bundle_parses_as_real_scripts() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../claudedocs/autorun-sample-scripts-pms.json");
+    let s = std::fs::read_to_string(path).expect("sample bundle missing");
+    let v: Vec<v2_lib::autorun::CaseScript> =
+        serde_json::from_str(&s).expect("the shipped sample bundle does not parse");
+    assert_eq!(v.len(), 4, "expected four samples");
+    assert!(v.iter().all(|c| !c.steps.is_empty()), "a sample has no steps");
+}

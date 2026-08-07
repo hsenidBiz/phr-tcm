@@ -146,6 +146,35 @@ pub fn auto_run_save_script(app: tauri::AppHandle, script: CaseScript) -> Result
     store::save_script(&root(&app)?, &script)
 }
 
+/// Import a BUNDLE of scripts from one file - the shape an assistant
+/// writes for a whole PBI, and the shape the Auto Run screen's Import
+/// button reads back.
+///
+/// All or nothing, like the bridge route: every entry parses before any
+/// file is written, because a half-applied import leaves the tester
+/// unable to tell which cases are current. Returns the case ids that
+/// landed, so the screen can say what changed rather than just "done".
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_import_scripts(app: tauri::AppHandle, json: String) -> Result<Vec<i32>, String> {
+    let scripts: Vec<CaseScript> = serde_json::from_str(&json).map_err(|e| {
+        format!(
+            "that file is not a list of action scripts: {e}. Expected an array of              {{ case_id, title, steps }}."
+        )
+    })?;
+    if scripts.is_empty() {
+        return Err("that file has no scripts in it".to_string());
+    }
+    let root = root(&app)?;
+    let mut ids = Vec::new();
+    for sc in &scripts {
+        store::save_script(&root, sc)?;
+        ids.push(sc.case_id);
+    }
+    crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));
+    Ok(ids)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_run(app: tauri::AppHandle, run: LocalRun) -> Result<(), String> {

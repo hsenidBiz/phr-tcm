@@ -60,6 +60,30 @@ If you can read the application's source, USE IT to find selectors. That
 is what source access is for: the real id of a button beats a guess every
 time. Read the component, take the id, move on.
 
+## Three things that make a source-derived selector wrong
+
+Reading the source is right, but the id you find is not always the id
+that exists at runtime. Check for these before you trust one:
+
+1. **Component libraries that wrap their real control.** A tag like
+   `<x-button id="save-host">` is often a HOST: the real `<button>` is
+   injected as a child at init, commonly with an id like
+   `save-host-button`, and text inputs likewise become `...-input`.
+   Clicking the host does nothing. Find the library's init code and see
+   what id it actually gives the control.
+2. **Ids built from data.** `group-header-gg-4711` is stable for one
+   record on one machine and wrong everywhere else. Match on the visible
+   text instead.
+3. **Markup that does not exist yet.** Grids and cards rendered from an
+   AJAX response, or cloned from a `<template>` when a modal opens, are
+   absent at page load. Put a `wait_for` on something inside the rendered
+   result before acting on it - never a bare `navigate` followed by a
+   `click`.
+
+Content inside an `<iframe>` cannot be reached at all: the actions run in
+the top document only. If a step depends on one, say so and leave it for
+the person to do by hand.
+
 ## Where each fact is allowed to come from
 
 This is the important part, and the one that goes wrong quietly.

@@ -221,6 +221,17 @@ export const commands = {
 	steps: StepScript[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (script: CaseScript) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
+	/**
+	 *  Import a BUNDLE of scripts from one file - the shape an assistant
+	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
+	 *  button reads back.
+	 * 
+	 *  All or nothing, like the bridge route: every entry parses before any
+	 *  file is written, because a half-applied import leaves the tester
+	 *  unable to tell which cases are current. Returns the case ids that
+	 *  landed, so the screen can say what changed rather than just "done".
+	 */
+	autoRunImportScripts: (json: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { json })),
 	autoRunSaveRun: (run: LocalRun) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
 	autoRunListRuns: () => __TAURI_INVOKE<LocalRun[]>("auto_run_list_runs"),
 	/**  A run id the frontend can stamp on a new session. */

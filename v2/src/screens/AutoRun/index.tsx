@@ -5,14 +5,16 @@
 // list is read from it, and the results stay in this app until the
 // feature has earned more trust than that.
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { IconEdit } from "../../lib/actionIcons";
+import { IconEdit, IconImport } from "../../lib/actionIcons";
+import { open } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import PastRuns from "./PastRuns";
 import RunPane from "./RunPane";
 import ScriptEditor from "./ScriptEditor";
@@ -48,6 +50,36 @@ export default function AutoRun({
   });
 
   const [editing, setEditing] = useState<number | null>(null);
+  const queryClient = useQueryClient();
+
+  /** One file, many cases - the shape `save_autorun_script` writes, so an
+   * assistant's whole-PBI output imports in one go. Every badge is
+   * invalidated afterwards, or the rows would keep saying "No script"
+   * for the cases that just gained one. */
+  const importScripts = async () => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "Action scripts", extensions: ["json"] }],
+    }).catch(() => null);
+    if (typeof path !== "string") return;
+    const text = await commands.readFileB64(path);
+    if (text.status === "error") {
+      toast.error(`Could not read that file: ${text.error}`);
+      return;
+    }
+    const json = atob(text.data.b64);
+    const r = await commands.autoRunImportScripts(json);
+    if (r.status === "error") {
+      toast.error(r.error);
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
+    toast.success(
+      `Imported ${r.data.length} script${r.data.length === 1 ? "" : "s"} (case${
+        r.data.length === 1 ? "" : "s"
+      } ${r.data.join(", ")}).`,
+    );
+  };
   const [running, setRunning] = useState<number | null>(null);
 
   if (!org || !pbi) {
@@ -60,6 +92,16 @@ export default function AutoRun({
         Runs happen in a real Edge window on this machine and you decide every verdict.
         Nothing is sent to Azure DevOps - results are saved here only.
       </p>
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" onClick={importScripts}>
+          <IconImport aria-hidden />
+          Import scripts
+        </Button>
+        <span className="text-xs text-faint">
+          One JSON file can carry every case in this PBI.
+        </span>
+      </div>
 
       {cases.isLoading && <p className="text-sm text-muted">Loading test cases…</p>}
       {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
