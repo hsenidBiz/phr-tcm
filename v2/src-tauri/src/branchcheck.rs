@@ -89,9 +89,18 @@ fn topic_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// How many content words two expectations share.
+/// How many DISTINCT content words two expectations share. Distinct, or a
+/// word repeated on one side counts double: "rating ... rating" against a
+/// side that says "rating" once scored 2 of the 3-word threshold by
+/// itself, flagging a contrast that shares only two subjects.
 fn overlap(a: &[String], b: &[String]) -> usize {
-    a.iter().filter(|w| b.contains(w)).count()
+    let mut seen: Vec<&String> = Vec::new();
+    for w in a {
+        if b.contains(w) && !seen.contains(&w) {
+            seen.push(w);
+        }
+    }
+    seen.len()
 }
 
 /// Adjacent content-word pairs - the cheap stand-in for a noun phrase.

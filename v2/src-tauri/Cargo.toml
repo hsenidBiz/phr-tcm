@@ -20,10 +20,12 @@ test = false
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "v2_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
-# All tests live in tests/ (integration targets) so they receive the
-# Common-Controls v6 manifest from build.rs rustc-link-arg-tests; a lib
-# unit-test binary would not and would crash at startup on Windows.
-test = false
+# Unit tests in src/ DO run under `cargo test`. This was `test = false` for
+# fear the unit-test binary would miss the Common-Controls manifest - but
+# build.rs's rustc-link-arg-tests applies to unit-test binaries too, and
+# the flag's real effect was months of #[cfg(test)] modules (branchcheck's
+# pinned feedback tests among them) silently running in NO gate at all -
+# one of them failing the whole time.
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
