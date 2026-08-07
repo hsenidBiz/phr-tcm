@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.10",
+    date: "2026-08-07",
+    items: [
+      "The database MCP server path may now be a folder: separate File and Folder browse buttons, a typeable path field, and validation that only asks the path to exist.",
+    ],
+  },
+  {
     version: "1.19.9",
     date: "2026-08-07",
     items: [
