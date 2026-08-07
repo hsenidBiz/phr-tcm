@@ -195,6 +195,12 @@ export const commands = {
 	 *  PBI - a newer share for the same PBI replaces the older copy.
 	 */
 	materializeSharedDraft: (pbiId: number, cases: TestCase_Deserialize[]) => typedError<MaterializedDraft, string>(__TAURI_INVOKE("materialize_shared_draft", { pbiId, cases })),
+	/**
+	 *  The shipped defaults for the database server form - see db_defaults.rs
+	 *  for why shipping them is acceptable here. The frontend applies these
+	 *  only to a form nothing was ever saved into.
+	 */
+	dbServerDefaults: () => __TAURI_INVOKE<DbServerConfig>("db_server_defaults"),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.

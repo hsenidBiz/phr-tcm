@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Database } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { commands, type DbServerConfig } from "../bindings";
 import { copyText } from "../lib/clipboard";
@@ -14,6 +14,7 @@ import { Select } from "../components/ui/select";
 import { cn } from "../lib/cn";
 import {
   forgetDbConfig,
+  hasStoredDbConfig,
   isDbConfigComplete,
   loadDbConfig,
   saveDbConfig,
@@ -87,6 +88,23 @@ export default function AiBridge() {
     setDb(next);
     saveDbConfig(next);
   };
+
+  // Shipped defaults fill a form NOTHING was ever saved into - a machine
+  // that configured (or deliberately cleared) its own values never has
+  // them overwritten. Prefill only: nothing persists or registers until
+  // the person edits or clicks Register themselves.
+  const dbDefaults = useQuery({
+    queryKey: ["db-defaults"],
+    queryFn: () => commands.dbServerDefaults(),
+    staleTime: Infinity,
+  });
+  useEffect(() => {
+    const d = dbDefaults.data;
+    if (!d || !d.connection_string.trim()) return; // no defaults shipped
+    if (hasStoredDbConfig()) return;
+    // Only replace a still-pristine form, in case typing raced the IPC.
+    setDb((cur) => (JSON.stringify(cur) === JSON.stringify(loadDbConfig()) ? { ...d } : cur));
+  }, [dbDefaults.data]);
 
   // The connection-string FIELDS are a view over the stored string: parsed
   // out on every render, rebuilt on every keystroke. No second copy of the

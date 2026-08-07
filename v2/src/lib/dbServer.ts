@@ -21,6 +21,16 @@ export const EMPTY_DB_CONFIG: DbServerConfig = {
   schema_filter: "",
 };
 
+/** Whether the person ever saved a config on this machine - the shipped
+ * defaults only fill a form that has never been touched. */
+export function hasStoredDbConfig(): boolean {
+  try {
+    return localStorage.getItem(KEY) != null;
+  } catch {
+    return false;
+  }
+}
+
 export function loadDbConfig(): DbServerConfig {
   try {
     const raw = localStorage.getItem(KEY);

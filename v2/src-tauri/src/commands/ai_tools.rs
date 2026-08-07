@@ -60,7 +60,7 @@ pub fn register_ai_tool(id: String) -> Result<(), String> {
 /// assistant can read the schema and the test cases in one session. The
 /// server itself is configured entirely through environment variables
 /// (see its README); we only place them in the tool's config.
-#[derive(serde::Deserialize, specta::Type)]
+#[derive(serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct DbServerConfig {
     /// Path to the built PeoplesHR.DBMCPServer.exe.
     pub exe_path: String,
@@ -108,6 +108,20 @@ impl DbServerConfig {
             args,
             env,
         })
+    }
+}
+
+/// The shipped defaults for the database server form - see db_defaults.rs
+/// for why shipping them is acceptable here. The frontend applies these
+/// only to a form nothing was ever saved into.
+#[tauri::command]
+#[specta::specta]
+pub fn db_server_defaults() -> DbServerConfig {
+    DbServerConfig {
+        exe_path: crate::db_defaults::DEFAULT_EXE_PATH.to_string(),
+        db_type: crate::db_defaults::DEFAULT_DB_TYPE.to_string(),
+        connection_string: crate::db_defaults::DEFAULT_CONNECTION_STRING.to_string(),
+        schema_filter: crate::db_defaults::DEFAULT_SCHEMA_FILTER.to_string(),
     }
 }
 
