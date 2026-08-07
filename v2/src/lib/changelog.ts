@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.9",
+    date: "2026-08-07",
+    items: [
+      "The database MCP server browse accepts any file, not just .exe - extension-less binaries and scripts included.",
+    ],
+  },
+  {
     version: "1.19.8",
     date: "2026-08-07",
     items: [
