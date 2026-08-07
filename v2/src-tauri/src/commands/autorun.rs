@@ -35,7 +35,17 @@ pub fn describe_session_error() -> String {
 }
 
 /// Where scripts and runs live: beside the app's other data.
+///
+/// Prefers the value app setup published process-wide, because the AI
+/// bridge writes through that same value and has no `AppHandle` to derive
+/// one from. Two independent derivations of "the autorun directory" is
+/// exactly how an assistant's saved script ends up somewhere this screen
+/// never looks. The handle is the fallback for any path that runs before
+/// setup.
 pub fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Some(configured) = store::configured_root() {
+        return Ok(configured);
+    }
     Ok(app
         .path()
         .app_data_dir()

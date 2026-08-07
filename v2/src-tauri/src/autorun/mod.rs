@@ -5,6 +5,7 @@
 //! - the results view in the app is the whole audience while the feature
 //! earns trust.
 
+pub mod guide;
 pub mod store;
 
 use crate::browser::actions::{Action, ActionOutcome};

@@ -143,6 +143,22 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["pbi_id"]),
         },
         {
+            "name": "get_autorun_guide",
+            "description": "How to write an Auto Run action script: the browser actions the runner understands, the selector forms, and - the part that matters - which source is allowed to decide what. Read this before writing a script. You may read the application's source for SELECTORS, but every assertion comes from the test case's own expected result, never from what the code happens to do.",
+            "inputSchema": schema(serde_json::json!({}), &[]),
+        },
+        {
+            "name": "save_autorun_script",
+            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, steps: [{ step_number, actions }] }. All or nothing: one bad action kind rejects the whole batch rather than leaving half the cases updated. Call get_autorun_guide first for the action vocabulary.",
+            "inputSchema": schema(serde_json::json!({
+                "scripts": {
+                    "type": "array",
+                    "description": "One entry per test case: { case_id, title, steps }",
+                    "items": { "type": "object" },
+                },
+            }), &["scripts"]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
             "inputSchema": schema(serde_json::json!({
@@ -272,6 +288,18 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_run_failures" => {
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);
             call("GET", &format!("/run-failures?pbi={pbi}"), "")
+        }
+        "get_autorun_guide" => call("GET", "/autorun-guide", ""),
+        "save_autorun_script" => {
+            // The bridge takes the bare array, so a caller that wrapped it
+            // in {scripts: [...]} and one that sent the list directly both
+            // work - the wrapper is a JSON-schema convenience, not a shape
+            // the assistant should have to get right twice.
+            let body = match args.get("scripts") {
+                Some(v) => v.to_string(),
+                None => args.to_string(),
+            };
+            call("POST", "/autorun-script", &body)
         }
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");

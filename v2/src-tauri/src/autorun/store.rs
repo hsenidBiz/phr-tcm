@@ -2,6 +2,28 @@
 
 use super::{CaseScript, LocalRun};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// Where scripts and runs live, remembered process-wide.
+///
+/// Commands get the path from their `AppHandle`, but the AI bridge has no
+/// handle - it is a router, not a Tauri command - and still has to write
+/// a script an assistant sends. The app sets this once at startup, the
+/// same way `/begin` publishes its plan path, and the bridge reads it.
+static ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Called once during app setup.
+pub fn set_root(root: PathBuf) {
+    if let Ok(mut slot) = ROOT.lock() {
+        *slot = Some(root);
+    }
+}
+
+/// `None` before setup has run - a caller with no handle must say so
+/// rather than guessing a path and writing somewhere nobody reads.
+pub fn configured_root() -> Option<PathBuf> {
+    ROOT.lock().ok().and_then(|s| s.clone())
+}
 
 fn scripts_dir(root: &Path) -> PathBuf {
     root.join("scripts")

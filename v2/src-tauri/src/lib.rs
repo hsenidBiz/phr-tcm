@@ -246,7 +246,12 @@ pub fn run() {
             // Reference data (project tags) cached on disk and shared by the
             // UI and the AI bridge - see refcache.rs.
             if let Ok(dir) = app.path().app_data_dir() {
-                refcache::init(dir);
+                refcache::init(dir.clone());
+                // Auto Run scripts and local runs. The commands reach this
+                // through their AppHandle; the AI bridge has no handle and
+                // reads it from here, so a script an assistant saves lands
+                // where the Auto Run screen actually looks.
+                autorun::store::set_root(dir.join("autorun"));
             }
             applog::info(format!(
                 "Test Case Manager {} started",
