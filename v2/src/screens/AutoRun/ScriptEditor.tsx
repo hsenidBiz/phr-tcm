@@ -49,7 +49,21 @@ export default function ScriptEditor({
   const value =
     text ?? (existing.data ? JSON.stringify(existing.data.steps, null, 2) : "");
 
+  // A save while the existing script hasn't resolved yet (still loading, or
+  // failed to load) would write an empty `steps: []` over whatever is
+  // already there - silent data loss. Block it rather than let an empty
+  // textarea pass for "this case genuinely has no script".
+  const blockedReason = existing.isLoading
+    ? "Still loading the existing script - wait for it before saving."
+    : existing.isError
+      ? `Could not load the existing script, so saving is blocked: ${existing.error.message}`
+      : "";
+
   const save = async () => {
+    if (blockedReason) {
+      setProblem(blockedReason);
+      return;
+    }
     let parsed: StepScript[];
     try {
       parsed = JSON.parse(value || "[]") as StepScript[];
@@ -104,6 +118,11 @@ export default function ScriptEditor({
         </label>
       </div>
 
+      {existing.isError && (
+        <p className="text-xs text-danger">
+          Could not load the existing script, so saving is blocked: {existing.error.message}
+        </p>
+      )}
       {problem && <p className="text-xs text-danger">{problem}</p>}
 
       <div className="flex justify-end gap-2">
@@ -111,7 +130,7 @@ export default function ScriptEditor({
           <IconCancel aria-hidden />
           Cancel
         </Button>
-        <Button size="sm" onClick={save}>
+        <Button size="sm" onClick={save} disabled={Boolean(blockedReason)}>
           <IconConfirm aria-hidden />
           Save script
         </Button>

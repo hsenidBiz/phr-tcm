@@ -144,3 +144,79 @@ test("a valid script is saved for that case id", async () => {
   expect(script.case_id).toBe(201);
   expect(script.steps).toHaveLength(1);
 });
+
+/// A case that already has a saved script has never had its load-and-prefill
+/// path exercised - both prior tests mock the load as returning null.
+test("prefills the editor with a case's existing script", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      return {
+        case_id: 201,
+        title: "Valid login",
+        steps: [{ step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] }],
+      };
+    }
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  const box = (await screen.findByLabelText("Action script JSON")) as HTMLTextAreaElement;
+  await waitFor(() => expect(box.value).toContain("check_text"));
+});
+
+/// While the existing script hasn't resolved yet, an empty textarea is
+/// indistinguishable from "this case has no script" - saving in that window
+/// would silently overwrite whatever script was already there.
+test("refuses to save while the existing script is still loading", async () => {
+  let saved = 0;
+  let resolveLoad: (value: unknown) => void = () => {};
+  const pending = new Promise((resolve) => {
+    resolveLoad = resolve;
+  });
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return pending;
+    if (cmd === "auto_run_save_script") {
+      saved++;
+      return null;
+    }
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  const saveButton = await screen.findByRole("button", { name: "Save script" });
+  expect(saveButton).toBeDisabled();
+
+  fireEvent.click(saveButton);
+  expect(saved).toBe(0);
+
+  resolveLoad(null);
+  await waitFor(() => expect(saveButton).not.toBeDisabled());
+});
+
+/// A load failure must be distinct from "no script yet" - it must not
+/// silently default to an empty, savable editor either.
+test("refuses to save when the existing script fails to load", async () => {
+  let saved = 0;
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") throw "boom";
+    if (cmd === "auto_run_save_script") {
+      saved++;
+      return null;
+    }
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit script for #201" }));
+  const saveButton = await screen.findByRole("button", { name: "Save script" });
+  await waitFor(() => expect(saveButton).toBeDisabled());
+
+  fireEvent.click(saveButton);
+  expect(saved).toBe(0);
+  expect(await screen.findByText(/could not load the existing script/i)).toBeInTheDocument();
+});
