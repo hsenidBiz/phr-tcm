@@ -220,3 +220,194 @@ test("refuses to save when the existing script fails to load", async () => {
   expect(saved).toBe(0);
   expect(await screen.findByText(/could not load the existing script/i)).toBeInTheDocument();
 });
+
+const scriptFor201 = {
+  case_id: 201,
+  title: "Valid login",
+  steps: [
+    { step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] },
+    { step_number: 2, actions: [{ kind: "click", selector: "text=Sign out" }] },
+  ],
+};
+
+function mockRunnable(extra?: (cmd: string, args: unknown) => unknown) {
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_new_id") return "run-1786000000000";
+    if (cmd === "auto_run_open_browser") return null;
+    if (cmd === "auto_run_close_browser") return null;
+    return extra?.(String(cmd), args);
+  });
+}
+
+/// The outcomes are EVIDENCE, not a vote: the pane shows what each
+/// action reported and leaves the verdict buttons untouched.
+test("running a step shows each action's outcome and picks no verdict", async () => {
+  mockRunnable((cmd) => {
+    if (cmd === "auto_run_step")
+      return [{ ok: true, detail: "page contains Dashboard" }];
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run step 1" }));
+
+  expect(await screen.findByText("page contains Dashboard")).toBeInTheDocument();
+  // Nothing is pre-selected - the human has not decided yet.
+  expect(screen.getByRole("button", { name: "Passed" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(screen.getByRole("button", { name: "Failed" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+});
+
+/// A failed action is reported plainly and STILL does not decide the
+/// verdict - the person may know the failure is the harness's fault.
+test("a failed action is shown but the human still chooses", async () => {
+  mockRunnable((cmd) => {
+    if (cmd === "auto_run_step") return [{ ok: false, detail: "not found: #nope" }];
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run step 1" }));
+
+  expect(await screen.findByText("not found: #nope")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Passed" })).toBeEnabled();
+});
+
+/// Saving records the human's verdict and the evidence together, into a
+/// LOCAL run - and never calls anything that writes to Azure DevOps.
+test("saving stores the verdict locally and touches no ADO command", async () => {
+  let saved: Record<string, unknown> | null = null;
+  const calls: string[] = [];
+  mockIPC((cmd, args) => {
+    calls.push(String(cmd));
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_new_id") return "run-1786000000000";
+    if (cmd === "auto_run_open_browser") return null;
+    if (cmd === "auto_run_step") return [{ ok: true, detail: "page contains Dashboard" }];
+    if (cmd === "auto_run_save_run") {
+      saved = args as Record<string, unknown>;
+      return null;
+    }
+    if (cmd === "auto_run_close_browser") return null;
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run step 1" }));
+  await screen.findByText("page contains Dashboard");
+  fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+
+  await waitFor(() => expect(saved).not.toBeNull());
+  const run = (saved as unknown as { run: { cases: { verdict: string }[] } }).run;
+  expect(run.cases[0].verdict).toBe("Failed");
+
+  // The guard that matters: no run-recording command was ever invoked.
+  expect(calls).not.toContain("start_test_run");
+  expect(calls).not.toContain("record_result");
+  expect(calls).not.toContain("finish_test_run");
+});
+
+/// The pane opens a real Edge process with its own temp profile
+/// directory. If the person navigates away instead of pressing Close or
+/// Save, the pane unmounts without either handler running - and the
+/// process would otherwise leak for the rest of the app's lifetime.
+test("closes the browser on unmount if a session was opened and never closed", async () => {
+  let closeCalls = 0;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_open_browser") return null;
+    if (cmd === "auto_run_close_browser") {
+      closeCalls++;
+      return null;
+    }
+  });
+  const view = renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await screen.findByRole("button", { name: "Run step 1" });
+
+  view.unmount();
+
+  await waitFor(() => expect(closeCalls).toBe(1));
+});
+
+/// A pane that was never opened has no browser to close - the unmount
+/// cleanup must not call the close command speculatively.
+test("does not close the browser on unmount if it was never opened", async () => {
+  let closeCalls = 0;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_close_browser") {
+      closeCalls++;
+      return null;
+    }
+  });
+  const view = renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  await screen.findByRole("button", { name: "Open browser" });
+
+  view.unmount();
+
+  expect(closeCalls).toBe(0);
+});
+
+/// Pressing Close already closes the browser. The unmount that follows
+/// (the pane leaving the tree once `onClose` fires) must not send a
+/// second close command for the same session.
+test("does not close the browser twice when Close is pressed then the pane unmounts", async () => {
+  let closeCalls = 0;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_open_browser") return null;
+    if (cmd === "auto_run_close_browser") {
+      closeCalls++;
+      return null;
+    }
+  });
+  renderAutoRun();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await screen.findByRole("button", { name: "Run step 1" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+  await waitFor(() => expect(closeCalls).toBe(1));
+});

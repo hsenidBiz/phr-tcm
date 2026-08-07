@@ -13,6 +13,7 @@ import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { IconEdit } from "../../lib/actionIcons";
+import RunPane from "./RunPane";
 import ScriptEditor from "./ScriptEditor";
 
 export default function AutoRun({
@@ -46,6 +47,7 @@ export default function AutoRun({
   });
 
   const [editing, setEditing] = useState<number | null>(null);
+  const [running, setRunning] = useState<number | null>(null);
 
   if (!org || !pbi) {
     return <p className="text-sm text-muted">Pick a PBI in the bar above to auto-run its cases.</p>;
@@ -83,6 +85,15 @@ export default function AutoRun({
               <IconEdit aria-hidden />
               Script
             </Button>
+            {scripts[i]?.data && (
+              <Button
+                size="sm"
+                aria-label={`Run #${c.id}`}
+                onClick={() => setRunning(c.id)}
+              >
+                Run
+              </Button>
+            )}
           </li>
         ))}
       </ul>
@@ -97,6 +108,20 @@ export default function AutoRun({
               title={c.title}
               steps={c.steps}
               onClose={() => setEditing(null)}
+            />
+          );
+        })()}
+
+      {running != null &&
+        (() => {
+          const c = (cases.data ?? []).find((x) => x.id === running);
+          if (!c) return null;
+          return (
+            <RunPane
+              pbiId={pbi.id}
+              caseId={c.id}
+              title={c.title}
+              onClose={() => setRunning(null)}
             />
           );
         })()}
