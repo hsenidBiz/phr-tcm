@@ -8,6 +8,7 @@ pub mod ado_share;
 pub mod ado_testplan;
 pub mod applog;
 pub mod branchcheck;
+pub mod browser;
 pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
