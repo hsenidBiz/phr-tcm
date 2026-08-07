@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.12",
+    date: "2026-08-07",
+    items: [
+      "The AI Bridge ships knowing the company's database environments: a Default connections dropdown fills the form (Dev read-only, Dev dev-login, QA read-only), and a fresh install starts prefilled with the read-only dev connection - registering still takes an explicit click.",
+    ],
+  },
+  {
     version: "1.19.11",
     date: "2026-08-07",
     items: [
