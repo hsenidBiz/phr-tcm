@@ -59,6 +59,7 @@ const DevPanel: ComponentType<{
   onShowSignIn: () => void;
 }> = DEV_TOOLS ? lazy(() => import("./dev/DevPanel")) : () => null;
 import AiBridge from "./screens/AiBridge";
+import AutoRun from "./screens/AutoRun";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
@@ -96,6 +97,7 @@ const TITLES: Record<Section, string> = {
   edit: "Update Test Cases",
   view: "View Test Cases",
   run: "Run Tests",
+  autorun: "Auto Run",
   suites: "Test Suites",
   ai: "AI Bridge",
   settings: "Settings",
@@ -712,6 +714,7 @@ export default function App() {
                   }}
                 />
               )}
+              {section === "autorun" && <AutoRun org={org} project={project} pbi={pbi} />}
               {section === "ai" && <AiBridge />}
               {section === "settings" && <Settings org={org} project={project} />}
             </AnimatedContent>

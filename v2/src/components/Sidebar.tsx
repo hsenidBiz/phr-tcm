@@ -9,6 +9,7 @@ import {
   GitPullRequest,
   KanbanSquare,
   PenLine,
+  Radar,
   RotateCcw,
   SquarePlay,
 } from "lucide-react";
@@ -19,7 +20,7 @@ import { cn } from "../lib/cn";
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
  * in the context bar. Collapsible to an icon rail. In Work Manager mode the
  * same rail shows WORK_ITEMS instead (PRs first, then the board). */
-export type Section = "manual" | "import" | "edit" | "view" | "run" | "suites" | "ai" | "settings";
+export type Section = "manual" | "import" | "edit" | "view" | "run" | "autorun" | "suites" | "ai" | "settings";
 export type WorkSection = "prs" | "board" | "create";
 
 type Item<T extends string> = {
@@ -40,6 +41,9 @@ const CASE_ITEMS: Item<Section>[] = [
   { id: "edit", label: "Update Test Cases", icon: RotateCcw, tone: "nav-ico nav-ico-edit" },
   { id: "view", label: "View Test Cases", icon: Eye, tone: "nav-ico nav-ico-view" },
   { id: "run", label: "Run Tests", icon: SquarePlay, tone: "nav-ico nav-ico-run" },
+  // A radar sweep, not a second play button: Run Tests owns the play
+  // glyph, and the rail has to stay scannable at 16px.
+  { id: "autorun", label: "Auto Run", icon: Radar, tone: "nav-ico nav-ico-autorun" },
   { id: "suites", label: "Test Suites", icon: FolderTree, tone: "nav-ico nav-ico-suites" },
   { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
 ];
