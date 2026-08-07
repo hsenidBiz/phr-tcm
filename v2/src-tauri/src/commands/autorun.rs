@@ -150,27 +150,43 @@ pub fn auto_run_save_script(app: tauri::AppHandle, script: CaseScript) -> Result
 /// writes for a whole PBI, and the shape the Auto Run screen's Import
 /// button reads back.
 ///
-/// All or nothing, like the bridge route: every entry parses before any
-/// file is written, because a half-applied import leaves the tester
-/// unable to tell which cases are current. Returns the case ids that
-/// landed, so the screen can say what changed rather than just "done".
+/// Takes a PATH, not the file's contents: the frontend used to read the
+/// file itself and hand over base64 text, but `atob` decodes base64 to a
+/// latin-1 binary string, so any non-ASCII byte (an accent, a curly
+/// quote, an em dash) came out mojibake, and a UTF-8 BOM made the JSON
+/// look corrupt before it ever reached the parser. Reading here, in Rust,
+/// with the same BOM handling `import_parser` already uses, sidesteps
+/// both.
+///
+/// All or nothing, via `store::save_scripts_atomically`: every entry is
+/// validated and serialised before a single file is written, so a bad
+/// entry - or a filesystem error partway through a big bundle - never
+/// leaves the tester unable to tell which cases are current. Returns the
+/// case ids that landed, so the screen can say what changed rather than
+/// just "done".
 #[tauri::command]
 #[specta::specta]
-pub fn auto_run_import_scripts(app: tauri::AppHandle, json: String) -> Result<Vec<i32>, String> {
-    let scripts: Vec<CaseScript> = serde_json::from_str(&json).map_err(|e| {
+pub fn auto_run_import_scripts(app: tauri::AppHandle, path: String) -> Result<Vec<i32>, String> {
+    import_scripts_from_path(&root(&app)?, &path)
+}
+
+/// The pure half of [`auto_run_import_scripts`]: everything that does not
+/// need an `AppHandle`, so it can be exercised directly in tests the same
+/// way `autorun::store`'s functions are.
+pub fn import_scripts_from_path(root: &std::path::Path, path: &str) -> Result<Vec<i32>, String> {
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Could not read {path}: {e}"))?;
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+    let scripts: Vec<CaseScript> = serde_json::from_str(content).map_err(|e| {
         format!(
-            "that file is not a list of action scripts: {e}. Expected an array of              {{ case_id, title, steps }}."
+            "that file is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps }}."
         )
     })?;
     if scripts.is_empty() {
         return Err("that file has no scripts in it".to_string());
     }
-    let root = root(&app)?;
-    let mut ids = Vec::new();
-    for sc in &scripts {
-        store::save_script(&root, sc)?;
-        ids.push(sc.case_id);
-    }
+    store::save_scripts_atomically(root, &scripts).map_err(|e| e.to_string())?;
+    let ids: Vec<i32> = scripts.iter().map(|sc| sc.case_id).collect();
     crate::applog::info(format!("Imported {} auto-run script(s)", ids.len()));
     Ok(ids)
 }

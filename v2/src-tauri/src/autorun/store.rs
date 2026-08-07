@@ -50,6 +50,103 @@ pub fn save_script(root: &Path, script: &CaseScript) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Why a bundle save failed - so a caller with an HTTP status to pick
+/// (the AI bridge) can tell "you sent something invalid" from "the disk
+/// said no" without parsing the message text.
+#[derive(Debug)]
+pub enum SaveScriptsError {
+    /// The bundle itself is wrong - a bad id, a duplicate, a script with
+    /// no steps. A retry with the same bundle will fail the same way.
+    Invalid(String),
+    /// The filesystem said no. A retry might succeed.
+    Io(String),
+}
+
+impl std::fmt::Display for SaveScriptsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SaveScriptsError::Invalid(s) | SaveScriptsError::Io(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+impl std::error::Error for SaveScriptsError {}
+
+/// Save a whole bundle of scripts as one unit: every entry lands, or none
+/// does. Used by both the AI bridge's `save_autorun_script` and the Auto
+/// Run screen's file import - the two places a batch of scripts can
+/// arrive from outside the app, and the two places a half-applied batch
+/// would leave a tester unable to tell which cases are current.
+///
+/// Three passes, each touching more than the last, so a bad bundle is
+/// caught before the disk sees any of it:
+///
+/// 1. Validate and serialise every entry. Pure in-memory work - a
+///    nonsense case id, a duplicate id, or a script with no steps
+///    rejects the whole call without a single byte written.
+/// 2. Confirm every target path is actually free to become a file. Still
+///    nothing written - this is what keeps an EARLIER entry from landing
+///    just because it happened to be processed before a later one that
+///    cannot be written (e.g. its filename is already a directory).
+/// 3. Write each entry to a `.tmp` sibling and `fs::rename` it into
+///    place. Each rename is a single filesystem operation - no reader
+///    ever sees a half-written case file - and by the time we reach it,
+///    pass 2 has already ruled out the one failure mode this bundle
+///    format can detect ahead of time.
+pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<(), SaveScriptsError> {
+    let dir = scripts_dir(root);
+    std::fs::create_dir_all(&dir).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
+
+    // Pass 1: validate + serialise.
+    let mut seen = std::collections::HashSet::new();
+    let mut entries: Vec<(PathBuf, String)> = Vec::with_capacity(scripts.len());
+    for sc in scripts {
+        if sc.case_id <= 0 {
+            return Err(SaveScriptsError::Invalid(format!(
+                "case id {} is not a valid Azure DevOps work item id",
+                sc.case_id
+            )));
+        }
+        if !seen.insert(sc.case_id) {
+            return Err(SaveScriptsError::Invalid(format!(
+                "case {} appears more than once in this bundle",
+                sc.case_id
+            )));
+        }
+        if sc.steps.is_empty() {
+            return Err(SaveScriptsError::Invalid(format!(
+                "case {} has no steps - a script that runs nothing cannot be saved",
+                sc.case_id
+            )));
+        }
+        let json = serde_json::to_string_pretty(sc).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
+        entries.push((dir.join(format!("case-{}.json", sc.case_id)), json));
+    }
+
+    // Pass 2: every target must be a plain file slot, not something else
+    // already occupying that name, checked for the WHOLE bundle before
+    // any write.
+    for (path, _) in &entries {
+        if path.is_dir() {
+            return Err(SaveScriptsError::Io(format!(
+                "{} exists and is a directory, not a script file",
+                path.display()
+            )));
+        }
+    }
+
+    // Pass 3: stage then commit.
+    for (path, json) in &entries {
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(SaveScriptsError::Io(e.to_string()));
+        }
+    }
+    Ok(())
+}
+
 /// `Ok(None)` for a case nobody has scripted yet - that is the normal
 /// state of most cases, not an error.
 pub fn load_script(root: &Path, case_id: i32) -> Result<Option<CaseScript>, String> {

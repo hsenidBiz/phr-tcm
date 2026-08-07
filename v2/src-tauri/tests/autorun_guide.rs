@@ -60,19 +60,77 @@ fn the_guide_says_where_assertions_may_come_from() {
     );
 }
 
+/// Extracts the first balanced `open`/`close` run starting at `from`,
+/// tracking depth rather than jumping to the string's last matching
+/// character - the guide carries more than one JSON example, and `find`
+/// paired with `rfind` would swallow everything between the first and the
+/// last regardless of what sits in between.
+fn first_balanced(text: &str, from: usize, open: char, close: char) -> &str {
+    let rel_start = text[from..].find(open).expect("no opening bracket found");
+    let start = from + rel_start;
+    let mut depth = 0i32;
+    for (i, c) in text[start..].char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return &text[start..start + i + c.len_utf8()];
+            }
+        }
+    }
+    panic!("bracket never closes");
+}
+
 /// A worked example is what an assistant copies, so it has to be valid -
 /// parseable as the very steps the runner executes.
 #[test]
 fn the_guides_worked_example_parses_as_real_steps() {
     let g = autorun_guide();
-    let start = g.find('[').expect("the guide carries no JSON example");
-    let end = g.rfind(']').expect("the guide's example is unterminated");
+    let example = first_balanced(&g, g.find("## A worked example").unwrap(), '[', ']');
     let steps: Vec<v2_lib::autorun::StepScript> =
-        serde_json::from_str(&g[start..=end]).expect("the example is not a valid script");
+        serde_json::from_str(example).expect("the example is not a valid script");
     assert!(!steps.is_empty(), "the example has no steps");
     assert!(
         steps.iter().any(|s| !s.actions.is_empty()),
         "the example has no actions"
+    );
+}
+
+/// The saving section's payload is the one shape an assistant actually
+/// has to send `save_autorun_script` - a list of scripts, each carrying
+/// `case_id` and `title` alongside its steps, not the bare steps array
+/// from the worked example above. If this drifts from what the command
+/// deserialises, the guide would be teaching the wrong shape.
+#[test]
+fn the_saving_example_parses_as_a_real_save_payload() {
+    #[derive(serde::Deserialize)]
+    struct Payload {
+        scripts: Vec<v2_lib::autorun::CaseScript>,
+    }
+    let g = autorun_guide();
+    let example = first_balanced(&g, g.find("## Saving it").unwrap(), '{', '}');
+    let payload: Payload =
+        serde_json::from_str(example).expect("the save example is not a valid payload");
+    assert_eq!(payload.scripts.len(), 1, "expected one script in the example");
+    assert!(!payload.scripts[0].title.is_empty(), "the example script has no title");
+    assert!(!payload.scripts[0].steps.is_empty(), "the example script has no steps");
+}
+
+/// The tool takes `{ case_id, title, steps }` per entry, but a reader
+/// could easily come away thinking it takes the bare steps array (that is
+/// literally what the worked example above shows). The guide has to name
+/// the actual field names somewhere, or an assistant following it
+/// literally sends the wrong shape.
+#[test]
+fn the_guide_names_the_save_payloads_fields() {
+    let g = autorun_guide();
+    for term in ["case_id", "title", "scripts"] {
+        assert!(g.contains(term), "the guide never mentions `{term}`");
+    }
+    assert!(
+        g.to_lowercase().contains("timeout_ms"),
+        "the guide never calls out timeout_ms as required"
     );
 }
 
@@ -83,12 +141,24 @@ fn the_root_round_trips_for_callers_without_an_app_handle() {
     assert_eq!(configured_root(), Some(dir));
 }
 
+/// The sample lives twice on purpose: `claudedocs/` is a scratch/report
+/// directory (see the repo's CLAUDE.md) that this test must not depend
+/// on - someone tidying it up should not break the build - so a copy is
+/// kept under `tests/fixtures/` as the one this test actually reads. The
+/// `claudedocs/` copy stays for a person to open by hand.
+///
+/// No exact-count assertion: this pins the fixture parsing as a valid
+/// bundle of real scripts, not a specific catalogue size that would break
+/// every time a sample is added or removed.
 #[test]
 fn the_shipped_sample_bundle_parses_as_real_scripts() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../claudedocs/autorun-sample-scripts-pms.json");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/autorun-sample-scripts-pms.json"
+    );
     let s = std::fs::read_to_string(path).expect("sample bundle missing");
     let v: Vec<v2_lib::autorun::CaseScript> =
         serde_json::from_str(&s).expect("the shipped sample bundle does not parse");
-    assert_eq!(v.len(), 4, "expected four samples");
+    assert!(!v.is_empty(), "expected at least one sample");
     assert!(v.iter().all(|c| !c.steps.is_empty()), "a sample has no steps");
 }

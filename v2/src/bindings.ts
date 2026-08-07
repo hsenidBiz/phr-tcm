@@ -226,12 +226,22 @@ export const commands = {
 	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
 	 *  button reads back.
 	 * 
-	 *  All or nothing, like the bridge route: every entry parses before any
-	 *  file is written, because a half-applied import leaves the tester
-	 *  unable to tell which cases are current. Returns the case ids that
-	 *  landed, so the screen can say what changed rather than just "done".
+	 *  Takes a PATH, not the file's contents: the frontend used to read the
+	 *  file itself and hand over base64 text, but `atob` decodes base64 to a
+	 *  latin-1 binary string, so any non-ASCII byte (an accent, a curly
+	 *  quote, an em dash) came out mojibake, and a UTF-8 BOM made the JSON
+	 *  look corrupt before it ever reached the parser. Reading here, in Rust,
+	 *  with the same BOM handling `import_parser` already uses, sidesteps
+	 *  both.
+	 * 
+	 *  All or nothing, via `store::save_scripts_atomically`: every entry is
+	 *  validated and serialised before a single file is written, so a bad
+	 *  entry - or a filesystem error partway through a big bundle - never
+	 *  leaves the tester unable to tell which cases are current. Returns the
+	 *  case ids that landed, so the screen can say what changed rather than
+	 *  just "done".
 	 */
-	autoRunImportScripts: (json: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { json })),
+	autoRunImportScripts: (path: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { path })),
 	autoRunSaveRun: (run: LocalRun) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
 	autoRunListRuns: () => __TAURI_INVOKE<LocalRun[]>("auto_run_list_runs"),
 	/**  A run id the frontend can stamp on a new session. */

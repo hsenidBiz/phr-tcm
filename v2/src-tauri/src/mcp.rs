@@ -294,8 +294,16 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // The bridge takes the bare array, so a caller that wrapped it
             // in {scripts: [...]} and one that sent the list directly both
             // work - the wrapper is a JSON-schema convenience, not a shape
-            // the assistant should have to get right twice.
+            // the assistant should have to get right twice. Every sibling
+            // tool on this server (transform_cases, validate_cases, ...)
+            // takes its JSON payload as a STRING, so a caller that follows
+            // that pattern here sends {"scripts": "[...]"} - a
+            // Value::String, not a Value::Array. `.to_string()` on that
+            // would re-quote and escape it into a JSON string literal
+            // instead of forwarding the array text, so it is unwrapped
+            // first.
             let body = match args.get("scripts") {
+                Some(serde_json::Value::String(s)) => s.clone(),
                 Some(v) => v.to_string(),
                 None => args.to_string(),
             };

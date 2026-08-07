@@ -141,9 +141,58 @@ dashboard is shown") and step 2 is "Open the objectives group" (expected:
 
 ## Saving it
 
-Call `save_autorun_script` with the case id and that array. The app picks
-it up immediately - the case's badge turns "Script ready" and a Run
-button appears beside it.
+`save_autorun_script` does NOT take the steps array on its own - it takes
+a LIST of scripts, one entry per case, so a whole PBI can be saved in one
+call. Every field below is required; there are no defaults, including
+`wait_for`'s `timeout_ms` - leave it out and the save is rejected, not
+defaulted to something reasonable.
+
+For the case above (id 501, say):
+
+{
+  "scripts": [
+    {
+      "case_id": 501,
+      "title": "Sign in as a manager",
+      "steps": [
+        {
+          "step_number": 1,
+          "actions": [
+            { "kind": "navigate", "url": "https://app.example/login" },
+            { "kind": "wait_for", "selector": "#username", "timeout_ms": 5000 },
+            { "kind": "fill", "selector": "#username", "value": "manager@example" },
+            { "kind": "fill", "selector": "#password", "value": "REPLACE_ME" },
+            { "kind": "click", "selector": "text=Sign in" },
+            { "kind": "check_text", "value": "Dashboard" }
+          ]
+        },
+        {
+          "step_number": 2,
+          "actions": [
+            { "kind": "click", "selector": "text=Objectives" },
+            { "kind": "check_text", "value": "Objectives" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+One case is a bundle of one - it still goes through `scripts` as a
+one-entry list, not the array of steps by itself.
+
+A case id must be a real, positive Azure DevOps work item id, cannot
+repeat within the same call, and its `steps` cannot be empty - a script
+with nothing to run does not earn a "Script ready" badge.
+
+The app does NOT necessarily pick this up right away. The Auto Run screen
+disables refetch-on-window-focus (alt-tabbing back to the app refetches
+nothing), so if it is already open when you save, its "Script ready"
+badges will not update until something in the app explicitly asks it to -
+switching PBI, reopening the screen, or an edit made from its own script
+editor. If the person watching says the badge has not changed, tell them
+to navigate away from Auto Run and back rather than just switching
+windows.
 
 ## When a script is already failing
 

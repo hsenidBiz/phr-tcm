@@ -3,7 +3,10 @@
 //! records the verdict the human gave (never one the machine inferred),
 //! and nothing here has an Azure DevOps shape.
 
-use v2_lib::autorun::store::{list_runs, load_script, new_run_id, save_run, save_script};
+use v2_lib::autorun::store::{
+    list_runs, load_script, new_run_id, save_run, save_script, save_scripts_atomically,
+    SaveScriptsError,
+};
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
 
@@ -139,4 +142,98 @@ fn a_corrupt_run_file_is_skipped_rather_than_fatal() {
     let all = list_runs(dir.path());
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].id, "good");
+}
+
+fn one_step_script(case_id: i32, title: &str) -> CaseScript {
+    CaseScript {
+        case_id,
+        title: title.to_string(),
+        steps: vec![StepScript {
+            step_number: 1,
+            actions: vec![Action::CheckText { value: "ok".to_string() }],
+        }],
+    }
+}
+
+/// The whole point of the shared helper: every entry lands, and it lands
+/// with the write-then-rename shape, not a direct write.
+#[test]
+fn a_bundle_saves_every_entry() {
+    let dir = TempDir::new();
+    let bundle = vec![one_step_script(101, "First"), one_step_script(102, "Second")];
+    save_scripts_atomically(dir.path(), &bundle).unwrap();
+    assert_eq!(load_script(dir.path(), 101).unwrap().unwrap().title, "First");
+    assert_eq!(load_script(dir.path(), 102).unwrap().unwrap().title, "Second");
+}
+
+/// `case-0.json` or `case--3.json` can never correspond to a real work
+/// item - saving one would report success for a script that can never be
+/// matched back up.
+#[test]
+fn a_case_id_that_cannot_be_a_real_work_item_is_rejected() {
+    let dir = TempDir::new();
+    for bad_id in [0, -1, -100] {
+        let err = save_scripts_atomically(dir.path(), &[one_step_script(bad_id, "Bad")])
+            .expect_err(&format!("case id {bad_id} was accepted"));
+        assert!(matches!(err, SaveScriptsError::Invalid(_)));
+    }
+}
+
+/// Two entries for the same case in one bundle is ambiguous - "last wins"
+/// silently is worse than refusing and asking which one was meant.
+#[test]
+fn a_duplicate_case_id_within_one_bundle_is_rejected() {
+    let dir = TempDir::new();
+    let bundle = vec![one_step_script(55, "First"), one_step_script(55, "Second")];
+    let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate was accepted");
+    assert!(matches!(err, SaveScriptsError::Invalid(_)));
+    assert!(
+        load_script(dir.path(), 55).unwrap().is_none(),
+        "a duplicate bundle wrote something anyway"
+    );
+}
+
+/// A script with no steps runs nothing - saving it would earn a "Script
+/// ready" badge for a case that has nothing behind it.
+#[test]
+fn a_script_with_no_steps_is_rejected() {
+    let dir = TempDir::new();
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), steps: vec![] }];
+    let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
+    assert!(matches!(err, SaveScriptsError::Invalid(_)));
+}
+
+/// A step with no ACTIONS is a different thing entirely - the guide tells
+/// an assistant to leave a step like this for a manual check rather than
+/// invent a check that proves nothing. That must keep saving cleanly.
+#[test]
+fn a_step_with_no_actions_is_still_accepted() {
+    let dir = TempDir::new();
+    let bundle = vec![CaseScript {
+        case_id: 60,
+        title: "Manual step included".to_string(),
+        steps: vec![StepScript { step_number: 1, actions: vec![] }],
+    }];
+    save_scripts_atomically(dir.path(), &bundle).unwrap();
+    assert!(load_script(dir.path(), 60).unwrap().is_some());
+}
+
+/// The real atomicity claim, exercised directly against the store rather
+/// than through the bridge route: case 101's target is pre-occupied by a
+/// directory, so its write can never land. Case 100 - which validates and
+/// would otherwise write cleanly - must not end up on disk either.
+#[test]
+fn a_write_failure_for_one_entry_leaves_none_of_the_bundle_behind() {
+    let dir = TempDir::new();
+    let scripts_dir = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir).unwrap();
+    std::fs::create_dir_all(scripts_dir.join("case-101.json")).unwrap();
+
+    let bundle = vec![one_step_script(100, "Would succeed"), one_step_script(101, "Blocked")];
+    let err = save_scripts_atomically(dir.path(), &bundle).expect_err("the write should fail");
+    assert!(matches!(err, SaveScriptsError::Io(_)));
+    assert!(
+        load_script(dir.path(), 100).unwrap().is_none(),
+        "case 100 was written even though case 101 in the same bundle could not be"
+    );
 }

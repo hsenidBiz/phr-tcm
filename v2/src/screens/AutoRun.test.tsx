@@ -90,6 +90,83 @@ test("without a PBI it asks for one instead of loading", async () => {
   expect(await screen.findByText(/pick a pbi/i)).toBeInTheDocument();
 });
 
+/// The picked PATH goes to Rust, not the file's contents: reading it here
+/// and sending base64 (the old approach) mangled non-ASCII text and a BOM
+/// on the way through `atob`. This just pins the IPC contract - that the
+/// path itself is what `auto_run_import_scripts` receives - and that a
+/// successful import refreshes the badges and reports what changed.
+test("importing scripts sends the picked file's path, and the badge updates", async () => {
+  let receivedArgs: unknown = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\scripts.json";
+    if (cmd === "auto_run_import_scripts") {
+      receivedArgs = args;
+      return [201];
+    }
+  });
+  renderAutoRun();
+  render(<Toaster />);
+
+  const row = (await screen.findByText("Valid login")).closest("li");
+  if (!row) throw new Error("row for case #201 not found");
+  expect(within(row).getByText("No script")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Import scripts" }));
+
+  await waitFor(() => expect(receivedArgs).not.toBeNull());
+  expect(receivedArgs).toEqual({ path: "C:\\scripts.json" });
+  expect(await screen.findByText(/imported 1 script/i)).toBeInTheDocument();
+});
+
+/// A 60-case import naming every id would be unreadable - the toast has
+/// to fall back to a count past some point.
+test("a large import's toast names a few ids and counts the rest", async () => {
+  const ids = Array.from({ length: 14 }, (_, i) => 300 + i);
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\scripts.json";
+    if (cmd === "auto_run_import_scripts") return ids;
+  });
+  renderAutoRun();
+  render(<Toaster />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Import scripts" }));
+
+  expect(await screen.findByText(/imported 14 scripts/i)).toBeInTheDocument();
+  expect(screen.getByText(/and 4 more/i)).toBeInTheDocument();
+  // Only the first ten are spelled out.
+  expect(screen.queryByText(/314/)).not.toBeInTheDocument();
+});
+
+/// Same failure class the `typedError` rethrow comment already documents
+/// for `auto_run_open_browser` above: an IPC-level rejection (rather than
+/// a `{status: "error"}` resolution) must not leave the Import button
+/// wedged disabled or escape as an unhandled rejection - the latter is
+/// what made this suite report PASS while exiting 1 before it was fixed
+/// on this branch.
+test("a rejected import call shows an error toast and re-enables the button", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\scripts.json";
+    if (cmd === "auto_run_import_scripts") throw new Error("disk read failed");
+  });
+  renderAutoRun();
+  render(<Toaster />);
+
+  const importButton = await screen.findByRole("button", { name: "Import scripts" });
+  fireEvent.click(importButton);
+
+  await waitFor(() => expect(importButton).not.toBeDisabled());
+  expect(await screen.findByText(/could not import that file/i)).toBeInTheDocument();
+});
+
 /// The script is authored as JSON for now - an assistant will generate
 /// these later, and hand-editing is how the format gets proven first.
 /// Invalid JSON must be refused at the point of saving, not written and

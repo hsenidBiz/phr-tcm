@@ -134,15 +134,21 @@ async fn malformed_json_is_a_400_that_says_why() {
     assert!(!out.is_empty(), "a 400 with no explanation");
 }
 
-/// Every case in a bundle is written or none is. A half-applied bundle
-/// leaves the tester guessing which cases are current.
+/// This is a PARSE-gate test, not an atomicity test: `"kind": "nope"` is
+/// an action tag serde does not know, so `serde_json::from_str::<Vec
+/// <CaseScript>>` fails on the whole body before the write loop ever
+/// starts - the good case was never going to be written regardless of
+/// whether that loop is atomic. It would pass even if
+/// `store::save_scripts_atomically` wrote every entry it reached with no
+/// rollback at all. See `a_write_failure_mid_bundle_leaves_nothing_behind`
+/// below for a test that actually exercises atomicity.
 #[tokio::test]
-async fn one_bad_case_rejects_the_whole_bundle() {
+async fn a_bundle_that_fails_to_parse_writes_nothing() {
     let dir = TempDir::new();
     let _root = ROOT_LOCK.lock().unwrap();
     set_root(dir.path().to_path_buf());
     let body = serde_json::json!([
-        { "case_id": 11, "title": "Fine", "steps": [] },
+        { "case_id": 11, "title": "Fine", "steps": [{ "step_number": 1, "actions": [] }] },
         { "case_id": 12, "title": "Broken", "steps": [{ "step_number": 1, "actions": [{ "kind": "nope" }] }] }
     ])
     .to_string();
@@ -151,6 +157,37 @@ async fn one_bad_case_rejects_the_whole_bundle() {
     assert_eq!(status, 400);
     assert!(
         load_script(dir.path(), 11).unwrap().is_none(),
-        "the good case was written even though the bundle failed"
+        "the good case was written even though the bundle failed to parse"
+    );
+}
+
+/// The real atomicity claim: both cases here parse and validate fine, so
+/// the write loop is reached for both - but case 12's target path is
+/// already a directory, so its write can never succeed. If the loop wrote
+/// case 11 before discovering that, this would be the "15 of 30 written"
+/// bug the claim was supposed to rule out.
+#[tokio::test]
+async fn a_write_failure_mid_bundle_leaves_nothing_behind() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    // Occupy case 12's target filename with a directory before the save
+    // is even attempted, so its write is doomed from the start.
+    let scripts_dir = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts_dir).unwrap();
+    std::fs::create_dir_all(scripts_dir.join("case-12.json")).unwrap();
+
+    let body = serde_json::json!([
+        { "case_id": 11, "title": "Fine", "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }] },
+        { "case_id": 12, "title": "Blocked", "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }] }
+    ])
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 500, "{out}");
+    assert!(
+        load_script(dir.path(), 11).unwrap().is_none(),
+        "case 11 was written even though case 12 in the same bundle could not be"
     );
 }

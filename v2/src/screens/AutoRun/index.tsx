@@ -5,7 +5,7 @@
 // list is read from it, and the results stay in this app until the
 // feature has earned more trust than that.
 
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
@@ -18,6 +18,11 @@ import { toast } from "sonner";
 import PastRuns from "./PastRuns";
 import RunPane from "./RunPane";
 import ScriptEditor from "./ScriptEditor";
+
+// How many imported case ids the success toast spells out before it falls
+// back to a count - the same shape as the assigned-work notification
+// summary. A 60-case import naming every one of them is unreadable.
+const MAX_IDS_IN_TOAST = 10;
 
 export default function AutoRun({
   org,
@@ -55,31 +60,43 @@ export default function AutoRun({
   /** One file, many cases - the shape `save_autorun_script` writes, so an
    * assistant's whole-PBI output imports in one go. Every badge is
    * invalidated afterwards, or the rows would keep saying "No script"
-   * for the cases that just gained one. */
-  const importScripts = async () => {
-    const path = await open({
-      multiple: false,
-      filters: [{ name: "Action scripts", extensions: ["json"] }],
-    }).catch(() => null);
-    if (typeof path !== "string") return;
-    const text = await commands.readFileB64(path);
-    if (text.status === "error") {
-      toast.error(`Could not read that file: ${text.error}`);
-      return;
-    }
-    const json = atob(text.data.b64);
-    const r = await commands.autoRunImportScripts(json);
-    if (r.status === "error") {
-      toast.error(r.error);
-      return;
-    }
-    await queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
-    toast.success(
-      `Imported ${r.data.length} script${r.data.length === 1 ? "" : "s"} (case${
-        r.data.length === 1 ? "" : "s"
-      } ${r.data.join(", ")}).`,
-    );
-  };
+   * for the cases that just gained one.
+   *
+   * The path goes to Rust rather than reading the file here and sending
+   * its contents: `readFileB64` + `atob` decodes to a latin-1 binary
+   * string, so any non-ASCII byte (an accent, a curly quote) came out
+   * mojibake, and a UTF-8 BOM made the JSON look corrupt before it ever
+   * reached the parser. Rust reads the bytes itself now, the same way
+   * the test-case JSON importer does. */
+  const importScripts = useMutation({
+    mutationFn: async () => {
+      const path = await open({
+        multiple: false,
+        filters: [{ name: "Action scripts", extensions: ["json"] }],
+      });
+      if (typeof path !== "string") return null;
+      const r = await commands.autoRunImportScripts(path);
+      if (r.status === "error") throw new Error(r.error);
+      return r.data;
+    },
+    onSuccess: async (ids) => {
+      if (!ids) return;
+      await queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
+      const shown = ids.slice(0, MAX_IDS_IN_TOAST);
+      const rest = ids.length - shown.length;
+      const caseList = `${shown.join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`;
+      toast.success(
+        `Imported ${ids.length} script${ids.length === 1 ? "" : "s"} (case${
+          ids.length === 1 ? "" : "s"
+        } ${caseList}).`,
+      );
+    },
+    // The generated `typedError` wrapper rethrows when the IPC call itself
+    // rejects with an Error (rather than resolving to {status: "error"}) -
+    // react-query's mutation still routes that here, same as an explicit
+    // throw above, so this is the one place that needs to handle it.
+    onError: (e) => toast.error(`Could not import that file: ${e.message}`),
+  });
   const [running, setRunning] = useState<number | null>(null);
 
   if (!org || !pbi) {
@@ -94,7 +111,12 @@ export default function AutoRun({
       </p>
 
       <div className="flex items-center gap-2">
-        <Button size="sm" variant="outline" onClick={importScripts}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={importScripts.isPending}
+          onClick={() => importScripts.mutate()}
+        >
           <IconImport aria-hidden />
           Import scripts
         </Button>
