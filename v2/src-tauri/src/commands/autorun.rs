@@ -143,7 +143,12 @@ pub fn auto_run_load_script(
 #[tauri::command]
 #[specta::specta]
 pub fn auto_run_save_script(app: tauri::AppHandle, script: CaseScript) -> Result<(), String> {
-    store::save_script(&root(&app)?, &script)
+    // Through the same helper the bundle paths use, as a bundle of one:
+    // the script editor is a THIRD way in, and a case id of 0 or an empty
+    // step list refused from a file but accepted from the editor would be
+    // a rule that depends on which door you came through.
+    store::save_scripts_atomically(&root(&app)?, std::slice::from_ref(&script))
+        .map_err(|e| e.to_string())
 }
 
 /// Import a BUNDLE of scripts from one file - the shape an assistant
