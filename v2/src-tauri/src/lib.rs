@@ -50,7 +50,10 @@ pub use events::{CaseNoteSaved, SubmitProgress, SuiteScanProgress};
 pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{ai_bridge, ai_tools, auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
+    use commands::{
+        ai_bridge, ai_tools, auth, autorun, board, bugs, cases, discovery, misc, prs, queue, runs,
+        testplan,
+    };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
@@ -123,6 +126,14 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::materialize_shared_draft,
             ai_tools::db_server_defaults,
             ai_tools::db_server_presets,
+            autorun::auto_run_open_browser,
+            autorun::auto_run_close_browser,
+            autorun::auto_run_step,
+            autorun::auto_run_load_script,
+            autorun::auto_run_save_script,
+            autorun::auto_run_save_run,
+            autorun::auto_run_list_runs,
+            autorun::auto_run_new_id,
             queue::export_queue_html,
             discovery::list_project_tags,
             runs::result_screenshots,
