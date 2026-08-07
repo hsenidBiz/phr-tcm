@@ -75,7 +75,7 @@ impl DbServerConfig {
     fn to_server(&self) -> Result<McpServer, String> {
         let exe = self.exe_path.trim();
         if exe.is_empty() {
-            return Err("pick the PeoplesHR.DBMCPServer.exe first".into());
+            return Err("pick the database MCP server file first".into());
         }
         if !std::path::Path::new(exe).is_file() {
             return Err(format!("{exe} does not exist"));

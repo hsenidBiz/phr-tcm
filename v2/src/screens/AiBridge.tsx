@@ -124,7 +124,13 @@ export default function AiBridge() {
   const pickExe = () => {
     open({
       multiple: false,
-      filters: [{ name: "Server executable", extensions: ["exe"] }],
+      // .exe first as the common case, but any file is selectable - the
+      // server may be an extension-less binary, a script, or a shim, and
+      // the Rust side only requires that the picked path exists.
+      filters: [
+        { name: "Server executable", extensions: ["exe"] },
+        { name: "All files", extensions: ["*"] },
+      ],
     })
       .then((path) => {
         if (typeof path === "string") editDb({ exe_path: path });
