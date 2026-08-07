@@ -59,42 +59,74 @@ fn launch_starts_a_browser_that_answers_on_its_port() {
 
 use v2_lib::browser::launch::{browser_candidates, Browser};
 
-/// Chrome installs to the same two Program Files roots, under Google.
+/// Chrome installs to the two Program Files roots under Google - and,
+/// when the installer ran without elevation, to the user's own profile.
+/// That third path is not a nicety: on a locked-down work machine it is
+/// the ONLY place Chrome ever lands.
 #[test]
 fn chrome_is_looked_for_where_its_installers_put_it() {
     let found = browser_candidates(
         Browser::Chrome,
         r"C:\Program Files",
         r"C:\Program Files (x86)",
+        r"C:\Users\t\AppData\Local",
     );
     assert_eq!(
         found,
         vec![
             PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
             PathBuf::from(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+            PathBuf::from(r"C:\Users\t\AppData\Local\Google\Chrome\Application\chrome.exe"),
         ]
     );
 }
 
-/// Asking for Edge still gets Edge - the existing behaviour is the
-/// default, not something Chrome support quietly replaced.
+/// Edge is machine-wide by construction, so the per-user root is not
+/// searched for it - a stat that could never succeed, on every launch.
 #[test]
-fn edge_is_still_reachable_through_the_same_door() {
-    let found = browser_candidates(Browser::Edge, r"C:\PF", r"C:\PF86");
+fn edge_is_not_looked_for_in_the_per_user_root() {
+    let found = browser_candidates(
+        Browser::Edge,
+        r"C:\PF",
+        r"C:\PF86",
+        r"C:\Users\t\AppData\Local",
+    );
     assert_eq!(
         found,
-        edge_candidates(r"C:\PF", r"C:\PF86"),
-        "the enum path and the original helper must agree"
+        vec![
+            PathBuf::from(r"C:\PF\Microsoft\Edge\Application\msedge.exe"),
+            PathBuf::from(r"C:\PF86\Microsoft\Edge\Application\msedge.exe"),
+        ],
+        "Edge picked up a per-user candidate it can never be installed at"
     );
 }
 
-/// Both browsers are Chromium, so both take the same switches - the
-/// arguments must not have quietly become Edge-specific.
+/// The two browsers must not resolve to the same exe - a "run it in
+/// Chrome" that quietly started Edge would produce a green result for a
+/// browser nobody tested.
 #[test]
-fn both_browsers_take_the_same_debugging_switches() {
-    let args = launch_args(9444, Path::new(r"C:	mp\p"));
+fn the_two_browsers_resolve_to_different_executables() {
+    let edge = browser_candidates(Browser::Edge, r"C:\PF", r"C:\PF86", r"C:\LAD");
+    let chrome = browser_candidates(Browser::Chrome, r"C:\PF", r"C:\PF86", r"C:\LAD");
+    assert!(
+        edge.iter().all(|e| !chrome.contains(e)),
+        "Edge and Chrome share a candidate path: {edge:?} vs {chrome:?}"
+    );
+    assert!(chrome.iter().all(|c| c.to_string_lossy().contains("chrome.exe")));
+    assert!(edge.iter().all(|e| e.to_string_lossy().contains("msedge.exe")));
+}
+
+/// Both browsers are Chromium and share one `launch_args`, so the
+/// switches must stay browser-neutral - an Edge-only flag here would
+/// break every Chrome run at once.
+#[test]
+fn the_debugging_switches_name_no_particular_browser() {
+    let args = launch_args(9444, Path::new(r"C:\tmp\p"));
     assert!(args.contains(&"--remote-debugging-port=9444".to_string()));
-    assert!(!args.iter().any(|a| a.to_lowercase().contains("edge")));
+    assert!(args.iter().any(|a| a.starts_with("--user-data-dir=")));
+    assert!(!args
+        .iter()
+        .any(|a| { let l = a.to_lowercase(); l.contains("edge") || l.contains("chrome") }));
 }
 
 /// A name from settings, mapped once. An unknown value falls back to

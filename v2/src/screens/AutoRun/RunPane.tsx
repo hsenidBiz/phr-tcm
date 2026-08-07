@@ -19,6 +19,11 @@ import { IconCancel, IconConfirm } from "../../lib/actionIcons";
 
 const VERDICTS = ["Passed", "Failed", "Blocked"] as const;
 
+const BROWSERS = [
+  { value: "edge", label: "Microsoft Edge" },
+  { value: "chrome", label: "Google Chrome" },
+];
+
 const verdictTone: Record<string, string> = {
   Passed: "bg-success/20 text-success",
   Failed: "bg-danger/20 text-danger",
@@ -52,10 +57,18 @@ export default function RunPane({
   const [records, setRecords] = useState<CaseRecord[]>([]);
 
   /** Which browser to watch in. Remembered, because a person who prefers
-   * Chrome prefers it every time. */
-  const [browserName, setBrowserName] = useState(
-    () => localStorage.getItem("tcm-v2-autorun-browser") ?? "edge",
-  );
+   * Chrome prefers it every time - but only a name the picker can show:
+   * anything else would leave the dropdown blank while Rust quietly fell
+   * back to Edge, so the screen and the run would disagree. */
+  const [browserName, setBrowserName] = useState(() => {
+    const saved = localStorage.getItem("tcm-v2-autorun-browser");
+    return BROWSERS.some((b) => b.value === saved) ? (saved as string) : "edge";
+  });
+
+  /** When the person started, not when the file happened to be written -
+   * a twelve-case selection takes long enough that stamping it at the end
+   * would sort the run under the wrong time. */
+  const [startedAt] = useState(() => String(Date.now()));
 
   const script = useQuery({
     queryKey: ["autorun-script", caseId],
@@ -65,6 +78,13 @@ export default function RunPane({
 
   const [opened, setOpened] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Save and Close both write and both end the session, so exactly one
+   * of them may be in flight. Without this, a backdrop click landing
+   * while Save awaits its write starts a SECOND write from a shorter
+   * record list - and `new_run_id` is millisecond-resolution, so the two
+   * can collide on one filename and the shorter list wins. */
+  const inFlight = useRef(false);
+  const [saving, setSaving] = useState(false);
   const [results, setResults] = useState<Record<number, ActionOutcome[]>>({});
   const [verdict, setVerdict] = useState("");
   const [note, setNote] = useState("");
@@ -133,34 +153,67 @@ export default function RunPane({
     }
   };
 
-  const save = async () => {
-    const record: CaseRecord = {
-      case_id: caseId,
-      title,
-      verdict,
-      note,
-      steps: (script.data?.steps ?? []).map((s) => ({
-        step_number: s.step_number,
-        outcomes: results[s.step_number] ?? [],
-      })),
-    };
+  /** The verdict in front of the person right now, as a record. */
+  const currentRecord = (): CaseRecord => ({
+    case_id: caseId,
+    title,
+    verdict,
+    note,
+    steps: (script.data?.steps ?? []).map((s) => ({
+      step_number: s.step_number,
+      outcomes: results[s.step_number] ?? [],
+    })),
+  });
 
-    // More cases to go: bank this verdict and move on WITHOUT writing or
-    // closing the browser. One selection is one run, and the browser
-    // stays open so the next case does not pay for a fresh launch.
-    if (!isLast) {
-      setRecords((r) => [...r, record]);
-      setIdx((i) => i + 1);
-      setResults({});
-      setVerdict("");
-      setNote("");
-      return;
-    }
-
-    if (!(await writeRun([...records, record]))) return;
-    closedRef.current = true;
+  /** Every case starts from a clean browser. Keeping one profile across
+   * the selection would let case 2 pass only because case 1 signed in -
+   * a green that vanishes the moment the case is run on its own, which is
+   * the one result a test runner must never produce. A relaunch that
+   * fails drops back to the explicit button rather than leaving the
+   * person driving a window that is no longer there. */
+  const freshBrowser = async () => {
     await commands.autoRunCloseBrowser().catch(() => {});
-    onClose();
+    try {
+      const r = await commands.autoRunOpenBrowser(browserName);
+      if (r.status === "error") throw new Error(r.error);
+    } catch (e) {
+      setOpened(false);
+      toast.error(
+        `Could not open a fresh browser for the next case: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  };
+
+  const save = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      const record = currentRecord();
+
+      // More cases to go: bank this verdict and move on WITHOUT writing.
+      // One selection is one run, so nothing reaches disk until the last
+      // verdict is in (or the person walks away).
+      if (!isLast) {
+        setRecords((r) => [...r, record]);
+        setIdx((i) => i + 1);
+        setResults({});
+        setVerdict("");
+        setNote("");
+        await freshBrowser();
+        return;
+      }
+
+      if (!(await writeRun([...records, record]))) return;
+      closedRef.current = true;
+      await commands.autoRunCloseBrowser().catch(() => {});
+      onClose();
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
   };
 
   /** The one place a run reaches disk. Returns false when it did not, so
@@ -178,7 +231,7 @@ export default function RunPane({
       const r = await commands.autoRunSaveRun({
         id,
         pbi_id: pbiId,
-        started_at: String(Date.now()),
+        started_at: startedAt,
         cases: all,
       });
       if (r.status === "error") {
@@ -202,11 +255,24 @@ export default function RunPane({
   };
 
   const close = async () => {
-    // Verdicts already marked are not thrown away by walking off.
-    await writeRun(records);
-    closedRef.current = true;
-    await commands.autoRunCloseBrowser().catch(() => {});
-    onClose();
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      // Verdicts already marked are not thrown away by walking off - and
+      // that includes the one on the case in front of them, which the
+      // buttons show as chosen even though Save was never pressed.
+      const pending = verdict ? [...records, currentRecord()] : records;
+      // A failed write keeps the pane open, the same as Save: closing over
+      // it would drop every banked verdict with no way back.
+      if (!(await writeRun(pending))) return;
+      closedRef.current = true;
+      await commands.autoRunCloseBrowser().catch(() => {});
+      onClose();
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
   };
 
   return (
@@ -242,8 +308,11 @@ export default function RunPane({
                   }
                 }}
               >
-                <option value="edge">Microsoft Edge</option>
-                <option value="chrome">Google Chrome</option>
+                {BROWSERS.map((b) => (
+                  <option key={b.value} value={b.value}>
+                    {b.label}
+                  </option>
+                ))}
               </Select>
             </label>
             <Button size="sm" disabled={busy} onClick={openBrowser}>
@@ -310,11 +379,11 @@ export default function RunPane({
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={close}>
+        <Button variant="ghost" size="sm" disabled={saving} onClick={close}>
           <IconCancel aria-hidden />
           Close
         </Button>
-        <Button size="sm" disabled={!verdict} onClick={save}>
+        <Button size="sm" disabled={!verdict || saving} onClick={save}>
           <IconConfirm aria-hidden />
           {isLast ? "Save result" : "Save and next case"}
         </Button>

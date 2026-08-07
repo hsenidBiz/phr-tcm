@@ -42,22 +42,34 @@ impl Browser {
 /// Every place this browser's installers put its exe, 64-bit first. Same
 /// shape as `ai_tools::claude_cli_candidates` and for the same reason:
 /// PATH is not trustworthy enough to be the only answer.
+///
+/// `local_app_data` matters for Chrome and only for Chrome: its consumer
+/// installer run without elevation lands in the user's own profile, which
+/// is exactly what happens on a locked-down work machine where the tester
+/// cannot elevate. Edge is always machine-wide, so it never appears there
+/// - listing the path for it anyway would just be a stat that always
+/// fails.
 pub fn browser_candidates(
     which: Browser,
     program_files: &str,
     program_files_x86: &str,
+    local_app_data: &str,
 ) -> Vec<PathBuf> {
     let rel = which.relative_exe();
-    vec![
+    let mut out = vec![
         PathBuf::from(program_files).join(rel),
         PathBuf::from(program_files_x86).join(rel),
-    ]
+    ];
+    if which == Browser::Chrome {
+        out.push(PathBuf::from(local_app_data).join(rel));
+    }
+    out
 }
 
 /// Edge specifically. Kept as its own name because it reads better at the
 /// call sites that only ever meant Edge, and its test pins the paths.
 pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<PathBuf> {
-    browser_candidates(Browser::Edge, program_files, program_files_x86)
+    browser_candidates(Browser::Edge, program_files, program_files_x86, "")
 }
 
 /// The arguments the run needs: a debugging port to drive it through, a
@@ -107,10 +119,11 @@ pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
         which,
         &env_or("ProgramFiles", r"C:\Program Files"),
         &env_or("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        &env_or("LOCALAPPDATA", ""),
     );
     let exe = candidates.iter().find(|p| p.is_file()).ok_or_else(|| {
         format!(
-            "{} was not found in either Program Files - pick the other browser in Auto Run",
+            "{} is not installed on this machine - pick the other browser in Auto Run",
             which.label()
         )
     })?;
@@ -122,7 +135,7 @@ pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
     let child = Command::new(exe)
         .args(launch_args(port, &profile_dir))
         .spawn()
-        .map_err(|e| format!("could not start Edge: {e}"))?;
+        .map_err(|e| format!("could not start {}: {e}", which.label()))?;
 
     Ok(LaunchedBrowser { child, port, profile_dir })
 }

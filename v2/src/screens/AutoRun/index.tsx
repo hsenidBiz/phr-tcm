@@ -130,11 +130,13 @@ export default function AutoRun({
       return next;
     });
 
-  /** A group heading ticks or clears every scripted case under it. */
+  /** A group heading ticks or clears every scripted case under it. The
+   * "are they all on already" question is asked of `prev` inside the
+   * updater, not of the `selected` this render closed over. */
   const toggleGroup = (indices: number[]) => {
     const ids = runnableIn(indices);
-    const allOn = ids.length > 0 && ids.every((id) => selected.has(id));
     setSelected((prev) => {
+      const allOn = ids.length > 0 && ids.every((id) => prev.has(id));
       const next = new Set(prev);
       for (const id of ids) {
         if (allOn) next.delete(id);
@@ -222,7 +224,11 @@ export default function AutoRun({
             ariaLabel="Group by title"
             onCheckedChange={(on) => {
               setGrouped(on);
-              localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
+              try {
+                localStorage.setItem("tcm-v2-autorun-group", on ? "on" : "off");
+              } catch {
+                // storage unavailable -> the choice lasts this session
+              }
             }}
           />
           Group by title
@@ -321,7 +327,12 @@ export default function AutoRun({
             <RunPane
               pbiId={pbi.id}
               cases={picked}
-              onClose={() => setRunning(null)}
+              onClose={() => {
+                setRunning(null);
+                // The selection has been run - leaving it ticked invites a
+                // second run of cases that were just decided.
+                setSelected(new Set());
+              }}
             />
           );
         })()}

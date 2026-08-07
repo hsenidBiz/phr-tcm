@@ -80,7 +80,27 @@ test("Group by title folds cases sharing a prefix into one heading", async () =>
   expect(screen.getByText("Ungrouped (1)")).toBeInTheDocument();
 });
 
-test("a group heading ticks every scripted case under it, and collapsing keeps them ticked", async () => {
+test("a group heading ticks only the scripted cases under it", async () => {
+  // Three in the group, one of them without a script: the heading must
+  // take two, not three, or "Run 3 selected" would queue a case the
+  // runner has nothing to run.
+  mockList(
+    [
+      caseRow(1, "Login - valid credentials"),
+      caseRow(2, "Login - locked account"),
+      caseRow(3, "Login - expired password"),
+    ],
+    [1, 3],
+  );
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
+
+  fireEvent.click(await screen.findByText("Login (3)"));
+  expect(await screen.findByText("2 cases selected")).toBeInTheDocument();
+});
+
+test("clicking a fully ticked heading clears the group again", async () => {
   mockList(
     [caseRow(1, "Login - valid credentials"), caseRow(2, "Login - locked account")],
     [1, 2],
@@ -92,12 +112,44 @@ test("a group heading ticks every scripted case under it, and collapsing keeps t
   fireEvent.click(await screen.findByText("Login (2)"));
   expect(await screen.findByText("2 cases selected")).toBeInTheDocument();
 
+  fireEvent.click(screen.getByText("Login (2)"));
+  await waitFor(() => expect(screen.queryByText("2 cases selected")).not.toBeInTheDocument());
+});
+
+test("collapsing a group keeps its ticked cases, and says so on the heading", async () => {
+  mockList(
+    [caseRow(1, "Login - valid credentials"), caseRow(2, "Login - locked account")],
+    [1, 2],
+  );
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
+  fireEvent.click(await screen.findByText("Login (2)"));
+  await screen.findByText("2 cases selected");
+
   // Collapsing hides the rows; the count has to survive, or a person
   // cannot tell what a "Run 2 selected" is about to run.
   fireEvent.click(screen.getByRole("button", { name: "Collapse group Login" }));
   expect(screen.queryByText("Login - valid credentials")).not.toBeInTheDocument();
   expect(screen.getByText("2 cases selected")).toBeInTheDocument();
   expect(screen.getByRole("status", { name: "2 of 2 selected in Login" })).toBeInTheDocument();
+});
+
+test("the grouping choice and the collapsed groups outlive a remount", async () => {
+  const cases = [caseRow(1, "Login - valid credentials"), caseRow(2, "Login - locked account")];
+  mockList(cases, [1, 2]);
+  const first = renderScreen();
+  await screen.findByText("Login - valid credentials");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Collapse group Login" }));
+  first.unmount();
+
+  mockList(cases, [1, 2]);
+  renderScreen();
+  // Still grouped, still shut - both read back from storage on mount.
+  expect(await screen.findByText("Login (2)")).toBeInTheDocument();
+  expect(screen.queryByText("Login - valid credentials")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Expand group Login" })).toBeInTheDocument();
 });
 
 test("an unscripted case cannot be ticked, so a bulk run never queues one", async () => {
@@ -146,4 +198,18 @@ test("Clear drops the selection without opening a run", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Clear" }));
   await waitFor(() => expect(screen.queryByText("1 case selected")).not.toBeInTheDocument());
   expect(screen.queryByText("Open browser")).not.toBeInTheDocument();
+});
+
+test("finishing a run clears the selection it ran", async () => {
+  mockList([caseRow(1, "Alpha check")], [1]);
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 selected" }));
+
+  // Leaving without a verdict still ends the run - the ticks must go with
+  // it, or the next click runs the same case again by accident.
+  fireEvent.click(await screen.findByRole("button", { name: /Close/ }));
+  await waitFor(() => expect(screen.queryByText("1 case selected")).not.toBeInTheDocument());
 });
