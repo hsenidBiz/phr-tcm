@@ -60,6 +60,77 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
     },
 ];
 
+/// Turn whatever the person picked for the database server into a real
+/// invocation, or refuse. Only a launchable command may reach a config:
+/// 1.19.9/1.19.10 let "any existing path" through, and picking the repo
+/// FOLDER registered a directory as `command` - which no MCP client can
+/// spawn, so the server never started and every tool call failed silently
+/// inside the client.
+///
+/// - `.exe`/`.cmd`/`.bat`: run directly.
+/// - `.dll`: a published framework-dependent build - runs via `dotnet`.
+/// - a folder: the newest built `.exe` beneath it (`obj\` intermediates,
+///   test hosts, `node_modules` and dot-dirs excluded); an unbuilt folder
+///   is refused with the `dotnet build` instruction rather than
+///   registering something dead.
+/// - anything else (`.csproj`, `.cs`, ...): refused with guidance.
+pub fn resolve_db_command(picked: &std::path::Path) -> Result<(String, Vec<String>), String> {
+    if !picked.exists() {
+        return Err(format!("{} does not exist", picked.display()));
+    }
+    let as_string = |p: &std::path::Path| p.to_string_lossy().to_string();
+    if picked.is_file() {
+        let ext = picked
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        return match ext.as_str() {
+            "exe" | "cmd" | "bat" => Ok((as_string(picked), vec![])),
+            "dll" => Ok(("dotnet".to_string(), vec![as_string(picked)])),
+            _ => Err(format!(
+                "{} is not something an MCP client can launch - pick the built server \
+                 executable (.exe), a published .dll, or the project folder",
+                picked.display()
+            )),
+        };
+    }
+    // A folder: find the built server executable beneath it.
+    let mut found: Vec<PathBuf> = vec![];
+    let mut stack = vec![picked.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if p.is_dir() {
+                // Never intermediate build state, never a test host.
+                if name == "obj"
+                    || name == "ref"
+                    || name.contains("test")
+                    || name == "node_modules"
+                    || name.starts_with('.')
+                {
+                    continue;
+                }
+                stack.push(p);
+            } else if name.ends_with(".exe") {
+                found.push(p);
+            }
+        }
+    }
+    // Newest build wins - the one `dotnet build` just produced.
+    found.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    match found.pop() {
+        Some(exe) => Ok((as_string(&exe), vec![])),
+        None => Err(format!(
+            "no built executable found under {} - run `dotnet build` there first, then \
+             register again (the build lands in src\\...\\bin\\...\\*.exe)",
+            picked.display()
+        )),
+    }
+}
+
 /// Our own MCP server's key in every tool's config.
 pub const TCM_SERVER: &str = "tcm-testcases";
 

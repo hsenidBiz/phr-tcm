@@ -5,7 +5,8 @@
 use v2_lib::ai_tools::{
     claude_cli_candidates, command_dir, command_files, command_files_for, command_markdown,
     detect, merge_entry,
-    remove_entry, tcm_server, McpServer, COMMAND_MARKER, COMMANDS, DB_SERVER, TCM_SERVER,
+    remove_entry, resolve_db_command, tcm_server, McpServer, COMMAND_MARKER, COMMANDS,
+    DB_SERVER, TCM_SERVER,
 };
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
@@ -415,4 +416,72 @@ fn detect_reports_each_managed_server_separately() {
         !cursor.registered_servers.iter().any(|s| s == "somebody-elses"),
         "only servers this app manages are reported"
     );
+}
+
+// ---- resolve_db_command: only a real invocation may reach a config ------
+
+#[test]
+fn a_picked_exe_registers_as_itself() {
+    let dir = TempDir::new();
+    let exe = dir.path().join("PeoplesHR.DBMCPServer.exe");
+    std::fs::write(&exe, "x").unwrap();
+    let (command, args) = resolve_db_command(&exe).unwrap();
+    assert_eq!(command, exe.to_string_lossy());
+    assert!(args.is_empty());
+}
+
+#[test]
+fn a_picked_dll_runs_through_dotnet() {
+    let dir = TempDir::new();
+    let dll = dir.path().join("PeoplesHR.DBMCPServer.dll");
+    std::fs::write(&dll, "x").unwrap();
+    let (command, args) = resolve_db_command(&dll).unwrap();
+    assert_eq!(command, "dotnet");
+    assert_eq!(args, vec![dll.to_string_lossy().to_string()]);
+}
+
+/// The incident layout: the repo folder was picked, and a directory was
+/// registered as `command` - unlaunchable, so the server never started.
+/// The folder must resolve to the BUILT exe, past the obj\ intermediate
+/// apphost and the test host.
+#[test]
+fn a_picked_folder_resolves_to_the_built_exe_only() {
+    let dir = TempDir::new();
+    let bin = dir
+        .path()
+        .join("src")
+        .join("PeoplesHR.DBMCPServer")
+        .join("bin")
+        .join("Debug")
+        .join("net10.0");
+    std::fs::create_dir_all(&bin).unwrap();
+    let real = bin.join("PeoplesHR.DBMCPServer.exe");
+    std::fs::write(&real, "x").unwrap();
+    let obj = dir.path().join("src/PeoplesHR.DBMCPServer/obj/Debug/net10.0");
+    std::fs::create_dir_all(&obj).unwrap();
+    std::fs::write(obj.join("apphost.exe"), "decoy").unwrap();
+    let tests = dir.path().join("src/PeoplesHR.DBMCPServer.Tests/bin/Debug/net10.0");
+    std::fs::create_dir_all(&tests).unwrap();
+    std::fs::write(tests.join("testhost.exe"), "decoy").unwrap();
+
+    let (command, args) = resolve_db_command(dir.path()).unwrap();
+    assert_eq!(command, real.to_string_lossy());
+    assert!(args.is_empty());
+}
+
+#[test]
+fn an_unbuilt_folder_is_refused_with_the_build_instruction() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("src/PeoplesHR.DBMCPServer")).unwrap();
+    let err = resolve_db_command(dir.path()).unwrap_err();
+    assert!(err.contains("dotnet build"), "error must say how to fix it: {err}");
+}
+
+#[test]
+fn a_source_file_pick_is_refused_with_guidance() {
+    let dir = TempDir::new();
+    let proj = dir.path().join("PeoplesHR.DBMCPServer.csproj");
+    std::fs::write(&proj, "<Project/>").unwrap();
+    let err = resolve_db_command(&proj).unwrap_err();
+    assert!(err.contains("pick the built server executable"), "{err}");
 }
