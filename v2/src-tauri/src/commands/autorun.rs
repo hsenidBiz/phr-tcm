@@ -68,15 +68,31 @@ pub async fn auto_run_open_browser() -> Result<(), String> {
     let browser = launch()?;
     // The browser needs a moment to bind its port before it will answer.
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-    let cdp = Cdp::connect(browser.port).await?;
+    let cdp = match Cdp::connect(browser.port).await {
+        Ok(cdp) => cdp,
+        Err(e) => {
+            // Connect failed after the process was already spawned and its
+            // temp profile created. Without this, `browser` is dropped here
+            // (Child has no kill-on-drop) and `*slot` is never assigned, so
+            // `auto_run_close_browser` has nothing to take - the msedge.exe
+            // and its %TEMP% profile dir leak for the rest of the app's
+            // lifetime, and every retry leaks another pair.
+            close_browser(browser);
+            return Err(e);
+        }
+    };
     *slot = Some(Session { browser, cdp });
     crate::applog::info("Auto-run browser opened");
     Ok(())
 }
 
-fn close_session(mut s: Session) {
-    let _ = s.browser.child.kill();
-    let _ = std::fs::remove_dir_all(&s.browser.profile_dir);
+fn close_browser(mut browser: LaunchedBrowser) {
+    let _ = browser.child.kill();
+    let _ = std::fs::remove_dir_all(&browser.profile_dir);
+}
+
+fn close_session(s: Session) {
+    close_browser(s.browser);
 }
 
 #[tauri::command]

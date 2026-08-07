@@ -122,10 +122,10 @@ export default function App() {
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
 
-  // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
+  // Keyboard shortcuts: Ctrl+1..8 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
-    const order: Section[] = ["manual", "import", "edit", "view", "run", "suites", "ai"];
+    const order: Section[] = ["manual", "import", "edit", "view", "run", "autorun", "suites", "ai"];
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.shiftKey && e.key.toLowerCase() === "m") {

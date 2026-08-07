@@ -74,26 +74,43 @@ export default function RunPane({
 
   const openBrowser = async () => {
     setBusy(true);
-    const r = await commands.autoRunOpenBrowser();
-    setBusy(false);
-    if (r.status === "error") {
-      toast.error(`Could not open the browser: ${r.error}`);
-      return;
+    try {
+      const r = await commands.autoRunOpenBrowser();
+      if (r.status === "error") {
+        toast.error(`Could not open the browser: ${r.error}`);
+        return;
+      }
+      setOpened(true);
+    } catch (e) {
+      // The generated `typedError` wrapper rethrows when the IPC call itself
+      // rejects with an Error (rather than resolving to {status: "error"}) -
+      // without this catch that propagates as an unhandled rejection AND,
+      // because setBusy(false) below never runs, leaves this button
+      // permanently disabled with no explanation.
+      toast.error(`Could not open the browser: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
     }
-    setOpened(true);
   };
 
   const runStep = async (stepNumber: number) => {
     const step = script.data?.steps.find((s) => s.step_number === stepNumber);
     if (!step) return;
     setBusy(true);
-    const r = await commands.autoRunStep(step);
-    setBusy(false);
-    if (r.status === "error") {
-      toast.error(r.error);
-      return;
+    try {
+      const r = await commands.autoRunStep(step);
+      if (r.status === "error") {
+        toast.error(r.error);
+        return;
+      }
+      setResults((prev) => ({ ...prev, [stepNumber]: r.data }));
+    } catch (e) {
+      // See openBrowser above: a rethrown Error here would otherwise wedge
+      // every "Run step N" button disabled for the rest of the session.
+      toast.error(`Could not run step ${stepNumber}: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
     }
-    setResults((prev) => ({ ...prev, [stepNumber]: r.data }));
   };
 
   const save = async () => {
@@ -114,14 +131,22 @@ export default function RunPane({
         outcomes: results[s.step_number] ?? [],
       })),
     };
-    const r = await commands.autoRunSaveRun({
-      id: idRes,
-      pbi_id: pbiId,
-      started_at: String(Date.now()),
-      cases: [record],
-    });
-    if (r.status === "error") {
-      toast.error(`Could not save the result: ${r.error}`);
+    try {
+      const r = await commands.autoRunSaveRun({
+        id: idRes,
+        pbi_id: pbiId,
+        started_at: String(Date.now()),
+        cases: [record],
+      });
+      if (r.status === "error") {
+        toast.error(`Could not save the result: ${r.error}`);
+        return;
+      }
+    } catch (e) {
+      // Same rethrow hazard as openBrowser/runStep: an Error out of the IPC
+      // call would otherwise reject unhandled and leave the person staring
+      // at a "Save result" click that appeared to do nothing.
+      toast.error(`Could not save the result: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     toast.success("Result saved on this machine.");

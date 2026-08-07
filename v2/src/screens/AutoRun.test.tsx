@@ -1,6 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Toaster } from "sonner";
 import { afterEach, expect, test } from "vitest";
 import AutoRun from "./AutoRun";
 
@@ -145,6 +146,54 @@ test("a valid script is saved for that case id", async () => {
   expect(script.steps).toHaveLength(1);
 });
 
+/// The list's badge and Run button are driven by the SAME `["autorun-script",
+/// caseId]` query the editor reads. A save that never invalidates that key
+/// leaves both stuck on "No script" until the person leaves the section and
+/// comes back - the case they just scripted can't be run. `scriptFor201`
+/// starts null and only becomes non-null once the save handler below fires,
+/// so this fails without the invalidation (the query would keep serving its
+/// cached `null` forever, `refetchOnWindowFocus` being off).
+test("saving a script invalidates its query so the badge and Run button update in place", async () => {
+  let scriptFor201: unknown = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_save_script") {
+      scriptFor201 = {
+        case_id: 201,
+        title: "Valid login",
+        steps: [{ step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] }],
+      };
+      return null;
+    }
+  });
+  renderAutoRun();
+
+  const editButton = await screen.findByRole("button", { name: "Edit script for #201" });
+  const row = editButton.closest("li");
+  if (!row) throw new Error("row for case #201 not found");
+  expect(within(row).getByText("No script")).toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "Run #201" })).not.toBeInTheDocument();
+
+  fireEvent.click(editButton);
+  const box = await screen.findByLabelText("Action script JSON");
+  fireEvent.change(box, {
+    target: {
+      value: JSON.stringify([
+        { step_number: 1, actions: [{ kind: "check_text", value: "Dashboard" }] },
+      ]),
+    },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save script" }));
+
+  await waitFor(() => expect(within(row).getByText("Script ready")).toBeInTheDocument());
+  expect(within(row).getByRole("button", { name: "Run #201" })).toBeInTheDocument();
+});
+
 /// A case that already has a saved script has never had its load-and-prefill
 /// path exercised - both prior tests mock the load as returning null.
 test("prefills the editor with a case's existing script", async () => {
@@ -286,6 +335,47 @@ test("a failed action is shown but the human still chooses", async () => {
   expect(screen.getByRole("button", { name: "Passed" })).toBeEnabled();
 });
 
+/// The generated `typedError` wrapper rethrows when the caught value is an
+/// `Error` instance, so a transport failure on `auto_run_open_browser`
+/// rejects rather than resolving to `{status: "error"}`. Before RunPane
+/// wrapped this call in try/catch, that rejection skipped the
+/// `setBusy(false)` that follows the await, wedging "Open browser"
+/// permanently disabled with no message and leaving the rejection
+/// unhandled (the mechanism that made this suite exit 1 despite a PASS
+/// line). This asserts the button becomes usable again and a retry can
+/// still succeed.
+test("a rejected open-browser call resets busy state instead of wedging the button", async () => {
+  let attempts = 0;
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") {
+      const a = args as { caseId: number };
+      return a.caseId === 201 ? scriptFor201 : null;
+    }
+    if (cmd === "auto_run_open_browser") {
+      attempts++;
+      if (attempts === 1) throw new Error("edge failed to start");
+      return null;
+    }
+  });
+  renderAutoRun();
+  // The error surfaces as a toast - mount a Toaster alongside the screen.
+  render(<Toaster />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
+  const openButton = await screen.findByRole("button", { name: "Open browser" });
+  fireEvent.click(openButton);
+
+  await waitFor(() => expect(openButton).not.toBeDisabled());
+  expect(attempts).toBe(1);
+  expect(await screen.findByText(/could not open the browser/i)).toBeInTheDocument();
+
+  // Not wedged: pressing it again reaches the command a second time.
+  fireEvent.click(openButton);
+  await waitFor(() => expect(attempts).toBe(2));
+});
+
 /// Saving records the human's verdict and the evidence together, into a
 /// LOCAL run - and never calls anything that writes to Azure DevOps.
 test("saving stores the verdict locally and touches no ADO command", async () => {
@@ -321,10 +411,30 @@ test("saving stores the verdict locally and touches no ADO command", async () =>
   const run = (saved as unknown as { run: { cases: { verdict: string }[] } }).run;
   expect(run.cases[0].verdict).toBe("Failed");
 
-  // The guard that matters: no run-recording command was ever invoked.
-  expect(calls).not.toContain("start_test_run");
-  expect(calls).not.toContain("record_result");
-  expect(calls).not.toContain("finish_test_run");
+  // The guard that matters: nothing outside this known-safe set was ever
+  // invoked. An allowlist (rather than naming the three ADO run-recording
+  // commands we know about today) means a FOURTH write command added later
+  // - one nobody thought to add to a denylist - fails this test instead of
+  // slipping straight through it. If this trips, check whether the new
+  // command writes to Azure DevOps: if it does, this feature must not call
+  // it; if it is a genuine local/read-only addition, add it to the list
+  // below deliberately.
+  const allowed = new Set([
+    "list_test_case_fields", // read-only: field discovery for module/preconditions refs
+    "pbi_test_cases_full", // read-only: the case list itself, from ADO
+    "auto_run_load_script",
+    "auto_run_new_id",
+    "auto_run_open_browser",
+    "auto_run_step",
+    "auto_run_save_run",
+    "auto_run_close_browser",
+    "auto_run_list_runs", // read-only: PastRuns' own listing, rendered alongside this screen
+  ]);
+  for (const cmd of calls) {
+    expect(allowed.has(cmd), `unexpected command "${cmd}" - does it write to Azure DevOps?`).toBe(
+      true,
+    );
+  }
 });
 
 /// The pane opens a real Edge process with its own temp profile

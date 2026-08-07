@@ -4,7 +4,7 @@
 // later, and the format has to be proven by hand before anything
 // generates it. The case's own steps sit alongside as the reference.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type StepScript } from "../../bindings";
@@ -38,6 +38,8 @@ export default function ScriptEditor({
   steps: { action: string; expected: string }[];
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
+
   const existing = useQuery({
     queryKey: ["autorun-script", caseId],
     queryFn: () => unwrapStr(commands.autoRunLoadScript(caseId)),
@@ -82,6 +84,7 @@ export default function ScriptEditor({
       return;
     }
     toast.success("Script saved.");
+    await queryClient.invalidateQueries({ queryKey: ["autorun-script", caseId] });
     onClose();
   };
 
