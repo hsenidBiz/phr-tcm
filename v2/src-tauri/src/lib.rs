@@ -7,6 +7,7 @@ pub mod ado_git;
 pub mod ado_share;
 pub mod ado_testplan;
 pub mod applog;
+pub mod autorun;
 pub mod branchcheck;
 pub mod browser;
 pub mod bugreport;
