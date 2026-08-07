@@ -97,7 +97,13 @@ export default function RunPane({
   };
 
   const save = async () => {
-    const idRes = await commands.autoRunNewId();
+    let idRes: string;
+    try {
+      idRes = await commands.autoRunNewId();
+    } catch (e) {
+      toast.error(`Could not save the result: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     const record: CaseRecord = {
       case_id: caseId,
       title,
@@ -121,13 +127,13 @@ export default function RunPane({
     toast.success("Result saved on this machine.");
     await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
     closedRef.current = true;
-    await commands.autoRunCloseBrowser();
+    await commands.autoRunCloseBrowser().catch(() => {});
     onClose();
   };
 
   const close = async () => {
     closedRef.current = true;
-    await commands.autoRunCloseBrowser();
+    await commands.autoRunCloseBrowser().catch(() => {});
     onClose();
   };
 
