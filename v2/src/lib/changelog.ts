@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.12",
+    date: "2026-08-07",
+    items: [
+      "The AI Bridge ships knowing the company's database environments: a Default connections dropdown fills the form (Dev read-only, Dev dev-login, QA read-only), and a fresh install starts prefilled with the read-only dev connection - registering still takes an explicit click.",
+    ],
+  },
+  {
+    version: "1.19.11",
+    date: "2026-08-07",
+    items: [
+      "Registering the database MCP server can no longer write a dead entry: picking the project folder now resolves to the built .exe inside it, a .dll registers through dotnet, and an unbuilt folder or source file is refused with instructions instead of silently failing later.",
+    ],
+  },
+  {
     version: "1.19.10",
     date: "2026-08-07",
     items: [

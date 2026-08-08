@@ -195,6 +195,17 @@ export const commands = {
 	 *  PBI - a newer share for the same PBI replaces the older copy.
 	 */
 	materializeSharedDraft: (pbiId: number, cases: TestCase_Deserialize[]) => typedError<MaterializedDraft, string>(__TAURI_INVOKE("materialize_shared_draft", { pbiId, cases })),
+	/**
+	 *  The shipped defaults for the database server form - see db_defaults.rs
+	 *  for why shipping them is acceptable here. The frontend applies these
+	 *  only to a form nothing was ever saved into.
+	 */
+	dbServerDefaults: () => __TAURI_INVOKE<DbServerConfig>("db_server_defaults"),
+	/**
+	 *  The shipped environments for the AI Bridge's preset dropdown - picking
+	 *  one fills the form; nothing registers until the explicit click.
+	 */
+	dbServerPresets: () => __TAURI_INVOKE<DbPresetOut[]>("db_server_presets"),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -505,6 +516,11 @@ export type CaseNoteSaved = {
 export type CreatedItem = {
 	id: number,
 	url: string,
+};
+
+export type DbPresetOut = {
+	label: string,
+	connection_string: string,
 };
 
 /**

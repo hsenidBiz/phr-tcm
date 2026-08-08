@@ -60,7 +60,7 @@ pub fn register_ai_tool(id: String) -> Result<(), String> {
 /// assistant can read the schema and the test cases in one session. The
 /// server itself is configured entirely through environment variables
 /// (see its README); we only place them in the tool's config.
-#[derive(serde::Deserialize, specta::Type)]
+#[derive(serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct DbServerConfig {
     /// Path to the built PeoplesHR.DBMCPServer.exe.
     pub exe_path: String,
@@ -77,11 +77,10 @@ impl DbServerConfig {
         if exe.is_empty() {
             return Err("pick the database MCP server first".into());
         }
-        // Whatever was picked - the built exe, a published .dll, or the
-        // project folder - resolve it into an invocation an MCP client can
-        // actually spawn. Registering the picked path verbatim once wrote a
-        // DIRECTORY as the command: the client failed to launch it silently
-        // and every tool call died before the server existed.
+        // Only a real invocation may reach the config: the resolver turns
+        // an exe/dll/folder pick into command+args, and refuses anything
+        // an MCP client could not launch (a bare directory was registered
+        // once - the server never started, silently).
         let (command, args) = crate::ai_tools::resolve_db_command(std::path::Path::new(exe))?;
         if self.db_type.trim().is_empty() {
             return Err("DB_TYPE is required".into());
@@ -110,6 +109,40 @@ impl DbServerConfig {
             env,
         })
     }
+}
+
+/// The shipped defaults for the database server form - see db_defaults.rs
+/// for why shipping them is acceptable here. The frontend applies these
+/// only to a form nothing was ever saved into.
+#[tauri::command]
+#[specta::specta]
+pub fn db_server_defaults() -> DbServerConfig {
+    DbServerConfig {
+        exe_path: crate::db_defaults::DEFAULT_EXE_PATH.to_string(),
+        db_type: crate::db_defaults::DEFAULT_DB_TYPE.to_string(),
+        connection_string: crate::db_defaults::default_connection_string().to_string(),
+        schema_filter: crate::db_defaults::DEFAULT_SCHEMA_FILTER.to_string(),
+    }
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct DbPresetOut {
+    pub label: String,
+    pub connection_string: String,
+}
+
+/// The shipped environments for the AI Bridge's preset dropdown - picking
+/// one fills the form; nothing registers until the explicit click.
+#[tauri::command]
+#[specta::specta]
+pub fn db_server_presets() -> Vec<DbPresetOut> {
+    crate::db_defaults::DB_PRESETS
+        .iter()
+        .map(|p| DbPresetOut {
+            label: p.label.to_string(),
+            connection_string: p.connection_string.to_string(),
+        })
+        .collect()
 }
 
 #[tauri::command]

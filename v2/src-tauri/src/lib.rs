@@ -12,6 +12,7 @@ pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
 pub mod assigned_watch;
+pub mod db_defaults;
 pub mod audio;
 pub mod auth;
 pub mod capture;
@@ -118,6 +119,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::share_queue,
             queue::fetch_shared_queue,
             queue::materialize_shared_draft,
+            ai_tools::db_server_defaults,
+            ai_tools::db_server_presets,
             queue::export_queue_html,
             discovery::list_project_tags,
             runs::result_screenshots,
