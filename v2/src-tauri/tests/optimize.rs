@@ -1096,3 +1096,104 @@ fn refusing_a_prefix_does_not_fall_through_to_a_shorter_one() {
         "Display an error."
     );
 }
+
+// ---- Round 4: the trimmer must not cut inside quotation marks ----------
+//
+// Caught on a notification set whose assertions ARE the quoted message
+// wording. A sentence boundary inside a quote is part of the message, not
+// the end of the outcome - cutting there drops the rest of the requirement
+// and leaves the quotation unterminated.
+
+/// The on-start notification quotes a two-sentence message and then
+/// specifies the date that follows it. The old trimmer cut at the full
+/// stop INSIDE the quote, so the case no longer asserted the end-date
+/// clause - which was the whole point of the case.
+#[test]
+fn a_sentence_boundary_inside_a_quote_is_not_a_place_to_cut() {
+    let raw = "It reads \"The Goal Planning stage of the current performance cycle \
+has now started. Please complete the required actions before\" followed by the stage's end date.";
+    assert_eq!(clean_expected(raw), raw.to_string());
+}
+
+/// A quoted message that is itself two sentences survives whole.
+#[test]
+fn a_multi_sentence_quoted_message_survives_whole() {
+    let raw = "It reads \"This is a reminder that the Goal Planning stage is currently \
+in progress. If you have any pending actions, please complete them before the deadline.\"";
+    let out = clean_expected(raw);
+    assert!(
+        out.contains("please complete them before the deadline."),
+        "the second half of the quoted message was lost: {out}"
+    );
+    assert_eq!(out.matches('"').count() % 2, 0, "unterminated quotation: {out}");
+}
+
+/// Whatever the trimmer does, what it produces must be well-formed: no
+/// odd number of quote marks, no clause severed at a comma.
+#[test]
+fn trimmed_output_never_carries_an_unterminated_quote() {
+    let raw = "It reads \"The Goal Planning stage of the current performance cycle \
+ends today. Please complete all pending actions before the deadline.\"";
+    let out = clean_expected(raw);
+    assert_eq!(out.matches('"').count() % 2, 0, "odd quote count in: {out}");
+    assert!(out.contains("all pending actions"), "quote content lost: {out}");
+}
+
+/// The rationale cut (" because ") is still wanted - but it must not leave
+/// the severed comma behind. "received,." is not a sentence.
+#[test]
+fn a_rationale_cut_does_not_leave_broken_punctuation() {
+    let out = clean_expected(
+        "No stage notification has been received, because notifications are only \
+produced for active cycles.",
+    );
+    assert_eq!(out, "No stage notification has been received.");
+}
+
+/// A rationale marker inside a quote is message text, not rationale.
+#[test]
+fn a_rationale_marker_inside_a_quote_is_not_a_cut_point() {
+    let raw = "An alert reads \"Approvals are locked because the cycle has ended\"";
+    let out = clean_expected(raw);
+    assert!(
+        out.contains("because the cycle has ended"),
+        "quoted 'because' clause was treated as rationale: {out}"
+    );
+}
+
+/// A parenthetical inside a quote is part of the message, however long.
+#[test]
+fn a_long_parenthetical_inside_a_quote_is_kept() {
+    let raw = "It reads \"Submit your review (including any attachments you have added) today\"";
+    let out = clean_expected(raw);
+    assert!(
+        out.contains("(including any attachments you have added)"),
+        "quoted parenthetical was dropped: {out}"
+    );
+}
+
+/// Punctuation-only reformatting is not a rewrite. When no sentence was
+/// actually removed from the preconditions, the text stays byte-for-byte
+/// and preconditions_rewritten stays empty - it is the signal a caller
+/// reads to know something REAL happened, and a signal that always fires
+/// is no signal.
+#[test]
+fn preconditions_are_left_alone_when_nothing_was_removed() {
+    let pre = "An active cycle exists with a \"1 Day Before Start\" trigger configured. \
+Signed in as a participant of that cycle.";
+    let (out, report) = optimize(
+        vec![case(
+            "Notification on start",
+            "Timeline",
+            pre,
+            vec![step("Wait for the stage to start", "The notification arrives")],
+        )],
+        None,
+    );
+    assert_eq!(out[0].preconditions, pre, "punctuation-only rewrite happened anyway");
+    assert!(
+        report.preconditions_rewritten.is_empty(),
+        "preconditions_rewritten fired with nothing removed: {:?}",
+        report.preconditions_rewritten
+    );
+}

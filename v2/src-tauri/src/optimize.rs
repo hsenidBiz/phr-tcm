@@ -230,7 +230,28 @@ fn starts_with_ascii_ci(s: &str, prefix: &str) -> bool {
     s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
-/// The end of the first real sentence, or None if the whole string is one.
+/// Whether byte offset `at` falls inside a quotation.
+///
+/// Round 4: the trimmer was cutting expected results at sentence
+/// boundaries INSIDE quoted message text - `It reads "...has now
+/// started. Please complete..."` lost everything after the quoted full
+/// stop, turning a case about the second half of a notification into one
+/// that never mentions it. Anything between quotes is the requirement
+/// being asserted, so no cut may land there.
+///
+/// Straight quotes have no direction, so parity stands in for nesting: an
+/// odd count of `"` before `at` means a quote is open. Curly quotes are
+/// directional and counted as open-minus-close.
+fn inside_quotes(s: &str, at: usize) -> bool {
+    let prefix = &s[..at];
+    if prefix.matches('"').count() % 2 == 1 {
+        return true;
+    }
+    prefix.matches('\u{201C}').count() > prefix.matches('\u{201D}').count()
+}
+
+/// The end of the first real sentence OUTSIDE any quotation, or None if
+/// the whole string is one sentence.
 fn sentence_break(s: &str) -> Option<usize> {
     let mut from = 0;
     while let Some(rel) = s[from..].find(". ") {
@@ -243,7 +264,7 @@ fn sentence_break(s: &str) -> Option<usize> {
             .to_lowercase();
         // A single letter is an initial ("J. Smith"), never a sentence end.
         let is_abbrev = ABBREVIATIONS.contains(&word.as_str()) || word.chars().count() == 1;
-        if !is_abbrev {
+        if !is_abbrev && !inside_quotes(s, at) {
             return Some(at);
         }
         from = at + 2;
@@ -297,7 +318,10 @@ pub fn clean_expected(raw: &str) -> String {
         while let Some(a) = s[from..].find(open).map(|i| i + from) {
             let Some(b) = s[a..].find(close).map(|i| i + a) else { break };
             let inner = &s[a + open.len_utf8()..b];
-            if inner.split_whitespace().count() >= 3 {
+            // A parenthetical inside a quotation is message text whatever
+            // its length - "(including any attachments you have added)"
+            // in a quoted alert is part of what the tester reads.
+            if inner.split_whitespace().count() >= 3 && !inside_quotes(&s, a) {
                 s = format!("{}{}", &s[..a], &s[b + close.len_utf8()..]);
                 s = squash(&s);
                 from = 0; // indices moved
@@ -308,10 +332,19 @@ pub fn clean_expected(raw: &str) -> String {
     }
 
     // Cut trailing rationale: notes, "because", "so that", "e.g.".
-    for marker in [" note:", " notes:", " because ", " so that ", " e.g.", " i.e."] {
-        if let Some(i) = find_ascii_ci(&s, marker) {
-            s = s[..i].trim().to_string();
-            break;
+    // A marker inside a quotation is part of the quoted message, not
+    // commentary about it - "Approvals are locked because the cycle has
+    // ended" is the alert's own wording. Scan past quoted matches to the
+    // first one in open text.
+    'rationale: for marker in [" note:", " notes:", " because ", " so that ", " e.g.", " i.e."] {
+        let mut from = 0;
+        while let Some(rel) = find_ascii_ci(&s[from..], marker) {
+            let at = from + rel;
+            if !inside_quotes(&s, at) {
+                s = s[..at].trim().to_string();
+                break 'rationale;
+            }
+            from = at + marker.len();
         }
     }
 
@@ -371,11 +404,25 @@ pub fn clean_expected(raw: &str) -> String {
         }
     }
 
-    let s = s.trim_end_matches(['.', ' ']).trim().to_string();
+    // A cut that landed just after a clause leaves its comma behind, and
+    // "received,." is not a sentence - drop the severed connective before
+    // the final full stop goes on.
+    let s = s
+        .trim_end_matches(['.', ' '])
+        .trim_end_matches([',', ';', ':', ' '])
+        .trim()
+        .to_string();
     if s.is_empty() {
         return squash(raw); // trimming ate everything - keep the original
     }
-    format!("{}.", sentence_case(&s))
+    let out = format!("{}.", sentence_case(&s));
+    // Belt over the braces above: if anything still managed to sever a
+    // quotation, the trim was wrong by construction - losing a tidy-up is
+    // cheaper than shipping a case that asserts half a message.
+    if out.matches('"').count() % 2 == 1 {
+        return squash(raw);
+    }
+    out
 }
 
 /// Everything in preconditions that is NOT navigation - the state a
@@ -739,14 +786,22 @@ pub fn optimize_with(
             steps.append(&mut c.steps);
             c.steps = steps;
 
-            let before_text = squash(&c.preconditions);
-            let after_text = sentences(&c.preconditions)
+            // Rewrite the preconditions ONLY when a sentence was actually
+            // consumed into the preamble. The join below reformats ". "
+            // into "; " and drops the closing full stop, so comparing
+            // rewritten-vs-original always differed and the report fired
+            // on every case - which made an empty preconditions_rewritten
+            // useless as the signal that nothing real happened (round 4;
+            // round 2 had used exactly that emptiness as evidence).
+            let kept: Vec<String> = sentences(&c.preconditions)
                 .into_iter()
                 .filter(|s| !consumed.contains(s))
-                .map(|s| sentence_case(&s))
-                .collect::<Vec<_>>()
-                .join("; ");
-            if squash(&after_text) != before_text {
+                .collect();
+            let removed_any = kept.len() != sentences(&c.preconditions).len();
+            if removed_any {
+                let before_text = squash(&c.preconditions);
+                let after_text =
+                    kept.iter().map(|s| sentence_case(s)).collect::<Vec<_>>().join("; ");
                 report.preconditions_rewritten.push(PreconditionChange {
                     title: c.title.clone(),
                     before: before_text,
