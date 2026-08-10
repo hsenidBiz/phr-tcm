@@ -74,7 +74,7 @@ export default function RunPanel({
       else next.add(pointId);
       return next;
     });
-  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+  const [collapsedGroups, toggleCollapsed, collapseGroups] = usePersistedStringSet(
     "tcm-v2-run-collapsed-groups",
   );
 
@@ -240,6 +240,12 @@ export default function RunPanel({
       pts: indices.map((i) => filtered[i]),
     }));
   }, [filtered, grouped]);
+
+  /** Groups on screen that are not yet folded - what the sticky
+   * "Collapse groups" button acts on. Empty while grouping is off. */
+  const openGroupNames = sections
+    .map((g) => g.name)
+    .filter((n) => n && !collapsedGroups.has(n));
 
   // A collapsed group hides its LIST, not the case someone is reading:
   // rows with an open preview stay rendered until closed - their own
@@ -534,18 +540,38 @@ export default function RunPanel({
           bar owns the right corner, so the two can show together without
           covering each other. Portalled for the same AnimatedContent
           reason as the bar below. */}
-      {expanded.size > 0 &&
+      {(expanded.size > 0 || openGroupNames.length > 0) &&
         createPortal(
-          <div className="fixed bottom-6 left-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
-            <Button
-              size="sm"
-              variant="outline"
-              className="rounded-full"
-              onClick={() => setExpanded(new Set())}
-            >
-              <IconCollapseAll aria-hidden />
-              Collapse all ({expanded.size})
-            </Button>
+          <div className="fixed bottom-6 left-6 z-40 flex items-center gap-2">
+            {expanded.size > 0 && (
+              <div className="rounded-full border border-border bg-surface shadow-2xl">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => setExpanded(new Set())}
+                >
+                  <IconCollapseAll aria-hidden />
+                  Collapse all ({expanded.size})
+                </Button>
+              </div>
+            )}
+            {/* Same intent split as View Test Cases: previews fold with
+                one button, groups with the other. Shown only while Group
+                by Title has groups left to fold. */}
+            {openGroupNames.length > 0 && (
+              <div className="rounded-full border border-border bg-surface shadow-2xl">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => collapseGroups(openGroupNames)}
+                >
+                  <IconCollapseAll aria-hidden />
+                  Collapse groups ({openGroupNames.length})
+                </Button>
+              </div>
+            )}
           </div>,
           document.body,
         )}

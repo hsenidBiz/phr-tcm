@@ -213,3 +213,30 @@ test("a collapsed group marks that it still holds a highlighted case", async () 
   fireEvent.click(screen.getByRole("button", { name: /Login \(2\)/ }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
+
+/** The sticky "Collapse groups" folds every open group at once - and only
+ * exists while Group by Title is on, because without groups there is
+ * nothing for it to fold. */
+test("Collapse groups folds every group in one press", async () => {
+  mockCases();
+  renderView();
+  await screen.findByText("Login - valid");
+
+  // Grouping off: no groups, no button.
+  expect(screen.queryByRole("button", { name: /Collapse groups/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("checkbox")); // Group by title
+  fireEvent.click(screen.getByRole("button", { name: /Collapse groups/ }));
+
+  // Every group is shut: the rows are gone, the headings remain.
+  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
+  expect(screen.queryByText("Checkout")).not.toBeInTheDocument();
+  expect(screen.getByText(/Login \(/)).toBeInTheDocument();
+  // And with everything folded, the button has nothing left to offer.
+  expect(screen.queryByRole("button", { name: /Collapse groups/ })).not.toBeInTheDocument();
+  // The fold is the same persisted state the chevrons use.
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-view-collapsed-groups")!) as string[];
+  expect(stored).toContain("Login");
+  expect(stored).toContain("Ungrouped");
+});
+

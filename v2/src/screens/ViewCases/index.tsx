@@ -73,7 +73,7 @@ export default function ViewCases({
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-view") === "on",
   );
-  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+  const [collapsedGroups, toggleCollapsed, collapseGroups] = usePersistedStringSet(
     "tcm-v2-view-collapsed-groups",
   );
 
@@ -112,6 +112,11 @@ export default function ViewCases({
     }));
   }, [visible, grouped]);
   const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
+  /** Groups on screen that are not yet folded - what the sticky
+   * "Collapse groups" button acts on. Empty while grouping is off. */
+  const openGroupNames = ordered
+    .map((g) => g.group)
+    .filter((g) => g && !collapsedGroups.has(g));
 
   const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
     const idx = flat.findIndex((x) => x.id === c.id);
@@ -425,15 +430,35 @@ export default function ViewCases({
           this screen renders inside AnimatedContent, whose GSAP transform
           would make `fixed` mean the scroll region instead of the
           viewport. */}
-      {openIds.size > 0 &&
+      {(openIds.size > 0 || openGroupNames.length > 0) &&
         createPortal(
-          <div className="fixed bottom-6 left-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
+          <div className="fixed bottom-6 left-6 z-40 flex items-center gap-2">
             {/* "Collapse", not "Close" or an eraser: nothing is deleted,
                 the open detail views just fold shut. */}
-            <Button size="sm" variant="outline" className="rounded-full" onClick={() => setOpenIds(new Set())}>
-              <IconCollapseAll aria-hidden />
-              Collapse all ({openIds.size})
-            </Button>
+            {openIds.size > 0 && (
+              <div className="rounded-full border border-border bg-surface shadow-2xl">
+                <Button size="sm" variant="outline" className="rounded-full" onClick={() => setOpenIds(new Set())}>
+                  <IconCollapseAll aria-hidden />
+                  Collapse all ({openIds.size})
+                </Button>
+              </div>
+            )}
+            {/* Groups fold too, but with their own button - one press per
+                intent. Only offered while Group by Title is on and at
+                least one group is still open. */}
+            {openGroupNames.length > 0 && (
+              <div className="rounded-full border border-border bg-surface shadow-2xl">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => collapseGroups(openGroupNames)}
+                >
+                  <IconCollapseAll aria-hidden />
+                  Collapse groups ({openGroupNames.length})
+                </Button>
+              </div>
+            )}
           </div>,
           document.body,
         )}
