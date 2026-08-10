@@ -18,7 +18,7 @@ import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
 import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
-import PrThreads from "../components/PrThreads";
+import PrThreads, { isResolved } from "../components/PrThreads";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
@@ -227,6 +227,22 @@ function PrRow({
 }) {
   const [open, setOpen] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
+  // Unresolved review threads, surfaced on the COLLAPSED row - the whole
+  // point is knowing without opening anything. Same queryKey (and the same
+  // staleTime) as PrThreads uses inside the expanded detail, so this is
+  // one fetch per PR shared by both, not two. Active rows only: a
+  // completed or abandoned PR has no comment anyone still needs to
+  // resolve, and eagerly fetching threads for pages of closed PRs would
+  // multiply the panel's ADO calls for nothing (the expanded view still
+  // loads them on demand).
+  const threadInfo = useQuery({
+    queryKey: ["pr-threads", org, project, pr.repo, pr.id],
+    queryFn: () => unwrap(commands.prThreads(org, project, pr.repo, pr.id)),
+    enabled: pr.status === "active" && Boolean(org && project),
+    staleTime: 2 * 60_000,
+    retry: false,
+  });
+  const toResolve = (threadInfo.data ?? []).filter((t) => !isResolved(t.status)).length;
   const created = pr.created ? new Date(pr.created).toLocaleDateString() : "";
   const closed = pr.closed ? new Date(pr.closed).toLocaleDateString() : "";
   // Linked work items load lazily, only when the row is expanded.
@@ -311,6 +327,13 @@ function PrRow({
             {pr.has_conflicts && (
               <span className="pill-label rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
                 Conflicts
+              </span>
+            )}
+            {/* Quiet when everything is settled, like the pipeline pill -
+                the pill exists to pick out rows that still need someone. */}
+            {toResolve > 0 && (
+              <span className="pill-label rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
+                {toResolve} comment{toResolve === 1 ? "" : "s"} to resolve
               </span>
             )}
             <PipelinePill state={buildState} />

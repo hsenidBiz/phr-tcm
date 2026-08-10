@@ -451,3 +451,75 @@ test("a cached closed PR re-asks only the deployments and folds them in", async 
   const stored = JSON.parse(localStorage.getItem("tcm-v2-cache:pipe:acme/Web:42:abc")!);
   expect(stored.data[0].deployments[0].release).toBe("Release-500");
 });
+
+// ---- The comments-to-resolve pill --------------------------------------
+
+const thread = (id: number, status: string) => ({
+  id,
+  status,
+  file_path: "src/app.ts",
+  line: 3,
+  comments: [{ id: 1, author: "Kim", content: "look here", published: "2026-08-01T10:00:00Z", is_system: false }],
+  last_updated: "2026-08-01T10:00:00Z",
+});
+
+test("a row with unresolved review threads says so without being opened", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(1)], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "pr_threads")
+      return [thread(1, "active"), thread(2, ""), thread(3, "fixed")];
+  });
+  renderPanel();
+
+  // Two need someone: "active" and the empty status ADO sends for a
+  // thread never resolved either way. "fixed" is settled and not counted.
+  const row = (await screen.findByText("!1")).closest("button")!;
+  expect(await within(row).findByText("2 comments to resolve")).toBeInTheDocument();
+});
+
+test("one unresolved thread reads in the singular", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(1)], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "pr_threads") return [thread(1, "active")];
+  });
+  renderPanel();
+  const row = (await screen.findByText("!1")).closest("button")!;
+  expect(await within(row).findByText("1 comment to resolve")).toBeInTheDocument();
+});
+
+test("a fully resolved conversation shows no pill at all", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(1)], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "pr_threads") return [thread(1, "fixed"), thread(2, "wontFix"), thread(3, "closed")];
+  });
+  renderPanel();
+  await screen.findByText("!1");
+  expect(screen.queryByText(/to resolve/)).not.toBeInTheDocument();
+});
+
+test("threads are not fetched eagerly for a completed PR", async () => {
+  const asked: number[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview")
+      return {
+        awaiting: [pr(1)],
+        mine: [pr(2, { status: "completed", closed: "2026-08-01T12:00:00Z" })],
+      };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "pr_threads") {
+      asked.push((args as { prId: number }).prId);
+      return [];
+    }
+  });
+  renderPanel();
+  await screen.findByText("!1");
+  // The active row may ask; the completed one must not - eager thread
+  // calls across pages of closed PRs would multiply the panel's ADO
+  // traffic for rows nobody still needs to act on.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(asked).not.toContain(2);
+});
+
