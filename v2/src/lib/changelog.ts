@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.13",
+    date: "2026-08-10",
+    items: [
+      "Pull request rows now say how many review comments still need resolving - an amber pill beside Conflicts, gone once the conversation is settled.",
+      "View Test Cases and Run Tests gain a sticky Collapse groups button that folds every open title group in one press while Group by Title is on.",
+      "optimize_cases no longer cuts an expected result inside quotation marks: quoted message text survives whole, a severed clause can no longer end in broken punctuation, and preconditions are left untouched when nothing was actually removed.",
+      "The AI bridge now refuses write attempts with a clear reason - creating, updating or deleting in Azure DevOps must be done through the app itself - instead of a bare not-found that invited retries.",
+    ],
+  },
+  {
     version: "1.19.12",
     date: "2026-08-07",
     items: [
