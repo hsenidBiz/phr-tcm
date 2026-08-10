@@ -699,8 +699,8 @@ export default function AiBridge() {
           the AI never has to ask whether the draft is valid.
         </p>
         <p className="text-xs text-faint">
-          AI can never create, update, or delete anything in Azure DevOps
-          through this bridge - it only reads.
+          Tool is unable to create, update or delete in Azure DevOps, only
+          read data.
         </p>
       </section>
       </div>

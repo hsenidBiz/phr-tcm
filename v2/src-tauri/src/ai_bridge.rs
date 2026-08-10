@@ -168,8 +168,29 @@ pub async fn route(
             Some(c) => wiki_page(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
+        _ if smells_like_a_write(method, target) => (403, WRITE_REFUSAL.into()),
         _ => (404, String::new()),
     }
+}
+
+/// The exact sentence an assistant is handed when it tries to write. One
+/// constant, shared with the MCP layer's unknown-tool path, so the two
+/// doors give the same answer.
+pub const WRITE_REFUSAL: &str = "This action is not possible and must be done through the app itself. Giving an automated agent access to directly edit or create cases can be unsafe. This bridge only reads from Azure DevOps - draft cases into the watched JSON file and a person imports them from the app.";
+
+/// A request that was going to 404 anyway, but whose shape says the
+/// assistant wanted to WRITE - a mutating verb, or a path named after
+/// one. Those deserve the refusal sentence rather than a bare 404,
+/// because "not found" invites the assistant to retry with a different
+/// spelling; "not possible, by design" ends the attempt.
+fn smells_like_a_write(method: &str, target: &str) -> bool {
+    if matches!(method, "PUT" | "PATCH" | "DELETE") {
+        return true;
+    }
+    let path = target.split('?').next().unwrap_or("").to_ascii_lowercase();
+    ["create", "update", "delete", "edit", "write", "add-", "remove", "submit"]
+        .iter()
+        .any(|w| path.contains(w))
 }
 
 /// Reorganise a draft into a run sheet: navigation spelled out as steps,

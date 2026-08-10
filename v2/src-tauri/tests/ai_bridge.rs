@@ -37,8 +37,8 @@ async fn ping_answers_without_a_client() {
 async fn unknown_routes_404() {
     let (status, _) = route(&ctx(), None, "GET", "/secrets", "", "1.10.3").await;
     assert_eq!(status, 404);
-    let (status, _) = route(&ctx(), None, "DELETE", "/ping", "", "1.10.3").await;
-    assert_eq!(status, 404);
+    // DELETE used to fall through to the same 404; it is now a refused
+    // write - see the refusal tests at the bottom of this file.
 }
 
 #[test]
@@ -680,3 +680,44 @@ async fn run_failures_requires_a_pbi_and_a_signed_in_client() {
     assert_eq!(status, 400);
     assert!(body.contains("?pbi="));
 }
+
+// ---- Writes are refused with a sentence, not a 404 ---------------------
+//
+// The bridge is read-only toward Azure DevOps by design. An assistant
+// that tries to mutate gets told the action is impossible and unsafe to
+// automate - a bare 404 reads as "wrong spelling, try again".
+
+#[tokio::test]
+async fn a_mutating_verb_is_refused_with_the_warning() {
+    for method in ["PUT", "PATCH", "DELETE"] {
+        let (status, body) = route(&ctx(), None, method, "/cases", "", "1.0.0").await;
+        assert_eq!(status, 403, "{method} was not refused");
+        assert!(
+            body.contains("must be done through the app"),
+            "{method} refusal lost its message: {body}"
+        );
+        assert!(
+            body.contains("unsafe"),
+            "the refusal must say WHY, not just no: {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_write_shaped_path_is_refused_even_as_a_post() {
+    for path in ["/update-case", "/create-case", "/delete-case?id=7"] {
+        let (status, body) = route(&ctx(), None, "POST", path, "{}", "1.0.0").await;
+        assert_eq!(status, 403, "{path} was not refused");
+        assert!(body.contains("must be done through the app"), "{path}: {body}");
+    }
+}
+
+/// A plain unknown GET is still a quiet 404 - the refusal is for write
+/// INTENT, not for every typo.
+#[tokio::test]
+async fn an_unknown_read_is_still_a_bare_404() {
+    let (status, body) = route(&ctx(), None, "GET", "/nonsense", "", "1.0.0").await;
+    assert_eq!(status, 404);
+    assert!(body.is_empty(), "a 404 grew a body: {body}");
+}
+

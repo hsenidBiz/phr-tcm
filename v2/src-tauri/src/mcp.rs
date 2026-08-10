@@ -338,6 +338,18 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 "",
             )
         }
+        // An unknown tool whose NAME says the assistant wanted to mutate
+        // Azure DevOps gets the refusal sentence, not a bare "unknown" -
+        // "unknown tool update_test_case" reads as a spelling problem and
+        // invites another guess; the refusal ends the attempt and points
+        // at the path that is allowed.
+        other
+            if ["create", "update", "delete", "edit", "remove", "submit"]
+                .iter()
+                .any(|w| other.to_ascii_lowercase().contains(w)) =>
+        {
+            Err(crate::ai_bridge::WRITE_REFUSAL.to_string())
+        }
         other => Err(format!("unknown tool {other}")),
     };
     match outcome {
