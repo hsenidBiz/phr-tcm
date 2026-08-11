@@ -512,6 +512,11 @@ test("an empty queue offers the recent imports instead of the dead-end empty sta
 
   expect(screen.getByText("Recent JSON Imports")).toBeInTheDocument();
   expect(screen.queryByText("Nothing queued yet")).not.toBeInTheDocument();
+  // The queue itself is gone until something is imported: no header, no
+  // disabled action row, no Review button.
+  expect(screen.queryByText(/Queue for PBI/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Review 0 test cases/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Export JSON" })).not.toBeInTheDocument();
 
   // The Open button holds disabled until the existence probe answers -
   // wait for it to arm before clicking.
@@ -542,13 +547,22 @@ test("a recent whose file is gone says so and cannot be opened", async () => {
   expect(forgotten).toEqual(["C:/work/deleted.json"]);
 });
 
-test("without recents the plain empty state stays (Manual Entry passes none)", () => {
+test("with no recents recorded yet, the area explains itself instead of showing a dead queue", () => {
   mockIPC((cmd) => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "list_test_case_fields") return [];
     return null;
   });
   renderEmptyWithRecents({ recents: [] });
+  expect(screen.getByText("Recent JSON Imports")).toBeInTheDocument();
+  expect(screen.getByText(/Import a JSON file above/)).toBeInTheDocument();
+  expect(screen.queryByText(/Queue for PBI/)).not.toBeInTheDocument();
+});
+
+test("Manual Entry (no recents wiring) keeps the full queue section when empty", () => {
+  baseMocks();
+  renderQueue([]);
+  expect(screen.getByText(/Queue for PBI #42/)).toBeInTheDocument();
   expect(screen.getByText("Nothing queued yet")).toBeInTheDocument();
   expect(screen.queryByText("Recent JSON Imports")).not.toBeInTheDocument();
 });

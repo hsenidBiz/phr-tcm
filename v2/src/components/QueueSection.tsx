@@ -825,6 +825,44 @@ export default function QueueSection({
   const duplicates = queue.map((tc) => duplicateWarning(tc, existingCases));
   const hasBlockers = problems.some(Boolean);
 
+  // An empty Import-tab queue is not a queue - it is the way back in. The
+  // "Queue for PBI" header, its five action buttons and the Review button
+  // all act on cases, and with zero cases every one of them was disabled
+  // furniture. Until something is imported the section is Recent JSON
+  // Imports alone; the queue proper appears when there are cases in it.
+  // Kept whole mid-submit (progress/results/reviewing): pruning empties
+  // the queue as items are created, and the progress bar must not vanish
+  // with it. Manual Entry passes no recents and keeps the full section -
+  // its queue is the workspace itself, not a landing zone for files.
+  if (queue.length === 0 && onOpenRecent && !progress && !results && !reviewing) {
+    return (
+      <section className="space-y-2 rounded-md border border-border bg-surface p-4">
+        <h2 className="text-sm font-semibold text-text">Recent JSON Imports</h2>
+        {recentImports.length > 0 ? (
+          <>
+            <p className="text-xs text-faint">
+              Reopen a file to import its cases again - the file is re-read as it is now.
+            </p>
+            {recentImports.map((r) => (
+              <RecentImportRow
+                key={r.path}
+                path={r.path}
+                when={r.when}
+                onOpen={() => onOpenRecent(r.path)}
+                onForget={() => onForgetRecent?.(r.path)}
+              />
+            ))}
+          </>
+        ) : (
+          <p className="text-xs text-faint">
+            Files you import appear here for quick reopening. Import a JSON file above to
+            start a queue.
+          </p>
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-3 rounded-md border border-border bg-surface p-4">
       <div className="flex items-center justify-between">
@@ -956,31 +994,14 @@ export default function QueueSection({
           </div>
         )}
 
-      {queue.length === 0 &&
-        (recentImports.length > 0 && onOpenRecent ? (
-          <div className="space-y-1.5 py-1">
-            <p className="text-xs font-semibold text-muted">Recent JSON Imports</p>
-            <p className="text-xs text-faint">
-              Reopen a file to import its cases again - the file is re-read as it is now.
-            </p>
-            {recentImports.map((r) => (
-              <RecentImportRow
-                key={r.path}
-                path={r.path}
-                when={r.when}
-                onOpen={() => onOpenRecent(r.path)}
-                onForget={() => onForgetRecent?.(r.path)}
-              />
-            ))}
-          </div>
-        ) : (
-          <AstryxIsland>
-            <EmptyState
-              title="Nothing queued yet"
-              description="Add test cases above - they gather here for review before anything is created in Azure DevOps."
-            />
-          </AstryxIsland>
-        ))}
+      {queue.length === 0 && (
+        <AstryxIsland>
+          <EmptyState
+            title="Nothing queued yet"
+            description="Add test cases above - they gather here for review before anything is created in Azure DevOps."
+          />
+        </AstryxIsland>
+      )}
 
       {/* Bulk actions over a selection. Shift+click a checkbox to select a
           range. Every action here also updates the .json file each case
