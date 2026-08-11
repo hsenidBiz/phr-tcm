@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.15",
+    date: "2026-08-11",
+    items: [
+      "Delete on Edit Test Cases now only appears when Azure DevOps would actually allow it: the permission check asks about the test-artifact rights (Manage test plans / Manage test suites) as well as work-item delete, instead of showing a button the service would refuse.",
+      "Steps reorder with a drag handle - drag a step and drop it where it goes, target row highlighted. The handle still moves one place per arrow key, so keyboard reordering is not lost.",
+      "The Import tab shows Recent JSON Imports alone until something is imported - the empty queue header and its disabled buttons are gone; the queue appears when there are cases in it.",
+      "The sticky Collapse all button sits beside the sidebar instead of on top of its collapse control, sliding with it as it opens and closes. The Collapse groups button is removed, and the sidebar's bottom control is now labelled Close.",
+    ],
+  },
+  {
     version: "1.19.14",
     date: "2026-08-11",
     items: [
