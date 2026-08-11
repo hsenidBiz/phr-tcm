@@ -2,6 +2,11 @@ import { useMutation } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+  forgetRecentImport,
+  loadRecentImports,
+  recordRecentImport,
+} from "../lib/recentImports";
 import { commands, events, type PbiHit, type SharedQueue } from "../bindings";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import GeneralComments from "../components/GeneralComments";
@@ -46,6 +51,8 @@ export default function ImportFile({
 }) {
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  /** Recently imported JSON files, offered back when the queue is empty. */
+  const [recents, setRecents] = useState(loadRecentImports);
   const [shareLink, setShareLink] = useState("");
   // A fetched draft whose PBI differs from the current selection: the
   // queue is stored PER PBI, so loading it here would hide the cases the
@@ -339,12 +346,16 @@ export default function ImportFile({
   });
 
   const importFile = useMutation({
-    mutationFn: async () => {
+    // `givenPath` set: a Recent JSON Imports row - same importer, no file
+    // dialog. Absent: the Import button's normal picker flow.
+    mutationFn: async (givenPath: string | undefined) => {
       // JSON is the import format (the AI round-trip file exports produce).
-      const path = await open({
-        multiple: false,
-        filters: [{ name: "Test cases (JSON)", extensions: ["json"] }],
-      });
+      const path =
+        givenPath ??
+        (await open({
+          multiple: false,
+          filters: [{ name: "Test cases (JSON)", extensions: ["json"] }],
+        }));
       if (typeof path !== "string") return null;
       const r = await commands.parseImportFile(path);
       if (r.status === "error") throw new Error(r.error);
@@ -363,6 +374,7 @@ export default function ImportFile({
       setQueue((q) => [...q, ...data.cases]);
       setWarnings(data.warnings);
       setReport(null);
+      setRecents(recordRecentImport(path));
       // From here on, edits to this file land in the queue by themselves.
       // Re-importing the same file replaces its entry rather than adding a
       // second watch on it.
@@ -373,7 +385,17 @@ export default function ImportFile({
           (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : ""),
       );
     },
-    onError: (e) => toast.error(`Import failed: ${e.message}`),
+    // A recent whose file is gone (or unreadable) is not worth offering
+    // again - the row disappears with the explanation, rather than failing
+    // identically on every future click.
+    onError: (e, givenPath) => {
+      if (typeof givenPath === "string") {
+        setRecents(forgetRecentImport(givenPath));
+        toast.error(`Could not reopen ${fileName(givenPath)}: ${e.message}. Removed from recent imports.`);
+        return;
+      }
+      toast.error(`Import failed: ${e.message}`);
+    },
   });
 
   if (!org || !project || !pbi) {
@@ -396,7 +418,7 @@ export default function ImportFile({
           A kept "id" updates that work item; a null id creates a new case.
         </p>
         <div className="flex gap-2">
-          <Button disabled={importFile.isPending} onClick={() => importFile.mutate()}>
+          <Button disabled={importFile.isPending} onClick={() => importFile.mutate(undefined)}>
             <IconImport aria-hidden />
             {importFile.isPending ? "Importing" : "Import JSON"}
           </Button>
@@ -509,6 +531,9 @@ export default function ImportFile({
         setQueue={setQueue}
         flash={flash}
         watches={watches}
+        recentImports={recents}
+        onOpenRecent={(path) => importFile.mutate(path)}
+        onForgetRecent={(path) => setRecents(forgetRecentImport(path))}
         // Called both by Remove all and by a submit that emptied the queue.
         // Either way the import is finished, and everything that existed to
         // service it goes with it: the file watches (which would otherwise

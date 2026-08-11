@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
-import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
+import { ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
@@ -57,6 +57,72 @@ import {
 /** The shared pending-creation queue with the review gate, live progress and
  * exports. Manual Entry and Import File both render this under their own
  * input areas (v1: every tab feeds one queue). */
+/** One recently imported file. The row asks the disk whether the file
+ * still exists (fileStamp is null for a missing one) and says so instead
+ * of offering a click that can only fail - deleted files happen, and the
+ * row's job is to be honest about them. The X forgets the entry either
+ * way. */
+function RecentImportRow({
+  path,
+  when,
+  onOpen,
+  onForget,
+}: {
+  path: string;
+  when: number;
+  onOpen: () => void;
+  onForget: () => void;
+}) {
+  const exists = useQuery({
+    queryKey: ["file-exists", path],
+    queryFn: () => commands.fileStamp(path),
+    // A file can come back (restored from the bin, a re-synced share) -
+    // re-ask on mount rather than trusting a stale "gone".
+    staleTime: 0,
+    retry: false,
+  });
+  const missing = exists.isSuccess && exists.data === null;
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs",
+        missing && "opacity-70",
+      )}
+    >
+      <span className="min-w-0 flex-1 truncate">
+        <span className="text-text">{fileName(path)}</span>
+        <span className="ml-2 text-faint" title={path}>
+          {path}
+        </span>
+      </span>
+      <span className="shrink-0 text-faint">{new Date(when).toLocaleDateString()}</span>
+      {missing ? (
+        <span className="pill-label shrink-0 rounded-full bg-warning/15 px-2 text-[10px] font-medium text-warning">
+          File no longer exists
+        </span>
+      ) : (
+        <Button
+          size="sm"
+          variant="outline"
+          aria-label={`Reopen ${fileName(path)}`}
+          disabled={exists.isLoading}
+          onClick={onOpen}
+        >
+          Open
+        </Button>
+      )}
+      <button
+        aria-label={`Remove ${fileName(path)} from recent imports`}
+        title="Remove from recent imports"
+        className="shrink-0 rounded p-1 text-muted transition-colors hover:text-danger"
+        onClick={onForget}
+      >
+        <X size={13} />
+      </button>
+    </div>
+  );
+}
+
 export default function QueueSection({
   org,
   project,
@@ -67,6 +133,9 @@ export default function QueueSection({
   watches = [],
   onQueueCleared,
   onWatchPatched,
+  recentImports = [],
+  onOpenRecent,
+  onForgetRecent,
 }: {
   org: string;
   project: string;
@@ -89,6 +158,12 @@ export default function QueueSection({
    * the file's new fingerprint and snapshot - the owner of the watch list
    * moves it forward so the watcher stays silent about our own write. */
   onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
+  /** Recently imported JSON files, shown while the queue is empty so the
+   * screen offers a way back in rather than a dead end. Manual Entry
+   * passes none and keeps the plain empty state. */
+  recentImports?: { path: string; when: number }[];
+  onOpenRecent?: (path: string) => void;
+  onForgetRecent?: (path: string) => void;
 }) {
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
@@ -881,14 +956,31 @@ export default function QueueSection({
           </div>
         )}
 
-      {queue.length === 0 && (
-        <AstryxIsland>
-          <EmptyState
-            title="Nothing queued yet"
-            description="Add test cases above - they gather here for review before anything is created in Azure DevOps."
-          />
-        </AstryxIsland>
-      )}
+      {queue.length === 0 &&
+        (recentImports.length > 0 && onOpenRecent ? (
+          <div className="space-y-1.5 py-1">
+            <p className="text-xs font-semibold text-muted">Recent JSON Imports</p>
+            <p className="text-xs text-faint">
+              Reopen a file to import its cases again - the file is re-read as it is now.
+            </p>
+            {recentImports.map((r) => (
+              <RecentImportRow
+                key={r.path}
+                path={r.path}
+                when={r.when}
+                onOpen={() => onOpenRecent(r.path)}
+                onForget={() => onForgetRecent?.(r.path)}
+              />
+            ))}
+          </div>
+        ) : (
+          <AstryxIsland>
+            <EmptyState
+              title="Nothing queued yet"
+              description="Add test cases above - they gather here for review before anything is created in Azure DevOps."
+            />
+          </AstryxIsland>
+        ))}
 
       {/* Bulk actions over a selection. Shift+click a checkbox to select a
           range. Every action here also updates the .json file each case

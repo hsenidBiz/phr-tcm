@@ -472,3 +472,84 @@ test("a sticky Collapse all folds every unfolded row", async () => {
   expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
   expect(screen.getByLabelText("Expand steps of Login works")).toBeInTheDocument();
 });
+
+// ---- Recent JSON Imports in the empty state ----------------------------
+
+function renderEmptyWithRecents(opts: {
+  recents: { path: string; when: number }[];
+  onOpen?: (p: string) => void;
+  onForget?: (p: string) => void;
+}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <QueueSection
+        org="acme"
+        project="Web"
+        pbiId={42}
+        queue={[]}
+        setQueue={() => {}}
+        recentImports={opts.recents}
+        onOpenRecent={opts.onOpen ?? (() => {})}
+        onForgetRecent={opts.onForget}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+test("an empty queue offers the recent imports instead of the dead-end empty state", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "file_stamp") return "stamp-1";
+    return null;
+  });
+  const opened: string[] = [];
+  renderEmptyWithRecents({
+    recents: [{ path: "C:/work/login-cases.json", when: 1754800000000 }],
+    onOpen: (p) => opened.push(p),
+  });
+
+  expect(screen.getByText("Recent JSON Imports")).toBeInTheDocument();
+  expect(screen.queryByText("Nothing queued yet")).not.toBeInTheDocument();
+
+  // The Open button holds disabled until the existence probe answers -
+  // wait for it to arm before clicking.
+  const openBtn = await screen.findByRole("button", { name: "Reopen login-cases.json" });
+  await waitFor(() => expect(openBtn).toBeEnabled());
+  fireEvent.click(openBtn);
+  expect(opened).toEqual(["C:/work/login-cases.json"]);
+});
+
+test("a recent whose file is gone says so and cannot be opened", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "file_stamp") return null; // fileStamp: null = missing
+    return null;
+  });
+  const forgotten: string[] = [];
+  renderEmptyWithRecents({
+    recents: [{ path: "C:/work/deleted.json", when: 1754800000000 }],
+    onForget: (p) => forgotten.push(p),
+  });
+
+  expect(await screen.findByText("File no longer exists")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reopen deleted.json" })).not.toBeInTheDocument();
+
+  // The X still works - a dead entry can be cleaned up by hand.
+  fireEvent.click(screen.getByRole("button", { name: "Remove deleted.json from recent imports" }));
+  expect(forgotten).toEqual(["C:/work/deleted.json"]);
+});
+
+test("without recents the plain empty state stays (Manual Entry passes none)", () => {
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_test_case_fields") return [];
+    return null;
+  });
+  renderEmptyWithRecents({ recents: [] });
+  expect(screen.getByText("Nothing queued yet")).toBeInTheDocument();
+  expect(screen.queryByText("Recent JSON Imports")).not.toBeInTheDocument();
+});
+
