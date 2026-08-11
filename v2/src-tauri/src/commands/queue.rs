@@ -435,6 +435,39 @@ pub fn view_queue_html(
     notes: std::collections::HashMap<String, String>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
+    let path_str = render_queue_html(&app, queue, subtitle, organization, notes, palette)?;
+    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Re-render the queue page WITHOUT opening a browser - the queue report's
+/// twin of `refresh_draft_html`, for the same reason: the keep-in-step
+/// refresh used to share `view_queue_html` with the button, and the
+/// `open_path` at the end of that meant every re-render - each one
+/// triggered by nothing more than the app window regaining focus - opened
+/// ANOTHER tab on the same file. A page already open learns about the
+/// rewrite from its revision poll and pulls the new content itself;
+/// nothing here should touch the browser.
+#[tauri::command]
+#[specta::specta]
+pub fn refresh_queue_html(
+    app: tauri::AppHandle,
+    queue: Vec<model::TestCase>,
+    subtitle: String,
+    organization: String,
+    notes: std::collections::HashMap<String, String>,
+    palette: crate::webtheme::PagePalette,
+) -> Result<(), String> {
+    render_queue_html(&app, queue, subtitle, organization, notes, palette).map(|_| ())
+}
+
+fn render_queue_html(
+    app: &tauri::AppHandle,
+    queue: Vec<model::TestCase>,
+    subtitle: String,
+    organization: String,
+    notes: std::collections::HashMap<String, String>,
+    palette: crate::webtheme::PagePalette,
+) -> Result<String, String> {
     // Stable per run, for the same reason the draft report is: a name
     // carrying `queue.len()` writes a DIFFERENT file the moment a case is
     // added or removed, so the tab already open could never see the change
@@ -442,7 +475,7 @@ pub fn view_queue_html(
     let path = std::env::temp_dir().join(format!("test-cases-{}.html", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
     let note_ctx = (!organization.is_empty())
-        .then(|| ensure_note_server(&app))
+        .then(|| ensure_note_server(app))
         .flatten()
         .map(|port| import_parser::NoteCtx {
             port,
@@ -461,7 +494,7 @@ pub fn view_queue_html(
     // where to pull the fresh content from.
     crate::note_server::set_report_path(crate::note_server::REPORT_QUEUE, &path_str);
     crate::note_server::bump_revision(crate::note_server::REPORT_QUEUE);
-    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
+    Ok(path_str)
 }
 
 /// The same page for a DRAFT queue. Every case gets a comment box - drafts

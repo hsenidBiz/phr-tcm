@@ -269,6 +269,17 @@ export const commands = {
 	 *  pulls the new content itself; nothing here should touch the browser.
 	 */
 	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, owners, files, palette })),
+	/**
+	 *  Re-render the queue page WITHOUT opening a browser - the queue report's
+	 *  twin of `refresh_draft_html`, for the same reason: the keep-in-step
+	 *  refresh used to share `view_queue_html` with the button, and the
+	 *  `open_path` at the end of that meant every re-render - each one
+	 *  triggered by nothing more than the app window regaining focus - opened
+	 *  ANOTHER tab on the same file. A page already open learns about the
+	 *  rewrite from its revision poll and pulls the new content itself;
+	 *  nothing here should touch the browser.
+	 */
+	refreshQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_queue_html", { queue, subtitle, organization, notes, palette })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**

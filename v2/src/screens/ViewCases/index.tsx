@@ -196,7 +196,12 @@ export default function ViewCases({
     // would otherwise rewrite the file.
     const t = window.setTimeout(() => {
       void commands
-        .viewQueueHtml(
+        // The refresh twin, NOT viewQueueHtml: that one ends in open_path,
+        // and this effect re-runs whenever the app window regains focus
+        // (the focus listener below re-reads notes and `chosen` is a fresh
+        // array every render) - sharing the button's command opened a new
+        // browser tab on every alt-tab back to the app.
+        .refreshQueueHtml(
           chosen.map(toTestCase),
           pbiId != null ? `PBI #${pbiId}` : "",
           org,
