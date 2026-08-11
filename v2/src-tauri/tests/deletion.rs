@@ -1,4 +1,6 @@
-//! The delete path: permission-gated, recycle bin only, reported per item.
+//! The delete path: permission-gated, Test Management API only (the one
+//! deletion Azure DevOps offers for test artifacts - permanent), reported
+//! per item.
 
 use v2_lib::ado::{AdoClient, AdoError};
 use wiremock::matchers::{method, path};
@@ -44,23 +46,24 @@ async fn with_split_permission(server: &MockServer, work_item: bool, manage_test
 }
 
 #[tokio::test]
-async fn a_delete_goes_to_the_recycle_bin_and_nowhere_else() {
+async fn a_delete_goes_to_the_test_management_endpoint_and_nowhere_else() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/wit/workitems/42"))
+        .and(path("/o/p/_apis/test/testcase/42"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 42 })))
         .mount(&server)
         .await;
 
     let client = AdoClient::with_base_url("t".into(), server.uri());
-    let out = client.delete_test_cases_to_recycle_bin("o", "p", &[42]).await.unwrap();
+    let out = client.delete_test_cases_permanently("o", "p", &[42]).await.unwrap();
     assert_eq!(out.len(), 1);
     assert!(out[0].deleted);
 
-    // The URL that actually went out carries api-version and NOTHING else.
-    // The permanent-erase form differs from this by one query parameter, so
-    // asserting the real request is the only check that means anything.
+    // The URL that actually went out is the TEST MANAGEMENT endpoint with
+    // api-version and NOTHING else - not the work-item endpoint, which
+    // refuses test artifacts outright (the 2026-08-11 field failure), and
+    // whose worse-semantics query parameter stays banned by name.
     let sent = server.received_requests().await.unwrap();
     let del = sent
         .iter()
@@ -81,7 +84,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
     let c = AdoClient::with_base_url("t".into(), denied.uri());
     assert!(!c.can_delete_work_items("o", "p").await);
     assert!(matches!(
-        c.delete_test_cases_to_recycle_bin("o", "p", &[42]).await.unwrap_err(),
+        c.delete_test_cases_permanently("o", "p", &[42]).await.unwrap_err(),
         AdoError::Forbidden
     ));
     // And nothing was sent.
@@ -136,23 +139,23 @@ async fn one_failure_does_not_stop_the_others_and_is_named() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/wit/workitems/1"))
+        .and(path("/o/p/_apis/test/testcase/1"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
         .await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/wit/workitems/2"))
+        .and(path("/o/p/_apis/test/testcase/2"))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/wit/workitems/3"))
+        .and(path("/o/p/_apis/test/testcase/3"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
         .await;
 
     let out = AdoClient::with_base_url("t".into(), server.uri())
-        .delete_test_cases_to_recycle_bin("o", "p", &[1, 2, 3])
+        .delete_test_cases_permanently("o", "p", &[1, 2, 3])
         .await
         .unwrap();
     assert_eq!(out.len(), 3);
@@ -177,7 +180,7 @@ async fn an_unmapped_failure_carries_azure_devops_own_explanation() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/wit/workitems/7"))
+        .and(path("/o/p/_apis/test/testcase/7"))
         .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
             "message": "VS402625: Work item 7 cannot be deleted because it is in use."
         })))
@@ -185,7 +188,7 @@ async fn an_unmapped_failure_carries_azure_devops_own_explanation() {
         .await;
 
     let out = AdoClient::with_base_url("t".into(), server.uri())
-        .delete_test_cases_to_recycle_bin("o", "p", &[7])
+        .delete_test_cases_permanently("o", "p", &[7])
         .await
         .unwrap();
 
@@ -209,13 +212,13 @@ async fn a_throttled_delete_is_reported_as_rate_limiting() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/wit/workitems/9"))
+        .and(path("/o/p/_apis/test/testcase/9"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "7"))
         .mount(&server)
         .await;
 
     let out = AdoClient::with_base_url("t".into(), server.uri())
-        .delete_test_cases_to_recycle_bin("o", "p", &[9])
+        .delete_test_cases_permanently("o", "p", &[9])
         .await
         .unwrap();
     assert!(matches!(out[0].error, Some(AdoError::RateLimited { retry_after_secs: 7 })));

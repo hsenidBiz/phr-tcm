@@ -574,30 +574,42 @@ fn app_only_fields_never_reach_a_request_body() {
 /// The one sanctioned exception, and it is held to a TIGHTER rule than the
 /// files above rather than a looser one.
 ///
-/// `recycle.rs` may issue DELETE - that is its whole reason to exist - but
-/// `DELETE _apis/wit/workitems/{id}?destroy=true` erases a work item
-/// permanently and irrecoverably, where the plain form moves it to the
-/// project's recycle bin and it can be restored. The recoverable one is the
-/// only delete this app will ever make, and the difference is a single
-/// query parameter, so it is asserted here rather than trusted to review.
+/// `deletion.rs` may issue DELETE - that is its whole reason to exist. It
+/// targets the Test Management endpoint (`_apis/test/testcase/{id}`), the
+/// only deletion Azure DevOps offers for test artifacts, and a PERMANENT
+/// one - authorized explicitly on 2026-08-11 after the work-item endpoint
+/// refused test cases outright. What stays banned is the work-item
+/// endpoint's own permanent-erase query parameter: the wit route must
+/// never grow back, and the parameter's name appearing nowhere in the
+/// file - prose included - is what keeps the ban unsoftenable.
 #[test]
-fn the_only_delete_is_the_recoverable_one() {
-    let recycle = include_str!("../src/ado/recycle.rs");
+fn the_only_delete_is_the_test_management_one() {
+    let deletion = include_str!("../src/ado/deletion.rs");
 
     // It really is the delete path - otherwise this test passes vacuously
     // if someone renames the file or moves the call out of it.
     assert!(
-        recycle.contains(".delete("),
-        "recycle.rs is supposed to be the file that deletes"
+        deletion.contains(".delete("),
+        "deletion.rs is supposed to be the file that deletes"
     );
 
-    // Case-insensitive: ?destroy=true, DESTROY, "Destroy" in a builder -
-    // none of it. The word appears nowhere, including in prose, so that
-    // this assertion can never be weakened by a comment mentioning it.
-    let lowered = recycle.to_lowercase();
+    // And it is the test-management endpoint, not the work-item one.
+    assert!(
+        deletion.contains("_apis/test/testcase/"),
+        "the delete must go through the Test Management API"
+    );
+    assert!(
+        !deletion.contains("_apis/wit/workitems"),
+        "the work-item delete endpoint must not come back - it refuses test artifacts, and its query parameter is the banned one"
+    );
+
+    // Case-insensitive: the wit permanent-erase parameter, in any casing,
+    // in code or prose - none of it, so this assertion can never be
+    // weakened by a comment mentioning it.
+    let lowered = deletion.to_lowercase();
     assert!(
         !lowered.contains("destroy"),
-        "recycle.rs must never mention destroy - a permanent delete is not          a capability this app has"
+        "deletion.rs must never mention the wit erase parameter by name"
     );
 
     // And nothing else may quietly grow one.

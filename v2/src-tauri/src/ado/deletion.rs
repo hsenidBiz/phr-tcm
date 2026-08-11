@@ -6,23 +6,29 @@
 //! exception, carved out so the thing a reviewer has to audit is one small
 //! module rather than a relaxed rule spread across a dozen.
 //!
-//! TWO HARD LIMITS, both enforced by test rather than by discipline:
+//! ## What this delete IS: permanent, and said so
 //!
-//! 1. **Recycle bin only.** `DELETE _apis/wit/workitems/{id}` moves a work
-//!    item to the project's recycle bin, where it can be restored from the
-//!    Azure DevOps UI. Azure DevOps also accepts a query parameter on that
-//!    same endpoint which erases the item permanently and irrecoverably
-//!    instead. This app has no use for it, and `tests/ado.rs` asserts that
-//!    parameter's name appears NOWHERE in this file - including in
-//!    comments, so the assertion can never be softened by prose explaining
-//!    an exception. That is why it is described here and not named.
+//! This file used to target the work-item recycle bin, and its old name
+//! (recycle.rs) said so. That endpoint categorically refuses test work
+//! items - `InvalidDeleteWorkItemCallException`, "Use Test Management REST
+//! API to delete test artifacts" - which the field confirmed on
+//! 2026-08-11. Azure DevOps offers NO recoverable API deletion for test
+//! cases: the Test Management endpoint used here removes the case and its
+//! results IRREVERSIBLY. The user authorized that trade explicitly, and
+//! the confirm dialog says "permanent" in so many words - the one thing
+//! this file must never do is dress this up as recoverable.
+//!
+//! ## The limits that remain, enforced by test rather than discipline
+//!
+//! 1. **This endpoint and nothing else.** `DELETE
+//!    _apis/test/testcase/{id}` with api-version alone. The work-item
+//!    endpoint's permanent-erase query parameter is still banned from this
+//!    file BY NAME - including in comments - so the wit route can never
+//!    quietly grow back with the worse semantics.
 //! 2. **Permission first, and fail closed.** The app asks Azure DevOps
-//!    whether this user may delete before it offers to. Anything other than
-//!    an explicit yes - a failed request, a missing evaluation, an
-//!    unexpected shape - is treated as no.
-//!
-//! Both limits exist because a delete is the one thing this tool does that
-//! the user cannot undo from inside it.
+//!    whether this user may manage test artifacts before it offers to.
+//!    Anything other than an explicit yes - a failed request, a missing
+//!    evaluation, an unexpected shape - is treated as no.
 
 use super::{AdoClient, AdoError};
 
@@ -194,7 +200,9 @@ impl AdoClient {
         Ok(ev(0) && (ev(1) || ev(2)))
     }
 
-    /// Move work items to the project's recycle bin, one at a time.
+    /// PERMANENTLY delete test cases through the Test Management API, one
+    /// at a time. There is no undo and no bin behind this - see the module
+    /// header for why that is the only deletion Azure DevOps offers here.
     ///
     /// One failure never stops the rest - a partly-completed delete is
     /// reported item by item so the caller can say exactly which survived,
@@ -203,7 +211,7 @@ impl AdoClient {
     /// The permission is re-checked here, not just in the UI: the button
     /// being visible is not authorisation, and the check that hid it may
     /// have been made minutes ago.
-    pub async fn delete_test_cases_to_recycle_bin(
+    pub async fn delete_test_cases_permanently(
         &self,
         org: &str,
         project: &str,
@@ -217,18 +225,15 @@ impl AdoClient {
         for &id in ids {
             // The id is an i32, so the one segment that names WHAT gets
             // deleted cannot carry arbitrary text. `org` and `project` are
-            // caller-supplied strings - a previous version of this comment
-            // claimed otherwise, which is worth correcting in the one file
-            // whose safety argument is that it is short enough to audit by
-            // reading. They are the same two strings every other endpoint
-            // interpolates, and the query carries only api-version - the
-            // recoverable form. See this file's header for the parameter
-            // that is deliberately absent, and the test that keeps it so.
+            // the same two caller-supplied strings every other endpoint
+            // interpolates, and the query carries api-version and nothing
+            // else - see this file's header for the wit parameter that is
+            // deliberately absent, and the test that keeps it so.
             let url = format!(
-                "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+                "{}/{}/{}/_apis/test/testcase/{}?api-version=7.1",
                 self.base_url, org, project, id
             );
-            match self.send_recycle_delete(&url, id).await {
+            match self.send_permanent_delete(&url, id).await {
                 Ok(()) => out.push(DeleteOutcome { id, deleted: true, error: None }),
                 Err(e) => out.push(DeleteOutcome { id, deleted: false, error: Some(e) }),
             }
@@ -246,7 +251,7 @@ impl AdoClient {
     /// explained in full arrived as a bare number - in the log and in the
     /// UI both. For the one irreversible thing this app does, "400" with
     /// no sentence is not a diagnosis.
-    async fn send_recycle_delete(&self, url: &str, id: i32) -> Result<(), AdoError> {
+    async fn send_permanent_delete(&self, url: &str, id: i32) -> Result<(), AdoError> {
         super::throttle::pace().await;
         let started = std::time::Instant::now();
         let resp = self
@@ -266,7 +271,7 @@ impl AdoClient {
         // not inside one arm of the match below.
         let body = resp.text().await.unwrap_or_default();
         let ms = started.elapsed().as_millis();
-        let line = format!("DELETE work item #{id} -> {status} in {ms} ms (recycle bin)");
+        let line = format!("DELETE test case #{id} -> {status} in {ms} ms (permanent, test management api)");
         if (200..=299).contains(&status) {
             crate::applog::info(line);
         } else {

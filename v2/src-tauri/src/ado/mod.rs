@@ -11,7 +11,7 @@
 
 mod endpoints;
 /// The single, audited exception to the no-DELETE rule. See its header.
-pub mod recycle;
+pub mod deletion;
 pub mod throttle;
 mod transport;
 

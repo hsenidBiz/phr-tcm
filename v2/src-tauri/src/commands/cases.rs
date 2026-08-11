@@ -153,10 +153,11 @@ pub async fn can_delete_test_cases(
         .await)
 }
 
-/// Move test cases to the project's RECYCLE BIN, where Azure DevOps can
-/// restore them. This app has no permanent delete and issues no other
-/// DELETE anywhere - see `ado/recycle.rs`, which is the only file allowed
-/// to, and the tests that keep it that way.
+/// PERMANENTLY delete test cases through the Test Management API - the
+/// only deletion Azure DevOps offers for test artifacts, and irreversible.
+/// See `ado/deletion.rs`, the one file allowed to issue a DELETE, and the
+/// tests that keep it that way. The confirm dialog carries the warning;
+/// this command carries the audit trail.
 ///
 /// Every id is reported individually: a partly-completed delete has to be
 /// able to say which ones survived.
@@ -167,16 +168,16 @@ pub async fn delete_test_cases(
     organization: String,
     project: String,
     ids: Vec<i32>,
-) -> Result<Vec<ado::recycle::DeleteOutcome>, ado::AdoError> {
+) -> Result<Vec<ado::deletion::DeleteOutcome>, ado::AdoError> {
     if ids.is_empty() {
         return Ok(vec![]);
     }
     crate::applog::warn(format!(
-        "deleting {} test case(s) to the recycle bin in {project}: {ids:?}",
+        "PERMANENTLY deleting {} test case(s) in {project}: {ids:?}",
         ids.len()
     ));
     let token = get_fresh_token(&app).await?;
     ado::AdoClient::new(token)
-        .delete_test_cases_to_recycle_bin(&organization, &project, &ids)
+        .delete_test_cases_permanently(&organization, &project, &ids)
         .await
 }

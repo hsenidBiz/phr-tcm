@@ -1337,7 +1337,7 @@ export default function QueueSection({
                   Check the highlighted PBI above — everything here will be written to{" "}
                   <span className="font-semibold">PBI #{pbiId}</span>. Removing them afterwards{" "}
                   <span className="font-semibold">needs delete permission</span> in Azure DevOps,
-                  and this app can only move them to the recycle bin.
+                  and deleting a test case in Azure DevOps is permanent.
                 </p>
                 <div className="flex items-center gap-2">
                   <Button

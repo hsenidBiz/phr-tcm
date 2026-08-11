@@ -5,14 +5,15 @@ import { commands, type DeleteOutcome } from "../bindings";
 import { describeAdoError, unwrap } from "../lib/ipc";
 import { IconCancel, IconRemove } from "../lib/actionIcons";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { Modal } from "./ui/modal";
 
 /**
  * The confirmation for the one action this app cannot undo from inside.
  *
  * Everything else it does is a create or an update, and a mistake can be
- * edited back. A delete cannot - the recycle bin is Azure DevOps' to
- * restore from, not this app's. So the whole list is shown by id and title
+ * edited back. A delete cannot - once gone, nothing brings a test case
+ * back. So the whole list is shown by id and title
  * rather than a count: "delete 12 test cases" is not something anyone can
  * check, and the point of a confirmation is to be checkable.
  */
@@ -30,6 +31,7 @@ export default function DeleteConfirm({
   onDeleted: () => void;
 }) {
   const [failures, setFailures] = useState<DeleteOutcome[] | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
   /** How many actually went, so the panel does not claim a "rest" that
    * does not exist when every one of them failed. */
   const [deleted, setDeleted] = useState(0);
@@ -73,7 +75,7 @@ export default function DeleteConfirm({
         </h2>
         <p className="shrink-0 text-xs text-muted">
           {deleted > 0
-            ? `The other ${deleted} moved to the recycle bin. These were left exactly as they were.`
+            ? `The other ${deleted} were permanently deleted. These were left exactly as they were.`
             : "Nothing was deleted - every one of these was left exactly as it was."}
         </p>
         <ul className="min-h-0 flex-1 space-y-1 overflow-auto text-xs">
@@ -106,16 +108,15 @@ export default function DeleteConfirm({
         <h2 className="text-sm font-semibold text-text">
           Delete {cases.length} test case{cases.length === 1 ? "" : "s"}?
         </h2>
-        {/* Deliberately not an absolute promise. This app only ever asks
-            Azure DevOps for the recoverable delete - that part is ours to
-            guarantee and it is enforced by test. What happens next is
-            Azure DevOps', and its own documentation is not consistent
-            about test cases specifically, so the app does not swear to an
-            outcome it does not control and cannot check. */}
-        <p className="mt-1 text-xs text-muted">
-          This app only ever asks for the recoverable delete - it never requests a permanent
-          one. Recovering them is then up to an administrator in Azure DevOps, and this app
-          cannot put them back. Treat it as one-way from here.
+        {/* The plain truth, plainly. Azure DevOps offers NO recoverable
+            deletion for test artifacts - the work-item recycle bin refuses
+            them outright - so this goes through the Test Management API
+            and is final. The wording must never soften: a person deciding
+            to destroy twelve named cases is owed the word "permanent". */}
+        <p className="mt-1 text-xs text-danger">
+          This is permanent. Azure DevOps deletes test cases through the Test Management
+          API with no recycle bin behind it - these cases and their run history cannot be
+          restored by this app, an administrator, or anyone else.
         </p>
       </div>
 
@@ -128,6 +129,19 @@ export default function DeleteConfirm({
         ))}
       </ul>
 
+      {/* The button stays dead until the finality is acknowledged - for
+          an action with no undo, one deliberate extra click is the whole
+          difference between a decision and a slip. */}
+      <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted">
+        <Checkbox
+          checked={acknowledged}
+          ariaLabel="I understand these test cases will be permanently deleted"
+          onCheckedChange={setAcknowledged}
+        />
+        I understand {cases.length === 1 ? "this test case" : `these ${cases.length} test cases`} will
+        be permanently deleted and cannot be restored.
+      </label>
+
       <div className="flex shrink-0 justify-end gap-2">
         <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={onClose}>
           <IconCancel aria-hidden />
@@ -136,11 +150,11 @@ export default function DeleteConfirm({
         <Button
           size="sm"
           variant="danger"
-          disabled={remove.isPending || cases.length === 0}
+          disabled={remove.isPending || cases.length === 0 || !acknowledged}
           onClick={() => remove.mutate()}
         >
           <IconRemove aria-hidden />
-          {remove.isPending ? "Deleting" : `Delete ${cases.length}`}
+          {remove.isPending ? "Deleting" : `Permanently delete ${cases.length}`}
         </Button>
       </div>
     </Modal>

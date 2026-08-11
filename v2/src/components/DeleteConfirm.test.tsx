@@ -11,6 +11,18 @@ const CASES = [
   { id: 5002, title: "Login - locked account is refused" },
 ];
 
+
+/** Tick the acknowledgement, then fire the delete - the two-step every
+ * real deletion now takes. */
+function armAndDelete() {
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "I understand these test cases will be permanently deleted",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Permanently delete 2/ }));
+}
+
 function mount(onDeleted = vi.fn(), onClose = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -34,19 +46,31 @@ test("every case is listed by id and title before anything happens", () => {
   expect(screen.getByText("#5001")).toBeInTheDocument();
   expect(screen.getByText("Login - valid credentials")).toBeInTheDocument();
   expect(screen.getByText("#5002")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Delete 2/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Permanently delete 2/ })).toBeInTheDocument();
 });
 
-/** The app never REQUESTS a permanent delete, and the wording has to say
- *  so. What it must NOT do is promise recovery: that is Azure DevOps' to
- *  give, its documentation is not consistent about test cases, and this
- *  app cannot check the outcome. Pinning the old absolute wording here is
- *  what would keep an unverifiable guarantee alive. */
-test("it promises only what the app itself controls", () => {
+/** The wording owes the user the truth: Azure DevOps deletes test cases
+ * permanently, with no bin behind it - the dialog must say "permanent"
+ * outright and never dress the action up as recoverable. */
+test("it says permanent, and never claims recoverability", () => {
   mount();
-  expect(screen.getByText(/never requests a permanent/i)).toBeInTheDocument();
-  expect(screen.getByText(/one-way from here/i)).toBeInTheDocument();
-  expect(screen.queryByText(/never deletes anything permanently/i)).not.toBeInTheDocument();
+  expect(screen.getByText(/This is permanent/)).toBeInTheDocument();
+  expect(screen.getByText(/run history cannot be/)).toBeInTheDocument();
+  expect(screen.queryByText(/recoverable/i)).not.toBeInTheDocument();
+});
+
+/** No acknowledgement, no delete: the button stays dead until the
+ * finality is explicitly accepted - the one-click slip is the failure
+ * mode an irreversible action cannot afford. */
+test("the delete button is dead until the permanence is acknowledged", () => {
+  mount();
+  expect(screen.getByRole("button", { name: /Permanently delete 2/ })).toBeDisabled();
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "I understand these test cases will be permanently deleted",
+    }),
+  );
+  expect(screen.getByRole("button", { name: /Permanently delete 2/ })).toBeEnabled();
 });
 
 test("cancel sends nothing", () => {
@@ -72,7 +96,7 @@ test("delete sends exactly the listed ids", async () => {
     return null;
   });
   const { onDeleted, onClose } = mount();
-  fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
+  armAndDelete();
 
   await waitFor(() => expect(onDeleted).toHaveBeenCalled());
   expect((sent as { ids: number[] }).ids).toEqual([5001, 5002]);
@@ -92,7 +116,7 @@ test("a partial failure names what was left behind and stays open", async () => 
     return null;
   });
   const { onClose } = mount();
-  fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
+  armAndDelete();
 
   expect(await screen.findByText(/1 could not be deleted/)).toBeInTheDocument();
   expect(screen.getByText(/don't have permission/i)).toBeInTheDocument();
@@ -128,7 +152,7 @@ test("Azure DevOps' own explanation is what the failure list shows", async () =>
     return null;
   });
   mount();
-  fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
+  armAndDelete();
 
   expect(await screen.findByText(/cannot be deleted because it is in use/)).toBeInTheDocument();
   expect(screen.queryByText(/http 400/i)).not.toBeInTheDocument();
@@ -145,7 +169,7 @@ test("an all-failed delete claims nothing and keeps the selection", async () => 
     return null;
   });
   const { onDeleted, onClose } = mount();
-  fireEvent.click(screen.getByRole("button", { name: /Delete 2/ }));
+  armAndDelete();
 
   expect(await screen.findByText(/2 could not be deleted/)).toBeInTheDocument();
   expect(screen.getByText(/Nothing was deleted/)).toBeInTheDocument();
