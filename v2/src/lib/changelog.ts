@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.16",
+    date: "2026-08-11",
+    items: [
+      "Deleting test cases now works - and says what it is. Azure DevOps offers no recoverable deletion for test artifacts, so Delete goes through the Test Management API and is PERMANENT: the dialog opens with the warning, lists every case, and arms only after an explicit I-understand acknowledgement.",
+      "The Delete button appears only when Azure DevOps would actually allow the delete: the permission is checked at sign-in and again against the PBI's own area path, since area permissions are per node and a root-level yes proved refutable in the field.",
+      "Collapse all now folds everything in one press - open case details and open title groups together - on View Test Cases and Run Tests.",
+    ],
+  },
+  {
     version: "1.19.15",
     date: "2026-08-11",
     items: [
