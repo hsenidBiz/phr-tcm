@@ -79,7 +79,7 @@ export default function RunPanel({
       else next.add(pointId);
       return next;
     });
-  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+  const [collapsedGroups, toggleCollapsed, collapseGroups] = usePersistedStringSet(
     "tcm-v2-run-collapsed-groups",
   );
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
@@ -246,6 +246,12 @@ export default function RunPanel({
       pts: indices.map((i) => filtered[i]),
     }));
   }, [filtered, grouped]);
+
+  /** Groups on screen not yet folded - Collapse all folds these too. */
+  const openGroupNames = sections
+    .map((g) => g.name)
+    .filter((n) => n && !collapsedGroups.has(n));
+  const collapsible = expanded.size + openGroupNames.length;
 
   // A collapsed group hides its LIST, not the case someone is reading:
   // rows with an open preview stay rendered until closed - their own
@@ -540,7 +546,7 @@ export default function RunPanel({
           bar owns the right corner, so the two can show together without
           covering each other. Portalled for the same AnimatedContent
           reason as the bar below. */}
-      {expanded.size > 0 &&
+      {collapsible > 0 &&
         createPortal(
           /* Left offset clears the sidebar at its CURRENT width - parked at
              left-6 this sat exactly on the sidebar's Close button. */
@@ -552,10 +558,13 @@ export default function RunPanel({
               size="sm"
               variant="outline"
               className="rounded-full"
-              onClick={() => setExpanded(new Set())}
+              onClick={() => {
+                setExpanded(new Set());
+                collapseGroups(openGroupNames);
+              }}
             >
               <IconCollapseAll aria-hidden />
-              Collapse all ({expanded.size})
+              Collapse all ({collapsible})
             </Button>
           </div>,
           document.body,

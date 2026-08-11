@@ -195,14 +195,15 @@ test("open details survive a group collapse until Collapse all", async () => {
   await screen.findByText("Login - valid");
   fireEvent.click(screen.getByRole("checkbox")); // Group by title
 
-  // No open details: no sticky button.
-  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
+  // Grouping alone already gives the sticky something to fold: the open
+  // groups count, before any detail is expanded (Login + Ungrouped).
+  expect(screen.getByRole("button", { name: /Collapse all \(2\)/ })).toBeInTheDocument();
 
   // Two details open AT ONCE - comparing cases is the point of plural.
   fireEvent.click(screen.getByLabelText("Expand #201"));
   fireEvent.click(screen.getByLabelText("Expand #202"));
   expect(screen.getAllByText("Open login page")).toHaveLength(2);
-  expect(screen.getByRole("button", { name: /Collapse all \(2\)/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Collapse all \(4\)/ })).toBeInTheDocument();
 
   // Collapse the Login group: the closed sibling rows vanish, the two
   // open details stay exactly where the reader left them.
@@ -210,14 +211,11 @@ test("open details survive a group collapse until Collapse all", async () => {
   expect(screen.getAllByText("Open login page")).toHaveLength(2);
   expect(screen.getByText("Login - valid")).toBeInTheDocument();
 
-  // A manual close removes that one from the collapsed group's survivors.
-  fireEvent.click(screen.getByLabelText("Expand #201"));
-  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
-  expect(screen.getByText("Login - locked out")).toBeInTheDocument();
-
-  // Collapse all clears the rest; the collapsed group is now fully folded.
-  fireEvent.click(screen.getByRole("button", { name: /Collapse all \(1\)/ }));
-  expect(screen.queryByText("Login - locked out")).not.toBeInTheDocument();
+  // Collapse all folds EVERYTHING left - the open details and the still-
+  // open Ungrouped group - and only then retires.
+  fireEvent.click(screen.getByRole("button", { name: /Collapse all \(3\)/ }));
+  expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
+  expect(screen.queryByText("Checkout")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 });
 

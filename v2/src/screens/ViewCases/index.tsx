@@ -78,7 +78,7 @@ export default function ViewCases({
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-view") === "on",
   );
-  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+  const [collapsedGroups, toggleCollapsed, collapseGroups] = usePersistedStringSet(
     "tcm-v2-view-collapsed-groups",
   );
 
@@ -118,6 +118,11 @@ export default function ViewCases({
   }, [visible, grouped]);
   const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
+  /** Groups on screen not yet folded - Collapse all folds these too. */
+  const openGroupNames = ordered
+    .map((g) => g.group)
+    .filter((g) => g && !collapsedGroups.has(g));
+  const collapsible = openIds.size + openGroupNames.length;
 
   const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
     const idx = flat.findIndex((x) => x.id === c.id);
@@ -436,7 +441,7 @@ export default function ViewCases({
           this screen renders inside AnimatedContent, whose GSAP transform
           would make `fixed` mean the scroll region instead of the
           viewport. */}
-      {openIds.size > 0 &&
+      {collapsible > 0 &&
         createPortal(
           /* Left offset clears the sidebar at its CURRENT width - parked at
              left-6 this sat exactly on the sidebar's Close button. */
@@ -444,11 +449,20 @@ export default function ViewCases({
             className="fixed bottom-6 z-40 rounded-full border border-border bg-surface shadow-2xl transition-[left] duration-200"
             style={{ left: stickyLeftPx(sidebarCollapsed) }}
           >
-            {/* "Collapse", not "Close" or an eraser: nothing is deleted,
-                the open detail views just fold shut. */}
-            <Button size="sm" variant="outline" className="rounded-full" onClick={() => setOpenIds(new Set())}>
+            {/* "Collapse", not "Close" or an eraser: nothing is deleted -
+                open details AND open groups fold shut together, one press
+                for a tidy screen. */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="rounded-full"
+              onClick={() => {
+                setOpenIds(new Set());
+                collapseGroups(openGroupNames);
+              }}
+            >
               <IconCollapseAll aria-hidden />
-              Collapse all ({openIds.size})
+              Collapse all ({collapsible})
             </Button>
           </div>,
           document.body,

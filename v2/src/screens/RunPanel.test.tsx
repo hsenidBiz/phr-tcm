@@ -310,19 +310,21 @@ test("open previews survive a group collapse until Collapse all", async () => {
   await screen.findByText("Valid login");
   fireEvent.click(screen.getByText("Group by title"));
 
-  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
+  // Grouping alone gives the sticky its first fold target: the one open
+  // group, before any preview is expanded.
+  expect(screen.getByRole("button", { name: /Collapse all \(1\)/ })).toBeInTheDocument();
 
   // Open both previews at once.
   fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
   fireEvent.click(screen.getAllByLabelText("Expand test case")[0]);
-  expect(screen.getByRole("button", { name: /Collapse all \(2\)/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Collapse all \(3\)/ })).toBeInTheDocument();
 
   // Collapse the group: both held-open rows stay on screen.
   fireEvent.click(screen.getByLabelText(/Collapse group/));
   expect(screen.getByText("Valid login")).toBeInTheDocument();
   expect(screen.getByText("Invalid login")).toBeInTheDocument();
 
-  // Collapse all folds the group completely and the button retires.
+  // Collapse all folds the previews AND the group, then retires.
   fireEvent.click(screen.getByRole("button", { name: /Collapse all \(2\)/ }));
   expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
