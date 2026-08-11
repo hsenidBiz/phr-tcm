@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.14",
+    date: "2026-08-11",
+    items: [
+      "An empty import queue now shows Recent JSON Imports - reopen a recently imported file with one click. A file that has been deleted says so instead of failing, and disappears from the list once its import is attempted anyway.",
+      "The View Test Cases report no longer opens another browser tab every time the app regains focus - refreshing the report updates the file in place, and only the button opens a tab.",
+    ],
+  },
+  {
     version: "1.19.13",
     date: "2026-08-10",
     items: [
