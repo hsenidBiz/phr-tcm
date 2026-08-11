@@ -38,12 +38,19 @@ const caseA = {
 const caseB = { ...caseA, id: 202, title: "Login - locked out", tags: "" };
 const caseC = { ...caseA, id: 203, title: "Checkout", tags: "" };
 
-function mockCases(onView?: (queue: Array<{ update_id: number | null }>) => void) {
+function mockCases(
+  onView?: (queue: Array<{ update_id: number | null }>) => void,
+  onRefresh?: () => void,
+) {
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return [caseA, caseB, caseC];
     if (cmd === "view_queue_html") {
       onView?.((args as { queue: Array<{ update_id: number | null }> }).queue);
+      return null;
+    }
+    if (cmd === "refresh_queue_html") {
+      onRefresh?.();
       return null;
     }
   });
@@ -126,6 +133,37 @@ test("selection drives View in browser; nothing selected sends all visible", asy
   expect(screen.getByText("1 selected")).toBeInTheDocument();
   fireEvent.click(screen.getByText("Checkout"));
   expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+});
+
+test("the keep-in-step refresh never reopens the browser", async () => {
+  // The report page is a temp file the browser has open; the app keeps it
+  // current by rewriting it in the background. That rewrite must go through
+  // refresh_queue_html (write only) - it used to share view_queue_html with
+  // the button, whose open_path opened ANOTHER tab every time the app window
+  // regained focus.
+  const sent: number[][] = [];
+  let refreshes = 0;
+  mockCases(
+    (queue) => sent.push(queue.map((c) => c.update_id!)),
+    () => {
+      refreshes += 1;
+    },
+  );
+  renderView();
+
+  await screen.findByText("Login - valid");
+  fireEvent.click(screen.getByRole("button", { name: "View in browser" }));
+  await waitFor(() => expect(sent).toHaveLength(1));
+
+  // Coming back to the app re-reads notes and re-renders - the exact
+  // trigger that used to open a fresh tab per alt-tab.
+  fireEvent.click(screen.getByText("Login - valid"));
+  window.dispatchEvent(new Event("focus"));
+
+  // The 800ms debounce fires the background rewrite...
+  await waitFor(() => expect(refreshes).toBeGreaterThan(0), { timeout: 3000 });
+  // ...and the tab-opening command was never called again.
+  expect(sent).toHaveLength(1);
 });
 
 test("Group by title folds cases under shared prefixes and persists collapse", async () => {

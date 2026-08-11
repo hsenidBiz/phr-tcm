@@ -17,7 +17,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-08-11",
     items: [
       "An empty import queue now shows Recent JSON Imports - reopen a recently imported file with one click. A file that has been deleted says so instead of failing, and disappears from the list once its import is attempted anyway.",
-      "The View Test Cases report no longer opens another browser tab every time the app regains focus - refreshing the report updates the file in place, and only the button opens a tab.",
+      "Fixed: the \"View in browser\" report on View Test Cases opened another browser tab every time you came back to the app. The background rewrite that keeps an open report current shared its command with the button - and the button's command ends by opening the file. The rewrite now has its own, and the tab you already have learns about changes the way it was designed to: by offering you a refresh.",
     ],
   },
   {
