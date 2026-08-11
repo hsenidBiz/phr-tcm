@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.14",
+    date: "2026-08-11",
+    items: [
+      "Fixed: the \"View in browser\" report on View Test Cases opened another browser tab every time you came back to the app. The background rewrite that keeps an open report current shared its command with the button - and the button's command ends by opening the file. The rewrite now has its own, and the tab you already have learns about changes the way it was designed to: by offering you a refresh.",
+    ],
+  },
+  {
     version: "1.19.13",
     date: "2026-08-10",
     items: [
