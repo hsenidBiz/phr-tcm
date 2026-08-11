@@ -21,7 +21,10 @@
 //! ## The limits that remain, enforced by test rather than discipline
 //!
 //! 1. **This endpoint and nothing else.** `DELETE
-//!    _apis/test/testcase/{id}` with api-version alone. The work-item
+//!    _apis/test/testcases/{id}` with api-version alone (PLURAL - the
+//!    singular form 404s with "controller not found", which the field
+//!    found on 2026-08-11 because a how-to doc page had it wrong; the
+//!    REST reference is the authority). The work-item
 //!    endpoint's permanent-erase query parameter is still banned from this
 //!    file BY NAME - including in comments - so the wit route can never
 //!    quietly grow back with the worse semantics.
@@ -108,8 +111,21 @@ impl AdoClient {
     /// missing button and a false positive would be a promise the app
     /// cannot keep - those are not symmetrical, and this leans hard to the
     /// safe side.
-    pub async fn can_delete_work_items(&self, org: &str, project: &str) -> bool {
-        match self.evaluate_delete_permission(org, project).await {
+    /// `area_path` scopes the manage-test half of the question to a
+    /// SPECIFIC area node - the one the cases being offered for deletion
+    /// actually live under. The field taught us why root is not enough:
+    /// the TCM API refused a delete with "no permissions to delete work
+    /// items under the specified area path" for a user whose root-area
+    /// evaluation passed - area permissions are per node, and inheritance
+    /// is exactly what an org overrides. `None` falls back to the root
+    /// node (the sign-in-time check, before any PBI is chosen).
+    pub async fn can_delete_work_items(
+        &self,
+        org: &str,
+        project: &str,
+        area_path: Option<&str>,
+    ) -> bool {
+        match self.evaluate_delete_permission(org, project, area_path).await {
             Ok(allowed) => allowed,
             Err(e) => {
                 crate::applog::warn(format!(
@@ -124,6 +140,7 @@ impl AdoClient {
         &self,
         org: &str,
         project: &str,
+        area_path: Option<&str>,
     ) -> Result<bool, AdoError> {
         // The permission is held against the PROJECT, so the security token
         // is built from the project's id - which is a GUID, not the name in
@@ -141,15 +158,39 @@ impl AdoClient {
             });
         };
 
-        // The root area node's GUID, which the CSS security token is built
-        // from. No identifier is an uncertain path, and uncertain reads as
-        // no.
-        let areas = self
-            .get_json(format!(
+        // The GUID of the area node the question is about - the given
+        // area, or the root when none is. An area path arrives shaped
+        // "Project\Team\Component"; the classificationnodes URL wants the
+        // segments AFTER the project, '/'-joined and encoded one by one.
+        // No identifier is an uncertain path, and uncertain reads as no.
+        let node_url = match area_path {
+            Some(path) if !path.trim().is_empty() => {
+                let tail: Vec<String> = path
+                    .split('\\')
+                    .skip(1)
+                    .map(|seg| urlencoding::encode(seg).into_owned())
+                    .collect();
+                if tail.is_empty() {
+                    format!(
+                        "{}/{}/{}/_apis/wit/classificationnodes/areas?api-version=7.1",
+                        self.base_url, org, project
+                    )
+                } else {
+                    format!(
+                        "{}/{}/{}/_apis/wit/classificationnodes/areas/{}?api-version=7.1",
+                        self.base_url,
+                        org,
+                        project,
+                        tail.join("/")
+                    )
+                }
+            }
+            _ => format!(
                 "{}/{}/{}/_apis/wit/classificationnodes/areas?api-version=7.1",
                 self.base_url, org, project
-            ))
-            .await?;
+            ),
+        };
+        let areas = self.get_json(node_url).await?;
         let Some(area_id) = areas["identifier"].as_str() else {
             return Err(AdoError::Http {
                 status: 0,
@@ -217,7 +258,7 @@ impl AdoClient {
         project: &str,
         ids: &[i32],
     ) -> Result<Vec<DeleteOutcome>, AdoError> {
-        if !self.can_delete_work_items(org, project).await {
+        if !self.can_delete_work_items(org, project, None).await {
             return Err(AdoError::Forbidden);
         }
 
@@ -230,7 +271,7 @@ impl AdoClient {
             // else - see this file's header for the wit parameter that is
             // deliberately absent, and the test that keeps it so.
             let url = format!(
-                "{}/{}/{}/_apis/test/testcase/{}?api-version=7.1",
+                "{}/{}/{}/_apis/test/testcases/{}?api-version=7.1",
                 self.base_url, org, project, id
             );
             match self.send_permanent_delete(&url, id).await {

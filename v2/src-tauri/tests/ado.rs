@@ -595,7 +595,7 @@ fn the_only_delete_is_the_test_management_one() {
 
     // And it is the test-management endpoint, not the work-item one.
     assert!(
-        deletion.contains("_apis/test/testcase/"),
+        deletion.contains("_apis/test/testcases/"),
         "the delete must go through the Test Management API"
     );
     assert!(

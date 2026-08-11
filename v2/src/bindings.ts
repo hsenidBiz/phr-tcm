@@ -296,12 +296,13 @@ export const commands = {
 	 *  Azure DevOps is a no. See `ado/recycle.rs` for why that asymmetry is
 	 *  deliberate.
 	 */
-	canDeleteTestCases: (organization: string, project: string) => typedError<boolean, AdoError>(__TAURI_INVOKE("can_delete_test_cases", { organization, project })),
+	canDeleteTestCases: (organization: string, project: string, pbiId: number | null) => typedError<boolean, AdoError>(__TAURI_INVOKE("can_delete_test_cases", { organization, project, pbiId })),
 	/**
-	 *  Move test cases to the project's RECYCLE BIN, where Azure DevOps can
-	 *  restore them. This app has no permanent delete and issues no other
-	 *  DELETE anywhere - see `ado/recycle.rs`, which is the only file allowed
-	 *  to, and the tests that keep it that way.
+	 *  PERMANENTLY delete test cases through the Test Management API - the
+	 *  only deletion Azure DevOps offers for test artifacts, and irreversible.
+	 *  See `ado/deletion.rs`, the one file allowed to issue a DELETE, and the
+	 *  tests that keep it that way. The confirm dialog carries the warning;
+	 *  this command carries the audit trail.
 	 * 
 	 *  Every id is reported individually: a partly-completed delete has to be
 	 *  able to say which ones survived.

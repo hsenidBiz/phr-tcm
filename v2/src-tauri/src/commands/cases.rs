@@ -146,10 +146,25 @@ pub async fn can_delete_test_cases(
     app: tauri::AppHandle,
     organization: String,
     project: String,
+    pbi_id: Option<i32>,
 ) -> Result<bool, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
-    Ok(ado::AdoClient::new(token)
-        .can_delete_work_items(&organization, &project)
+    let client = ado::AdoClient::new(token);
+    // With a PBI in hand, ask about ITS area - the one the cases being
+    // shown actually live under. Area permissions are per node, and the
+    // root said yes to a user the TCM API then refused; the sign-in-time
+    // call passes no PBI and gets the root heuristic.
+    let area = match pbi_id {
+        Some(id) => match client.get_work_item_paths(&organization, &project, id).await {
+            Ok((area, _)) => Some(area),
+            // Fail closed: if the area cannot be learned, do not offer a
+            // button whose real gate could not be asked.
+            Err(_) => return Ok(false),
+        },
+        None => None,
+    };
+    Ok(client
+        .can_delete_work_items(&organization, &project, area.as_deref())
         .await)
 }
 

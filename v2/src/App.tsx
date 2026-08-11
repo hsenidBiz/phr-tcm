@@ -342,6 +342,21 @@ export default function App() {
     disabledTools,
   ]);
 
+  // Delete permission, asked ONCE at sign-in per org/project rather than
+  // when the Update Test Cases screen opens. The screen reads this same
+  // cache key, so by the time anyone can look for a Delete button the
+  // answer is already in - and staleTime: Infinity means the session
+  // never re-asks: the permission a user signed in with is the one the
+  // UI reflects until they switch org/project or restart. App never
+  // unmounts, so the entry is never garbage-collected either.
+  useQuery({
+    queryKey: ["can-delete", org, project],
+    queryFn: () => unwrap(commands.canDeleteTestCases(org, project, null)),
+    enabled: signedIn && Boolean(org && project),
+    staleTime: Infinity,
+    retry: false,
+  });
+
   // Background check for work items newly assigned to you. Rust polls and
   // emits; the choice of toast vs Windows notification is made here,
   // because "can the user see the app" is a frontend question.

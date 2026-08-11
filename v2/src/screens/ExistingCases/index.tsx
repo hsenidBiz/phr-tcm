@@ -69,15 +69,23 @@ export default function ExistingCases({
     retry: false,
   });
 
-  /** Whether Azure DevOps says this user may delete here. The client fails
-   *  closed on every uncertain answer, so `false` covers "not allowed",
-   *  "could not ask" and "answered something unexpected" alike - and the
-   *  button simply does not exist rather than failing when pressed. */
+  /** Whether Azure DevOps says this user may delete here. App.tsx asks
+   *  this at SIGN-IN on the same cache key, so opening this screen reads
+   *  the answer that is already in rather than fetching - the button's
+   *  presence is decided when the user logs in, not when they arrive
+   *  here. The client fails closed on every uncertain answer, so `false`
+   *  covers "not allowed", "could not ask" and "answered something
+   *  unexpected" alike - and the button simply does not exist rather
+   *  than failing when pressed. */
   const canDelete = useQuery({
-    queryKey: ["can-delete", org, project],
-    queryFn: () => unwrap(commands.canDeleteTestCases(org, project)),
+    // Keyed by the PBI: the probe asks about the PBI's OWN area node,
+    // because area permissions are per node - the root said yes to a
+    // user the TCM API then refused. The sign-in-time root check in
+    // App.tsx warms the coarse answer; this one decides the button.
+    queryKey: ["can-delete", org, project, pbiId],
+    queryFn: () => unwrap(commands.canDeleteTestCases(org, project, pbiId)),
     enabled: Boolean(org && project),
-    staleTime: 10 * 60_000,
+    staleTime: Infinity,
     retry: false,
   });
 

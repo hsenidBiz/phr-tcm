@@ -50,7 +50,7 @@ async fn a_delete_goes_to_the_test_management_endpoint_and_nowhere_else() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/test/testcase/42"))
+        .and(path("/o/p/_apis/test/testcases/42"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": 42 })))
         .mount(&server)
         .await;
@@ -82,7 +82,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
     let denied = MockServer::start().await;
     with_permission(&denied, false).await;
     let c = AdoClient::with_base_url("t".into(), denied.uri());
-    assert!(!c.can_delete_work_items("o", "p").await);
+    assert!(!c.can_delete_work_items("o", "p", None).await);
     assert!(matches!(
         c.delete_test_cases_permanently("o", "p", &[42]).await.unwrap_err(),
         AdoError::Forbidden
@@ -108,7 +108,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
         .mount(&empty)
         .await;
     assert!(!AdoClient::with_base_url("t".into(), empty.uri())
-        .can_delete_work_items("o", "p")
+        .can_delete_work_items("o", "p", None)
         .await);
 
     // The permission service itself is unreachable or erroring.
@@ -118,7 +118,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
         .mount(&broken)
         .await;
     assert!(!AdoClient::with_base_url("t".into(), broken.uri())
-        .can_delete_work_items("o", "p")
+        .can_delete_work_items("o", "p", None)
         .await);
 
     // The project carried no id to build a token from.
@@ -128,7 +128,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
         .mount(&nonode)
         .await;
     assert!(!AdoClient::with_base_url("t".into(), nonode.uri())
-        .can_delete_work_items("o", "p")
+        .can_delete_work_items("o", "p", None)
         .await);
 }
 
@@ -139,17 +139,17 @@ async fn one_failure_does_not_stop_the_others_and_is_named() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/test/testcase/1"))
+        .and(path("/o/p/_apis/test/testcases/1"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
         .await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/test/testcase/2"))
+        .and(path("/o/p/_apis/test/testcases/2"))
         .respond_with(ResponseTemplate::new(403))
         .mount(&server)
         .await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/test/testcase/3"))
+        .and(path("/o/p/_apis/test/testcases/3"))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
         .await;
@@ -180,7 +180,7 @@ async fn an_unmapped_failure_carries_azure_devops_own_explanation() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/test/testcase/7"))
+        .and(path("/o/p/_apis/test/testcases/7"))
         .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
             "message": "VS402625: Work item 7 cannot be deleted because it is in use."
         })))
@@ -212,7 +212,7 @@ async fn a_throttled_delete_is_reported_as_rate_limiting() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
-        .and(path("/o/p/_apis/test/testcase/9"))
+        .and(path("/o/p/_apis/test/testcases/9"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "7"))
         .mount(&server)
         .await;
@@ -241,7 +241,7 @@ async fn the_permission_asked_for_is_work_item_delete_on_the_project() {
     let server = MockServer::start().await;
     with_permission(&server, true).await;
     let client = AdoClient::with_base_url("t".into(), server.uri());
-    assert!(client.can_delete_work_items("o", "p").await);
+    assert!(client.can_delete_work_items("o", "p", None).await);
 
     let sent = server.received_requests().await.unwrap();
     let eval = sent
@@ -302,7 +302,7 @@ async fn work_item_delete_alone_is_not_enough_for_test_cases() {
     with_split_permission(&server, true, false).await;
     assert!(
         !AdoClient::with_base_url("t".into(), server.uri())
-            .can_delete_work_items("o", "p")
+            .can_delete_work_items("o", "p", None)
             .await,
         "work-item delete without a manage-test right must hide the button"
     );
@@ -311,7 +311,7 @@ async fn work_item_delete_alone_is_not_enough_for_test_cases() {
     let mirror = MockServer::start().await;
     with_split_permission(&mirror, false, true).await;
     assert!(!AdoClient::with_base_url("t".into(), mirror.uri())
-        .can_delete_work_items("o", "p")
+        .can_delete_work_items("o", "p", None)
         .await);
 }
 
@@ -333,6 +333,57 @@ async fn a_root_area_without_an_identifier_fails_closed() {
         .mount(&server)
         .await;
     assert!(!AdoClient::with_base_url("t".into(), server.uri())
-        .can_delete_work_items("o", "p")
+        .can_delete_work_items("o", "p", None)
         .await);
 }
+
+/// The area-scoped question: with an area path given, the CSS token is
+/// built from THAT node's GUID, not the root's - the field failure was a
+/// root yes refuted per-area by the TCM API.
+#[tokio::test]
+async fn a_given_area_path_is_asked_about_its_own_node() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/_apis/projects/p"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "proj-guid-1" })),
+        )
+        .mount(&server)
+        .await;
+    // The node lookup goes to the path SEGMENTS AFTER the project.
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/classificationnodes/areas/Team/Component"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "identifier": "deep-node-guid" })),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/o/_apis/security/permissionevaluationbatch"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "evaluations": [{ "value": true }, { "value": true }, { "value": true }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    assert!(
+        client
+            .can_delete_work_items("o", "p", Some(r"p\Team\Component"))
+            .await
+    );
+
+    let sent = server.received_requests().await.unwrap();
+    let eval = sent
+        .iter()
+        .find(|r| r.url.path().ends_with("/permissionevaluationbatch"))
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&eval.body).unwrap();
+    assert_eq!(
+        body["evaluations"][1]["token"].as_str(),
+        Some("vstfs:///Classification/Node/deep-node-guid"),
+        "the manage-test question must be about the given area's node"
+    );
+}
+
