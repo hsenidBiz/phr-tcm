@@ -383,18 +383,4 @@ test("suite resolution is cached in localStorage and reused", async () => {
   expect(ensured).toBe(0);
 });
 
-/** Same one-press fold as View Test Cases, gated on grouping being on. */
-test("Collapse groups folds every run-table group in one press", async () => {
-  mockAll();
-  renderPanel();
-  await screen.findByText("Valid login");
-
-  expect(screen.queryByRole("button", { name: /Collapse groups/ })).not.toBeInTheDocument();
-
-  fireEvent.click(screen.getByText("Group by title"));
-  fireEvent.click(screen.getByRole("button", { name: /Collapse groups/ }));
-
-  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Collapse groups/ })).not.toBeInTheDocument();
-});
 

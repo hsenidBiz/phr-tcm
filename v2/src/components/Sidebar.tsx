@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Tooltip } from "./ui/tooltip";
+import { publishSidebarChange } from "../lib/sidebarState";
 import { cn } from "../lib/cn";
 
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
@@ -77,6 +78,9 @@ export default function Sidebar<T extends string = Section>({
       } catch {
         // storage unavailable -> session-only
       }
+      // The sticky bottom-left buttons key their offset off this - a
+      // storage write does not notify the same window, so tell them.
+      publishSidebarChange();
       return next;
     });
   };
@@ -143,14 +147,14 @@ export default function Sidebar<T extends string = Section>({
           Ctrl+K for commands
         </div>
         <button
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? "Expand sidebar" : "Close sidebar"}
+          title={collapsed ? "Expand sidebar" : "Close sidebar"}
           className="flex w-full items-center overflow-hidden rounded-md px-3 py-2 text-sm text-faint hover:bg-surface-2 hover:text-text"
           onClick={toggle}
         >
           {collapsed ? <ChevronsRight size={15} className="shrink-0" /> : <ChevronsLeft size={15} className="shrink-0" />}
           <span className={labelCls} style={labelDelay}>
-            Collapse
+            Close
           </span>
         </button>
       </div>

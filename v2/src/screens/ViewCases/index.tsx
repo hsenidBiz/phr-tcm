@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, type PbiHit, type TestCaseFull } from "../../bindings";
@@ -14,6 +14,11 @@ import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { loadNotes, saveNote } from "../../lib/caseNotes";
 import { cn } from "../../lib/cn";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
+import {
+  sidebarCollapsedSnapshot,
+  stickyLeftPx,
+  subscribeSidebar,
+} from "../../lib/sidebarState";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { pagePalette } from "../../lib/reportTheme";
@@ -73,7 +78,7 @@ export default function ViewCases({
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-view") === "on",
   );
-  const [collapsedGroups, toggleCollapsed, collapseGroups] = usePersistedStringSet(
+  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
     "tcm-v2-view-collapsed-groups",
   );
 
@@ -112,11 +117,7 @@ export default function ViewCases({
     }));
   }, [visible, grouped]);
   const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
-  /** Groups on screen that are not yet folded - what the sticky
-   * "Collapse groups" button acts on. Empty while grouping is off. */
-  const openGroupNames = ordered
-    .map((g) => g.group)
-    .filter((g) => g && !collapsedGroups.has(g));
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
 
   const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
     const idx = flat.findIndex((x) => x.id === c.id);
@@ -435,35 +436,20 @@ export default function ViewCases({
           this screen renders inside AnimatedContent, whose GSAP transform
           would make `fixed` mean the scroll region instead of the
           viewport. */}
-      {(openIds.size > 0 || openGroupNames.length > 0) &&
+      {openIds.size > 0 &&
         createPortal(
-          <div className="fixed bottom-6 left-6 z-40 flex items-center gap-2">
+          /* Left offset clears the sidebar at its CURRENT width - parked at
+             left-6 this sat exactly on the sidebar's Close button. */
+          <div
+            className="fixed bottom-6 z-40 rounded-full border border-border bg-surface shadow-2xl transition-[left] duration-200"
+            style={{ left: stickyLeftPx(sidebarCollapsed) }}
+          >
             {/* "Collapse", not "Close" or an eraser: nothing is deleted,
                 the open detail views just fold shut. */}
-            {openIds.size > 0 && (
-              <div className="rounded-full border border-border bg-surface shadow-2xl">
-                <Button size="sm" variant="outline" className="rounded-full" onClick={() => setOpenIds(new Set())}>
-                  <IconCollapseAll aria-hidden />
-                  Collapse all ({openIds.size})
-                </Button>
-              </div>
-            )}
-            {/* Groups fold too, but with their own button - one press per
-                intent. Only offered while Group by Title is on and at
-                least one group is still open. */}
-            {openGroupNames.length > 0 && (
-              <div className="rounded-full border border-border bg-surface shadow-2xl">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-full"
-                  onClick={() => collapseGroups(openGroupNames)}
-                >
-                  <IconCollapseAll aria-hidden />
-                  Collapse groups ({openGroupNames.length})
-                </Button>
-              </div>
-            )}
+            <Button size="sm" variant="outline" className="rounded-full" onClick={() => setOpenIds(new Set())}>
+              <IconCollapseAll aria-hidden />
+              Collapse all ({openIds.size})
+            </Button>
           </div>,
           document.body,
         )}

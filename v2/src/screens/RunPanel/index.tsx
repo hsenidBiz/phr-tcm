@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, events, type EnsuredSuite, type TestPoint } from "../../bindings";
@@ -15,6 +15,11 @@ import { cn } from "../../lib/cn";
 import { pagePalette } from "../../lib/reportTheme";
 import { CACHE, persistentQuery } from "../../lib/persistentQuery";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
+import {
+  sidebarCollapsedSnapshot,
+  stickyLeftPx,
+  subscribeSidebar,
+} from "../../lib/sidebarState";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
@@ -74,9 +79,10 @@ export default function RunPanel({
       else next.add(pointId);
       return next;
     });
-  const [collapsedGroups, toggleCollapsed, collapseGroups] = usePersistedStringSet(
+  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
     "tcm-v2-run-collapsed-groups",
   );
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
 
   const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
   const readSuiteSeed = (): EnsuredSuite | undefined => {
@@ -240,12 +246,6 @@ export default function RunPanel({
       pts: indices.map((i) => filtered[i]),
     }));
   }, [filtered, grouped]);
-
-  /** Groups on screen that are not yet folded - what the sticky
-   * "Collapse groups" button acts on. Empty while grouping is off. */
-  const openGroupNames = sections
-    .map((g) => g.name)
-    .filter((n) => n && !collapsedGroups.has(n));
 
   // A collapsed group hides its LIST, not the case someone is reading:
   // rows with an open preview stay rendered until closed - their own
@@ -540,38 +540,23 @@ export default function RunPanel({
           bar owns the right corner, so the two can show together without
           covering each other. Portalled for the same AnimatedContent
           reason as the bar below. */}
-      {(expanded.size > 0 || openGroupNames.length > 0) &&
+      {expanded.size > 0 &&
         createPortal(
-          <div className="fixed bottom-6 left-6 z-40 flex items-center gap-2">
-            {expanded.size > 0 && (
-              <div className="rounded-full border border-border bg-surface shadow-2xl">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-full"
-                  onClick={() => setExpanded(new Set())}
-                >
-                  <IconCollapseAll aria-hidden />
-                  Collapse all ({expanded.size})
-                </Button>
-              </div>
-            )}
-            {/* Same intent split as View Test Cases: previews fold with
-                one button, groups with the other. Shown only while Group
-                by Title has groups left to fold. */}
-            {openGroupNames.length > 0 && (
-              <div className="rounded-full border border-border bg-surface shadow-2xl">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-full"
-                  onClick={() => collapseGroups(openGroupNames)}
-                >
-                  <IconCollapseAll aria-hidden />
-                  Collapse groups ({openGroupNames.length})
-                </Button>
-              </div>
-            )}
+          /* Left offset clears the sidebar at its CURRENT width - parked at
+             left-6 this sat exactly on the sidebar's Close button. */
+          <div
+            className="fixed bottom-6 z-40 rounded-full border border-border bg-surface shadow-2xl transition-[left] duration-200"
+            style={{ left: stickyLeftPx(sidebarCollapsed) }}
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              className="rounded-full"
+              onClick={() => setExpanded(new Set())}
+            >
+              <IconCollapseAll aria-hidden />
+              Collapse all ({expanded.size})
+            </Button>
           </div>,
           document.body,
         )}
