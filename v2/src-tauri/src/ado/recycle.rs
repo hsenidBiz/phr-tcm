@@ -52,6 +52,30 @@ const PROJECT_NAMESPACE_ID: &str = "52d39943-cb85-4d7f-8fa8-c6baac873819";
 /// the request body, so changing it is a deliberate act rather than a typo.
 const WORK_ITEM_DELETE: u32 = 8192;
 
+/// The CSS (area path) namespace, where Azure DevOps keeps the
+/// test-artifact permissions.
+///
+/// Round two of the wrong-question lesson above, caught in the field this
+/// time: WORK_ITEM_DELETE alone is the permission for ORDINARY work items,
+/// and a default Contributor holds it. Test Cases are test artifacts, and
+/// Microsoft's docs gate deleting those on the area-level "Manage test
+/// plans" / "Manage test suites" permissions instead - so the old check
+/// answered yes for users Azure DevOps would refuse, and they met the
+/// refusal only after clicking a button that looked like a promise. The
+/// gate now requires BOTH: the work-item delete right and a manage-test
+/// right on the project's root area.
+///
+/// Root area, not the case's own: cases under one PBI can span areas, and
+/// a root-level check that fails closed is the posture this module
+/// documents - a missing button for an edge-case user beats a button that
+/// lies.
+const CSS_NAMESPACE_ID: &str = "83e28ad4-2d72-4ceb-97b0-c7726d5502c3";
+
+/// MANAGE_TEST_PLANS / MANAGE_TEST_SUITES in the CSS namespace. Either
+/// suffices - the docs name them as alternatives.
+const MANAGE_TEST_PLANS: u32 = 64;
+const MANAGE_TEST_SUITES: u32 = 128;
+
 /// One work item's fate after a delete attempt.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct DeleteOutcome {
@@ -111,11 +135,37 @@ impl AdoClient {
             });
         };
 
+        // The root area node's GUID, which the CSS security token is built
+        // from. No identifier is an uncertain path, and uncertain reads as
+        // no.
+        let areas = self
+            .get_json(format!(
+                "{}/{}/{}/_apis/wit/classificationnodes/areas?api-version=7.1",
+                self.base_url, org, project
+            ))
+            .await?;
+        let Some(area_id) = areas["identifier"].as_str() else {
+            return Err(AdoError::Http {
+                status: 0,
+                body: "the root area node carried no identifier to build a security token from"
+                    .into(),
+            });
+        };
+
+        let area_token = format!("vstfs:///Classification/Node/{area_id}");
         let body = serde_json::json!({
             "evaluations": [{
                 "securityNamespaceId": PROJECT_NAMESPACE_ID,
                 "token": format!("$PROJECT:vstfs:///Classification/TeamProject/{project_id}"),
                 "permissions": WORK_ITEM_DELETE,
+            }, {
+                "securityNamespaceId": CSS_NAMESPACE_ID,
+                "token": area_token,
+                "permissions": MANAGE_TEST_PLANS,
+            }, {
+                "securityNamespaceId": CSS_NAMESPACE_ID,
+                "token": area_token,
+                "permissions": MANAGE_TEST_SUITES,
             }],
             // FALSE on purpose: this asks Azure DevOps for the literal ACL
             // answer. `true` tells it to pass anyone in an Administrators
@@ -138,8 +188,10 @@ impl AdoClient {
             .await?;
 
         // Explicitly true, or nothing. A missing or oddly-shaped evaluation
-        // is not a yes.
-        Ok(answer["evaluations"][0]["value"].as_bool() == Some(true))
+        // is not a yes. Deleting a Test Case needs the work-item right AND
+        // a manage-test right (either of the two) - see CSS_NAMESPACE_ID.
+        let ev = |i: usize| answer["evaluations"][i]["value"].as_bool() == Some(true);
+        Ok(ev(0) && (ev(1) || ev(2)))
     }
 
     /// Move work items to the project's recycle bin, one at a time.
