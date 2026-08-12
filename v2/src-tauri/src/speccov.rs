@@ -23,6 +23,10 @@ pub struct Section {
 pub struct Inventory {
     pub lines: usize,
     pub sections: Vec<Section>,
+    /// The raw document text, kept for Task 2's quote-verification join -
+    /// `Section`s alone don't carry body text, and a quote can appear
+    /// anywhere in the document relative to its citation's section.
+    pub text: String,
 }
 
 /// Markdown heading: `#{1,6}` then required whitespace then the title.
@@ -134,7 +138,7 @@ pub fn parse_inventory(text: &str) -> Inventory {
         }
     }
 
-    Inventory { lines: lines.len(), sections }
+    Inventory { lines: lines.len(), sections, text: text.to_string() }
 }
 
 pub struct SpecCitation {
@@ -162,7 +166,12 @@ pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
         r"(?im)^\s*spec:\s*(\S+)\s+(.+?)\s*$",
     )
     .unwrap();
-    let exemption_re = Regex::new(r"(?i)^(.*?)\s*-\s*no quotable text\s*\(([^)]*)\)\s*$").unwrap();
+    // Dash before "no quotable text" may be an ASCII hyphen or a typographic
+    // em/en dash - reviewers paste from Word, which autocorrects "-" to "—".
+    // Missing a dash form here doesn't fail loudly: the whole tail (dash and
+    // reason) silently leaks into `section` and `exemption` reads as None,
+    // which is exactly the misparse this feature exists to catch.
+    let exemption_re = Regex::new(r"(?i)^(.*?)\s*[-\u{2013}\u{2014}]\s*no quotable text\s*\(([^)]*)\)\s*$").unwrap();
     let quote_re = Regex::new(r#"^\s*>\s*"(.*)"\s*$"#).unwrap();
     let code_re = Regex::new(r"(?im)^\s*code:\s*\S+").unwrap();
 
@@ -205,6 +214,176 @@ pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
     } else {
         Some(Citations { specs, has_code_ref })
     }
+}
+
+/// Input to [`check_coverage`]: one or more parsed [`Inventory`]s (paired
+/// with the file name the citations reference), the case set to score
+/// against them, and the two free-text scope fields a reviewer may set on
+/// the intake form.
+pub struct CoverageInput<'a> {
+    pub inventories: Vec<(String, Inventory)>,
+    pub cases: &'a [crate::model::TestCase],
+    pub sections_scope: &'a str,
+    pub out_of_scope: &'a str,
+}
+
+/// Collapse runs of whitespace (including newlines) to a single space, so a
+/// quote that wraps across lines in the markdown - or in the reviewer's
+/// pasted copy of it - still matches.
+fn normalize_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The trailing path segment, lowercased, so a citation of "Step10.md"
+/// matches an inventory built from "C:\specs\Step10.md" case-insensitively.
+fn file_basename_lower(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_lowercase()
+}
+
+/// `"7.7 (AC-3)" -> Some("7.7")`; sections with no AC suffix have no parent.
+fn parent_section_id(section_id: &str) -> Option<String> {
+    let re = Regex::new(r"(?i)^(.+?)\s*\(AC-\d+\)\s*$").unwrap();
+    re.captures(section_id).map(|c| c[1].trim().to_string())
+}
+
+/// A bare section-id shape: `7`, `7.7`, `7.7.1`, optionally with a trailing
+/// `(AC-n)`. Used to decide whether `sections_scope` is an enumerated list
+/// (every token matches) or free text (no filtering at all).
+fn is_section_id_shape(s: &str) -> bool {
+    Regex::new(r"(?i)^\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?$").unwrap().is_match(s)
+}
+
+/// `sections_scope` is treated as an enumerated in-scope list only when
+/// EVERY comma/semicolon-separated token looks like a section id - per the
+/// plan's "not a second source of truth about scope" rule, anything else
+/// (a sentence, "everything", one stray non-id token) is read as free text
+/// that excludes nothing, rather than guessed at.
+fn parse_enumerated_scope(sections_scope: &str) -> Option<std::collections::HashSet<String>> {
+    let tokens: Vec<String> = sections_scope
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(normalize_section_id)
+        .collect();
+    if tokens.is_empty() || !tokens.iter().all(|t| is_section_id_shape(t)) {
+        return None;
+    }
+    Some(tokens.into_iter().collect())
+}
+
+/// `out_of_scope` is free text ("7.4 is deferred to phase 2, see JIRA-99")
+/// - pull out anything that looks like a section-id token anywhere in it,
+/// rather than requiring the whole line to be one.
+fn parse_out_of_scope_ids(out_of_scope: &str) -> std::collections::HashSet<String> {
+    let token_re = Regex::new(r"(?i)\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?").unwrap();
+    let mut ids = std::collections::HashSet::new();
+    for line in out_of_scope.lines() {
+        for m in token_re.find_iter(line) {
+            ids.insert(normalize_section_id(m.as_str()));
+        }
+    }
+    ids
+}
+
+/// Join a document inventory against a case set's `Spec:` citations into six
+/// findings buckets (never a `warnings` key - see module docs and the plan's
+/// "findings, not warnings" register rule). Not a hard failure and not a
+/// second source of truth about scope: `sections_scope` / `out_of_scope`
+/// only move sections between `uncovered` and `excluded_by_plan`, they never
+/// suppress a citation or invent one.
+pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
+    let sections_in_document: usize = input.inventories.iter().map(|(_, inv)| inv.sections.len()).sum();
+
+    let enumerated_scope = parse_enumerated_scope(input.sections_scope);
+    let out_of_scope_ids = parse_out_of_scope_ids(input.out_of_scope);
+    let is_excluded = |id: &str| -> bool {
+        enumerated_scope.as_ref().is_some_and(|set| !set.contains(id)) || out_of_scope_ids.contains(id)
+    };
+
+    // Documents keyed by basename, each paired with its whitespace-normalised
+    // full text for quote matching.
+    let docs: Vec<(String, &Inventory, String)> = input
+        .inventories
+        .iter()
+        .map(|(name, inv)| (file_basename_lower(name), inv, normalize_whitespace(&inv.text)))
+        .collect();
+
+    let mut covered: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut unattributed: Vec<String> = vec![];
+    let mut cited_but_absent: Vec<String> = vec![];
+    let mut quote_not_in_document: Vec<String> = vec![];
+
+    for case in input.cases {
+        let Some(citations) = parse_citations(&case.reviewer_notes) else {
+            unattributed.push(format!("{} — no spec citation found", case.title));
+            continue;
+        };
+        if citations.specs.is_empty() {
+            // parse_citations only returns Some with empty specs when a
+            // code-only citation was found (has_code_ref) - a deliberate
+            // non-spec claim, not "nothing to score", but still not spec
+            // coverage of any section.
+            unattributed.push(format!("{} — cites code, not spec", case.title));
+            continue;
+        }
+
+        for spec in &citations.specs {
+            let file_key = file_basename_lower(&spec.file);
+            let Some((_, doc, doc_text_norm)) = docs.iter().find(|(base, _, _)| *base == file_key) else {
+                cited_but_absent.push(format!("{} — cited by '{}', no such document", spec.section, case.title));
+                continue;
+            };
+
+            // A citation of a child AC section covers that section if the
+            // document actually has it; otherwise it falls back to covering
+            // the parent section (if THAT exists). An AC the reviewer cited
+            // but the parser didn't find as its own heading must not read
+            // as cited_but_absent when the parent section it lives under is
+            // right there in the inventory.
+            let resolved = doc
+                .sections
+                .iter()
+                .find(|s| s.id == spec.section)
+                .or_else(|| parent_section_id(&spec.section).and_then(|p| doc.sections.iter().find(|s| s.id == p)));
+
+            match resolved {
+                Some(sec) => covered.entry(sec.id.clone()).or_default().push(case.title.clone()),
+                None => cited_but_absent.push(format!(
+                    "{} — cited by '{}', no such section in file",
+                    spec.section, case.title
+                )),
+            }
+
+            if let Some(quote) = &spec.quote {
+                let norm_quote = normalize_whitespace(quote);
+                if !doc_text_norm.contains(&norm_quote) {
+                    quote_not_in_document.push(format!("{} — quoted text not found in file", case.title));
+                }
+            }
+        }
+    }
+
+    let mut uncovered: Vec<String> = vec![];
+    let mut excluded_by_plan: Vec<String> = vec![];
+    for (_, inv) in &input.inventories {
+        for sec in &inv.sections {
+            if is_excluded(&sec.id) {
+                excluded_by_plan.push(sec.id.clone());
+            } else if !covered.contains_key(&sec.id) {
+                uncovered.push(sec.id.clone());
+            }
+        }
+    }
+
+    serde_json::json!({
+        "sections_in_document": sections_in_document,
+        "covered": covered,
+        "uncovered": uncovered,
+        "unattributed": unattributed,
+        "cited_but_absent": cited_but_absent,
+        "quote_not_in_document": quote_not_in_document,
+        "excluded_by_plan": excluded_by_plan,
+    })
 }
 
 #[cfg(test)]
@@ -270,5 +449,205 @@ mod tests {
         let c = parse_citations("Spec: Step10.md 7.9 - no quotable text (requirement is a state table)").unwrap();
         assert_eq!(c.specs[0].exemption.as_deref(), Some("requirement is a state table"));
         assert!(c.specs[0].quote.is_none());
+    }
+
+    #[test]
+    fn the_exemption_form_accepts_any_dash() {
+        // Reviewers paste from Word, which autocorrects "-" to an em/en
+        // dash. Missing a form here used to leak the dash and reason text
+        // into `section` and read `exemption` as None - a silent misparse.
+        for dash in ["-", "\u{2013}", "\u{2014}"] {
+            let notes = format!("Spec: Step10.md 7.9 {dash} no quotable text (state table)");
+            let c = parse_citations(&notes).unwrap_or_else(|| panic!("dash {dash:?} should parse"));
+            assert_eq!(c.specs[0].section, "7.9", "dash {dash:?} leaked into section");
+            assert_eq!(c.specs[0].exemption.as_deref(), Some("state table"), "dash {dash:?}");
+        }
+    }
+
+    fn case(title: &str, notes: &str) -> crate::model::TestCase {
+        crate::model::TestCase {
+            title: title.to_string(),
+            reviewer_notes: notes.to_string(),
+            automation_status: "Not Automated".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn covered_and_uncovered_split_on_citations() {
+        let inv = parse_inventory("## 7.1 List\n## 7.4 Export\n## 7.7 Copy\n");
+        let cases = vec![case("List loads", "Spec: S.md 7.1"), case("Copy offered", "Spec: S.md 7.7")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["sections_in_document"], serde_json::json!(3));
+        assert_eq!(v["uncovered"], serde_json::json!(["7.4"]));
+        assert_eq!(v["covered"]["7.1"], serde_json::json!(["List loads"]));
+        assert_eq!(v["covered"]["7.7"], serde_json::json!(["Copy offered"]));
+    }
+
+    #[test]
+    fn a_case_without_a_parseable_citation_is_unattributed_not_a_gap() {
+        let inv = parse_inventory("## 7.1 List\n## 7.4 Export\n");
+        let cases = vec![
+            case("Undocumented case", "just prose, no Spec: line"),
+            case("Cites a ghost section", "Spec: S.md 9.9"),
+        ];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["unattributed"], serde_json::json!(["Undocumented case — no spec citation found"]));
+        assert_eq!(
+            v["cited_but_absent"],
+            serde_json::json!(["9.9 — cited by 'Cites a ghost section', no such section in file"])
+        );
+        // A ghost citation must never be miscounted as coverage.
+        assert_eq!(v["covered"].as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_code_only_citation_is_unattributed_as_a_deliberate_non_spec_claim() {
+        // Distinct from "nothing to score": has_code_ref is a claim the
+        // reviewer made on purpose, but it still covers no spec section.
+        let cases = vec![case("Backed by code only", "Code: IndexModel.CanCopy")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["unattributed"], serde_json::json!(["Backed by code only — cites code, not spec"]));
+    }
+
+    #[test]
+    fn a_quote_that_is_not_in_the_document_is_reported() {
+        let inv = parse_inventory("## 7.1 List\n\nThe list refreshes automatically\nwhen data changes.\n");
+        let cases = vec![
+            case(
+                "Verbatim",
+                "Spec: S.md 7.1\n> \"The list refreshes automatically when data changes.\"",
+            ),
+            case("Paraphrase", "Spec: S.md 7.1\n> \"The list updates itself instantly.\""),
+        ];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        // Found (whitespace-normalised across the line wrap) -> not reported.
+        assert_eq!(v["quote_not_in_document"], serde_json::json!(["Paraphrase — quoted text not found in file"]));
+    }
+
+    #[test]
+    fn an_ac_citation_falls_back_to_its_parent_section() {
+        // Doc only has AC-1 under 8.2; the case cites AC-3, which the
+        // parser never saw as its own heading. It must still resolve to the
+        // parent section 8.2 - not read as cited_but_absent - because the
+        // parent the citation lives under really is in the inventory.
+        let inv = parse_inventory("## 8.2 Archive\n\nAC-1: it archives\n");
+        let cases = vec![case("Archives on schedule", "Spec: S.md 8.2 (AC-3)")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["covered"]["8.2"], serde_json::json!(["Archives on schedule"]));
+        assert_eq!(v["cited_but_absent"], serde_json::json!(Vec::<String>::new()));
+    }
+
+    #[test]
+    fn a_citation_naming_an_unknown_file_is_cited_but_absent() {
+        let inv = parse_inventory("## 7.1 List\n");
+        let cases = vec![case("Wrong file", "Spec: Nope.md 7.1")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["cited_but_absent"], serde_json::json!(["7.1 — cited by 'Wrong file', no such document"]));
+    }
+
+    #[test]
+    fn a_citation_matches_the_inventory_file_by_trailing_path_segment_case_insensitively() {
+        let inv = parse_inventory("## 7.1 List\n");
+        let cases = vec![case("List loads", "Spec: s.MD 7.1")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![(r"C:\specs\S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["covered"]["7.1"], serde_json::json!(["List loads"]));
+    }
+
+    #[test]
+    fn plan_scope_moves_sections_to_excluded_not_uncovered() {
+        let doc = || parse_inventory("## 7.1 List\n## 7.4 Export\n## 7.7 Copy\n");
+        let cases = vec![case("List loads", "Spec: S.md 7.1")];
+
+        // An enumerated list filters: 7.4 is excluded, not uncovered.
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), doc())],
+            cases: &cases,
+            sections_scope: "7.1, 7.7",
+            out_of_scope: "",
+        });
+        assert_eq!(v["excluded_by_plan"], serde_json::json!(["7.4"]));
+        assert_eq!(v["uncovered"], serde_json::json!(["7.7"]));
+
+        // Free text excludes nothing - not a second source of truth.
+        let v2 = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), doc())],
+            cases: &cases,
+            sections_scope: "everything",
+            out_of_scope: "",
+        });
+        assert_eq!(v2["excluded_by_plan"], serde_json::json!(Vec::<String>::new()));
+        assert_eq!(v2["uncovered"], serde_json::json!(["7.4", "7.7"]));
+
+        // out_of_scope naming a section id excludes it too.
+        let v3 = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), doc())],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "7.4 is deferred to phase 2",
+        });
+        assert_eq!(v3["excluded_by_plan"], serde_json::json!(["7.4"]));
+        assert_eq!(v3["uncovered"], serde_json::json!(["7.7"]));
+    }
+
+    #[test]
+    fn the_report_has_exactly_the_listed_keys_and_never_a_warnings_key() {
+        let inv = parse_inventory("## 7.1 List\n");
+        let cases = vec![case("List loads", "Spec: S.md 7.1")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        let mut expected = vec![
+            "sections_in_document",
+            "covered",
+            "uncovered",
+            "unattributed",
+            "cited_but_absent",
+            "quote_not_in_document",
+            "excluded_by_plan",
+        ];
+        expected.sort_unstable();
+        assert_eq!(keys, expected);
+        assert!(!v.as_object().unwrap().contains_key("warnings"));
     }
 }
