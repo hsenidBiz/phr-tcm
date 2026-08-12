@@ -156,3 +156,186 @@ async fn the_report_carries_no_warnings_key() {
     assert_eq!(status, 200, "{out}");
     assert!(!out.contains("\"warnings\""), "findings register must never carry a warnings key: {out}");
 }
+
+// ---------------------------------------------------------------------
+// `/merge-cases` - the other half of a fan-out: `check_spec_coverage`
+// finds gaps in a single draft, this is how a spec too large for one
+// writer gets back to being a single draft at all.
+// ---------------------------------------------------------------------
+
+fn case_json(title: &str) -> serde_json::Value {
+    serde_json::json!({
+        "title": title,
+        "steps": [{ "action": "Open the list", "expected": "It loads" }],
+    })
+}
+
+/// Two real slice files, merged in the order given, must land as one
+/// draft with both the total and the per-file breakdown right - the
+/// whole point of a merge is that the pieces can be trusted to add up.
+#[tokio::test]
+async fn merge_preserves_order_and_reports_per_file_counts() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("slice-a.json");
+    let slice_b = dir.path().join("slice-b.json");
+    std::fs::write(
+        &slice_a,
+        serde_json::json!([case_json("Case A1"), case_json("Case A2")]).to_string(),
+    )
+    .unwrap();
+    std::fs::write(&slice_b, serde_json::json!([case_json("Case B1")]).to_string()).unwrap();
+    let output_path = dir.path().join("merged.json");
+
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["cases"], 3, "{out}");
+    let per_file = v["per_file"].as_array().unwrap();
+    assert_eq!(per_file.len(), 2, "{out}");
+    assert_eq!(per_file[0]["cases"], 2, "{out}");
+    assert_eq!(per_file[1]["cases"], 1, "{out}");
+
+    // Slice order is preserved on disk too - A's two cases before B's one.
+    let written = std::fs::read_to_string(&output_path).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&written).unwrap();
+    let titles: Vec<&str> = doc["test_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, vec!["Case A1", "Case A2", "Case B1"], "{written}");
+}
+
+/// A slice that cannot be read fails the WHOLE merge, naming the path -
+/// and nothing gets written, because a merge silently missing one slice
+/// is worse than no merge at all.
+#[tokio::test]
+async fn an_unreadable_slice_fails_the_whole_merge_and_writes_nothing() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("slice-a.json");
+    std::fs::write(&slice_a, serde_json::json!([case_json("Case A1")]).to_string()).unwrap();
+    let missing = dir.path().join("does-not-exist-slice.json");
+    let output_path = dir.path().join("merged.json");
+
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), missing.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(
+        out.contains("does-not-exist-slice.json"),
+        "error does not name the unreadable slice: {out}"
+    );
+    assert!(!output_path.exists(), "a failed merge must write nothing: {out}");
+}
+
+/// An `output_path` that already exists is refused, not silently
+/// overwritten - the caller picks a new name rather than this route
+/// guessing whether the existing file was meant to survive.
+#[tokio::test]
+async fn an_existing_output_path_is_refused_rather_than_overwritten() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("slice-a.json");
+    std::fs::write(&slice_a, serde_json::json!([case_json("Case A1")]).to_string()).unwrap();
+    let output_path = dir.path().join("already-here.json");
+    std::fs::write(&output_path, "not a merge result").unwrap();
+
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(
+        out.contains("already-here.json"),
+        "error does not name the existing output path: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&output_path).unwrap(),
+        "not a merge result",
+        "refused, not overwritten"
+    );
+}
+
+/// Warnings from every slice are aggregated, each still carrying the name
+/// of the slice it came from - lose that and a warning three slices deep
+/// in a fan-out cannot be traced back to the file that needs fixing.
+#[tokio::test]
+async fn aggregated_warnings_carry_the_slice_file_name() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("slice-a.json");
+    let slice_b = dir.path().join("slice-b.json");
+    std::fs::write(&slice_a, serde_json::json!([case_json("Case A1")]).to_string()).unwrap();
+    // id 0 is not a valid work item id - the importer keeps the case but
+    // warns, which is exactly the kind of per-slice warning that must not
+    // get lost once several slices are concatenated together.
+    std::fs::write(
+        &slice_b,
+        serde_json::json!([{
+            "title": "Case B1",
+            "id": 0,
+            "steps": [{ "action": "Open", "expected": "Opens" }],
+        }])
+        .to_string(),
+    )
+    .unwrap();
+    let output_path = dir.path().join("merged.json");
+
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let warnings: Vec<&str> = v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap())
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("slice-b.json") && w.contains("not a valid work item")),
+        "warning does not carry its slice's file name: {warnings:?}"
+    );
+}
+
+/// The atomic guarantee: if the final write cannot land (here, because the
+/// parent directory does not exist), `output_path` is left exactly as it
+/// was before the call - never a half-written file, and no stray temp
+/// file either.
+#[tokio::test]
+async fn a_failed_write_leaves_no_file_at_output_path() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("slice-a.json");
+    std::fs::write(&slice_a, serde_json::json!([case_json("Case A1")]).to_string()).unwrap();
+    let output_path = dir.path().join("no-such-subdir").join("merged.json");
+
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(!output_path.exists(), "a failed write must leave nothing at output_path: {out}");
+    let tmp_path = dir.path().join("no-such-subdir").join("merged.json.tmp");
+    assert!(!tmp_path.exists(), "no stray temp file should remain either: {out}");
+}

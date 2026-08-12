@@ -137,6 +137,7 @@ pub async fn route(
         ("POST", "/transform") => transform_json(body),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
         ("POST", "/check-coverage") => check_coverage_route(body).await,
+        ("POST", "/merge-cases") => merge_cases_route(body),
         ("POST", "/begin") => begin_writing(body, target, ctx, client).await,
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
@@ -694,6 +695,130 @@ async fn check_coverage_route(body: &str) -> (u16, String) {
         out_of_scope: &req.out_of_scope,
     });
     (200, report.to_string())
+}
+
+/// Request body for `/merge-cases`: which slice files to concatenate, and
+/// where the merged draft goes.
+#[derive(serde::Deserialize, Default)]
+struct MergeRequest {
+    #[serde(default)]
+    paths: Vec<String>,
+    #[serde(default)]
+    output_path: String,
+}
+
+/// Merge slice files from a fan-out into one draft - the other half of
+/// `check_spec_coverage`: that finds gaps in a single draft, this is how a
+/// spec too large for one writer gets back to being a single draft at all.
+///
+/// Every slice is read through `crate::import_parser::parse_file` - the
+/// REAL importer, same as every other route that reads a draft - never
+/// hand-parsed, so a slice a subagent wrote is judged by the exact rules
+/// the app itself will apply on import. One unreadable or unparsable slice
+/// fails the WHOLE merge with a 400 naming that path; nothing is written,
+/// because a merge missing one slice silently is worse than no merge.
+/// `output_path` already existing is refused rather than overwritten - the
+/// caller picks a new name rather than this route guessing whether the
+/// existing file was meant to survive.
+fn merge_cases_route(body: &str) -> (u16, String) {
+    let req: MergeRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                400,
+                serde_json::json!({ "error": format!("could not read the request body: {e}") }).to_string(),
+            )
+        }
+    };
+
+    if req.paths.is_empty() {
+        return (
+            400,
+            serde_json::json!({ "error": "no `paths` given - name the slice files to merge" }).to_string(),
+        );
+    }
+    if req.output_path.trim().is_empty() {
+        return (
+            400,
+            serde_json::json!({ "error": "no `output_path` given - name where the merged draft goes" })
+                .to_string(),
+        );
+    }
+    if std::path::Path::new(&req.output_path).exists() {
+        return (
+            400,
+            serde_json::json!({
+                "error": format!(
+                    "{} already exists - merge_case_files refuses to overwrite it; pick a new \
+                     output_path or remove the existing file first",
+                    req.output_path
+                )
+            })
+            .to_string(),
+        );
+    }
+
+    let mut merged: Vec<crate::model::TestCase> = Vec::new();
+    let mut per_file: Vec<serde_json::Value> = Vec::with_capacity(req.paths.len());
+    let mut warnings: Vec<String> = Vec::new();
+
+    for path in &req.paths {
+        match crate::import_parser::parse_file(path) {
+            Ok((cases, file_warnings)) => {
+                per_file.push(serde_json::json!({ "path": path, "cases": cases.len() }));
+                // Prefixed with the slice's own file name - a warning
+                // aggregated across several slices is useless if it can't
+                // be traced back to which one produced it.
+                warnings.extend(file_warnings.into_iter().map(|w| format!("{path}: {w}")));
+                merged.extend(cases);
+            }
+            Err(e) => {
+                return (
+                    400,
+                    serde_json::json!({ "error": format!("{path}: {e}") }).to_string(),
+                )
+            }
+        }
+    }
+
+    let text = match crate::import_parser::queue_to_json_string(&merged) {
+        Ok(t) => t,
+        Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+    };
+
+    // Atomic write: write to a sibling temp file, then rename it into
+    // place. A crash or error partway through a plain `fs::write` would
+    // leave `output_path` existing but truncated, which is worse than the
+    // merge never having run at all - the caller would find a file, not
+    // know it was cut short, and hand a half-draft to the next step. There
+    // is no existing atomic-write helper on this branch (the autorun
+    // store's version lives on an unmerged sibling), so it is inlined
+    // here rather than borrowed from elsewhere.
+    let tmp_path = format!("{}.tmp", req.output_path);
+    if let Err(e) = std::fs::write(&tmp_path, &text) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return (
+            400,
+            serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),
+        );
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &req.output_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return (
+            400,
+            serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),
+        );
+    }
+
+    (
+        200,
+        serde_json::json!({
+            "cases": merged.len(),
+            "per_file": per_file,
+            "warnings": warnings,
+        })
+        .to_string(),
+    )
 }
 
 /// Like `parse_cases`, but keeps the importer's warnings too.

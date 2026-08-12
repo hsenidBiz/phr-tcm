@@ -158,6 +158,14 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["spec_paths"]),
         },
         {
+            "name": "merge_case_files",
+            "description": "Merge slice files from a fan-out into one draft through the real importer - never merge by hand. Reads every path in `paths` with the same importer the app uses, concatenates the cases in that order, and writes the result to `output_path` (refused if that path already exists - pick a new one rather than overwriting). Returns the merged case count, a per-file breakdown, and the importer's warnings from every slice, each prefixed with the slice file it came from.",
+            "inputSchema": schema(serde_json::json!({
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths to the slice files, in the order they should be concatenated" },
+                "output_path": { "type": "string", "description": "Full path, including file name, for the merged draft - must not already exist" },
+            }), &["paths", "output_path"]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
             "inputSchema": schema(serde_json::json!({
@@ -289,6 +297,10 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             call("GET", &format!("/run-failures?pbi={pbi}"), "")
         }
         "check_spec_coverage" => call("POST", "/check-coverage", &args.to_string()),
+        // The bridge takes one body, so forwarding the raw arguments object
+        // is structurally unable to drop `paths` or `output_path` - the
+        // same pattern as `check_spec_coverage` above.
+        "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

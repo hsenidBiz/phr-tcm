@@ -74,8 +74,8 @@ fn the_claude_cli_is_looked_for_where_the_installers_put_it() {
 fn every_tool_gets_a_command_and_each_describes_itself() {
     // Kept in step with mcp.rs by hand; a tool added there without one
     // here is a tool nobody can reach from the picker.
-    const TOOLS: [&str; 12] = [
-        "write", "guide", "examples", "failures", "validate", "coverage", "optimize", "transform",
+    const TOOLS: [&str; 13] = [
+        "write", "fanout", "guide", "examples", "failures", "validate", "coverage", "optimize", "transform",
         "tags", "pbis", "wiki", "page",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
