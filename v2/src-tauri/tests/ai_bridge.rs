@@ -175,6 +175,67 @@ async fn a_clean_draft_carries_no_advisories_key() {
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert!(v.get("advisories").is_none(), "{body}");
 }
+
+/// A `Spec:` citation with neither a quote nor the fixed exemption form is
+/// a judgement call flagged as an advisory, not a warning - the same
+/// register as the both-branches check. Uses `speccov::parse_citations`
+/// (Task 1's parser) rather than a second regex over `reviewer_notes`, so
+/// the guide's citation grammar and this check can never drift apart.
+#[tokio::test]
+async fn a_spec_cited_case_without_quote_or_exemption_is_an_advisory_not_a_warning() {
+    let draft = serde_json::json!({
+        "test_cases": [
+            {
+                "title": "Cited with no quote or exemption",
+                "reviewer_notes": "Checks the export button.\nSpec: S.md 7.7",
+                "automation_status": "Not Automated",
+                "steps": [{ "action": "Open the page.", "expected": "The button is shown." }]
+            },
+            {
+                "title": "Cited with the exemption form",
+                "reviewer_notes": "Checks the state table.\nSpec: S.md 7.9 - no quotable text (requirement is a state table)",
+                "automation_status": "Not Automated",
+                "steps": [{ "action": "Open the page.", "expected": "The table matches." }]
+            },
+            {
+                "title": "Code-only citation",
+                "reviewer_notes": "Checks the helper.\nCode: IndexModel.CanCopyFromPreviousCycle",
+                "automation_status": "Not Automated",
+                "steps": [{ "action": "Run the helper.", "expected": "It returns true." }]
+            }
+        ]
+    })
+    .to_string();
+
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.19.17").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["warnings"].as_array().unwrap(), &Vec::<serde_json::Value>::new(), "{body}");
+
+    let advisories = v["advisories"]
+        .as_array()
+        .expect("advisories key present when an uncited quote is missing")
+        .iter()
+        .map(|w| w.as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(advisories.len(), 1, "{body}");
+    assert!(
+        advisories[0].contains("Cited with no quote or exemption"),
+        "the advisory has to name the case: {:?}",
+        advisories
+    );
+    assert!(
+        !advisories.iter().any(|a| a.contains("Cited with the exemption form")),
+        "the exemption form must clear the advisory: {:?}",
+        advisories
+    );
+    assert!(
+        !advisories.iter().any(|a| a.contains("Code-only citation")),
+        "a Code:-only citation must not trip the quote-rule advisory: {:?}",
+        advisories
+    );
+}
+
 #[tokio::test]
 async fn guide_carries_format_rules_and_live_modules() {
     let (server, client) = ado_stub().await;
@@ -256,6 +317,77 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(
         rebuild.contains("ask the") && rebuild.contains("developer"),
         "a blocked assistant has to ask, not improvise: {rebuild}"
+    );
+}
+
+/// The quote rule: a citation either carries the source's own words
+/// verbatim, or states one of the fixed exemptions - never a paraphrase
+/// dressed up as a quote. Pinned separately from the round-3 assertions
+/// above because round-round-6 feedback found the old single sentence
+/// ("one short quote only when the exact wording IS the requirement")
+/// left "no quote" as a silent third option nobody was told to justify.
+#[tokio::test]
+async fn the_guide_teaches_the_quote_rule_and_its_exemptions() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "allowedValues": ["Login"]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.19.17").await;
+    assert_eq!(status, 200);
+
+    // The always-attempt-a-quote rule replaces the old "one short quote
+    // only when..." clause outright - the two must never coexist, or an
+    // assistant reading top to bottom hits contradictory instructions.
+    assert!(
+        !body.contains("one short quote only when the exact wording IS"),
+        "the old single-quote clause must be replaced, not left alongside the new rule: {body}"
+    );
+    assert!(
+        body.contains("verbatim, or it must not be presented as a quote"),
+        "the guide has to state the quote-or-exemption rule in these terms: {body}"
+    );
+    // The fixed exemption form, ASCII hyphen only - an em dash in the guide
+    // prose itself was the round-6 misparse trap, even though the parser
+    // also accepts the typographic dashes reviewers paste from Word.
+    assert!(
+        body.contains("no quotable text"),
+        "the guide has to name the fixed exemption form: {body}"
+    );
+    assert!(
+        !body.contains("\u{2013} no quotable text") && !body.contains("\u{2014} no quotable text"),
+        "the guide's own example must use a plain ASCII hyphen, not a typographic dash: {body}"
+    );
+    // The four exemption reasons from spec section 7, named so an author
+    // has a menu to pick from rather than inventing wording.
+    for reason in ["code-not-prose", "absence", "table/diagram", "synthesis"] {
+        assert!(body.contains(reason), "the guide has to name the {reason} exemption: {body}");
+    }
+
+    // Workflow step 3.5: check_spec_coverage sits between drafting/optimize
+    // and validation, not just mentioned somewhere in the document.
+    let workflow = body
+        .split("## Workflow")
+        .nth(1)
+        .expect("the guide still has a Workflow section");
+    assert!(
+        workflow.contains("check_spec_coverage"),
+        "the workflow has to call out check_spec_coverage: {workflow}"
+    );
+    let optimize_at = workflow.find("optimize_cases").expect("optimize_cases still in the workflow");
+    let coverage_at = workflow.find("check_spec_coverage").unwrap();
+    let validate_at = workflow.find("validate_cases").expect("validate_cases still in the workflow");
+    assert!(
+        optimize_at < coverage_at && coverage_at < validate_at,
+        "check_spec_coverage has to sit between drafting/optimize and validation: {workflow}"
+    );
+    assert!(
+        workflow.contains("uncovered") && workflow.contains("out of scope for this batch"),
+        "the workflow step has to say what to do with `uncovered`, not just name the tool: {workflow}"
     );
 }
 

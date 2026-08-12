@@ -324,7 +324,8 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
          2. {optimize_step}\n\
          3. Run `validate_cases` (pass `path` for a large draft) and fix every warning.\n\
          4. Raise any contradiction found in the specs here rather than \
-         resolving it silently.\n",
+         resolving it silently.\n\
+         5. Run `check_spec_coverage` and account for every `uncovered` entry out loud.\n",
         feature = if feature.trim().is_empty() { "untitled" } else { feature.trim() },
         specs = specs,
         sections = if a.sections.trim().is_empty() { "everything in the documents above" } else { a.sections.trim() },

@@ -523,6 +523,26 @@ async fn validate_json(
                         why
                     ));
                 }
+
+                // A `Spec:` citation with no verbatim quote and no exemption
+                // is a judgement call, not a defect the importer can catch -
+                // same register as the both-branches check above. Uses
+                // `speccov::parse_citations` (the one parser Task 1 built)
+                // rather than a second regex over `reviewer_notes`, so the
+                // guide's citation grammar and this check can never drift
+                // apart. A code-only citation (no `specs` at all) never
+                // trips this - the rule is about quoting a SPEC, not code.
+                if let Some(citations) = crate::speccov::parse_citations(&tc.reviewer_notes) {
+                    if citations.specs.iter().any(|s| s.quote.is_none() && s.exemption.is_none()) {
+                        advisories.push(format!(
+                            "Test case {} ('{}') cites a Spec: section with no verbatim quote and \
+                             no exemption. Quote the source sentence, or state the exemption in \
+                             the fixed form `Spec: <file> <section> - no quotable text (<why>)`.",
+                            i + 1,
+                            tc.title
+                        ));
+                    }
+                }
             }
             if let Some(c) = client {
                 let allowed = allowed_modules(ctx, c).await;
@@ -875,8 +895,13 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         2. **Where the requirement lives**: `Spec: Step10-ManagePerformanceCycle.md\n\
         7.7 (AC-3)`, `Code: IndexModel.CanCopyFromPreviousCycle`, or both.\n\n\
         Add `Out of scope: SSO` only when THIS case deliberately leaves\n\
-        something out, and one short quote only when the exact wording IS\n\
-        the requirement.\n\n\
+        something out. Alongside the `Spec:` pointer, quote the source\n\
+        sentence verbatim, or it must not be presented as a quote: write\n\
+        `> \"...\"` when you can quote it, or state the exemption in the\n\
+        fixed form `Spec: <file> <section> - no quotable text (<why>)`,\n\
+        naming why as one of code-not-prose, absence, table/diagram, or\n\
+        synthesis. Never rewrite inside quotation marks; elide with an\n\
+        ellipsis instead.\n\n\
         Leave OUT, every time:\n\
         - Where the cases came from as a body of work - \"Source:\n\
         implementation (authority = app)\", \"written from the spec\". The\n\
@@ -928,6 +953,10 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         and `tester_order` (its grouped run sequence). Keep those two fields\n\
         exactly as it set them - do not renumber them by hand, and do not strip\n\
         them; the app uses them to flip the queue between the two readings.\n\
+        3.5. Call `check_spec_coverage` with the draft and the plan's spec\n\
+        paths. Report `uncovered` to the developer and account for every\n\
+        entry - \"out of scope for this batch\" is a fine answer, silence\n\
+        is not.\n\
         4. Call `validate_cases` and fix every warning. For a large draft,\n\
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\
