@@ -82,6 +82,29 @@ async fn coverage_answers_without_a_signed_in_client() {
     assert!(v["covered"]["7.1"].as_array().unwrap().len() == 1, "{out}");
 }
 
+/// The `path` branch - a draft too large to inline gets written to a local
+/// file and scored the same way as `json`, mirroring the happy path above.
+#[tokio::test]
+async fn coverage_scores_a_draft_given_by_path() {
+    let dir = TempDir::new();
+    let (spec_path, draft) = spec_and_draft(dir.path());
+    let draft_path = dir.path().join("draft.json");
+    std::fs::write(&draft_path, &draft).unwrap();
+
+    let body = serde_json::json!({
+        "spec_paths": [spec_path.to_string_lossy()],
+        "path": draft_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/check-coverage", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let uncovered: Vec<&str> = v["uncovered"].as_array().unwrap().iter().map(|s| s.as_str().unwrap()).collect();
+    assert_eq!(uncovered, vec!["7.4"], "the gap did not surface from a path-given draft: {out}");
+    assert!(v["covered"]["7.1"].as_array().unwrap().len() == 1, "{out}");
+}
+
 #[tokio::test]
 async fn a_missing_spec_file_is_a_400_naming_the_path() {
     let dir = TempDir::new();

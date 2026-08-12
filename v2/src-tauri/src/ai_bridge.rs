@@ -1069,22 +1069,22 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         is out of scope are theirs to decide, not yours to assume.\n\
         1. Call `get_test_cases` for the PBI you're writing for and mimic\n\
         their style and granularity.\n\
-        2. Draft your cases.\n\
+        2. Draft your cases. Write your draft IN SPEC ORDER - cases walking\n\
+        down the document, so a reviewer can scroll the spec and the file\n\
+        together, and so `check_spec_coverage` (next) can reason about it\n\
+        against the document in the order you wrote it.\n\
+        2.5. Call `check_spec_coverage` with the draft and the plan's spec\n\
+        paths, while it is still in spec order. Report `uncovered` to the\n\
+        developer and account for every entry - \"out of scope for this batch\"\n\
+        is a fine answer, silence is not.\n\
         3. Call `optimize_cases` with the JSON: it spells navigation out as\n\
         steps, trims expected results to the outcome, and reorders the cases so\n\
         the tester changes environment as few times as possible. Hand back the\n\
-        JSON it returns.\n\
-        \n\
-        Write your draft IN SPEC ORDER - cases walking down the document, so a\n\
-        reviewer can scroll the spec and the file together. The optimizer then\n\
-        stamps every case with BOTH orders: `spec_order` (the order you wrote)\n\
-        and `tester_order` (its grouped run sequence). Keep those two fields\n\
-        exactly as it set them - do not renumber them by hand, and do not strip\n\
-        them; the app uses them to flip the queue between the two readings.\n\
-        3.5. Call `check_spec_coverage` with the draft and the plan's spec\n\
-        paths. Report `uncovered` to the developer and account for every\n\
-        entry - \"out of scope for this batch\" is a fine answer, silence\n\
-        is not.\n\
+        JSON it returns. The optimizer then stamps every case with BOTH\n\
+        orders: `spec_order` (the order you wrote) and `tester_order` (its\n\
+        grouped run sequence). Keep those two fields exactly as it set them -\n\
+        do not renumber them by hand, and do not strip them; the app uses\n\
+        them to flip the queue between the two readings.\n\
         4. Call `validate_cases` and fix every warning. For a large draft,\n\
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\

@@ -144,7 +144,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "check_spec_coverage",
-            "description": "Reports coverage as findings to read and account for, not as pass/fail - a partial draft is a normal state, not an error. Joins a draft's `Spec:` citations against one or more spec documents and returns which sections have no case yet (`uncovered`), which cases could not be attributed to any section, which citations point at a section or file that does not exist, which quoted text was not found in the document, and which sections are excluded by the plan's own scope. Run before optimize_cases so gaps are found while the draft is still easy to extend.",
+            "description": "Reports coverage as findings to read and account for, not as pass/fail - a partial draft is a normal state, not an error. Joins a draft's `Spec:` citations against one or more spec documents and returns which sections have no case yet (`uncovered`), which cases could not be attributed to any section, which citations point at a section or file that does not exist, which quoted text was not found in the document, and which sections are excluded by the plan's own scope. AC-level sections (e.g. \"8.2 (AC-2)\") are reported individually - a covered parent section does not silence its acceptance criteria. Run before optimize_cases so gaps are found while the draft is still easy to extend.",
             "inputSchema": schema(serde_json::json!({
                 "json": { "type": "string", "description": "The draft import JSON (array or wrapper object) - use this or `path`, never both" },
                 "path": { "type": "string", "description": "Absolute path to a local draft file - use this or `json`, never both" },

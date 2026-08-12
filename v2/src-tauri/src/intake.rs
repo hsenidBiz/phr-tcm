@@ -321,11 +321,12 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
          ## Notes from the developer\n\n{notes}\n\n\
          ## Before handing the file over\n\n\
          1. Draft against the sources above - nothing outside them.\n\
-         2. {optimize_step}\n\
-         3. Run `validate_cases` (pass `path` for a large draft) and fix every warning.\n\
-         4. Raise any contradiction found in the specs here rather than \
-         resolving it silently.\n\
-         5. Run `check_spec_coverage` and account for every `uncovered` entry out loud.\n",
+         2. Run `check_spec_coverage` and account for every `uncovered` entry out loud - \
+         while the draft is still in spec order, before optimizing it.\n\
+         3. {optimize_step}\n\
+         4. Run `validate_cases` (pass `path` for a large draft) and fix every warning.\n\
+         5. Raise any contradiction found in the specs here rather than \
+         resolving it silently.\n",
         feature = if feature.trim().is_empty() { "untitled" } else { feature.trim() },
         specs = specs,
         sections = if a.sections.trim().is_empty() { "everything in the documents above" } else { a.sections.trim() },

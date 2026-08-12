@@ -141,6 +141,30 @@ pub fn parse_inventory(text: &str) -> Inventory {
     Inventory { lines: lines.len(), sections, text: text.to_string() }
 }
 
+/// Join a quote's opening fragment (the text right after the `> "` marker,
+/// on the line where it started) with continuation lines until one ends in
+/// the closing `"`, bounded at 5 continuation lines - the feedback's own
+/// example wraps a quote across lines, and whitespace-normalisation
+/// downstream still matches once the pieces are joined with a space. An
+/// opener that never closes within the bound reads as no quote (`None`),
+/// never as a truncated or corrupted one.
+fn accumulate_quote(first_fragment: String, following: &[&str]) -> Option<String> {
+    if let Some(stripped) = first_fragment.strip_suffix('"') {
+        return Some(stripped.to_string());
+    }
+    let mut acc = first_fragment;
+    for line in following.iter().take(5) {
+        if let Some(stripped) = line.strip_suffix('"') {
+            acc.push(' ');
+            acc.push_str(stripped.trim());
+            return Some(acc);
+        }
+        acc.push(' ');
+        acc.push_str(line.trim());
+    }
+    None
+}
+
 pub struct SpecCitation {
     pub file: String,
     pub section: String,
@@ -172,7 +196,15 @@ pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
     // reason) silently leaks into `section` and `exemption` reads as None,
     // which is exactly the misparse this feature exists to catch.
     let exemption_re = Regex::new(r"(?i)^(.*?)\s*[-\u{2013}\u{2014}]\s*no quotable text\s*\(([^)]*)\)\s*$").unwrap();
-    let quote_re = Regex::new(r#"^\s*>\s*"(.*)"\s*$"#).unwrap();
+    // Same-line quote: "Spec: F.md 7.1 > "text"" - a quote marker embedded
+    // directly in what `spec_re` captured as the section, rather than on its
+    // own line below. Must be split off BEFORE exemption-checking, or it
+    // corrupts `section` into "7.1 > "text"" (round-5 ledger M5).
+    let inline_quote_re = Regex::new(r#"^(.*?)\s*>\s*"(.*)$"#).unwrap();
+    // A quote's opening line, closed or not: `> "text` with no requirement
+    // that the closing `"` be on this same line - a quote may wrap across
+    // several lines before it closes (round-5 §7's own example wraps).
+    let quote_opener_re = Regex::new(r#"^\s*>\s*"(.*)$"#).unwrap();
     let code_re = Regex::new(r"(?im)^\s*code:\s*\S+").unwrap();
 
     let mut specs = vec![];
@@ -186,17 +218,30 @@ pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
                 section_raw = stripped.to_string();
             }
 
+            if let Some(qcaps) = inline_quote_re.captures(&section_raw) {
+                let section = normalize_section_id(qcaps[1].trim());
+                let quote = accumulate_quote(qcaps[2].to_string(), &lines[i + 1..]);
+                specs.push(SpecCitation { file, section, quote, exemption: None });
+                continue;
+            }
+
             let (section, exemption) = match exemption_re.captures(&section_raw) {
                 Some(ecaps) => (ecaps[1].trim().to_string(), Some(ecaps[2].trim().to_string())),
                 None => (section_raw, None),
             };
 
-            // A quote, if present, lives on the next non-blank line.
+            // A quote, if present, opens on the next non-blank line and may
+            // wrap across several more before its closing mark.
             let quote = lines[i + 1..]
                 .iter()
-                .find(|l| !l.trim().is_empty())
-                .and_then(|l| quote_re.captures(l))
-                .map(|c| c[1].to_string());
+                .enumerate()
+                .find(|(_, l)| !l.trim().is_empty())
+                .and_then(|(offset, opener)| {
+                    quote_opener_re
+                        .captures(opener)
+                        .map(|c| accumulate_quote(c[1].to_string(), &lines[i + 2 + offset..]))
+                })
+                .flatten();
 
             specs.push(SpecCitation {
                 file,
@@ -272,14 +317,23 @@ pub(crate) fn parse_enumerated_scope(sections_scope: &str) -> Option<std::collec
 }
 
 /// `out_of_scope` is free text ("7.4 is deferred to phase 2, see JIRA-99")
-/// - pull out anything that looks like a section-id token anywhere in it,
-///   rather than requiring the whole line to be one.
-fn parse_out_of_scope_ids(out_of_scope: &str) -> std::collections::HashSet<String> {
-    let token_re = Regex::new(r"(?i)\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?").unwrap();
+/// - pull out a section-id token only when it (a) actually exists in the
+///   parsed inventory AND (b) sits at line start or right after "section" /
+///   "§". Without both checks a bare number loose in prose ("phase 2") or
+///   the tail of an unrelated ticket code ("JIRA-99") gets misread as a
+///   section reference and silently swallows an honestly-uncovered section.
+fn parse_out_of_scope_ids(
+    out_of_scope: &str,
+    known_ids: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let token_re = Regex::new(r"(?i)(?:^|\bsection\s+|§\s*)(\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?)").unwrap();
     let mut ids = std::collections::HashSet::new();
     for line in out_of_scope.lines() {
-        for m in token_re.find_iter(line) {
-            ids.insert(normalize_section_id(m.as_str()));
+        for caps in token_re.captures_iter(line) {
+            let id = normalize_section_id(&caps[1]);
+            if known_ids.contains(&id) {
+                ids.insert(id);
+            }
         }
     }
     ids
@@ -294,8 +348,14 @@ fn parse_out_of_scope_ids(out_of_scope: &str) -> std::collections::HashSet<Strin
 pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
     let sections_in_document: usize = input.inventories.iter().map(|(_, inv)| inv.sections.len()).sum();
 
+    let known_ids: std::collections::HashSet<String> = input
+        .inventories
+        .iter()
+        .flat_map(|(_, inv)| inv.sections.iter().map(|s| s.id.clone()))
+        .collect();
+
     let enumerated_scope = parse_enumerated_scope(input.sections_scope);
-    let out_of_scope_ids = parse_out_of_scope_ids(input.out_of_scope);
+    let out_of_scope_ids = parse_out_of_scope_ids(input.out_of_scope, &known_ids);
     let is_excluded = |id: &str| -> bool {
         enumerated_scope.as_ref().is_some_and(|set| !set.contains(id)) || out_of_scope_ids.contains(id)
     };
@@ -374,8 +434,8 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
                     .or_default()
                     .push(case.title.clone()),
                 None => cited_but_absent.push(format!(
-                    "{} — cited by '{}', no such section in file",
-                    spec.section, case.title
+                    "{} — cited by '{}', no such section in {}",
+                    spec.section, case.title, doc_display
                 )),
             }
 
@@ -394,7 +454,7 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
         for sec in &inv.sections {
             let key = qualify(name, &sec.id);
             if is_excluded(&sec.id) {
-                excluded_by_plan.push(key);
+                excluded_by_plan.push(format!("{key} — excluded by the plan's scope"));
             } else if !covered.contains_key(&key) {
                 uncovered.push(key);
             }
@@ -457,6 +517,52 @@ mod tests {
         assert_eq!(c.specs[0].file, "Step10.md");
         assert_eq!(c.specs[0].section, "7.7 (AC-3)");
         assert!(c.specs[0].quote.as_deref().unwrap().starts_with("Copy from previous cycle"));
+    }
+
+    #[test]
+    fn a_quote_wrapping_across_lines_is_accumulated_and_matches_the_document() {
+        // The feedback's own §7 example wraps the quote across two lines -
+        // the closing `"` isn't on the same line as the opening one.
+        let notes = "Spec: Step10.md 7.7 (AC-3)\n\
+                     > \"Copy from previous cycle is offered only when a completed\n\
+                        cycle exists for the same appraisal type.\"";
+        let c = parse_citations(notes).unwrap();
+        assert_eq!(
+            c.specs[0].quote.as_deref(),
+            Some("Copy from previous cycle is offered only when a completed cycle exists for the same appraisal type.")
+        );
+        let inv = parse_inventory(
+            "## 7.7 Copy from previous cycle\n\n\
+             Copy from previous cycle is offered only when a completed\n\
+             cycle exists for the same appraisal type.\n",
+        );
+        let cases = vec![case("Copy offered", notes)];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("Step10.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["quote_not_in_document"], serde_json::json!(Vec::<String>::new()), "{v}");
+    }
+
+    #[test]
+    fn a_same_line_quote_does_not_corrupt_the_section() {
+        // Round-5 ledger M5: "Spec: F.md 7.1 > "q"" used to leave `section`
+        // as the corrupted "7.1 > "q"" instead of splitting off the quote.
+        let c = parse_citations("Spec: F.md 7.1 > \"q\"").unwrap();
+        assert_eq!(c.specs[0].section, "7.1");
+        assert_eq!(c.specs[0].quote.as_deref(), Some("q"));
+    }
+
+    #[test]
+    fn an_unterminated_quote_gives_up_after_five_lines_without_corrupting_anything() {
+        let notes = "Spec: Step10.md 7.9\n\
+                     > \"This quote never closes\n\
+                     line 2\nline 3\nline 4\nline 5\nline 6";
+        let c = parse_citations(notes).unwrap();
+        assert_eq!(c.specs[0].section, "7.9", "section must stay intact even when the quote never resolves");
+        assert_eq!(c.specs[0].quote, None, "an opener with no close inside the bound must read as no quote");
     }
 
     #[test]
@@ -531,7 +637,7 @@ mod tests {
         assert_eq!(v["unattributed"], serde_json::json!(["Undocumented case — no spec citation found"]));
         assert_eq!(
             v["cited_but_absent"],
-            serde_json::json!(["9.9 — cited by 'Cites a ghost section', no such section in file"])
+            serde_json::json!(["9.9 — cited by 'Cites a ghost section', no such section in S.md"])
         );
         // A ghost citation must never be miscounted as coverage.
         assert_eq!(v["covered"].as_object().unwrap().len(), 0);
@@ -590,6 +696,26 @@ mod tests {
     }
 
     #[test]
+    fn ac_children_stay_reported_when_the_parent_is_covered() {
+        // A covered parent must not silence its AC children - round-5 §3's
+        // own example lists "8.2 (AC-2)" in `uncovered` even though 8.2
+        // itself is covered. Finer-grained gaps are the spec'd reading, not
+        // a bug: pin the behaviour so it isn't "fixed" away later.
+        let inv = parse_inventory("## 8.2 Archive\n\nAC-1: it archives\nAC-2: it restores\n");
+        let cases = vec![case("Archive parent behaviour", "Spec: S.md 8.2")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["covered"]["8.2"], serde_json::json!(["Archive parent behaviour"]));
+        let uncovered: Vec<&str> = v["uncovered"].as_array().unwrap().iter().map(|s| s.as_str().unwrap()).collect();
+        assert!(uncovered.contains(&"8.2 (AC-1)"), "{uncovered:?}");
+        assert!(uncovered.contains(&"8.2 (AC-2)"), "{uncovered:?}");
+    }
+
+    #[test]
     fn a_citation_naming_an_unknown_file_is_cited_but_absent() {
         let inv = parse_inventory("## 7.1 List\n");
         let cases = vec![case("Wrong file", "Spec: Nope.md 7.1")];
@@ -644,7 +770,7 @@ mod tests {
             sections_scope: "7.1, 7.7",
             out_of_scope: "",
         });
-        assert_eq!(v["excluded_by_plan"], serde_json::json!(["7.4"]));
+        assert_eq!(v["excluded_by_plan"], serde_json::json!(["7.4 — excluded by the plan's scope"]));
         assert_eq!(v["uncovered"], serde_json::json!(["7.7"]));
 
         // Free text excludes nothing - not a second source of truth.
@@ -664,8 +790,28 @@ mod tests {
             sections_scope: "",
             out_of_scope: "7.4 is deferred to phase 2",
         });
-        assert_eq!(v3["excluded_by_plan"], serde_json::json!(["7.4"]));
+        assert_eq!(v3["excluded_by_plan"], serde_json::json!(["7.4 — excluded by the plan's scope"]));
         assert_eq!(v3["uncovered"], serde_json::json!(["7.7"]));
+    }
+
+    #[test]
+    fn out_of_scope_prose_numbers_do_not_get_harvested_as_sections() {
+        // "phase 2" and the "99" tail of "JIRA-99" both look like section-id
+        // tokens in isolation. Only "7.4" - at line start, and an id that
+        // actually exists in the document - may be excluded; section "2"
+        // must stay honestly uncovered rather than being silently swallowed.
+        let inv = parse_inventory("## 2 Overview\n## 7.4 Export\n## 7.7 Copy\n");
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "7.4 is deferred to phase 2, see JIRA-99",
+        });
+        assert_eq!(v["excluded_by_plan"], serde_json::json!(["7.4 — excluded by the plan's scope"]), "{v}");
+        let uncovered: Vec<&str> = v["uncovered"].as_array().unwrap().iter().map(|s| s.as_str().unwrap()).collect();
+        assert!(uncovered.contains(&"2"), "section 2 must stay honestly uncovered: {uncovered:?}");
+        assert!(uncovered.contains(&"7.7"), "{uncovered:?}");
     }
 
     #[test]

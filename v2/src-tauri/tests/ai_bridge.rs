@@ -368,8 +368,9 @@ async fn the_guide_teaches_the_quote_rule_and_its_exemptions() {
         assert!(body.contains(reason), "the guide has to name the {reason} exemption: {body}");
     }
 
-    // Workflow step 3.5: check_spec_coverage sits between drafting/optimize
-    // and validation, not just mentioned somewhere in the document.
+    // Workflow step 2.5: check_spec_coverage runs BEFORE optimize_cases,
+    // while the draft is still in spec order (round-5 §4) - not after it,
+    // and not just mentioned somewhere in the document.
     let workflow = body
         .split("## Workflow")
         .nth(1)
@@ -382,8 +383,8 @@ async fn the_guide_teaches_the_quote_rule_and_its_exemptions() {
     let coverage_at = workflow.find("check_spec_coverage").unwrap();
     let validate_at = workflow.find("validate_cases").expect("validate_cases still in the workflow");
     assert!(
-        optimize_at < coverage_at && coverage_at < validate_at,
-        "check_spec_coverage has to sit between drafting/optimize and validation: {workflow}"
+        coverage_at < optimize_at && optimize_at < validate_at,
+        "check_spec_coverage has to run BEFORE optimize_cases, while the draft is still in spec order: {workflow}"
     );
     assert!(
         workflow.contains("uncovered") && workflow.contains("out of scope for this batch"),

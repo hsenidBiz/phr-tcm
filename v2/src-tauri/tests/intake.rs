@@ -208,6 +208,27 @@ fn the_plan_records_every_decision_in_the_developers_words() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `check_spec_coverage` has to run BEFORE `optimize_cases` in the "Before
+/// handing the file over" checklist - round-5 §4 says the check belongs
+/// "while the draft is still in spec order", which is before optimizing it,
+/// not after.
+#[test]
+fn the_plan_runs_coverage_before_optimize() {
+    let dir = temp_dir("plan-order");
+    let spec = dir.join("spec.md");
+    std::fs::write(&spec, "# spec").unwrap();
+    let plan = plan_markdown(&good(&dir, &spec), "Manager Assessment landing page");
+
+    assert!(plan.contains("check_spec_coverage"), "{plan}");
+    let coverage_at = plan.find("check_spec_coverage").expect("check_spec_coverage still in the plan");
+    let optimize_at = plan.find("optimize_cases").expect("optimize_cases still in the plan");
+    assert!(
+        coverage_at < optimize_at,
+        "check_spec_coverage has to precede optimize_cases in the plan: {plan}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_plan_sits_beside_the_output_file() {
     assert_eq!(
