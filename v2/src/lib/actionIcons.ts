@@ -41,6 +41,7 @@ export {
   Undo2 as IconUndo,
   X as IconCancel,
   ChevronsDownUp as IconCollapseAll,
+  ArrowRightLeft as IconMoveToPbi,
   Eraser as IconClear,
   Trash2 as IconRemove,
   EyeOff as IconStopWatching,

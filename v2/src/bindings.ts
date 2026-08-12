@@ -309,6 +309,14 @@ export const commands = {
 	 */
 	deleteTestCases: (organization: string, project: string, ids: number[]) => typedError<DeleteOutcome[], AdoError>(__TAURI_INVOKE("delete_test_cases", { organization, project, ids })),
 	/**
+	 *  Move test cases from one PBI's Tested By list to another's - the fix
+	 *  for a case that landed in the wrong PBI. One rev-guarded PATCH per
+	 *  case (remove old link + add new in a single operation), reported per
+	 *  id so a partial move can say exactly which cases went. Reversible:
+	 *  moving them back is the same call with the PBIs swapped.
+	 */
+	relinkTestCases: (organization: string, project: string, ids: number[], fromPbi: number, toPbi: number) => typedError<RelinkOutcome[], AdoError>(__TAURI_INVOKE("relink_test_cases", { organization, project, ids, fromPbi, toPbi })),
+	/**
 	 *  Read-only suite lookup for background prefetch: finds the PBI's
 	 *  requirement suite if one exists anywhere, but NEVER creates a plan or
 	 *  suite (creation stays on the Run Tests screen where the user asked).
@@ -981,6 +989,22 @@ export type PullRequest = {
 	my_vote: number,
 	reviewers: PrReviewer[],
 	web_url: string,
+};
+
+/**
+ *  One test case's fate after a relink attempt - same shape as
+ *  `deletion::DeleteOutcome` but named for what actually happened: a
+ *  successful MOVE reported as `deleted: true` would be a lie in the one
+ *  report a worried user reads most carefully.
+ */
+export type RelinkOutcome = {
+	id: number,
+	moved: boolean,
+	/**
+	 *  Why not, when it was not. `None` on success. Structured, so the
+	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
+	 */
+	error: AdoError | null,
 };
 
 export type RepoRef = {

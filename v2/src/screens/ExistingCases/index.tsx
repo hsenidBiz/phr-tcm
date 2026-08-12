@@ -7,6 +7,7 @@ import { commands, type TestCaseFull } from "../../bindings";
 import BulkEditDialog from "../../components/BulkEditDialog";
 import PowerRenameDialog, { type RenameTarget } from "../../components/PowerRenameDialog";
 import DeleteConfirm from "../../components/DeleteConfirm";
+import RelinkDialog from "../../components/RelinkDialog";
 import CaseEditor from "./CaseEditor";
 import CountUp from "../../components/CountUp";
 import { Button } from "../../components/ui/button";
@@ -20,7 +21,7 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap } from "../../lib/ipc";
 import { toTestCase } from "../../lib/testCaseConvert";
-import { IconBulkEdit, IconClear, IconExport, IconRemove, IconRename } from "../../lib/actionIcons";
+import { IconBulkEdit, IconClear, IconExport, IconRemove, IconRename, IconMoveToPbi } from "../../lib/actionIcons";
 
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
@@ -47,6 +48,7 @@ export default function ExistingCases({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [relinkOpen, setRelinkOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
@@ -285,6 +287,16 @@ export default function ExistingCases({
               Delete
             </Button>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pbiId == null}
+            title="Move the selected cases' Tested By link to a different PBI"
+            onClick={() => setRelinkOpen(true)}
+          >
+            <IconMoveToPbi aria-hidden />
+            Move to PBI
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
             <IconClear aria-hidden />
             Clear
@@ -395,6 +407,23 @@ export default function ExistingCases({
           onDeleted={() => {
             // An expanded editor for a case that is now gone would save it
             // straight back as a new one.
+            setOpenId(null);
+            setSelected(new Set());
+            refresh();
+          }}
+        />
+      )}
+
+      {relinkOpen && pbiId != null && (
+        <RelinkDialog
+          org={org}
+          project={project}
+          fromPbi={pbiId}
+          cases={selectedCases}
+          onClose={() => setRelinkOpen(false)}
+          onMoved={() => {
+            // Same hygiene as a delete: an expanded editor for a case that
+            // has left this PBI would save it straight back here.
             setOpenId(null);
             setSelected(new Set());
             refresh();

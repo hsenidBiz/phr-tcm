@@ -168,6 +168,43 @@ pub async fn can_delete_test_cases(
         .await)
 }
 
+/// Move test cases from one PBI's Tested By list to another's - the fix
+/// for a case that landed in the wrong PBI. One rev-guarded PATCH per
+/// case (remove old link + add new in a single operation), reported per
+/// id so a partial move can say exactly which cases went. Reversible:
+/// moving them back is the same call with the PBIs swapped.
+#[tauri::command]
+#[specta::specta]
+pub async fn relink_test_cases(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    ids: Vec<i32>,
+    from_pbi: i32,
+    to_pbi: i32,
+) -> Result<Vec<ado::RelinkOutcome>, ado::AdoError> {
+    if ids.is_empty() || from_pbi == to_pbi {
+        return Ok(vec![]);
+    }
+    crate::applog::warn(format!(
+        "relinking {} test case(s) in {project} from PBI #{from_pbi} to #{to_pbi}: {ids:?}",
+        ids.len()
+    ));
+    let token = get_fresh_token(&app).await?;
+    let client = ado::AdoClient::new(token);
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        match client
+            .relink_test_case(&organization, &project, id, from_pbi, to_pbi)
+            .await
+        {
+            Ok(()) => out.push(ado::RelinkOutcome { id, moved: true, error: None }),
+            Err(e) => out.push(ado::RelinkOutcome { id, moved: false, error: Some(e) }),
+        }
+    }
+    Ok(out)
+}
+
 /// PERMANENTLY delete test cases through the Test Management API - the
 /// only deletion Azure DevOps offers for test artifacts, and irreversible.
 /// See `ado/deletion.rs`, the one file allowed to issue a DELETE, and the

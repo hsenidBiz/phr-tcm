@@ -531,6 +531,90 @@ impl AdoClient {
         Ok(())
     }
 
+}
+
+/// One test case's fate after a relink attempt - same shape as
+/// `deletion::DeleteOutcome` but named for what actually happened: a
+/// successful MOVE reported as `deleted: true` would be a lie in the one
+/// report a worried user reads most carefully.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct RelinkOutcome {
+    pub id: i32,
+    pub moved: bool,
+    /// Why not, when it was not. `None` on success. Structured, so the
+    /// frontend's describeAdoError can lift Azure DevOps' own sentence.
+    pub error: Option<super::AdoError>,
+}
+
+impl AdoClient {
+    /// Move a Test Case's PBI link: drop the TestedBy-Reverse relation
+    /// that points at `from_pbi` and add one pointing at `to_pbi`, in ONE
+    /// PATCH - the case is never observable in a half-moved state. The
+    /// requirement-based suites follow on their own, because they populate
+    /// from exactly this link.
+    ///
+    /// The remove is BY INDEX, which Azure DevOps requires - so the
+    /// relations are read first and the index found by matching the
+    /// relation URL's trailing id. A case that carries no link to
+    /// `from_pbi` is reported as such rather than silently linked to a
+    /// second PBI: the caller thought it lived somewhere it does not, and
+    /// that misunderstanding is worth surfacing before any write.
+    pub async fn relink_test_case(
+        &self,
+        organization: &str,
+        project: &str,
+        test_case_id: i32,
+        from_pbi: i32,
+        to_pbi: i32,
+    ) -> Result<(), AdoError> {
+        let url = format!(
+            "{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
+            self.base_url, organization, test_case_id
+        );
+        let data = self.get_json(url).await?;
+        let relations = data["relations"].as_array().cloned().unwrap_or_default();
+        let from_suffix_slash = format!("/{from_pbi}");
+        let idx = relations.iter().position(|r| {
+            r["rel"]
+                .as_str()
+                .map(|s| s.eq_ignore_ascii_case("Microsoft.VSTS.Common.TestedBy-Reverse"))
+                .unwrap_or(false)
+                && r["url"]
+                    .as_str()
+                    .map(|u| u.ends_with(&from_suffix_slash))
+                    .unwrap_or(false)
+        });
+        let Some(idx) = idx else {
+            return Err(AdoError::Http {
+                status: 0,
+                body: format!("test case #{test_case_id} carries no link to PBI #{from_pbi}"),
+            });
+        };
+
+        let to_url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}",
+            self.base_url, organization, project, to_pbi
+        );
+        // `test` on rev first: if the case changed between the read above
+        // and this write, the whole PATCH is refused rather than removing
+        // an index that now names a different relation.
+        let patch = serde_json::json!([
+            { "op": "test", "path": "/rev", "value": data["rev"] },
+            { "op": "remove", "path": format!("/relations/{idx}") },
+            { "op": "add", "path": "/relations/-", "value": {
+                "rel": "Microsoft.VSTS.Common.TestedBy-Reverse",
+                "url": to_url,
+                "attributes": {"comment": "Relinked by DevOps Test Case Manager"},
+            }},
+        ]);
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
+            self.base_url, organization, project, test_case_id
+        );
+        self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
+        Ok(())
+    }
+
     /// All writable fields on the Test Case type, ported from v1
     /// get_test_case_fields: readOnly dropped, System.* dropped except
     /// Title/Tags/Description, sorted by display name. Read only.

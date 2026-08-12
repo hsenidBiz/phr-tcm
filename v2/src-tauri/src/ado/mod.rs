@@ -10,6 +10,7 @@
 //! the same client from `ado_testplan` / `work_board`.
 
 mod endpoints;
+pub use endpoints::RelinkOutcome;
 /// The single, audited exception to the no-DELETE rule. See its header.
 pub mod deletion;
 pub mod throttle;
