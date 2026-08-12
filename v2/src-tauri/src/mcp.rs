@@ -159,7 +159,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "merge_case_files",
-            "description": "Merge slice files from a fan-out into one draft through the real importer - never merge by hand. Reads every path in `paths` with the same importer the app uses, concatenates the cases in that order, and writes the result to `output_path` (refused if that path already exists - pick a new one rather than overwriting). Returns the merged case count, a per-file breakdown, and the importer's warnings from every slice, each prefixed with the slice file it came from.",
+            "description": "Merge slice files from a fan-out into one draft through the real importer - never merge by hand. Reads every path in `paths` with the same importer the app uses, concatenates the cases in that order, and writes the result to `output_path` (refused if that path already exists - pick a new one rather than overwriting). Returns the merged case count, a per-file breakdown, and the importer's warnings from every slice, each prefixed with the slice file it came from. Does not deduplicate - if slices may overlap, run optimize_cases or transform_cases' dedupe on the merged file afterward.",
             "inputSchema": schema(serde_json::json!({
                 "paths": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths to the slice files, in the order they should be concatenated" },
                 "output_path": { "type": "string", "description": "Full path, including file name, for the merged draft - must not already exist" },

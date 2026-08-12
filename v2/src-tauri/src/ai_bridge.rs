@@ -719,7 +719,10 @@ struct MergeRequest {
 /// because a merge missing one slice silently is worse than no merge.
 /// `output_path` already existing is refused rather than overwritten - the
 /// caller picks a new name rather than this route guessing whether the
-/// existing file was meant to survive.
+/// existing file was meant to survive. Cases are concatenated as-is, with
+/// no cross-slice deduplication - a caller merging slices that may overlap
+/// should run `optimize_cases` or `transform_cases`' dedupe on the merged
+/// file afterward.
 fn merge_cases_route(body: &str) -> (u16, String) {
     let req: MergeRequest = match serde_json::from_str(body) {
         Ok(r) => r,
