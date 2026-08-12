@@ -258,7 +258,7 @@ fn is_section_id_shape(s: &str) -> bool {
 /// plan's "not a second source of truth about scope" rule, anything else
 /// (a sentence, "everything", one stray non-id token) is read as free text
 /// that excludes nothing, rather than guessed at.
-fn parse_enumerated_scope(sections_scope: &str) -> Option<std::collections::HashSet<String>> {
+pub(crate) fn parse_enumerated_scope(sections_scope: &str) -> Option<std::collections::HashSet<String>> {
     let tokens: Vec<String> = sections_scope
         .split([',', ';'])
         .map(str::trim)

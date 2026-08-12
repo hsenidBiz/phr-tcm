@@ -358,3 +358,87 @@ pub fn plan_path(output_path: &str) -> String {
     let stem = if stem.is_empty() { "test-cases" } else { stem };
     format!("{dir}{stem}-plan.md")
 }
+
+/// Is this job small enough for one pass, or does it need `optimize_cases`'
+/// fan-out - and does the developer even get a choice?
+///
+/// Sizing is advice, never a gate: this returns `None` only when NOT ONE
+/// `spec_paths` entry could be read as text (missing file, or a folder -
+/// `spec_paths` allows those, `problems()` only checks that the path
+/// *exists*). A partly-readable list still sizes what it COULD read,
+/// because handing back nothing when something is knowable is a worse
+/// failure than an estimate built on partial data.
+///
+/// Section count dominates line count, per the plan's Global Constraints:
+/// fewer than 8 in-scope sections is `"single-pass"`, 8-15 is `"choose"`,
+/// more than 15 is `"fan-out"`. Lines only ever tip the recommendation
+/// UPWARD - more than 1500 total lines upgrades `"single-pass"` to
+/// `"choose"`, but never downgrades a `"choose"`/`"fan-out"` and never
+/// pushes past `"choose"` on line count alone.
+///
+/// `sections_in_scope` is this function's OWN count, not
+/// `check_coverage`'s `sections_in_document`: that total includes AC-marker
+/// CHILD sections (ids like `"8.2 (AC-1)"`), which would make a five-heading
+/// document with a dozen acceptance criteria look like a fan-out job it is
+/// not. Only top-level section ids are counted here, and the same
+/// enumerated-scope filter `check_coverage` uses (an enumerated list of
+/// section ids restricts the count; free text restricts nothing) is
+/// re-applied via `speccov::parse_enumerated_scope` so a `sections` answer
+/// like `"3.1-3.4"` sizes only what was actually asked for.
+pub fn job_scale(spec_paths: &[String], sections_scope: &str) -> Option<serde_json::Value> {
+    let enumerated_scope = crate::speccov::parse_enumerated_scope(sections_scope);
+
+    let mut spec_lines: usize = 0;
+    let mut sections_in_scope: usize = 0;
+    let mut any_read = false;
+
+    for raw in spec_paths {
+        let path = raw.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        any_read = true;
+        let inventory = crate::speccov::parse_inventory(&text);
+        spec_lines += inventory.lines;
+        sections_in_scope += inventory
+            .sections
+            .iter()
+            // Task 2's carried constraint: drop AC-marker children before
+            // counting - only top-level sections size the job.
+            .filter(|s| !s.id.contains("(AC-"))
+            .filter(|s| match &enumerated_scope {
+                Some(set) => set.contains(&s.id),
+                None => true,
+            })
+            .count();
+    }
+
+    if !any_read {
+        return None;
+    }
+
+    let mut recommendation = if sections_in_scope > 15 {
+        "fan-out"
+    } else if sections_in_scope >= 8 {
+        "choose"
+    } else {
+        "single-pass"
+    };
+    if recommendation == "single-pass" && spec_lines > 1500 {
+        recommendation = "choose";
+    }
+
+    let why = format!(
+        "{spec_lines} lines and {sections_in_scope} in-scope sections point to \"{recommendation}\"."
+    );
+
+    Some(serde_json::json!({
+        "spec_lines": spec_lines,
+        "sections_in_scope": sections_in_scope,
+        "recommendation": recommendation,
+        "why": why,
+    }))
+}

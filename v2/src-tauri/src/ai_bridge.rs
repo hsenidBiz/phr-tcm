@@ -385,6 +385,9 @@ async fn begin_writing(
 
     let plan = crate::intake::plan_markdown(&answers, &feature);
     let plan_path = crate::intake::plan_path(&answers.output_path);
+    // Advice, not a gate: `None` (never an error) when no spec file could
+    // be read at all, which must not block an otherwise-ready intake.
+    let scale = crate::intake::job_scale(&answers.spec_paths, &answers.sections);
     // `fs::write` TRUNCATES, and this path is derived from a name the
     // developer typed - so it can land on a file that was never ours.
     // Re-running begin after refining the answers has to keep working, so
@@ -401,6 +404,7 @@ async fn begin_writing(
         serde_json::json!({
             "status": "ready",
             "unchecked": unchecked,
+            "scale": scale,
             "plan": plan,
             "plan_path": if written { serde_json::json!(plan_path) } else { serde_json::Value::Null },
             "plan_write_error": if written {
