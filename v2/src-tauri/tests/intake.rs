@@ -57,10 +57,13 @@ fn assert_scale(v: &serde_json::Value, expected: &str) {
     let lines = v["spec_lines"].as_u64().expect("spec_lines");
     let sections = v["sections_in_scope"].as_u64().expect("sections_in_scope");
     let why = v["why"].as_str().expect("why");
-    assert!(why.contains(&lines.to_string()), "why does not name spec_lines: {why}");
+    // The exact phrase job_scale formats the numbers into, not a bare
+    // substring check - "6".contains would false-pass on a `why` that
+    // only names "68" lines, hiding a dropped number inside the other.
+    let expected_phrase = format!("{lines} lines and {sections} in-scope sections");
     assert!(
-        why.contains(&sections.to_string()),
-        "why does not name sections_in_scope: {why}"
+        why.contains(&expected_phrase),
+        "why does not name both numbers together: {why}"
     );
 }
 
@@ -270,6 +273,40 @@ fn scale_thresholds_boundary_section_counts() {
         "fan-out",
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The >1500-line upgrade only ever fires on the "single-pass" branch -
+/// a document already at "fan-out" on section count alone must never be
+/// capped back down to "choose" because it also happens to be long.
+#[test]
+fn a_large_doc_with_many_sections_is_fan_out_not_capped_at_choose() {
+    let dir = temp_dir("scale-large-fanout");
+    // 20 top-level headings spread across roughly 80 filler lines each -
+    // comfortably over both the section and the line threshold at once.
+    let spec = spec_with_sections(&dir, "large.md", 20, 20 + 20 * 80);
+    let v = job_scale(&[spec.to_string_lossy().to_string()], "").expect("readable");
+    assert!(v["spec_lines"].as_u64().unwrap() > 1500, "got {v}");
+    assert!(v["sections_in_scope"].as_u64().unwrap() > 15, "got {v}");
+    assert_scale(&v, "fan-out");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Multi-file sizing sums across every readable spec, not just the first
+/// one named.
+#[test]
+fn two_readable_specs_sum_their_lines_and_sections() {
+    let dir = temp_dir("scale-sum");
+    let a = spec_with_sections(&dir, "a.md", 5, 100);
+    let b = spec_with_sections(&dir, "b.md", 4, 50);
+    let v = job_scale(
+        &[a.to_string_lossy().to_string(), b.to_string_lossy().to_string()],
+        "",
+    )
+    .expect("both readable");
+    assert_eq!(v["spec_lines"], serde_json::json!(150), "got {v}");
+    assert_eq!(v["sections_in_scope"], serde_json::json!(9), "got {v}");
+    assert_scale(&v, "choose");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
