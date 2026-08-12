@@ -273,7 +273,7 @@ fn parse_enumerated_scope(sections_scope: &str) -> Option<std::collections::Hash
 
 /// `out_of_scope` is free text ("7.4 is deferred to phase 2, see JIRA-99")
 /// - pull out anything that looks like a section-id token anywhere in it,
-/// rather than requiring the whole line to be one.
+///   rather than requiring the whole line to be one.
 fn parse_out_of_scope_ids(out_of_scope: &str) -> std::collections::HashSet<String> {
     let token_re = Regex::new(r"(?i)\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?").unwrap();
     let mut ids = std::collections::HashSet::new();
@@ -300,15 +300,36 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
         enumerated_scope.as_ref().is_some_and(|set| !set.contains(id)) || out_of_scope_ids.contains(id)
     };
 
-    // Documents keyed by basename, each paired with its whitespace-normalised
-    // full text for quote matching.
-    let docs: Vec<(String, &Inventory, String)> = input
+    // Documents keyed by basename, each paired with its display name (as
+    // given by the caller) and its whitespace-normalised full text for
+    // quote matching.
+    let docs: Vec<(String, String, &Inventory, String)> = input
         .inventories
         .iter()
-        .map(|(name, inv)| (file_basename_lower(name), inv, normalize_whitespace(&inv.text)))
+        .map(|(name, inv)| (file_basename_lower(name), name.clone(), inv, normalize_whitespace(&inv.text)))
         .collect();
 
-    let mut covered: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    // A normalized section id is only a unique key across ALL documents by
+    // coincidence - two specs can both have a "7.1". Qualify the id with
+    // its file's display name whenever more than one inventory has it, so
+    // "cite A.md 7.1" doesn't silently mark B.md's unrelated 7.1 as
+    // covered too (reviewer-reported: `uncovered` came back empty even
+    // though B's 7.1 was never cited).
+    let mut id_files: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+    for (file_key, _, inv, _) in &docs {
+        for sec in &inv.sections {
+            id_files.entry(sec.id.clone()).or_default().insert(file_key.clone());
+        }
+    }
+    let qualify = |file_display: &str, id: &str| -> String {
+        if id_files.get(id).is_some_and(|files| files.len() > 1) {
+            format!("{file_display} {id}")
+        } else {
+            id.to_string()
+        }
+    };
+
+    let mut covered: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
     let mut unattributed: Vec<String> = vec![];
     let mut cited_but_absent: Vec<String> = vec![];
     let mut quote_not_in_document: Vec<String> = vec![];
@@ -329,7 +350,8 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
 
         for spec in &citations.specs {
             let file_key = file_basename_lower(&spec.file);
-            let Some((_, doc, doc_text_norm)) = docs.iter().find(|(base, _, _)| *base == file_key) else {
+            let Some((_, doc_display, doc, doc_text_norm)) = docs.iter().find(|(base, _, _, _)| *base == file_key)
+            else {
                 cited_but_absent.push(format!("{} — cited by '{}', no such document", spec.section, case.title));
                 continue;
             };
@@ -347,7 +369,10 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
                 .or_else(|| parent_section_id(&spec.section).and_then(|p| doc.sections.iter().find(|s| s.id == p)));
 
             match resolved {
-                Some(sec) => covered.entry(sec.id.clone()).or_default().push(case.title.clone()),
+                Some(sec) => covered
+                    .entry(qualify(doc_display, &sec.id))
+                    .or_default()
+                    .push(case.title.clone()),
                 None => cited_but_absent.push(format!(
                     "{} — cited by '{}', no such section in file",
                     spec.section, case.title
@@ -365,12 +390,13 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
 
     let mut uncovered: Vec<String> = vec![];
     let mut excluded_by_plan: Vec<String> = vec![];
-    for (_, inv) in &input.inventories {
+    for (name, inv) in &input.inventories {
         for sec in &inv.sections {
+            let key = qualify(name, &sec.id);
             if is_excluded(&sec.id) {
-                excluded_by_plan.push(sec.id.clone());
-            } else if !covered.contains_key(&sec.id) {
-                uncovered.push(sec.id.clone());
+                excluded_by_plan.push(key);
+            } else if !covered.contains_key(&key) {
+                uncovered.push(key);
             }
         }
     }
@@ -587,6 +613,23 @@ mod tests {
             out_of_scope: "",
         });
         assert_eq!(v["covered"]["7.1"], serde_json::json!(["List loads"]));
+    }
+
+    #[test]
+    fn the_same_section_id_in_two_files_is_tracked_per_file() {
+        // Two documents each happen to have a "7.1". Citing only A.md's must
+        // not silently mark B.md's unrelated 7.1 as covered too.
+        let inv_a = parse_inventory("## 7.1 List\n");
+        let inv_b = parse_inventory("## 7.1 List\n");
+        let cases = vec![case("A's list loads", "Spec: A.md 7.1")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("A.md".into(), inv_a), ("B.md".into(), inv_b)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["covered"]["A.md 7.1"], serde_json::json!(["A's list loads"]));
+        assert_eq!(v["uncovered"], serde_json::json!(["B.md 7.1"]));
     }
 
     #[test]
