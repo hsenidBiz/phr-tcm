@@ -238,6 +238,20 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        stem: "coverage",
+        tool: "check_spec_coverage",
+        desc: "Which parts of the spec have no case yet - run before optimize_cases",
+        hint: "[spec file path(s), and the draft]",
+        body: &[
+            "Call `check_spec_coverage` with the draft and the plan's spec paths: $ARGUMENTS",
+            "",
+            "It reports findings to read and account for, not a pass/fail - a partial draft is",
+            "a normal state, not an error. Report `uncovered` to the developer and account for",
+            "every entry before handing the file over: \"out of scope for this batch\" is a fine",
+            "answer, silence is not.",
+        ],
+    },
+    CommandSpec {
         stem: "optimize",
         tool: "optimize_cases",
         desc: "Reorganise a draft into a run sheet a tester can work straight through",

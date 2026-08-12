@@ -136,6 +136,7 @@ pub async fn route(
         ("POST", "/optimize") => optimize_json(body, target),
         ("POST", "/transform") => transform_json(body),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
+        ("POST", "/check-coverage") => check_coverage_route(body).await,
         ("POST", "/begin") => begin_writing(body, target, ctx, client).await,
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
@@ -565,6 +566,110 @@ async fn validate_json(
         Err(e) => serde_json::json!({ "cases": 0, "warnings": [], "error": e }),
     };
     out.to_string()
+}
+
+/// Request body for `/check-coverage`: which draft to score against which
+/// spec documents. `path` and `json` are a strict XOR - never both, never
+/// neither - see `check_coverage_route`'s doc comment for why.
+#[derive(serde::Deserialize, Default)]
+struct CoverageRequest {
+    json: Option<String>,
+    path: Option<String>,
+    #[serde(default)]
+    spec_paths: Vec<String>,
+    #[serde(default)]
+    sections: String,
+    #[serde(default)]
+    out_of_scope: String,
+}
+
+/// Score a draft's `Spec:` citations against one or more spec documents -
+/// the coverage math itself lives in `speccov::check_coverage`; this route
+/// is only the I/O around it.
+///
+/// `path` XOR `json` names the draft: both present is refused rather than
+/// silently preferring one, because a silently-preferred source is exactly
+/// the defect class this whole feature exists to catch (round 5, item 10).
+/// Neither present is refused the same way, for the same reason. Every
+/// `spec_paths` entry is read from disk; one that does not exist or cannot
+/// be read is a 400 naming that path, never a silently empty inventory -
+/// an unreadable spec must not read as "fully covered because it has no
+/// sections".
+async fn check_coverage_route(body: &str) -> (u16, String) {
+    let req: CoverageRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                400,
+                serde_json::json!({ "error": format!("could not read the request body: {e}") }).to_string(),
+            )
+        }
+    };
+
+    let has_path = req.path.as_deref().is_some_and(|p| !p.trim().is_empty());
+    let has_json = req.json.as_deref().is_some_and(|j| !j.trim().is_empty());
+    if has_path && has_json {
+        return (
+            400,
+            serde_json::json!({
+                "error": "both `path` and `json` were given - pass exactly one, naming the draft \
+                          to score. A silently-preferred source is the defect this tool exists to catch."
+            })
+            .to_string(),
+        );
+    }
+    if !has_path && !has_json {
+        return (
+            400,
+            serde_json::json!({
+                "error": "neither `path` nor `json` was given - pass exactly one, naming the draft to score"
+            })
+            .to_string(),
+        );
+    }
+
+    let cases = if has_path {
+        let path = req.path.as_deref().unwrap_or_default();
+        if !std::path::Path::new(path).is_file() {
+            return (
+                400,
+                serde_json::json!({ "error": format!("{path} does not exist or is not a file") }).to_string(),
+            );
+        }
+        match crate::import_parser::parse_file(path) {
+            Ok((cases, _warnings)) => cases,
+            Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+        }
+    } else {
+        match parse_cases_with_warnings(req.json.as_deref().unwrap_or_default()) {
+            Ok((cases, _warnings)) => cases,
+            Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+        }
+    };
+
+    let mut inventories: Vec<(String, crate::speccov::Inventory)> = Vec::with_capacity(req.spec_paths.len());
+    for spec_path in &req.spec_paths {
+        match std::fs::read_to_string(spec_path) {
+            Ok(text) => inventories.push((spec_path.clone(), crate::speccov::parse_inventory(&text))),
+            Err(e) => {
+                return (
+                    400,
+                    serde_json::json!({
+                        "error": format!("{spec_path} does not exist or could not be read: {e}")
+                    })
+                    .to_string(),
+                )
+            }
+        }
+    }
+
+    let report = crate::speccov::check_coverage(crate::speccov::CoverageInput {
+        inventories,
+        cases: &cases,
+        sections_scope: &req.sections,
+        out_of_scope: &req.out_of_scope,
+    });
+    (200, report.to_string())
 }
 
 /// Like `parse_cases`, but keeps the importer's warnings too.

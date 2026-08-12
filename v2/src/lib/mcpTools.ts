@@ -19,6 +19,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
   { name: "get_writing_guide", summary: "Format rules and your org's allowed Module values." },
   { name: "get_test_cases", summary: "The cases already on a PBI - style, and what is covered." },
   { name: "get_run_failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },
+  { name: "check_spec_coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
   { name: "validate_cases", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", summary: "Reorganise a draft into a tester-ready run sheet." },

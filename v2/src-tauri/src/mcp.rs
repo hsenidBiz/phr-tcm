@@ -143,6 +143,21 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["pbi_id"]),
         },
         {
+            "name": "check_spec_coverage",
+            "description": "Reports coverage as findings to read and account for, not as pass/fail - a partial draft is a normal state, not an error. Joins a draft's `Spec:` citations against one or more spec documents and returns which sections have no case yet (`uncovered`), which cases could not be attributed to any section, which citations point at a section or file that does not exist, which quoted text was not found in the document, and which sections are excluded by the plan's own scope. Run before optimize_cases so gaps are found while the draft is still easy to extend.",
+            "inputSchema": schema(serde_json::json!({
+                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object) - use this or `path`, never both" },
+                "path": { "type": "string", "description": "Absolute path to a local draft file - use this or `json`, never both" },
+                "spec_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Absolute paths to the specification documents the draft cites",
+                },
+                "sections": { "type": "string", "description": "Which sections are in scope for this batch, if narrower than the whole document" },
+                "out_of_scope": { "type": "string", "description": "Anything explicitly not covered by this batch, e.g. \"7.4 is deferred to phase 2\"" },
+            }), &["spec_paths"]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
             "inputSchema": schema(serde_json::json!({
@@ -273,6 +288,7 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);
             call("GET", &format!("/run-failures?pbi={pbi}"), "")
         }
+        "check_spec_coverage" => call("POST", "/check-coverage", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];
