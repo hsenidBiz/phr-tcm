@@ -250,31 +250,120 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
 }
 
 /// Apply declarative edits to a draft - the restructuring an assistant
-/// would otherwise write a throwaway script for. Pure, like `optimize`.
+/// would otherwise write a throwaway script for.
+///
+/// Round 5 §10: the draft may come as a `path` instead of inline JSON -
+/// the same escape `validate_cases` has, because a 245 KB draft inlined
+/// both ways is a 489 KB round-trip to reword some steps, and sharding it
+/// forces the hand-rolled reassembly the guide forbids. `path` and inline
+/// together is a 400 naming both - the old behaviour, building the result
+/// from the inline draft while the path sat ignored, is the exact silent-
+/// discard §15 condemns. `in_place: true` writes the transformed draft
+/// back to the path atomically and skips echoing the JSON, which for a
+/// bulk retag is the whole cost.
 fn transform_json(body: &str) -> (u16, String) {
     let doc: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return (400, serde_json::json!({ "error": format!("invalid JSON: {e}") }).to_string()),
     };
-    // The draft arrives as a JSON *string* (the tool's `json` argument),
-    // but a caller posting the array inline should work too.
-    let draft = match &doc["test_cases"] {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
+    let from_path = doc["path"].as_str().filter(|p| !p.trim().is_empty()).map(str::to_string);
+    let has_inline = !doc["test_cases"].is_null();
+    let in_place = doc["in_place"].as_bool().unwrap_or(false);
+    if from_path.is_some() && has_inline {
+        return (
+            400,
+            serde_json::json!({ "error": "pass the draft as \"json\" OR as \"path\", not both - \
+                a silently preferred source is how edits land on the wrong draft." })
+            .to_string(),
+        );
+    }
+    if in_place && from_path.is_none() {
+        return (
+            400,
+            serde_json::json!({ "error": "in_place needs a \"path\" - there is no file to write back to." })
+                .to_string(),
+        );
+    }
+
+    let (cases, import_warnings) = match &from_path {
+        Some(path) => {
+            if !std::path::Path::new(path).is_file() {
+                return (
+                    400,
+                    serde_json::json!({ "error": format!("{path} does not exist or is not a file") })
+                        .to_string(),
+                );
+            }
+            match crate::import_parser::parse_file(path) {
+                Ok(v) => v,
+                Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+            }
+        }
+        None => {
+            // The draft arrives as a JSON *string* (the tool's `json`
+            // argument), but a caller posting the array inline works too.
+            let draft = match &doc["test_cases"] {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Null => {
+                    return (
+                        400,
+                        serde_json::json!({ "error": "empty draft - pass the JSON as \"json\", or a local file via \"path\" for large drafts" })
+                            .to_string(),
+                    )
+                }
+                other => other.to_string(),
+            };
+            match parse_cases_with_warnings(&draft) {
+                Ok(v) => v,
+                Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+            }
+        }
     };
-    let (cases, import_warnings) = match parse_cases_with_warnings(&draft) {
-        Ok(v) => v,
-        Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
-    };
-    let ops = match crate::transform::parse_ops(&doc["operations"]) {
+    let (ops, mut ignored) = match crate::transform::parse_ops_full(&doc["operations"]) {
         Ok(o) => o,
         Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
     };
-    let (out, report) = crate::transform::apply(cases, &ops);
+    // Body arguments this route does not read - echoed, not swallowed.
+    if let Some(obj) = doc.as_object() {
+        for k in obj.keys() {
+            if !["test_cases", "operations", "path", "in_place"].contains(&k.as_str()) {
+                ignored.push(format!("request argument \"{k}\" is not read by transform_cases."));
+            }
+        }
+    }
+    let (out, mut report) = crate::transform::apply(cases, &ops);
+    report.ignored.extend(ignored);
     let json = match crate::import_parser::queue_to_json_string(&out) {
         Ok(j) => j,
         Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
     };
+
+    if in_place {
+        // Temp-in-same-directory + rename, like merge_case_files: a half-
+        // written draft under a watched path is worse than no write.
+        let path = from_path.expect("guarded above");
+        let tmp = format!("{path}.tmp");
+        if let Err(e) = std::fs::write(&tmp, &json) {
+            let _ = std::fs::remove_file(&tmp);
+            return (500, serde_json::json!({ "error": format!("could not write {tmp}: {e}") }).to_string());
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            return (500, serde_json::json!({ "error": format!("could not replace {path}: {e}") }).to_string());
+        }
+        return (
+            200,
+            serde_json::json!({
+                "written_to": path,
+                "cases": out.len(),
+                "report": report,
+                "import_warnings": import_warnings,
+                "note": "The transformed draft was written back in place - no JSON is echoed. The app's file watch will pick the change up.",
+            })
+            .to_string(),
+        );
+    }
+
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
     (
         200,

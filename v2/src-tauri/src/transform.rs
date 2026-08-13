@@ -60,8 +60,26 @@ pub enum Op {
     /// Drop the matched cases. Requires a `where` filter: an unfiltered
     /// remove would delete the whole draft, and nobody means that.
     RemoveCases,
-    /// Append new cases to the draft.
-    InsertCases(Vec<TestCase>),
+    /// Insert new cases at a chosen position. Position matters because a
+    /// draft's array order IS its spec order - the one reading no field
+    /// encodes - and an insert that always appended silently destroyed it
+    /// once per edited case (round 5 §13).
+    InsertCases { cases: Vec<TestCase>, position: InsertPos },
+    /// Replace each step whose action contains `find` with the `into`
+    /// sequence, at the same index.
+    SplitStep { find: String, into: Vec<crate::steps_xml::Step> },
+}
+
+/// Where `insert_cases` puts its cases.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InsertPos {
+    End,
+    /// Zero-based index into the case array, clamped to the end.
+    Index(usize),
+    /// Before the first case whose title contains this (case-insensitive).
+    Before(String),
+    /// After the first case whose title contains this (case-insensitive).
+    After(String),
 }
 
 /// Which cases an operation applies to. Absent means all of them.
@@ -91,6 +109,13 @@ pub struct TransformReport {
     /// draft by hand.
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Everything the tool was GIVEN and did not use: unknown operation
+    /// keys, unknown fields on inserted cases, unknown body arguments.
+    /// Round 5 §15's rule - "echo what you ignored" - because a tool that
+    /// silently drops input is the hand-rolled-script hazard one layer
+    /// down, and harder to notice because the report looks clean.
+    #[serde(default)]
+    pub ignored: Vec<String>,
     pub cases_in: usize,
     pub cases_out: usize,
 }
@@ -181,12 +206,46 @@ fn parse_filter(v: &serde_json::Value, label: &str) -> Result<Filter, String> {
 /// offending entry rather than silently skipping it - a dropped edit that
 /// looks applied is the worst outcome here.
 pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
+    parse_ops_full(raw).map(|(ops, _)| ops)
+}
+
+/// As `parse_ops`, also returning what was IGNORED: keys an op does not
+/// read, and fields `insert_cases` will discard. The route folds these
+/// into the report's `ignored` list - §15's "echo what you ignored".
+pub fn parse_ops_full(
+    raw: &serde_json::Value,
+) -> Result<(Vec<Operation>, Vec<String>), String> {
     let list = raw
         .as_array()
         .ok_or("\"operations\" must be a list of operation objects.")?;
     let mut out = vec![];
+    let mut ignored: Vec<String> = vec![];
     for (i, v) in list.iter().enumerate() {
         let label = format!("operation {}", i + 1);
+        if let (Some(obj), Some(name)) = (v.as_object(), v["op"].as_str()) {
+            for k in obj.keys() {
+                if !known_keys(name).contains(&k.as_str()) {
+                    ignored.push(format!(
+                        "{label}: \"{k}\" is not read by {name} - it was ignored. {name} reads: {}.",
+                        known_keys(name).join(", ")
+                    ));
+                }
+            }
+        }
+        if v["op"].as_str() == Some("insert_cases") {
+            if let Some(list) = v["cases"].as_array() {
+                for (j, rv) in list.iter().enumerate() {
+                    let unknown = insert_case_unknown_keys(rv);
+                    if !unknown.is_empty() {
+                        ignored.push(format!(
+                            "{label}: cases[{j}] carries fields the draft format does not keep - \
+                             discarded: {}.",
+                            unknown.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
         let name = v["op"].as_str().ok_or(format!("{label}: missing \"op\"."))?;
         // Only read for the ops that take one; required_str below is what
         // actually guards them.
@@ -237,11 +296,55 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                 }
             }
             "remove_step_matching" => {
-                let find = if value.is_empty() { str_of(v, "find") } else { value.clone() };
+                // `action` is accepted as a third alias because the schema's
+                // own field list makes it LOOK right (prepend/append use it)
+                // - round 5 §11 walked into exactly that trap. The error
+                // names every accepted key, the way the unknown-op error
+                // already names every op.
+                let find = [value.clone(), str_of(v, "find"), str_of(v, "action")]
+                    .into_iter()
+                    .find(|s| !s.trim().is_empty())
+                    .unwrap_or_default();
                 if find.trim().is_empty() {
-                    return Err(format!("{label}: remove_step_matching needs the text to match."));
+                    return Err(format!(
+                        "{label}: remove_step_matching needs \"value\", \"find\" or \"action\" - \
+                         the text to match against step actions."
+                    ));
                 }
                 Op::RemoveStepMatching(find)
+            }
+            "split_step" => {
+                // The commonest edit when tightening steps toward one action
+                // each - round 5 §13 rebuilt 18 cases with remove+prepend
+                // chains for want of this. Every step whose action contains
+                // `find` is replaced, in place, by the `into` sequence.
+                let find = if value.is_empty() { str_of(v, "find") } else { value.clone() };
+                if find.trim().is_empty() {
+                    return Err(format!(
+                        "{label}: split_step needs \"value\" or \"find\" - the step text to split."
+                    ));
+                }
+                let into_raw = v["into"]
+                    .as_array()
+                    .ok_or(format!(
+                        "{label}: split_step needs \"into\" - a list of {{action, expected}} \
+                         steps that replace the matched step."
+                    ))?;
+                let mut into = vec![];
+                for (j, sv) in into_raw.iter().enumerate() {
+                    let action = sv["action"].as_str().unwrap_or("").to_string();
+                    if action.trim().is_empty() {
+                        return Err(format!("{label}: into[{j}] has no \"action\"."));
+                    }
+                    into.push(crate::steps_xml::Step {
+                        action,
+                        expected: sv["expected"].as_str().unwrap_or("").to_string(),
+                    });
+                }
+                if into.is_empty() {
+                    return Err(format!("{label}: split_step got an empty \"into\" list."));
+                }
+                Op::SplitStep { find, into }
             }
             "remove_cases" => {
                 let f = &v["where"];
@@ -313,15 +416,45 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
                 if cases.is_empty() {
                     return Err(format!("{label}: insert_cases got an empty \"cases\" list."));
                 }
-                Op::InsertCases(cases)
+                // `index`/`at`/`position` used to be accepted and silently
+                // dropped - the §15 defect class. Now `at_index`/`before`/
+                // `after` are real, exactly one may be given, and the old
+                // spellings are named in the error rather than swallowed.
+                let mut positions: Vec<InsertPos> = vec![];
+                if let Some(n) = v["at_index"].as_u64() {
+                    positions.push(InsertPos::Index(n as usize));
+                }
+                if let Some(t) = v["before"].as_str().filter(|t| !t.trim().is_empty()) {
+                    positions.push(InsertPos::Before(t.to_string()));
+                }
+                if let Some(t) = v["after"].as_str().filter(|t| !t.trim().is_empty()) {
+                    positions.push(InsertPos::After(t.to_string()));
+                }
+                if positions.len() > 1 {
+                    return Err(format!(
+                        "{label}: insert_cases takes at most ONE of \"at_index\", \"before\", \"after\"."
+                    ));
+                }
+                for legacy in ["index", "at", "position"] {
+                    if v.get(legacy).is_some() {
+                        return Err(format!(
+                            "{label}: insert_cases does not read \"{legacy}\" - use \"at_index\" \
+                             (zero-based), \"before\" or \"after\" (a title fragment)."
+                        ));
+                    }
+                }
+                Op::InsertCases {
+                    cases,
+                    position: positions.pop().unwrap_or(InsertPos::End),
+                }
             }
             other => {
                 return Err(format!(
                     "{label}: unknown op \"{other}\". Supported: set_tags, add_tags, \
                      remove_tags, set_module, set_automation_status, set_preconditions, \
                      replace_in_title, prefix_title, suffix_title, replace_in_steps, \
-                     prepend_step, append_step, remove_step_matching, sort_by, group_by, \
-                     dedupe, remove_cases, insert_cases."
+                     prepend_step, append_step, remove_step_matching, split_step, sort_by, \
+                     group_by, dedupe, remove_cases, insert_cases."
                 ))
             }
         };
@@ -337,7 +470,7 @@ pub fn parse_ops(raw: &serde_json::Value) -> Result<Vec<Operation>, String> {
             filter: parse_filter(v, &label)?,
         });
     }
-    Ok(out)
+    Ok((out, ignored))
 }
 
 pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, TransformReport) {
@@ -380,10 +513,42 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                 touched = before - cases.len();
                 report.applied.push(format!("Removed {touched} case(s)."));
             }
-            Op::InsertCases(new_cases) => {
+            Op::InsertCases { cases: new_cases, position } => {
                 touched = new_cases.len();
-                cases.extend(new_cases.iter().cloned());
-                report.applied.push(format!("Inserted {touched} case(s) at the end."));
+                // Resolved at APPLY time, against the array as it stands
+                // after earlier operations. A before/after fragment that
+                // matches nothing appends WITH a warning - dropping the
+                // cases would lose data, and doing it silently would be
+                // the §15 defect all over again.
+                let at = match position {
+                    InsertPos::End => cases.len(),
+                    InsertPos::Index(i) => (*i).min(cases.len()),
+                    InsertPos::Before(t) | InsertPos::After(t) => {
+                        let needle = t.to_lowercase();
+                        match cases.iter().position(|c| c.title.to_lowercase().contains(&needle)) {
+                            Some(i) => {
+                                if matches!(position, InsertPos::Before(_)) { i } else { i + 1 }
+                            }
+                            None => {
+                                report.warnings.push(format!(
+                                    "insert_cases: no case title contains '{t}' - inserted at \
+                                     the end instead."
+                                ));
+                                cases.len()
+                            }
+                        }
+                    }
+                };
+                let where_txt = match position {
+                    InsertPos::End => "at the end".to_string(),
+                    _ if at == cases.len() && !matches!(position, InsertPos::Index(_)) =>
+                        "at the end".to_string(),
+                    _ => format!("at index {at}"),
+                };
+                for (offset, c) in new_cases.iter().cloned().enumerate() {
+                    cases.insert(at + offset, c);
+                }
+                report.applied.push(format!("Inserted {touched} case(s) {where_txt}."));
             }
             Op::Dedupe => {
                 let before = cases.len();
@@ -401,11 +566,26 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                 report.applied.push(format!("Removed {touched} duplicate case(s)."));
             }
             other => {
+                // For the find-driven ops, `touched` (how many cases the
+                // filter selected) says nothing about whether any TEXT
+                // matched - with no filter it is always the whole draft,
+                // which is no information at all (round 5 §12). `modified`
+                // counts cases whose content actually changed, and that is
+                // the number the report gives for those ops.
+                let mut modified = 0usize;
                 for c in cases.iter_mut() {
                     if !operation.filter.matches(c) {
                         continue;
                     }
                     touched += 1;
+                    let before_snapshot = matches!(
+                        other,
+                        Op::ReplaceInTitle { .. }
+                            | Op::ReplaceInSteps { .. }
+                            | Op::RemoveStepMatching(_)
+                            | Op::SplitStep { .. }
+                    )
+                    .then(|| c.clone());
                     match other {
                         Op::SetTags(v) => c.tags = join_tags(&split_tags(v)),
                         Op::AddTags(v) => {
@@ -478,16 +658,56 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                                 c.steps = kept;
                             }
                         }
+                        Op::SplitStep { find, into } => {
+                            let needle = find.to_lowercase();
+                            let mut rebuilt: Vec<crate::steps_xml::Step> = vec![];
+                            for s in c.steps.drain(..) {
+                                if s.action.to_lowercase().contains(&needle) {
+                                    rebuilt.extend(into.iter().cloned());
+                                } else {
+                                    rebuilt.push(s);
+                                }
+                            }
+                            c.steps = rebuilt;
+                        }
                         Op::SortBy(_)
                         | Op::GroupBy(_)
                         | Op::Dedupe
                         | Op::RemoveCases
-                        | Op::InsertCases(_) => unreachable!("handled above"),
+                        | Op::InsertCases { .. } => unreachable!("handled above"),
+                    }
+                    if let Some(before) = before_snapshot {
+                        if before.title != c.title || before.steps != c.steps {
+                            modified += 1;
+                        }
                     }
                 }
-                report
-                    .applied
-                    .push(format!("{} applied to {touched} case(s).", describe(other)));
+                let find_driven = matches!(
+                    other,
+                    Op::ReplaceInTitle { .. }
+                        | Op::ReplaceInSteps { .. }
+                        | Op::RemoveStepMatching(_)
+                        | Op::SplitStep { .. }
+                );
+                if find_driven {
+                    report
+                        .applied
+                        .push(format!("{} modified {modified} case(s).", describe(other)));
+                    // The find hit nothing anywhere it looked. Same shape as
+                    // the empty-filter line below, because it is the same
+                    // failure: an operation that quietly did nothing. This
+                    // is what makes an order-dependent find - one op
+                    // rewriting the text a later op looks for - visible.
+                    if touched > 0 && modified == 0 {
+                        report
+                            .applied
+                            .push("  (the find matched no text - check it)".to_string());
+                    }
+                } else {
+                    report
+                        .applied
+                        .push(format!("{} applied to {touched} case(s).", describe(other)));
+                }
             }
         }
         if touched == 0 {
@@ -529,7 +749,63 @@ fn describe(op: &Op) -> String {
         Op::PrependStep { action, .. } => format!("Prepended step '{action}'"),
         Op::AppendStep { action, .. } => format!("Appended step '{action}'"),
         Op::RemoveStepMatching(f) => format!("Removed steps matching '{f}'"),
+        Op::SplitStep { find, into } => {
+            format!("Split steps matching '{find}' into {} step(s)", into.len())
+        }
         Op::RemoveCases => "Removed cases".to_string(),
-        Op::InsertCases(list) => format!("Inserted {} case(s)", list.len()),
+        Op::InsertCases { cases, .. } => format!("Inserted {} case(s)", cases.len()),
     }
+}
+
+/// The keys each op actually reads - the mapping §11 found missing from
+/// the schema, now enforced: a key an op does not read lands in the
+/// report's `ignored` list instead of vanishing.
+fn known_keys(op_name: &str) -> &'static [&'static str] {
+    match op_name {
+        "set_tags" | "add_tags" | "remove_tags" | "set_module" | "set_automation_status"
+        | "set_preconditions" | "prefix_title" | "suffix_title" | "sort_by" | "group_by" => {
+            &["op", "where", "value"]
+        }
+        "replace_in_title" | "replace_in_steps" => &["op", "where", "find", "replace"],
+        "prepend_step" | "append_step" => &["op", "where", "action", "expected"],
+        "remove_step_matching" => &["op", "where", "value", "find", "action"],
+        "split_step" => &["op", "where", "value", "find", "into"],
+        "remove_cases" | "dedupe" => &["op", "where"],
+        "insert_cases" => &["op", "where", "cases", "at_index", "before", "after"],
+        _ => &["op", "where"],
+    }
+}
+
+/// The case-object keys `insert_cases` reads (importer aliases included).
+/// Everything else on an inserted case is DISCARDED by the rebuild, and
+/// §15's evidence showed `author`, `priority` and `step_number` vanishing
+/// with `warnings: []` - so the discard is now echoed.
+fn insert_case_unknown_keys(rv: &serde_json::Value) -> Vec<String> {
+    const KNOWN: &[&str] = &[
+        "title", "steps", "tags", "automation_status", "module", "module_value",
+        "preconditions", "id", "update_id", "spec_order", "tester_order",
+    ];
+    let mut out = vec![];
+    if let Some(obj) = rv.as_object() {
+        for k in obj.keys() {
+            let known = KNOWN.contains(&k.as_str())
+                || crate::import_parser::COMMENT_KEYS.contains(&k.as_str())
+                || crate::import_parser::REVIEWER_NOTES_KEYS.contains(&k.as_str());
+            if !known {
+                out.push(k.clone());
+            }
+        }
+    }
+    if let Some(steps) = rv["steps"].as_array() {
+        for sv in steps {
+            if let Some(obj) = sv.as_object() {
+                for k in obj.keys() {
+                    if k != "action" && k != "expected" && !out.contains(&format!("steps.{k}")) {
+                        out.push(format!("steps.{k}"));
+                    }
+                }
+            }
+        }
+    }
+    out
 }

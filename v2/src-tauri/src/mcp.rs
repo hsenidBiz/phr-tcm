@@ -177,15 +177,17 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "transform_cases",
-            "description": "Apply bulk edits to a draft without rewriting it yourself: retag, retitle, set module or automation status, find/replace inside steps, sort, dedupe. Each operation takes an optional `where` filter. Use this instead of writing a script to reshape the JSON.",
+            "description": "Apply bulk edits to a draft without rewriting it yourself: retag, retitle, set module or automation status, find/replace inside steps, split a step in two, sort, dedupe, insert at a position. Each operation takes an optional `where` filter. Pass `path` instead of `json` for large drafts, and `in_place: true` to write the result back to that file. The report's `applied` lines give the count of cases actually MODIFIED for find-driven ops, its `warnings` list what an op declined to do, and its `ignored` list everything you passed that was not used - read all three.",
             "inputSchema": schema(serde_json::json!({
-                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
+                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object). Use `path` instead for large drafts - never both." },
+                "path": { "type": "string", "description": "Absolute path to the draft file - use this instead of `json` for large drafts." },
+                "in_place": { "type": "boolean", "description": "With `path`: write the transformed draft back to the same file (atomic) and skip echoing the JSON." },
                 "operations": {
                     "type": "array",
-                    "description": "Ops applied in order. Each: {op, value?, find?, replace?, action?, expected?, cases?, where?}. op is one of set_tags, add_tags, remove_tags, set_module, set_automation_status, set_preconditions, replace_in_title, prefix_title, suffix_title, replace_in_steps, prepend_step, append_step, remove_step_matching, sort_by, group_by (stable - keeps within-group order), dedupe, remove_cases (where filter required), insert_cases. sort_by/group_by take title, module, tags or preconditions. `where` may carry title_contains, has_tag, module_is.",
+                    "description": "Ops applied in order. WHICH KEYS EACH OP READS: set_tags/add_tags/remove_tags/set_module/set_automation_status/set_preconditions/prefix_title/suffix_title/sort_by/group_by take {value}; replace_in_title/replace_in_steps take {find, replace}; prepend_step/append_step take {action, expected}; remove_step_matching takes {value|find|action} (substring against step actions); split_step takes {find, into: [{action, expected}, ...]} and replaces each matching step with that sequence; remove_cases takes only a required `where`; insert_cases takes {cases, and optionally ONE of at_index (zero-based) | before | after (a title fragment)} - without one it appends; dedupe takes nothing (first copy wins, no merge). Every op accepts `where` with title_contains/has_tag/module_is. sort_by/group_by values: title, module, tags, preconditions. A key an op does not read is reported in `ignored`, never silently dropped.",
                     "items": { "type": "object" },
                 },
-            }), &["json", "operations"]),
+            }), &["operations"]),
         },
         {
             "name": "validate_cases",
@@ -331,12 +333,24 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "transform_cases" => {
             // The bridge takes one body, so the draft and the ops travel
-            // together rather than as a query string.
-            let body = serde_json::json!({
-                "test_cases": args["json"].as_str().unwrap_or(""),
-                "operations": args["operations"].clone(),
-            });
-            call("POST", "/transform", &body.to_string())
+            // together rather than as a query string. Keys are forwarded
+            // only when PRESENT - the old shape hardcoded json+operations,
+            // which is precisely how a passed `path` was silently dropped
+            // and the result built from an empty inline draft (round 5
+            // §10). Absent stays absent so the route can tell "not given"
+            // from "given empty".
+            let mut body = serde_json::Map::new();
+            if let Some(j) = args["json"].as_str() {
+                body.insert("test_cases".into(), serde_json::json!(j));
+            }
+            if let Some(p) = args["path"].as_str() {
+                body.insert("path".into(), serde_json::json!(p));
+            }
+            if let Some(w) = args["in_place"].as_bool() {
+                body.insert("in_place".into(), serde_json::json!(w));
+            }
+            body.insert("operations".into(), args["operations"].clone());
+            call("POST", "/transform", &serde_json::Value::Object(body).to_string())
         }
         "get_tags" => {
             let target = match args["query"].as_str().filter(|f| !f.trim().is_empty()) {
