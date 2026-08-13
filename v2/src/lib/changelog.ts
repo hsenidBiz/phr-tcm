@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.18",
+    date: "2026-08-13",
+    items: [
+      "The AI transform_cases tool got a round of honesty and reach: its reports now count the cases an edit actually changed (a find that matches nothing says so), drafts can be edited straight from their file path and written back in place, and anything the tool ignored - unknown options, misspelled keys, dropped fields - is echoed back instead of vanishing.",
+      "transform_cases also learned two asked-for edits: insert new cases at an exact position (by index or next to a titled case) and split one overloaded step into several across every case that has it.",
+    ],
+  },
+  {
     version: "1.19.17",
     date: "2026-08-12",
     items: [
