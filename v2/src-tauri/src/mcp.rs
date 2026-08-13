@@ -143,6 +143,29 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["pbi_id"]),
         },
         {
+            "name": "check_spec_coverage",
+            "description": "Reports coverage as findings to read and account for, not as pass/fail - a partial draft is a normal state, not an error. Joins a draft's `Spec:` citations against one or more spec documents and returns which sections have no case yet (`uncovered`), which cases could not be attributed to any section, which citations point at a section or file that does not exist, which quoted text was not found in the document, and which sections are excluded by the plan's own scope. AC-level sections (e.g. \"8.2 (AC-2)\") are reported individually - a covered parent section does not silence its acceptance criteria. Run before optimize_cases so gaps are found while the draft is still easy to extend.",
+            "inputSchema": schema(serde_json::json!({
+                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object) - use this or `path`, never both" },
+                "path": { "type": "string", "description": "Absolute path to a local draft file - use this or `json`, never both" },
+                "spec_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Absolute paths to the specification documents the draft cites",
+                },
+                "sections": { "type": "string", "description": "Which sections are in scope for this batch, if narrower than the whole document" },
+                "out_of_scope": { "type": "string", "description": "Anything explicitly not covered by this batch, e.g. \"7.4 is deferred to phase 2\"" },
+            }), &["spec_paths"]),
+        },
+        {
+            "name": "merge_case_files",
+            "description": "Merge slice files from a fan-out into one draft through the real importer - never merge by hand. Reads every path in `paths` with the same importer the app uses, concatenates the cases in that order, and writes the result to `output_path` (refused if that path already exists - pick a new one rather than overwriting). Returns the merged case count, a per-file breakdown, and the importer's warnings from every slice, each prefixed with the slice file it came from. Does not deduplicate - if slices may overlap, run optimize_cases or transform_cases' dedupe on the merged file afterward.",
+            "inputSchema": schema(serde_json::json!({
+                "paths": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths to the slice files, in the order they should be concatenated" },
+                "output_path": { "type": "string", "description": "Full path, including file name, for the merged draft - must not already exist" },
+            }), &["paths", "output_path"]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
             "inputSchema": schema(serde_json::json!({
@@ -273,6 +296,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);
             call("GET", &format!("/run-failures?pbi={pbi}"), "")
         }
+        "check_spec_coverage" => call("POST", "/check-coverage", &args.to_string()),
+        // The bridge takes one body, so forwarding the raw arguments object
+        // is structurally unable to drop `paths` or `output_path` - the
+        // same pattern as `check_spec_coverage` above.
+        "merge_case_files" => call("POST", "/merge-cases", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

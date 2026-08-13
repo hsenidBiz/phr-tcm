@@ -29,6 +29,7 @@ pub mod optimize;
 pub mod pipelines;
 pub mod refcache;
 pub mod report;
+pub mod speccov;
 pub mod state;
 pub mod steps_xml;
 pub mod transform;

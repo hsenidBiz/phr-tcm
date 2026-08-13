@@ -136,6 +136,8 @@ pub async fn route(
         ("POST", "/optimize") => optimize_json(body, target),
         ("POST", "/transform") => transform_json(body),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
+        ("POST", "/check-coverage") => check_coverage_route(body).await,
+        ("POST", "/merge-cases") => merge_cases_route(body),
         ("POST", "/begin") => begin_writing(body, target, ctx, client).await,
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
@@ -384,6 +386,9 @@ async fn begin_writing(
 
     let plan = crate::intake::plan_markdown(&answers, &feature);
     let plan_path = crate::intake::plan_path(&answers.output_path);
+    // Advice, not a gate: `None` (never an error) when no spec file could
+    // be read at all, which must not block an otherwise-ready intake.
+    let scale = crate::intake::job_scale(&answers.spec_paths, &answers.sections);
     // `fs::write` TRUNCATES, and this path is derived from a name the
     // developer typed - so it can land on a file that was never ours.
     // Re-running begin after refining the answers has to keep working, so
@@ -400,6 +405,7 @@ async fn begin_writing(
         serde_json::json!({
             "status": "ready",
             "unchecked": unchecked,
+            "scale": scale,
             "plan": plan,
             "plan_path": if written { serde_json::json!(plan_path) } else { serde_json::Value::Null },
             "plan_write_error": if written {
@@ -518,6 +524,26 @@ async fn validate_json(
                         why
                     ));
                 }
+
+                // A `Spec:` citation with no verbatim quote and no exemption
+                // is a judgement call, not a defect the importer can catch -
+                // same register as the both-branches check above. Uses
+                // `speccov::parse_citations` (the one parser Task 1 built)
+                // rather than a second regex over `reviewer_notes`, so the
+                // guide's citation grammar and this check can never drift
+                // apart. A code-only citation (no `specs` at all) never
+                // trips this - the rule is about quoting a SPEC, not code.
+                if let Some(citations) = crate::speccov::parse_citations(&tc.reviewer_notes) {
+                    if citations.specs.iter().any(|s| s.quote.is_none() && s.exemption.is_none()) {
+                        advisories.push(format!(
+                            "Test case {} ('{}') cites a Spec: section with no verbatim quote and \
+                             no exemption. Quote the source sentence, or state the exemption in \
+                             the fixed form `Spec: <file> <section> - no quotable text (<why>)`.",
+                            i + 1,
+                            tc.title
+                        ));
+                    }
+                }
             }
             if let Some(c) = client {
                 let allowed = allowed_modules(ctx, c).await;
@@ -565,6 +591,237 @@ async fn validate_json(
         Err(e) => serde_json::json!({ "cases": 0, "warnings": [], "error": e }),
     };
     out.to_string()
+}
+
+/// Request body for `/check-coverage`: which draft to score against which
+/// spec documents. `path` and `json` are a strict XOR - never both, never
+/// neither - see `check_coverage_route`'s doc comment for why.
+#[derive(serde::Deserialize, Default)]
+struct CoverageRequest {
+    json: Option<String>,
+    path: Option<String>,
+    #[serde(default)]
+    spec_paths: Vec<String>,
+    #[serde(default)]
+    sections: String,
+    #[serde(default)]
+    out_of_scope: String,
+}
+
+/// Score a draft's `Spec:` citations against one or more spec documents -
+/// the coverage math itself lives in `speccov::check_coverage`; this route
+/// is only the I/O around it.
+///
+/// `path` XOR `json` names the draft: both present is refused rather than
+/// silently preferring one, because a silently-preferred source is exactly
+/// the defect class this whole feature exists to catch (round 5, item 10).
+/// Neither present is refused the same way, for the same reason. Every
+/// `spec_paths` entry is read from disk; one that does not exist or cannot
+/// be read is a 400 naming that path, never a silently empty inventory -
+/// an unreadable spec must not read as "fully covered because it has no
+/// sections".
+async fn check_coverage_route(body: &str) -> (u16, String) {
+    let req: CoverageRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                400,
+                serde_json::json!({ "error": format!("could not read the request body: {e}") }).to_string(),
+            )
+        }
+    };
+
+    let has_path = req.path.as_deref().is_some_and(|p| !p.trim().is_empty());
+    let has_json = req.json.as_deref().is_some_and(|j| !j.trim().is_empty());
+    if has_path && has_json {
+        return (
+            400,
+            serde_json::json!({
+                "error": "both `path` and `json` were given - pass exactly one, naming the draft \
+                          to score. A silently-preferred source is the defect this tool exists to catch."
+            })
+            .to_string(),
+        );
+    }
+    if !has_path && !has_json {
+        return (
+            400,
+            serde_json::json!({
+                "error": "neither `path` nor `json` was given - pass exactly one, naming the draft to score"
+            })
+            .to_string(),
+        );
+    }
+
+    let cases = if has_path {
+        let path = req.path.as_deref().unwrap_or_default();
+        if !std::path::Path::new(path).is_file() {
+            return (
+                400,
+                serde_json::json!({ "error": format!("{path} does not exist or is not a file") }).to_string(),
+            );
+        }
+        match crate::import_parser::parse_file(path) {
+            Ok((cases, _warnings)) => cases,
+            Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+        }
+    } else {
+        match parse_cases_with_warnings(req.json.as_deref().unwrap_or_default()) {
+            Ok((cases, _warnings)) => cases,
+            Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+        }
+    };
+
+    let mut inventories: Vec<(String, crate::speccov::Inventory)> = Vec::with_capacity(req.spec_paths.len());
+    for spec_path in &req.spec_paths {
+        match std::fs::read_to_string(spec_path) {
+            Ok(text) => inventories.push((spec_path.clone(), crate::speccov::parse_inventory(&text))),
+            Err(e) => {
+                return (
+                    400,
+                    serde_json::json!({
+                        "error": format!("{spec_path} does not exist or could not be read: {e}")
+                    })
+                    .to_string(),
+                )
+            }
+        }
+    }
+
+    let report = crate::speccov::check_coverage(crate::speccov::CoverageInput {
+        inventories,
+        cases: &cases,
+        sections_scope: &req.sections,
+        out_of_scope: &req.out_of_scope,
+    });
+    (200, report.to_string())
+}
+
+/// Request body for `/merge-cases`: which slice files to concatenate, and
+/// where the merged draft goes.
+#[derive(serde::Deserialize, Default)]
+struct MergeRequest {
+    #[serde(default)]
+    paths: Vec<String>,
+    #[serde(default)]
+    output_path: String,
+}
+
+/// Merge slice files from a fan-out into one draft - the other half of
+/// `check_spec_coverage`: that finds gaps in a single draft, this is how a
+/// spec too large for one writer gets back to being a single draft at all.
+///
+/// Every slice is read through `crate::import_parser::parse_file` - the
+/// REAL importer, same as every other route that reads a draft - never
+/// hand-parsed, so a slice a subagent wrote is judged by the exact rules
+/// the app itself will apply on import. One unreadable or unparsable slice
+/// fails the WHOLE merge with a 400 naming that path; nothing is written,
+/// because a merge missing one slice silently is worse than no merge.
+/// `output_path` already existing is refused rather than overwritten - the
+/// caller picks a new name rather than this route guessing whether the
+/// existing file was meant to survive. Cases are concatenated as-is, with
+/// no cross-slice deduplication - a caller merging slices that may overlap
+/// should run `optimize_cases` or `transform_cases`' dedupe on the merged
+/// file afterward.
+fn merge_cases_route(body: &str) -> (u16, String) {
+    let req: MergeRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                400,
+                serde_json::json!({ "error": format!("could not read the request body: {e}") }).to_string(),
+            )
+        }
+    };
+
+    if req.paths.is_empty() {
+        return (
+            400,
+            serde_json::json!({ "error": "no `paths` given - name the slice files to merge" }).to_string(),
+        );
+    }
+    if req.output_path.trim().is_empty() {
+        return (
+            400,
+            serde_json::json!({ "error": "no `output_path` given - name where the merged draft goes" })
+                .to_string(),
+        );
+    }
+    if std::path::Path::new(&req.output_path).exists() {
+        return (
+            400,
+            serde_json::json!({
+                "error": format!(
+                    "{} already exists - merge_case_files refuses to overwrite it; pick a new \
+                     output_path or remove the existing file first",
+                    req.output_path
+                )
+            })
+            .to_string(),
+        );
+    }
+
+    let mut merged: Vec<crate::model::TestCase> = Vec::new();
+    let mut per_file: Vec<serde_json::Value> = Vec::with_capacity(req.paths.len());
+    let mut warnings: Vec<String> = Vec::new();
+
+    for path in &req.paths {
+        match crate::import_parser::parse_file(path) {
+            Ok((cases, file_warnings)) => {
+                per_file.push(serde_json::json!({ "path": path, "cases": cases.len() }));
+                // Prefixed with the slice's own file name - a warning
+                // aggregated across several slices is useless if it can't
+                // be traced back to which one produced it.
+                warnings.extend(file_warnings.into_iter().map(|w| format!("{path}: {w}")));
+                merged.extend(cases);
+            }
+            Err(e) => {
+                return (
+                    400,
+                    serde_json::json!({ "error": format!("{path}: {e}") }).to_string(),
+                )
+            }
+        }
+    }
+
+    let text = match crate::import_parser::queue_to_json_string(&merged) {
+        Ok(t) => t,
+        Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+    };
+
+    // Atomic write: write to a sibling temp file, then rename it into
+    // place. A crash or error partway through a plain `fs::write` would
+    // leave `output_path` existing but truncated, which is worse than the
+    // merge never having run at all - the caller would find a file, not
+    // know it was cut short, and hand a half-draft to the next step. There
+    // is no existing atomic-write helper on this branch (the autorun
+    // store's version lives on an unmerged sibling), so it is inlined
+    // here rather than borrowed from elsewhere.
+    let tmp_path = format!("{}.tmp", req.output_path);
+    if let Err(e) = std::fs::write(&tmp_path, &text) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return (
+            400,
+            serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),
+        );
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &req.output_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return (
+            400,
+            serde_json::json!({ "error": format!("could not write {}: {e}", req.output_path) }).to_string(),
+        );
+    }
+
+    (
+        200,
+        serde_json::json!({
+            "cases": merged.len(),
+            "per_file": per_file,
+            "warnings": warnings,
+        })
+        .to_string(),
+    )
 }
 
 /// Like `parse_cases`, but keeps the importer's warnings too.
@@ -766,8 +1023,13 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         2. **Where the requirement lives**: `Spec: Step10-ManagePerformanceCycle.md\n\
         7.7 (AC-3)`, `Code: IndexModel.CanCopyFromPreviousCycle`, or both.\n\n\
         Add `Out of scope: SSO` only when THIS case deliberately leaves\n\
-        something out, and one short quote only when the exact wording IS\n\
-        the requirement.\n\n\
+        something out. Alongside the `Spec:` pointer, quote the source\n\
+        sentence verbatim, or it must not be presented as a quote: write\n\
+        `> \"...\"` when you can quote it, or state the exemption in the\n\
+        fixed form `Spec: <file> <section> - no quotable text (<why>)`,\n\
+        naming why as one of code-not-prose, absence, table/diagram, or\n\
+        synthesis. Never rewrite inside quotation marks; elide with an\n\
+        ellipsis instead.\n\n\
         Leave OUT, every time:\n\
         - Where the cases came from as a body of work - \"Source:\n\
         implementation (authority = app)\", \"written from the spec\". The\n\
@@ -807,18 +1069,22 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         is out of scope are theirs to decide, not yours to assume.\n\
         1. Call `get_test_cases` for the PBI you're writing for and mimic\n\
         their style and granularity.\n\
-        2. Draft your cases.\n\
+        2. Draft your cases. Write your draft IN SPEC ORDER - cases walking\n\
+        down the document, so a reviewer can scroll the spec and the file\n\
+        together, and so `check_spec_coverage` (next) can reason about it\n\
+        against the document in the order you wrote it.\n\
+        2.5. Call `check_spec_coverage` with the draft and the plan's spec\n\
+        paths, while it is still in spec order. Report `uncovered` to the\n\
+        developer and account for every entry - \"out of scope for this batch\"\n\
+        is a fine answer, silence is not.\n\
         3. Call `optimize_cases` with the JSON: it spells navigation out as\n\
         steps, trims expected results to the outcome, and reorders the cases so\n\
         the tester changes environment as few times as possible. Hand back the\n\
-        JSON it returns.\n\
-        \n\
-        Write your draft IN SPEC ORDER - cases walking down the document, so a\n\
-        reviewer can scroll the spec and the file together. The optimizer then\n\
-        stamps every case with BOTH orders: `spec_order` (the order you wrote)\n\
-        and `tester_order` (its grouped run sequence). Keep those two fields\n\
-        exactly as it set them - do not renumber them by hand, and do not strip\n\
-        them; the app uses them to flip the queue between the two readings.\n\
+        JSON it returns. The optimizer then stamps every case with BOTH\n\
+        orders: `spec_order` (the order you wrote) and `tester_order` (its\n\
+        grouped run sequence). Keep those two fields exactly as it set them -\n\
+        do not renumber them by hand, and do not strip them; the app uses\n\
+        them to flip the queue between the two readings.\n\
         4. Call `validate_cases` and fix every warning. For a large draft,\n\
         pass a local file via its `path` argument instead of inlining the\n\
         JSON.\n\
