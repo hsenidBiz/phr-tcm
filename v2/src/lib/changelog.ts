@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.17",
+    date: "2026-08-12",
+    items: [
+      "Update Test Cases can move cases to a different PBI: select them, Move to PBI, search-pick the destination, and every Tested By link moves in one guarded update - reported per case, reversible by moving them back.",
+      "New AI tool check_spec_coverage answers which parts of a specification have no test case yet: it parses the document's own sections, joins them against each case's Spec: citations and quotes, and reports gaps as findings to account for - a partial draft is a normal state, not an error.",
+      "The writing intake now sizes the job - lines and in-scope sections, with a single-pass / choose / fan-out recommendation - and the writing guide asks every case to quote its source verbatim, with a fan-out recipe and a merge_case_files tool so large specs can be split across slice-writers and merged back through the real importer.",
+    ],
+  },
+  {
     version: "1.19.16",
     date: "2026-08-11",
     items: [
