@@ -180,8 +180,10 @@ export default function AiBridge() {
   return (
     // Two columns once there is room (the window floor is 900px, so
     // this only kicks in above it); a single column below, which is
-    // also what the narrow runner-sized windows get.
-    <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start">
+    // also what the narrow runner-sized windows get. At 2xl the right
+    // stack dissolves (display:contents) and How-it-works becomes its
+    // own third column instead of leaving the window's right third empty.
+    <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3">
       <div className="space-y-6">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Status</h2>
@@ -376,8 +378,11 @@ export default function AiBridge() {
       </div>
 
       {/* Right column: the two tallest cards, so neither column runs
-          far past the other. */}
-      <div className="space-y-6">
+          far past the other. `grid gap-6`, not space-y: at 2xl this
+          wrapper turns into display:contents so the two sections place
+          as grid columns 2 and 3 - and space-y's child margins would
+          leak through contents into the outer grid, where gap does not. */}
+      <div className="grid gap-6 2xl:contents">
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
@@ -631,9 +636,11 @@ export default function AiBridge() {
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">How it works</h2>
         <p className="text-sm text-muted">
-          Connected AI tools can call ten tools this app exposes. All of them
-          either read or reshape the AI's own draft — none can write to Azure
-          DevOps:
+          {/* No count in the sentence: it went stale twice - the list
+              below is the inventory. */}
+          Connected AI tools can call the tools this app exposes. All of them
+          read, reshape the AI's own draft, or save local files — none can
+          write to Azure DevOps:
         </p>
         <ul className="space-y-1.5 text-xs text-muted">
           <li>
@@ -676,6 +683,29 @@ export default function AiBridge() {
             (retag, retitle, set module, find/replace in steps, sort, dedupe) so the
             AI reshapes a draft through tested operations instead of writing its own
             throwaway script.
+          </li>
+          <li>
+            <code className="id-mono text-text">check_spec_coverage</code> — reports
+            which parts of a specification have no test case yet, by joining the
+            draft's own citations against the spec documents. Gaps come back as
+            findings to account for — a partial draft is a normal state, not an
+            error.
+          </li>
+          <li>
+            <code className="id-mono text-text">merge_case_files</code> — merges the
+            slice files of a fanned-out draft into one file through the real
+            importer, with each slice's warnings labelled by the file they came
+            from.
+          </li>
+          <li>
+            <code className="id-mono text-text">get_autorun_guide</code> — how to
+            write an Auto Run browser script: the actions the runner understands
+            and where assertions are allowed to come from.
+          </li>
+          <li>
+            <code className="id-mono text-text">save_autorun_script</code> — saves
+            browser scripts for a PBI's cases so Auto Run can drive them; one call
+            covers the whole set, saved locally, all-or-nothing.
           </li>
           <li>
             <code className="id-mono text-text">search_pbis</code> — finds the right

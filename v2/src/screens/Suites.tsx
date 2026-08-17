@@ -310,13 +310,16 @@ export default function Suites({
           ) : (
             <ChevronRight size={14} />
           )}
+          {/* The PBI badge sits BEFORE the title: ADO's own suite name
+              usually repeats the number, and reading the badge first is
+              how the eye scans a tree of "<id> <name>" rows. */}
+          {s.suite_type === "requirementTestSuite" && (
+            <Badge className="shrink-0 bg-accent-soft text-accent">PBI {s.requirement_id}</Badge>
+          )}
           {/* min-w-0 lets a long name wrap instead of forcing the row
               wider; centred while the window is narrow (where it wraps),
               left-aligned once there is room, like a tree label. */}
           <span className="min-w-0 flex-1 break-words text-center lg:text-left">{s.name}</span>
-          {s.suite_type === "requirementTestSuite" && (
-            <Badge className="shrink-0 bg-accent-soft text-accent">PBI {s.requirement_id}</Badge>
-          )}
           <span className="flex shrink-0 flex-wrap items-center justify-end gap-1">
             <span
               role="button"
