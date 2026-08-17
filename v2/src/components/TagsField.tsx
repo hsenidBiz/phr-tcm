@@ -12,6 +12,7 @@ export default function TagsField({
   value,
   onChange,
   placeholder,
+  ariaLabel,
   className,
 }: {
   org: string;
@@ -19,6 +20,8 @@ export default function TagsField({
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  /** Override the default "Tags" name when two instances share a screen. */
+  ariaLabel?: string;
   className?: string;
 }) {
   const tags = useQuery({
@@ -34,6 +37,7 @@ export default function TagsField({
       onChange={onChange}
       suggestions={tags.data ?? []}
       placeholder={placeholder}
+      ariaLabel={ariaLabel}
       className={className}
     />
   );

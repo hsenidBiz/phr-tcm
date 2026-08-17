@@ -87,3 +87,22 @@ test("the right column switches from the changelog to the app log", async () => 
   ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copy log" })).toBeInTheDocument();
 });
+
+test("editing default tags saves them for this project as you type", async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_project_tags") return ["smoke", "regression"];
+    return undefined;
+  });
+  renderSettings(qc);
+
+  const field = screen.getByLabelText("Default tags");
+  fireEvent.change(field, { target: { value: "smoke" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+
+  await waitFor(() =>
+    expect(localStorage.getItem("tcm-v2-default-tags:acme/Web")).toBe("smoke"),
+  );
+  localStorage.clear();
+});

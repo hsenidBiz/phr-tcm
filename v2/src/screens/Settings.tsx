@@ -2,7 +2,7 @@ import { reportUpdateCheck } from "../lib/updateToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { commands } from "../bindings";
@@ -14,6 +14,8 @@ import { Input, Textarea } from "../components/ui/input";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
+import { loadDefaultTags, saveDefaultTags } from "../lib/defaultTags";
+import TagsField from "../components/TagsField";
 import { cn } from "../lib/cn";
 import {
   ACCENTS,
@@ -57,6 +59,16 @@ export default function Settings({ org, project }: { org: string; project: strin
   const [choice, setChoiceState] = useState<ThemeChoice>(getThemeChoice());
   const [accent, setAccentState] = useState<Accent>(getAccent());
   const [rate, setRate] = useState<RateLevel>(getRateLevel());
+  // Default tags are per org/project - switching project in the bar while
+  // Settings is open must show that project's own set, not the last one's.
+  const [defaultTags, setDefaultTags] = useState(() => loadDefaultTags(org, project));
+  useEffect(() => {
+    setDefaultTags(loadDefaultTags(org, project));
+  }, [org, project]);
+  const setAndSaveDefaultTags = (v: string) => {
+    setDefaultTags(v);
+    saveDefaultTags(org, project, v);
+  };
   // The right column shows one panel at a time - the changelog, or the
   // app's own log for when something needs reporting.
   const [rightPanel, setRightPanel] = useState<"changelog" | "logs">("changelog");
@@ -256,6 +268,25 @@ export default function Settings({ org, project }: { org: string; project: strin
           (useFieldRefs ranked match) and deliberately NOT user-editable -
           re-add a "Test case fields" section here if that ever needs a
           manual override. */}
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Default tags</h2>
+        <p className="text-sm text-muted">
+          Added to every new test case you write in Manual Entry for this
+          project. Handy for a tag the whole PBI shares.
+        </p>
+        {org && project ? (
+          <TagsField
+            org={org}
+            project={project}
+            ariaLabel="Default tags"
+            value={defaultTags}
+            onChange={setAndSaveDefaultTags}
+          />
+        ) : (
+          <p className="text-xs text-faint">Pick an organization and project first.</p>
+        )}
+      </section>
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Updates</h2>

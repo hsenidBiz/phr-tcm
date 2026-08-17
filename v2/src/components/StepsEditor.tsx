@@ -131,7 +131,7 @@ export default function StepsEditor({
         onClick={() => onChange([...steps, { action: "", expected: "" }])}
       >
         <IconAdd aria-hidden />
-        + Add Step
+        Add Step
       </Button>
     </div>
   );

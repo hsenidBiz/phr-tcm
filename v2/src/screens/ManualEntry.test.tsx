@@ -43,7 +43,7 @@ function addCase(title: string) {
   fireEvent.change(screen.getByLabelText("Step 1 expected"), {
     target: { value: "Page shown" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "+ Add Step" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add Step" }));
   fireEvent.change(screen.getByLabelText("Step 2 action"), {
     target: { value: "Submit form" },
   });
@@ -109,4 +109,20 @@ test("draft queue persists across remounts (shared with Import File)", async () 
 
   renderScreen();
   expect(await screen.findByText("Persistent case")).toBeInTheDocument();
+});
+
+test("the project's default tags prefill each new case and return after adding", async () => {
+  localStorage.setItem("tcm-v2-default-tags:acme/Web", "smoke");
+  baseMocks();
+  renderScreen();
+
+  // Prefilled: the default renders as a removable chip before any typing.
+  expect(screen.getByLabelText("Remove smoke")).toBeInTheDocument();
+
+  addCase("Case carrying defaults");
+  expect(await screen.findByText("Case carrying defaults")).toBeInTheDocument();
+
+  // The reset goes back to the defaults, not to empty - the next case
+  // wants them too.
+  expect(screen.getByLabelText("Remove smoke")).toBeInTheDocument();
 });

@@ -559,11 +559,14 @@ test("with no recents recorded yet, the area explains itself instead of showing 
   expect(screen.queryByText(/Queue for PBI/)).not.toBeInTheDocument();
 });
 
-test("Manual Entry (no recents wiring) keeps the full queue section when empty", () => {
+test("Manual Entry (no recents wiring) renders nothing at all when the queue is empty", () => {
   baseMocks();
-  renderQueue([]);
-  expect(screen.getByText(/Queue for PBI #42/)).toBeInTheDocument();
-  expect(screen.getByText("Nothing queued yet")).toBeInTheDocument();
+  const { container } = renderQueue([]);
+  // No header, no disabled action row, no explanatory island - the queue
+  // section simply does not exist until a case is added.
+  expect(screen.queryByText(/Queue for PBI/)).not.toBeInTheDocument();
+  expect(screen.queryByText("Nothing queued yet")).not.toBeInTheDocument();
   expect(screen.queryByText("Recent JSON Imports")).not.toBeInTheDocument();
+  expect(container).toBeEmptyDOMElement();
 });
 

@@ -40,7 +40,7 @@ and it goes back on the board before retirement.
 |---|---|---|
 | Manual entry: title/steps/tags/automation status | CHANGED | Steps entered one-per-line ("action => expected") instead of a grid; the full grid editor exists on Edit Test Cases |
 | Manual entry: module/preconditions inputs | DEFERRED | Import + Edit carry them; add two inputs on request (small) |
-| Tag autocomplete from project tags | DEFERRED | Tags free-text; add on request (get_tags port is small) |
+| Tag autocomplete from project tags | SHIPPED | TagsField suggests from the shared Rust tag cache; click opens the full list, typing filters |
 | xlsx/csv import, 9-column, row-numbered warnings | SHIPPED | Golden-tested vs v1 pytest suite |
 | AI round-trip JSON import/export | SHIPPED | Exact v1 wrapper, golden round-trip |
 | Template generation | SHIPPED | Same example rows |

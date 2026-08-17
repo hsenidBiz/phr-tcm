@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -30,7 +29,6 @@ import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
-import AstryxIsland from "./AstryxIsland";
 import InlineDiff from "./InlineDiff";
 import { pagePalette } from "../lib/reportTheme";
 import CaseStepsTable from "./CaseStepsTable";
@@ -825,16 +823,18 @@ export default function QueueSection({
   const duplicates = queue.map((tc) => duplicateWarning(tc, existingCases));
   const hasBlockers = problems.some(Boolean);
 
-  // An empty Import-tab queue is not a queue - it is the way back in. The
-  // "Queue for PBI" header, its five action buttons and the Review button
-  // all act on cases, and with zero cases every one of them was disabled
-  // furniture. Until something is imported the section is Recent JSON
-  // Imports alone; the queue proper appears when there are cases in it.
-  // Kept whole mid-submit (progress/results/reviewing): pruning empties
-  // the queue as items are created, and the progress bar must not vanish
-  // with it. Manual Entry passes no recents and keeps the full section -
-  // its queue is the workspace itself, not a landing zone for files.
-  if (queue.length === 0 && onOpenRecent && !progress && !results && !reviewing) {
+  // An empty queue is not a queue - the whole section stays out of the
+  // way until a case exists. The "Queue for PBI" header, its five action
+  // buttons and the Review button all act on cases, and with zero cases
+  // every one of them was disabled furniture; even the old "Nothing
+  // queued yet" island was a paragraph explaining an absence. So: Manual
+  // Entry (no recents wiring) renders nothing below the form, and the
+  // Import tab shows Recent JSON Imports alone - its way back in. Kept
+  // whole mid-submit (progress/results/reviewing): pruning empties the
+  // queue as items are created, and the progress bar must not vanish
+  // with it.
+  if (queue.length === 0 && !progress && !results && !reviewing) {
+    if (!onOpenRecent) return null;
     return (
       <section className="space-y-2 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Recent JSON Imports</h2>
@@ -994,14 +994,9 @@ export default function QueueSection({
           </div>
         )}
 
-      {queue.length === 0 && (
-        <AstryxIsland>
-          <EmptyState
-            title="Nothing queued yet"
-            description="Add test cases above - they gather here for review before anything is created in Azure DevOps."
-          />
-        </AstryxIsland>
-      )}
+      {/* No empty-state island: with zero cases (and no submit running)
+          the whole section early-returns above, so this point is only
+          reached with cases to show or a submit in flight. */}
 
       {/* Bulk actions over a selection. Shift+click a checkbox to select a
           range. Every action here also updates the .json file each case

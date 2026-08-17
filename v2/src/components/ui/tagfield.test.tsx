@@ -42,6 +42,24 @@ test("Enter adds a brand-new tag not in the suggestions", () => {
   expect(screen.getByTestId("val").textContent).toBe("smoke; custom-tag");
 });
 
+/// The "searchable" contract: clicking the field is browsing - the whole
+/// unselected suggestion list opens without typing a letter, and typing
+/// narrows it. This is what makes org tags discoverable instead of
+/// remembered.
+test("clicking the field opens every unselected suggestion, typing filters", () => {
+  render(<Harness suggestions={["smoke", "regression", "sanity"]} />);
+  fireEvent.click(screen.getByLabelText("Tags"));
+
+  // All suggestions except the already-selected "smoke".
+  expect(screen.getByRole("button", { name: "regression" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "sanity" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "smoke" })).not.toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Tags"), { target: { value: "reg" } });
+  expect(screen.getByRole("button", { name: "regression" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "sanity" })).not.toBeInTheDocument();
+});
+
 /// Tabbing THROUGH the form must not detonate a dropdown on the way past -
 /// the Module combobox is the reference: its trigger opens on click and
 /// keys only. The list opens by typing, clicking, or ArrowDown; Escape

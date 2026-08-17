@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type PbiHit, type Step, type TestCase } from "../bindings";
 import ModuleField from "../components/ModuleField";
 import PickPbiEmpty from "../components/PickPbiEmpty";
@@ -10,6 +10,7 @@ import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { useQueue } from "../hooks/useQueue";
 import { IconAdd } from "../lib/actionIcons";
+import { loadDefaultTags } from "../lib/defaultTags";
 
 export default function ManualEntry({
   org,
@@ -25,10 +26,16 @@ export default function ManualEntry({
   const { queue, setQueue } = useQueue(org, pbi?.id ?? null);
   const [title, setTitle] = useState("");
   const [steps, setSteps] = useState<Step[]>([{ action: "", expected: "" }]);
-  const [tags, setTags] = useState("");
+  // Every new case starts with the project's default tags (set in
+  // Settings); the effect re-seeds when the user switches project, since
+  // the initializer only ran for the first one.
+  const [tags, setTags] = useState(() => loadDefaultTags(org, project));
   const [status, setStatus] = useState("Not Automated");
   const [moduleValue, setModuleValue] = useState("");
   const [preconditions, setPreconditions] = useState("");
+  useEffect(() => {
+    setTags(loadDefaultTags(org, project));
+  }, [org, project]);
 
   if (!org || !project || !pbi) {
     return (
@@ -57,7 +64,8 @@ export default function ManualEntry({
     setQueue((q) => [...q, tc]);
     setTitle("");
     setSteps([{ action: "", expected: "" }]);
-    setTags("");
+    // Back to the defaults, not to empty - the next case wants them too.
+    setTags(loadDefaultTags(org, project));
     setModuleValue("");
     setPreconditions("");
   }
