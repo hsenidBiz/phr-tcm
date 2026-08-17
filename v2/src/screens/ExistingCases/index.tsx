@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { commands, type TestCaseFull } from "../../bindings";
 import BulkEditDialog from "../../components/BulkEditDialog";
@@ -20,8 +21,9 @@ import { exportPathFor, rememberExportPath } from "../../lib/exportDir";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap } from "../../lib/ipc";
+import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../../lib/sidebarState";
 import { toTestCase } from "../../lib/testCaseConvert";
-import { IconBulkEdit, IconClear, IconExport, IconRemove, IconRename, IconMoveToPbi } from "../../lib/actionIcons";
+import { IconBulkEdit, IconClear, IconCollapseAll, IconExport, IconRemove, IconRename, IconMoveToPbi } from "../../lib/actionIcons";
 
 /** The Edit tab: click selects a card, ctrl+click toggles, shift+click
  * ranges; the chevron (or double-click) expands the editor. Selection
@@ -53,7 +55,7 @@ export default function ExistingCases({
   const [grouped, setGrouped] = useState(
     () => localStorage.getItem("tcm-v2-group-cases") === "on",
   );
-  const [collapsedGroups, toggleCollapsed] = usePersistedStringSet(
+  const [collapsedGroups, toggleCollapsed, collapseGroups] = usePersistedStringSet(
     "tcm-v2-edit-collapsed-groups",
   );
 
@@ -117,6 +119,12 @@ export default function ExistingCases({
     }));
   }, [visible, grouped]);
   const flat = useMemo(() => ordered.flatMap((g) => g.items), [ordered]);
+
+  // The sticky Collapse all folds the open editor AND every unfolded
+  // group in one press - same merged control as View Test Cases.
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
+  const openGroupNames = ordered.map((g) => g.group).filter((g) => g && !collapsedGroups.has(g));
+  const collapsible = (openId != null ? 1 : 0) + openGroupNames.length;
 
   const handleCardClick = (c: TestCaseFull, e: React.MouseEvent) => {
     const idx = flat.findIndex((x) => x.id === c.id);
@@ -327,10 +335,19 @@ export default function ExistingCases({
               >
                 {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
               </button>
+              {/* Selection is the checkbox's job; the TITLE toggles the
+                  fold, same as the chevron - clicking the name is how
+                  people expect to open a group. */}
+              <Checkbox
+                ariaLabel={`Select all in ${group}`}
+                checked={items.length > 0 && selectedInGroup(items) === items.length}
+                indeterminate={selectedInGroup(items) > 0 && selectedInGroup(items) < items.length}
+                onCheckedChange={() => toggleGroup(items)}
+              />
               <button
                 className="group flex items-center gap-2"
-                title="Select all test cases in this group"
-                onClick={() => toggleGroup(items)}
+                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                onClick={() => toggleCollapsed(group)}
               >
                 <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                   {group} ({items.length})
@@ -350,6 +367,8 @@ export default function ExistingCases({
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>
           )}
+          {/* Fold-state render below; the sticky Collapse all is portalled
+              after this loop. */}
           {group && collapsedGroups.has(group) ? null : (
           <ul className="space-y-1">
             {items.map((c) => (
@@ -397,6 +416,32 @@ export default function ExistingCases({
           )}
         </div>
       ))}
+
+      {/* Sticky merged collapse: folds the open editor and every unfolded
+          group. Portalled to body because AnimatedContent's GSAP transform
+          would otherwise make `fixed` resolve against the scroll region
+          (same reason as View Test Cases / Run Tests). */}
+      {collapsible > 0 &&
+        createPortal(
+          <div
+            className="fixed bottom-6 z-40 rounded-full border border-border bg-surface shadow-2xl transition-[left] duration-200"
+            style={{ left: stickyLeftPx(sidebarCollapsed) }}
+          >
+            <Button
+              size="sm"
+              variant="default"
+              className="rounded-full"
+              onClick={() => {
+                setOpenId(null);
+                collapseGroups(openGroupNames);
+              }}
+            >
+              <IconCollapseAll aria-hidden />
+              Collapse all ({collapsible})
+            </Button>
+          </div>,
+          document.body,
+        )}
 
       {deleteOpen && (
         <DeleteConfirm

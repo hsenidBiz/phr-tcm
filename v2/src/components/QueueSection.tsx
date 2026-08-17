@@ -1399,7 +1399,7 @@ export default function QueueSection({
           <div className="fixed bottom-6 right-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
             <Button
               size="sm"
-              variant="outline"
+              variant="default"
               className="rounded-full"
               onClick={() => {
                 setExpandedSteps(new Set());

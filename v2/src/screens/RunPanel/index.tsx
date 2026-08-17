@@ -435,10 +435,26 @@ export default function RunPanel({
                             <ChevronDown size={15} />
                           )}
                         </button>
+                        {/* Selection is the checkbox's job; the TITLE
+                            toggles the fold, same as the chevron. */}
+                        {(() => {
+                          const selectable = pts.filter((p) => p.test_case_id != null);
+                          const inGroup = selectable.filter((p) =>
+                            selected.has(p.test_case_id!),
+                          ).length;
+                          return (
+                            <Checkbox
+                              ariaLabel={`Select all in ${name}`}
+                              checked={selectable.length > 0 && inGroup === selectable.length}
+                              indeterminate={inGroup > 0 && inGroup < selectable.length}
+                              onCheckedChange={() => toggleSection(pts)}
+                            />
+                          );
+                        })()}
                         <button
                           className="group flex items-center gap-2"
-                          title="Select all test cases in this group"
-                          onClick={() => toggleSection(pts)}
+                          title={collapsedGroups.has(name) ? "Expand group" : "Collapse group"}
+                          onClick={() => toggleCollapsed(name)}
                         >
                           <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                             {name} ({pts.length})
@@ -556,7 +572,7 @@ export default function RunPanel({
           >
             <Button
               size="sm"
-              variant="outline"
+              variant="default"
               className="rounded-full"
               onClick={() => {
                 setExpanded(new Set());

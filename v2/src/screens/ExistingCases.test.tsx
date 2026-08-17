@@ -163,7 +163,7 @@ test("invalid edits disable save with a reason", async () => {
   expect(screen.getByText(/Title is required/)).toBeInTheDocument();
 });
 
-test("group-header click selects every case in the group", async () => {
+test("the header checkbox selects the group; title and chevron both collapse", async () => {
   localStorage.setItem("tcm-v2-group-cases", "on");
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];
@@ -177,17 +177,19 @@ test("group-header click selects every case in the group", async () => {
   renderCases();
 
   const header = await screen.findByRole("button", { name: "Login (2)" });
-  fireEvent.click(header);
+  const box = screen.getByRole("checkbox", { name: "Select all in Login" });
+  fireEvent.click(box);
   expect(screen.getByText("2 selected")).toBeInTheDocument();
 
   // Clicking again clears the group's selection.
-  fireEvent.click(header);
+  fireEvent.click(box);
   expect(screen.queryByText("2 selected")).not.toBeInTheDocument();
 
-  // The chevron collapses the group's cards (header stays).
-  fireEvent.click(screen.getByLabelText("Collapse group Login"));
+  // The TITLE collapses the group's cards (header stays)...
+  fireEvent.click(header);
   expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
   expect(screen.getByText("Standalone thing")).toBeInTheDocument();
+  // ...and the chevron reopens it - both are fold controls now.
   fireEvent.click(screen.getByLabelText("Expand group Login"));
   expect(screen.getByText("Login - valid")).toBeInTheDocument();
 });
@@ -274,4 +276,36 @@ test("search narrows the list by title, id or tag", async () => {
   fireEvent.change(box, { target: { value: "" } });
   expect(screen.getByText("Valid login")).toBeInTheDocument();
   expect(screen.getByText("Checkout")).toBeInTheDocument();
+});
+
+/** Same merged sticky as View Test Cases / Run Tests, adjusted for this
+ * screen's single-editor model: one press folds the open editor and every
+ * unfolded group, then the button retires. */
+test("sticky Collapse all folds the open editor and every open group", async () => {
+  localStorage.setItem("tcm-v2-group-cases", "on");
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        { ...fullCase, id: 201, title: "Login - valid" },
+        { ...fullCase, id: 202, title: "Login - locked out" },
+        { ...fullCase, id: 203, title: "Standalone thing" },
+      ];
+  });
+  renderCases();
+  await screen.findByRole("button", { name: "Login (2)" });
+
+  // Grouping alone gives the sticky its fold targets (Login + Ungrouped).
+  expect(screen.getByRole("button", { name: /Collapse all \(2\)/ })).toBeInTheDocument();
+
+  // An open editor is one more thing to fold.
+  fireEvent.click(screen.getByLabelText("Expand #201"));
+  expect(await screen.findByLabelText("Case title")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Collapse all \(3\)/ }));
+
+  // Editor gone, groups folded, button retired.
+  expect(screen.queryByLabelText("Case title")).not.toBeInTheDocument();
+  expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
+  expect(screen.queryByText("Standalone thing")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 });

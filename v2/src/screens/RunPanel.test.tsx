@@ -295,9 +295,10 @@ test("a collapsed group marks that it still holds selected cases", async () => {
   const dot = screen.getByRole("status");
   expect(dot.getAttribute("aria-label")).toMatch(/1 of 2 selected/);
 
-  // Clearing the selection retires the marker while still collapsed.
-  fireEvent.click(screen.getByRole("button", { name: /\(2\)/ }));
-  fireEvent.click(screen.getByRole("button", { name: /\(2\)/ }));
+  // Clearing the selection retires the marker while still collapsed: from
+  // mixed the header checkbox first completes the selection, then clears.
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select all in/ }));
+  fireEvent.click(screen.getByRole("checkbox", { name: /Select all in/ }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 

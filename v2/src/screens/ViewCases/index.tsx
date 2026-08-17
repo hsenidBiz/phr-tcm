@@ -337,10 +337,19 @@ export default function ViewCases({
               >
                 {collapsedGroups.has(group) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
               </button>
+              {/* Selection is the checkbox's job; the TITLE toggles the
+                  fold, same as the chevron - clicking the name is how
+                  people expect to open a group. */}
+              <Checkbox
+                ariaLabel={`Select all in ${group}`}
+                checked={items.length > 0 && selectedInGroup(items) === items.length}
+                indeterminate={selectedInGroup(items) > 0 && selectedInGroup(items) < items.length}
+                onCheckedChange={() => toggleGroup(items)}
+              />
               <button
                 className="group flex items-center gap-2"
-                title="Select all test cases in this group"
-                onClick={() => toggleGroup(items)}
+                title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
+                onClick={() => toggleCollapsed(group)}
               >
                 <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                   {group} ({items.length})
@@ -451,10 +460,12 @@ export default function ViewCases({
           >
             {/* "Collapse", not "Close" or an eraser: nothing is deleted -
                 open details AND open groups fold shut together, one press
-                for a tidy screen. */}
+                for a tidy screen. Accent-filled (variant=default): outline
+                inside the same-colour wrapper read as a label, not a
+                button. */}
             <Button
               size="sm"
-              variant="outline"
+              variant="default"
               className="rounded-full"
               onClick={() => {
                 setOpenIds(new Set());

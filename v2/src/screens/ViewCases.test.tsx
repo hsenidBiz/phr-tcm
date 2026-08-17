@@ -174,12 +174,13 @@ test("Group by title folds cases under shared prefixes and persists collapse", a
   fireEvent.click(screen.getByRole("checkbox"));
   const header = await screen.findByRole("button", { name: "Login (2)" });
 
-  // Header click selects the group.
-  fireEvent.click(header);
+  // The header CHECKBOX selects the group.
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Login" }));
   expect(screen.getByText("2 selected")).toBeInTheDocument();
 
-  // Chevron collapses; state lands in localStorage for the next session.
-  fireEvent.click(screen.getByLabelText("Collapse group Login"));
+  // The TITLE collapses - the name is the fold control now, same as the
+  // chevron; state lands in localStorage for the next session.
+  fireEvent.click(header);
   expect(screen.queryByText("Login - valid")).not.toBeInTheDocument();
   expect(screen.getByText("Checkout")).toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem("tcm-v2-view-collapsed-groups")!)).toEqual(["Login"]);
@@ -234,6 +235,11 @@ test("a collapsed group marks that it still holds a highlighted case", async () 
   // leave something highlighted", not about completeness.
   fireEvent.click(screen.getByText("Login - valid"));
   expect(screen.queryByRole("status")).not.toBeInTheDocument(); // still expanded
+  // A partial selection reads as the header checkbox's mixed state.
+  expect(screen.getByRole("checkbox", { name: "Select all in Login" })).toHaveAttribute(
+    "aria-checked",
+    "mixed",
+  );
 
   fireEvent.click(screen.getByLabelText("Collapse group Login"));
   const dot = screen.getByRole("status");
@@ -244,9 +250,10 @@ test("a collapsed group marks that it still holds a highlighted case", async () 
   fireEvent.click(screen.getByLabelText("Collapse group Ungrouped"));
   expect(screen.getAllByRole("status")).toHaveLength(1);
 
-  // Clearing the selection retires the marker while still collapsed.
-  fireEvent.click(screen.getByRole("button", { name: /Login \(2\)/ }));
-  fireEvent.click(screen.getByRole("button", { name: /Login \(2\)/ }));
+  // Clearing the selection retires the marker while still collapsed: from
+  // mixed the checkbox first completes the selection, then clears it.
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Login" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Login" }));
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
