@@ -81,7 +81,7 @@ test("work pill toggles the board and a tab click returns", async () => {
   renderApp();
   await screen.findByText("a@b.com");
 
-  fireEvent.click(screen.getByRole("button", { name: /Work Manager \(Beta\)/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Work Manager/ }));
   expect(screen.getByRole("heading", { name: "Board" })).toBeInTheDocument();
 
   // Work Manager swaps the rail: its own sections, no test-case tabs.
@@ -146,9 +146,13 @@ test("Ctrl+6 jumps to Auto Run and Ctrl+8 jumps to AI Bridge", async () => {
 
   fireEvent.keyDown(window, { key: "6", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+  // Shipped early, and the screen says so - beside the heading, not in it.
+  expect(screen.getByText("In Development")).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "7", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "Test Suites" })).toBeInTheDocument();
+  // The pill belongs to Auto Run alone.
+  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "8", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();

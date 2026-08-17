@@ -32,6 +32,9 @@ type Item<T extends string> = {
    * collapsed to icons alone. The selected row's tinted background stays
    * the theme accent - only the glyph is coloured. */
   tone: string;
+  /** A short status pill after the label ("In Dev") - for features that
+   * ship early. Keep it to a word or two: the label span caps at max-w-40. */
+  note?: string;
 };
 
 const CASE_ITEMS: Item<Section>[] = [
@@ -44,7 +47,7 @@ const CASE_ITEMS: Item<Section>[] = [
   { id: "run", label: "Run Tests", icon: SquarePlay, tone: "nav-ico nav-ico-run" },
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
-  { id: "autorun", label: "Auto Run", icon: Radar, tone: "nav-ico nav-ico-autorun" },
+  { id: "autorun", label: "Auto Run", icon: Radar, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
   { id: "suites", label: "Test Suites", icon: FolderTree, tone: "nav-ico nav-ico-suites" },
   { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
 ];
@@ -110,11 +113,12 @@ export default function Sidebar<T extends string = Section>({
       )}
       style={{ transitionDelay: collapsed ? "120ms" : "0ms" }}
     >
-      {list.map(({ id, label, icon: Icon, tone }) => {
+      {list.map(({ id, label, icon: Icon, tone, note }) => {
         const badge = badges?.[id] ?? 0;
         return (
         // Only when collapsed: with the rail open the label is right there.
-        <Tooltip key={id} label={label} side="right" disabled={!collapsed}>
+        // The note joins the tooltip so the status survives the icon rail.
+        <Tooltip key={id} label={note ? `${label} — In Development` : label} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           onClick={() => onSelect(id)}
@@ -153,6 +157,13 @@ export default function Sidebar<T extends string = Section>({
           )}
           <span className={labelCls} style={labelDelay}>
             {label}
+            {note && (
+              // Inside the collapsing span, so the pill folds away with
+              // the label instead of needing its own animation plumbing.
+              <span className="ml-2 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                {note}
+              </span>
+            )}
           </span>
         </button>
         </Tooltip>

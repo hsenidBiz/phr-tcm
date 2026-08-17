@@ -115,6 +115,11 @@ const TITLES: Record<Section, string> = {
   settings: "Settings",
 };
 
+/** Status pill beside the heading - features shipped before they are done. */
+const TITLE_NOTES: Partial<Record<Section, string>> = {
+  autorun: "In Development",
+};
+
 export default function App() {
   const qc = useQueryClient();
   const initial = loadPrefs();
@@ -758,7 +763,14 @@ export default function App() {
             // key={section} remounts the wrapper on tab switch, so every
             // screen fades up briefly instead of snapping in.
             <AnimatedContent key={section} distance={14} duration={0.3} threshold={0}>
-              <h1 className="mb-4 text-lg font-semibold">{TITLES[section]}</h1>
+              <div className="mb-4 flex items-center gap-2">
+                <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
+                {TITLE_NOTES[section] && (
+                  <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
+                    {TITLE_NOTES[section]}
+                  </span>
+                )}
+              </div>
               {section === "manual" && (
                 <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
               )}

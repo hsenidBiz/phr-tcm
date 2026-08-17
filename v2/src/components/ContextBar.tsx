@@ -140,7 +140,7 @@ export default function ContextBar({
               ? `${prAttention} pull request${prAttention === 1 ? "" : "s"} with conflicts or comments to resolve`
               : workMode
                 ? "Test Case Manager"
-                : "Work Manager (Beta)"
+                : "Work Manager"
           }
           onClick={onToggleWork}
         >
@@ -150,7 +150,7 @@ export default function ContextBar({
           {workMode ? <IconTestCases aria-hidden /> : <IconBoard aria-hidden />}
           {/* Icon-only below lg so the button never crowds the PBI picker. */}
           <span className="hidden lg:inline">
-            {workMode ? "Test Case Manager" : "Work Manager (Beta)"}
+            {workMode ? "Test Case Manager" : "Work Manager"}
           </span>
           {/* PRs that need a human: conflicts or comments to resolve. On
               the pill's corner so it reads from either mode - it is the
