@@ -1,9 +1,16 @@
 import type { AdoError } from "../bindings";
+import { flagSessionExpired } from "./sessionExpired";
 
 export function describeAdoError(e: AdoError): string {
   switch (e.kind) {
     case "Unauthorized":
-      return "Not authorized - sign in again.";
+      // Deliberate side effect in a formatter: every screen that shows an
+      // ADO error - via unwrap, inline, or a toast - formats it here, so
+      // this is the one place that sees every 401 the user sees. Raising
+      // the shared flag here is what turns N per-screen errors into one
+      // app-level "sign in again" prompt (App renders it).
+      flagSessionExpired();
+      return "Your session has expired - sign in again.";
     case "RateLimited":
       return `Rate limited - retry in ${e.detail.retry_after_secs}s.`;
     case "Forbidden":

@@ -7,6 +7,11 @@ import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
 import { formatByteProgress } from "./lib/bytes";
 import { onlineSnapshot, subscribeOnline } from "./lib/network";
+import {
+  clearSessionExpired,
+  sessionExpiredSnapshot,
+  subscribeSessionExpired,
+} from "./lib/sessionExpired";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { cacheEntry, claimCacheFor } from "./lib/localCache";
@@ -22,6 +27,7 @@ import {
 } from "./lib/changelog";
 import AnimatedContent from "./components/AnimatedContent";
 import ChangelogModal from "./components/ChangelogModal";
+import SessionExpiredModal from "./components/SessionExpiredModal";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
@@ -274,6 +280,22 @@ export default function App() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }),
     onError: (e) => toast.error(`Sign-in failed: ${e.message}`),
   });
+
+  // Raised by describeAdoError whenever a request came back 401 - silent
+  // token renewal has given up (days in hibernate does it), so every new
+  // fetch fails until the user signs in again. One prompt instead of a
+  // "Not authorized" on each screen.
+  const sessionExpired = useSyncExternalStore(subscribeSessionExpired, sessionExpiredSnapshot);
+  const reSignIn = () =>
+    signIn.mutate(undefined, {
+      onSuccess: () => {
+        clearSessionExpired();
+        // Every query that 401'd is sitting in an error state on cached
+        // data - refetch the lot now that the token works again.
+        qc.invalidateQueries();
+        toast.success("Signed back in.");
+      },
+    });
 
   // Dev-only auth override: "out" shows the sign-in screen from a signed-in
   // app (to iterate on it), "in" proceeds without any real session (demo
@@ -736,6 +758,17 @@ export default function App() {
       </div>
 
       {changelog && <ChangelogModal entries={changelog} onClose={dismissChangelog} />}
+
+      {/* Only over a signed-in app: before sign-in the SignIn screen IS the
+          prompt. "Not now" just closes it - cached data stays readable and
+          the next failed fetch raises it again. */}
+      {signedIn && sessionExpired && (
+        <SessionExpiredModal
+          signingIn={signIn.isPending}
+          onSignIn={reSignIn}
+          onDismiss={clearSessionExpired}
+        />
+      )}
 
       {DEV_TOOLS && signedIn && (
         <Suspense fallback={null}>
