@@ -117,14 +117,14 @@ test("selection drives View in browser; nothing selected sends all visible", asy
 
   // No selection: everything visible goes to the report.
   await screen.findByText("Login - valid");
-  fireEvent.click(screen.getByRole("button", { name: "View in browser" }));
+  fireEvent.click(screen.getByRole("button", { name: "View All Test Cases in Browser" }));
   await waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]).toEqual([201, 202, 203]);
 
   // Click + shift-click selects a range; the button reflects the count.
   fireEvent.click(screen.getByText("Login - valid"));
   fireEvent.click(screen.getByText("Login - locked out"), { shiftKey: true });
-  fireEvent.click(screen.getByRole("button", { name: "View 2 in browser" }));
+  fireEvent.click(screen.getByRole("button", { name: "View 2 Test Cases in Browser" }));
   await waitFor(() => expect(sent).toHaveLength(2));
   expect(sent[1]).toEqual([201, 202]);
 
@@ -152,7 +152,7 @@ test("the keep-in-step refresh never reopens the browser", async () => {
   renderView();
 
   await screen.findByText("Login - valid");
-  fireEvent.click(screen.getByRole("button", { name: "View in browser" }));
+  fireEvent.click(screen.getByRole("button", { name: "View All Test Cases in Browser" }));
   await waitFor(() => expect(sent).toHaveLength(1));
 
   // Coming back to the app re-reads notes and re-renders - the exact

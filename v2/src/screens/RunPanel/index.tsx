@@ -195,6 +195,9 @@ export default function RunPanel({
           // of the user rather than whatever was set at startup. Both
           // schemes go along, for the switch in the page's corner.
           pagePalette(),
+          // The report covers exactly the highlighted cases - the button
+          // does not arm without a selection.
+          [...selected],
         ),
       ),
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
@@ -314,7 +317,12 @@ export default function RunPanel({
             <Button
               variant="outline"
               size="sm"
-              disabled={report.isPending}
+              disabled={report.isPending || selected.size === 0}
+              title={
+                selected.size === 0
+                  ? "Select the cases to report on first - click rows to select"
+                  : `Report on the ${selected.size} highlighted case${selected.size === 1 ? "" : "s"}`
+              }
               onClick={() => report.mutate()}
             >
               <IconReport aria-hidden />
@@ -368,14 +376,14 @@ export default function RunPanel({
         <div className="flex gap-2">
           <Input
             aria-label="Filter points"
-            className="w-56 px-2 py-1"
+            className="w-56 px-2 py-1.5"
             placeholder="Filter by name or id"
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
           />
           <Select
             aria-label="Filter by last outcome"
-            className="px-2 py-1"
+            triggerClassName="px-2 py-1.5"
             value={filterOutcome}
             onChange={(e) => setFilterOutcome(e.target.value)}
           >

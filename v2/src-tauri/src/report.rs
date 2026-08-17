@@ -26,6 +26,24 @@ pub struct FailureInfo {
     pub bug_ids: Vec<i32>,
 }
 
+/// Keep only the points belonging to the given case ids; `None` (and an
+/// empty list, defensively - a report about zero cases is never what
+/// anyone meant) leaves the whole suite. A point without a case id cannot
+/// be one of the asked-for cases, so it drops when a filter is present.
+pub fn filter_points_to_cases(
+    points: Vec<crate::ado_testplan::TestPoint>,
+    case_ids: Option<&[i32]>,
+) -> Vec<crate::ado_testplan::TestPoint> {
+    let Some(ids) = case_ids.filter(|ids| !ids.is_empty()) else {
+        return points;
+    };
+    let keep: std::collections::HashSet<i32> = ids.iter().copied().collect();
+    points
+        .into_iter()
+        .filter(|p| p.test_case_id.is_some_and(|id| keep.contains(&id)))
+        .collect()
+}
+
 /// UTC timestamp from epoch seconds without a chrono dependency
 /// (Howard Hinnant's civil-from-days algorithm; unit-tested).
 pub fn format_epoch_utc(secs: u64) -> String {

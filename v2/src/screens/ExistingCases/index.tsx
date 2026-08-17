@@ -252,7 +252,7 @@ export default function ExistingCases({
         <div className="flex gap-2">
           <Input
             aria-label="Search test cases"
-            className="w-56 px-2 py-1"
+            className="w-56 px-2 py-1.5"
             placeholder="Filter by name or id"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

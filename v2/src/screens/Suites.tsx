@@ -235,7 +235,8 @@ export default function Suites({
       unwrapStr(
         // Read at click time so the report matches the theme currently in
         // front of the user, not whatever was set at startup.
-        commands.viewExecutionReport(org, project, planId, suiteIds, label, pagePalette()),
+        // null = the whole suite tree - folder reports are not scoped.
+        commands.viewExecutionReport(org, project, planId, suiteIds, label, pagePalette(), null),
       ),
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
   });
@@ -401,7 +402,7 @@ export default function Suites({
         </button>
         <Input
           aria-label="Search suites"
-          className="w-64 px-2 py-1"
+          className="w-64 px-2 py-1.5"
           placeholder="Search plans and suites"
           value={search}
           onChange={(e) => setSearch(e.target.value)}

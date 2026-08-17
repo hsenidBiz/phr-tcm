@@ -75,7 +75,7 @@ export default function ContextBar({
       <Select
         data-tour="org"
         aria-label="Organization"
-        className="w-44 py-1.5"
+        className="w-44" triggerClassName="py-1.5"
         value={org}
         onChange={(e) => {
           setOrg(e.target.value);
@@ -92,7 +92,7 @@ export default function ContextBar({
       </Select>
       <Select
         aria-label="Project"
-        className="w-44 py-1.5"
+        className="w-44" triggerClassName="py-1.5"
         value={project}
         disabled={!org}
         onChange={(e) => {

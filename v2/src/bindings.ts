@@ -383,7 +383,7 @@ export const commands = {
 	 *  app the user just came from rather than a hardcoded light page - and
 	 *  carries the other scheme too, for the switch in the page's corner.
 	 */
-	viewExecutionReport: (organization: string, project: string, planId: number, suiteIds: number[], title: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_execution_report", { organization, project, planId, suiteIds, title, palette })),
+	viewExecutionReport: (organization: string, project: string, planId: number, suiteIds: number[], title: string, palette: PagePalette, caseIds: number[] | null) => typedError<null, string>(__TAURI_INVOKE("view_execution_report", { organization, project, planId, suiteIds, title, palette, caseIds })),
 	/**  Read any file for attaching to a result (name + base64 bytes). */
 	readFileB64: (path: string) => typedError<RunAttachmentOut, string>(__TAURI_INVOKE("read_file_b64", { path })),
 	/**

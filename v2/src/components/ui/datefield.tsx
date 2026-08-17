@@ -46,7 +46,13 @@ export default function DateField({
       <button
         type="button"
         aria-label={ariaLabel}
-        className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5 text-left text-sm transition-colors hover:border-border-strong"
+        className={cn(
+          "flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5 text-left text-sm transition-colors hover:border-border-strong focus:border-accent focus:outline-none",
+          // While open, focus lives in the panel's search input - the
+          // trigger keeps the accent explicitly so every dropdown shows
+          // the same lit border as a focused Input.
+          open && "border-accent",
+        )}
         onClick={() => setOpen((o) => !o)}
       >
         <span className={date ? "text-text" : "text-faint"}>

@@ -46,12 +46,18 @@ function optionsOf(children: ReactNode): OptionSpec[] {
 
 export function Select({
   className,
+  triggerClassName,
   children,
   value,
   onChange,
   disabled,
   "aria-label": ariaLabel,
-}: SelectHTMLAttributes<HTMLSelectElement>) {
+}: SelectHTMLAttributes<HTMLSelectElement> & {
+  /** The wrapper div takes `className` (width, positioning). Padding and
+   * sizing belong HERE - callers used to put py-* on `className` and
+   * silently pad the wrapper around an unchanged 38px trigger. */
+  triggerClassName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -88,7 +94,13 @@ export function Select({
         aria-haspopup="listbox"
         aria-label={ariaLabel}
         disabled={disabled}
-        className="flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 text-left text-sm text-text transition-colors hover:border-border-strong focus:border-accent focus:outline-none disabled:opacity-50"
+        className={cn(
+          "flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2 text-left text-sm text-text transition-colors hover:border-border-strong focus:border-accent focus:outline-none disabled:opacity-50",
+          // Open state matches focus: the trigger stays lit while the
+          // listbox is showing, same accent as every other open control.
+          open && "border-accent",
+          triggerClassName,
+        )}
         onClick={() => (open ? setOpen(false) : openAt())}
         onKeyDown={(e) => {
           if (!open && (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ")) {

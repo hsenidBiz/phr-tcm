@@ -1,7 +1,7 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import RunPanel from "./RunPanel";
 
 afterEach(() => {
@@ -387,3 +387,50 @@ test("suite resolution is cached in localStorage and reused", async () => {
 });
 
 
+
+/** The execution report is about the cases the tester picked: dead until
+ * something is highlighted, and the IPC call carries exactly those ids.
+ * Self-contained handler - mockIPC keeps ONE handler, so this cannot
+ * layer a capture on top of mockAll(). */
+test("Execution report arms on selection and reports only the highlighted cases", async () => {
+  const reported: number[][] = [];
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "",
+            last_run_id: null,
+            last_result_id: null,
+          },
+        ];
+      case "view_execution_report":
+        reported.push((args as { caseIds: number[] }).caseIds);
+        return null;
+    }
+  });
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  const btn = screen.getByRole("button", { name: /Execution report/ });
+  expect(btn).toBeDisabled();
+
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(btn).toBeEnabled();
+  fireEvent.click(btn);
+  await vi.waitFor(() => expect(reported).toHaveLength(1));
+  expect(reported[0]).toEqual([201]);
+});

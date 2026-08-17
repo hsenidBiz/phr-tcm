@@ -294,6 +294,9 @@ pub async fn view_execution_report(
     suite_ids: Vec<i32>,
     title: String,
     palette: crate::webtheme::PagePalette,
+    /* Scope the report to these test cases; None = the whole suite
+     * (Test Suites' folder reports pass None). */
+    case_ids: Option<Vec<i32>>,
 ) -> Result<(), String> {
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
     let client = ado::AdoClient::new(token);
@@ -312,6 +315,9 @@ pub async fn view_execution_report(
             }
         }
     }
+    // Run Tests passes the highlighted cases so the report covers exactly
+    // what the tester picked; suite-level reports pass None.
+    let points = report::filter_points_to_cases(points, case_ids.as_deref());
 
     // Failure details (comment + linked bugs) for failed points only.
     let mut failures = std::collections::HashMap::new();

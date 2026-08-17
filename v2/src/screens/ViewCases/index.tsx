@@ -273,7 +273,9 @@ export default function ViewCases({
             onClick={() => viewHtml.mutate()}
           >
             <IconOpenInBrowser aria-hidden />
-            {selected.size > 0 ? `View ${selected.size} in browser` : "View in browser"}
+            {selected.size > 0
+              ? `View ${selected.size} Test Case${selected.size === 1 ? "" : "s"} in Browser`
+              : "View All Test Cases in Browser"}
           </Button>
         </div>
       </div>
@@ -282,7 +284,7 @@ export default function ViewCases({
         <div className="flex gap-2">
           <Input
             aria-label="Search test cases"
-            className="w-56 px-2 py-1"
+            className="w-56 px-2 py-1.5"
             placeholder="Filter by name or id"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

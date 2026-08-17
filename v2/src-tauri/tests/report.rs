@@ -163,3 +163,29 @@ fn empty_tokens_fall_back_instead_of_rendering_blank() {
     );
     assert!(!html.contains("--muted: ;"), "never an empty declaration");
 }
+
+/// The report can be scoped to the highlighted cases; None (and an empty
+/// list, defensively) means the whole suite, and a point with no case id
+/// cannot be one of the asked-for cases.
+#[test]
+fn report_points_filter_to_the_asked_for_cases() {
+    use v2_lib::report::filter_points_to_cases;
+
+    let pts = || {
+        vec![
+            point(1, "A", "passed"),   // case 201
+            point(2, "B", "failed"),   // case 202
+            point(3, "C", "passed"),   // case 203
+            TestPoint { test_case_id: None, ..point(4, "orphan", "passed") },
+        ]
+    };
+
+    // None and empty both pass everything through.
+    assert_eq!(filter_points_to_cases(pts(), None).len(), 4);
+    assert_eq!(filter_points_to_cases(pts(), Some(&[])).len(), 4);
+
+    // A filter keeps exactly the named cases; the orphan point drops.
+    let kept = filter_points_to_cases(pts(), Some(&[201, 203, 999]));
+    let ids: Vec<i32> = kept.iter().map(|p| p.test_case_id.unwrap()).collect();
+    assert_eq!(ids, vec![201, 203]);
+}
