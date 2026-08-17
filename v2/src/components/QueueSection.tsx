@@ -981,7 +981,7 @@ export default function QueueSection({
                   size="sm"
                   disabled={!available}
                   aria-pressed={active}
-                  title={available ? hint : "Not every queued case carries this order - run optimize_cases to stamp both"}
+                  title={available ? hint : "Not every queued case has this order yet - it's added when an AI assistant optimizes the draft"}
                   className={active ? "border-accent text-accent" : undefined}
                   onClick={() =>
                     setQueue((q) => [...q].sort((a, b) => (a[key] ?? 0) - (b[key] ?? 0)))
@@ -1271,9 +1271,8 @@ export default function QueueSection({
               return (
                 <div className="w-full space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
                   <p className="text-sm font-semibold text-text">
-                    Stopped: {dupGate.length} case{dupGate.length === 1 ? "" : "s"} you are about
-                    to CREATE already exist{dupGate.length === 1 ? "s" : ""} on PBI #{pbiId} with
-                    the same title.
+                    Stopped: {dupGate.length} case{dupGate.length === 1 ? "" : "s"} with the same
+                    title already exist{dupGate.length === 1 ? "s" : ""} on PBI #{pbiId}.
                   </p>
                   <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-muted">
                     {dupGate.map((t) => (
@@ -1281,9 +1280,9 @@ export default function QueueSection({
                     ))}
                   </ul>
                   <p className="text-xs text-muted">
-                    If these should UPDATE the existing cases, import a file that carries their
-                    ids instead (View Test Cases → Export JSON has them). Creating anyway makes
-                    duplicates, and removing those needs delete permission.
+                    If you meant to update the existing cases, import a file that includes their
+                    ids (View Test Cases → Export JSON has them). Creating anyway makes
+                    duplicates - and cleaning those up needs delete permission.
                   </p>
                   <div className="flex items-center gap-2">
                     <Button size="sm" onClick={() => setDupGate(null)}>

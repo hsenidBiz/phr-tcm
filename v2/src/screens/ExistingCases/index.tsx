@@ -291,7 +291,7 @@ export default function ExistingCases({
             variant="outline"
             size="sm"
             disabled={pbiId == null}
-            title="Move the selected cases' Tested By link to a different PBI"
+            title="Move the selected test cases to a different PBI"
             onClick={() => setRelinkOpen(true)}
           >
             <IconMoveToPbi aria-hidden />

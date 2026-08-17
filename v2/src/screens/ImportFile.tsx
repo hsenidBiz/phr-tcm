@@ -309,8 +309,9 @@ export default function ImportFile({
       if (!r || (r.status === "ok" && !r.data)) return; // defensive: mocked/absent backend
       if (r.status === "error") {
         toast.warning(
-          `Imported, but the shared draft could not be saved locally: ${r.error}. ` +
-            `Ids created by a submit will not be recorded anywhere - export JSON after uploading.`,
+          `Imported, but a local copy could not be saved: ${r.error}. ` +
+            `Without that file the app can't remember the ids a submit creates - ` +
+            `use Export JSON after submitting so you keep them.`,
           { duration: 15000 },
         );
         return;
@@ -318,7 +319,7 @@ export default function ImportFile({
       setWatches((prev) =>
         upsertWatch(prev, { path: r.data.path, stamp: r.data.stamp, snapshot: data.cases }),
       );
-      toast.info(`Shared draft saved locally and followed: ${fileName(r.data.path)}`);
+      toast.info(`Saved a local copy and watching it for changes: ${fileName(r.data.path)}`);
     });
     toast.success(
       `Imported ${data.cases.length} shared case${data.cases.length === 1 ? "" : "s"} for review.`,
@@ -414,8 +415,10 @@ export default function ImportFile({
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Import test cases</h2>
         <p className="text-sm text-muted">
-          The JSON round-trip format (what Export JSON produces, AI-editable).
-          A kept "id" updates that work item; a null id creates a new case.
+          Import your test cases from a JSON file. Imported files are watched -
+          edit the file and the changes flow into the queue automatically.
+          Cases that carry an id update that exact work item; cases without
+          one are created new.
         </p>
         <div className="flex gap-2">
           <Button disabled={importFile.isPending} onClick={() => importFile.mutate(undefined)}>
@@ -494,7 +497,8 @@ export default function ImportFile({
         )}
         <div className="space-y-1 border-t border-border/60 pt-3">
           <p className="text-xs text-muted">
-            Or paste a share link a teammate sent you (one-time use - importing it revokes the link):
+            Paste a share link a teammate sent you. Links are one-time use -
+            once imported, the link expires.
           </p>
           <div className="flex gap-2">
             <Input
@@ -560,13 +564,13 @@ export default function ImportFile({
               : `Stop watching all ${dropping.length} files?`}
           </h2>
           <p className="mt-2 text-sm text-muted">
-            {dropping.length === 1 ? "Edits to this file" : "Edits to these files"} will
-            no longer be applied to the queue. The{" "}
-            {dropping.reduce((n, w) => n + w.snapshot.length, 0)} case
-            {dropping.reduce((n, w) => n + w.snapshot.length, 0) === 1 ? "" : "s"}{" "}
-            {dropping.length === 1 ? "it" : "they"} added{" "}
-            {dropping.reduce((n, w) => n + w.snapshot.length, 0) === 1 ? "is" : "are"}{" "}
-            still queued — keep them, or remove them too?
+            {(() => {
+              const n = dropping.reduce((sum, w) => sum + w.snapshot.length, 0);
+              const files = dropping.length === 1 ? "this file" : "these files";
+              return n === 1
+                ? `Edits to ${files} will no longer flow into the queue. The 1 case it added is still queued - keep it, or remove it too?`
+                : `Edits to ${files} will no longer flow into the queue. The ${n} cases ${dropping.length === 1 ? "it" : "they"} added are still queued - keep them, or remove them too?`;
+            })()}
           </p>
           {dropping.length > 1 && (
             <ul className="mt-2 space-y-0.5 text-xs text-faint">
