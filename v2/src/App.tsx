@@ -12,6 +12,12 @@ import {
   sessionExpiredSnapshot,
   subscribeSessionExpired,
 } from "./lib/sessionExpired";
+import {
+  addWorkAlerts,
+  clearWorkAlerts,
+  subscribeWorkAlerts,
+  workAlertsSnapshot,
+} from "./lib/workAlerts";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { cacheEntry, claimCacheFor } from "./lib/localCache";
@@ -286,6 +292,13 @@ export default function App() {
   // fetch fails until the user signs in again. One prompt instead of a
   // "Not authorized" on each screen.
   const sessionExpired = useSyncExternalStore(subscribeSessionExpired, sessionExpiredSnapshot);
+
+  // Assignments announced while the user was elsewhere, counted on the
+  // Board rail item. Looking at the board IS the acknowledgement.
+  const workAlerts = useSyncExternalStore(subscribeWorkAlerts, workAlertsSnapshot);
+  useEffect(() => {
+    if (workMode && workSection === "board") clearWorkAlerts();
+  }, [workMode, workSection, workAlerts]);
   const reSignIn = () =>
     signIn.mutate(undefined, {
       onSuccess: () => {
@@ -391,6 +404,9 @@ export default function App() {
     const un = events.workAssigned.listen((e) => {
       const items = e.payload.items;
       if (items.length === 0) return;
+      // A toast is gone in seconds - the Board badge is what remains
+      // until the user actually looks at the board.
+      addWorkAlerts(items.length);
       const { title, body } = summarize(items);
       if (appIsInView()) {
         toast.info(title, { description: body, duration: 10_000 });
@@ -518,6 +534,34 @@ export default function App() {
         suite = null;
       }
       if (!suite) {
+        // Before asking the network: the Suites screen's plan tree is
+        // already on disk per PROJECT and carries every requirement
+        // suite's PBI id - switching PBIs must not re-list every plan's
+        // suites when one cached inventory answers for all of them.
+        const tree = cacheEntry<PlanWithSuites[]>(
+          `plans-suites:${org}/${project}`,
+          CACHE.structure.ttlMs,
+        );
+        for (const { plan, suites } of tree?.data ?? []) {
+          const hit = suites.find(
+            (s) => s.requirement_id === pbiId && s.suite_type === "requirementTestSuite",
+          );
+          if (hit) {
+            suite = { plan_id: plan.id, plan_name: plan.name, suite_id: hit.id };
+            try {
+              localStorage.setItem(suiteKey, JSON.stringify(suite));
+            } catch {
+              // cache is best-effort
+            }
+            break;
+          }
+        }
+        // A FRESH tree with no match is an answer, not a miss: this PBI
+        // has no suite yet, and scanning every plan again would only
+        // confirm that. (Run Tests still find-or-creates on demand.)
+        if (!suite && tree && Date.now() - tree.at < CACHE.structure.staleMs) return;
+      }
+      if (!suite) {
         const r = await commands.findPbiSuite(org, project, pbiId).catch(() => null);
         if (r && r.status === "ok" && r.data) {
           suite = r.data;
@@ -572,6 +616,7 @@ export default function App() {
               setWorkSection(w);
             }}
             items={WORK_ITEMS}
+            badges={{ board: workAlerts }}
           />
         ) : (
           <Sidebar section={section} onSelect={goToSection} />
