@@ -60,11 +60,15 @@ export default function Sidebar<T extends string = Section>({
   section,
   onSelect,
   items,
+  badges,
 }: {
   section: T;
   onSelect: (s: T) => void;
   /** Defaults to the test-case tabs; Work Manager passes WORK_ITEMS. */
   items?: Item<T>[];
+  /** Unseen-count bubbles per item (e.g. new assignments on the Board).
+   * Zero or absent renders nothing - the rail stays quiet by default. */
+  badges?: Partial<Record<T, number>>;
 }) {
   const list = items ?? (CASE_ITEMS as unknown as Item<T>[]);
   const [collapsed, setCollapsed] = useState(
@@ -102,19 +106,22 @@ export default function Sidebar<T extends string = Section>({
       )}
       style={{ transitionDelay: collapsed ? "120ms" : "0ms" }}
     >
-      {list.map(({ id, label, icon: Icon, tone }) => (
+      {list.map(({ id, label, icon: Icon, tone }) => {
+        const badge = badges?.[id] ?? 0;
+        return (
         // Only when collapsed: with the rail open the label is right there.
         <Tooltip key={id} label={label} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
           onClick={() => onSelect(id)}
           aria-current={section === id ? "page" : undefined}
-          aria-label={label}
+          aria-label={badge > 0 ? `${label} (${badge} new)` : label}
           className={cn(
             // px-3 keeps the icon at the exact same x whether the rail is
             // wide or collapsed (8px nav pad + 12px = centered in w-14), so
             // icons stay perfectly still while the width animates.
-            "group flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors",
+            // relative anchors the badge bubble on the icon.
+            "group relative flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors",
             section === id
               ? "bg-accent-soft font-medium text-accent"
               : "text-muted hover:bg-surface-2 hover:text-text",
@@ -130,12 +137,23 @@ export default function Sidebar<T extends string = Section>({
               section === id ? "nav-ico-on text-accent" : tone,
             )}
           />
+          {badge > 0 && (
+            // Pinned to the icon, not the row end, so it survives the
+            // collapse to an icon rail unchanged.
+            <span
+              aria-hidden
+              className="absolute left-6 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-accent"
+            >
+              {badge > 99 ? "99+" : badge}
+            </span>
+          )}
           <span className={labelCls} style={labelDelay}>
             {label}
           </span>
         </button>
         </Tooltip>
-      ))}
+        );
+      })}
       <div className="mt-auto space-y-1">
         <div
           className={cn(

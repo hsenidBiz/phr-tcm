@@ -55,6 +55,17 @@ pub fn newly_assigned(
     (fresh, ids)
 }
 
+/// The assignment watch is for WORK - PBIs, bugs, tasks, features. Test
+/// management artifacts are excluded: creating or updating test cases
+/// through this very app assigns them to you, so every submit used to
+/// come straight back as an "assigned to you" notification about your
+/// own edit.
+pub const ASSIGNED_WIQL: &str = "SELECT [System.Id] FROM WorkItems \
+    WHERE [System.AssignedTo] = @Me \
+    AND [System.State] NOT IN ('Closed', 'Done', 'Removed', 'Resolved') \
+    AND [System.WorkItemType] NOT IN ('Test Case', 'Test Suite', 'Test Plan', 'Shared Steps', 'Shared Parameter') \
+    ORDER BY [System.ChangedDate] DESC";
+
 impl AdoClient {
     /// Work items currently assigned to the caller, newest first. Read only.
     pub async fn assigned_to_me(
@@ -64,11 +75,7 @@ impl AdoClient {
     ) -> Result<Vec<AssignedItem>, AdoError> {
         // Closed work is not news; States vary by process, so this filters
         // on the category-independent System.State values ADO always has.
-        let wiql = "SELECT [System.Id] FROM WorkItems \
-                    WHERE [System.AssignedTo] = @Me \
-                    AND [System.State] NOT IN ('Closed', 'Done', 'Removed', 'Resolved') \
-                    ORDER BY [System.ChangedDate] DESC";
-        let ids = self.query_work_items(org, project, wiql, 50).await?;
+        let ids = self.query_work_items(org, project, ASSIGNED_WIQL, 50).await?;
         if ids.is_empty() {
             return Ok(vec![]);
         }

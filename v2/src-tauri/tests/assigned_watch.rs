@@ -59,3 +59,24 @@ fn an_empty_assignment_list_is_not_an_error() {
     assert!(fresh.is_empty());
     assert!(seen.is_empty());
 }
+
+/// Creating or updating a test case through this app assigns it to you -
+/// the watch must not announce your own edit back to you. Only real work
+/// (PBIs, bugs, tasks) is news.
+#[test]
+fn the_watch_query_excludes_test_management_artifacts() {
+    let wiql = v2_lib::assigned_watch::ASSIGNED_WIQL;
+    for excluded in [
+        "'Test Case'",
+        "'Test Suite'",
+        "'Test Plan'",
+        "'Shared Steps'",
+        "'Shared Parameter'",
+    ] {
+        assert!(
+            wiql.contains(excluded),
+            "{excluded} missing from the exclusion list: {wiql}"
+        );
+    }
+    assert!(wiql.contains("[System.WorkItemType] NOT IN"));
+}

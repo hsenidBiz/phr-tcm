@@ -4,6 +4,7 @@ import { IconBoard, IconTestCases } from "../lib/actionIcons";
 import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
+import { usePrAttention } from "../hooks/usePrAttention";
 import { unwrap } from "../lib/ipc";
 import { cached } from "../lib/localCache";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
@@ -62,6 +63,10 @@ export default function ContextBar({
     enabled: Boolean(org),
     staleTime: 60 * 60_000,
   });
+
+  // PRs with conflicts or comments still to resolve - the number on the
+  // Work Manager pill. Shares the PR panel's cache keys.
+  const prAttention = usePrAttention(org, project);
 
   return (
     // flex-wrap: in a narrow window the right-side group drops to a second
@@ -129,7 +134,14 @@ export default function ContextBar({
           data-tour="work"
           variant="pill"
           size="sm"
-          title={workMode ? "Test Case Manager" : "Work Manager (Beta)"}
+          className="relative"
+          title={
+            prAttention > 0
+              ? `${prAttention} pull request${prAttention === 1 ? "" : "s"} with conflicts or comments to resolve`
+              : workMode
+                ? "Test Case Manager"
+                : "Work Manager (Beta)"
+          }
           onClick={onToggleWork}
         >
           {/* The icon names the DESTINATION, same as the label: a board
@@ -140,6 +152,17 @@ export default function ContextBar({
           <span className="hidden lg:inline">
             {workMode ? "Test Case Manager" : "Work Manager (Beta)"}
           </span>
+          {/* PRs that need a human: conflicts or comments to resolve. On
+              the pill's corner so it reads from either mode - it is the
+              reason to go (back) to Work Manager. */}
+          {prAttention > 0 && (
+            <span
+              aria-label={`${prAttention} pull requests need attention`}
+              className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-accent"
+            >
+              {prAttention > 99 ? "99+" : prAttention}
+            </span>
+          )}
         </Button>
         {account && <span className="hidden text-sm text-muted xl:inline">{account}</span>}
         <button
