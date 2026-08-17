@@ -148,6 +148,11 @@ pub async fn route(
             None => (503, "sign in to Test Case Manager first".into()),
         },
         ("GET", "/tags") => tags(ctx, client, target).await,
+        // Both autorun routes deliberately ignore `client`: one documents
+        // a format, the other writes local files. Neither reaches Azure
+        // DevOps, so neither should demand a sign-in first.
+        ("GET", "/autorun-guide") => (200, crate::autorun::guide::autorun_guide()),
+        ("POST", "/autorun-script") => save_autorun_scripts(body),
         // The proxy asks for this before listing tools, so a toggle in the
         // app takes effect on the assistant's next tools/list.
         ("GET", "/tools") => (
@@ -193,6 +198,70 @@ fn smells_like_a_write(method: &str, target: &str) -> bool {
     ["create", "update", "delete", "edit", "write", "add-", "remove", "submit"]
         .iter()
         .any(|w| path.contains(w))
+}
+
+/// Save one or many Auto Run action scripts, as an assistant writes them.
+///
+/// A BUNDLE by design: the body is an array, so a whole PBI's worth of
+/// cases lands in one call - and the same shape is what the Auto Run
+/// screen's Import button reads from a file. One case is a bundle of one.
+///
+/// ALL OR NOTHING, for real: parsing is one gate, but
+/// `store::save_scripts_atomically` is the one that actually makes the
+/// claim true - it validates and serialises every entry before a single
+/// file is written, so a bad case id or a filesystem error on entry 16 of
+/// 30 can never leave the other 29 half-applied. An unknown action `kind`
+/// fails here rather than mid-run, with the browser already open in front
+/// of them.
+fn save_autorun_scripts(body: &str) -> (u16, String) {
+    let scripts: Vec<crate::autorun::CaseScript> = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                400,
+                format!(
+                    "that is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps: [{{ step_number, actions }}] }} - call get_autorun_guide for the format."
+                ),
+            )
+        }
+    };
+    if scripts.is_empty() {
+        return (400, "no scripts in the bundle".to_string());
+    }
+
+    let Some(root) = crate::autorun::store::configured_root() else {
+        // `set_root` runs exactly once, during app setup, and only when
+        // `app_data_dir()` resolves - so `None` here is not something
+        // this process will ever recover from on its own; "try again"
+        // would never help. Refuse rather than invent a path: a script
+        // written somewhere the app does not read would look saved and
+        // never appear.
+        return (
+            503,
+            "the app could not set up its data directory this session - restart the app"
+                .to_string(),
+        );
+    };
+
+    match crate::autorun::store::save_scripts_atomically(&root, &scripts) {
+        Ok(()) => {
+            let saved: Vec<String> = scripts.iter().map(|sc| sc.case_id.to_string()).collect();
+            crate::applog::info(format!("AI saved {} auto-run script(s)", saved.len()));
+            (
+                200,
+                serde_json::json!({
+                    "saved": saved.len(),
+                    "case_ids": saved,
+                    "note": "Open Auto Run in the app - these cases now show a Run button.",
+                })
+                .to_string(),
+            )
+        }
+        Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => (400, e),
+        Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
+            (500, format!("could not save the bundle: {e}"))
+        }
+    }
 }
 
 /// Reorganise a draft into a run sheet: navigation spelled out as steps,
@@ -640,7 +709,7 @@ async fn validate_json(
                 // mean "checked and fine", not "could not look".
                 if let Modules::Unavailable(why) = &allowed {
                     warnings.push(format!(
-                        "Module values could not be read from Azure DevOps ({why}), so the                          Module on each case was NOT checked. Everything else was."
+                        "Module values could not be read from Azure DevOps ({why}), so the Module on each case was NOT checked. Everything else was."
                     ));
                 }
                 let known = allowed.known();

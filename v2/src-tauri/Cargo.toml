@@ -56,6 +56,11 @@ velopack = "1.2.0"
 xcap = "0.9.6"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures = { version = "0.3.32", default-features = false, features = ["std", "async-await"] }
+# The DevTools Protocol is WebSocket-only. Five commands is the whole
+# surface this app needs, so a full automation framework (and the Node
+# runtime and browser binaries it would drag into the installer) buys
+# nothing a socket does not.
+tokio-tungstenite = "0.24"
 cpal = "0.18.1"
 rustfft = "6.4.1"
 tauri-plugin-clipboard-manager = "2.3.2"

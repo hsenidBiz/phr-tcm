@@ -749,6 +749,7 @@ table {
 .group:hover .nav-ico-edit { animation: ico-spin 0.55s ease; }
 .group:hover .nav-ico-view { animation: ico-blink 0.5s ease; }
 .group:hover .nav-ico-run { animation: ico-pop 0.4s ease; }
+.group:hover .nav-ico-autorun { animation: ico-sway 0.5s ease; }
 .group:hover .nav-ico-suites { animation: ico-sway 0.5s ease; }
 .group:hover .nav-ico-ai { animation: ico-sway 0.5s ease; }
 .group:hover .nav-ico-prs { animation: ico-pull 0.5s ease; }

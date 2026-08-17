@@ -5,6 +5,7 @@
 pub mod ai_bridge;
 pub mod ai_tools;
 pub mod auth;
+pub mod autorun;
 pub mod board;
 pub mod bugs;
 pub mod cases;

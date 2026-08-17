@@ -135,6 +135,25 @@ test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () 
   expect(screen.getByRole("heading", { name: "Import File" })).toBeInTheDocument();
 });
 
+// The sidebar's CASE_ITEMS order is manual, import, edit, view, run,
+// autorun, suites, ai (8 rows) - the Ctrl+N shortcut order must match it
+// row for row, or a number opens the wrong screen and the last row loses
+// its shortcut entirely.
+test("Ctrl+6 jumps to Auto Run and Ctrl+8 jumps to AI Bridge", async () => {
+  signedInMocks();
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  fireEvent.keyDown(window, { key: "6", ctrlKey: true });
+  expect(screen.getByRole("heading", { name: "Auto Run" })).toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "7", ctrlKey: true });
+  expect(screen.getByRole("heading", { name: "Test Suites" })).toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "8", ctrlKey: true });
+  expect(screen.getByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();
+});
+
 test("signing in starts the AI bridge and pushes org/project context", async () => {
   const pushes: Array<Record<string, unknown>> = [];
   let bridgeStarted = 0;

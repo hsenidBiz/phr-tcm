@@ -206,6 +206,46 @@ export const commands = {
 	 *  one fills the form; nothing registers until the explicit click.
 	 */
 	dbServerPresets: () => __TAURI_INVOKE<DbPresetOut[]>("db_server_presets"),
+	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
+	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
+	/**
+	 *  Run one step's actions in order and report every outcome. Actions
+	 *  after a failure still run: the watcher learns more from "the click
+	 *  worked, the check did not" than from a run that stops at the first
+	 *  red.
+	 */
+	autoRunStep: (step: StepScript) => typedError<ActionOutcome[], string>(__TAURI_INVOKE("auto_run_step", { step })),
+	autoRunLoadScript: (caseId: number) => typedError<{
+	case_id: number,
+	title: string,
+	steps: StepScript[],
+} | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
+	autoRunSaveScript: (script: CaseScript) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
+	/**
+	 *  Import a BUNDLE of scripts from one file - the shape an assistant
+	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
+	 *  button reads back.
+	 * 
+	 *  Takes a PATH, not the file's contents: the frontend used to read the
+	 *  file itself and hand over base64 text, but `atob` decodes base64 to a
+	 *  latin-1 binary string, so any non-ASCII byte (an accent, a curly
+	 *  quote, an em dash) came out mojibake, and a UTF-8 BOM made the JSON
+	 *  look corrupt before it ever reached the parser. Reading here, in Rust,
+	 *  with the same BOM handling `import_parser` already uses, sidesteps
+	 *  both.
+	 * 
+	 *  All or nothing, via `store::save_scripts_atomically`: every entry is
+	 *  validated and serialised before a single file is written, so a bad
+	 *  entry - or a filesystem error partway through a big bundle - never
+	 *  leaves the tester unable to tell which cases are current. Returns the
+	 *  case ids that landed, so the screen can say what changed rather than
+	 *  just "done".
+	 */
+	autoRunImportScripts: (path: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { path })),
+	autoRunSaveRun: (run: LocalRun) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
+	autoRunListRuns: () => __TAURI_INVOKE<LocalRun[]>("auto_run_list_runs"),
+	/**  A run id the frontend can stamp on a new session. */
+	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -420,6 +460,13 @@ export const events = {
 };
 
 /* Types */
+export type Action = { kind: "navigate"; url: string } | { kind: "click"; selector: string } | { kind: "fill"; selector: string; value: string } | { kind: "wait_for"; selector: string; timeout_ms: number } | { kind: "check_text"; value: string } | { kind: "check_url"; contains: string };
+
+export type ActionOutcome = {
+	ok: boolean,
+	detail: string,
+};
+
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
 } } | { kind: "Forbidden" } | { kind: "NotFound" } | { kind: "Http"; detail: {
@@ -531,6 +578,29 @@ export type CaseNoteSaved = {
 	org: string,
 	case_id: number,
 	text: string,
+};
+
+/**
+ *  One case in a run. `verdict` is the HUMAN's word - "", "Passed",
+ *  "Failed", "Blocked". The machine never fills it in: the action
+ *  outcomes are evidence shown to the person, not a vote.
+ */
+export type CaseRecord = {
+	case_id: number,
+	title: string,
+	verdict: string,
+	note: string,
+	steps: StepRecord[],
+};
+
+/**
+ *  How one test case is driven. Keyed by the Azure DevOps case id so a
+ *  script and its case stay together, but the script never leaves here.
+ */
+export type CaseScript = {
+	case_id: number,
+	title: string,
+	steps: StepScript[],
 };
 
 export type CreatedItem = {
@@ -742,6 +812,17 @@ export type IterationRef = {
 	path: string,
 	start_date: string | null,
 	finish_date: string | null,
+};
+
+export type LocalRun = {
+	id: string,
+	pbi_id: number,
+	/**
+	 *  Epoch milliseconds as a string - specta forbids u64 across IPC,
+	 *  and the frontend formats it anyway.
+	 */
+	started_at: string,
+	cases: CaseRecord[],
 };
 
 /**  One line, as the viewer renders it. */
@@ -1133,6 +1214,17 @@ export type StateInfo = {
 export type Step = {
 	action: string,
 	expected: string,
+};
+
+export type StepRecord = {
+	step_number: number,
+	outcomes: ActionOutcome[],
+};
+
+/**  The actions that carry out one numbered step of a test case. */
+export type StepScript = {
+	step_number: number,
+	actions: Action[],
 };
 
 export type SubmitItemResult = {

@@ -71,6 +71,7 @@ const DevPanel: ComponentType<{
   onShowSignIn: () => void;
 }> = DEV_TOOLS ? lazy(() => import("./dev/DevPanel")) : () => null;
 import AiBridge from "./screens/AiBridge";
+import AutoRun from "./screens/AutoRun";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
@@ -108,6 +109,7 @@ const TITLES: Record<Section, string> = {
   edit: "Update Test Cases",
   view: "View Test Cases",
   run: "Run Tests",
+  autorun: "Auto Run",
   suites: "Test Suites",
   ai: "AI Bridge",
   settings: "Settings",
@@ -132,10 +134,10 @@ export default function App() {
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
 
-  // Keyboard shortcuts: Ctrl+1..5 = tabs, Ctrl+Shift+M = Work Manager
+  // Keyboard shortcuts: Ctrl+1..8 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
-    const order: Section[] = ["manual", "import", "edit", "view", "run", "suites", "ai"];
+    const order: Section[] = ["manual", "import", "edit", "view", "run", "autorun", "suites", "ai"];
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.shiftKey && e.key.toLowerCase() === "m") {
@@ -794,6 +796,7 @@ export default function App() {
                   }}
                 />
               )}
+              {section === "autorun" && <AutoRun org={org} project={project} pbi={pbi} />}
               {section === "ai" && <AiBridge />}
               {section === "settings" && <Settings org={org} project={project} />}
             </AnimatedContent>

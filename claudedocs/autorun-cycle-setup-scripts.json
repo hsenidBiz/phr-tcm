@@ -1,0 +1,5939 @@
+[
+  {
+    "case_id": 136448,
+    "title": "Cycle Setup - Admin can override evaluation method without clearing the configuration level selection",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"90\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] .cs-config-check-badge:not(.cs-hidden)",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136451,
+    "title": "Cycle Setup - Appraisal Guidelines section shows upload zone with drag-drop and browse options",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-file-upload .phr-fileuploader-zone",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Appraisal Guidelines"
+          },
+          {
+            "kind": "check_text",
+            "value": "Optional"
+          },
+          {
+            "kind": "check_text",
+            "value": "Drop your files here or click to browse"
+          },
+          {
+            "kind": "check_text",
+            "value": "PDF or Word documents up to"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136430,
+    "title": "Cycle Setup - Clicking Back in confirmation returns to cycle list without applying changes",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "div[id^=\"phr-confirm-\"].is-open .phr-modal-footer",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "This will overwrite any configuration already set for the current cycle."
+          },
+          {
+            "kind": "click",
+            "selector": "div[id^=\"phr-confirm-\"] .phr-modal-footer button.phr-btn:first-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy from Previous Cycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Select a previous performance cycle to import its settings"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136429,
+    "title": "Cycle Setup - Clicking a cycle row shows inline confirmation message",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy from Previous Cycle"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "div[id^=\"phr-confirm-\"].is-open .phr-modal-footer",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy settings from"
+          },
+          {
+            "kind": "check_text",
+            "value": "This will overwrite any configuration already set for the current cycle."
+          },
+          {
+            "kind": "check_text",
+            "value": "Confirm"
+          },
+          {
+            "kind": "check_text",
+            "value": "Back"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136431,
+    "title": "Cycle Setup - Confirming copy applies settings closes modal and shows success toast",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "div[id^=\"phr-confirm-\"].is-open .phr-modal-footer",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "div[id^=\"phr-confirm-\"] .phr-modal-footer button.phr-btn:last-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration copied from"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card.is-selected",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card.is-selected .cs-config-check-badge:not(.cs-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136425,
+    "title": "Cycle Setup - Confirming template change re-applies new template and resets affected downstream data",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle/Manage"
+          },
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Edit&cycleId=REPLACE_WITH_DRAFT_CYCLE_ID&restricted=false&stepKey=cycle_setup"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Edit Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card.is-selected",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "div[id^=\"phr-confirm-\"].is-open .phr-modal-footer",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Change Configuration Level?"
+          },
+          {
+            "kind": "check_text",
+            "value": "Changing the template will reset evaluator and stage configuration. Continue?"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "div[id^=\"phr-confirm-\"] .phr-modal-footer button.phr-btn:last-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] .cs-config-check-badge:not(.cs-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"360\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136461,
+    "title": "Cycle Setup - Continue is disabled when configuration level is selected but required fields are empty",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Save & Continue"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button[disabled]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136460,
+    "title": "Cycle Setup - Continue is disabled when no configuration level is selected",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle/Manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-create-button-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#mc-create-button-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_url",
+            "contains": "mode=Create"
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Continue Gate Check Cycle"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-grid .phr-cal-day",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-grid .phr-cal-day:first-child"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-grid .phr-cal-day",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-grid .phr-cal-day:last-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button[disabled]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136423,
+    "title": "Cycle Setup - Continue remains disabled after card selection when basic information fields are incomplete",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Save & Continue"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button[disabled]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136463,
+    "title": "Cycle Setup - Continue with all required fields filled advances to Step 2",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected[aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "180° Evaluation"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Annual Performance Cycle Auto Run"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-option",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-day.is-today",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day.is-today"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date button.phr-cal-nav[aria-label=\"Next month\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date button.phr-cal-nav[aria-label=\"Next month\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)"
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"evaluation_rules\"][aria-current=\"step\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Evaluation Rules"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136426,
+    "title": "Cycle Setup - Copy from Previous button is visible in the Configuration Level section header",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-section-box #btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration Level"
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy from Previous"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 146308,
+    "title": "Cycle Setup - Copy from Previous button is visible when editing a draft cycle",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle/manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-list-section",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_url",
+            "contains": "/performancecycle/manage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-mc-card[data-is-draft=\"true\"] button[aria-label^=\"Edit \"]",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-mc-card[data-is-draft=\"true\"] button[aria-label^=\"Edit \"]"
+          },
+          {
+            "kind": "check_url",
+            "contains": "mode=Edit"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy from Previous"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136427,
+    "title": "Cycle Setup - Copy from Previous modal opens with correct title and subtitle",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal #phr-cc-copy-modal-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy from Previous Cycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Select a previous performance cycle to import its settings"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136479,
+    "title": "Cycle Setup - Copy from Previous modal opens without crashing when no previous cycles exist",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-empty",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "No previous cycles available to copy from."
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy from Previous Cycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136433,
+    "title": "Cycle Setup - Copy from Previous modal shows empty state when no previous cycles exist",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-empty",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "No previous cycles available to copy from."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 146314,
+    "title": "Cycle Setup - Copying from a previous cycle copies each stage's email notification settings",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle/Manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-create-button-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-cycle-list .phr-mc-card[data-is-draft=\"true\"] button[id^=\"mc-edit-\"]",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "#mc-cycle-list .phr-mc-card[data-is-draft=\"true\"] button[id^=\"mc-edit-\"]"
+          },
+          {
+            "kind": "check_url",
+            "contains": "mode=Edit"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 25000
+          },
+          {
+            "kind": "click",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration copied from"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"evaluation_rules\"][aria-current=\"step\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 25000
+          }
+        ]
+      },
+      {
+        "step_number": 6,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#tl-step-root",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"timeline\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 25000
+          }
+        ]
+      },
+      {
+        "step_number": 7,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#tl-stage-list .phr-cc-stage-card[data-stage-id] [data-action=\"toggle-notif\"] button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "#tl-stage-list .phr-cc-stage-card[data-stage-id] [data-action=\"toggle-notif\"] button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#tl-stage-list .phr-cc-stage-card[data-stage-id] [data-action=\"toggle-notif\"].is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Enable for this stage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Send to"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#tl-stage-list .phr-cc-stage-card[data-stage-id] [data-role=\"notif-enable-host\"] input:checked",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#tl-stage-list .phr-cc-stage-card[data-stage-id] [data-role=\"notif-emp-host\"] input:checked",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 146313,
+    "title": "Cycle Setup - Copying from a previous cycle copies timeline stages but leaves stage dates blank",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle/Manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-create-button-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-cycle-list .phr-mc-card[data-is-draft=\"true\"] button[id^=\"mc-edit-\"]",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "#mc-cycle-list .phr-mc-card[data-is-draft=\"true\"] button[id^=\"mc-edit-\"]"
+          },
+          {
+            "kind": "check_url",
+            "contains": "mode=Edit"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 25000
+          },
+          {
+            "kind": "click",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration copied from"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"evaluation_rules\"][aria-current=\"step\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 25000
+          }
+        ]
+      },
+      {
+        "step_number": 6,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#tl-step-root",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"timeline\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 25000
+          },
+          {
+            "kind": "check_text",
+            "value": "Timeline"
+          }
+        ]
+      },
+      {
+        "step_number": 7,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#tl-stage-list .phr-cc-stage-card[data-stage-id]",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 8,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientErrorToast .phr-toast-body",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "All stages must have start and end dates before continuing."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 146320,
+    "title": "Cycle Setup - Copying from a previous cycle reveals a step that was disabled on the target cycle",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle/Manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-create-button-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-cycle-list .phr-mc-card[data-is-draft=\"true\"] button[id^=\"mc-edit-\"]",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "#mc-cycle-list .phr-mc-card[data-is-draft=\"true\"] button[id^=\"mc-edit-\"]"
+          },
+          {
+            "kind": "check_url",
+            "contains": "mode=Edit"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 25000
+          },
+          {
+            "kind": "click",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Leave this step?"
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-prev-cycle-list .phr-cc-prev-cycle-item"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "This will overwrite any configuration already set for the current cycle."
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer .phr-btn-primary"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration copied from"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"competencies\"]",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Competencies"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136477,
+    "title": "Cycle Setup - Cycle Name at exactly 200 characters is accepted",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected[aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-day.is-today",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day.is-today"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date button.phr-cal-nav[aria-label=\"Next month\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date button.phr-cal-nav[aria-label=\"Next month\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)"
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"evaluation_rules\"][aria-current=\"step\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_text",
+            "value": "Evaluation Rules"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136436,
+    "title": "Cycle Setup - Cycle Name is required and shows error when cleared and Continue is clicked",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav",
+            "timeout_ms": 10000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected[aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": ""
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name .phr-textbox-hint.is-error",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input[aria-invalid=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle name is required"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136465,
+    "title": "Cycle Setup - Cycle Name with only whitespace is treated as blank and shows required error",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "   "
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name .phr-textbox-hint.is-error",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle name is required"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136440,
+    "title": "Cycle Setup - Description accepts up to 500 characters with character countdown",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-description-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-description-input",
+            "value": "Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Autom"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-description .phr-textarea-counter",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "500 / 500"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-description-input",
+            "value": "Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automated description text for cycle setup validation. Automa"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-description .phr-textarea-counter",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "500 / 500"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136439,
+    "title": "Cycle Setup - Description is optional and blank value does not block Continue",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Automated Cycle - Blank Description"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn:first-child"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-grid .phr-cal-day",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date button[aria-label=\"Next month\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-grid .phr-cal-day:not(.is-other-month)"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"evaluation_rules\"][aria-current=\"step\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136444,
+    "title": "Cycle Setup - End Date before Start Date shows date range validation error",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-grid .phr-cal-day",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date button[aria-label=\"Next month\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-grid .phr-cal-day:not(.is-other-month)"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-footer .phr-cal-today-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-footer .phr-cal-today-btn:first-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientErrorToast .phr-toast-body",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "End date must be after start date."
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136443,
+    "title": "Cycle Setup - End Date equal to Start Date shows date range validation error",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn:first-child"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-footer .phr-cal-today-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-footer .phr-cal-today-btn:first-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientErrorToast .phr-toast-body",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "End date must be after start date."
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136442,
+    "title": "Cycle Setup - End Date is required and shows error when left empty",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn:first-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientErrorToast .phr-toast-body",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "End date is required."
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136478,
+    "title": "Cycle Setup - Evaluation Year boundary values are selectable",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle/manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-list-section",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_url",
+            "contains": "/performancecycle/manage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-option",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(1)"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year button.phr-select-single-toggle[aria-expanded=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(1).is-selected",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(11)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(11)"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year button.phr-select-single-toggle[aria-expanded=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(11).is-selected",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 6,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year button.phr-select-single-toggle[aria-expanded=\"false\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136437,
+    "title": "Cycle Setup - Evaluation Year defaults to current year and shows correct year range",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year .phr-select-single.has-value .phr-select-single-label",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "2026"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel.is-open .phr-select-single-option[data-phr-value=\"2026\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel.is-open .phr-select-single-option[data-phr-value=\"2021\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel.is-open .phr-select-single-option[data-phr-value=\"2031\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136447,
+    "title": "Cycle Setup - Evaluation method is auto-selected when a configuration level card is chosen",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"90\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"90\"][aria-pressed=\"false\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 6,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"360\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"][aria-pressed=\"false\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136449,
+    "title": "Cycle Setup - Evaluation method is mandatory and shows error when bypassed",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Automated Cycle - No Method"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-footer .phr-cal-today-btn:first-child"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-datepicker-trigger"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-grid .phr-cal-day",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date button[aria-label=\"Next month\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-grid .phr-cal-day:not(.is-other-month)"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientErrorToast .phr-toast-body",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Please select an evaluation method."
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136428,
+    "title": "Cycle Setup - Modal lists previous cycles with name year badge and evaluation method badge",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-copy-from-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-copy-from-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open .phr-cc-prev-cycle-item",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Copy from Previous Cycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open .phr-cc-prev-cycle-item .phr-cc-prev-cycle-name",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-cc-copy-modal.is-open .phr-cc-prev-cycle-item .phr-cc-prev-cycle-meta",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136473,
+    "title": "Cycle Setup - Navigating back from Step 2 to Step 1 shows previously saved values",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Auto Run Cycle 136473"
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card.is-selected[data-method=\"180\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-datepicker-wrap.is-open .phr-cal-day[data-date=\"2026-08-10\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day[data-date=\"2026-08-10\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-datepicker-wrap.is-open .phr-cal-day[data-date=\"2026-08-20\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day[data-date=\"2026-08-20\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#er-form",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"evaluation_rules\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#btn-previous-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Any unsaved changes on this step will be lost if you navigate to the previous step. Do you want to continue?"
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer button:last-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card.is-selected",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card.is-selected[data-method=\"180\"]",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_text",
+            "value": "2026"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136412,
+    "title": "Cycle Setup - Page title and subtitle are visible on load",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "p.phr-cc-step-desc",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Select a configuration template, fill in basic cycle information, choose an evaluation method, and optionally attach appraisal guidelines."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136467,
+    "title": "Cycle Setup - Previous button is visible but disabled on Step 1",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-nav-footer #btn-previous-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Previous"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-nav-footer #btn-previous-button[disabled]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-nav-footer #btn-previous-button.is-disabled",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136480,
+    "title": "Cycle Setup - Resuming a draft cycle pre-populates all previously saved fields",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Edit&cycleId=1&restricted=false&stepKey=cycle_setup"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "cycleId=1"
+          },
+          {
+            "kind": "check_text",
+            "value": "Edit Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card.is-selected",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card.is-selected",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year .phr-select-single.has-value .phr-select-single-label",
+            "timeout_ms": 15000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136472,
+    "title": "Cycle Setup - Returning to a cycle after Save and Exit resumes with previously saved values",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-page-title",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Auto Run Draft 136472"
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-description-input",
+            "value": "Auto Run draft description 136472"
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card.is-selected[data-method=\"180\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-datepicker-wrap.is-open .phr-cal-day[data-date=\"2026-08-10\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day[data-date=\"2026-08-10\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-datepicker-wrap.is-open .phr-cal-day[data-date=\"2026-08-20\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day[data-date=\"2026-08-20\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-save-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle setup saved successfully."
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-exit-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.is-open .phr-modal-footer button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Any unsaved changes on this step will be lost if you exit the wizard. Do you want to continue?"
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-modal.is-open .phr-modal-footer button:last-child"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-cycle-list",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_url",
+            "contains": "performancecycle/manage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Auto Run Draft 136472"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "phr-button[data-aria-label=\"Edit Auto Run Draft 136472\"] button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "click",
+            "selector": "phr-button[data-aria-label=\"Edit Auto Run Draft 136472\"] button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Edit Performance Cycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card.is-selected",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card.is-selected[data-method=\"180\"]",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_text",
+            "value": "2026"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136476,
+    "title": "Cycle Setup - SQL injection string in Description is stored and displayed safely",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle/manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-list-section",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_url",
+            "contains": "/performancecycle/manage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Auto Run 136476 Cycle"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-option",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(6)"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-day:not(.is-other-month)[data-date$=\"-01\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day:not(.is-other-month)[data-date$=\"-01\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)[data-date$=\"-28\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)[data-date$=\"-28\"]"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-description-input",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-description-input",
+            "value": "'; DROP TABLE perf_performance_cycle;--"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-description .phr-textarea-counter",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "39 / 500"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#btn-save-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-save-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle setup saved successfully."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136468,
+    "title": "Cycle Setup - Save with complete fields saves without validation and stays on Step 1",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle/manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-list-section",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_url",
+            "contains": "/performancecycle/manage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Auto Run 136468 Cycle"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-option",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(6)"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-day:not(.is-other-month)[data-date$=\"-01\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day:not(.is-other-month)[data-date$=\"-01\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)[data-date$=\"-28\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)[data-date$=\"-28\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-description-input",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-description-input",
+            "value": "Auto Run save check for Step 1."
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-save-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-save-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"][aria-current=\"step\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          },
+          {
+            "kind": "check_url",
+            "contains": "/performancecycle"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136469,
+    "title": "Cycle Setup - Save without configuration level selected saves without template validation",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-save-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Auto Test Cycle No Template"
+          },
+          {
+            "kind": "click",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-day.is-today",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day.is-today"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-datepicker-wrap.is-open",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date button.phr-cal-nav[aria-label=\"Next month\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-day[data-date$=\"-15\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day[data-date$=\"-15\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-save-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientSuccessToast .phr-toast-body",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle setup saved successfully."
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          },
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136420,
+    "title": "Cycle Setup - Selecting Advanced card highlights it and auto-selects 360 degree evaluation method",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected[aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] .cs-config-check-badge:not(.cs-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"360\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "360° Evaluation"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136417,
+    "title": "Cycle Setup - Selecting Basic card highlights it and auto-selects 90 degree evaluation method",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"].is-selected[aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] .cs-config-check-badge:not(.cs-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"90\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "90° Evaluation"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136419,
+    "title": "Cycle Setup - Selecting Standard card highlights it and auto-selects 180 degree evaluation method",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected[aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] .cs-config-check-badge:not(.cs-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"180\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "180° Evaluation"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136422,
+    "title": "Cycle Setup - Selecting a card does not navigate away or show a toast",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration Level"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136424,
+    "title": "Cycle Setup - Selecting a different template after downstream data exists shows a warning dialog",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Edit&cycleId=1&stepKey=cycle_setup&restricted=false"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration Level"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-modal.phr-modal-danger .phr-modal-title",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Change Configuration Level?"
+          },
+          {
+            "kind": "check_text",
+            "value": "Changing the template will reset evaluator and stage configuration. Continue?"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136441,
+    "title": "Cycle Setup - Start Date is required and shows error when left empty",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Auto Test Missing Start Date"
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phrApiClientErrorToast .phr-toast-body",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Start date is required."
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          },
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136464,
+    "title": "Cycle Setup - Step 1 tile shows completed state after successful Continue",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle/manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-list-section",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_url",
+            "contains": "/performancecycle/manage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "fill",
+            "selector": "#cc-cycle-name-input",
+            "value": "Auto Run 136464 Cycle"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year button.phr-select-single-toggle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-eval-year-panel .phr-select-single-option",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-eval-year-panel .phr-select-single-list .phr-select-single-option:nth-child(6)"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-start-date .phr-cal-day:not(.is-other-month)[data-date$=\"-01\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-start-date .phr-cal-day:not(.is-other-month)[data-date$=\"-01\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date-input"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)[data-date$=\"-28\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": "#cc-end-date .phr-cal-day:not(.is-other-month)[data-date$=\"-28\"]"
+          },
+          {
+            "kind": "click",
+            "selector": "button.phr-cc-method-card[data-method=\"360\"]"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "button.phr-cc-method-card[data-method=\"360\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#btn-continue-button",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": "#btn-continue-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"evaluation_rules\"][aria-current=\"step\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 2 of 9"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button[data-step-key=\"cycle_setup\"] .phr-dw-step-nav-circle.is-done",
+            "timeout_ms": 10000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136413,
+    "title": "Cycle Setup - Step progress bar shows Step 1 of 9 at 11 percent on first load",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-progress-bar .phr-progress-title",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9"
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-progress-bar .phr-progress-track[aria-valuenow=\"11\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-progress-bar .phr-progress-pct",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9"
+          },
+          {
+            "kind": "check_text",
+            "value": "11%"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn.is-active[aria-current=\"step\"][data-step-key=\"cycle_setup\"]",
+            "timeout_ms": 10000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136421,
+    "title": "Cycle Setup - Switching template card removes previous highlight and only one card is active",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle/Manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-create-button-button",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "#mc-create-button-button"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cycle-step-content[aria-busy=\"false\"]",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "check_url",
+            "contains": "mode=Create"
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] .phr-cc-config-card-name",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] .phr-cc-config-card-name"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-selected",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"][aria-pressed=\"false\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card[data-method=\"360\"][aria-pressed=\"true\"]",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136415,
+    "title": "Cycle Setup - Three configuration level cards are displayed in order",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"].is-active",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Configuration Level"
+          },
+          {
+            "kind": "check_text",
+            "value": "Basic Configuration"
+          },
+          {
+            "kind": "check_text",
+            "value": "Standard Configuration"
+          },
+          {
+            "kind": "check_text",
+            "value": "Advanced Configuration"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "check_text",
+            "value": "Simple setup for straightforward performance reviews"
+          },
+          {
+            "kind": "check_text",
+            "value": "Balanced approach with manager feedback and competencies"
+          },
+          {
+            "kind": "check_text",
+            "value": "Comprehensive setup with full 360° feedback and OKRs"
+          }
+        ]
+      },
+      {
+        "step_number": 6,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"].is-expanded ul.phr-cc-config-features:not(.cs-features-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Self-assessment only (90°)"
+          },
+          {
+            "kind": "check_text",
+            "value": "Single evaluation stage"
+          },
+          {
+            "kind": "check_text",
+            "value": "Basic goal tracking"
+          },
+          {
+            "kind": "check_text",
+            "value": "Standard rating scales"
+          }
+        ]
+      },
+      {
+        "step_number": 7,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] button.phr-cc-config-toggle-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"] button.phr-cc-config-toggle-btn"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"180\"].is-expanded ul.phr-cc-config-features:not(.cs-features-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Self + Manager feedback (180°)"
+          },
+          {
+            "kind": "check_text",
+            "value": "Goals and Competencies"
+          },
+          {
+            "kind": "check_text",
+            "value": "Multiple evaluation stages"
+          },
+          {
+            "kind": "check_text",
+            "value": "Moderation support"
+          }
+        ]
+      },
+      {
+        "step_number": 8,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] button.phr-cc-config-toggle-btn",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"] button.phr-cc-config-toggle-btn"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"360\"].is-expanded ul.phr-cc-config-features:not(.cs-features-hidden)",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Multi-rater feedback (360°)"
+          },
+          {
+            "kind": "check_text",
+            "value": "Goals, Competencies & OKRs"
+          },
+          {
+            "kind": "check_text",
+            "value": "Calibration & Moderation"
+          },
+          {
+            "kind": "check_text",
+            "value": "Advanced analytics"
+          }
+        ]
+      },
+      {
+        "step_number": 9,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input[placeholder=\"Annual Performance Cycle 2026\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Name"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136446,
+    "title": "Cycle Setup - Three evaluation method cards are displayed",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Cycle Setup"
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card[data-method=\"90\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card[data-method=\"180\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-method-card[data-method=\"360\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Evaluation Method"
+          },
+          {
+            "kind": "check_text",
+            "value": "90° Evaluation"
+          },
+          {
+            "kind": "check_text",
+            "value": "Manager assessment only"
+          },
+          {
+            "kind": "check_text",
+            "value": "180° Evaluation"
+          },
+          {
+            "kind": "check_text",
+            "value": "Self + Manager"
+          },
+          {
+            "kind": "check_text",
+            "value": "360° Evaluation"
+          },
+          {
+            "kind": "check_text",
+            "value": "Multi-role feedback"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 136416,
+    "title": "Cycle Setup - View details toggle expands and collapses the feature list on each card",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/PerformanceCycle?mode=Create"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-cycle-name-input",
+            "timeout_ms": 15000
+          },
+          {
+            "kind": "check_text",
+            "value": "Create Performance Cycle"
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "check_url",
+            "contains": "/PerformanceCycle"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#cc-form",
+            "timeout_ms": 5000
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#phr-shell-step-nav button.phr-dw-step-nav-btn[data-step-key=\"cycle_setup\"][aria-current=\"step\"]:not([disabled])",
+            "timeout_ms": 20000
+          },
+          {
+            "kind": "wait_for",
+            "selector": "h2.phr-cc-step-title",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Step 1 of 9 — Cycle Setup"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"]",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Basic Configuration"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"].is-expanded",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] ul.phr-cc-config-features[aria-hidden=\"false\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn[aria-expanded=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Hide details"
+          },
+          {
+            "kind": "check_text",
+            "value": "Self-assessment only (90°)"
+          },
+          {
+            "kind": "check_text",
+            "value": "Single evaluation stage"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn[aria-expanded=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "click",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn"
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] ul.phr-cc-config-features[aria-hidden=\"true\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "wait_for",
+            "selector": ".phr-cc-config-card[data-eval-method=\"90\"] button.phr-cc-config-toggle-btn[aria-expanded=\"false\"]",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "View details"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": 140891,
+    "title": "Cycle setup - Help icon available",
+    "steps": [
+      {
+        "step_number": 1,
+        "actions": [
+          {
+            "kind": "navigate",
+            "url": "https://localhost:7001/performancecycle/manage"
+          },
+          {
+            "kind": "wait_for",
+            "selector": "#mc-page-root",
+            "timeout_ms": 15000
+          }
+        ]
+      },
+      {
+        "step_number": 2,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": ".phr-page-header.phr-page-header-row",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_text",
+            "value": "Manage Performance Cycles"
+          }
+        ]
+      },
+      {
+        "step_number": 3,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "#mc-list-section",
+            "timeout_ms": 10000
+          },
+          {
+            "kind": "check_url",
+            "contains": "/performancecycle/manage"
+          }
+        ]
+      },
+      {
+        "step_number": 4,
+        "actions": [
+          {
+            "kind": "wait_for",
+            "selector": "p.phr-help-link a",
+            "timeout_ms": 5000
+          },
+          {
+            "kind": "check_text",
+            "value": "Help"
+          }
+        ]
+      },
+      {
+        "step_number": 5,
+        "actions": [
+          {
+            "kind": "click",
+            "selector": "p.phr-help-link a"
+          }
+        ]
+      }
+    ]
+  }
+]

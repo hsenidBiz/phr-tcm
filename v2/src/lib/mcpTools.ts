@@ -21,6 +21,14 @@ export const MCP_TOOLS: McpToolInfo[] = [
   { name: "get_run_failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },
   { name: "check_spec_coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
   { name: "merge_case_files", summary: "Merge fan-out slice files into one draft through the real importer." },
+  {
+    name: "get_autorun_guide",
+    summary: "How to write an Auto Run browser script, and where assertions may come from.",
+  },
+  {
+    name: "save_autorun_script",
+    summary: "Save browser scripts for a PBI's cases - one call covers the whole set.",
+  },
   { name: "validate_cases", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", summary: "Reorganise a draft into a tester-ready run sheet." },

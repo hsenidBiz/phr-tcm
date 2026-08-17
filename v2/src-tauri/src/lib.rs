@@ -7,7 +7,9 @@ pub mod ado_git;
 pub mod ado_share;
 pub mod ado_testplan;
 pub mod applog;
+pub mod autorun;
 pub mod branchcheck;
+pub mod browser;
 pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
@@ -49,7 +51,10 @@ pub use events::{CaseNoteSaved, SubmitProgress, SuiteScanProgress};
 pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
-    use commands::{ai_bridge, ai_tools, auth, board, bugs, cases, discovery, misc, prs, queue, runs, testplan};
+    use commands::{
+        ai_bridge, ai_tools, auth, autorun, board, bugs, cases, discovery, misc, prs, queue, runs,
+        testplan,
+    };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
             events::SubmitProgress,
@@ -122,6 +127,15 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::materialize_shared_draft,
             ai_tools::db_server_defaults,
             ai_tools::db_server_presets,
+            autorun::auto_run_open_browser,
+            autorun::auto_run_close_browser,
+            autorun::auto_run_step,
+            autorun::auto_run_load_script,
+            autorun::auto_run_save_script,
+            autorun::auto_run_import_scripts,
+            autorun::auto_run_save_run,
+            autorun::auto_run_list_runs,
+            autorun::auto_run_new_id,
             queue::export_queue_html,
             discovery::list_project_tags,
             runs::result_screenshots,
@@ -236,7 +250,12 @@ pub fn run() {
             // Reference data (project tags) cached on disk and shared by the
             // UI and the AI bridge - see refcache.rs.
             if let Ok(dir) = app.path().app_data_dir() {
-                refcache::init(dir);
+                refcache::init(dir.clone());
+                // Auto Run scripts and local runs. The commands reach this
+                // through their AppHandle; the AI bridge has no handle and
+                // reads it from here, so a script an assistant saves lands
+                // where the Auto Run screen actually looks.
+                autorun::store::set_root(dir.join("autorun"));
             }
             applog::info(format!(
                 "Test Case Manager {} started",
