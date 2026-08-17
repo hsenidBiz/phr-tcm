@@ -271,10 +271,25 @@ export default function AutoRun({
                 >
                   {shut ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
                 </button>
+                {/* Same contract as the other grouped screens: selection
+                    is the checkbox's job (scripted cases only), the TITLE
+                    toggles the fold like the chevron. */}
+                {(() => {
+                  const runnable = runnableIn(indices);
+                  const on = runnable.filter((id) => selected.has(id)).length;
+                  return (
+                    <Checkbox
+                      ariaLabel={`Select all in ${label}`}
+                      checked={runnable.length > 0 && on === runnable.length}
+                      indeterminate={on > 0 && on < runnable.length}
+                      onCheckedChange={() => toggleGroup(indices)}
+                    />
+                  );
+                })()}
                 <button
                   className="group flex items-center gap-2"
-                  title="Select every scripted case in this group"
-                  onClick={() => toggleGroup(indices)}
+                  title={shut ? "Expand group" : "Collapse group"}
+                  onClick={() => toggleCollapsed(label)}
                 >
                   <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                     {label} ({indices.length})

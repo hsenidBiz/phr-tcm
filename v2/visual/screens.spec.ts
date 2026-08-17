@@ -85,7 +85,7 @@ test.describe("OLED (daily driver)", () => {
 
   test("work manager screens", async ({ page }) => {
     await bootDemo(page, "oled");
-    await page.getByRole("button", { name: "Work Manager (Beta)" }).click();
+    await page.getByRole("button", { name: "Work Manager" }).click();
     await page.getByRole("button", { name: "Board", exact: true }).waitFor();
     await shoot(page, "oled-work-board");
     await page.getByRole("button", { name: "Pull Requests", exact: true }).click();
@@ -101,7 +101,7 @@ test.describe("Light (palette inverse)", () => {
   test("manual entry + board", async ({ page }) => {
     await bootDemo(page, "light");
     await shoot(page, "light-manual");
-    await page.getByRole("button", { name: "Work Manager (Beta)" }).click();
+    await page.getByRole("button", { name: "Work Manager" }).click();
     await page.getByRole("button", { name: "Board", exact: true }).waitFor();
     await shoot(page, "light-work-board");
   });

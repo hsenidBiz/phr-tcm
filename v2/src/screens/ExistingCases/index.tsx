@@ -367,11 +367,19 @@ export default function ExistingCases({
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>
           )}
-          {/* Fold-state render below; the sticky Collapse all is portalled
-              after this loop. */}
-          {group && collapsedGroups.has(group) ? null : (
+          {/* A collapsed group must NOT unmount an open editor: the title
+              is now a fold control, and folding away unsaved edits with it
+              would be a silent discard. Same rule as View Test Cases -
+              tidying must not snatch away the thing being worked on. */}
+          {(group && collapsedGroups.has(group)
+            ? items.filter((c) => c.id === openId)
+            : items
+          ).length === 0 ? null : (
           <ul className="space-y-1">
-            {items.map((c) => (
+            {(group && collapsedGroups.has(group)
+              ? items.filter((c) => c.id === openId)
+              : items
+            ).map((c) => (
               <li
                 key={c.id}
                 className={cn(

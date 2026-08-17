@@ -309,3 +309,33 @@ test("sticky Collapse all folds the open editor and every open group", async () 
   expect(screen.queryByText("Standalone thing")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 });
+
+/** The title is a fold control now, and folding must not become a silent
+ * discard: an open editor (possibly carrying unsaved edits) stays mounted
+ * when its group collapses - only the closed sibling rows go. */
+test("folding a group keeps the open editor and its unsaved edits", async () => {
+  localStorage.setItem("tcm-v2-group-cases", "on");
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        { ...fullCase, id: 201, title: "Login - valid" },
+        { ...fullCase, id: 202, title: "Login - locked out" },
+        { ...fullCase, id: 203, title: "Standalone thing" },
+      ];
+  });
+  renderCases();
+
+  const header = await screen.findByRole("button", { name: "Login (2)" });
+  fireEvent.click(screen.getByLabelText("Expand #201"));
+  const title = await screen.findByLabelText("Case title");
+  fireEvent.change(title, { target: { value: "Login - valid EDITED" } });
+
+  // Fold the group via the title: the sibling row vanishes, the case
+  // being edited stays, edit intact.
+  fireEvent.click(header);
+  expect(screen.queryByText("Login - locked out")).not.toBeInTheDocument();
+  expect((screen.getByLabelText("Case title") as HTMLInputElement).value).toBe(
+    "Login - valid EDITED",
+  );
+});

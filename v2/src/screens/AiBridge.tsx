@@ -421,7 +421,8 @@ export default function AiBridge() {
             DB_TYPE
             <Select
               aria-label="Database type"
-              className="mt-1 w-full py-1.5 text-xs"
+              className="mt-1 w-full"
+              triggerClassName="py-1.5 text-xs"
               value={db.db_type}
               onChange={(e) => editDb({ db_type: e.target.value })}
             >

@@ -621,7 +621,7 @@ export default function PrPanel({ org, project }: { org: string; project: string
       <div className="flex items-center gap-2">
         <Select
           aria-label="Repository"
-          className="w-64 py-1.5"
+          className="w-64" triggerClassName="py-1.5"
           value={repoId}
           onChange={(e) => setRepoId(e.target.value)}
         >

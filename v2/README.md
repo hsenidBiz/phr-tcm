@@ -80,9 +80,11 @@ test count.
 - Rows **expand in place** to show the case's steps and, for failures, the
   latest failure detail — result comment and linked bugs — so a fix can be
   checked against the exact failure without opening the runner.
-- **Execution report**: one click builds a shareable HTML summary — pass rate
-  over executed cases, outcome bar, failures-first table, and failure details
-  with result comments and linked bugs — and opens it in the browser.
+- **Execution report**: highlight the cases to report on (click rows, or a
+  group's header checkbox) and one click builds a shareable HTML summary of
+  exactly those cases — pass rate, outcome bar, failures-first table, and
+  failure details with result comments and linked bugs — and opens it in the
+  browser. Whole-suite (and folder) reports live on the Test Suites tab.
 - Select rows and open the compact **always-on-top runner** for a
   step-by-step player scoped to that subset (or the whole suite).
 - Runner: mark **Passed / Failed / Blocked / Not Applicable** per step and

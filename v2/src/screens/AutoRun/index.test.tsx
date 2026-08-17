@@ -80,8 +80,8 @@ test("Group by title folds cases sharing a prefix into one heading", async () =>
   expect(screen.getByText("Ungrouped (1)")).toBeInTheDocument();
 });
 
-test("a group heading ticks only the scripted cases under it", async () => {
-  // Three in the group, one of them without a script: the heading must
+test("the header checkbox ticks only the scripted cases under it", async () => {
+  // Three in the group, one of them without a script: the checkbox must
   // take two, not three, or "Run 3 selected" would queue a case the
   // runner has nothing to run.
   mockList(
@@ -96,11 +96,11 @@ test("a group heading ticks only the scripted cases under it", async () => {
   await screen.findByText("Login - valid credentials");
   fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
 
-  fireEvent.click(await screen.findByText("Login (3)"));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select all in Login" }));
   expect(await screen.findByText("2 cases selected")).toBeInTheDocument();
 });
 
-test("clicking a fully ticked heading clears the group again", async () => {
+test("clicking a fully ticked header checkbox clears the group; the title folds it", async () => {
   mockList(
     [caseRow(1, "Login - valid credentials"), caseRow(2, "Login - locked account")],
     [1, 2],
@@ -109,11 +109,17 @@ test("clicking a fully ticked heading clears the group again", async () => {
   await screen.findByText("Login - valid credentials");
   fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
 
-  fireEvent.click(await screen.findByText("Login (2)"));
+  const box = await screen.findByRole("checkbox", { name: "Select all in Login" });
+  fireEvent.click(box);
   expect(await screen.findByText("2 cases selected")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByText("Login (2)"));
+  fireEvent.click(box);
   await waitFor(() => expect(screen.queryByText("2 cases selected")).not.toBeInTheDocument());
+
+  // The TITLE is a fold control now - same contract as every other
+  // grouped screen, so a habit learned there cannot mis-tick runs here.
+  fireEvent.click(screen.getByText("Login (2)"));
+  expect(screen.queryByText("Login - valid credentials")).not.toBeInTheDocument();
 });
 
 test("collapsing a group keeps its ticked cases, and says so on the heading", async () => {
@@ -124,7 +130,7 @@ test("collapsing a group keeps its ticked cases, and says so on the heading", as
   renderScreen();
   await screen.findByText("Login - valid credentials");
   fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
-  fireEvent.click(await screen.findByText("Login (2)"));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Select all in Login" }));
   await screen.findByText("2 cases selected");
 
   // Collapsing hides the rows; the count has to survive, or a person
