@@ -257,7 +257,6 @@ export default function AutoRun({
         groups.map(({ name, indices }) => {
           const label = name || "Ungrouped";
           const shut = collapsed.has(label);
-          const ticked = indices.filter((i) => selected.has(rows[i].id)).length;
           return (
             <div key={label} className="space-y-1">
               <div className="flex w-full items-center gap-3 pb-1 pt-2">
