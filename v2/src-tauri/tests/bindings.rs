@@ -32,3 +32,20 @@ fn export_bindings() {
         )
         .expect("failed to export typescript bindings");
 }
+
+/// tauri.conf.json's "version" is the app's real version - it names the
+/// release, the update feed, and the What's-new entry. Cargo.toml's only
+/// names the compile ("Compiling v2 v1.19.18" while shipping 1.20.0), but
+/// a drifted one turns build logs and cargo metadata into misinformation.
+/// The bump routine edits both; this makes forgetting one fail the gate.
+#[test]
+fn cargo_version_matches_tauri_conf() {
+    let conf: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string("tauri.conf.json").unwrap()).unwrap();
+    let app = conf["version"].as_str().expect("tauri.conf.json has no version");
+    assert_eq!(
+        env!("CARGO_PKG_VERSION"),
+        app,
+        "Cargo.toml package.version must match tauri.conf.json - bump both together"
+    );
+}
