@@ -352,17 +352,6 @@ export default function ExistingCases({
                 <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                   {group} ({items.length})
                 </span>
-                {/* Same marker as View Test Cases: folding a group hides its
-                    rows and the highlight with them, so the heading has to
-                    say something is still selected in there. */}
-                {collapsedGroups.has(group) && selectedInGroup(items) > 0 && (
-                  <span
-                    className="selection-dot"
-                    role="status"
-                    aria-label={`${selectedInGroup(items)} of ${items.length} selected in ${group}`}
-                    title={`${selectedInGroup(items)} selected in this group`}
-                  />
-                )}
               </button>
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>

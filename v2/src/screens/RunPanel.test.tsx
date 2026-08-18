@@ -272,34 +272,34 @@ test("filtering by Failed and selecting the rows starts a failures-only run", as
   expect(session.planId).toBe(9);
 });
 
-/** Folding a group hides the highlight along with the rows, so the heading
- * has to say that something is still selected in there - the same marker
- * View Test Cases and Update Test Cases carry. */
-test("a collapsed group marks that it still holds selected cases", async () => {
+/** The header checkbox is the one selection indicator - dash for partial,
+ * tick for the whole group - and it keeps saying so while the group is
+ * collapsed. The pulsing dot that used to ride beside collapsed headings
+ * is gone: it repeated what the checkbox already shows. */
+test("the header checkbox carries the selection state through a collapse", async () => {
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
   fireEvent.click(screen.getByLabelText(/Group by title/i) ?? screen.getByText("Group by title"));
 
-  // Expanded and unselected: nothing to announce.
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
-
-  // Select one case, still expanded: the highlighted row itself is the
-  // indicator, so the heading stays quiet.
+  // Select one case: partial reads as the checkbox's mixed state.
   fireEvent.click(screen.getByText("Valid login"));
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  const box = () => screen.getByRole("checkbox", { name: /Select all in/ });
+  expect(box()).toHaveAttribute("aria-checked", "mixed");
 
-  // Collapse the group: the rows and their highlight vanish, the dot
-  // takes over.
+  // Collapse the group: rows and highlight vanish, the checkbox stays
+  // mixed - and no dot marker appears.
   fireEvent.click(screen.getByLabelText(/Collapse group/));
-  const dot = screen.getByRole("status");
-  expect(dot.getAttribute("aria-label")).toMatch(/1 of 2 selected/);
-
-  // Clearing the selection retires the marker while still collapsed: from
-  // mixed the header checkbox first completes the selection, then clears.
-  fireEvent.click(screen.getByRole("checkbox", { name: /Select all in/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: /Select all in/ }));
+  expect(box()).toHaveAttribute("aria-checked", "mixed");
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  // Complete the selection: the dash becomes a tick, still collapsed.
+  fireEvent.click(box());
+  expect(box()).toHaveAttribute("aria-checked", "true");
+
+  // Clear it: empty box.
+  fireEvent.click(box());
+  expect(box()).toHaveAttribute("aria-checked", "false");
 });
 
 /** Same model as View Test Cases: previews are plural, an open one

@@ -294,16 +294,6 @@ export default function AutoRun({
                   <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                     {label} ({indices.length})
                   </span>
-                  {/* A collapsed group hides its rows, and with them the
-                      only sign that anything inside is ticked. */}
-                  {shut && ticked > 0 && (
-                    <span
-                      className="selection-dot"
-                      role="status"
-                      aria-label={`${ticked} of ${indices.length} selected in ${label}`}
-                      title={`${ticked} selected in this group`}
-                    />
-                  )}
                 </button>
                 <span aria-hidden className="h-px flex-1 bg-border" />
               </div>

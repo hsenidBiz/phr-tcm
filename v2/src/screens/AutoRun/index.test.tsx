@@ -122,7 +122,7 @@ test("clicking a fully ticked header checkbox clears the group; the title folds 
   expect(screen.queryByText("Login - valid credentials")).not.toBeInTheDocument();
 });
 
-test("collapsing a group keeps its ticked cases, and says so on the heading", async () => {
+test("collapsing a group keeps its ticked cases, shown by the header checkbox", async () => {
   mockList(
     [caseRow(1, "Login - valid credentials"), caseRow(2, "Login - locked account")],
     [1, 2],
@@ -134,11 +134,16 @@ test("collapsing a group keeps its ticked cases, and says so on the heading", as
   await screen.findByText("2 cases selected");
 
   // Collapsing hides the rows; the count has to survive, or a person
-  // cannot tell what a "Run 2 selected" is about to run.
+  // cannot tell what a "Run 2 selected" is about to run. The whole-group
+  // tick stays on the header checkbox - no separate dot marker.
   fireEvent.click(screen.getByRole("button", { name: "Collapse group Login" }));
   expect(screen.queryByText("Login - valid credentials")).not.toBeInTheDocument();
   expect(screen.getByText("2 cases selected")).toBeInTheDocument();
-  expect(screen.getByRole("status", { name: "2 of 2 selected in Login" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Select all in Login" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });
 
 test("the grouping choice and the collapsed groups outlive a remount", async () => {

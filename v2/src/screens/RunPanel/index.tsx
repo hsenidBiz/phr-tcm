@@ -467,23 +467,6 @@ export default function RunPanel({
                           <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                             {name} ({pts.length})
                           </span>
-                          {/* Same marker as View / Update Test Cases:
-                              folding a group hides its rows and the row
-                              highlight with them, so the heading has to say
-                              something is still selected in there. */}
-                          {(() => {
-                            const inGroup = pts.filter(
-                              (p) => p.test_case_id != null && selected.has(p.test_case_id),
-                            ).length;
-                            return collapsedGroups.has(name) && inGroup > 0 ? (
-                              <span
-                                className="selection-dot"
-                                role="status"
-                                aria-label={`${inGroup} of ${pts.length} selected in ${name}`}
-                                title={`${inGroup} selected in this group`}
-                              />
-                            ) : null;
-                          })()}
                         </button>
                         <span aria-hidden className="h-px flex-1 bg-border" />
                       </div>

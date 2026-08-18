@@ -359,19 +359,6 @@ export default function ViewCases({
                 <span className="text-sm font-semibold tracking-wide text-muted transition-colors group-hover:text-accent">
                   {group} ({items.length})
                 </span>
-                {/* Collapsed groups hide their rows, and with them the only
-                    sign that anything inside is selected - so the count
-                    surfaces on the heading instead. Shown for ONE selected
-                    case as much as for all of them: the question it answers
-                    is "did I leave something highlighted in there". */}
-                {collapsedGroups.has(group) && selectedInGroup(items) > 0 && (
-                  <span
-                    className="selection-dot"
-                    role="status"
-                    aria-label={`${selectedInGroup(items)} of ${items.length} selected in ${group}`}
-                    title={`${selectedInGroup(items)} selected in this group`}
-                  />
-                )}
               </button>
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>

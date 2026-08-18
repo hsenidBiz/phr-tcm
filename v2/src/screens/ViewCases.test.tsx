@@ -220,41 +220,35 @@ test("open details survive a group collapse until Collapse all", async () => {
   expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
 });
 
-/** Folding a group hides the highlight along with the rows, so the heading
- * has to say that something is still selected in there. */
-test("a collapsed group marks that it still holds a highlighted case", async () => {
+/** The header checkbox is the one selection indicator: a dash (mixed) for a
+ * partial selection, a tick for the whole group - expanded or collapsed.
+ * There used to be a pulsing dot beside collapsed headings saying the same
+ * thing; it said nothing the checkbox does not. */
+test("the header checkbox carries the group's selection state through a collapse", async () => {
   mockCases();
   renderView();
   await screen.findByText("Login - valid");
   fireEvent.click(screen.getByRole("checkbox")); // Group by title
 
-  // Expanded and unselected: nothing to announce.
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
-
-  // ONE case selected, not the whole group - the marker is about "did I
-  // leave something highlighted", not about completeness.
+  // ONE case selected, not the whole group: the checkbox reads mixed.
   fireEvent.click(screen.getByText("Login - valid"));
-  expect(screen.queryByRole("status")).not.toBeInTheDocument(); // still expanded
-  // A partial selection reads as the header checkbox's mixed state.
-  expect(screen.getByRole("checkbox", { name: "Select all in Login" })).toHaveAttribute(
-    "aria-checked",
-    "mixed",
-  );
+  const loginBox = () => screen.getByRole("checkbox", { name: "Select all in Login" });
+  expect(loginBox()).toHaveAttribute("aria-checked", "mixed");
 
+  // Folding the group hides the highlighted rows - the header checkbox
+  // stays on screen and keeps saying something is selected in there.
   fireEvent.click(screen.getByLabelText("Collapse group Login"));
-  const dot = screen.getByRole("status");
-  expect(dot).toHaveAccessibleName("1 of 2 selected in Login");
-
-  // The untouched sibling group stays unmarked when it collapses too -
-  // "Checkout" has no shared prefix, so it lands in Ungrouped.
-  fireEvent.click(screen.getByLabelText("Collapse group Ungrouped"));
-  expect(screen.getAllByRole("status")).toHaveLength(1);
-
-  // Clearing the selection retires the marker while still collapsed: from
-  // mixed the checkbox first completes the selection, then clears it.
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Login" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Login" }));
+  expect(loginBox()).toHaveAttribute("aria-checked", "mixed");
+  // And no separate dot marker rides along any more.
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+  // Completing the selection turns the dash into a tick, still collapsed.
+  fireEvent.click(loginBox());
+  expect(loginBox()).toHaveAttribute("aria-checked", "true");
+
+  // Clearing it empties the box.
+  fireEvent.click(loginBox());
+  expect(loginBox()).toHaveAttribute("aria-checked", "false");
 });
 
 

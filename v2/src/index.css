@@ -669,51 +669,6 @@ table {
   top: 2px;
 }
 
-/* "There is a highlighted item folded up in here." Shown beside a group
-   name in View Test Cases when the group is COLLAPSED and holds at least
-   one selected case - selection is otherwise invisible once the rows are
-   hidden, and a static dot beside a heading reads as decoration.
-
-   Two layers: a solid core that stays put so the mark is still legible
-   with motion off, and a ring that expands and fades out of it. The ring
-   is the part that moves, so `animation: none` under reduced motion
-   leaves a perfectly good static dot rather than nothing. */
-@keyframes selection-ping {
-  0% {
-    transform: scale(1);
-    opacity: 0.55;
-  }
-  70%,
-  100% {
-    transform: scale(2.4);
-    opacity: 0;
-  }
-}
-.selection-dot {
-  position: relative;
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  flex: none;
-  border-radius: 9999px;
-  background: var(--color-accent);
-}
-.selection-dot::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--color-accent);
-  animation: selection-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .selection-dot::after {
-    animation: none;
-    opacity: 0;
-  }
-}
-
 /* The rail's icons take the colour of the text beside them - the same
    muted/accent treatment as the label, so an active item reads as one
    thing rather than a coloured glyph next to a word.
