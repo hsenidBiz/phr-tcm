@@ -464,14 +464,24 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
             className="rounded p-1.5 text-muted transition-colors hover:text-accent"
             onClick={() => qc.invalidateQueries({ queryKey: boardKey })}
           >
-            <RefreshCw size={14} className={board.isFetching ? "animate-spin" : undefined} />
+            {/* The one spinner in this toolbar. The PR first-load note
+                beside it used to carry its own - two spinning arrows side
+                by side for one wait - so that load spins THIS icon too and
+                the note stays text-only. */}
+            <RefreshCw
+              size={14}
+              className={
+                board.isFetching || (prLinks.isFetching && !prLinks.data)
+                  ? "animate-spin"
+                  : undefined
+              }
+            />
           </button>
           {/* Only the FIRST-ever load - once the disk cache has an answer,
               chips paint instantly and the background refresh needs no
               announcement. */}
           {prLinks.isFetching && !prLinks.data && (
-            <span role="status" className="flex items-center gap-1.5 text-xs text-faint">
-              <RefreshCw size={12} className="animate-spin" aria-hidden />
+            <span role="status" className="text-xs text-faint">
               Loading pull requests…
             </span>
           )}
@@ -601,14 +611,28 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                         padding below 1px moves nothing. Closing the last
                         half pixel would mean changing the box height, not
                         the padding. */}
+                    {/* The label is HORIZONTAL text rotated as a finished
+                        box - not writing-mode text. vertical-rl rasterizes
+                        each rotated glyph, and that path's baseline snap is
+                        state-dependent: the first repaint after mount (or
+                        WebView2's hover repaint) could re-snap the run ~1px
+                        along the reading axis, so OPEN sat centred until you
+                        hovered and then rode up. A transform rotates the
+                        already-rasterized horizontal run as one unit - the
+                        same pipeline as the Hide button, which never moved -
+                        so every repaint lands identically. The box is sized
+                        explicitly because a transform does not change
+                        layout: h-11 reads as the old padded strip, w-4
+                        spans the glyph cross-axis in the 36px rail. */}
                     <button
                       aria-label={`Open ${col}`}
                       title={`Open ${col}`}
-                      className="self-center rounded border border-accent/60 pb-2 pl-[0.5px] pr-[1.5px] pt-2 text-center text-[10px] font-semibold uppercase leading-none tracking-wide text-accent transition-colors hover:bg-accent-soft"
-                      style={{ writingMode: "vertical-rl" }}
+                      className="relative h-11 w-4 self-center rounded border border-accent/60 text-accent transition-colors hover:bg-accent-soft"
                       onClick={() => toggleCol(col)}
                     >
-                      Open
+                      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-90 whitespace-nowrap text-[10px] font-semibold uppercase leading-none tracking-wide">
+                        Open
+                      </span>
                     </button>
                     <span
                       className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-faint"
