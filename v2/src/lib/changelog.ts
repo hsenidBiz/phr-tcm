@@ -22,6 +22,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "The header checkbox is the one selection indicator: a dash for a partly selected group, a tick for the whole group, collapsed or not. The pulsing dot beside collapsed titles is gone - it repeated what the checkbox already said.",
       "The pull-request count no longer rides the mode-switch pill once you are in Work Manager - on a pill reading \"Test Case Manager\" it looked like TCM had notifications.",
       "Selection bars say the count once: \"Run 3 in runner\" already counts, so the \"3 selected\" text beside it is gone - same for Auto Run's bar.",
+      "Fixed: the \"Session expired\" prompt could greet you seconds after you signed in. A background request racing the sign-in screen tripped the expiry flag before you had a session at all; the flag now only arms once you are signed in, and every successful sign-in clears it.",
     ],
   },
   {
