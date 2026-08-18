@@ -468,7 +468,7 @@ export default function RunPanel({
                             {name} ({pts.length})
                           </span>
                         </button>
-                        <span aria-hidden className="h-px flex-1 bg-border" />
+                        <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
                       </div>
                     </td>
                   </tr>

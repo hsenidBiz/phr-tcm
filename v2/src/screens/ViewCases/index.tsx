@@ -360,7 +360,10 @@ export default function ViewCases({
                   {group} ({items.length})
                 </span>
               </button>
-              <span aria-hidden className="h-px flex-1 bg-border" />
+              {/* Solid where it meets the title, dissolved long before the
+                  window edge - the rule belongs to the heading, not the
+                  viewport. */}
+              <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
             </div>
           )}
           {/* A collapsed group hides its LIST, not the case someone is

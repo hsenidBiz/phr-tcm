@@ -295,7 +295,7 @@ export default function AutoRun({
                     {label} ({indices.length})
                   </span>
                 </button>
-                <span aria-hidden className="h-px flex-1 bg-border" />
+                <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
               </div>
               {!shut && <ul className="space-y-1">{indices.map(row)}</ul>}
             </div>

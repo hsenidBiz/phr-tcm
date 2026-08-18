@@ -353,7 +353,7 @@ export default function ExistingCases({
                   {group} ({items.length})
                 </span>
               </button>
-              <span aria-hidden className="h-px flex-1 bg-border" />
+              <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
             </div>
           )}
           {/* A collapsed group must NOT unmount an open editor: the title
