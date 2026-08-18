@@ -13,6 +13,20 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.0",
+    date: "2026-08-13",
+    items: [
+      "Auto Run arrives (marked In-Development): a supervised browser runner that drives Edge or Chrome through a test case's scripted actions step by step while you watch and record the verdict. It lists a PBI's drivable cases, runs a selection in one sitting, keeps a local results view of supervised runs, and scripts can be authored by hand, saved by an AI assistant, or imported for a whole PBI from one file.",
+      "Group headers across the case screens now fold on click, with selection moved to a checkbox - and Update Test Cases gains the same Collapse all button View and Run already had.",
+      "Manual Entry cleaned up: new cases start with your default tags, one plus button instead of two, and the empty queue box is gone until there is a queue.",
+      "The execution report can be scoped to the cases you have selected, controls share one height, and accent borders are applied consistently across the app.",
+      "Notification badges for PRs and new assignments - and the app no longer announces your own test cases back to you.",
+      "When the Azure DevOps session expires you get one re-sign-in prompt, not a pile of them.",
+      "Finding a PBI's suite reuses the cached project tree instead of a fresh plan scan, so Run Tests opens noticeably faster.",
+      "Review fixes: an edit in progress can no longer be silently discarded, and Auto Run honours the shared header layout.",
+    ],
+  },
+  {
     version: "1.19.18",
     date: "2026-08-13",
     items: [
