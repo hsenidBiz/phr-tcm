@@ -13,6 +13,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.2",
+    date: "2026-08-18",
+    items: [
+      "AI coverage checking works on specs whose filenames contain spaces - \"Step9 - FDP.md\" was being cut down to \"FDP.md\" and reported as missing, which blanked the whole coverage report.",
+      "The AI can now bulk-edit reviewer notes (find/replace or overwrite) - the one field its cleanup tools could not reach, right after the coverage checker learned to point at problems in it.",
+      "Coverage citations that name a heading plus a locator (\"Implementation section 5 ...\") now count toward that heading, and \"out of scope\" notes with ranges like \"sections 4 to 7\" finally move those sections out of the uncovered list.",
+      "The run-sheet optimizer stops adding a stray full stop after a closing quote, and no longer prepends a navigation step to cases that already start with one.",
+      "Merging fan-out slice files warns when two slices produced the same title - keeping both and naming the files, since one of them usually needs a rename, not deletion.",
+      "Bulk edits can target a single case by its position (where.at_index) - the only way to tell apart two cases whose titles ended up identical.",
+      "The AI intake now always asks whether there are reference test cases to model on, and tells the assistant to have you review the plan before anything is written. The writing guide gains a quality-over-quantity rule: similar checks combine into one case instead of splitting per field.",
+    ],
+  },
+  {
     version: "1.20.1",
     date: "2026-08-18",
     items: [
