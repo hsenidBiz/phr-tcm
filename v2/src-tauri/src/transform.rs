@@ -16,7 +16,7 @@ use crate::model::TestCase;
 /// ignored, which left an all-None filter - and `Filter::matches` reads that
 /// as "every case", so one typo turned a targeted edit into a draft-wide
 /// rewrite that reported success.
-const FILTER_KEYS: [&str; 3] = ["title_contains", "has_tag", "module_is"];
+const FILTER_KEYS: [&str; 4] = ["title_contains", "has_tag", "module_is", "at_index"];
 
 /// First non-empty value among `keys`, using the file importer's own
 /// lookup so the two paths cannot disagree about what a key means.
@@ -36,8 +36,15 @@ pub enum Op {
     SetModule(String),
     SetAutomationStatus(String),
     SetPreconditions(String),
+    /// Overwrite the local reviewer notes (never sent to Azure DevOps).
+    SetReviewerNotes(String),
     /// Literal find/replace across the title.
     ReplaceInTitle { find: String, replace: String },
+    /// Literal find/replace across the local reviewer notes - the bulk
+    /// repair for what check_spec_coverage finds there (round 6 §1: 347
+    /// findings, every one a literal replacement, and no op could reach
+    /// the field).
+    ReplaceInNotes { find: String, replace: String },
     PrefixTitle(String),
     SuffixTitle(String),
     /// Literal find/replace across every step's action and expected.
@@ -91,6 +98,12 @@ pub struct Filter {
     pub has_tag: Option<String>,
     /// Case-insensitive exact module match.
     pub module_is: Option<String>,
+    /// Zero-based position in the draft as it stands when the op runs -
+    /// the same numbering `insert_cases`' at_index uses. The selector of
+    /// last resort: two cases whose titles converged (a fan-out hazard,
+    /// round 6 §5) match identically on every text filter, and this is
+    /// the only way to address exactly one of them.
+    pub at_index: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +134,17 @@ pub struct TransformReport {
 }
 
 impl Filter {
+    /// `i` is the case's position in the draft as this op sees it - the
+    /// numbering the report and `insert_cases`' at_index already use.
+    fn matches_at(&self, c: &TestCase, i: usize) -> bool {
+        if let Some(want) = self.at_index {
+            if i != want {
+                return false;
+            }
+        }
+        self.matches(c)
+    }
+
     fn matches(&self, c: &TestCase) -> bool {
         if let Some(t) = &self.title_contains {
             if !c.title.to_lowercase().contains(&t.to_lowercase()) {
@@ -190,15 +214,22 @@ fn parse_filter(v: &serde_json::Value, label: &str) -> Result<Filter, String> {
             ));
         }
     }
-    for key in FILTER_KEYS {
+    for key in ["title_contains", "has_tag", "module_is"] {
         if obj.get(key).is_some_and(|x| !x.is_string()) {
             return Err(format!("{label}: \"where.{key}\" must be a string."));
         }
     }
+    let at_index = match obj.get("at_index") {
+        None => None,
+        Some(v) => Some(v.as_u64().ok_or_else(|| {
+            format!("{label}: \"where.at_index\" must be a non-negative integer.")
+        })? as usize),
+    };
     Ok(Filter {
         title_contains: f["title_contains"].as_str().map(str::to_string),
         has_tag: f["has_tag"].as_str().map(str::to_string),
         module_is: f["module_is"].as_str().map(str::to_string),
+        at_index,
     })
 }
 
@@ -264,7 +295,12 @@ pub fn parse_ops_full(
                 Op::SetAutomationStatus(value)
             }
             "set_preconditions" => Op::SetPreconditions(required_str(v, "value", &label)?),
+            "set_reviewer_notes" => Op::SetReviewerNotes(required_str(v, "value", &label)?),
             "replace_in_title" => Op::ReplaceInTitle {
+                find: str_of(v, "find"),
+                replace: str_of(v, "replace"),
+            },
+            "replace_in_notes" => Op::ReplaceInNotes {
                 find: str_of(v, "find"),
                 replace: str_of(v, "replace"),
             },
@@ -350,7 +386,8 @@ pub fn parse_ops_full(
                 let f = &v["where"];
                 let has_filter = f["title_contains"].as_str().is_some()
                     || f["has_tag"].as_str().is_some()
-                    || f["module_is"].as_str().is_some();
+                    || f["module_is"].as_str().is_some()
+                    || f["at_index"].as_u64().is_some();
                 if !has_filter {
                     return Err(format!(
                         "{label}: remove_cases requires a \"where\" filter - an unfiltered remove would delete every case."
@@ -452,15 +489,19 @@ pub fn parse_ops_full(
                 return Err(format!(
                     "{label}: unknown op \"{other}\". Supported: set_tags, add_tags, \
                      remove_tags, set_module, set_automation_status, set_preconditions, \
-                     replace_in_title, prefix_title, suffix_title, replace_in_steps, \
-                     prepend_step, append_step, remove_step_matching, split_step, sort_by, \
-                     group_by, dedupe, remove_cases, insert_cases."
+                     set_reviewer_notes, replace_in_title, prefix_title, suffix_title, \
+                     replace_in_steps, replace_in_notes, prepend_step, append_step, \
+                     remove_step_matching, split_step, sort_by, group_by, dedupe, \
+                     remove_cases, insert_cases."
                 ))
             }
         };
         // A find/replace with an empty needle would splice the replacement
         // between every character - refuse rather than mangle the draft.
-        if let Op::ReplaceInTitle { find, .. } | Op::ReplaceInSteps { find, .. } = &op {
+        if let Op::ReplaceInTitle { find, .. }
+        | Op::ReplaceInSteps { find, .. }
+        | Op::ReplaceInNotes { find, .. } = &op
+        {
             if find.is_empty() {
                 return Err(format!("{label}: \"find\" must not be empty."));
             }
@@ -509,7 +550,14 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
             }
             Op::RemoveCases => {
                 let before = cases.len();
-                cases.retain(|c| !operation.filter.matches(c));
+                // retain visits in order, so the running counter is each
+                // case's position - what where.at_index addresses.
+                let mut i = 0usize;
+                cases.retain(|c| {
+                    let keep = !operation.filter.matches_at(c, i);
+                    i += 1;
+                    keep
+                });
                 touched = before - cases.len();
                 report.applied.push(format!("Removed {touched} case(s)."));
             }
@@ -573,8 +621,8 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                 // counts cases whose content actually changed, and that is
                 // the number the report gives for those ops.
                 let mut modified = 0usize;
-                for c in cases.iter_mut() {
-                    if !operation.filter.matches(c) {
+                for (i, c) in cases.iter_mut().enumerate() {
+                    if !operation.filter.matches_at(c, i) {
                         continue;
                     }
                     touched += 1;
@@ -582,6 +630,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         other,
                         Op::ReplaceInTitle { .. }
                             | Op::ReplaceInSteps { .. }
+                            | Op::ReplaceInNotes { .. }
                             | Op::RemoveStepMatching(_)
                             | Op::SplitStep { .. }
                     )
@@ -608,8 +657,12 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::SetModule(v) => c.module_value = v.clone(),
                         Op::SetAutomationStatus(v) => c.automation_status = v.clone(),
                         Op::SetPreconditions(v) => c.preconditions = v.clone(),
+                        Op::SetReviewerNotes(v) => c.reviewer_notes = v.clone(),
                         Op::ReplaceInTitle { find, replace } => {
                             c.title = c.title.replace(find.as_str(), replace);
+                        }
+                        Op::ReplaceInNotes { find, replace } => {
+                            c.reviewer_notes = c.reviewer_notes.replace(find.as_str(), replace);
                         }
                         Op::PrefixTitle(v) => c.title = format!("{v}{}", c.title),
                         Op::SuffixTitle(v) => c.title = format!("{}{v}", c.title),
@@ -677,7 +730,10 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         | Op::InsertCases { .. } => unreachable!("handled above"),
                     }
                     if let Some(before) = before_snapshot {
-                        if before.title != c.title || before.steps != c.steps {
+                        if before.title != c.title
+                            || before.steps != c.steps
+                            || before.reviewer_notes != c.reviewer_notes
+                        {
                             modified += 1;
                         }
                     }
@@ -686,6 +742,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                     other,
                     Op::ReplaceInTitle { .. }
                         | Op::ReplaceInSteps { .. }
+                        | Op::ReplaceInNotes { .. }
                         | Op::RemoveStepMatching(_)
                         | Op::SplitStep { .. }
                 );
@@ -739,7 +796,11 @@ fn describe(op: &Op) -> String {
         Op::SetModule(v) => format!("Set module to '{v}'"),
         Op::SetAutomationStatus(v) => format!("Set automation status to '{v}'"),
         Op::SetPreconditions(v) => format!("Set preconditions to '{v}'"),
+        Op::SetReviewerNotes(v) => format!("Set reviewer notes to '{v}'"),
         Op::ReplaceInTitle { find, replace } => format!("Replaced '{find}' with '{replace}' in titles"),
+        Op::ReplaceInNotes { find, replace } => {
+            format!("Replaced '{find}' with '{replace}' in reviewer notes")
+        }
         Op::PrefixTitle(v) => format!("Prefixed titles with '{v}'"),
         Op::SuffixTitle(v) => format!("Suffixed titles with '{v}'"),
         Op::ReplaceInSteps { find, replace } => format!("Replaced '{find}' with '{replace}' in steps"),
@@ -763,10 +824,11 @@ fn describe(op: &Op) -> String {
 fn known_keys(op_name: &str) -> &'static [&'static str] {
     match op_name {
         "set_tags" | "add_tags" | "remove_tags" | "set_module" | "set_automation_status"
-        | "set_preconditions" | "prefix_title" | "suffix_title" | "sort_by" | "group_by" => {
-            &["op", "where", "value"]
+        | "set_preconditions" | "set_reviewer_notes" | "prefix_title" | "suffix_title"
+        | "sort_by" | "group_by" => &["op", "where", "value"],
+        "replace_in_title" | "replace_in_steps" | "replace_in_notes" => {
+            &["op", "where", "find", "replace"]
         }
-        "replace_in_title" | "replace_in_steps" => &["op", "where", "find", "replace"],
         "prepend_step" | "append_step" => &["op", "where", "action", "expected"],
         "remove_step_matching" => &["op", "where", "value", "find", "action"],
         "split_step" => &["op", "where", "value", "find", "into"],

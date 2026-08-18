@@ -1197,3 +1197,41 @@ Signed in as a participant of that cycle.";
         report.preconditions_rewritten
     );
 }
+
+// ---- round 6 §2: the two trimmer/preamble edges -------------------------
+
+/// §2.1: a quoted sentence carries its full stop INSIDE the quote; the
+/// trimmer's raw-last-character test saw `"` and appended another,
+/// manufacturing the `".` malformed tail round 4's guard exists to stop.
+#[test]
+fn a_closing_quote_is_terminal_punctuation() {
+    let text = r#"It reads "please complete them before the deadline.""#;
+    let out = clean_expected(text);
+    assert!(!out.ends_with("\".") && !out.ends_with("'."), "stray stop after quote: {out}");
+    assert!(out.ends_with('"'), "the quote stays terminal: {out}");
+}
+
+/// §2.2: a first step that OPENS with the entry phrase already walks in
+/// from the entry - prepending the entry again duplicated ~500 steps
+/// across one real set.
+#[test]
+fn the_preamble_is_skipped_when_step_one_already_opens_with_the_entry() {
+    let entry = "In the PMS Module, open Performance Management.";
+    let c = case(
+        "On-start notification",
+        "",
+        "",
+        vec![step(
+            "In the PMS Module, open Performance Management and confirm the Goal Planning \
+             stage is configured to send an on-start notification.",
+            "The stage is configured.",
+        )],
+    );
+    let (out, report) = optimize(vec![c], Some(entry));
+    assert_eq!(report.preamble_steps_added, 0, "no duplicate preamble");
+    assert!(
+        out[0].steps[0].action.starts_with("In the PMS Module"),
+        "the case's own opening step stays first: {:?}",
+        out[0].steps[0].action
+    );
+}

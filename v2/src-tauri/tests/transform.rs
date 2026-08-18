@@ -279,3 +279,101 @@ async fn unknown_request_arguments_surface_in_the_reports_ignored_list() {
         "{out}"
     );
 }
+
+// ---- round 6 §1: reviewer_notes are finally editable --------------------
+
+fn noted(title: &str, notes: &str) -> TestCase {
+    TestCase { reviewer_notes: notes.into(), ..case(title, vec![step("s")]) }
+}
+
+#[test]
+fn replace_in_notes_edits_only_the_notes_and_counts_honestly() {
+    // The §1 probe, inverted: the find-string planted in every field, and
+    // only reviewer_notes may change.
+    let mut c = noted("Has FIND in title: FIND", "Spec: FIND section 5");
+    c.preconditions = "FIND".into();
+    c.tags = "FIND".into();
+    c.steps = vec![step("FIND the row.")];
+    let cases = vec![c, noted("Untouched", "nothing to see")];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "replace_in_notes", "find": "FIND", "replace": "Step9 - FDP.md" },
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert_eq!(out[0].reviewer_notes, "Spec: Step9 - FDP.md section 5");
+    assert_eq!(out[0].title, "Has FIND in title: FIND", "title untouched");
+    assert_eq!(out[0].preconditions, "FIND", "preconditions untouched");
+    assert_eq!(out[0].tags, "FIND", "tags untouched");
+    assert_eq!(out[0].steps[0].action, "FIND the row.", "steps untouched");
+    assert!(report.applied[0].contains("modified 1 case(s)"), "{:?}", report.applied);
+}
+
+#[test]
+fn set_reviewer_notes_overwrites_and_requires_a_value() {
+    let cases = vec![noted("A", "old")];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "set_reviewer_notes", "value": "new note" },
+    ]))
+    .unwrap();
+    let (out, _) = apply(cases, &ops);
+    assert_eq!(out[0].reviewer_notes, "new note");
+
+    let err = parse_ops(&serde_json::json!([{ "op": "set_reviewer_notes" }])).unwrap_err();
+    assert!(err.contains("value"), "{err}");
+}
+
+// ---- round 6 §5: where.at_index addresses one of two title twins --------
+
+#[test]
+fn at_index_addresses_exactly_one_of_two_identical_cases() {
+    // The fan-out collision: two legitimately different cases whose titles
+    // converged. Every text filter matches both; the index picks one.
+    let cases = vec![
+        case("Alerts - No Notification When Cycle Inactive", vec![step("a")]),
+        case("Alerts - No Notification When Cycle Inactive", vec![step("b")]),
+    ];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "suffix_title", "value": " (SYS_03)", "where": { "at_index": 1 } },
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert_eq!(out[0].title, "Alerts - No Notification When Cycle Inactive");
+    assert_eq!(out[1].title, "Alerts - No Notification When Cycle Inactive (SYS_03)");
+    assert!(report.applied[0].contains("applied to 1 case(s)"), "{:?}", report.applied);
+}
+
+#[test]
+fn at_index_composes_with_text_filters_and_validates_its_type() {
+    // AND semantics: index 0's module is not "Auth", so nothing matches.
+    let mut c = case("A", vec![step("s")]);
+    c.module_value = "Payments".into();
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "set_tags", "value": "x", "where": { "at_index": 0, "module_is": "Auth" } },
+    ]))
+    .unwrap();
+    let (out, report) = apply(vec![c], &ops);
+    assert_eq!(out[0].tags, "");
+    assert!(
+        report.applied.iter().any(|l| l.contains("nothing matched")),
+        "{:?}",
+        report.applied
+    );
+
+    let err = parse_ops(&serde_json::json!([
+        { "op": "set_tags", "value": "x", "where": { "at_index": "one" } },
+    ]))
+    .unwrap_err();
+    assert!(err.contains("non-negative integer"), "{err}");
+}
+
+#[test]
+fn remove_cases_accepts_an_index_only_filter() {
+    let cases = vec![case("Keep", vec![step("a")]), case("Drop", vec![step("b")])];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "remove_cases", "where": { "at_index": 1 } },
+    ]))
+    .unwrap();
+    let (out, _) = apply(cases, &ops);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].title, "Keep");
+}

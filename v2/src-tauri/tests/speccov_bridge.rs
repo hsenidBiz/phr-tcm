@@ -362,3 +362,48 @@ async fn a_failed_write_leaves_no_file_at_output_path() {
     let tmp_path = dir.path().join("no-such-subdir").join("merged.json.tmp");
     assert!(!tmp_path.exists(), "no stray temp file should remain either: {out}");
 }
+
+/// Round 6 §4: a fan-out makes title collisions likely because no slice
+/// writer sees another's output. The merge names them - dedupe would
+/// silently delete a real case, and a human has to disambiguate instead.
+#[tokio::test]
+async fn merge_warns_when_a_title_appears_in_more_than_one_slice() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("ga01.json");
+    let slice_b = dir.path().join("ga04.json");
+    std::fs::write(
+        &slice_a,
+        serde_json::json!([case_json("No Notification When Cycle Inactive"), case_json("Only A")])
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &slice_b,
+        serde_json::json!([case_json("No Notification When Cycle Inactive")]).to_string(),
+    )
+    .unwrap();
+    let output_path = dir.path().join("merged.json");
+
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+
+    // Both copies are KEPT - the merge reports, it does not decide.
+    assert_eq!(v["cases"], 3, "{out}");
+    let warnings = v["warnings"].as_array().unwrap();
+    let dup = warnings
+        .iter()
+        .filter_map(|w| w.as_str())
+        .find(|w| w.contains("duplicate title"))
+        .expect("a duplicate-title warning");
+    assert!(dup.contains("no notification when cycle inactive"), "{dup}");
+    assert!(dup.contains("ga01.json") && dup.contains("ga04.json"), "{dup}");
+    // The unique title stays unmentioned.
+    assert!(!warnings.iter().any(|w| w.as_str().unwrap().contains("Only A")), "{out}");
+}

@@ -40,6 +40,12 @@ pub struct IntakeAnswers {
     /// Which sections are in scope, free text ("3.1-3.4 only").
     #[serde(default)]
     pub sections: String,
+    /// The developer's answer to "any reference test cases to model on?" -
+    /// a PBI id, a file path, prose, or "none". Required so the question
+    /// is put to them on EVERY writing job; "none" is an answer, silence
+    /// is not.
+    #[serde(default)]
+    pub reference_cases: String,
     /// PBI whose existing cases supply house style and the duplicate check.
     #[serde(default)]
     pub examples_pbi: Option<i32>,
@@ -119,6 +125,12 @@ pub fn questions() -> Vec<Question> {
             "ordering",
             "How should the finished set be organised - \"spec\", so reading the cases walks straight down the specification, or \"tester\", so whoever runs them changes environment as little as possible?",
             "The two orders are different sets on the page, and only the developer knows which job this file is for - reviewing against a document, or handing to someone to execute. `optimize_cases` reorders for the tester unless told otherwise.",
+            true,
+        ),
+        q(
+            "reference_cases",
+            "Are there any reference test cases you would like used as a model - a PBI id, an exported JSON file, or specific cases? Say \"none\" if not.",
+            "Asked on every writing job: a good reference beats any guide, and only the developer knows whether one exists. \"none\" is a real answer - skipping the question is not.",
             true,
         ),
         q(
@@ -242,6 +254,16 @@ pub fn problems(a: &IntakeAnswers, allowed_modules: &[String]) -> Vec<String> {
         );
     }
 
+    // Required on EVERY job, and "none" is the way to say no - an empty
+    // answer means the question was never put to the developer.
+    if a.reference_cases.trim().is_empty() {
+        out.push(
+            "reference_cases is required - ask the developer whether there are reference test \
+             cases to model on (a PBI id, an exported JSON file, or \"none\")."
+                .into(),
+        );
+    }
+
     out
 }
 
@@ -312,6 +334,7 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
          **Authority:** {authority}\n\n\
          **Ordered:** {ordering}\n\n\
          **Out of scope**\n{out_of_scope}\n\n\
+         ## Reference cases\n\n{reference_cases}\n\n\
          ## Existing coverage\n\n{examples}\n\n\
          ## Output\n\n\
          - **JSON file:** `{output}`\n\
@@ -333,6 +356,15 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
         authority = authority,
         ordering = ordering,
         optimize_step = optimize_step,
+        reference_cases = {
+            let r = a.reference_cases.trim();
+            if r.is_empty() || r.eq_ignore_ascii_case("none") {
+                "None named - the writing guide and the examples PBI (if any) are the model."
+                    .to_string()
+            } else {
+                format!("Model these on: {r}")
+            }
+        },
         out_of_scope = bullets(&a.out_of_scope),
         examples = examples,
         output = a.output_path.trim(),

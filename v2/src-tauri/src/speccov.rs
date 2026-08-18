@@ -183,11 +183,37 @@ pub struct Citations {
 /// `Some(Citations { specs: vec![], .. })`, which means a code-only
 /// citation was found. The distinction matters to callers (task 2+): the
 /// former is "nothing to score", the latter is a deliberate non-spec claim.
+/// Split "Step9 - FDP.md 3.1" into file and section. The filename may
+/// contain spaces - most of a real project's specs do - so the split point
+/// is the end of the first token that looks like a file extension (a dot
+/// followed by letters), NOT the first space. Splitting on whitespace
+/// truncated "Step9 - FDP.md" to "FDP.md" and reported a document that
+/// does not exist, which zeroed `covered` on a 227-case set (round 6
+/// §3.1). "3.1" cannot be mistaken for an extension: its post-dot
+/// character is a digit, and extensions must start with a letter.
+fn split_file_and_section(rest: &str) -> (String, String) {
+    let ext_split =
+        Regex::new(r"^(?s)(.+?\.[A-Za-z][A-Za-z0-9]{0,5})(?:\s+(.*))?$").unwrap();
+    if let Some(caps) = ext_split.captures(rest) {
+        return (
+            caps[1].to_string(),
+            caps.get(2).map(|m| m.as_str()).unwrap_or("").trim().to_string(),
+        );
+    }
+    // No extension anywhere: the old first-token split, so an
+    // extension-less citation keeps meaning what it always meant.
+    match rest.split_once(char::is_whitespace) {
+        Some((file, section)) => (file.to_string(), section.trim().to_string()),
+        None => (rest.to_string(), String::new()),
+    }
+}
+
 pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
-    // "Spec: Step10.md 7.7 (AC-3)" - file, then section (which may itself
-    // carry a trailing "(AC-n)"), then an optional quote or exemption.
+    // "Spec: Step10.md 7.7 (AC-3)" - the whole tail is captured and the
+    // file/section split happens in `split_file_and_section`, extension-
+    // aware because filenames carry spaces.
     let spec_re = Regex::new(
-        r"(?im)^\s*spec:\s*(\S+)\s+(.+?)\s*$",
+        r"(?im)^\s*spec:\s*(.+?)\s*$",
     )
     .unwrap();
     // Dash before "no quotable text" may be an ASCII hyphen or a typographic
@@ -211,8 +237,7 @@ pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
     let lines: Vec<&str> = reviewer_notes.lines().collect();
     for (i, line) in lines.iter().enumerate() {
         if let Some(caps) = spec_re.captures(line) {
-            let file = caps[1].to_string();
-            let mut section_raw = caps[2].trim().to_string();
+            let (file, mut section_raw) = split_file_and_section(caps[1].trim());
             // Tolerate a trailing period on the whole citation line.
             if let Some(stripped) = section_raw.strip_suffix('.') {
                 section_raw = stripped.to_string();
@@ -316,24 +341,105 @@ pub(crate) fn parse_enumerated_scope(sections_scope: &str) -> Option<std::collec
     Some(tokens.into_iter().collect())
 }
 
+/// The leading numeric components of a section id: "8.12" -> [8, 12],
+/// "UAC 8.9" -> [8, 9] (the prefix word is compared separately). Empty for
+/// a heading with no number at all.
+fn id_numeric_parts(id: &str) -> Vec<u64> {
+    let re = Regex::new(r"(\d+(?:\.\d+)*)").unwrap();
+    re.captures(id)
+        .map(|c| c[1].split('.').filter_map(|p| p.parse().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// `parts` is inside [lo, hi] when it is >= lo and, truncated to hi's
+/// length, <= hi - so "sections 4 to 7" takes 4, 4.15, 5 and 7.9 alike.
+fn parts_in_range(parts: &[u64], lo: &[u64], hi: &[u64]) -> bool {
+    if parts.is_empty() || lo.is_empty() || hi.is_empty() {
+        return false;
+    }
+    let trunc: Vec<u64> = parts.iter().copied().take(hi.len()).collect();
+    parts >= lo && trunc.as_slice() <= hi
+}
+
 /// `out_of_scope` is free text ("7.4 is deferred to phase 2, see JIRA-99")
-/// - pull out a section-id token only when it (a) actually exists in the
-///   parsed inventory AND (b) sits at line start or right after "section" /
-///   "§". Without both checks a bare number loose in prose ("phase 2") or
-///   the tail of an unrelated ticket code ("JIRA-99") gets misread as a
-///   section reference and silently swallows an honestly-uncovered section.
+/// - a section is excluded only on evidence that survives prose:
+///   * an id at line start or after "section(s)" / "§" that EXISTS in the
+///     inventory - as before;
+///   * a RANGE in any of those positions ("sections 4 to 7", "8.9-8.12"),
+///     expanded against the inventory (round 6 §3.3: the bucket was
+///     unreachable precisely because real scope notes are written as
+///     ranges);
+///   * a prefixed id ("UAC 8.9") whose prefixed form is itself a known
+///     section id - the prefix is the anchor;
+///   * a non-numeric heading name ("Implementation") quoted verbatim.
+/// A bare number loose in prose ("phase 2") still excludes nothing.
 fn parse_out_of_scope_ids(
     out_of_scope: &str,
     known_ids: &std::collections::HashSet<String>,
 ) -> std::collections::HashSet<String> {
-    let token_re = Regex::new(r"(?i)(?:^|\bsection\s+|§\s*)(\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?)").unwrap();
+    const ID: &str = r"\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?";
+    let token_re = Regex::new(&format!(
+        r"(?i)(?:^|\bsections?\s+|§§?\s*|\b([A-Za-z][A-Za-z0-9_-]*)\s+)({ID})(?:\s*(?:to|through|[-\u{{2013}}\u{{2014}}])\s*({ID}))?"
+    ))
+    .unwrap();
     let mut ids = std::collections::HashSet::new();
     for line in out_of_scope.lines() {
         for caps in token_re.captures_iter(line) {
-            let id = normalize_section_id(&caps[1]);
-            if known_ids.contains(&id) {
-                ids.insert(id);
+            let prefix = caps.get(1).map(|m| m.as_str().trim().to_string());
+            let a = normalize_section_id(&caps[2]);
+            let b = caps.get(3).map(|m| normalize_section_id(m.as_str()));
+
+            // With a prefix word, the anchored family is "<prefix> <n>":
+            // only ids the inventory spells that way qualify, so "phase 2"
+            // stays prose while "UAC 8.9" reaches the UAC sections.
+            let family_id = |n: &str| -> Option<String> {
+                match &prefix {
+                    None => known_ids.contains(n).then(|| n.to_string()),
+                    Some(p) => {
+                        let candidate = normalize_section_id(&format!("{p} {n}"));
+                        known_ids
+                            .iter()
+                            .find(|k| k.eq_ignore_ascii_case(&candidate))
+                            .cloned()
+                    }
+                }
+            };
+
+            match b {
+                None => {
+                    if let Some(id) = family_id(&a) {
+                        ids.insert(id);
+                    }
+                }
+                Some(b) => {
+                    // A range: expand against the inventory. The prefix (or
+                    // its absence) must match each candidate the same way a
+                    // single id would.
+                    let lo = id_numeric_parts(&a);
+                    let hi = id_numeric_parts(&b);
+                    for k in known_ids {
+                        let prefix_ok = match &prefix {
+                            None => k.chars().next().is_some_and(|c| c.is_ascii_digit()),
+                            Some(p) => k.to_lowercase().starts_with(&format!("{} ", p.to_lowercase())),
+                        };
+                        if prefix_ok && parts_in_range(&id_numeric_parts(k), &lo, &hi) {
+                            ids.insert(k.clone());
+                        }
+                    }
+                }
             }
+        }
+    }
+    // Non-numeric headings ("Implementation", "Open Items") are excluded
+    // when named verbatim - there is no id to anchor on, so the full name
+    // is the evidence.
+    let text_lower = out_of_scope.to_lowercase();
+    for k in known_ids {
+        if k.chars().next().is_some_and(|c| !c.is_ascii_digit())
+            && k.len() >= 4
+            && text_lower.contains(&k.to_lowercase())
+        {
+            ids.insert(k.clone());
         }
     }
     ids
@@ -347,6 +453,13 @@ fn parse_out_of_scope_ids(
 /// suppress a citation or invent one.
 pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
     let sections_in_document: usize = input.inventories.iter().map(|(_, inv)| inv.sections.len()).sum();
+    // The total reads as a per-document count when several files are
+    // supplied (round 6 §3.3, cosmetic) - the breakdown says which is which.
+    let sections_per_document: std::collections::BTreeMap<String, usize> = input
+        .inventories
+        .iter()
+        .map(|(name, inv)| (name.clone(), inv.sections.len()))
+        .collect();
 
     let known_ids: std::collections::HashSet<String> = input
         .inventories
@@ -422,11 +535,36 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
             // but the parser didn't find as its own heading must not read
             // as cited_but_absent when the parent section it lives under is
             // right there in the inventory.
+            //
+            // Third fallback: a citation that BEGINS with a real heading and
+            // carries a free-text locator after it - "Implementation section
+            // 5 DATA view, SUPERVISOR_NAME" - resolves to that heading. In a
+            // near-structureless document everything worth citing lives
+            // inside one heading, and treating the locator as part of the
+            // section name reported 331 accurate citations as absent (round
+            // 6 §3.2). Longest heading wins, and the match must end on a
+            // word boundary so "7.1" never claims a citation of "7.10".
             let resolved = doc
                 .sections
                 .iter()
                 .find(|s| s.id == spec.section)
-                .or_else(|| parent_section_id(&spec.section).and_then(|p| doc.sections.iter().find(|s| s.id == p)));
+                .or_else(|| parent_section_id(&spec.section).and_then(|p| doc.sections.iter().find(|s| s.id == p)))
+                .or_else(|| {
+                    doc.sections
+                        .iter()
+                        .filter(|s| {
+                            // .get() rather than indexing: a multi-byte
+                            // character at the cut is "no match", not a panic.
+                            spec.section.len() > s.id.len()
+                                && spec.section
+                                    .get(..s.id.len())
+                                    .is_some_and(|head| head.eq_ignore_ascii_case(&s.id))
+                                && spec.section
+                                    .get(s.id.len()..)
+                                    .is_some_and(|tail| tail.starts_with(char::is_whitespace))
+                        })
+                        .max_by_key(|s| s.id.len())
+                });
 
             match resolved {
                 Some(sec) => covered
@@ -463,6 +601,7 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
 
     serde_json::json!({
         "sections_in_document": sections_in_document,
+        "sections_per_document": sections_per_document,
         "covered": covered,
         "uncovered": uncovered,
         "unattributed": unattributed,
@@ -828,6 +967,7 @@ mod tests {
         keys.sort_unstable();
         let mut expected = vec![
             "sections_in_document",
+            "sections_per_document",
             "covered",
             "uncovered",
             "unattributed",
@@ -838,5 +978,164 @@ mod tests {
         expected.sort_unstable();
         assert_eq!(keys, expected);
         assert!(!v.as_object().unwrap().contains_key("warnings"));
+    }
+
+    // ---- round 6 §3.1: filenames with spaces --------------------------
+
+    #[test]
+    fn a_spec_filename_containing_spaces_resolves() {
+        // The blocker: whitespace-splitting truncated "Step9 - FDP.md" to
+        // "FDP.md" and zeroed `covered` on a 227-case set.
+        let c = parse_citations("Spec: Step9 - FDP.md 3.1").unwrap();
+        assert_eq!(c.specs[0].file, "Step9 - FDP.md");
+        assert_eq!(c.specs[0].section, "3.1");
+
+        let c = parse_citations("Spec: UC & UACs.md 8.9").unwrap();
+        assert_eq!(c.specs[0].file, "UC & UACs.md");
+
+        // The space-free case must not regress...
+        let c = parse_citations("Spec: Step9FDP.md 3.1").unwrap();
+        assert_eq!(c.specs[0].file, "Step9FDP.md");
+        assert_eq!(c.specs[0].section, "3.1");
+        // ...and "3.1" is never mistaken for an extension: a section id's
+        // post-dot character is a digit, extensions start with a letter.
+        let c = parse_citations("Spec: v1.2 spec.md 3.1").unwrap();
+        assert_eq!(c.specs[0].file, "v1.2 spec.md");
+    }
+
+    #[test]
+    fn a_spaced_filename_still_carries_its_quote_and_exemption() {
+        let c = parse_citations("Spec: Step9 - FDP.md 3.1 > \"the exact text\"").unwrap();
+        assert_eq!(c.specs[0].file, "Step9 - FDP.md");
+        assert_eq!(c.specs[0].section, "3.1");
+        assert!(c.specs[0].quote.as_deref().is_some_and(|q| q.contains("the exact text")));
+
+        let c =
+            parse_citations("Spec: UC & UACs.md 3.1 - no quotable text (a table)").unwrap();
+        assert_eq!(c.specs[0].file, "UC & UACs.md");
+        assert_eq!(c.specs[0].exemption.as_deref(), Some("a table"));
+    }
+
+    // ---- round 6 §3.2: heading + free-text locator --------------------
+
+    #[test]
+    fn a_heading_plus_locator_resolves_to_the_heading() {
+        // A near-structureless document: everything citable lives inside
+        // one heading, and the locator after it is detail, not a section
+        // name - 331 accurate citations read as absent before this.
+        let inv = parse_inventory("## Implementation\nbody\n## Notes\nmore\n");
+        let cases = vec![case(
+            "Greets the Supervisor by Their Own Name",
+            "Spec: A.md Implementation section 5 DATA view, SUPERVISOR_NAME",
+        )];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("A.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert!(v["covered"].get("Implementation").is_some(), "{v}");
+        assert_eq!(v["cited_but_absent"].as_array().unwrap().len(), 0, "{v}");
+    }
+
+    #[test]
+    fn the_heading_prefix_match_requires_a_word_boundary() {
+        // "7.10" must never resolve to section "7.1" just because the
+        // characters line up.
+        let inv = parse_inventory("## 7.1 Alpha\nbody\n");
+        let cases = vec![case("X", "Spec: A.md 7.10")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("A.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["cited_but_absent"].as_array().unwrap().len(), 1, "{v}");
+        assert!(v["covered"].as_object().unwrap().is_empty(), "{v}");
+    }
+
+    // ---- round 6 §3.3: out_of_scope reaches excluded_by_plan ----------
+
+    #[test]
+    fn out_of_scope_ranges_land_in_excluded_by_plan() {
+        let inv = parse_inventory("## 3 Keep\na\n## 4 A\nb\n## 4.15 B\nc\n## 5 C\nd\n## 7 D\ne\n## 8 Keep too\nf\n");
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("F.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "sections 4 to 7 are reference only for this batch",
+        });
+        let excluded = v["excluded_by_plan"].as_array().unwrap();
+        for id in ["4 ", "4.15 ", "5 ", "7 "] {
+            assert!(
+                excluded.iter().any(|e| e.as_str().unwrap().starts_with(id)),
+                "{id} missing from {v}"
+            );
+        }
+        let uncovered: Vec<&str> =
+            v["uncovered"].as_array().unwrap().iter().map(|u| u.as_str().unwrap()).collect();
+        assert_eq!(uncovered, vec!["3", "8"], "{v}");
+    }
+
+    #[test]
+    fn a_prefixed_range_excludes_the_prefixed_family() {
+        let inv = parse_inventory("## UAC 8.9\na\n## UAC 8.10\nb\n## UAC 8.13\nc\n");
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("U.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "UAC 8.9 to 8.12 belong to the Review step",
+        });
+        let excluded = v["excluded_by_plan"].as_array().unwrap();
+        assert_eq!(excluded.len(), 2, "{v}"); // 8.9 and 8.10; 8.13 stays
+        let uncovered = v["uncovered"].as_array().unwrap();
+        assert_eq!(uncovered.len(), 1, "{v}");
+        assert_eq!(uncovered[0], "UAC 8.13", "{v}");
+    }
+
+    #[test]
+    fn a_bare_number_in_prose_still_excludes_nothing() {
+        let inv = parse_inventory("## 2 Real section\nbody\n");
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("F.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "deferred to phase 2 of the project",
+        });
+        assert!(v["excluded_by_plan"].as_array().unwrap().is_empty(), "{v}");
+    }
+
+    #[test]
+    fn a_named_heading_in_out_of_scope_is_excluded() {
+        let inv = parse_inventory("## Implementation\na\n## Open Items\nb\n");
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("F.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "Open Items is tracked separately",
+        });
+        let excluded = v["excluded_by_plan"].as_array().unwrap();
+        assert_eq!(excluded.len(), 1, "{v}");
+        assert!(excluded[0].as_str().unwrap().starts_with("Open Items"), "{v}");
+    }
+
+    #[test]
+    fn the_per_document_breakdown_names_each_file() {
+        let a = parse_inventory("## 1 A\nx\n## 2 B\ny\n");
+        let b = parse_inventory("## 1 C\nz\n");
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("A.md".into(), a), ("B.md".into(), b)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["sections_in_document"], 3, "{v}");
+        assert_eq!(v["sections_per_document"]["A.md"], 2, "{v}");
+        assert_eq!(v["sections_per_document"]["B.md"], 1, "{v}");
     }
 }

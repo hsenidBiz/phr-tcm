@@ -578,9 +578,11 @@ async fn begin_writing(
                 serde_json::json!(format!("could not write {plan_path} - the plan is in this response instead"))
             },
             "answers": answers,
-            "note": "Show this plan to the developer and get their agreement before writing \
-                     any case. Then write only what it covers, put the JSON exactly at \
-                     output_path, and follow the steps at the end of the plan.",
+            "note": "Show this plan to the developer and say, in so many words: check the \
+                     plan and tell me if anything needs changing, or say to go ahead. Do \
+                     not write a single case until they answer. Then write only what the \
+                     plan covers, put the JSON exactly at output_path, and follow the \
+                     steps at the end of the plan.",
         })
         .to_string(),
     )
@@ -922,6 +924,14 @@ fn merge_cases_route(body: &str) -> (u16, String) {
     let mut merged: Vec<crate::model::TestCase> = Vec::new();
     let mut per_file: Vec<serde_json::Value> = Vec::with_capacity(req.paths.len());
     let mut warnings: Vec<String> = Vec::new();
+    // Title -> the slice files it appeared in. A fan-out makes title
+    // collisions likely precisely because no slice-writer sees another's
+    // output, and `dedupe` is the wrong repair (first-wins would delete a
+    // real case) - so the merge REPORTS the collision for a human to
+    // settle (round 6 §4: two legitimate different cases converged on one
+    // title in 373, found only by hand).
+    let mut title_slices: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
 
     for path in &req.paths {
         match crate::import_parser::parse_file(path) {
@@ -931,6 +941,12 @@ fn merge_cases_route(body: &str) -> (u16, String) {
                 // aggregated across several slices is useless if it can't
                 // be traced back to which one produced it.
                 warnings.extend(file_warnings.into_iter().map(|w| format!("{path}: {w}")));
+                for c in &cases {
+                    title_slices
+                        .entry(c.title.trim().to_lowercase())
+                        .or_default()
+                        .push(path.clone());
+                }
                 merged.extend(cases);
             }
             Err(e) => {
@@ -939,6 +955,19 @@ fn merge_cases_route(body: &str) -> (u16, String) {
                     serde_json::json!({ "error": format!("{path}: {e}") }).to_string(),
                 )
             }
+        }
+    }
+
+    for (title, slices) in &title_slices {
+        if slices.len() > 1 {
+            let mut named: Vec<&str> = slices.iter().map(String::as_str).collect();
+            named.dedup();
+            warnings.push(format!(
+                "duplicate title: '{title}' appears {} times ({}) - if these are different \
+                 cases, disambiguate the titles; dedupe would keep the first and delete the rest.",
+                slices.len(),
+                named.join(", ")
+            ));
         }
     }
 
@@ -1172,6 +1201,14 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         an in-app note that round-trips through the file but is never sent\n\
         to Azure DevOps. Include `id` ONLY to update that exact work item;\n\
         omit it to create.\n\n\
+        ## Granularity - quality over quantity\n\
+        Similar checks belong in ONE case, not several. Checking a\n\
+        notification's title and checking its body is one case with two\n\
+        steps (or one step with both in the expected result) - not two\n\
+        cases. Split only when the checks need different setup or data, or\n\
+        can fail independently in a way the tester must record separately.\n\
+        A padded case count is not coverage; every extra case is another\n\
+        row someone has to execute and maintain.\n\n\
         ## reviewer_notes\n\
         Optional, never sent to Azure DevOps, and the most useful thing you\n\
         can add. Two parts, in this order, and nothing else:\n\n\

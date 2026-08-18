@@ -415,7 +415,15 @@ pub fn clean_expected(raw: &str) -> String {
     if s.is_empty() {
         return squash(raw); // trimming ate everything - keep the original
     }
-    let out = format!("{}.", sentence_case(&s));
+    // A closing quote is terminal punctuation: the sentence it ends
+    // already carries its own full stop inside the quote, and appending
+    // another manufactures the `".` malformed tail (round 6 §2.1 - the
+    // raw-last-character test saw `"` and thought the sentence unfinished).
+    let out = if s.ends_with(['"', '\u{201d}', '\'', '\u{2019}']) {
+        sentence_case(&s)
+    } else {
+        format!("{}.", sentence_case(&s))
+    };
     // Belt over the braces above: if anything still managed to sever a
     // quotation, the trim was wrong by construction - losing a tidy-up is
     // cheaper than shipping a case that asserts half a message.
@@ -612,7 +620,12 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
 
 fn already_has_preamble(c: &TestCase, entry: &str) -> bool {
     c.steps.iter().take(PREAMBLE_PROBE).any(|s| {
-        if norm_step(&s.action) == norm_step(entry) {
+        // A step that OPENS with the entry phrase counts, not just one
+        // that equals it: "In the PMS Module, open Performance Management
+        // and confirm..." already walks in from the entry, and prepending
+        // the entry again added ~500 redundant steps across one 267-case
+        // set (round 6 §2.2).
+        if norm_step(&s.action).starts_with(&norm_step(entry)) {
             return true;
         }
         let l = s.action.to_lowercase();

@@ -20,6 +20,7 @@ fn good(dir: &std::path::Path, spec: &std::path::Path) -> IntakeAnswers {
         spec_paths: vec![spec.to_string_lossy().to_string()],
         sections: "3.1-3.4".into(),
         ordering: "tester".into(),
+        reference_cases: "none".into(),
         examples_pbi: Some(144714),
         check_examples: true,
         authority: "spec-wins".into(),
@@ -83,7 +84,10 @@ fn the_checklist_leads_with_what_is_expensive_to_get_wrong() {
         .filter(|q| q.required)
         .map(|q| q.field.as_str())
         .collect();
-    assert_eq!(required, vec!["output_path", "spec_paths", "authority", "ordering"]);
+    assert_eq!(
+        required,
+        vec!["output_path", "spec_paths", "authority", "ordering", "reference_cases"]
+    );
     // Every question explains itself - the assistant is meant to relay
     // the "why", not just the prompt.
     assert!(qs.iter().all(|q| !q.why.trim().is_empty()));
@@ -503,6 +507,7 @@ async fn phase_two_writes_the_plan_when_the_answers_are_sound() {
         "spec_paths": [spec.to_string_lossy()],
         "authority": "spec-wins",
         "ordering": "tester",
+        "reference_cases": "none",
     })
     .to_string();
     let (status, body) =
@@ -517,7 +522,13 @@ async fn phase_two_writes_the_plan_when_the_answers_are_sound() {
         "plan written to disk"
     );
     assert!(std::fs::read_to_string(written).unwrap().contains("Orders"));
-    assert!(v["note"].as_str().unwrap().contains("get their agreement"));
+    // The note spells out the review gate in so many words: the developer
+    // checks the plan and either names changes or says to go ahead - and
+    // nothing is written until they answer.
+    let note = v["note"].as_str().unwrap();
+    assert!(note.contains("check the plan"), "{note}");
+    assert!(note.contains("go ahead"), "{note}");
+    assert!(note.contains("until they answer"), "{note}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -575,6 +586,7 @@ async fn a_ready_intake_carries_the_scale_block() {
         "spec_paths": [spec.to_string_lossy()],
         "authority": "spec",
         "ordering": "tester",
+        "reference_cases": "none",
     })
     .to_string();
     let (status, body) = route(&ctx(), None, "POST", "/begin?feature=Big", &body_in, "test").await;
@@ -605,6 +617,7 @@ async fn scale_is_absent_not_an_error_when_no_spec_file_is_readable() {
         "spec_paths": [folder.to_string_lossy()],
         "authority": "spec",
         "ordering": "tester",
+        "reference_cases": "none",
     })
     .to_string();
     let (status, body) = route(&ctx(), None, "POST", "/begin?feature=NoSpec", &body_in, "test").await;
