@@ -10,6 +10,7 @@ import { onlineSnapshot, subscribeOnline } from "./lib/network";
 import {
   clearSessionExpired,
   sessionExpiredSnapshot,
+  setSessionActive,
   subscribeSessionExpired,
 } from "./lib/sessionExpired";
 import {
@@ -290,7 +291,14 @@ export default function App() {
       if (r.status === "error") throw new Error(r.error);
       return r.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }),
+    onSuccess: () => {
+      // A fresh token retires any pending "session expired" - including a
+      // latch parked by pre-sign-in Unauthorized errors racing the very
+      // first sign-in. Cleared HERE, on every successful sign-in, not only
+      // on the modal's own re-sign-in path.
+      clearSessionExpired();
+      qc.invalidateQueries({ queryKey: ["auth"] });
+    },
     onError: (e) => toast.error(`Sign-in failed: ${e.message}`),
   });
 
@@ -324,6 +332,14 @@ export default function App() {
   const [devAuth, setDevAuth] = useState<"real" | "out" | "in">("real");
   const signedIn =
     DEV_TOOLS && devAuth !== "real" ? devAuth === "in" : Boolean(status.data?.signed_in);
+
+  // The latch is armed only while a session exists. Signed out, the Rust
+  // side answers every command with Unauthorized (no token to send) and
+  // those flow through the same formatter as real expiries - unarmed, they
+  // no longer park a "Session expired" for the freshly signed-in user.
+  useEffect(() => {
+    setSessionActive(signedIn);
+  }, [signedIn]);
 
   // The persistent cache is scoped by org and project, which is not the same
   // as being scoped by person. Claim it for whoever is signed in NOW.

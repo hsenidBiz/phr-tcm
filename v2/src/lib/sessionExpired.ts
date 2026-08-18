@@ -11,9 +11,18 @@
  * user and read by App, which offers one re-sign-in prompt instead. It is
  * a latch, not a live probe: cleared when the user signs back in or
  * dismisses the prompt, re-raised by the next 401.
+ *
+ * The latch is ARMED only while the app is signed in. Before sign-in the
+ * Rust side answers every command with Unauthorized without touching the
+ * network (there is no token to send), and those errors flow through the
+ * same formatter as real expiries - so a background query racing the very
+ * first sign-in used to park the latch, and the "Session expired" modal
+ * greeted the user seconds after they signed in. While signed out, the
+ * SignIn screen IS the prompt; the latch has nothing to add.
  */
 
 let expired = false;
+let active = false;
 const listeners = new Set<() => void>();
 
 function set(value: boolean) {
@@ -22,8 +31,17 @@ function set(value: boolean) {
   for (const l of listeners) l();
 }
 
+/** App tells the store whether a session exists. Arming late is the point:
+ * an Unauthorized formatted while signed out is not an expiry. Going
+ * inactive also retires any raised latch - there is no session left for
+ * it to be about. */
+export function setSessionActive(value: boolean): void {
+  active = value;
+  if (!value) set(false);
+}
+
 export function flagSessionExpired(): void {
-  set(true);
+  if (active) set(true);
 }
 
 export function clearSessionExpired(): void {
