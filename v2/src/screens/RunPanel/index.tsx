@@ -430,7 +430,7 @@ export default function RunPanel({
                   <tr>
                     <td colSpan={3} className="px-2 pb-1 pt-2">
                       <div className="flex w-full items-center gap-3">
-                        <span aria-hidden className="h-px flex-1 bg-border" />
+                        {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                         <button
                           aria-label={`${collapsedGroups.has(name) ? "Expand" : "Collapse"} group ${name}`}
                           title={collapsedGroups.has(name) ? "Expand group" : "Collapse group"}

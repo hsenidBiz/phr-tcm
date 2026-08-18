@@ -326,7 +326,7 @@ export default function ExistingCases({
         <div key={group || "__all"} className="space-y-1">
           {group && (
             <div className="flex w-full items-center gap-3 pb-1 pt-2">
-              <span aria-hidden className="h-px flex-1 bg-border" />
+              {/* Left-anchored with a trailing rule - see ViewCases for why. */}
               <button
                 aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
                 title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}

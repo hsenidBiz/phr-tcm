@@ -330,7 +330,10 @@ export default function ViewCases({
         <div key={group || "__all"} className="space-y-1">
           {group && (
             <div className="flex w-full items-center gap-3 pb-1 pt-2">
-              <span aria-hidden className="h-px flex-1 bg-border" />
+              {/* Left-anchored, controls at fixed x, the rule trails to the
+                  right edge: rows are scanned down a shared left edge, and a
+                  centered header put the chevron and checkbox at a different
+                  x every row. */}
               <button
                 aria-label={`${collapsedGroups.has(group) ? "Expand" : "Collapse"} group ${group}`}
                 title={collapsedGroups.has(group) ? "Expand group" : "Collapse group"}
