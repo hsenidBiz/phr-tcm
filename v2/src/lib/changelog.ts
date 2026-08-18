@@ -13,6 +13,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.1",
+    date: "2026-08-18",
+    items: [
+      "Group headers across View, Update, Run Tests and Auto Run are left-aligned: chevron, checkbox and title sit at the same spot on every row instead of wandering with the title's length, and the divider now starts solid at the title and fades out instead of running into the window edge.",
+      "Fixed: a hidden board column's OPEN label could sit a pixel high after hovering it (or from the moment it collapsed, depending on the machine). The label is now rendered on the same text path as everything else and rotated whole, so it stays put.",
+      "The board toolbar shows one spinner, not two - the first pull-request load now spins the refresh icon instead of bringing its own.",
+      "The header checkbox is the one selection indicator: a dash for a partly selected group, a tick for the whole group, collapsed or not. The pulsing dot beside collapsed titles is gone - it repeated what the checkbox already said.",
+      "The pull-request count no longer rides the mode-switch pill once you are in Work Manager - on a pill reading \"Test Case Manager\" it looked like TCM had notifications.",
+      "Selection bars say the count once: \"Run 3 in runner\" already counts, so the \"3 selected\" text beside it is gone - same for Auto Run's bar.",
+    ],
+  },
+  {
     version: "1.20.0",
     date: "2026-08-13",
     items: [
