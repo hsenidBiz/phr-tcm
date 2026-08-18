@@ -136,7 +136,7 @@ export default function ContextBar({
           size="sm"
           className="relative"
           title={
-            prAttention > 0
+            !workMode && prAttention > 0
               ? `${prAttention} pull request${prAttention === 1 ? "" : "s"} with conflicts or comments to resolve`
               : workMode
                 ? "Test Case Manager"
@@ -152,10 +152,13 @@ export default function ContextBar({
           <span className="hidden lg:inline">
             {workMode ? "Test Case Manager" : "Work Manager"}
           </span>
-          {/* PRs that need a human: conflicts or comments to resolve. On
-              the pill's corner so it reads from either mode - it is the
-              reason to go (back) to Work Manager. */}
-          {prAttention > 0 && (
+          {/* PRs that need a human: conflicts or comments to resolve.
+              Only while the pill points TO Work Manager - the count is
+              the reason to go there. Once switched, the pill reads "Test
+              Case Manager", and a badge riding on it looked like TCM had
+              notifications; inside Work Manager the PR panel itself shows
+              what needs attention. */}
+          {!workMode && prAttention > 0 && (
             <span
               aria-label={`${prAttention} pull requests need attention`}
               className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-accent"
