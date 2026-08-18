@@ -241,11 +241,10 @@ export default function AutoRun({
       {/* The bar only exists while something is ticked, so the screen is
           not carrying a permanently disabled button nobody can use. */}
       {selectedInOrder.length > 0 && (
-        <div className="sticky top-0 z-10 flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-2">
-          <span className="text-sm text-text">
-            {selectedInOrder.length} case{selectedInOrder.length === 1 ? "" : "s"} selected
-          </span>
-          <Button size="sm" className="ml-auto" onClick={() => setRunning(selectedInOrder)}>
+        <div className="sticky top-0 z-10 flex items-center justify-end gap-2 rounded-md border border-accent/40 bg-accent-soft px-3 py-2">
+          {/* No "N cases selected" text - the count is already in the
+              button's own label, same as Run Tests' floating pill. */}
+          <Button size="sm" onClick={() => setRunning(selectedInOrder)}>
             Run {selectedInOrder.length} selected
           </Button>
           <Button size="sm" variant="outline" onClick={() => setSelected(new Set())}>

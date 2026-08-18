@@ -97,7 +97,7 @@ test("the header checkbox ticks only the scripted cases under it", async () => {
   fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
 
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select all in Login" }));
-  expect(await screen.findByText("2 cases selected")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
 });
 
 test("clicking a fully ticked header checkbox clears the group; the title folds it", async () => {
@@ -111,10 +111,12 @@ test("clicking a fully ticked header checkbox clears the group; the title folds 
 
   const box = await screen.findByRole("checkbox", { name: "Select all in Login" });
   fireEvent.click(box);
-  expect(await screen.findByText("2 cases selected")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
 
   fireEvent.click(box);
-  await waitFor(() => expect(screen.queryByText("2 cases selected")).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Run 2 selected" })).not.toBeInTheDocument(),
+  );
 
   // The TITLE is a fold control now - same contract as every other
   // grouped screen, so a habit learned there cannot mis-tick runs here.
@@ -131,14 +133,15 @@ test("collapsing a group keeps its ticked cases, shown by the header checkbox", 
   await screen.findByText("Login - valid credentials");
   fireEvent.click(screen.getByRole("checkbox", { name: "Group by title" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select all in Login" }));
-  await screen.findByText("2 cases selected");
+  await screen.findByRole("button", { name: "Run 2 selected" });
 
   // Collapsing hides the rows; the count has to survive, or a person
-  // cannot tell what a "Run 2 selected" is about to run. The whole-group
-  // tick stays on the header checkbox - no separate dot marker.
+  // cannot tell what a "Run 2 selected" is about to run - it lives in
+  // the run button's own label now. The whole-group tick stays on the
+  // header checkbox - no separate dot marker.
   fireEvent.click(screen.getByRole("button", { name: "Collapse group Login" }));
   expect(screen.queryByText("Login - valid credentials")).not.toBeInTheDocument();
-  expect(screen.getByText("2 cases selected")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Select all in Login" })).toHaveAttribute(
     "aria-checked",
     "true",
@@ -175,7 +178,7 @@ test("an unscripted case cannot be ticked, so a bulk run never queues one", asyn
   expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
-  expect(await screen.findByText("1 case selected")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Run 1 selected" })).toBeInTheDocument();
 });
 
 test("Run N selected opens one pane for the whole selection, in list order", async () => {
@@ -204,10 +207,12 @@ test("Clear drops the selection without opening a run", async () => {
   await screen.findByText("Alpha check");
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Select #1" }));
-  expect(await screen.findByText("1 case selected")).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Run 1 selected" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-  await waitFor(() => expect(screen.queryByText("1 case selected")).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Run 1 selected" })).not.toBeInTheDocument(),
+  );
   expect(screen.queryByText("Open browser")).not.toBeInTheDocument();
 });
 
@@ -222,5 +227,7 @@ test("finishing a run clears the selection it ran", async () => {
   // Leaving without a verdict still ends the run - the ticks must go with
   // it, or the next click runs the same case again by accident.
   fireEvent.click(await screen.findByRole("button", { name: /Close/ }));
-  await waitFor(() => expect(screen.queryByText("1 case selected")).not.toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Run 1 selected" })).not.toBeInTheDocument(),
+  );
 });

@@ -580,8 +580,9 @@ export default function RunPanel({
       {suite.data &&
         selected.size > 0 &&
         createPortal(
-          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface py-1.5 pl-4 pr-2 shadow-2xl">
-            <span className="text-xs font-medium text-muted">{selected.size} selected</span>
+          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-1.5 shadow-2xl">
+            {/* No "N selected" text - the count is already in the button's
+                own label. */}
             <Button size="sm" onClick={() => openRunner([...selected])}>
               <IconRun aria-hidden />
               Run {selected.size} in runner
