@@ -27,8 +27,8 @@ export default function SessionExpiredModal({
 
       <p className="text-xs leading-relaxed text-muted">
         Your Azure DevOps sign-in is no longer valid - this happens after the app has been idle
-        for a while (a weekend in hibernate is enough). Anything already loaded stays readable,
-        but fetching or saving needs a fresh sign-in.
+        for a while. Anything already loaded stays readable, but fetching or saving needs a
+        fresh sign-in.
       </p>
 
       <div className="flex shrink-0 items-center justify-end gap-2">
