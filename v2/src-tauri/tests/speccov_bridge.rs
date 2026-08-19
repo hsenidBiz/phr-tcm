@@ -402,8 +402,45 @@ async fn merge_warns_when_a_title_appears_in_more_than_one_slice() {
         .filter_map(|w| w.as_str())
         .find(|w| w.contains("duplicate title"))
         .expect("a duplicate-title warning");
-    assert!(dup.contains("no notification when cycle inactive"), "{dup}");
+    // The warning shows the AUTHOR'S casing - a lowercased title reads
+    // like the tool mangled it (round 8 dogfooding). Matching is still
+    // case-insensitive underneath.
+    assert!(dup.contains("No Notification When Cycle Inactive"), "{dup}");
+    assert!(!dup.contains("'no notification when cycle inactive'"), "{dup}");
     assert!(dup.contains("ga01.json") && dup.contains("ga04.json"), "{dup}");
     // The unique title stays unmentioned.
     assert!(!warnings.iter().any(|w| w.as_str().unwrap().contains("Only A")), "{out}");
+}
+
+/// The casing rule holds even when the slices DISAGREE on casing - the
+/// first-seen spelling is the display title, and both copies still count.
+#[tokio::test]
+async fn a_duplicate_warning_uses_the_first_authors_casing_when_slices_disagree() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("cs-a.json");
+    let slice_b = dir.path().join("cs-b.json");
+    std::fs::write(&slice_a, serde_json::json!([case_json("Alert Fires On Time")]).to_string())
+        .unwrap();
+    std::fs::write(&slice_b, serde_json::json!([case_json("ALERT FIRES ON TIME")]).to_string())
+        .unwrap();
+    let output_path = dir.path().join("merged.json");
+
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let dup = v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|w| w.as_str())
+        .find(|w| w.contains("duplicate title"))
+        .expect("a duplicate-title warning");
+    assert!(dup.contains("'Alert Fires On Time'"), "{dup}");
+    assert!(dup.contains("2 times"), "{dup}");
 }

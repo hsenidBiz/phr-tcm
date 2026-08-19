@@ -995,7 +995,7 @@ fn merge_cases_route(body: &str) -> (u16, String) {
     // real case) - so the merge REPORTS the collision for a human to
     // settle (round 6 §4: two legitimate different cases converged on one
     // title in 373, found only by hand).
-    let mut title_slices: std::collections::BTreeMap<String, Vec<String>> =
+    let mut title_slices: std::collections::BTreeMap<String, Vec<(String, String)>> =
         std::collections::BTreeMap::new();
 
     for path in &req.paths {
@@ -1007,10 +1007,13 @@ fn merge_cases_route(body: &str) -> (u16, String) {
                 // be traced back to which one produced it.
                 warnings.extend(file_warnings.into_iter().map(|w| format!("{path}: {w}")));
                 for c in &cases {
+                    // Keyed case-insensitively, but the warning shows the
+                    // AUTHOR'S casing - a lowercased title in the message
+                    // reads like the tool mangled it (round 8 dogfooding).
                     title_slices
                         .entry(c.title.trim().to_lowercase())
                         .or_default()
-                        .push(path.clone());
+                        .push((c.title.trim().to_string(), path.clone()));
                 }
                 merged.extend(cases);
             }
@@ -1023,13 +1026,15 @@ fn merge_cases_route(body: &str) -> (u16, String) {
         }
     }
 
-    for (title, slices) in &title_slices {
+    for slices in title_slices.values() {
         if slices.len() > 1 {
-            let mut named: Vec<&str> = slices.iter().map(String::as_str).collect();
+            let display_title = &slices[0].0;
+            let mut named: Vec<&str> = slices.iter().map(|(_, p)| p.as_str()).collect();
             named.dedup();
             warnings.push(format!(
-                "duplicate title: '{title}' appears {} times ({}) - if these are different \
-                 cases, disambiguate the titles; dedupe would keep the first and delete the rest.",
+                "duplicate title: '{display_title}' appears {} times ({}) - if these are \
+                 different cases, disambiguate the titles; dedupe would keep the first and \
+                 delete the rest.",
                 slices.len(),
                 named.join(", ")
             ));
@@ -1124,15 +1129,33 @@ async fn tags(
     // A project can carry thousands of tags; ?query= filters to a
     // case-insensitive substring match so the common call stays cheap.
     let total = values.len();
-    let values: Vec<String> = match q(target, "query").filter(|f| !f.trim().is_empty()) {
-        Some(f) => {
-            let f = f.to_lowercase();
-            values
-                .into_iter()
-                .filter(|t| t.to_lowercase().contains(&f))
-                .collect()
-        }
-        None => values,
+    let (values, capped): (Vec<String>, bool) =
+        match q(target, "query").filter(|f| !f.trim().is_empty()) {
+            Some(f) => {
+                let f = f.to_lowercase();
+                (
+                    values.into_iter().filter(|t| t.to_lowercase().contains(&f)).collect(),
+                    false,
+                )
+            }
+            // No query on a 2,000-tag project used to dump the whole list
+            // (~30 KB) into the assistant's context (round 8 dogfooding) -
+            // capped, with the cap saying how to get the rest.
+            None if values.len() > NO_QUERY_TAG_LIMIT => {
+                (values.into_iter().take(NO_QUERY_TAG_LIMIT).collect(), true)
+            }
+            None => (values, false),
+        };
+    let note = if capped {
+        format!(
+            "Showing {NO_QUERY_TAG_LIMIT} of {total} tags - pass ?query= (a substring) to \
+             search all of them. Prefer an existing tag over a new one. Tags are \
+             semicolon-separated in the import JSON, never commas."
+        )
+    } else {
+        "Prefer an existing tag over a new one. Tags are semicolon-separated in the import \
+         JSON, never commas."
+            .to_string()
     };
     (
         200,
@@ -1141,12 +1164,16 @@ async fn tags(
             "count": values.len(),
             "total": total,
             "source": source,
-            "note": "Prefer an existing tag over a new one. Tags are \
-                     semicolon-separated in the import JSON, never commas.",
+            "note": note,
         })
         .to_string(),
     )
 }
+
+/// The most tags a query-less get_tags answers with. High enough that a
+/// small project's whole list still comes back in one call, low enough
+/// that a 2,229-tag org cannot flood the context by accident.
+const NO_QUERY_TAG_LIMIT: usize = 300;
 
 /// The org's Module values: configured picklist first, observed values as
 /// the fallback - the same discovery the app's own module picker uses.
@@ -1290,11 +1317,14 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         Add `Out of scope: SSO` only when THIS case deliberately leaves\n\
         something out. Alongside the `Spec:` pointer, quote the source\n\
         sentence verbatim, or it must not be presented as a quote: write\n\
-        `> \"...\"` when you can quote it, or state the exemption in the\n\
-        fixed form `Spec: <file> <section> - no quotable text (<why>)`,\n\
-        naming why as one of code-not-prose, absence, table/diagram, or\n\
-        synthesis. Never rewrite inside quotation marks; elide with an\n\
-        ellipsis instead.\n\n\
+        `> \"<the source sentence>\"` when you can quote it, or state the\n\
+        exemption in the fixed form\n\
+        `Spec: <file> <section> - no quotable text (<why>)`,\n\
+        naming why as one of code-not-prose, absence,\n\
+        table/diagram, or synthesis. Never rewrite inside quotation marks;\n\
+        elide with an ellipsis (`...`) instead - check_spec_coverage\n\
+        honours an elided quote by requiring every fragment verbatim, in\n\
+        order.\n\n\
         Leave OUT, every time:\n\
         - Where the cases came from as a body of work - \"Source:\n\
         implementation (authority = app)\", \"written from the spec\". The\n\

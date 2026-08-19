@@ -957,3 +957,38 @@ async fn an_unknown_read_is_still_a_bare_404() {
     assert!(body.is_empty(), "a 404 grew a body: {body}");
 }
 
+/// Round 8 dogfooding: a query-less get_tags on a 2,000-tag project dumped
+/// the whole list into the assistant's context. Capped at 300, the note
+/// says so and how to search the rest - and ?query= still searches ALL of
+/// them, not just the first 300.
+#[tokio::test]
+async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything() {
+    // A dedicated org/project keeps this test's cache entry out of every
+    // other test's way (the refcache is process-global).
+    let c = BridgeContext {
+        org: "cap-org".into(),
+        project: "CapProj".into(),
+        module_ref: None,
+        preconditions_ref: None,
+        disabled_tools: vec![],
+    };
+    let key = v2_lib::refcache::tags_key("cap-org", "CapProj");
+    let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();
+    v2_lib::refcache::put(&key, &values);
+
+    let (status, out) = route(&c, None, "GET", "/tags", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["count"], 300, "{out}");
+    assert_eq!(v["total"], 350, "{out}");
+    assert!(v["note"].as_str().unwrap().contains("Showing 300 of 350"), "{out}");
+
+    // tag-349 is beyond the cap, but a query reaches it.
+    let (status, out) = route(&c, None, "GET", "/tags?query=tag-349", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["count"], 1, "{out}");
+    assert_eq!(v["tags"][0], "tag-349", "{out}");
+    assert!(!v["note"].as_str().unwrap().contains("Showing"), "{out}");
+}
+

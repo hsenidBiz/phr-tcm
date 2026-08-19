@@ -72,6 +72,17 @@ fn numbered_heading(line: &str) -> Option<(&str, &str)> {
             break;
         }
     }
+    // A single trailing lowercase letter is part of the id when whitespace
+    // follows: "3.4a Entry Limit Per Role" sits between 3.4 and 3.5, and
+    // without this the heading fell through to title-as-id and could not
+    // be cited as "3.4a" (round 8 dogfooding). One letter only - "3.4ab"
+    // is a word, not an id.
+    if end < bytes.len()
+        && bytes[end].is_ascii_lowercase()
+        && bytes.get(end + 1).is_some_and(|b| b.is_ascii_whitespace())
+    {
+        end += 1;
+    }
     let id = &line[..end];
     let rest = &line[end..];
     if !rest.starts_with(char::is_whitespace) {
@@ -335,6 +346,36 @@ fn normalize_whitespace(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Whether a quote is verbatim in the (whitespace-normalised) document -
+/// including an ELIDED quote, split on `...` or `…`, whose fragments must
+/// each appear in order without overlapping. The guide has always said
+/// "elide with an ellipsis instead" of rewriting inside quotation marks,
+/// and the checker rejected exactly that form: 33 real repairs on two
+/// drafts were nothing but removing elisions to appease it (round 8 §1).
+/// Ordered non-overlapping fragments are still strictly stronger than a
+/// pass: every fragment must be real, and the sequence must hold, so an
+/// invented quote still fails.
+fn quote_matches_document(quote: &str, doc_text_norm: &str) -> bool {
+    let fragments: Vec<String> = quote
+        .split("...")
+        .flat_map(|part| part.split('\u{2026}'))
+        .map(normalize_whitespace)
+        .filter(|f| !f.is_empty())
+        .collect();
+    if fragments.is_empty() {
+        // A quote that is nothing but ellipses claims nothing.
+        return false;
+    }
+    let mut from = 0usize;
+    for frag in &fragments {
+        match doc_text_norm[from..].find(frag.as_str()) {
+            Some(i) => from += i + frag.len(),
+            None => return false,
+        }
+    }
+    true
+}
+
 /// The trailing path segment, lowercased, so a citation of "Step10.md"
 /// matches an inventory built from "C:\specs\Step10.md" case-insensitively.
 fn file_basename_lower(path: &str) -> String {
@@ -351,7 +392,44 @@ fn parent_section_id(section_id: &str) -> Option<String> {
 /// `(AC-n)`. Used to decide whether `sections_scope` is an enumerated list
 /// (every token matches) or free text (no filtering at all).
 fn is_section_id_shape(s: &str) -> bool {
-    Regex::new(r"(?i)^\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?$").unwrap().is_match(s)
+    // A single trailing letter is a real heading style ("3.4a Entry Limit
+    // Per Role" sits between 3.4 and 3.5) - round 8 dogfooding found those
+    // uncitable. A RANGE of ids ("3.1-3.6", "3.1 to 3.6") also reads as an
+    // id token, so a scope list written the way people actually write one
+    // stays enumerated instead of collapsing to inert free text.
+    const ID: &str = r"\d+(?:\.\d+)*[a-z]?(?:\s*\(AC-\d+\))?";
+    Regex::new(&format!(
+        r"(?i)^{ID}(?:\s*(?:-|\u{{2013}}|\u{{2014}}|to|through)\s*{ID})?$"
+    ))
+    .unwrap()
+    .is_match(s)
+}
+
+/// A range token's two ends, when the token is one ("3.1-3.6",
+/// "3.1 to 3.6"); None for a plain id.
+fn scope_range_ends(token: &str) -> Option<(String, String)> {
+    let re = Regex::new(
+        r"(?i)^(\d+(?:\.\d+)*[a-z]?)\s*(?:-|\u{2013}|\u{2014}|\bto\b|\bthrough\b)\s*(\d+(?:\.\d+)*[a-z]?)$",
+    )
+    .unwrap();
+    re.captures(token)
+        .map(|c| (normalize_section_id(&c[1]), normalize_section_id(&c[2])))
+}
+
+/// Whether `id` is inside an enumerated scope set that may carry range
+/// tokens: an exact member, or numerically within any range member.
+fn in_enumerated_scope(set: &std::collections::HashSet<String>, id: &str) -> bool {
+    if set.contains(id) {
+        return true;
+    }
+    set.iter().any(|token| {
+        scope_range_ends(token).is_some_and(|(lo, hi)| {
+            parts_in_range(&id_numeric_parts(id), &id_numeric_parts(&lo), &id_numeric_parts(&hi))
+                // Ranges are numeric; a named heading ("Implementation")
+                // never falls inside one by accident.
+                && id.chars().next().is_some_and(|c| c.is_ascii_digit())
+        })
+    })
 }
 
 /// `sections_scope` is treated as an enumerated in-scope list only when
@@ -408,7 +486,7 @@ fn parse_out_of_scope_ids(
     out_of_scope: &str,
     known_ids: &std::collections::HashSet<String>,
 ) -> std::collections::HashSet<String> {
-    const ID: &str = r"\d+(?:\.\d+)*(?:\s*\(AC-\d+\))?";
+    const ID: &str = r"\d+(?:\.\d+)*[a-z]?(?:\s*\(AC-\d+\))?";
     let token_re = Regex::new(&format!(
         r"(?i)(?:^|\bsections?\s+|§§?\s*|\b([A-Za-z][A-Za-z0-9_-]*)\s+)({ID})(?:\s*(?:to|through|[-\u{{2013}}\u{{2014}}])\s*({ID}))?"
     ))
@@ -520,7 +598,8 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
     let enumerated_scope = parse_enumerated_scope(input.sections_scope);
     let out_of_scope_ids = parse_out_of_scope_ids(input.out_of_scope, &known_ids);
     let is_excluded = |id: &str| -> bool {
-        enumerated_scope.as_ref().is_some_and(|set| !set.contains(id)) || out_of_scope_ids.contains(id)
+        enumerated_scope.as_ref().is_some_and(|set| !in_enumerated_scope(set, id))
+            || out_of_scope_ids.contains(id)
     };
 
     // Documents keyed by basename, each paired with its display name (as
@@ -673,8 +752,7 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
             }
 
             if let Some(quote) = &spec.quote {
-                let norm_quote = normalize_whitespace(quote);
-                if !doc_text_norm.contains(&norm_quote) {
+                if !quote_matches_document(quote, doc_text_norm) {
                     quote_not_in_document.push(format!("{} — quoted text not found in file", case.title));
                 }
             }
@@ -694,8 +772,23 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
     let mut uncovered: Vec<String> = vec![];
     let mut excluded_by_plan: Vec<String> = vec![];
     for (name, inv) in &input.inventories {
+        // In enumerated mode a NAMED sub-heading ("On submit", "Pre-submit
+        // validation") is not in the id list and read as excluded - noise
+        // that buried the real exclusions when its parent ("3.6") was in
+        // scope. Sections arrive in line order, so a non-id heading
+        // inherits the verdict of the nearest preceding id-shaped one.
+        let mut inherited_excluded: Option<bool> = None;
         for sec in &inv.sections {
             let key = qualify(name, &sec.id);
+            let excluded = if is_section_id_shape(&sec.id) {
+                let e = is_excluded(&sec.id);
+                inherited_excluded = Some(e);
+                e
+            } else if enumerated_scope.is_some() {
+                inherited_excluded.unwrap_or_else(|| is_excluded(&sec.id))
+            } else {
+                is_excluded(&sec.id)
+            };
             // Evidence beats exclusion (round 7 §8): a section with
             // covering cases listed under `covered` AND under
             // `excluded_by_plan` is a contradiction the report can resolve
@@ -704,7 +797,7 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
             if covered.contains_key(&key) {
                 continue;
             }
-            if is_excluded(&sec.id) {
+            if excluded {
                 excluded_by_plan.push(format!("{key} — excluded by the plan's scope"));
             } else {
                 uncovered.push(key);
@@ -1410,5 +1503,94 @@ mod tests {
         assert_eq!(v["sections_in_document"], 3, "{v}");
         assert_eq!(v["sections_per_document"]["A.md"], 2, "{v}");
         assert_eq!(v["sections_per_document"]["B.md"], 1, "{v}");
+    }
+
+    /// Round 8 §1: the guide tells authors to elide mid-quote with `...`,
+    /// so the checker must honour an elided quote - every fragment
+    /// verbatim, in document order - instead of failing it wholesale.
+    #[test]
+    fn an_elided_quote_matches_when_its_fragments_appear_in_order() {
+        let doc = "## 1 Links\n\nAction links - every template links back into the system with a deep URL, not generic landing pages.\n";
+        let run = |notes: &str| {
+            let cases = vec![case("Elided", notes)];
+            let v = check_coverage(CoverageInput {
+                inventories: vec![("A.md".into(), parse_inventory(doc))],
+                cases: &cases,
+                sections_scope: "",
+                out_of_scope: "",
+            });
+            v["quote_not_in_document"].as_array().unwrap().len()
+        };
+        // Three-dot and U+2026 elisions both pass...
+        assert_eq!(run("Spec: A.md 1\n> \"Action links ... not generic landing pages.\""), 0);
+        assert_eq!(run("Spec: A.md 1\n> \"Action links \u{2026} not generic landing pages.\""), 0);
+        // ...an invented fragment still fails...
+        assert_eq!(run("Spec: A.md 1\n> \"Action links ... the moon on a stick.\""), 1);
+        // ...and so do real fragments in the WRONG order.
+        assert_eq!(run("Spec: A.md 1\n> \"not generic landing pages ... Action links\""), 1);
+    }
+
+    /// Round 8 dogfooding: a scope list written "3.1-3.6, 3.10" must stay
+    /// enumerated, with the range admitting its numeric members.
+    #[test]
+    fn an_enumerated_scope_accepts_ranges() {
+        let inv = parse_inventory("## 3.1 A\nx\n## 3.4 B\nx\n## 3.6 C\nx\n## 3.7 D\nx\n");
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("F.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "3.1-3.6, 3.10",
+            out_of_scope: "",
+        });
+        let uncovered: Vec<&str> =
+            v["uncovered"].as_array().unwrap().iter().map(|u| u.as_str().unwrap()).collect();
+        assert_eq!(uncovered, vec!["3.1", "3.4", "3.6"], "{v}");
+        assert!(
+            v["excluded_by_plan"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().starts_with("3.7")),
+            "{v}"
+        );
+    }
+
+    /// Round 8 dogfooding: "3.4a Entry Limit Per Role" is a real heading
+    /// style; its id must parse as its own section and be citable.
+    #[test]
+    fn a_letter_suffixed_heading_is_a_real_citable_id() {
+        let doc = "### 3.4a Entry Limit Per Role\nbody\n### 3.5 Next\nx\n";
+        let inv = parse_inventory(doc);
+        let ids: Vec<&str> = inv.sections.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["3.4a", "3.5"]);
+
+        let cases = vec![case("Limit", "Spec: F.md 3.4a\n> \"body\"")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("F.md".into(), parse_inventory(doc))],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert!(v["covered"].get("3.4a").is_some(), "{v}");
+        assert!(v["cited_but_absent"].as_array().unwrap().is_empty(), "{v}");
+    }
+
+    /// Round 8 dogfooding: in enumerated mode a NAMED sub-heading inherits
+    /// the verdict of the id-shaped heading above it - "On submit" under an
+    /// in-scope 3.6 is uncovered work, not an exclusion.
+    #[test]
+    fn named_sub_headings_inherit_their_parents_scope_in_enumerated_mode() {
+        let inv = parse_inventory(
+            "## 3.6 Submit\n#### Pre-submit validation\nx\n#### On submit\nx\n## 3.7 Actions\n#### Buttons\nx\n",
+        );
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("F.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "3.6",
+            out_of_scope: "",
+        });
+        let uncovered: Vec<&str> =
+            v["uncovered"].as_array().unwrap().iter().map(|u| u.as_str().unwrap()).collect();
+        assert_eq!(uncovered, vec!["3.6", "Pre-submit validation", "On submit"], "{v}");
+        let excluded = v["excluded_by_plan"].as_array().unwrap();
+        assert!(excluded.iter().any(|e| e.as_str().unwrap().starts_with("3.7")), "{v}");
+        assert!(excluded.iter().any(|e| e.as_str().unwrap().starts_with("Buttons")), "{v}");
     }
 }

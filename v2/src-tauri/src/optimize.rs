@@ -640,10 +640,45 @@ fn already_has_preamble(c: &TestCase, entry: &str) -> bool {
         if norm_step(&s.action).starts_with(&norm_step(entry)) {
             return true;
         }
+        // "As the manager, open the Review step" is the same walk-in with
+        // a role prefix - a very common test-writing idiom, and skipping
+        // past it re-added 18 preamble steps to an 11-case set (round 8
+        // dogfooding). The clause is dropped before the prefix test.
         let l = s.action.to_lowercase();
-        ["launch", "open the app", "start the app", "log in", "sign in", "navigate to"]
+        let l = match l.starts_with("as the ") || l.starts_with("as a ") || l.starts_with("as an ")
+        {
+            true => l.split_once(',').map(|(_, rest)| rest.trim_start().to_string()).unwrap_or(l),
+            false => l,
+        };
+        if ["launch", "start the app", "log in", "sign in", "navigate to", "go to "]
             .iter()
             .any(|m| l.starts_with(m))
+        {
+            return true;
+        }
+        // "Open the Review step" is a walk-in; "Open the payment detail"
+        // is a mid-flow action. Both start with "open ", so the verb alone
+        // cannot decide (round 8: the blanket reading deleted legitimate
+        // preambles). It counts only when the step names a navigation
+        // CONTAINER - a place the tester goes, not a thing they act on.
+        l.starts_with("open ")
+            && l.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| {
+                matches!(
+                    w,
+                    "app" | "application"
+                        | "portal"
+                        | "site"
+                        | "browser"
+                        | "url"
+                        | "page"
+                        | "screen"
+                        | "tab"
+                        | "module"
+                        | "menu"
+                        | "step"
+                        | "dashboard"
+                )
+            })
     })
 }
 

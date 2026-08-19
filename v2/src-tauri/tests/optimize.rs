@@ -244,6 +244,28 @@ fn a_case_that_already_walks_in_is_not_given_a_second_preamble() {
     assert_eq!(report.preamble_steps_added, 0);
 }
 
+/// Round 8 dogfooding: "Open the Review step" and "As the manager, open
+/// the Team Reviews tab" are both walk-ins - the generic "open " reading
+/// and the role-prefix idiom each got 18 redundant preambles bolted on.
+#[test]
+fn open_anything_and_role_prefixed_walk_ins_count_as_preambles() {
+    let walk_ins = [
+        "Open the Review step for the selected employee",
+        "As the manager, open the Team Reviews tab",
+        "As an admin, go to the configuration screen",
+    ];
+    for action in walk_ins {
+        let c = case("Walks in", "Reviews", "", vec![step(action, "It opens")]);
+        let (out, report) = optimize(vec![c], Some("Launch the HRM portal."));
+        assert_eq!(out[0].steps.len(), 1, "no preamble for {action:?}");
+        assert_eq!(report.preamble_steps_added, 0, "for {action:?}");
+    }
+    // A case that genuinely starts mid-flow still gets its walk-in.
+    let c = case("Mid-flow", "Reviews", "", vec![step("Click Save", "Saved")]);
+    let (_, report) = optimize(vec![c], Some("Launch the HRM portal."));
+    assert!(report.preamble_steps_added >= 1);
+}
+
 // ---------------------------------------------------------------- ordering
 
 /// The headline behaviour: interleaved setups get grouped, so the tester
