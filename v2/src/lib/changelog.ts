@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.4",
+    date: "2026-08-19",
+    items: [
+      "check_spec_coverage honours an elided quote: quote the fragments you need with an ellipsis (`...`) between them, and each fragment is verified verbatim, in order - a rewritten or reordered quote still fails.",
+      "A plan's sections scope understands ranges (\"3.1-3.6\", \"3.1 to 3.6\"), letter-suffixed headings (\"3.4a\") are parsed and citable, and a named sub-heading now inherits its parent section's in/out-of-scope verdict instead of drowning the exclusions list.",
+      "The optimizer recognises \"As the manager, open the Review step\" as a case that already walks in - no more redundant preamble bolted on top - while \"Open the payment detail\" mid-flow steps still get their walk-in.",
+      "get_tags without a query is capped at 300 tags (the note says how to search the rest), and merge_case_files' duplicate-title warning shows the title exactly as its author wrote it.",
+    ],
+  },
+  {
     version: "1.20.3",
     date: "2026-08-19",
     items: [
