@@ -233,47 +233,78 @@ pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
     let quote_opener_re = Regex::new(r#"^\s*>\s*"(.*)$"#).unwrap();
     let code_re = Regex::new(r"(?im)^\s*code:\s*\S+").unwrap();
 
+    // A segment after `;` is a SECOND document pointer only when it names a
+    // document (carries a file extension). Round 7 §7.2: `Summary.md 5 ...;
+    // Step3-Timeline.md 3.8` silently dropped the second pointer - it
+    // neither resolved nor errored, so the second document read as
+    // uncovered however many cases pointed at it. A semicolon inside
+    // free-text detail ("employees; managers too") stays detail.
+    let names_document_re = Regex::new(r"^(?s).+?\.[A-Za-z][A-Za-z0-9]{0,5}(?:\s|$)").unwrap();
+
     let mut specs = vec![];
     let lines: Vec<&str> = reviewer_notes.lines().collect();
     for (i, line) in lines.iter().enumerate() {
         if let Some(caps) = spec_re.captures(line) {
-            let (file, mut section_raw) = split_file_and_section(caps[1].trim());
-            // Tolerate a trailing period on the whole citation line.
-            if let Some(stripped) = section_raw.strip_suffix('.') {
-                section_raw = stripped.to_string();
+            let mut pointers: Vec<String> = vec![];
+            for seg in caps[1].trim().split(';') {
+                let seg = seg.trim();
+                match pointers.last_mut() {
+                    Some(last) if !names_document_re.is_match(seg) => {
+                        // Not a new pointer - reattach the split-off detail.
+                        last.push_str("; ");
+                        last.push_str(seg);
+                    }
+                    _ if seg.is_empty() => {}
+                    _ => pointers.push(seg.to_string()),
+                }
             }
 
-            if let Some(qcaps) = inline_quote_re.captures(&section_raw) {
-                let section = normalize_section_id(qcaps[1].trim());
-                let quote = accumulate_quote(qcaps[2].to_string(), &lines[i + 1..]);
-                specs.push(SpecCitation { file, section, quote, exemption: None });
-                continue;
+            for (pi, pointer) in pointers.iter().enumerate() {
+                let (file, mut section_raw) = split_file_and_section(pointer);
+                // Tolerate a trailing period on the whole citation line.
+                if let Some(stripped) = section_raw.strip_suffix('.') {
+                    section_raw = stripped.to_string();
+                }
+
+                if let Some(qcaps) = inline_quote_re.captures(&section_raw) {
+                    let section = normalize_section_id(qcaps[1].trim());
+                    let quote = accumulate_quote(qcaps[2].to_string(), &lines[i + 1..]);
+                    specs.push(SpecCitation { file, section, quote, exemption: None });
+                    continue;
+                }
+
+                let (section, exemption) = match exemption_re.captures(&section_raw) {
+                    Some(ecaps) => (ecaps[1].trim().to_string(), Some(ecaps[2].trim().to_string())),
+                    None => (section_raw, None),
+                };
+
+                // A quote, if present, opens on the next non-blank line and
+                // may wrap across several more before its closing mark. It
+                // belongs to the line's FIRST pointer - the quote follows
+                // the line as a whole, and the primary citation is the one
+                // it substantiates.
+                let quote = (pi == 0)
+                    .then(|| {
+                        lines[i + 1..]
+                            .iter()
+                            .enumerate()
+                            .find(|(_, l)| !l.trim().is_empty())
+                            .and_then(|(offset, opener)| {
+                                quote_opener_re
+                                    .captures(opener)
+                                    .map(|c| accumulate_quote(c[1].to_string(), &lines[i + 2 + offset..]))
+                            })
+                            .flatten()
+                    })
+                    .flatten();
+
+                specs.push(SpecCitation {
+                    file,
+                    section: normalize_section_id(&section),
+                    quote,
+                    exemption,
+                });
             }
-
-            let (section, exemption) = match exemption_re.captures(&section_raw) {
-                Some(ecaps) => (ecaps[1].trim().to_string(), Some(ecaps[2].trim().to_string())),
-                None => (section_raw, None),
-            };
-
-            // A quote, if present, opens on the next non-blank line and may
-            // wrap across several more before its closing mark.
-            let quote = lines[i + 1..]
-                .iter()
-                .enumerate()
-                .find(|(_, l)| !l.trim().is_empty())
-                .and_then(|(offset, opener)| {
-                    quote_opener_re
-                        .captures(opener)
-                        .map(|c| accumulate_quote(c[1].to_string(), &lines[i + 2 + offset..]))
-                })
-                .flatten();
-
-            specs.push(SpecCitation {
-                file,
-                section: normalize_section_id(&section),
-                quote,
-                exemption,
-            });
         }
     }
 
@@ -434,10 +465,29 @@ fn parse_out_of_scope_ids(
     // when named verbatim - there is no id to anchor on, so the full name
     // is the evidence.
     let text_lower = out_of_scope.to_lowercase();
+    // A slash-list names every item in it (round 7 §8): "Audience:
+    // Employees / Managers / Reviewers" must reach "Audience: Managers"
+    // and "Audience: Reviewers", not only the variant that happens to
+    // appear verbatim - matching one out of three made the sentence do
+    // the opposite of what it said.
+    let slash_match = |k_lower: &str| -> bool {
+        let Some((head, tail)) = k_lower.split_once(':') else { return false };
+        let head = format!("{head}:");
+        let tail = tail.trim();
+        if tail.is_empty() {
+            return false;
+        }
+        text_lower
+            .lines()
+            .filter(|l| l.contains('/'))
+            .filter_map(|l| l.find(&head).map(|at| &l[at + head.len()..]))
+            .any(|after| after.split('/').take(6).any(|part| part.trim().starts_with(tail)))
+    };
     for k in known_ids {
+        let k_lower = k.to_lowercase();
         if k.chars().next().is_some_and(|c| !c.is_ascii_digit())
             && k.len() >= 4
-            && text_lower.contains(&k.to_lowercase())
+            && (text_lower.contains(&k_lower) || slash_match(&k_lower))
         {
             ids.insert(k.clone());
         }
@@ -506,6 +556,7 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
     let mut unattributed: Vec<String> = vec![];
     let mut cited_but_absent: Vec<String> = vec![];
     let mut quote_not_in_document: Vec<String> = vec![];
+    let mut cited_without_quote: Vec<String> = vec![];
 
     for case in input.cases {
         let Some(citations) = parse_citations(&case.reviewer_notes) else {
@@ -564,6 +615,27 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
                                     .is_some_and(|tail| tail.starts_with(char::is_whitespace))
                         })
                         .max_by_key(|s| s.id.len())
+                })
+                .or_else(|| {
+                    // Round 7 §7.1, the mirror of the fallback above: the
+                    // citation is an exact PREFIX of the heading - the
+                    // author stopped before a parenthetical the heading
+                    // carries ("(SYS-01 - SYS-05)"). Boundary discipline
+                    // as ever: the heading's next character must be a word
+                    // boundary, so "7.1" never claims "7.10". Only an
+                    // UNAMBIGUOUS prefix resolves - two headings sharing
+                    // it would make this a guess, not a match.
+                    let mut hits = doc.sections.iter().filter(|s| {
+                        s.id.len() > spec.section.len()
+                            && s.id
+                                .get(..spec.section.len())
+                                .is_some_and(|head| head.eq_ignore_ascii_case(&spec.section))
+                            && s.id
+                                .get(spec.section.len()..)
+                                .is_some_and(|tail| tail.starts_with(|c: char| c.is_whitespace() || c == '('))
+                    });
+                    let first = hits.next();
+                    if hits.next().is_some() { None } else { first }
                 });
 
             match resolved {
@@ -571,10 +643,33 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
                     .entry(qualify(doc_display, &sec.id))
                     .or_default()
                     .push(case.title.clone()),
-                None => cited_but_absent.push(format!(
-                    "{} — cited by '{}', no such section in {}",
-                    spec.section, case.title, doc_display
-                )),
+                None => {
+                    // Name the near-miss: "nearly right" and "plain wrong"
+                    // read identically otherwise, and telling them apart
+                    // cost a six-probe ladder in the field (round 7 §7.1).
+                    let closest = doc
+                        .sections
+                        .iter()
+                        .map(|s| {
+                            let n = s
+                                .id
+                                .chars()
+                                .zip(spec.section.chars())
+                                .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+                                .count();
+                            (n, s)
+                        })
+                        .filter(|(n, _)| *n >= 4 && *n * 2 >= spec.section.chars().count())
+                        .max_by_key(|(n, _)| *n)
+                        .map(|(_, s)| format!(" (closest heading: \"{}\")", s.id));
+                    cited_but_absent.push(format!(
+                        "{} — cited by '{}', no such section in {}{}",
+                        spec.section,
+                        case.title,
+                        doc_display,
+                        closest.unwrap_or_default()
+                    ));
+                }
             }
 
             if let Some(quote) = &spec.quote {
@@ -582,6 +677,16 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
                 if !doc_text_norm.contains(&norm_quote) {
                     quote_not_in_document.push(format!("{} — quoted text not found in file", case.title));
                 }
+            }
+            // Round 7 §9: a bare `Spec:` line - no quote, no exemption -
+            // was invisible HERE and reported only by validate_cases, so
+            // the tool named for citation checking had a blind spot in the
+            // middle of its own job. The parse already knows; report it.
+            if spec.quote.is_none() && spec.exemption.is_none() {
+                cited_without_quote.push(format!(
+                    "{} — Spec: {} {} has no quote and no exemption",
+                    case.title, spec.file, spec.section
+                ));
             }
         }
     }
@@ -591,9 +696,17 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
     for (name, inv) in &input.inventories {
         for sec in &inv.sections {
             let key = qualify(name, &sec.id);
+            // Evidence beats exclusion (round 7 §8): a section with
+            // covering cases listed under `covered` AND under
+            // `excluded_by_plan` is a contradiction the report can resolve
+            // itself - the free-text scope match was over-eager, the
+            // citations are concrete.
+            if covered.contains_key(&key) {
+                continue;
+            }
             if is_excluded(&sec.id) {
                 excluded_by_plan.push(format!("{key} — excluded by the plan's scope"));
-            } else if !covered.contains_key(&key) {
+            } else {
                 uncovered.push(key);
             }
         }
@@ -607,6 +720,7 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
         "unattributed": unattributed,
         "cited_but_absent": cited_but_absent,
         "quote_not_in_document": quote_not_in_document,
+        "cited_without_quote": cited_without_quote,
         "excluded_by_plan": excluded_by_plan,
     })
 }
@@ -683,6 +797,164 @@ mod tests {
             out_of_scope: "",
         });
         assert_eq!(v["quote_not_in_document"], serde_json::json!(Vec::<String>::new()), "{v}");
+    }
+
+    // ---- round 7 §§7-9 --------------------------------------------------
+
+    /// §7.1: a citation that is an exact PREFIX of the real heading
+    /// resolves - `5. Cycle Stage Level Notifications` reaches the heading
+    /// `5. Cycle Stage Level Notifications (SYS-01 -> SYS-05)`. Round 6
+    /// §3.2 made trailing detail AFTER a complete heading resolve; the
+    /// mirror (an incomplete heading) cost a six-probe ladder.
+    #[test]
+    fn a_citation_that_prefixes_the_heading_resolves() {
+        let inv = parse_inventory("## 5. Cycle Stage Level Notifications (SYS-01 - SYS-05)\n\nbody\n");
+        let cases = vec![case("Send To", "Spec: Summary.md 5. Cycle Stage Level Notifications")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("Summary.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["cited_but_absent"].as_array().unwrap().len(), 0, "{v}");
+        assert_eq!(v["covered"].as_object().unwrap().len(), 1, "{v}");
+    }
+
+    /// The prefix rule must not let `7.1` claim `7.10` - the boundary after
+    /// the citation has to be a real word boundary in the heading.
+    #[test]
+    fn a_numeric_prefix_does_not_claim_a_longer_section_number() {
+        let inv = parse_inventory("## 7.10 Archive rules\n\nbody\n");
+        let cases = vec![case("Archive", "Spec: S.md 7.1")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["cited_but_absent"].as_array().unwrap().len(), 1, "{v}");
+    }
+
+    /// §7.1's other half: when a section is nearly right, the error names
+    /// the closest heading instead of leaving the author to probe for it.
+    #[test]
+    fn a_near_miss_names_the_closest_heading() {
+        let inv = parse_inventory("## 5. Cycle Stage Level Notifications (SYS-01 - SYS-05)\n\nbody\n");
+        // A typo ("Notifcations") - not a prefix, but close.
+        let cases = vec![case("Send To", "Spec: Summary.md 5. Cycle Stage Level Notifcations")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("Summary.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        let absent = v["cited_but_absent"].as_array().unwrap();
+        assert_eq!(absent.len(), 1, "{v}");
+        assert!(
+            absent[0].as_str().unwrap().contains("closest heading"),
+            "the near-miss should be named: {v}"
+        );
+    }
+
+    /// §7.2: a `;` citation names two documents - both pointers resolve,
+    /// not just the first. Half-honoured was the one misleading option.
+    #[test]
+    fn a_semicolon_citation_resolves_both_documents() {
+        let a = parse_inventory("## 5. Notifications\n\nbody\n");
+        let b = parse_inventory("## 3.8 Send To\n\nbody\n");
+        let cases = vec![case(
+            "Send To audience",
+            "Spec: Summary.md 5. Notifications; Step3-Timeline.md 3.8 Send To",
+        )];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("Summary.md".into(), a), ("Step3-Timeline.md".into(), b)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["cited_but_absent"].as_array().unwrap().len(), 0, "{v}");
+        assert_eq!(v["covered"].as_object().unwrap().len(), 2, "both documents covered: {v}");
+        assert_eq!(v["uncovered"].as_array().unwrap().len(), 0, "{v}");
+    }
+
+    /// A `;` inside free-text detail (no document after it) must NOT be
+    /// split into a phantom second pointer.
+    #[test]
+    fn a_semicolon_inside_detail_is_not_a_second_pointer() {
+        let inv = parse_inventory("## 5. Notifications\n\nbody\n");
+        let cases = vec![case("Send To", "Spec: Summary.md 5. Notifications - employees; managers too")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("Summary.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        assert_eq!(v["cited_but_absent"].as_array().unwrap().len(), 0, "{v}");
+        assert_eq!(v["covered"].as_object().unwrap().len(), 1, "{v}");
+    }
+
+    /// §8: a section with covering cases is never ALSO excluded - the
+    /// evidence wins over an over-eager scope match. The Alerts run listed
+    /// the same Implementation section under `covered` (11 cases) and
+    /// `excluded_by_plan` at once.
+    #[test]
+    fn covering_evidence_beats_an_out_of_scope_match() {
+        let inv = parse_inventory("## Implementation\n\nbody\n");
+        let cases = vec![case("Impl check", "Spec: S.md Implementation")];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "covered through their parent Implementation section",
+        });
+        assert_eq!(v["covered"].as_object().unwrap().len(), 1, "{v}");
+        assert_eq!(
+            v["excluded_by_plan"].as_array().unwrap().len(),
+            0,
+            "a covered section cannot be excluded too: {v}"
+        );
+    }
+
+    /// §8: a slash-list names every item in it. "Audience: Employees /
+    /// Managers / Reviewers" excluded only the first and left the other two
+    /// uncovered - the sentence achieved its own opposite.
+    #[test]
+    fn a_slash_list_excludes_every_named_section() {
+        let inv = parse_inventory(
+            "## Audience: Employees\n\nbody\n\n## Audience: Managers\n\nbody\n\n## Audience: Reviewers\n\nbody\n",
+        );
+        let cases: Vec<crate::model::TestCase> = vec![];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "the Audience: Employees / Managers / Reviewers subsections contain only SQL",
+        });
+        assert_eq!(v["excluded_by_plan"].as_array().unwrap().len(), 3, "{v}");
+        assert_eq!(v["uncovered"].as_array().unwrap().len(), 0, "{v}");
+    }
+
+    /// §9: a bare `Spec:` line - no quote, no exemption - is a finding of
+    /// THIS tool, not something only validate_cases mentions. The Alerts
+    /// draft passed with both citation lists empty while 14 cases carried
+    /// exactly this.
+    #[test]
+    fn a_citation_with_no_quote_and_no_exemption_is_reported() {
+        let inv = parse_inventory("## 7.7 Copy\n\nCopy body text.\n");
+        let cases = vec![
+            case("Bare", "Spec: S.md 7.7"),
+            case("Quoted", "Spec: S.md 7.7\n> \"Copy body text.\""),
+            case("Exempt", "Spec: S.md 7.7 - no quotable text (state table)"),
+        ];
+        let v = check_coverage(CoverageInput {
+            inventories: vec![("S.md".into(), inv)],
+            cases: &cases,
+            sections_scope: "",
+            out_of_scope: "",
+        });
+        let bare = v["cited_without_quote"].as_array().expect("fourth list present");
+        assert_eq!(bare.len(), 1, "{v}");
+        assert!(bare[0].as_str().unwrap().contains("Bare"), "{v}");
     }
 
     #[test]
@@ -973,6 +1245,7 @@ mod tests {
             "unattributed",
             "cited_but_absent",
             "quote_not_in_document",
+            "cited_without_quote",
             "excluded_by_plan",
         ];
         expected.sort_unstable();

@@ -588,6 +588,109 @@ async fn no_configuration_disables_nothing() {
     assert!(v["disabled"].as_array().unwrap().is_empty());
 }
 
+// ---- round 7 §§1-5: optimize_cases takes a path, like every other tool --
+
+struct TempDir(std::path::PathBuf);
+impl TempDir {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir()
+            .join(format!("tcm-optimize-{nanos}-{}", N.fetch_add(1, Ordering::SeqCst)));
+        std::fs::create_dir_all(&dir).unwrap();
+        TempDir(dir)
+    }
+}
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn draft_on_disk(dir: &TempDir) -> std::path::PathBuf {
+    let path = dir.0.join("draft.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({ "test_cases": [
+            { "title": "A", "steps": [{ "action": "Open the module.", "expected": "It opens." }] },
+            { "title": "B", "steps": [{ "action": "Open the module.", "expected": "It opens." }] }
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    path
+}
+
+/// A 457 KB finished draft cannot travel inline both ways (round 7 §1) -
+/// the optimizer reads it from disk like every other tool in the family.
+#[tokio::test]
+async fn a_draft_can_be_optimized_from_a_path() {
+    let dir = TempDir::new();
+    let path = draft_on_disk(&dir);
+    let target = format!("/optimize?path={}", path.to_string_lossy().replace('\\', "%5C"));
+    let (status, out) = route(&ctx(), None, "POST", &target, "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let cases = v["test_cases"].as_array().expect("transformed draft returned");
+    assert_eq!(cases.len(), 2);
+    assert!(
+        cases.iter().all(|c| c["spec_order"].is_number() && c["tester_order"].is_number()),
+        "every case carries both orders: {out}"
+    );
+}
+
+/// `in_place` writes the optimized draft back and answers with the report
+/// alone - the return half of the quarter-million-token cost was the other
+/// half of §1's complaint.
+#[tokio::test]
+async fn optimize_in_place_writes_back_and_returns_only_the_report() {
+    let dir = TempDir::new();
+    let path = draft_on_disk(&dir);
+    let target = format!(
+        "/optimize?in_place=true&path={}",
+        path.to_string_lossy().replace('\\', "%5C")
+    );
+    let (status, out) = route(&ctx(), None, "POST", &target, "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v.get("test_cases").is_none(), "in_place must not echo the draft: {out}");
+    assert_eq!(v["cases"], 2);
+    assert!(v["report"].is_object(), "the report is the response: {out}");
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(on_disk.contains("tester_order"), "the file was not rewritten: {on_disk}");
+    assert!(!std::path::Path::new(&format!("{}.tmp", path.display())).exists());
+}
+
+/// Same contract as transform_cases: two sources is a refusal, not a
+/// silent preference, and in_place with nothing to write back to is a 400.
+#[tokio::test]
+async fn optimize_refuses_both_sources_and_pathless_in_place() {
+    let dir = TempDir::new();
+    let path = draft_on_disk(&dir);
+    let target = format!("/optimize?path={}", path.to_string_lossy().replace('\\', "%5C"));
+    let (status, out) = route(&ctx(), None, "POST", &target, "[]", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("not both"), "{out}");
+
+    let (status, out) = route(&ctx(), None, "POST", "/optimize?in_place=true", "[]", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("path"), "{out}");
+}
+
+/// A path that does not resolve names itself in the error - the assistant
+/// is usually one typo away from the real file.
+#[tokio::test]
+async fn optimize_names_a_missing_path() {
+    let (status, out) =
+        route(&ctx(), None, "POST", "/optimize?path=C%3A%5Cnope%5Cmissing.json", "", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("missing.json"), "{out}");
+}
+
 /// The importer skips a case it cannot read and says why. Both tools threw
 /// those warnings away, so a draft came back shorter with no indication -
 /// "success" over work that had quietly gone missing.

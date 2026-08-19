@@ -13,6 +13,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.3",
+    date: "2026-08-19",
+    items: [
+      "The AI run-sheet optimizer can finally be pointed at a file: optimize_cases takes `path` and `in_place` like the other tools, so a 227-case finished draft no longer has to travel a quarter of a million tokens through the conversation - or skip its ordering entirely, which is what both large sets had been doing.",
+      "The optimizer keeps a full stop that legitimately follows a closing quote - the fix for the stray-stop defect had started deleting the real one from 'It reads \"X\".', the commonest expected-result shape there is.",
+      "AI coverage checking resolves a citation that stops short of a heading's trailing parenthetical, tells you the closest heading when a citation is nearly right instead of leaving you to probe for it, and honours both halves of a two-document citation joined with ';' - the second half used to vanish without a trace.",
+      "A section with test cases against it can no longer also be reported as excluded by the plan - the evidence wins - and scope notes written as slash-lists (\"Audience: Employees / Managers / Reviewers\") now exclude every item named, not just the first.",
+      "New coverage finding cited_without_quote: a Spec: line with no quote and no exemption now shows up in the coverage report itself, instead of surfacing one tool later.",
+      "The AI writing guide asks for preconditions to be reused word-for-word wherever the setup genuinely is the same - bespoke rewordings of the same setup leave the run-sheet ordering nothing to group.",
+    ],
+  },
+  {
     version: "1.20.2",
     date: "2026-08-18",
     items: [
