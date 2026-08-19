@@ -1211,6 +1211,28 @@ fn a_closing_quote_is_terminal_punctuation() {
     assert!(out.ends_with('"'), "the quote stays terminal: {out}");
 }
 
+/// Round 7 §6: the mirror image of §2.1. `It reads "X".` carries its stop
+/// OUTSIDE the quote - the assertion is the outer sentence, the quote has
+/// no stop of its own - and the §2.1 fix was deleting it, unterminating
+/// the commonest expected-result shape in both large sets. A pre-existing
+/// terminal `".` is well-formed; only a stop the trimmer would MANUFACTURE
+/// after an already-stopped quote (`."` -> `.".`) stays forbidden.
+#[test]
+fn a_pre_existing_stop_after_a_closing_quote_survives() {
+    let text = r#"It reads "Goal Planning Starts Soon"."#;
+    assert_eq!(clean_expected(text), text, "the outer sentence's stop was deleted");
+}
+
+/// The two quote tails together, so neither fix can regress the other:
+/// stop inside the quote -> none appended; stop outside -> kept.
+#[test]
+fn quote_tails_keep_exactly_one_stop_each_way() {
+    let inner = clean_expected(r#"The alert reads "The stage has ended.""#);
+    assert!(inner.ends_with('"') && !inner.ends_with("\"."), "inner-stop tail wrong: {inner}");
+    let outer = clean_expected(r#"The subject line reads "Cycle Published"."#);
+    assert!(outer.ends_with("\"."), "outer-stop tail wrong: {outer}");
+}
+
 /// §2.2: a first step that OPENS with the entry phrase already walks in
 /// from the entry - prepending the entry again duplicated ~500 steps
 /// across one real set.

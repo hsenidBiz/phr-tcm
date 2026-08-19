@@ -404,6 +404,16 @@ pub fn clean_expected(raw: &str) -> String {
         }
     }
 
+    // `It reads "X".` ends quote-then-stop: that stop belongs to the OUTER
+    // sentence (the quote carries none of its own) and is well-formed -
+    // remember it BEFORE the tail-normalisation below strips it, or the
+    // commonest expected-result shape in real sets comes back
+    // unterminated (round 7 §6, the mirror of round 6 §2.1).
+    let stopped_after_quote = {
+        let tail = s.trim_end().trim_end_matches('.');
+        tail.len() < s.trim_end().len()
+            && tail.ends_with(['"', '\u{201d}', '\'', '\u{2019}'])
+    };
     // A cut that landed just after a clause leaves its comma behind, and
     // "received,." is not a sentence - drop the severed connective before
     // the final full stop goes on.
@@ -415,11 +425,13 @@ pub fn clean_expected(raw: &str) -> String {
     if s.is_empty() {
         return squash(raw); // trimming ate everything - keep the original
     }
-    // A closing quote is terminal punctuation: the sentence it ends
-    // already carries its own full stop inside the quote, and appending
-    // another manufactures the `".` malformed tail (round 6 §2.1 - the
-    // raw-last-character test saw `"` and thought the sentence unfinished).
-    let out = if s.ends_with(['"', '\u{201d}', '\'', '\u{2019}']) {
+    // A closing quote PRECEDED by its own stop (`."`) is terminal
+    // punctuation: appending another manufactures the `".` malformed tail
+    // (round 6 §2.1 - the raw-last-character test saw `"` and thought the
+    // sentence unfinished). But a quote the author already followed with a
+    // stop (`".`) gets that stop back - the guard is against punctuation
+    // this trimmer introduces, not against the author's own.
+    let out = if s.ends_with(['"', '\u{201d}', '\'', '\u{2019}']) && !stopped_after_quote {
         sentence_case(&s)
     } else {
         format!("{}.", sentence_case(&s))

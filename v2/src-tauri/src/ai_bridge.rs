@@ -266,16 +266,56 @@ fn save_autorun_scripts(body: &str) -> (u16, String) {
 
 /// Reorganise a draft into a run sheet: navigation spelled out as steps,
 /// cases ordered so the tester switches environment as little as
-/// possible, expected results reduced to the outcome. Pure - it reads the
-/// JSON the assistant sends and hands back a new one. Nothing is written
-/// anywhere, and Azure DevOps is never touched.
+/// possible, expected results reduced to the outcome. Azure DevOps is
+/// never touched.
+///
+/// Round 7 §1: the draft may come as a `path` instead of inline JSON -
+/// the run-sheet ordering is inherently GLOBAL (one tester_order across
+/// the whole set), so this was the one tool where "too big to inline"
+/// could not be chunked around: five shards give five sequences all
+/// starting at 1, a wrong answer that looks like an answer. `path` and
+/// `in_place` match transform_cases exactly; with `in_place: true` the
+/// response is the report alone, which removes the return half of the
+/// cost as well as the send half.
 fn optimize_json(body: &str, target: &str) -> (u16, String) {
+    let from_path = q(target, "path").filter(|p| !p.trim().is_empty());
+    let in_place = matches!(q(target, "in_place").as_deref(), Some("true") | Some("1"));
+    if from_path.is_some() && !body.trim().is_empty() {
+        return (
+            400,
+            serde_json::json!({ "error": "pass the draft as \"json\" OR as \"path\", not both - \
+                a silently preferred source is how the wrong draft gets optimized." })
+            .to_string(),
+        );
+    }
+    if in_place && from_path.is_none() {
+        return (
+            400,
+            serde_json::json!({ "error": "in_place needs a \"path\" - there is no file to write back to." })
+                .to_string(),
+        );
+    }
     // Warnings are not failures - a long title or a comma in a tag is worth
     // saying and not worth refusing over - but they must reach the caller,
     // because some of them mean a case was dropped.
-    let (cases, import_warnings) = match parse_cases_with_warnings(body) {
-        Ok(v) => v,
-        Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+    let (cases, import_warnings) = match &from_path {
+        Some(path) => {
+            if !std::path::Path::new(path).is_file() {
+                return (
+                    400,
+                    serde_json::json!({ "error": format!("{path} does not exist or is not a file") })
+                        .to_string(),
+                );
+            }
+            match crate::import_parser::parse_file(path) {
+                Ok(v) => v,
+                Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+            }
+        }
+        None => match parse_cases_with_warnings(body) {
+            Ok(v) => v,
+            Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
+        },
     };
     let entry = q(target, "entry");
     let dry_run = matches!(q(target, "dry_run").as_deref(), Some("true") | Some("1"));
@@ -302,6 +342,31 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
         Ok(j) => j,
         Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
     };
+    if in_place {
+        // Temp-in-same-directory + rename, like transform_cases: a half-
+        // written draft under a watched path is worse than no write.
+        let path = from_path.expect("guarded above");
+        let tmp = format!("{path}.tmp");
+        if let Err(e) = std::fs::write(&tmp, &json) {
+            let _ = std::fs::remove_file(&tmp);
+            return (500, serde_json::json!({ "error": format!("could not write {tmp}: {e}") }).to_string());
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            let _ = std::fs::remove_file(&tmp);
+            return (500, serde_json::json!({ "error": format!("could not replace {path}: {e}") }).to_string());
+        }
+        return (
+            200,
+            serde_json::json!({
+                "written_to": path,
+                "cases": optimized.len(),
+                "report": report,
+                "import_warnings": import_warnings,
+                "note": "The optimized draft was written back in place - no JSON is echoed. Every case now carries spec_order and tester_order; the app's file watch will pick the change up.",
+            })
+            .to_string(),
+        );
+    }
     let doc: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
     (
         200,
@@ -1201,6 +1266,11 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         an in-app note that round-trips through the file but is never sent\n\
         to Azure DevOps. Include `id` ONLY to update that exact work item;\n\
         omit it to create.\n\n\
+        Reuse preconditions VERBATIM wherever the environment genuinely is\n\
+        the same - do not reword the same setup per case. The run-sheet\n\
+        ordering groups cases by shared preconditions so the tester changes\n\
+        environment as little as possible; 192 bespoke wordings of the same\n\
+        few setups leave it nothing to group, and the ordering buys nothing.\n\n\
         ## Granularity - quality over quantity\n\
         Similar checks belong in ONE case, not several. Checking a\n\
         notification's title and checking its body is one case with two\n\

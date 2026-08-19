@@ -144,7 +144,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "check_spec_coverage",
-            "description": "Reports coverage as findings to read and account for, not as pass/fail - a partial draft is a normal state, not an error. Joins a draft's `Spec:` citations against one or more spec documents and returns which sections have no case yet (`uncovered`), which cases could not be attributed to any section, which citations point at a section or file that does not exist, which quoted text was not found in the document, and which sections are excluded by the plan's own scope. AC-level sections (e.g. \"8.2 (AC-2)\") are reported individually - a covered parent section does not silence its acceptance criteria. Run before optimize_cases so gaps are found while the draft is still easy to extend.",
+            "description": "Reports coverage as findings to read and account for, not as pass/fail - a partial draft is a normal state, not an error. Joins a draft's `Spec:` citations against one or more spec documents and returns which sections have no case yet (`uncovered`), which cases could not be attributed to any section, which citations point at a section or file that does not exist, which quoted text was not found in the document, which citations carry no quote and no exemption (`cited_without_quote` - fix these here, do not wait for validate_cases), and which sections are excluded by the plan's own scope. A citation may stop short of a heading's trailing parenthetical, and `;` may join a second document's pointer onto the same Spec: line - both resolve. AC-level sections (e.g. \"8.2 (AC-2)\") are reported individually - a covered parent section does not silence its acceptance criteria. Run before optimize_cases so gaps are found while the draft is still easy to extend.",
             "inputSchema": schema(serde_json::json!({
                 "json": { "type": "string", "description": "The draft import JSON (array or wrapper object) - use this or `path`, never both" },
                 "path": { "type": "string", "description": "Absolute path to a local draft file - use this or `json`, never both" },
@@ -183,13 +183,15 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "optimize_cases",
-            "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it.",
+            "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it. For large drafts pass `path` (a local file) instead of inlining the JSON, and `in_place: true` to write the result back to that file and get only the report - NEVER shard a draft to fit it inline: tester_order is one sequence across the whole set, and per-shard orderings cannot be stitched together.",
             "inputSchema": schema(serde_json::json!({
-                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object)" },
+                "json": { "type": "string", "description": "The draft import JSON (array or wrapper object). Use `path` instead for large drafts - never both." },
+                "path": { "type": "string", "description": "Absolute path to the draft file - use this instead of `json` for large drafts." },
+                "in_place": { "type": "boolean", "description": "With `path`: write the optimized draft back to the same file (atomic) and return only the report, skipping the JSON echo." },
                 "entry": { "type": "string", "description": "First step of every preamble, e.g. \"Launch the HRM portal.\" (default: \"Launch the application.\"). A non-launch entry (e.g. opening a module) is placed AFTER the sign-in step." },
                 "dry_run": { "type": "boolean", "description": "Return only the report of what would change - inspect it before committing to the transformed JSON" },
                 "reorder": { "type": "boolean", "description": "Default true: regroup the cases so the tester changes environment as little as possible. Pass false for a set that is meant to be read against the specification in document order - navigation and expected results are still cleaned up, the order is left alone." },
-            }), &["json"]),
+            }), &[]),
         },
         {
             "name": "transform_cases",
@@ -352,6 +354,16 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // reordering, and an absent flag has to mean the same thing.
             if args["reorder"].as_bool() == Some(false) {
                 params.push("reorder=false".to_string());
+            }
+            // Round 7 §1: a large draft travels as a file path, like every
+            // other tool in the family. Forwarded only when present, so
+            // the route can refuse path+json as two sources rather than
+            // silently preferring one.
+            if let Some(p) = args["path"].as_str().filter(|p| !p.trim().is_empty()) {
+                params.push(format!("path={}", percent_encode(p)));
+            }
+            if args["in_place"].as_bool().unwrap_or(false) {
+                params.push("in_place=true".to_string());
             }
             let target = if params.is_empty() {
                 "/optimize".to_string()
