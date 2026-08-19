@@ -71,7 +71,9 @@ fn now_parts() -> (i64, u32, u32, u32, u32, u32) {
     (y, m, d, (rem / 3600) as u32, ((rem % 3600) / 60) as u32, (rem % 60) as u32)
 }
 
-fn stamp() -> String {
+/// UTC "YYYY-MM-DD HH:MM:SS". Public because backup export stamps its
+/// `exported_at` with the same clock the log lines use.
+pub fn stamp() -> String {
     let (y, mo, d, h, mi, s) = now_parts();
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }

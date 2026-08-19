@@ -17,6 +17,7 @@ pub mod assigned_watch;
 pub mod db_defaults;
 pub mod audio;
 pub mod auth;
+pub mod backup;
 pub mod capture;
 pub mod commands;
 pub mod events;
@@ -103,6 +104,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::app_log_dir,
             misc::apply_update,
             misc::watch_assigned_work,
+            misc::export_app_backup,
+            misc::import_app_backup,
             cases::list_test_case_fields,
             cases::pbi_test_cases_full,
             cases::update_test_case,

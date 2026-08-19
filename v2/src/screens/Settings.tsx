@@ -15,6 +15,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
 import { loadDefaultTags, saveDefaultTags } from "../lib/defaultTags";
+import { applyLocalStorage, collectLocalStorage } from "../lib/backup";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import TagsField from "../components/TagsField";
 import { cn } from "../lib/cn";
 import {
@@ -122,6 +124,58 @@ export default function Settings({ org, project }: { org: string; project: strin
     setChoiceState(t);
     setThemeChoice(t);
   };
+
+  // Backup & transfer. Import is two steps: pick the file, then confirm in
+  // a modal - it overwrites this machine's settings and cache and reloads
+  // the app, which is not something a stray double-click should do.
+  const [importPath, setImportPath] = useState<string | null>(null);
+
+  const exportBackup = useMutation({
+    mutationFn: async () => {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const path = await save({
+        defaultPath: `tcm-backup-${stamp}.json`,
+        filters: [{ name: "Test Case Manager backup", extensions: ["json"] }],
+      });
+      if (!path) return null;
+      const r = await commands.exportAppBackup(collectLocalStorage(), path);
+      if (r.status === "error") throw new Error(r.error);
+      return r.data;
+    },
+    onSuccess: (s) => {
+      if (!s) return; // dialog cancelled
+      const skipped = s.skipped.length ? ` ${s.skipped.length} large file(s) were left out.` : "";
+      toast.success(`Backup saved: ${s.keys} setting(s) and ${s.files} file(s).${skipped}`);
+    },
+    onError: (e) => toast.error(`Export failed: ${e.message}`),
+  });
+
+  const pickImport = async () => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "Test Case Manager backup", extensions: ["json"] }],
+    });
+    if (typeof path === "string") setImportPath(path);
+  };
+
+  const importBackup = useMutation({
+    mutationFn: async (path: string) => {
+      const r = await commands.importAppBackup(path);
+      if (r.status === "error") throw new Error(r.error);
+      applyLocalStorage(r.data.local_storage);
+      return r.data;
+    },
+    onSuccess: () => {
+      setImportPath(null);
+      // Every screen reads its settings at mount - a full reload is the
+      // only honest way to make the imported state the live state.
+      window.location.reload();
+    },
+    onError: (e) => {
+      setImportPath(null);
+      toast.error(`Import failed: ${e.message}`);
+    },
+  });
 
 
   return (
@@ -285,6 +339,52 @@ export default function Settings({ org, project }: { org: string; project: strin
           />
         ) : (
           <p className="text-xs text-faint">Pick an organization and project first.</p>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Backup &amp; transfer</h2>
+        <p className="text-sm text-muted">
+          Moving to a new computer? Export your settings and local data -
+          theme, default tags, drafts, cached lists, Auto Run scripts - to a
+          single file, then import it on the other machine. Your Microsoft
+          sign-in is never included; you simply sign in again there.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exportBackup.isPending}
+            onClick={() => exportBackup.mutate()}
+          >
+            {exportBackup.isPending ? "Exporting" : "Export to file"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={pickImport}>
+            Import from file
+          </Button>
+        </div>
+        {importPath && (
+          <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
+            <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
+            <p className="text-sm text-muted">
+              This replaces the settings and local data on this machine with
+              the backup&apos;s copy, then reloads the app. Anything you
+              changed here since the backup was made will be overwritten.
+            </p>
+            <p className="break-all text-xs text-faint">{importPath}</p>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={importBackup.isPending}
+                onClick={() => importBackup.mutate(importPath)}
+              >
+                {importBackup.isPending ? "Importing" : "Import and reload"}
+              </Button>
+            </div>
+          </Modal>
         )}
       </section>
 

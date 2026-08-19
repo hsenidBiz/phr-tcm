@@ -131,6 +131,20 @@ export const commands = {
 	 *  polls, so switching project doesn't spawn a second task.
 	 */
 	watchAssignedWork: (organization: string, project: string) => typedError<null, string>(__TAURI_INVOKE("watch_assigned_work", { organization, project })),
+	/**
+	 *  Export everything the app remembers on this machine - the webview's
+	 *  `tcm-v2-*` localStorage (handed in by the frontend, which is the only
+	 *  side that can read it) plus the disk stores under `app_data_dir` - into
+	 *  one JSON file the user can carry to another laptop. Credentials never
+	 *  travel: sign-in tokens are memory-only and outside the exported roots.
+	 */
+	exportAppBackup: (localStorage: { [key in string]: string }, path: string) => typedError<ExportSummary, string>(__TAURI_INVOKE("export_app_backup", { localStorage, path })),
+	/**
+	 *  Read a backup file, restore its disk half, and hand the localStorage
+	 *  half back to the frontend to apply (only the webview can write it).
+	 *  The frontend reloads afterwards so every screen re-reads its state.
+	 */
+	importAppBackup: (path: string) => typedError<BackupImportResult, string>(__TAURI_INVOKE("import_app_backup", { path })),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
 	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**
@@ -491,6 +505,13 @@ export type AuthStatus = {
 	account: string | null,
 };
 
+export type BackupImportResult = {
+	local_storage: { [key in string]: string },
+	files_restored: number,
+	exported_at: string,
+	app_version: string,
+};
+
 export type BoardData = {
 	items: BoardItem[],
 	states_by_type: { [key in string]: StateInfo[] },
@@ -720,6 +741,14 @@ export type EnsuredSuite = {
 	 *  nowhere would otherwise be a mystery).
 	 */
 	created_plan: boolean,
+};
+
+export type ExportSummary = {
+	path: string,
+	keys: number,
+	files: number,
+	/**  Files left out (too large), named so the export is honest about it. */
+	skipped: string[],
 };
 
 /**  A single field on an extra page. */
