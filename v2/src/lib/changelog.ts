@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.5",
+    date: "2026-08-19",
+    items: [
+      "Backup & transfer, in Settings: export your settings and local data - theme, default tags, drafts, cached lists, Auto Run scripts - to a single file, and import it on another machine. Your Microsoft sign-in is never included; you simply sign in again there.",
+      "Import is careful by design: it asks before replacing this machine's state, refuses files that aren't Test Case Manager backups, and reloads the app so everything picks up the imported settings.",
+    ],
+  },
+  {
     version: "1.20.4",
     date: "2026-08-19",
     items: [
