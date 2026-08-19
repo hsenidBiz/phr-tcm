@@ -204,3 +204,40 @@ fn an_unreachable_bridge_disables_nothing() {
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 15);
 }
+
+/// The intake's questions and `begin_test_case_writing`'s inputSchema are
+/// two halves of one contract, and nothing bound them together: a field
+/// added to `intake::questions()` (and made required in `problems()`)
+/// without a matching schema property is silently STRIPPED by the MCP
+/// client before the call is ever made. The tool then asks for an answer
+/// there is no way to give - an unbreakable intake loop, which is exactly
+/// what shipped in 1.20.2 when `reference_cases` was added to one side
+/// only, past all 39 green suites.
+#[test]
+fn every_intake_question_is_answerable_through_the_mcp_schema() {
+    let resp = handle_message(
+        r#"{"jsonrpc":"2.0","id":9,"method":"tools/list"}"#,
+        "1.0.0",
+        &stub(200, ""),
+    )
+    .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let begin = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "begin_test_case_writing")
+        .expect("begin_test_case_writing is registered");
+    let props = begin["inputSchema"]["properties"]
+        .as_object()
+        .expect("inputSchema has properties");
+
+    for q in v2_lib::intake::questions() {
+        assert!(
+            props.contains_key(&q.field),
+            "intake asks for '{}' but begin_test_case_writing's schema has no such property - \
+             an MCP client will drop the answer and the intake can never reach \"ready\"",
+            q.field
+        );
+    }
+}

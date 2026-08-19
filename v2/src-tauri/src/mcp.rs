@@ -111,6 +111,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
                 "sections": { "type": "string", "description": "Which parts of those documents are in scope" },
                 "authority": { "type": "string", "description": "\"spec\", \"app\", or \"spec-wins\" - which source decides when they disagree" },
                 "ordering": { "type": "string", "description": "\"spec\" (cases walk down the specification) or \"tester\" (grouped so the tester changes environment as little as possible)" },
+                "reference_cases": { "type": "string", "description": "The developer's answer to \"any reference test cases to model on?\" - a PBI id, a file path, prose, or \"none\". Required: asked on every writing job, and \"none\" is the way to say no" },
                 "examples_pbi": { "type": "integer", "description": "PBI holding existing cases to learn style from and check for duplicates" },
                 "check_examples": { "type": "boolean", "description": "Whether to read those existing cases at all" },
                 "tags": { "type": "string", "description": "Semicolon-separated" },
