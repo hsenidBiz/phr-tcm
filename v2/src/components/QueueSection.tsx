@@ -24,6 +24,7 @@ import {
 } from "../lib/submitRun";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
+import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
 import { loadNotes, saveNote } from "../lib/caseNotes";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
@@ -178,6 +179,9 @@ export default function QueueSection({
   // beats an error toast. Reads pause on their own (React Query's
   // networkMode) and resume when the connection returns.
   const online = useSyncExternalStore(subscribeOnline, onlineSnapshot);
+  // For the sticky Collapse all's left offset - it parks bottom LEFT like
+  // every other screen's, clearing the sidebar at its current width.
+  const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
 
   // While mounted, this screen's own setQueue handles the post-submit
   // prune (through React state, as always). When it is NOT mounted at the
@@ -1390,13 +1394,19 @@ export default function QueueSection({
         </div>
       )}
 
-      {/* Sticky Collapse all, bottom RIGHT, once anything in the queue is
-          unfolded (steps, diffs, or the inline editor). Portalled because
-          this renders inside AnimatedContent, whose GSAP transform would
-          make `fixed` mean the scroll region instead of the viewport. */}
+      {/* Sticky Collapse all, bottom LEFT like every other screen's, once
+          anything in the queue is unfolded (steps, diffs, or the inline
+          editor). Portalled because this renders inside AnimatedContent,
+          whose GSAP transform would make `fixed` mean the scroll region
+          instead of the viewport. */}
       {(expandedSteps.size + expandedDiffs.size > 0 || editingIdx != null) &&
         createPortal(
-          <div className="fixed bottom-6 right-6 z-40 rounded-full border border-border bg-surface shadow-2xl">
+          /* Left offset clears the sidebar at its CURRENT width - parked at
+             left-6 this would sit exactly on the sidebar's Close button. */
+          <div
+            className="fixed bottom-6 z-40 rounded-full border border-border bg-surface shadow-2xl transition-[left] duration-200"
+            style={{ left: stickyLeftPx(sidebarCollapsed) }}
+          >
             <Button
               size="sm"
               variant="default"

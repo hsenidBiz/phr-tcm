@@ -457,8 +457,8 @@ test("duplicate-title creates stop the submit until explicitly allowed", async (
 });
 
 /// Unfolding steps (or diffs, or the editor) earns a sticky Collapse all
-/// in the bottom-right; clicking it folds everything shut. "Collapse",
-/// not "Close" - nothing is removed.
+/// in the bottom-LEFT - the same corner as every other screen's; clicking
+/// it folds everything shut. "Collapse", not "Close" - nothing is removed.
 test("a sticky Collapse all folds every unfolded row", async () => {
   renderQueue([makeCase(), makeCase({ title: "Second case" })]);
 
@@ -467,6 +467,12 @@ test("a sticky Collapse all folds every unfolded row", async () => {
   fireEvent.click(screen.getByLabelText("Expand steps of Login works"));
   fireEvent.click(screen.getByLabelText("Expand steps of Second case"));
   const collapse = screen.getByRole("button", { name: /Collapse all \(2\)/ });
+
+  // Bottom LEFT, like View/Update Test Cases and Run Tests: positioned by
+  // a sidebar-clearing left offset, never parked at right-6.
+  const wrapper = collapse.parentElement!;
+  expect(wrapper.className).not.toContain("right-6");
+  expect(wrapper.style.left).not.toBe("");
 
   fireEvent.click(collapse);
   expect(screen.queryByRole("button", { name: /Collapse all/ })).not.toBeInTheDocument();
