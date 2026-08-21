@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.6",
+    date: "2026-08-21",
+    items: [
+      "Fixed: \"Restart to update\" could restart you straight back into the old version. The installer has to rename the app's folder to swap in the new build, and anything the app had opened - the browser behind \"View in Browser\", Auto Run's Edge window - was started from inside that folder and kept it pinned, so the swap failed and the old version came back. The app now steps out of its install folder the moment it starts, so nothing it launches can hold the update hostage. If you are reading this, the update that brought you here worked; if an earlier one didn't, close your browser windows and try once more.",
+    ],
+  },
+  {
     version: "1.20.5",
     date: "2026-08-19",
     items: [

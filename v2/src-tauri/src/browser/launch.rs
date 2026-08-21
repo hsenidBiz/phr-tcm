@@ -134,6 +134,10 @@ pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
 
     let child = Command::new(exe)
         .args(launch_args(port, &profile_dir))
+        // Never the app's own cwd: a browser that inherits the install's
+        // `current\` pins it, and the next update cannot rename it. See
+        // `leave_install_dir` in lib.rs for the update that taught us this.
+        .current_dir(&profile_dir)
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", which.label()))?;
 
