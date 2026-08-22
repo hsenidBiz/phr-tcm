@@ -269,6 +269,11 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
       ),
     enabled: Boolean(org && project) && (!pbiMode || pbiScope !== null),
     retry: false,
+    // Cached-first: a tab flip inside a minute renders instantly from
+    // cache; after that the cached list still paints while a background
+    // refetch updates it. Refresh buttons and mutation invalidations
+    // bypass this and always hit the network.
+    staleTime: 60_000,
   });
 
   // Work-item -> PR chips, resolved PR-side (one list + one small call per

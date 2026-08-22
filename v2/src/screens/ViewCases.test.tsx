@@ -56,6 +56,38 @@ function mockCases(
   });
 }
 
+/// Cached-first: flipping away and back inside a minute must render from
+/// cache with zero refetch - the tab switch IS the hot path.
+test("a remount within staleTime reuses the cached case list", async () => {
+  let fetches = 0;
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") {
+      fetches++;
+      return [caseA, caseB, caseC];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const renderWithClient = () =>
+    render(
+      <QueryClientProvider client={qc}>
+        <ViewCases
+          org="acme"
+          project="Web"
+          pbi={{ id: 42, title: "Login flow", work_item_type: "Product Backlog Item" }}
+        />
+      </QueryClientProvider>,
+    );
+
+  const view = renderWithClient(); // first mount
+  await screen.findByText("Login - valid");
+  expect(fetches).toBe(1);
+  view.unmount();
+  renderWithClient(); // same client = same cache
+  await screen.findByText("Login - valid"); // renders instantly from cache
+  expect(fetches).toBe(1); // FAILS before the fix (2)
+});
+
 test("rows start compact; the chevron expands steps, tags and the comment editor", async () => {
   mockCases();
   renderView();

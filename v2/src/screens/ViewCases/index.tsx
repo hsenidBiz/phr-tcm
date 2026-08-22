@@ -91,6 +91,11 @@ export default function ViewCases({
       unwrap(commands.pbiTestCasesFull(org, pbiId!, prefs.moduleRef, prefs.preconditionsRef)),
     enabled: Boolean(org && pbiId != null),
     retry: false,
+    // Cached-first: a tab flip inside a minute renders instantly from
+    // cache; after that the cached list still paints while a background
+    // refetch updates it. Refresh buttons and mutation invalidations
+    // bypass this and always hit the network.
+    staleTime: 60_000,
   });
 
   const list = cases.data ?? [];

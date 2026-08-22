@@ -242,6 +242,11 @@ export default function QueueSection({
     queryKey: ["pbi-tc-titles", org, pbiId],
     queryFn: () => unwrap(commands.pbiTestCases(org, pbiId)),
     retry: false,
+    // Cached-first: a tab flip inside a minute renders instantly from
+    // cache; after that the cached list still paints while a background
+    // refetch updates it. Refresh buttons and mutation invalidations
+    // bypass this and always hit the network.
+    staleTime: 60_000,
   });
   const existingCases = (existing.data ?? []).map((t) => ({ id: t.id, title: t.title }));
 

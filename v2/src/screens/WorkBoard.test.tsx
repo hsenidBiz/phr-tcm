@@ -56,6 +56,34 @@ const boardData = {
   },
 };
 
+/// Cached-first: flipping away and back inside a minute must render from
+/// cache with zero refetch - the tab switch IS the hot path.
+test("a remount within staleTime reuses the cached board", async () => {
+  let fetches = 0;
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") {
+      fetches++;
+      return boardData;
+    }
+    if (cmd === "classification_paths") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const renderWithClient = () =>
+    render(
+      <QueryClientProvider client={qc}>
+        <WorkBoard org="acme" project="Web" />
+      </QueryClientProvider>,
+    );
+
+  const view = renderWithClient(); // first mount
+  await screen.findByText("Write docs");
+  expect(fetches).toBe(1);
+  view.unmount();
+  renderWithClient(); // same client = same cache
+  await screen.findByText("Write docs"); // renders instantly from cache
+  expect(fetches).toBe(1); // FAILS before the fix (2)
+});
+
 test("items land in their columns", async () => {
   mockIPC((cmd) => {
     if (cmd === "fetch_board") return boardData;
