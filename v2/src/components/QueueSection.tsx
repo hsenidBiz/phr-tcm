@@ -1079,7 +1079,11 @@ export default function QueueSection({
               <li
                 key={i}
                 className={cn(
-                  "cv-row rounded-md border text-sm transition-colors",
+                  // The open editor hosts a non-portaled Combobox dropdown that must
+                  // paint past the row's box - content-visibility's paint containment
+                  // would clip it, so drop cv-row while this row is being edited.
+                  editingIdx !== i && "cv-row",
+                  "rounded-md border text-sm transition-colors",
                   touched === "added"
                     ? "border-success/50 bg-success/5"
                     : touched === "changed"

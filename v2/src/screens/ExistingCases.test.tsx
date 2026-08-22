@@ -50,6 +50,9 @@ test("expands a case via the chevron and saves edits via update_test_case", asyn
   expect(screen.getByText("Valid login").closest("li")!.className).toContain("cv-row");
   fireEvent.click(screen.getByLabelText("Expand #201"));
   const titleInput = await screen.findByLabelText("Case title");
+  // The editor's Combobox dropdown paints past the row, so an open row
+  // must drop content-visibility's paint containment.
+  expect(titleInput.closest("li")!.className).not.toContain("cv-row");
   fireEvent.change(titleInput, { target: { value: "Valid login v2" } });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 

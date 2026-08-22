@@ -86,6 +86,9 @@ test("Edit opens the inline editor and Save writes back into the queue", async (
 
   fireEvent.click(screen.getByRole("button", { name: "Edit" }));
   const title = await screen.findByLabelText("Case title");
+  // The editor's Combobox dropdown paints past the row, so an editing row
+  // must drop content-visibility's paint containment.
+  expect(title.closest("li")!.className).not.toContain("cv-row");
   fireEvent.change(title, { target: { value: "Login works — edited" } });
   fireEvent.change(screen.getByLabelText("Step 1 expected"), {
     target: { value: "Dashboard shown" },

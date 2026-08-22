@@ -378,7 +378,11 @@ export default function ExistingCases({
               <li
                 key={c.id}
                 className={cn(
-                  "cv-row cursor-pointer select-none rounded-md border transition-colors",
+                  // The open editor hosts a non-portaled Combobox dropdown that must
+                  // paint past the row's box - content-visibility's paint containment
+                  // would clip it, so drop cv-row while this row is open.
+                  openId !== c.id && "cv-row",
+                  "cursor-pointer select-none rounded-md border transition-colors",
                   selected.has(c.id)
                     ? "border-accent bg-accent-soft"
                     : "border-border hover:border-border-strong",
