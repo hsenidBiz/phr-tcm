@@ -644,16 +644,26 @@ table {
    NOT generalised to the 12px controls - the same measurement there gave
    contradictory answers between methods, and an unverified nudge on a
    control nobody complained about is how a "fix" becomes a regression.
-   If a second size is ever wanted, measure it the same way first (a 6x
-   element screenshot, counting ink rows) and add a variant here rather
-   than tuning a number at a call site.
+   If a second size is ever wanted, measure it the same way first and add
+   a variant here rather than tuning a number at a call site.
+
+   RECALIBRATED after a field report ("more space on top than bottom",
+   cap-tops level with a centred dot): the original 2px shift OVERSHOT
+   and flipped the error - text that once rode ~1px high sat ~1px low.
+   Re-measured with canvas ink metrics (actualBoundingBoxAscent/Descent
+   against a baseline probe inside the text's own inline context, not a
+   screenshot): with the bundled Fira Sans at 10px, uncorrected ink sits
+   1.0px high on a mixed-case badge and 1.5px high on a caps-only chip
+   label. 3px/1px centres the badge's ink to 0.00px measured. Fira Sans
+   ships via @fontsource (top of this file), so these metrics are the
+   same on every machine - do not retune against a fallback font.
 
    Not for a pill that also holds an icon: this shifts the whole content
    box, so a correctly-centred glyph would go down with the text. Use
    `pill-label-ink` on the text span instead - see below. */
 .pill-label {
-  padding-top: 4px;
-  padding-bottom: 0;
+  padding-top: 3px;
+  padding-bottom: 1px;
 }
 
 /* The same correction for a pill whose text sits BESIDE an icon - the
@@ -663,10 +673,16 @@ table {
    Padding is the wrong lever there: it would move the icons, which are
    already centred, down with the text. This nudges the text span alone,
    as a relative offset so nothing about the layout changes - the chip's
-   height, the gaps and the icons all stay exactly where they were. */
+   height, the gaps and the icons all stay exactly where they were.
+
+   1.5px, not a whole pixel: repo labels are caps-and-digits, whose ink
+   rides higher (1.5px measured) than the mixed-case badge's 1.0px, and
+   Chromium positions at subpixels - the same measurement that sized the
+   padding above reads exactly 0.00px against the chip's status dot at
+   1.5px, 0.5px high at 1px, and 0.5px low at the old 2px. */
 .pill-label-ink {
   position: relative;
-  top: 2px;
+  top: 1.5px;
 }
 
 /* The rail's icons take the colour of the text beside them - the same
