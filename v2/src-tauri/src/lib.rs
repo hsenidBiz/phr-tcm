@@ -199,8 +199,30 @@ fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+/// Step out of the install's `current\` directory before anything can
+/// inherit it.
+///
+/// Velopack starts the app with cwd = `current\`. Every child started
+/// without an explicit cwd - the browser behind "View in Browser" (the
+/// opener plugin calls ShellExecute with no directory), Auto Run's Edge,
+/// the `claude mcp add` shell, WebView2's own helpers - inherits that cwd,
+/// and a process's cwd pins the directory against rename. Renaming
+/// `current\` is the first thing Update.exe does when applying an update,
+/// and it can only kill processes whose exe lives under the install root -
+/// a browser's does not. On 2026-08-21 a 1.20.2 -> 1.20.5 update failed
+/// three times over with "os error 32" because Edge, first opened from the
+/// app that morning, was still sitting in `current\` hours later.
+///
+/// The temp dir is the one place guaranteed to exist, be writable, and
+/// never be renamed by an installer. Best-effort: an app that cannot chdir
+/// still runs - it just updates the way it did before.
+pub fn leave_install_dir() {
+    let _ = std::env::set_current_dir(std::env::temp_dir());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    leave_install_dir();
     let builder = specta_builder();
     #[allow(unused_mut)]
     let mut tauri_builder = tauri::Builder::default();

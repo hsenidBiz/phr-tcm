@@ -85,3 +85,36 @@ fn an_unknown_size_stays_zero() {
     assert_eq!(bytes_at(50, 0), 0);
     assert_eq!(bytes_at(100, 0), 0);
 }
+
+/// The process must not keep the install's `current\` as its working
+/// directory.
+///
+/// Velopack launches the app with cwd = `current\`, and every child the
+/// app starts without an explicit cwd - the browser behind "View in
+/// Browser", Auto Run's Edge, `claude mcp add` - inherits it. A process's
+/// cwd pins that directory against rename, and renaming `current\` is the
+/// first thing Update.exe does when applying an update. On 2026-08-21 a
+/// user's 1.20.2 -> 1.20.5 update failed three times with "os error 32"
+/// because Edge, opened from the app that morning, still sat in
+/// `current\`. Update.exe kills processes whose EXE is under the install
+/// root, but a browser's exe is not, so only the app can prevent this - by
+/// leaving the directory before anything can inherit it.
+#[test]
+fn the_process_leaves_the_install_dir_so_children_cannot_pin_it() {
+    let root = std::env::temp_dir().join(format!("tcm-leave-{}", std::process::id()));
+    let current = root.join("current");
+    std::fs::create_dir_all(&current).unwrap();
+    let was = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&current).unwrap();
+
+    v2_lib::leave_install_dir();
+
+    let now = std::env::current_dir().unwrap();
+    assert!(!now.starts_with(&root), "still inside the install dir: {}", now.display());
+    // The point of leaving: Update.exe can now rename `current\`.
+    let moved = root.join("current.bak");
+    std::fs::rename(&current, &moved).expect("the current dir should be renameable once nothing sits in it");
+
+    std::env::set_current_dir(&was).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+}
