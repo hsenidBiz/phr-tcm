@@ -82,6 +82,8 @@ test("Edit opens the inline editor and Save writes back into the queue", async (
   baseMocks();
   renderQueue([makeCase()]);
 
+  expect(screen.getByText("Login works").closest("li")!.className).toContain("cv-row");
+
   fireEvent.click(screen.getByRole("button", { name: "Edit" }));
   const title = await screen.findByLabelText("Case title");
   fireEvent.change(title, { target: { value: "Login works — edited" } });

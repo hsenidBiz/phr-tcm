@@ -47,6 +47,7 @@ test("expands a case via the chevron and saves edits via update_test_case", asyn
   renderCases();
 
   await screen.findByText("Valid login");
+  expect(screen.getByText("Valid login").closest("li")!.className).toContain("cv-row");
   fireEvent.click(screen.getByLabelText("Expand #201"));
   const titleInput = await screen.findByLabelText("Case title");
   fireEvent.change(titleInput, { target: { value: "Valid login v2" } });

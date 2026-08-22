@@ -93,6 +93,7 @@ test("rows start compact; the chevron expands steps, tags and the comment editor
   renderView();
 
   await screen.findByText("Login - valid");
+  expect(screen.getByText("Login - valid").closest("li")!.className).toContain("cv-row");
   expect(screen.queryByText("Open login page")).not.toBeInTheDocument();
   // Tags stay out of the compact row - they only show in the detail.
   expect(screen.queryByText("smoke")).not.toBeInTheDocument();

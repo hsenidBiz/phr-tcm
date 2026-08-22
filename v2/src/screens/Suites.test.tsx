@@ -66,6 +66,7 @@ test("plans render with suites; a suite click shows its points", async () => {
   renderSuites();
 
   expect(await screen.findByText("Auth - Test Plan")).toBeInTheDocument();
+  expect(screen.getByText("PBI 42 suite").closest("li")!.className).toContain("cv-row");
   fireEvent.click(screen.getByText("PBI 42 suite"));
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
   expect(screen.getByText("Passed")).toBeInTheDocument(); // capitalized display

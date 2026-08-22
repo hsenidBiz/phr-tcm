@@ -2,7 +2,7 @@ import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/
 import { ChevronDown, ChevronRight, Copy, ExternalLink, Folder, FolderOpen, FolderTree, RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "../lib/clipboard";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { toast } from "sonner";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
 import ScanProgress from "../components/ScanProgress";
@@ -288,7 +288,7 @@ export default function Suites({
       });
 
     return (
-      <li key={s.id}>
+      <li key={s.id} className="cv-row" style={{ "--cv-size": "32px" } as CSSProperties}>
         <button
           className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
           style={{ paddingLeft: 8 + depth * 18 }}

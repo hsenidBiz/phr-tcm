@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, GitPullRequest, RefreshCw } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
@@ -57,9 +57,10 @@ function Card({
       onClick={onOpen}
       title={isStale ? `No changes in ${stale} days` : undefined}
       className={cn(
-        "cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent",
+        "cv-row cursor-pointer space-y-1 rounded-md border border-border bg-surface p-2 text-sm hover:border-accent",
         isStale && "border-l-2 border-l-warning",
       )}
+      style={{ "--cv-size": "84px" } as CSSProperties}
     >
       <div className="flex items-center gap-2">
         <Badge color={typeColor[item.work_item_type] ?? "#9ca3af"}>

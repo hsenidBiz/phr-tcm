@@ -378,7 +378,7 @@ export default function ExistingCases({
               <li
                 key={c.id}
                 className={cn(
-                  "cursor-pointer select-none rounded-md border transition-colors",
+                  "cv-row cursor-pointer select-none rounded-md border transition-colors",
                   selected.has(c.id)
                     ? "border-accent bg-accent-soft"
                     : "border-border hover:border-border-strong",

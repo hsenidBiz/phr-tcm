@@ -94,6 +94,7 @@ test("items land in their columns", async () => {
   expect(within(todo).getByText("Write docs")).toBeInTheDocument();
   const done = screen.getByTestId("col-Done");
   expect(within(done).getByText("Fix bug")).toBeInTheDocument();
+  expect(screen.getByText("Write docs").closest("[draggable]")!.className).toContain("cv-row");
 });
 
 test("drop moves card and applies the returned state", async () => {

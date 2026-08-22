@@ -1066,7 +1066,7 @@ export default function QueueSection({
               <li
                 key={i}
                 className={cn(
-                  "rounded-md border text-sm transition-colors",
+                  "cv-row rounded-md border text-sm transition-colors",
                   touched === "added"
                     ? "border-success/50 bg-success/5"
                     : touched === "changed"

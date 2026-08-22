@@ -685,6 +685,19 @@ table {
   top: 1.5px;
 }
 
+/* Long-list rows: the browser skips layout and paint for rows outside the
+   viewport, which is the difference between a 300-row list stuttering and
+   scrolling clean. NOT virtualization - every row stays in the DOM, so
+   selection, drag, tests, and Ctrl+F still see them. The intrinsic size is
+   a pre-render height ESTIMATE for scrollbar stability; `auto` makes the
+   browser remember each row's real height once rendered (so expanded
+   rows/editors keep their true size). Never put this on <tr> - table rows
+   cannot take size containment. */
+.cv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--cv-size, 38px);
+}
+
 /* The rail's icons take the colour of the text beside them - the same
    muted/accent treatment as the label, so an active item reads as one
    thing rather than a coloured glyph next to a word.
