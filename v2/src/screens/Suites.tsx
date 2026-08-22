@@ -413,7 +413,10 @@ export default function Suites({
         {busy && <span className="text-xs text-muted">Collecting test cases</span>}
       </div>
 
-      {plans.isFetching && (
+      {/* The bar is for the FIRST scan only - once a tree is already on
+          screen, a background revalidation keeps it there and spins only
+          the toolbar Refresh icon above, not this bar over the tree. */}
+      {plans.isFetching && !plans.data && (
         <ScanProgress
           label={scan ? "Scanning test plans" : "Loading test plans"}
           done={scan?.done}

@@ -9,8 +9,12 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function renderSuites(onEditCases?: (label: string, ids: number[]) => void) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderSuites(
+  onEditCases?: (label: string, ids: number[]) => void,
+  // Accepts a caller-supplied QueryClient so a test can pre-seed the cache
+  // (qc.setQueryData) before the component ever mounts.
+  qc: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   return render(
     <QueryClientProvider client={qc}>
       <Suites org="acme" project="Web" onEditCases={onEditCases} />
@@ -231,4 +235,39 @@ test("empty project shows the friendly message", async () => {
   expect(
     await screen.findByText(/No test plans with test suites in this project yet/),
   ).toBeInTheDocument();
+});
+
+/// A background revalidation must not throw the scan bar over a tree the
+/// user is already working with - the toolbar spinner is that signal.
+test("the scan progress bar shows only while there is no tree yet", async () => {
+  const plansFixture = [
+    {
+      plan: PLAN,
+      suites: [
+        { id: 91, name: "PBI 42 suite", suite_type: "requirementTestSuite", requirement_id: 42, parent_id: null },
+      ],
+    },
+  ];
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // Seed the cache as a disk-seeded session would: data present, but old
+  // enough to be past the 6h staleMs, so mounting still fires a background
+  // refetch (isFetching true) even though the tree is already on screen.
+  qc.setQueryData(["plans-suites", "acme", "Web"], plansFixture, {
+    updatedAt: Date.now() - 7 * 60 * 60_000,
+  });
+  let release!: () => void;
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return new Promise((res) => {
+        release = () => res(plansFixture);
+      });
+    if (cmd === "list_test_points") return [];
+  });
+  renderSuites(undefined, qc);
+
+  // The tree renders from cache while the refetch is in flight...
+  expect(await screen.findByText("Auth - Test Plan")).toBeInTheDocument();
+  // ...and the scan bar must NOT be over it.
+  expect(screen.queryByText(/Scanning test plans|Loading test plans/)).not.toBeInTheDocument();
+  release();
 });
