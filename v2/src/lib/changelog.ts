@@ -13,6 +13,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.6",
+    date: "2026-08-22",
+    items: [
+      "Removing a tag now actually removes it - from Import File updates and the editor alike. Azure DevOps quietly merges plain tag writes, so the app now sends the operation that can truly take a tag away.",
+      "The runner shows each case's previous verdict as a pulsing dot on the matching button instead of pre-selecting it - so re-passing an already-passed case is one ordinary click, recorded like any other.",
+      "The runner's header counts your position (1 of 53) instead of a marked tally that could overshoot; the marked count lives in its tooltip and on the Finish button. And when you snip on a single screen, the runner minimizes out of the way and comes back when the capture lands.",
+      "Execution history now carries everything Azure DevOps shows - who ran it, when, which run - plus the screenshots uploaded with each earlier result, as zoomable thumbnails.",
+      "Small pills and badges sit dead-centre again: the text-centering nudge overshot by a pixel everywhere. Collapse all now parks bottom-left on every screen, filled with the page background and edged in your accent colour.",
+      "Comment modals wrap long titles instead of cutting them off, the evidence card stops saying 'optional' twice, and sign-in from a plain browser tab explains itself instead of throwing an error.",
+    ],
+  },
+  {
     version: "1.20.5",
     date: "2026-08-19",
     items: [
