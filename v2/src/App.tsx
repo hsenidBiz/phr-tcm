@@ -758,10 +758,11 @@ export default function App() {
             // Same fade-up as the Test Case Manager tabs below: key remounts
             // on section switch; the flex classes keep the board's height
             // chain intact (the wrapper sits inside a flex-col main).
+            // 120ms fade chosen for snappiness (user request 2026-08-22).
             <AnimatedContent
               key={workSection}
-              distance={14}
-              duration={0.3}
+              distance={8}
+              duration={0.12}
               threshold={0}
               className="flex min-h-0 flex-1 flex-col"
             >
@@ -790,8 +791,9 @@ export default function App() {
             </AnimatedContent>
           ) : (
             // key={section} remounts the wrapper on tab switch, so every
-            // screen fades up briefly instead of snapping in.
-            <AnimatedContent key={section} distance={14} duration={0.3} threshold={0}>
+            // screen fades up briefly (120ms) instead of snapping in.
+            // 120ms fade chosen for snappiness (user request 2026-08-22).
+            <AnimatedContent key={section} distance={8} duration={0.12} threshold={0}>
               <div className="mb-4 flex items-center gap-2">
                 <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
                 {TITLE_NOTES[section] && (
