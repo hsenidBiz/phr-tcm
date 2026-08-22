@@ -80,6 +80,9 @@ export default function BulkEditDialog({
           // the original XML in hand the save leaves Steps out of the patch
           // entirely, instead of rewriting them from a plain-text read.
           c.steps_xml,
+          // The current tags decide which PATCH op can actually REMOVE a
+          // tag - Azure DevOps merges plain tag writes.
+          c.tags,
         );
         // The message is the actionable half. Counting the failures and
         // dropping WHY told the user "2 failed" about a selection of

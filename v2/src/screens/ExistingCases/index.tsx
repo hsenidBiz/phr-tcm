@@ -195,6 +195,7 @@ export default function ExistingCases({
           prefs.moduleRef,
           prefs.preconditionsRef,
           full.steps_xml,
+          full.tags,
         );
         if (r.status === "error") failed.push(row);
       }

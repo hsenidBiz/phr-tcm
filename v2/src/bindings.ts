@@ -155,8 +155,12 @@ export const commands = {
 	 *  it, taken from the TestCaseFull this edit started from. Without it a
 	 *  title-only save rewrites the steps from a plain-text read and strips
 	 *  their formatting and embedded images - see `steps_patch`.
+	 * 
+	 *  `original_tags` is System.Tags from that same TestCaseFull - without
+	 *  it a removed tag cannot actually be removed (ADO merges tag writes
+	 *  made with the plain `add` op; see `tags_write_ops`).
 	 */
-	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml })),
+	updateTestCase: (organization: string, project: string, tc: TestCase_Deserialize, moduleRef: string | null, preconditionsRef: string | null, originalStepsXml: string | null, originalTags: string | null) => typedError<null, string>(__TAURI_INVOKE("update_test_case", { organization, project, tc, moduleRef, preconditionsRef, originalStepsXml, originalTags })),
 	exportQueueJson: (path: string, queue: TestCase_Deserialize[]) => typedError<null, string>(__TAURI_INVOKE("export_queue_json", { path, queue })),
 	listPlansWithSuites: (organization: string, project: string) => typedError<PlanWithSuites[], AdoError>(__TAURI_INVOKE("list_plans_with_suites", { organization, project })),
 	getResultDetail: (organization: string, project: string, runId: number, resultId: number) => typedError<ResultDetail, AdoError>(__TAURI_INVOKE("get_result_detail", { organization, project, runId, resultId })),

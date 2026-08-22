@@ -65,8 +65,13 @@ pub async fn test_cases_by_ids(
 /// it, taken from the TestCaseFull this edit started from. Without it a
 /// title-only save rewrites the steps from a plain-text read and strips
 /// their formatting and embedded images - see `steps_patch`.
+///
+/// `original_tags` is System.Tags from that same TestCaseFull - without
+/// it a removed tag cannot actually be removed (ADO merges tag writes
+/// made with the plain `add` op; see `tags_write_ops`).
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn update_test_case(
     app: tauri::AppHandle,
     organization: String,
@@ -75,6 +80,7 @@ pub async fn update_test_case(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
     original_steps_xml: Option<String>,
+    original_tags: Option<String>,
 ) -> Result<(), String> {
     let id = tc.update_id.ok_or("update_test_case requires update_id")?;
     tc.is_valid()?;
@@ -88,6 +94,7 @@ pub async fn update_test_case(
             module_ref.as_deref(),
             preconditions_ref.as_deref(),
             original_steps_xml.as_deref(),
+            original_tags.as_deref(),
             // This command IS the editor. A field the user emptied is meant
             // to be emptied in Azure DevOps - skipping it left the old value
             // there while the app reported the save as done.

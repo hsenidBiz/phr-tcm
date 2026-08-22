@@ -620,6 +620,10 @@ pub async fn submit_queue(
     // read and strips their formatting and screenshots. One batched read
     // covers the whole queue, and creates cost nothing.
     let mut steps_before: std::collections::HashMap<i32, String> = Default::default();
+    // System.Tags as ADO holds it, from the same batched read: the op that
+    // can actually REMOVE a tag depends on the current value - see
+    // `tags_write_ops`. Without this baseline a dropped tag stays put.
+    let mut tags_before: std::collections::HashMap<i32, String> = Default::default();
     if let Ok(token) = get_fresh_token(&app).await {
         let client = ado::AdoClient::new(token);
         let update_ids: Vec<i32> = queue.iter().filter_map(|tc| tc.update_id).collect();
@@ -629,6 +633,7 @@ pub async fn submit_queue(
                 .await
             {
                 Ok(current) => {
+                    tags_before = current.iter().map(|c| (c.id, c.tags.clone())).collect();
                     steps_before = current.into_iter().map(|c| (c.id, c.steps_xml)).collect();
                 }
                 // Without a baseline the import's own steps are written, as
@@ -702,6 +707,7 @@ pub async fn submit_queue(
             &effective_area,
             &effective_iteration,
             tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
+            tc.update_id.and_then(|id| tags_before.get(&id)).map(String::as_str),
         )
         .await;
         let _ = SubmitProgress {
@@ -757,6 +763,7 @@ async fn process_queue_item(
     area_path: &str,
     iteration_path: &str,
     original_steps_xml: Option<&str>,
+    original_tags: Option<&str>,
 ) -> SubmitItemResult {
     let failed = |error: String| SubmitItemResult {
         index,
@@ -783,6 +790,7 @@ async fn process_queue_item(
                 m_ref,
                 p_ref,
                 original_steps_xml,
+                original_tags,
                 // An import: a blank column is the absence of an opinion,
                 // never an instruction to erase.
                 ado::BlankPolicy::Skip,

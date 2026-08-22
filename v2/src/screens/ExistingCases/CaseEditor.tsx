@@ -77,6 +77,9 @@ export default function CaseEditor({
         moduleRef,
         preconditionsRef,
         original.steps_xml,
+        // The current tags decide which PATCH op can actually REMOVE a
+        // tag - Azure DevOps merges plain tag writes.
+        original.tags,
       );
       if (r.status === "error") throw new Error(r.error);
       return sent;

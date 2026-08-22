@@ -419,6 +419,11 @@ impl AdoClient {
 
     /// PATCH a work item's fields ({reference_name: value}); the 'add' op
     /// creates-or-replaces. Ported from v1 update_work_item_fields.
+    ///
+    /// One exception to "creates-or-replaces": System.Tags. Azure DevOps
+    /// treats `add` on that one field as a MERGE, so writing tags through
+    /// here can only ever grow the list - use `tags_write_ops` when a
+    /// removal has to stick.
     pub async fn update_work_item_fields(
         &self,
         organization: &str,
@@ -430,11 +435,22 @@ impl AdoClient {
             .iter()
             .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
             .collect();
+        self.patch_work_item_ops(organization, project, wi_id, patch).await
+    }
+
+    /// PATCH a work item with explicit JSON-Patch operations.
+    async fn patch_work_item_ops(
+        &self,
+        organization: &str,
+        project: &str,
+        wi_id: i32,
+        ops: Vec<serde_json::Value>,
+    ) -> Result<(), AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
             self.base_url, organization, project, wi_id
         );
-        self.send_json_patch(reqwest::Method::PATCH, url, &serde_json::Value::Array(patch))
+        self.send_json_patch(reqwest::Method::PATCH, url, &serde_json::Value::Array(ops))
             .await?;
         Ok(())
     }
@@ -448,6 +464,11 @@ impl AdoClient {
     /// holds it, when the caller has it. See `steps_patch` for why that
     /// matters - in short, without it, saving a case you only retitled
     /// deletes the formatting and screenshots from its steps.
+    ///
+    /// `original_tags` is System.Tags as Azure DevOps currently holds it,
+    /// when the caller has it - it decides which PATCH op can actually
+    /// REMOVE a tag. See `tags_write_ops`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_test_case_from_model(
         &self,
         organization: &str,
@@ -457,6 +478,7 @@ impl AdoClient {
         module_ref: Option<&str>,
         preconditions_ref: Option<&str>,
         original_steps_xml: Option<&str>,
+        original_tags: Option<&str>,
         blanks: BlankPolicy,
     ) -> Result<(), AdoError> {
         let mut fields = vec![
@@ -477,9 +499,14 @@ impl AdoClient {
         // of "<div>   </div>" - which is the "looks blank but is not" case
         // the Clear branch below already went out of its way to avoid.
         let writes = |value: &str| blanks == BlankPolicy::Clear || !value.trim().is_empty();
-        if writes(&tc.tags) {
-            fields.push(("System.Tags".to_string(), tc.tags.trim().to_string()));
-        }
+        // Tags do NOT ride in `fields`: the plain `add` op those become
+        // merges on this one field, which is exactly the "removed a tag,
+        // nothing happened" bug. They get their own op(s) below.
+        let tag_ops = if writes(&tc.tags) {
+            tags_write_ops(&tc.tags, original_tags)
+        } else {
+            vec![]
+        };
         if let Some(m) = module_ref {
             if writes(&tc.module_value) {
                 fields.push((m.to_string(), tc.module_value.trim().to_string()));
@@ -496,8 +523,12 @@ impl AdoClient {
                 fields.push((p.to_string(), html));
             }
         }
-        self.update_work_item_fields(organization, project, tc_id, &fields)
-            .await
+        let mut ops: Vec<serde_json::Value> = fields
+            .iter()
+            .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
+            .collect();
+        ops.extend(tag_ops);
+        self.patch_work_item_ops(organization, project, tc_id, ops).await
     }
 
     /// PATCH the Test Case to add a TestedBy-Reverse relation to the PBI -
@@ -1069,6 +1100,37 @@ fn percent_encode_path(s: &str) -> String {
 ///
 /// Without a baseline (an imported update, where the file genuinely supplies
 /// the steps) the field is written as before.
+/// The PATCH op(s) that write System.Tags on an EXISTING work item.
+///
+/// Azure DevOps treats the `add` op on this ONE field as a merge: the
+/// listed tags are appended and omitted ones stay put, so an update that
+/// dropped a tag silently kept it - both from an import file and from the
+/// editor's clear. Removal needs `replace`, but JSON Patch only replaces
+/// a path that exists, so the right op depends on what the work item
+/// currently holds:
+/// - had tags: one `replace` sets the exact final list (`""` clears);
+///   skipped entirely when nothing changed.
+/// - had none: there is nothing to remove - a plain `add` creates the
+///   field, and an empty desired list needs no op at all.
+/// - unknown (the caller could not read the current value): `add` then
+///   `replace` in the same document - the add guarantees the path exists,
+///   the replace makes the value exact. Only for a non-empty desired
+///   list: a blind clear could fail the WHOLE patch on a tagless item,
+///   and losing the title/steps update over tags that may not even exist
+///   is the worse trade.
+pub fn tags_write_ops(desired: &str, original: Option<&str>) -> Vec<serde_json::Value> {
+    let desired = desired.trim();
+    let op = |kind: &str| serde_json::json!({"op": kind, "path": "/fields/System.Tags", "value": desired});
+    match original.map(str::trim) {
+        Some(orig) if orig == desired => vec![],
+        Some(orig) if !orig.is_empty() => vec![op("replace")],
+        Some(_) if desired.is_empty() => vec![],
+        Some(_) => vec![op("add")],
+        None if desired.is_empty() => vec![],
+        None => vec![op("add"), op("replace")],
+    }
+}
+
 fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> Option<String> {
     // build_steps_xml(&[]) emits a single blank placeholder step, so writing
     // it would replace a real step list with one empty row. Nothing upstream

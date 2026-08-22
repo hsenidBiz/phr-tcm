@@ -318,7 +318,7 @@ async fn update_from_model_skips_blank_fields() {
     tc.preconditions = String::new();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"), None, BlankPolicy::Skip)
+        .update_test_case_from_model("org", "proj", 55, &tc, Some("Custom.Module"), Some("Custom.Prec"), None, None, BlankPolicy::Skip)
         .await
         .unwrap();
 
@@ -339,6 +339,84 @@ async fn update_from_model_skips_blank_fields() {
     assert!(!paths.iter().any(|p| p.contains("Custom.Prec")));
 }
 
+/// The decision table behind tag REMOVAL. Azure DevOps merges tag writes
+/// made with the plain `add` op - it appends the listed tags and never
+/// removes one - so which op the update sends has to depend on what the
+/// work item currently holds. This was the "removed a tag through Import
+/// File, nothing happened" bug, and the editor's clear-all-tags shared it.
+#[test]
+fn tags_write_ops_picks_the_op_that_can_actually_remove() {
+    use v2_lib::ado::tags_write_ops;
+    let kinds = |ops: &[serde_json::Value]| -> Vec<String> {
+        ops.iter().map(|o| o["op"].as_str().unwrap().to_string()).collect()
+    };
+
+    // Item HAS tags: replace sets the exact final list...
+    let ops = tags_write_ops("smoke", Some("smoke; regression"));
+    assert_eq!(kinds(&ops), ["replace"]);
+    assert_eq!(ops[0]["value"], "smoke");
+    // ...and "" clears everything (the editor's clear-all).
+    let ops = tags_write_ops("", Some("smoke; regression"));
+    assert_eq!(kinds(&ops), ["replace"]);
+    assert_eq!(ops[0]["value"], "");
+    // Nothing changed: nothing sent.
+    assert!(tags_write_ops("smoke", Some("smoke")).is_empty());
+
+    // Item has NO tags: nothing to remove - plain add creates the field,
+    // and clearing an already-clear field needs no op at all.
+    assert_eq!(kinds(&tags_write_ops("smoke", Some(""))), ["add"]);
+    assert!(tags_write_ops("", Some("  ")).is_empty());
+
+    // Current value unknown (the baseline read failed): add guarantees the
+    // path exists, replace makes it exact - in that order, one document.
+    assert_eq!(kinds(&tags_write_ops("smoke", None)), ["add", "replace"]);
+    // ...but never a blind clear, which could fail the whole PATCH on a
+    // tagless item and lose the title/steps update with it.
+    assert!(tags_write_ops("", None).is_empty());
+}
+
+/// End to end through the client: an update that DROPS a tag sends the
+/// `replace` op, not the merging `add` the other fields ride on.
+#[tokio::test]
+async fn update_from_model_removes_a_tag_with_the_replace_op() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/wit/workitems/55"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 55})))
+        .mount(&server)
+        .await;
+
+    let mut tc = sample_tc();
+    tc.tags = "smoke".into(); // "regression" was removed in the import file
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client
+        .update_test_case_from_model(
+            "org", "proj", 55, &tc, None, None, None,
+            Some("smoke; regression"),
+            BlankPolicy::Skip,
+        )
+        .await
+        .unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
+    let tag_ops: Vec<&serde_json::Value> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|op| op["path"] == "/fields/System.Tags")
+        .collect();
+    assert_eq!(tag_ops.len(), 1, "{body}");
+    assert_eq!(tag_ops[0]["op"], "replace", "an add here merges and cannot remove: {body}");
+    assert_eq!(tag_ops[0]["value"], "smoke");
+    // Every other field still uses the create-or-replace add.
+    for op in body.as_array().unwrap() {
+        if op["path"] != "/fields/System.Tags" {
+            assert_eq!(op["op"], "add", "{body}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn update_from_model_writes_the_title() {
     // Regression guard: bulk-import updates rename cases via System.Title.
@@ -356,7 +434,7 @@ async fn update_from_model_writes_the_title() {
     tc.title = "Renamed by bulk import".into();
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     client
-        .update_test_case_from_model("org", "proj", 55, &tc, None, None, None, BlankPolicy::Skip)
+        .update_test_case_from_model("org", "proj", 55, &tc, None, None, None, None, BlankPolicy::Skip)
         .await
         .unwrap();
 
@@ -734,7 +812,7 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
                 .map(|_| ())
         } else {
             client
-                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"), None, BlankPolicy::Skip)
+                .update_test_case_from_model("o", "p", 7, &tc, None, Some("Custom.Pre"), None, None, BlankPolicy::Skip)
                 .await
         };
         let sent = server.received_requests().await.unwrap();
@@ -766,7 +844,7 @@ async fn captured_patch(tc: &v2_lib::model::TestCase, original: Option<&str>) ->
         .mount(&server)
         .await;
     v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri())
-        .update_test_case_from_model("o", "p", 55, tc, None, None, original, BlankPolicy::Skip)
+        .update_test_case_from_model("o", "p", 55, tc, None, None, original, None, BlankPolicy::Skip)
         .await
         .unwrap();
     String::from_utf8_lossy(&server.received_requests().await.unwrap()[0].body).to_string()
@@ -905,7 +983,13 @@ async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
         AdoClient::with_base_url("t".into(), server.uri())
             .update_test_case_from_model(
                 "o", "p", 55, &blank,
-                Some("Custom.Module"), Some("Custom.Pre"), None, policy,
+                Some("Custom.Module"), Some("Custom.Pre"), None,
+                // The editor always has the case it started from, so a
+                // clear always knows the current tags. (With an UNKNOWN
+                // baseline a clear is deliberately not attempted - see
+                // tags_write_ops.)
+                Some("old-tag"),
+                policy,
             )
             .await
             .unwrap();
@@ -922,6 +1006,17 @@ async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
         // looks blank but is not.
         if should_write {
             assert!(!body.contains("<div>"), "cleared preconditions must be empty:\n{body}");
+            // And the tags clear rides the op that can actually remove -
+            // an `add` here merges nothing and leaves every tag in place.
+            let ops: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let tag_op = ops
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|op| op["path"] == "/fields/System.Tags")
+                .unwrap();
+            assert_eq!(tag_op["op"], "replace", "{body}");
+            assert_eq!(tag_op["value"], "", "{body}");
         }
     }
 }
@@ -954,7 +1049,7 @@ async fn a_field_of_only_spaces_counts_as_blank() {
     AdoClient::with_base_url("t".into(), server.uri())
         .update_test_case_from_model(
             "o", "p", 55, &spaces,
-            Some("Custom.Module"), Some("Custom.Pre"), None, BlankPolicy::Skip,
+            Some("Custom.Module"), Some("Custom.Pre"), None, None, BlankPolicy::Skip,
         )
         .await
         .unwrap();
@@ -975,7 +1070,7 @@ async fn a_field_of_only_spaces_counts_as_blank() {
         .mount(&server2)
         .await;
     AdoClient::with_base_url("t".into(), server2.uri())
-        .update_test_case_from_model("o", "p", 55, &padded, None, None, None, BlankPolicy::Skip)
+        .update_test_case_from_model("o", "p", 55, &padded, None, None, None, None, BlankPolicy::Skip)
         .await
         .unwrap();
     let body2 =
