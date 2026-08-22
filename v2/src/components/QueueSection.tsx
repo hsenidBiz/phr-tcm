@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -832,6 +832,28 @@ export default function QueueSection({
   const duplicates = queue.map((tc) => duplicateWarning(tc, existingCases));
   const hasBlockers = problems.some(Boolean);
 
+  // Diffing is word-level and runs per row - recomputing all of it on
+  // every keystroke/selection render made an 80-case review sluggish.
+  // Recomputed only when the queue, the fetched originals, or the field
+  // refs actually change. `currentById` above is rebuilt fresh every
+  // render (a cheap Map wrap), so the dependency here is its SOURCE -
+  // `currentCases.data` - which react-query keeps referentially stable
+  // across renders that don't change the result; depending on
+  // `currentById` itself would defeat the memo, since that Map's
+  // identity is new every render regardless of whether the data changed.
+  const reviewRows = useMemo(() => {
+    const byId = new Map((currentCases.data ?? []).map((c) => [c.id, c]));
+    return queue.map((tc) => {
+      const cur = tc.update_id != null ? byId.get(tc.update_id) : undefined;
+      const diff =
+        reviewing && cur
+          ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
+          : null;
+      const diffFailed = reviewing && tc.update_id != null && !cur && currentCases.isError;
+      return { diff, diffFailed };
+    });
+  }, [queue, currentCases.data, reviewing, prefs.moduleRef, prefs.preconditionsRef, currentCases.isError]);
+
   // An empty queue is not a queue - the whole section stays out of the
   // way until a case exists. The "Queue for PBI" header, its five action
   // buttons and the Review button all act on cases, and with zero cases
@@ -1051,16 +1073,7 @@ export default function QueueSection({
       {queue.length > 0 && (
         <ul className="space-y-1">
           {queue.map((tc, i) => {
-            const cur = tc.update_id != null ? currentById.get(tc.update_id) : undefined;
-            const diff =
-              reviewing && cur
-                ? diffCase(tc, cur, {
-                    moduleRef: prefs.moduleRef,
-                    preconditionsRef: prefs.preconditionsRef,
-                  })
-                : null;
-            const diffFailed =
-              reviewing && tc.update_id != null && !cur && currentCases.isError;
+            const { diff, diffFailed } = reviewRows[i];
             const touched = flash?.[rowKeys[i]];
             return (
               <li
