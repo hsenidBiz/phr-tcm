@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
+import { isTauri } from "@tauri-apps/api/core";
 import { lazy, Suspense, useEffect, useRef, useState, type ComponentType, useSyncExternalStore } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
@@ -287,6 +288,18 @@ export default function App() {
 
   const signIn = useMutation({
     mutationFn: async () => {
+      // A plain browser tab on the Vite dev server has no Tauri backend -
+      // the first IPC call used to surface as a raw "Cannot read
+      // properties of undefined (reading 'invoke')" toast. Sign-in can
+      // NEVER work there (MSAL and the ADO client live in the Rust
+      // process), so say what is going on and what to do instead.
+      if (!isTauri()) {
+        throw new Error(
+          "this page is running in a plain browser, where the app's backend isn't available. " +
+            "Use the desktop window (npm run tauri dev), or turn on Demo data in the Dev Panel " +
+            "to explore the UI with fake data.",
+        );
+      }
       const r = await commands.signIn();
       if (r.status === "error") throw new Error(r.error);
       return r.data;
