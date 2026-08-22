@@ -422,13 +422,13 @@ export default function ExistingCases({
       {collapsible > 0 &&
         createPortal(
           <div
-            className="fixed bottom-6 z-40 rounded-full border border-border bg-surface shadow-2xl transition-[left] duration-200"
+            className="fixed bottom-6 z-40 rounded-full border border-accent bg-bg shadow-2xl transition-[left] duration-200"
             style={{ left: stickyLeftPx(sidebarCollapsed) }}
           >
             <Button
               size="sm"
-              variant="default"
-              className="rounded-full"
+              variant="ghost"
+              className="rounded-full text-text hover:bg-surface-2 hover:text-text"
               onClick={() => {
                 setOpenId(null);
                 collapseGroups(openGroupNames);

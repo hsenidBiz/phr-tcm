@@ -558,13 +558,13 @@ export default function RunPanel({
           /* Left offset clears the sidebar at its CURRENT width - parked at
              left-6 this sat exactly on the sidebar's Close button. */
           <div
-            className="fixed bottom-6 z-40 rounded-full border border-border bg-surface shadow-2xl transition-[left] duration-200"
+            className="fixed bottom-6 z-40 rounded-full border border-accent bg-bg shadow-2xl transition-[left] duration-200"
             style={{ left: stickyLeftPx(sidebarCollapsed) }}
           >
             <Button
               size="sm"
-              variant="default"
-              className="rounded-full"
+              variant="ghost"
+              className="rounded-full text-text hover:bg-surface-2 hover:text-text"
               onClick={() => {
                 setExpanded(new Set());
                 collapseGroups(openGroupNames);
