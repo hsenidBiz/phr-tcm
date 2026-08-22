@@ -101,6 +101,10 @@ impl AdoClient {
                             .to_string(),
                         run_id: *run_id,
                         result_id: r["id"].as_i64().unwrap_or_default() as i32,
+                        run_by: r["runBy"]["displayName"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
                     });
                 }
             }

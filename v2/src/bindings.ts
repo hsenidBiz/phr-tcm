@@ -1177,6 +1177,11 @@ export type RunOutcome = {
 	 *  latest one the point itself carries.
 	 */
 	result_id: number,
+	/**
+	 *  Who ran it (display name), matching the "Run by" column in Azure
+	 *  DevOps' own execution history. Empty when the result carries none.
+	 */
+	run_by: string,
 };
 
 /**

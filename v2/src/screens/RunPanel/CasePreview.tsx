@@ -6,6 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useLightbox } from "@astryxdesign/core/Lightbox";
+import AstryxIsland from "../../components/AstryxIsland";
 import { commands, type RunOutcome, type TestPoint } from "../../bindings";
 import { outcomeLabel } from "../../lib/outcomes";
 import { unwrap } from "../../lib/ipc";
@@ -142,8 +144,10 @@ export default function CasePreview({
 }
 
 
-/** One earlier result: verdict, when, which run - and the comment behind
- * it, fetched only once this row is on screen. */
+/** One earlier result, carrying the same details Azure DevOps' own
+ * execution history shows - verdict, test run, who ran it, when - plus
+ * the comment and the screenshots uploaded with it, fetched only once
+ * this row is on screen. */
 function HistoryEntry({
   org,
   project,
@@ -159,6 +163,21 @@ function HistoryEntry({
       unwrap(commands.resultFailureDetail(org, project, entry.run_id, entry.result_id)),
     staleTime: Infinity, // a finished result never changes
     retry: false,
+  });
+  const shots = useQuery({
+    queryKey: ["result-shots", org, entry.run_id, entry.result_id],
+    queryFn: () =>
+      unwrap(commands.resultScreenshots(org, project, entry.run_id, entry.result_id)),
+    staleTime: Infinity,
+    retry: false,
+  });
+  // The same fullscreen viewer (zoom/pan + prev/next) the runner gives its
+  // own screenshots.
+  const lightbox = useLightbox({
+    media: (shots.data ?? []).map((b64, i) => ({
+      src: `data:image/png;base64,${b64}`,
+      alt: `Run ${entry.run_id} screenshot ${i + 1}`,
+    })),
   });
   const tone: Record<string, string> = {
     passed: "text-success",
@@ -177,12 +196,27 @@ function HistoryEntry({
           {" "}
           · {entry.completed_date ? entry.completed_date.slice(0, 10) : "no date"} · run #
           {entry.run_id}
+          {entry.run_by && <> · by {entry.run_by}</>}
         </span>
       </p>
       {detail.isLoading && <p className="text-[11px] text-faint">Loading comment…</p>}
       {comment && <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-muted">{comment}</p>}
       {detail.data && !comment && (
         <p className="text-[11px] text-faint">No comment recorded.</p>
+      )}
+      {(shots.data?.length ?? 0) > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {shots.data!.map((b64, i) => (
+            <img
+              key={i}
+              alt={`Run ${entry.run_id} screenshot ${i + 1}`}
+              className="h-12 cursor-zoom-in rounded border border-border object-cover"
+              src={`data:image/png;base64,${b64}`}
+              {...lightbox.getTriggerProps(i)}
+            />
+          ))}
+          <AstryxIsland>{lightbox.element}</AstryxIsland>
+        </div>
       )}
     </li>
   );

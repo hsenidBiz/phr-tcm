@@ -60,9 +60,11 @@ export default function CommentModal({
         tabIndex={-1}
         className="modal-in w-full max-w-md rounded-lg border border-border bg-surface shadow-2xl focus:outline-none"
       >
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <MessageSquare size={14} className="shrink-0 text-accent" />
-          <span className="truncate text-sm font-semibold text-text">
+        <div className="flex items-start gap-2 border-b border-border px-4 py-3">
+          <MessageSquare size={14} className="mt-0.5 shrink-0 text-accent" />
+          {/* Wraps rather than truncates: the title is the only thing that
+              says WHICH case this comment belongs to. */}
+          <span className="min-w-0 flex-1 break-words text-sm font-semibold text-text">
             <span className="id-mono text-faint">#{c.id}</span> {c.title}
           </span>
           <button
@@ -130,7 +132,7 @@ export default function CommentModal({
                   Remove
                 </Button>
                 <span className="text-[11px] text-faint">
-                  Saved on this device only — never sent to Azure DevOps.
+                  Saved locally
                 </span>
               </div>
             </>

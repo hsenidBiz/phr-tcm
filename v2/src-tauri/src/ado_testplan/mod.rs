@@ -127,6 +127,9 @@ pub struct RunOutcome {
     /// pull the comment and linked bugs for a PRIOR result, not just the
     /// latest one the point itself carries.
     pub result_id: i32,
+    /// Who ran it (display name), matching the "Run by" column in Azure
+    /// DevOps' own execution history. Empty when the result carries none.
+    pub run_by: String,
 }
 
 /// One test case's recent outcomes (newest first, capped at 5).

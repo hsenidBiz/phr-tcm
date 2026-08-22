@@ -152,10 +152,10 @@ const pointState = new Map<number, { outcome: string; runId: number | null }>([
 ]);
 const historyByCase = new Map<number, RunOutcome[]>([
   [5001, [
-    { outcome: "Passed", completed_date: "2026-07-13T09:00:00Z", run_id: 700, result_id: 7000 },
-    { outcome: "Failed", completed_date: "2026-07-12T09:00:00Z", run_id: 695, result_id: 6950 },
+    { outcome: "Passed", completed_date: "2026-07-13T09:00:00Z", run_id: 700, result_id: 7000, run_by: "Demo Tester" },
+    { outcome: "Failed", completed_date: "2026-07-12T09:00:00Z", run_id: 695, result_id: 6950, run_by: "Demo Tester" },
   ]],
-  [5002, [{ outcome: "Failed", completed_date: "2026-07-13T09:00:00Z", run_id: 700, result_id: 7000 }]],
+  [5002, [{ outcome: "Failed", completed_date: "2026-07-13T09:00:00Z", run_id: 700, result_id: 7000, run_by: "Demo Tester" }]],
 ]);
 let nextRunId = 701;
 
@@ -354,7 +354,7 @@ function applyPatches() {
       const caseId = outcome.point_id - 40000;
       pointState.set(caseId, { outcome: outcome.outcome.toLowerCase(), runId });
       const hist = historyByCase.get(caseId) ?? [];
-      hist.unshift({ outcome: outcome.outcome, completed_date: new Date().toISOString(), run_id: runId, result_id: runId * 10 });
+      hist.unshift({ outcome: outcome.outcome, completed_date: new Date().toISOString(), run_id: runId, result_id: runId * 10, run_by: "Demo Tester" });
       historyByCase.set(caseId, hist.slice(0, 5));
       return ok([]);
     },

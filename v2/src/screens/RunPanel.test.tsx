@@ -161,12 +161,17 @@ test("an expanded row can open the execution history behind the dots", async () 
           {
             test_case_id: 201,
             outcomes: [
-              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7, result_id: 70 },
-              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6, result_id: 60 },
-              { outcome: "Blocked", completed_date: "2026-07-10T10:00:00Z", run_id: 5, result_id: 50 },
+              { outcome: "Failed", completed_date: "2026-07-12T10:00:00Z", run_id: 7, result_id: 70, run_by: "Avin Alwis" },
+              { outcome: "Passed", completed_date: "2026-07-11T10:00:00Z", run_id: 6, result_id: 60, run_by: "Buddhima Kaushalya" },
+              { outcome: "Blocked", completed_date: "2026-07-10T10:00:00Z", run_id: 5, result_id: 50, run_by: "" },
             ],
           },
         ];
+      case "result_screenshots": {
+        const a = args as { runId: number; resultId: number };
+        // Run 6's result carries one screenshot; the others carry none.
+        return a.runId === 6 && a.resultId === 60 ? ["aGVsbG8="] : [];
+      }
       case "ensure_pbi_suite":
         return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
       case "list_test_points":
@@ -216,9 +221,14 @@ test("an expanded row can open the execution history behind the dots", async () 
   const toggle = screen.getByRole("button", { name: /Execution history \(2 earlier results\)/ });
   fireEvent.click(toggle);
   expect(await screen.findByText("Passed after the hotfix")).toBeInTheDocument();
-  expect(screen.getByText(/2026-07-11 · run #6/)).toBeInTheDocument();
-  expect(screen.getByText(/2026-07-10 · run #5/)).toBeInTheDocument();
+  // Each entry carries the same details ADO's own execution history shows:
+  // outcome, date, run, and who ran it - "by" omitted when unknown.
+  expect(screen.getByText(/2026-07-11 · run #6 · by Buddhima Kaushalya/)).toBeInTheDocument();
+  expect(screen.getByText(/2026-07-10 · run #5$/)).toBeInTheDocument();
   expect(await screen.findByText("No comment recorded.")).toBeInTheDocument();
+  // ...plus the screenshots uploaded with that result, as zoomable thumbs
+  // (the fullscreen viewer holds a second copy of the same image).
+  expect((await screen.findAllByAltText("Run 6 screenshot 1")).length).toBeGreaterThan(0);
 
   // And it folds away again.
   fireEvent.click(screen.getByRole("button", { name: /Hide execution history/ }));

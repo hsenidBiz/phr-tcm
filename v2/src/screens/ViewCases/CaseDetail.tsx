@@ -103,7 +103,7 @@ export default function CaseDetail({
                 Cancel
               </Button>
               <span className="text-[11px] text-faint">
-                Saved on this device only — never sent to Azure DevOps.
+                Saved locally
               </span>
             </div>
           </div>
