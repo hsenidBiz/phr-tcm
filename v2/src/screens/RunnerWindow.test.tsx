@@ -229,6 +229,20 @@ test("each case opens with its last outcome pre-selected, and it counts", async 
           last_run_id: null,
           last_result_id: null,
         },
+        // A point for a case NOT in this runner's list (another config or
+        // a filtered run). Its pre-seeded state must not count: the header
+        // once read "68/53" from exactly this, and Finish flushes only the
+        // listed cases.
+        {
+          point_id: 9,
+          test_case_id: 999,
+          test_case_name: "Elsewhere",
+          config_name: "W11",
+          tester: "",
+          last_outcome: "passed",
+          last_run_id: 3,
+          last_result_id: 31,
+        },
       ];
     if (cmd === "get_result_detail") return { outcome: "failed", comment: "" };
     if (cmd === "result_screenshots") return [];
@@ -241,13 +255,18 @@ test("each case opens with its last outcome pre-selected, and it counts", async 
   await vi.waitFor(() => {
     expect(screen.getByRole("button", { name: "Failed" })).toHaveClass("bg-danger");
   });
-  expect(screen.getByText("1/2 marked")).toBeInTheDocument();
+  // The header is a POSITION indicator - first case of two - with the
+  // marked tally in its tooltip; Finish counts only listed cases, so the
+  // off-list point 999 adds nothing.
+  expect(screen.getByTitle("1 of 2 marked")).toHaveTextContent("1/2");
   expect(screen.getByRole("button", { name: /Finish \(1\)/ })).toBeInTheDocument();
 
   // Case 202 has never run: it must arrive with NOTHING selected - a blank
   // slate is information too.
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("Invalid login");
+  // ...and walking forward increments the position.
+  expect(screen.getByTitle("1 of 2 marked")).toHaveTextContent("2/2");
   expect(screen.getByRole("button", { name: "Failed" })).not.toHaveClass("bg-danger");
   expect(screen.getByRole("button", { name: "Passed" })).not.toHaveClass("bg-success");
 });

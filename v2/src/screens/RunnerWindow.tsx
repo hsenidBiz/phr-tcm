@@ -264,8 +264,8 @@ export default function RunnerWindow() {
   // itself the "this failed last time" indicator while re-testing.
   //
   // Pre-selected marks count toward Finish exactly like clicked ones - that
-  // is the point - and the footer's "N/M marked" plus "Finish (N)" say how
-  // many will be recorded before anything is sent. Never-run cases stay
+  // is the point - and "Finish (N)" (plus the header counter's tooltip)
+  // says how many will be recorded before anything is sent. Never-run cases stay
   // unmarked, and a mark the tester has already made is never overwritten,
   // so a refetch of points mid-session cannot undo a decision.
   useEffect(() => {
@@ -730,7 +730,12 @@ export default function RunnerWindow() {
     return <div className="p-6 text-sm text-muted">No run session. Open the runner from Run Tests.</div>;
   }
 
-  const markedCount = Object.values(states).filter((s) => s.outcome).length;
+  // Counted over the cases actually IN this run, not over every id in
+  // `states`: the pre-selection effect seeds a state for every point the
+  // suite returns, and a filtered runner (or a suite with more points
+  // than listed cases) made the count overshoot the total - the header
+  // read "68/53". Finish flushes only `list`, so only `list` may count.
+  const markedCount = list.filter((c) => states[c.id]?.outcome).length;
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
@@ -746,8 +751,14 @@ export default function RunnerWindow() {
             {caseFilter.size} selected
           </span>
         )}
-        <span className="ml-auto text-xs text-muted">
-          {markedCount}/{list.length} marked
+        {/* WHERE the tester is, not how much is marked - "1/53" opening
+            the first case, incrementing as they walk. The marked tally
+            still shows on the Finish button (and in this tooltip). */}
+        <span
+          className="ml-auto text-xs text-muted"
+          title={`${markedCount} of ${list.length} marked`}
+        >
+          {list.length === 0 ? 0 : Math.min(idx + 1, list.length)}/{list.length}
         </span>
         <button
           aria-label={pinned ? "Unpin (allow other windows on top)" : "Pin on top"}
