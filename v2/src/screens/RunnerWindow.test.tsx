@@ -199,10 +199,11 @@ test("Next records the outcome immediately, without waiting for Finish", async (
   expect(recorded).toHaveLength(2);
 });
 
-/// A tester re-running a suite only touches what changed: every case opens
-/// with its last outcome already selected, and pre-selected marks count
-/// toward Finish exactly like clicked ones.
-test("each case opens with its last outcome pre-selected, and it counts", async () => {
+/// The previous run's outcome is SHOWN, never pre-applied: pre-selecting
+/// the button made "pass it again" impossible (the lit button's click
+/// un-marks). A previously-run case opens unmarked with the last verdict
+/// pulsing on its button; never-run cases stay entirely blank.
+test("a previously-run case opens unmarked with its last verdict pulsing", async () => {
   mockIPC((cmd) => {
     if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full")
@@ -250,33 +251,36 @@ test("each case opens with its last outcome pre-selected, and it counts", async 
   renderRunner();
   await screen.findByText("Valid login");
 
-  // Case 201 failed last time: the Failed button arrives lit (the outcome
-  // classes, not the unselected border) and the mark is already counted.
-  await vi.waitFor(() => {
-    expect(screen.getByRole("button", { name: "Failed" })).toHaveClass("bg-danger");
-  });
-  // The header is a POSITION indicator - first case of two - with the
-  // marked tally in its tooltip; Finish counts only listed cases, so the
-  // off-list point 999 adds nothing.
-  expect(screen.getByTitle("1 of 2 marked")).toHaveTextContent("1/2");
-  expect(screen.getByRole("button", { name: /Finish \(1\)/ })).toBeInTheDocument();
+  // Case 201 failed last time: the Failed button arrives UNLIT, carrying
+  // a pulsing dot and a tooltip naming it as the previous result instead.
+  const failedBtn = await screen.findByTitle("Failed - the previous run's result");
+  expect(failedBtn).not.toHaveClass("bg-danger");
+  expect(failedBtn.querySelector(".animate-pulse")).toBeTruthy();
+  // Nothing is marked yet - the indicator is information, not a mark -
+  // and the off-list point 999 adds nothing either.
+  expect(screen.getByTitle("0 of 2 marked")).toHaveTextContent("1/2");
+  expect(screen.getByRole("button", { name: /Finish \(0\)/ })).toBeInTheDocument();
 
-  // Case 202 has never run: it must arrive with NOTHING selected - a blank
-  // slate is information too.
+  // Case 202 has never run: it must arrive with NOTHING selected and
+  // nothing pulsing - a blank slate is information too.
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   await screen.findByText("Invalid login");
   // ...and walking forward increments the position.
-  expect(screen.getByTitle("1 of 2 marked")).toHaveTextContent("2/2");
+  expect(screen.getByTitle("0 of 2 marked")).toHaveTextContent("2/2");
   expect(screen.getByRole("button", { name: "Failed" })).not.toHaveClass("bg-danger");
   expect(screen.getByRole("button", { name: "Passed" })).not.toHaveClass("bg-success");
+  expect(screen.queryByTitle(/previous run's result/)).not.toBeInTheDocument();
 });
 
-/// The pre-selection is a starting point, never an override: once the
-/// tester marks a case, a later refetch of the points must not undo it.
-test("a mark the tester makes wins over the pre-selection", async () => {
-  mockIPC((cmd) => {
+/// The point of showing instead of pre-selecting: a case that passed last
+/// time can be PASSED AGAIN - the click is an ordinary mark, and Next
+/// records it as a fresh result.
+test("clicking the previous run's own verdict records a fresh result", async () => {
+  const recorded: Array<Record<string, unknown>> = [];
+  mockIPC((cmd, args) => {
     if (cmd === "run_history") return [];
-    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Invalid login" }];
     if (cmd === "list_test_points")
       return [
         {
@@ -285,24 +289,51 @@ test("a mark the tester makes wins over the pre-selection", async () => {
           test_case_name: "Valid login",
           config_name: "W10",
           tester: "",
-          last_outcome: "failed",
+          last_outcome: "passed",
           last_run_id: 3,
           last_result_id: 30,
         },
+        {
+          point_id: 8,
+          test_case_id: 202,
+          test_case_name: "Invalid login",
+          config_name: "W10",
+          tester: "",
+          last_outcome: "",
+          last_run_id: null,
+          last_result_id: null,
+        },
       ];
-    if (cmd === "get_result_detail") return { outcome: "failed", comment: "" };
+    if (cmd === "get_result_detail") return { outcome: "passed", comment: "" };
     if (cmd === "result_screenshots") return [];
+    if (cmd === "start_test_run")
+      return {
+        run_id: 300,
+        web_url: "",
+        results: [
+          { point_id: 7, result_id: 70 },
+          { point_id: 8, result_id: 80 },
+        ],
+        unmatched: [],
+      };
+    if (cmd === "record_result") {
+      recorded.push(args as Record<string, unknown>);
+      return [];
+    }
   });
   renderRunner();
   await screen.findByText("Valid login");
-  await vi.waitFor(() => {
-    expect(screen.getByRole("button", { name: "Failed" })).toHaveClass("bg-danger");
-  });
+  await screen.findByTitle("Passed - the previous run's result");
 
-  // The fix landed and this time it passes.
+  // Clicking Passed - the SAME verdict as last run - is a real mark...
   fireEvent.click(screen.getByRole("button", { name: "Passed" }));
   expect(screen.getByRole("button", { name: "Passed" })).toHaveClass("bg-success");
-  expect(screen.getByRole("button", { name: "Failed" })).not.toHaveClass("bg-danger");
+
+  // ...and Next records it like any other.
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await vi.waitFor(() => expect(recorded).toHaveLength(1));
+  expect(recorded[0].resultId).toBe(70);
+  expect((recorded[0].outcome as Record<string, unknown>).outcome).toBe("Passed");
 });
 
 test("session caseIds restrict the runner's case list", async () => {

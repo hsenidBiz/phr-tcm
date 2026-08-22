@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Pin, PinOff, X } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Toaster, toast } from "sonner";
 import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
 import AstryxIsland from "../components/AstryxIsland";
@@ -258,32 +258,23 @@ export default function RunnerWindow() {
     startRef.current = Date.now();
   }, [idx]);
 
-  // Every case opens with its LAST outcome already selected. A tester
-  // re-running a suite only touches what changed: a case that passed last
-  // time and passed again needs no click at all, and the lit button is
-  // itself the "this failed last time" indicator while re-testing.
-  //
-  // Pre-selected marks count toward Finish exactly like clicked ones - that
-  // is the point - and "Finish (N)" (plus the header counter's tooltip)
-  // says how many will be recorded before anything is sent. Never-run cases stay
-  // unmarked, and a mark the tester has already made is never overwritten,
-  // so a refetch of points mid-session cannot undo a decision.
-  useEffect(() => {
-    if (!points.data || !cases.data) return;
-    setStates((s) => {
-      let changed = false;
-      const next = { ...s };
-      for (const p of points.data) {
-        if (p.test_case_id == null || next[p.test_case_id]?.outcome) continue;
-        if (next[p.test_case_id]?.cleared) continue; // tester explicitly un-marked it
-        const last = OUTCOMES.find((o) => o.toLowerCase() === p.last_outcome.toLowerCase());
-        if (!last) continue; // never run - a blank slate stays blank
-        next[p.test_case_id] = { ...emptyState(), ...next[p.test_case_id], outcome: last };
-        changed = true;
-      }
-      return changed ? next : s;
-    });
-  }, [points.data, cases.data]);
+  // The previous run's outcome is SHOWN, never pre-applied. Pre-selecting
+  // the button made "pass it again" impossible: the button arrived lit,
+  // clicking it un-marked (that's the toggle), and an untouched pre-mark
+  // was never re-recorded - so a re-run of an already-passed case had no
+  // way to record a fresh Pass. Now every case opens unmarked, the dot on
+  // the button matching the last outcome pulses as the "this is what it
+  // did last time" indicator, and clicking the same (or any) verdict is a
+  // real mark that Next records like every other one.
+  const lastOutcomeByCase = useMemo(() => {
+    const m: Record<number, string> = {};
+    for (const p of points.data ?? []) {
+      if (p.test_case_id == null) continue;
+      const last = OUTCOMES.find((o) => o.toLowerCase() === p.last_outcome.toLowerCase());
+      if (last) m[p.test_case_id] = last; // never-run cases stay absent
+    }
+    return m;
+  }, [points.data]);
 
   const patch = (caseId: number, p: Partial<CaseState>) =>
     setStates((s) => ({ ...s, [caseId]: { ...emptyState(), ...s[caseId], ...p } }));
@@ -994,9 +985,12 @@ export default function RunnerWindow() {
             other three stay reachable but read as secondary. */}
         {current && (
           <div className="flex gap-1">
-            {OUTCOMES.map((o) => (
+            {OUTCOMES.map((o) => {
+              const wasLastOutcome = lastOutcomeByCase[current.id] === o;
+              return (
               <button
                 key={o}
+                title={wasLastOutcome ? `${outcomeLabel(o)} - the previous run's result` : undefined}
                 className={cn(
                   "flex items-center justify-center gap-1.5 rounded-md py-2 text-xs font-semibold",
                   o === "Passed" || o === "Failed" ? "flex-[2]" : "flex-1",
@@ -1014,11 +1008,22 @@ export default function RunnerWindow() {
                 }
               >
                 {st.outcome !== o && (
-                  <span aria-hidden className={cn("size-1.5 rounded-full", outcomeDot[o])} />
+                  // The previous run's verdict pulses instead of arriving
+                  // pre-selected, so recording the same result again is one
+                  // ordinary click away.
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      outcomeDot[o],
+                      wasLastOutcome && "size-2 animate-pulse",
+                    )}
+                  />
                 )}
                 {outcomeLabel(o)}
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
         <div className="flex items-center gap-2">
