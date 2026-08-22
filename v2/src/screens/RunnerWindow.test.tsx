@@ -7,13 +7,17 @@ import RunnerWindow from "./RunnerWindow";
 // getCurrentWindow() must be a no-op in jsdom - and its methods must
 // return PROMISES: the component chains .catch() on them, and a bare
 // vi.fn() (undefined) threw an unhandled error that failed the release
-// gate even with every assertion green.
+// gate even with every assertion green. ONE shared object, so tests can
+// assert calls like minimize/unminimize across getCurrentWindow() calls.
+const windowMock = vi.hoisted(() => ({
+  close: vi.fn(() => Promise.resolve()),
+  setFocus: vi.fn(() => Promise.resolve()),
+  setAlwaysOnTop: vi.fn(() => Promise.resolve()),
+  minimize: vi.fn(() => Promise.resolve()),
+  unminimize: vi.fn(() => Promise.resolve()),
+}));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({
-    close: vi.fn(() => Promise.resolve()),
-    setFocus: vi.fn(() => Promise.resolve()),
-    setAlwaysOnTop: vi.fn(() => Promise.resolve()),
-  }),
+  getCurrentWindow: () => windowMock,
 }));
 
 beforeEach(() => {
@@ -505,4 +509,34 @@ test("pasting an image (Ctrl+V) attaches it to the current case", async () => {
   // The attachment lands as this case's next pasted-*.png thumbnail
   // (the fullscreen viewer holds a second copy of the same image).
   expect((await screen.findAllByAltText("pasted-201-1.png")).length).toBeGreaterThan(0);
+});
+
+/** Single-screen snipping: the runner covers the very thing the tester
+ * wants to capture, so Snip minimizes the window BEFORE the overlay
+ * freezes the screen - and Cancel snip brings it back with focus. (The
+ * success and timeout paths restore through the same helper.) */
+test("Snip minimizes the runner and Cancel snip restores it", async () => {
+  windowMock.minimize.mockClear();
+  windowMock.unminimize.mockClear();
+  windowMock.setFocus.mockClear();
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "list_test_points") return [];
+    if (cmd === "open_snip") return null;
+  });
+  renderRunner();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Snip" }));
+  // Out of the way first: minimize precedes the overlay opening.
+  await vi.waitFor(() => expect(windowMock.minimize).toHaveBeenCalled());
+  expect(windowMock.unminimize).not.toHaveBeenCalled();
+
+  // The overlay is up; the same control now cancels - and brings the
+  // window back, focused.
+  fireEvent.click(await screen.findByRole("button", { name: "Cancel snip" }));
+  await vi.waitFor(() => expect(windowMock.unminimize).toHaveBeenCalled());
+  await vi.waitFor(() => expect(windowMock.setFocus).toHaveBeenCalled());
+  expect(screen.getByRole("button", { name: "Snip" })).toBeInTheDocument();
 });

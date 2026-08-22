@@ -388,14 +388,37 @@ export default function RunnerWindow() {
       .catch(() => toast.error("Could not change always-on-top."));
   };
 
+  /** Bring the runner back after a snip: restore from the taskbar and
+   * take focus so the tester lands where the attachment just went. A
+   * best-effort pair - the window may never have minimized, or the user
+   * may have restored it themselves while the overlay was up. */
+  function restoreFromSnip() {
+    const win = getCurrentWindow();
+    win
+      .unminimize()
+      .then(() => win.setFocus())
+      .catch(() => {});
+  }
+
   /** Region capture via the Windows snip overlay: the result lands on the
    * clipboard, so poll for a NEW image for up to 60s and auto-attach it. */
   async function snip() {
     if (!current) return;
     const caseId = current.id;
     const before = await readClipboardImageB64().catch(() => null);
+    // On a single screen the runner itself covers the thing the tester
+    // wants to capture, and the overlay freezes the screen the moment it
+    // opens - so get out of the way FIRST, give the compositor a beat to
+    // actually paint the window away, then open the overlay. The window
+    // comes back when the snip lands, times out, is cancelled here, or
+    // the overlay fails to open at all.
+    await getCurrentWindow()
+      .minimize()
+      .then(() => new Promise((res) => setTimeout(res, 350)))
+      .catch(() => {});
     const r = await commands.openSnip();
     if (r.status === "error") {
+      restoreFromSnip();
       toast.error(`Could not open the snipping overlay: ${r.error}. Snip manually and use Paste.`);
       return;
     }
@@ -407,6 +430,7 @@ export default function RunnerWindow() {
       const img = await readClipboardImageB64().catch(() => null);
       if (img && img !== before) {
         addImage(caseId, img, "snip");
+        restoreFromSnip();
         toast.success("Snip attached");
         setSnipping(false);
         return;
@@ -414,6 +438,7 @@ export default function RunnerWindow() {
     }
     if (snipToken.current === token) {
       setSnipping(false);
+      restoreFromSnip();
       toast.info("No snip detected - use Paste if you captured one.");
     }
   }
@@ -424,6 +449,7 @@ export default function RunnerWindow() {
   function cancelSnip() {
     snipToken.current++;
     setSnipping(false);
+    restoreFromSnip();
   }
 
   async function pasteImage() {
@@ -827,7 +853,9 @@ export default function RunnerWindow() {
               keeps the card from being crushed on short screens. */}
           <div className="shrink-0 space-y-2 rounded-md border border-border p-2">
           <div className="flex items-baseline justify-between">
-            <span className="text-xs font-semibold text-muted">Evidence · optional</span>
+            {/* Just "Evidence" - the comment box's own placeholder already
+                says optional, and saying it twice reads like nagging. */}
+            <span className="text-xs font-semibold text-muted">Evidence</span>
             {st.attachments.length > 0 && (
               <span className="text-[11px] text-faint">
                 {st.attachments.length} attached
