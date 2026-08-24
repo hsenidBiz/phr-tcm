@@ -68,6 +68,12 @@ test("groups render in actionability order with counts and badges", async () => 
   expect(within(mineRow).getByTitle("Kim: approved")).toBeInTheDocument();
 });
 
+/** Tick a repo row inside the (already open) Repositories dropdown. The
+ * repo name also appears on PR-row pills, so target the dropdown's
+ * checkbox label the way the Work Board tests do. */
+const tickRepo = async (name: string) =>
+  fireEvent.click((await screen.findAllByText(name)).find((el) => el.closest("label"))!);
+
 test("picking a repo fetches its active PRs and persists the choice", async () => {
   let asked = "";
   mockIPC((cmd, args) => {
@@ -85,12 +91,103 @@ test("picking a repo fetches its active PRs and persists the choice", async () =
   renderPanel();
   await screen.findByText("Awaiting your review");
 
-  fireEvent.click(screen.getByLabelText("Repository"));
-  fireEvent.click(await screen.findByRole("option", { name: "api" }));
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("api");
   expect(await screen.findByText(/Active on api/)).toBeInTheDocument();
   expect(await screen.findByText("!9")).toBeInTheDocument();
   expect(asked).toBe("r2");
-  expect(localStorage.getItem("tcm-v2-pr-repo:acme/Web")).toBe("r2");
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r2"]));
+});
+
+test("several repos each get their own section, and unticking removes one", async () => {
+  const asked: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos")
+      return [
+        { id: "r1", name: "web" },
+        { id: "r2", name: "api" },
+      ];
+    if (cmd === "repo_pull_requests") {
+      const repoId = (args as { repoId: string }).repoId;
+      asked.push(repoId);
+      return repoId === "r1" ? [pr(11, { repo: "web" })] : [pr(12, { repo: "api" })];
+    }
+  });
+  renderPanel();
+  await screen.findByText("Awaiting your review");
+
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("web");
+  await tickRepo("api");
+  // One titled section per repo, each with its own PRs, in repo-list order.
+  expect(await screen.findByText("Active on web")).toBeInTheDocument();
+  expect(await screen.findByText("Active on api")).toBeInTheDocument();
+  expect(await screen.findByText("!11")).toBeInTheDocument();
+  expect(await screen.findByText("!12")).toBeInTheDocument();
+  expect(
+    screen
+      .getByText("Active on web")
+      .compareDocumentPosition(screen.getByText("Active on api")) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(new Set(asked)).toEqual(new Set(["r1", "r2"]));
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r1", "r2"]));
+
+  // Unticking web drops its section but leaves api's alone.
+  await tickRepo("web");
+  expect(screen.queryByText("Active on web")).not.toBeInTheDocument();
+  expect(screen.getByText("Active on api")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-repos:acme/Web")).toBe(JSON.stringify(["r2"]));
+});
+
+test("a single-repo choice from before multi-select migrates silently", async () => {
+  localStorage.setItem("tcm-v2-pr-repo:acme/Web", "r2");
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos")
+      return [
+        { id: "r1", name: "web" },
+        { id: "r2", name: "api" },
+      ];
+    if (cmd === "repo_pull_requests")
+      return (args as { repoId: string }).repoId === "r2" ? [pr(9, { repo: "api" })] : [];
+  });
+  renderPanel();
+  // The old choice keeps working without the user re-picking anything.
+  expect(await screen.findByText("Active on api")).toBeInTheDocument();
+  expect(await screen.findByText("!9")).toBeInTheDocument();
+});
+
+test("deselecting Your Pull Requests hides the group and un-hides yours in repo sections", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [pr(20, { repo: "web" })] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "repo_pull_requests")
+      return [pr(20, { repo: "web" }), pr(21, { repo: "web", author: "Kim" })];
+  });
+  renderPanel();
+  // On by default: the group renders without anyone touching the picker.
+  expect(await screen.findByText("Your pull requests")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("web");
+  await screen.findByText("!21");
+  // While the group is shown, your PR lives there and only there.
+  expect(screen.getAllByText("!20")).toHaveLength(1);
+
+  await tickRepo("Your Pull Requests");
+  expect(screen.queryByText("Your pull requests")).not.toBeInTheDocument();
+  // "Show all pull requests": yours now belongs to the repo's own list -
+  // deduping against the hidden group would have made it vanish entirely.
+  expect(screen.getAllByText("!20")).toHaveLength(1);
+  expect(screen.getByText("Active on web")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-yours:acme/Web")).toBe("off");
+
+  // And back on: the group returns, the repo section dedupes again.
+  await tickRepo("Your Pull Requests");
+  expect(await screen.findByText("Your pull requests")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-pr-yours:acme/Web")).toBe("on");
 });
 
 test("your own PR in the selected repo is not duplicated under Active on X", async () => {
@@ -103,8 +200,8 @@ test("your own PR in the selected repo is not duplicated under Active on X", asy
   });
   renderPanel();
   await screen.findByText("!20"); // your PR loads first (overview)
-  fireEvent.click(screen.getByLabelText("Repository"));
-  fireEvent.click(await screen.findByRole("option", { name: "web" }));
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("web");
   // Wait for the repo's active list to load (the stranger's PR appears).
   await screen.findByText("!21");
 
@@ -197,8 +294,8 @@ test("the completed filter runs a separate query and titles the group", async ()
     }
   });
   renderPanel();
-  fireEvent.click(screen.getByLabelText("Repository"));
-  fireEvent.click(await screen.findByRole("option", { name: "web" }));
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("web");
   // Titles render as "!<id> <title>" across sibling nodes, so match the id.
   expect(await screen.findByText("!9")).toBeInTheDocument();
 
@@ -341,8 +438,8 @@ test("a full page offers Load more, which fetches the next skip", async () => {
     }
   });
   renderPanel();
-  fireEvent.click(screen.getByLabelText("Repository"));
-  fireEvent.click(await screen.findByRole("option", { name: "web" }));
+  fireEvent.click(screen.getByLabelText("Repositories"));
+  await tickRepo("web");
 
   expect(await screen.findByText("!100")).toBeInTheDocument();
   const more = await screen.findByRole("button", { name: "Load more" });

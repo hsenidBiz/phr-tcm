@@ -18,6 +18,8 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       "An update that couldn't finish now says so. Before, if the installer couldn't swap the app's files - because a browser window opened from the app, or another program, was still using them - the app quietly restarted on the old version and the update banner just reappeared, as if clicking it had done nothing. The app now remembers what it was trying to become, notices on the next launch that it didn't get there, and the banner explains: files were in use, close your browser windows and try again, or restart Windows.",
       "The board's Hide chip sits its label properly: the text was measurably off-centre and the bottom padding thinner than the top. Now padded evenly with the same ink correction the app's other chips use - same chip size.",
+      "Pull Requests now tracks as many repositories as you want: the repository picker became a checkbox list, and every ticked repo gets its own titled section with its own Load more. Your previous single-repo choice carries over.",
+      "The same picker starts on \"Your Pull Requests\" - by default the panel shows what's waiting on you and what you've authored. Tick repositories to follow them alongside, or untick Your Pull Requests to read a repo's complete list (your own PRs then stay in place there instead of being folded away).",
     ],
   },
   {
