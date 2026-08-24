@@ -171,7 +171,15 @@ export default function RunnerWindow() {
   });
 
   const caseFilter = session?.caseIds?.length ? new Set(session.caseIds) : null;
-  const list = (cases.data ?? []).filter((c) => !caseFilter || caseFilter.has(c.id));
+  // The fetch order is the PBI's Tested-By link order, which is NOT the
+  // order the Run Tests list showed - the session carries that order
+  // (caseIds for a selective run, caseOrder as a hint for a full one) and
+  // the runner follows it. Unlisted cases keep fetch order, at the end.
+  const order = session?.caseIds?.length ? session.caseIds : (session?.caseOrder ?? []);
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const list = (cases.data ?? [])
+    .filter((c) => !caseFilter || caseFilter.has(c.id))
+    .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
   const current = list[idx];
   const st = (current && states[current.id]) || emptyState();
   const currentPoint = points.data?.find((p) => p.test_case_id === current?.id);

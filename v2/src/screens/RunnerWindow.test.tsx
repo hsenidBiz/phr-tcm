@@ -336,6 +336,65 @@ test("clicking the previous run's own verdict records a fresh result", async () 
   expect((recorded[0].outcome as Record<string, unknown>).outcome).toBe("Passed");
 });
 
+/// The Run Tests list and the runner used to disagree about order: the
+/// list shows the suite's points, while the runner fetches the PBI's
+/// Tested-By links - two ADO artifacts with no shared ordering contract.
+/// The session now carries the list's order and the runner follows it.
+test("the runner walks cases in the session's caseIds order", async () => {
+  localStorage.setItem(
+    "tcm-v2-runner-session",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      planId: 9,
+      planName: "Plan",
+      suiteId: 91,
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      // Reversed relative to the fetch below: the session's order must win.
+      caseIds: [202, 201],
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Second case" }];
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  // First up is 202, not the fetch's first (201).
+  expect(await screen.findByText("Second case")).toBeInTheDocument();
+  expect(screen.queryByText("Valid login")).not.toBeInTheDocument();
+});
+
+test("a caseOrder hint orders the full run without restricting it", async () => {
+  localStorage.setItem(
+    "tcm-v2-runner-session",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      planId: 9,
+      planName: "Plan",
+      suiteId: 91,
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      // Only 202 is hinted - 201 must still be in the run, after it.
+      caseOrder: [202],
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Second case" }];
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  expect(await screen.findByText("Second case")).toBeInTheDocument();
+  // Both cases are in the session: "1/2", not a filtered "1/1". The
+  // counter renders as sibling text nodes, so match on textContent.
+  expect(
+    screen.getByText((_, el) => el?.tagName === "SPAN" && el.textContent === "1/2"),
+  ).toBeInTheDocument();
+});
+
 test("session caseIds restrict the runner's case list", async () => {
   localStorage.setItem(
     "tcm-v2-runner-session",

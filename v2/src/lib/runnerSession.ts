@@ -8,8 +8,15 @@ export type RunnerSession = {
   planName: string;
   suiteId: number;
   pbi: PbiHit;
-  /** Restrict the runner to these test case ids; empty/absent = all. */
+  /** Restrict the runner to these test case ids, IN THIS ORDER;
+   * empty/absent = all. Ordered because the Run Tests list and the
+   * runner's own fetch (the PBI's Tested-By links) have no shared
+   * ordering contract - the runner walks the sequence it is handed. */
   caseIds?: number[];
+  /** Order hint for an unrestricted run: the Run Tests list's visible
+   * order. Cases missing from it (list filtered, linked since) still
+   * run - after these, in fetch order. Ignored when caseIds is set. */
+  caseOrder?: number[];
 };
 
 const KEY = "tcm-v2-runner-session";

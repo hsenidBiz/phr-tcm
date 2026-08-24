@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.9",
+    date: "2026-08-24",
+    items: [
+      "The runner walks test cases in the same order the Run Tests list shows them. The list and the runner read two different things in Azure DevOps (the suite's test points and the PBI's Tested By links), which don't agree on order - so a selective run could open on a different case than the one at the top of your selection. The list's order now travels with the handoff, for full runs and selected runs alike.",
+      "The floating \"Run N in runner\" pill breathes: its button sat nearly flush with the pill's edge.",
+    ],
+  },
+  {
     version: "1.20.8",
     date: "2026-08-24",
     items: [
