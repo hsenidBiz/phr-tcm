@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.8",
+    date: "2026-08-24",
+    items: [
+      "An update that couldn't finish now says so. Before, if the installer couldn't swap the app's files - because a browser window opened from the app, or another program, was still using them - the app quietly restarted on the old version and the update banner just reappeared, as if clicking it had done nothing. The app now remembers what it was trying to become, notices on the next launch that it didn't get there, and the banner explains: files were in use, close your browser windows and try again, or restart Windows.",
+    ],
+  },
+  {
     version: "1.20.7",
     date: "2026-08-22",
     items: [

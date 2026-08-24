@@ -5925,7 +5925,7 @@ dependencies = [
 
 [[package]]
 name = "v2"
-version = "1.20.7"
+version = "1.20.8"
 dependencies = [
  "base64 0.22.1",
  "cpal",

@@ -118,3 +118,64 @@ fn the_process_leaves_the_install_dir_so_children_cannot_pin_it() {
     std::env::set_current_dir(&was).unwrap();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The forensic marker behind "your last update didn't finish".
+///
+/// The apply runs after the app has exited and reports its failure only to
+/// Velopack's own log, so the app restarting on the OLD version was
+/// indistinguishable from never having clicked at all - the banner just
+/// came back. `note_attempt` + `failed_attempt` close that gap: aim is
+/// recorded before the hand-off, outcome is judged on the next launch.
+mod update_attempt_marker {
+    use v2_lib::updater::{failed_attempt, note_attempt};
+
+    fn dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("tcm-attempt-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn still_on_the_old_version_means_the_apply_failed_and_the_marker_survives() {
+        let d = dir("failed");
+        note_attempt(&d, "1.20.8");
+        assert_eq!(failed_attempt(&d, "1.20.7"), Some("1.20.8".into()));
+        // Kept: the explanation must survive further restarts of the old
+        // version, not vanish after being shown once.
+        assert_eq!(failed_attempt(&d, "1.20.7"), Some("1.20.8".into()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn reaching_or_passing_the_target_clears_the_marker() {
+        let d = dir("landed");
+        note_attempt(&d, "1.20.8");
+        assert_eq!(failed_attempt(&d, "1.20.8"), None, "the update landed - nothing failed");
+        assert!(!d.join("update-attempt.txt").exists(), "a resolved marker must not linger");
+
+        // Overshot (hand-copied files, a skipped release): also not a failure.
+        note_attempt(&d, "1.20.8");
+        assert_eq!(failed_attempt(&d, "1.21.0"), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn no_marker_or_an_unreadable_one_alarms_no_one() {
+        let d = dir("noise");
+        assert_eq!(failed_attempt(&d, "1.20.7"), None);
+        std::fs::write(d.join("update-attempt.txt"), "not-a-version").unwrap();
+        assert_eq!(failed_attempt(&d, "1.20.7"), None);
+        assert!(!d.join("update-attempt.txt").exists(), "garbage must be cleaned up, not re-read forever");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_newer_attempt_overwrites_the_old_aim() {
+        let d = dir("overwrite");
+        note_attempt(&d, "1.20.8");
+        note_attempt(&d, "1.20.9");
+        assert_eq!(failed_attempt(&d, "1.20.7"), Some("1.20.9".into()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

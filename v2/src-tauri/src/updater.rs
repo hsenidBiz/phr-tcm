@@ -74,6 +74,56 @@ pub struct UpdateStatus {
     /// Why no check happened. When this is set, `available` being None
     /// means "unknown", NOT "up to date".
     pub blocked: Option<String>,
+    /// A version a previous "Restart to update" tried and failed to reach.
+    ///
+    /// The apply happens after this process has exited, so the only way
+    /// the app can know it failed is forensically: `note_attempt` records
+    /// the target version just before the hand-off, and the next launch
+    /// finds itself still on the old version. Without this the failure is
+    /// invisible - the app restarts, the banner comes back, and the user
+    /// is left to wonder whether clicking it did anything at all.
+    pub failed_attempt: Option<String>,
+}
+
+/// The file that remembers what the last "Restart to update" aimed for.
+const ATTEMPT_FILE: &str = "update-attempt.txt";
+
+/// Records that this process is about to hand off to Update.exe to become
+/// `version`. Written just before the hand-off; read by the NEXT launch.
+pub fn note_attempt(data_dir: &std::path::Path, version: &str) {
+    let _ = std::fs::create_dir_all(data_dir);
+    let _ = std::fs::write(data_dir.join(ATTEMPT_FILE), version);
+}
+
+/// The version the previous apply tried and failed to reach, if any.
+///
+/// "Failed" is judged by outcome, not by error codes: the marker names a
+/// version strictly newer than the one now running, so the hand-off to
+/// Update.exe cannot have worked. A marker the app has caught up with (or
+/// one that does not parse) is deleted; a failed one is KEPT, so the
+/// explanation survives further restarts until an update actually lands -
+/// the next `note_attempt` overwrites it anyway.
+pub fn failed_attempt(data_dir: &std::path::Path, running: &str) -> Option<String> {
+    let path = data_dir.join(ATTEMPT_FILE);
+    let target = std::fs::read_to_string(&path).ok()?;
+    let target = target.trim().to_string();
+    match (parse_version(&target), parse_version(running)) {
+        (Some(t), Some(r)) if t > r => Some(target),
+        _ => {
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    }
+}
+
+/// "1.20.8" as an orderable triple. Anything else is None - a marker this
+/// cannot read is a marker not worth alarming anyone over.
+fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = v.trim().split('.').map(|p| p.parse::<u64>().ok());
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(Some(a)), Some(Some(b)), Some(Some(c)), None) => Some((a, b, c)),
+        _ => None,
+    }
 }
 
 /// Looks for a newer release, storing the UpdateInfo for apply.
@@ -85,8 +135,8 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
     let mans = managers();
     if mans.is_empty() {
         return UpdateStatus {
-            available: None,
             blocked: Some("This build does not update itself - it was not installed by the installer.".into()),
+            ..UpdateStatus::default()
         };
     }
     let mut last = None;
@@ -95,7 +145,7 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
             Ok(UpdateCheck::UpdateAvailable(info)) => {
                 let version = info.TargetFullRelease.Version.clone();
                 *state.pending.lock().unwrap() = Some(*info);
-                return UpdateStatus { available: Some(version), blocked: None };
+                return UpdateStatus { available: Some(version), ..UpdateStatus::default() };
             }
             Ok(_) => return UpdateStatus::default(),
             Err(e) => {
@@ -105,11 +155,11 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
         }
     }
     UpdateStatus {
-        available: None,
         blocked: Some(format!(
             "Could not reach the update feed: {}",
             last.unwrap_or_else(|| "no source answered".into())
         )),
+        ..UpdateStatus::default()
     }
 }
 
@@ -167,6 +217,7 @@ pub fn bytes_at(percent: i16, total: u64) -> u64 {
 /// works, because the two sources resolve the same filename differently.
 pub fn download_and_apply(
     state: &UpdateState,
+    data_dir: Option<std::path::PathBuf>,
     on_progress: impl Fn(Progress) + Send + Sync + 'static,
 ) -> Result<(), String> {
     let mans = managers();
@@ -177,7 +228,7 @@ pub fn download_and_apply(
     let report = std::sync::Arc::new(on_progress);
     let mut last = String::new();
     for (name, um) in mans {
-        match try_source(&um, state, &report) {
+        match try_source(&um, state, data_dir.as_deref(), &report) {
             Ok(()) => return Ok(()), // never returns: the app restarts
             Err(Refusal::UpToDate) => {
                 *state.pending.lock().unwrap() = None;
@@ -203,6 +254,7 @@ enum Refusal {
 fn try_source(
     um: &UpdateManager,
     state: &UpdateState,
+    data_dir: Option<&std::path::Path>,
     report: &std::sync::Arc<impl Fn(Progress) + Send + Sync + 'static>,
 ) -> Result<(), Refusal> {
     let info = match um.check_for_updates() {
@@ -257,6 +309,13 @@ fn try_source(
     downloaded.map_err(|e| Refusal::Failed(format!("could not download {version}: {e}")))?;
 
     report(Progress { percent: 100, downloaded: total, total });
+    // The last thing written before the hand-off: if the next launch is
+    // still older than this version, the apply below must have failed - a
+    // fact that process can learn no other way, because this one is about
+    // to exit and Update.exe reports its failures only to its own log.
+    if let Some(dir) = data_dir {
+        note_attempt(dir, &version);
+    }
     // The package is on disk now, so a failure here is not something the
     // next source could fix - but it is still reported as one failure among
     // the sources rather than specially, because the caller's job is only to

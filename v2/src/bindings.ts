@@ -1535,6 +1535,17 @@ export type UpdateStatus = {
 	 *  means "unknown", NOT "up to date".
 	 */
 	blocked: string | null,
+	/**
+	 *  A version a previous "Restart to update" tried and failed to reach.
+	 * 
+	 *  The apply happens after this process has exited, so the only way
+	 *  the app can know it failed is forensically: `note_attempt` records
+	 *  the target version just before the hand-off, and the next launch
+	 *  finds itself still on the old version. Without this the failure is
+	 *  invisible - the app restarts, the banner comes back, and the user
+	 *  is left to wonder whether clicking it did anything at all.
+	 */
+	failed_attempt: string | null,
 };
 
 /**

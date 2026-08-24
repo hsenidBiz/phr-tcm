@@ -44,13 +44,24 @@ pub fn app_log_dir() -> String {
 #[specta::specta]
 pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
     tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let running = app.package_info().version.to_string();
+        // Did the LAST "Restart to update" actually land? The apply runs
+        // after that process died, so this launch is the first thing that
+        // can compare where it aimed against where we are.
+        let failed_attempt = app
+            .path()
+            .app_data_dir()
+            .ok()
+            .and_then(|dir| updater::failed_attempt(&dir, &running));
         let state = app.state::<updater::UpdateState>();
-        updater::check(&state)
+        updater::UpdateStatus { failed_attempt, ..updater::check(&state) }
     })
     .await
     .unwrap_or_else(|e| updater::UpdateStatus {
         available: None,
         blocked: Some(format!("The update check did not run: {e}")),
+        failed_attempt: None,
     })
 }
 
@@ -60,9 +71,11 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
 #[specta::specta]
 pub async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
         let emitter = app.clone();
+        let data_dir = app.path().app_data_dir().ok();
         let state = app.state::<updater::UpdateState>();
-        updater::download_and_apply(&state, move |p| {
+        updater::download_and_apply(&state, data_dir, move |p| {
             use tauri_specta::Event as _;
             let _ = crate::events::UpdateProgress {
                 percent: p.percent as i32,
