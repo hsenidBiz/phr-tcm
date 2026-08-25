@@ -114,9 +114,10 @@ test("an update with nothing to change is not submitted at all", async () => {
   await screen.findByText("Unchanged");
 
   fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
-  // Both rows are updates, so the gate says "update", not "create".
+  // Both rows are updates, so the gate says "update", not "create" - and
+  // a pure-update queue skips the check-the-PBI stage entirely (updates
+  // never read the selected PBI), so the first Confirm submits.
   fireEvent.click(await screen.findByRole("button", { name: /Confirm & update 2/ }));
-  fireEvent.click(screen.getByRole("button", { name: /Yes — update 2/ }));
 
   await waitFor(() => expect(sent.length).toBeGreaterThan(0));
   expect(sent.map((c) => c.title)).toEqual(["Edited now"]);

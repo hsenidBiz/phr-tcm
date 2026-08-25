@@ -5,7 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
-import { commands, events, type SubmitItemResult, type TestCase } from "../bindings";
+import { commands, events, type SubmitItemResult, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
@@ -216,6 +216,13 @@ export default function QueueSection({
 
   // Final confirmation stage: the first Confirm click arms the submit and
   // spotlights the PBI chip; only the explicit second click writes.
+  //
+  // Skipped for a queue that is NOTHING but updates: an update PATCHes its
+  // own work item where it already lives and never reads the selected PBI
+  // (only creates link to it, take its area/iteration, and populate its
+  // suite). The check-the-PBI stage exists to stop creates landing under
+  // the wrong PBI - for pure updates it is friction with nothing to catch.
+  const pureUpdates = queue.length > 0 && queue.every((tc) => tc.update_id != null);
   const [armed, setArmed] = useState(false);
   // The last safeguard before anything is written: titles of the CREATE
   // rows that already exist on the PBI, checked FRESH against ADO at the
@@ -265,32 +272,6 @@ export default function QueueSection({
     staleTime: 60_000,
     retry: false,
   });
-  const currentById = new Map((currentCases.data ?? []).map((c) => [c.id, c]));
-
-  /** Rows this submit has nothing to write for.
-   *
-   * The review gate already computes this and prints "no-op - nothing will
-   * change" on the row; until now it printed that and then wrote the case
-   * anyway. On a queue of 81 imported cases where ten had really changed,
-   * that was 71 pointless PATCHes plus 71 x the half-second pacing gap -
-   * about a minute of waiting, and a minute of someone's rate-limit budget,
-   * to say nothing.
-   *
-   * Fails SAFE in both directions that matter:
-   *  - only an UPDATE can be a no-op; a create always writes.
-   *  - it needs the server's current values. If that fetch failed, or has
-   *    not landed, the row is NOT skipped - "we could not check" must never
-   *    read as "nothing to do".
-   */
-  const isNoop = (tc: TestCase): boolean => {
-    if (tc.update_id == null) return false;
-    const cur = currentById.get(tc.update_id);
-    if (!cur) return false;
-    return diffCase(tc, cur, {
-      moduleRef: prefs.moduleRef,
-      preconditionsRef: prefs.preconditionsRef,
-    }).noop;
-  };
   const [expandedDiffs, setExpandedDiffs] = useState<Set<number>>(new Set());
   const toggleDiff = (i: number) =>
     setExpandedDiffs((s) => {
@@ -440,11 +421,48 @@ export default function QueueSection({
 
   const submit = useMutation({
     mutationFn: async () => {
+      // Rows this submit has nothing to write for. The review gate prints
+      // "no-op - nothing will change" per row; on a queue of 81 imported
+      // cases where ten had really changed, writing anyway meant 71
+      // pointless PATCHes plus 71 x the half-second pacing gap - a minute
+      // of waiting and rate-limit budget to say nothing.
+      //
+      // The check needs the server's CURRENT values, fetched HERE at
+      // submit time: the review's cached baseline can be minutes old, and
+      // the pure-update fast path (no check-the-PBI stage) can reach this
+      // point before the review's own diff fetch has landed at all.
+      // Fails SAFE in both directions that matter: only an UPDATE can be
+      // a no-op (a create always writes), and an unreadable baseline
+      // skips nothing - "we could not check" must never read as "nothing
+      // to do".
+      const idsToCheck = queue
+        .map((tc) => tc.update_id)
+        .filter((x): x is number => x != null);
+      const freshById = new Map<number, TestCaseFull>();
+      if (idsToCheck.length > 0) {
+        try {
+          const fresh = await unwrap(
+            commands.testCasesByIds(org, idsToCheck, prefs.moduleRef, prefs.preconditionsRef),
+          );
+          for (const c of fresh) freshById.set(c.id, c);
+        } catch {
+          // fail safe: skip nothing
+        }
+      }
+      const noopNow = (tc: TestCase): boolean => {
+        if (tc.update_id == null) return false;
+        const cur = freshById.get(tc.update_id);
+        if (!cur) return false;
+        return diffCase(tc, cur, {
+          moduleRef: prefs.moduleRef,
+          preconditionsRef: prefs.preconditionsRef,
+        }).noop;
+      };
       // Everything that actually has something to write. The skipped rows
       // are still in the queue and still on screen - they are just not
       // sent, and they are pruned alongside the written ones afterwards.
-      const toSend = queue.filter((tc) => !isNoop(tc));
-      const skippedRows = queue.filter((tc) => isNoop(tc));
+      const toSend = queue.filter((tc) => !noopNow(tc));
+      const skippedRows = queue.filter((tc) => noopNow(tc));
       const skipped = skippedRows.length;
       if (toSend.length === 0) {
         return { results: [], sent: [], sentFor: pbiId, skipped, skippedRows };
@@ -835,12 +853,12 @@ export default function QueueSection({
   // Diffing is word-level and runs per row - recomputing all of it on
   // every keystroke/selection render made an 80-case review sluggish.
   // Recomputed only when the queue, the fetched originals, or the field
-  // refs actually change. `currentById` above is rebuilt fresh every
-  // render (a cheap Map wrap), so the dependency here is its SOURCE -
-  // `currentCases.data` - which react-query keeps referentially stable
-  // across renders that don't change the result; depending on
-  // `currentById` itself would defeat the memo, since that Map's
-  // identity is new every render regardless of whether the data changed.
+  // refs actually change. The dependency is `currentCases.data` - which
+  // react-query keeps referentially stable across renders that don't
+  // change the result - and the id lookup Map is built INSIDE the
+  // factory: a Map built per render would have a new identity every
+  // time and defeat the memo. (The submit path builds its own fresh
+  // baseline at submit time; see the mutation.)
   const reviewRows = useMemo(() => {
     const byId = new Map((currentCases.data ?? []).map((c) => [c.id, c]));
     return queue.map((tc) => {
@@ -1336,7 +1354,9 @@ export default function QueueSection({
                   <Button
                     disabled={queue.length === 0 || hasBlockers || submit.isPending || !online}
                     title={online ? undefined : OFFLINE_HINT}
-                    onClick={() => arm(true)}
+                    // Pure updates go straight to the (still dup-guarded)
+                    // submit - see the pureUpdates note above.
+                    onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
                   >
                     <IconConfirm aria-hidden />
                     {submit.isPending ? "Processing" : `Confirm & ${label || "create 0"}`}

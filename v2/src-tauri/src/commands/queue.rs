@@ -646,23 +646,32 @@ pub async fn submit_queue(
                 )),
             }
         }
-        if let Ok((area, iteration)) = client
-            .get_work_item_paths(&organization, &project, pbi_id)
-            .await
-        {
-            // Still best-effort (a failure never blocks creation), but when
-            // the PBI had no test plan at all, the plan gets created FIRST
-            // and the user is told before the upload proceeds.
-            if let Ok(ensured) = client
-                .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
+        // A queue of NOTHING but updates never touches the selected PBI:
+        // updates PATCH their own work items where they already live, and
+        // the area/iteration defaults below are only read by creates. The
+        // suite-ensure would at best be a wasted round trip and at worst
+        // CREATE a test plan on a mis-selected PBI nobody meant to touch.
+        let has_creates = queue.iter().any(|tc| tc.update_id.is_none());
+        if has_creates {
+            if let Ok((area, iteration)) = client
+                .get_work_item_paths(&organization, &project, pbi_id)
                 .await
             {
-                if ensured.created_plan {
-                    let _ = PlanCreated { plan_name: ensured.plan_name }.emit(&app);
+                // Still best-effort (a failure never blocks creation), but
+                // when the PBI had no test plan at all, the plan gets
+                // created FIRST and the user is told before the upload
+                // proceeds.
+                if let Ok(ensured) = client
+                    .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
+                    .await
+                {
+                    if ensured.created_plan {
+                        let _ = PlanCreated { plan_name: ensured.plan_name }.emit(&app);
+                    }
                 }
+                pbi_area = area;
+                pbi_iteration = iteration;
             }
-            pbi_area = area;
-            pbi_iteration = iteration;
         }
     }
     let effective_area = area_path.filter(|s| !s.is_empty()).unwrap_or(pbi_area);

@@ -581,3 +581,59 @@ test("Manual Entry (no recents wiring) renders nothing at all when the queue is 
   expect(container).toBeEmptyDOMElement();
 });
 
+
+/// An update PATCHes its own work item where it already lives - the
+/// check-the-PBI arming stage exists to stop CREATES landing under the
+/// wrong PBI, so a queue of nothing but updates goes straight from the
+/// first Confirm to the submit.
+test("a pure-update queue submits on the first Confirm, no PBI stage", async () => {
+  let submits = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      submits += 1;
+      return [{ index: 0, title: "Login works", action: "updated", id: 777, error: null }];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ update_id: 777 })]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & update 1/ }));
+
+  // No "Check the highlighted PBI" stage, no second Yes - it submits.
+  expect(screen.queryByText(/Check the highlighted PBI/)).not.toBeInTheDocument();
+  await waitFor(() => expect(submits).toBe(1));
+});
+
+/// One create in the queue is enough to bring the PBI stage back - the
+/// skip is strictly for ALL-update queues.
+test("a mixed queue still gets the check-the-PBI stage", async () => {
+  let submits = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      submits += 1;
+      return [];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ update_id: 777 }), makeCase({ title: "Brand new" })]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm &/ }));
+
+  // Armed, not submitted: the warning is up and nothing was written.
+  expect(await screen.findByText(/Check the highlighted PBI/)).toBeInTheDocument();
+  expect(submits).toBe(0);
+});
