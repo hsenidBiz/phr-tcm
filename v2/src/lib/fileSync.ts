@@ -328,11 +328,20 @@ export function fileName(path: string): string {
 export function syncNotification(
   file: string,
   changes: SyncChange[],
+  /** True when the sync landed in an empty queue - a load, not an edit;
+   * "157 added" would misread as 157 test cases created. */
+  intoEmpty = false,
 ): { title: string; body: string } {
-  const parts: string[] = [];
   const added = countBy(changes, "added");
   const changed = countBy(changes, "changed");
   const removed = countBy(changes, "removed");
+  if (intoEmpty && added === changes.length && changes.length > 0) {
+    return {
+      title: `${file} was loaded`,
+      body: `${added} case${added === 1 ? "" : "s"} loaded into the queue.`,
+    };
+  }
+  const parts: string[] = [];
   if (added) parts.push(`${added} added`);
   if (changed) parts.push(`${changed} changed`);
   if (removed) parts.push(`${removed} removed`);

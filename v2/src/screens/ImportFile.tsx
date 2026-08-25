@@ -76,6 +76,8 @@ export default function ImportFile({
     changes: SyncChange[];
     file: string;
     warnings: number;
+    /** The sync landed in an empty queue - a load, not an edit. */
+    intoEmpty?: boolean;
   } | null>(null);
   // The watches the user asked to drop, pending the "and their cases?"
   // answer. A list rather than one file so Stop and Remove all go through
@@ -189,6 +191,10 @@ export default function ImportFile({
           toast.error(`${fileName(stale.path)} could not be read: ${r.error}`);
           return;
         }
+        // Captured BEFORE the sync lands: whether these cases flowed into
+        // an empty queue decides whether the banner says "loaded" or
+        // reports an edit.
+        const wasEmpty = queueRef.current.length === 0;
         const synced = syncFromFile(queueRef.current, stale.snapshot, r.data.cases);
         // The set-wide comment lives in the same file, so an edit can have
         // moved it as well - re-read rather than let the panel go stale.
@@ -210,13 +216,14 @@ export default function ImportFile({
             changes: synced.changes,
             file: fileName(stale.path),
             warnings: r.data.warnings.length,
+            intoEmpty: wasEmpty,
           });
           // The whole point of watching a file is that an assistant can
           // edit it while you are somewhere else. If the app is behind
           // another window the report panel is not feedback at all, so
           // the OS says it instead - and stays quiet when you are looking.
           if (!appIsInView()) {
-            const n = syncNotification(fileName(stale.path), synced.changes);
+            const n = syncNotification(fileName(stale.path), synced.changes, wasEmpty);
             void osNotify(n.title, n.body);
           }
         }
@@ -492,6 +499,7 @@ export default function ImportFile({
             changes={report.changes}
             fileName={report.file}
             warnings={report.warnings}
+            intoEmptyQueue={report.intoEmpty}
             onDismiss={dismissReport}
           />
         )}

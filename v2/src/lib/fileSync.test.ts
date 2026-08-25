@@ -319,3 +319,19 @@ test("a malformed watch entry is dropped rather than thrown on later", () => {
   expect(loadWatches("acme", 42)).toEqual([older]);
   localStorage.clear();
 });
+
+test("the notification calls a fill-of-an-empty-queue a load, not additions", () => {
+  const all = ["A", "B"].map((t) => ({
+    kind: "added" as const,
+    key: `t:${t}`,
+    title: t,
+    fields: [],
+    steps: [],
+    full: tc(t),
+  }));
+  const n = syncNotification("FDP.json", all, true);
+  expect(n.title).toBe("FDP.json was loaded");
+  expect(n.body).toBe("2 cases loaded into the queue.");
+  // The same changes into a NON-empty queue keep the edit wording.
+  expect(syncNotification("FDP.json", all).body).toContain("2 added");
+});

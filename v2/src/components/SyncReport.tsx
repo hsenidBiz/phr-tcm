@@ -26,6 +26,7 @@ export default function SyncReport({
   changes,
   fileName,
   warnings = 0,
+  intoEmptyQueue = false,
   onDismiss,
 }: {
   changes: SyncChange[];
@@ -34,6 +35,11 @@ export default function SyncReport({
    * bad save is caught the moment it happens - no separate check, and no
    * AI round-trip to ask whether the draft is valid. */
   warnings?: number;
+  /** The sync landed in an EMPTY queue - a load/refill, not an edit. Every
+   * case counts as "added" then, and "+157 added" reads like 157 test
+   * cases were just created when nothing of the sort happened - so the
+   * banner says "loaded" instead (field report, 2026-08-25). */
+  intoEmptyQueue?: boolean;
   onDismiss: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -50,9 +56,15 @@ export default function SyncReport({
 
   if (changes.length === 0 && warnings === 0) return null;
 
-  const counts = (["added", "changed", "removed"] as const)
-    .map((k) => ({ k, n: countBy(changes, k) }))
-    .filter((c) => c.n > 0);
+  // A pure load (empty queue, nothing but "added") drops the +/-/~ chips:
+  // the headline already says everything, and "+157 added" is the part
+  // that misreads as "157 created".
+  const pureLoad = intoEmptyQueue && changes.length > 0 && changes.every((c) => c.kind === "added");
+  const counts = pureLoad
+    ? []
+    : (["added", "changed", "removed"] as const)
+        .map((k) => ({ k, n: countBy(changes, k) }))
+        .filter((c) => c.n > 0);
 
   return (
     <div
@@ -63,7 +75,11 @@ export default function SyncReport({
       className="rounded-md border border-accent/40 bg-accent-soft/40 px-3 py-2 text-sm"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-medium text-text">Updated from {fileName}</span>
+        <span className="font-medium text-text">
+          {pureLoad
+            ? `Loaded ${changes.length} case${changes.length === 1 ? "" : "s"} from ${fileName} into the queue`
+            : `Updated from ${fileName}`}
+        </span>
         {counts.map(({ k, n }) => (
           <span key={k} className={cn("id-mono text-xs", KIND[k].tone)}>
             {KIND[k].sign}

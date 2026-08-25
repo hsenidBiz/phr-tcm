@@ -96,3 +96,42 @@ test("each case opens on its own", () => {
   expect(screen.getAllByRole("table")).toHaveLength(1);
   expect(screen.queryByText("Unrelated action")).not.toBeInTheDocument();
 });
+
+/// A sync that fills an EMPTY queue is a load, not an edit: "+157 added"
+/// read like 157 test cases had just been created. The banner says
+/// "loaded" and drops the count chips; details stay available.
+test("a pure load into an empty queue says loaded, not added", () => {
+  const changes: SyncChange[] = ["A", "B", "C"].map((t) => ({
+    kind: "added" as const,
+    key: `t:${t}`,
+    title: t,
+    fields: [],
+    steps: [],
+    full: tc(t),
+  }));
+  render(
+    <SyncReport changes={changes} fileName="FDP.json" intoEmptyQueue onDismiss={() => {}} />,
+  );
+  expect(screen.getByText("Loaded 3 cases from FDP.json into the queue")).toBeInTheDocument();
+  expect(screen.queryByText(/added/)).not.toBeInTheDocument();
+
+  // The same changes WITHOUT the flag (an edit to a live queue) keep the
+  // original reporting.
+  render(<SyncReport changes={changes} fileName="FDP.json" onDismiss={() => {}} />);
+  expect(screen.getByText("Updated from FDP.json")).toBeInTheDocument();
+  expect(screen.getByText("+3 added")).toBeInTheDocument();
+});
+
+/// Mixed changes into a briefly-empty queue are still an edit report - the
+/// "loaded" wording is only for the all-added case.
+test("a mixed sync keeps edit wording even into an empty queue", () => {
+  const changes: SyncChange[] = [
+    { kind: "added", key: "t:a", title: "A", fields: [], steps: [], full: tc("A") },
+    { kind: "removed", key: "t:b", title: "B", fields: [], steps: [], full: tc("B") },
+  ];
+  render(
+    <SyncReport changes={changes} fileName="x.json" intoEmptyQueue onDismiss={() => {}} />,
+  );
+  expect(screen.getByText("Updated from x.json")).toBeInTheDocument();
+  expect(screen.getByText("+1 added")).toBeInTheDocument();
+});
