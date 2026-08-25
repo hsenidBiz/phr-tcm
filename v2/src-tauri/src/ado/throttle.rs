@@ -14,6 +14,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+/// The longest server-requested delay we will actually sleep. ADO
+/// documents delays "up to 30 seconds"; a longer value than that is more
+/// likely a bad header than a real instruction, and sleeping on it would
+/// look like the app had hung.
+const MAX_BACKOFF_SECS: u64 = 30;
+
 /// Minimum gap between any two ADO requests. 0 = unthrottled.
 static MIN_INTERVAL_MS: AtomicU64 = AtomicU64::new(DEFAULT_MS);
 
@@ -43,6 +49,64 @@ fn last_send() -> &'static tokio::sync::Mutex<Option<Instant>> {
     GATE.get_or_init(|| tokio::sync::Mutex::new(None))
 }
 
+/// When the server has asked us to hold off until - shared by every
+/// request, like the pacer itself.
+fn backoff_until() -> &'static std::sync::Mutex<Option<Instant>> {
+    static UNTIL: OnceLock<std::sync::Mutex<Option<Instant>>> = OnceLock::new();
+    UNTIL.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Record a delay Azure DevOps ASKED us to take.
+///
+/// The important part is that this is not a 429 handler. ADO throttles
+/// *before* it rejects: the docs say a delayed request "still returns HTTP
+/// 200", carrying `Retry-After` (and `X-RateLimit-Delay`) to say how long
+/// it was held and how long to wait next time. Ignoring that until a 429
+/// arrives means racing an already-annoyed server at full pace - the exact
+/// thing the pacer exists to avoid. Honouring it on every response is what
+/// Microsoft's own guidance asks for.
+///
+/// Takes the LATER of any existing deadline and this one, so overlapping
+/// responses cannot shorten a hold that is already in force. Zero and
+/// absurd values are ignored - a header saying "wait 0" is not a request
+/// to wait, and one saying "wait an hour" is more likely broken than true.
+pub fn note_server_delay(secs: u64) {
+    if secs == 0 {
+        return;
+    }
+    let capped = secs.min(MAX_BACKOFF_SECS);
+    let until = Instant::now() + Duration::from_secs(capped);
+    if let Ok(mut slot) = backoff_until().lock() {
+        let extend = slot.map(|cur| until > cur).unwrap_or(true);
+        if extend {
+            *slot = Some(until);
+            crate::applog::warn(format!(
+                "Azure DevOps asked us to slow down: holding requests for {capped}s                 {}",
+                if capped < secs { format!(" (it asked for {secs}s, capped)") } else { String::new() }
+            ));
+        }
+    }
+}
+
+/// How long the server-requested hold still has to run, if any.
+fn remaining_backoff() -> Option<Duration> {
+    let mut slot = backoff_until().lock().ok()?;
+    let until = (*slot)?;
+    let now = Instant::now();
+    if until <= now {
+        *slot = None; // expired - stop checking
+        return None;
+    }
+    Some(until - now)
+}
+
+/// Test/diagnostic helper: clear any hold in force.
+pub fn clear_backoff() {
+    if let Ok(mut slot) = backoff_until().lock() {
+        *slot = None;
+    }
+}
+
 /// Waits until the configured gap since the previous request has elapsed.
 ///
 /// The lock is deliberately held across the sleep: that serialises callers
@@ -50,6 +114,13 @@ fn last_send() -> &'static tokio::sync::Mutex<Option<Instant>> {
 /// budget, not each get their own. At "full" it returns without locking so
 /// the fast path stays free.
 pub async fn pace() {
+    // A server-requested hold outranks the local pace - including at
+    // "full", where the user asked US to go flat out, not the server to
+    // tolerate it. Slept before the interval gate so the two add rather
+    // than overlap.
+    if let Some(hold) = remaining_backoff() {
+        tokio::time::sleep(hold).await;
+    }
     let want = MIN_INTERVAL_MS.load(Ordering::Relaxed);
     if want == 0 {
         return;

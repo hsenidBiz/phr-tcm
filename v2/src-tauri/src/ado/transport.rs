@@ -79,6 +79,15 @@ impl AdoClient {
                 } else {
                     crate::applog::warn(line);
                 }
+                // Read the throttle hint on EVERY response, not just 429.
+                // Azure DevOps delays requests before it ever rejects one:
+                // a throttled call "still returns HTTP 200" carrying
+                // Retry-After / X-RateLimit-Delay. Honouring it only on
+                // 429 meant the app kept firing at full pace through the
+                // whole warning phase - see the 2026-08 audit (R-1).
+                if let Some(secs) = server_delay(&resp) {
+                    super::throttle::note_server_delay(secs);
+                }
                 Ok(resp)
             }
             Err(e) => {
@@ -264,6 +273,28 @@ impl AdoClient {
             }),
         }
     }
+}
+
+/// The delay ADO asked for on THIS response, if any.
+///
+/// `Retry-After` is the documented instruction; `X-RateLimit-Delay` says
+/// how long the request we just made was already held, which is ADO's
+/// early warning that the account is over its budget. Either one means
+/// "slow down". Absent on a healthy response, so this is `None` on the
+/// overwhelming majority of calls.
+fn server_delay(resp: &reqwest::Response) -> Option<u64> {
+    let header = |name: &str| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            // Values arrive as whole seconds; ADO also emits fractional
+            // delays on X-RateLimit-Delay, so take the ceiling rather than
+            // dropping a sub-second hold to zero.
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .map(|f| f.ceil() as u64)
+    };
+    header("Retry-After").or_else(|| header("X-RateLimit-Delay"))
 }
 
 /// ADO's back-off hint, defaulting to 5s when it doesn't send one.
