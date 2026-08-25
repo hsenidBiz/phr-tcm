@@ -439,9 +439,9 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
                 .iter()
                 .any(|w| other.to_ascii_lowercase().contains(w)) =>
         {
-            Err(crate::ai_bridge::WRITE_REFUSAL.to_string())
+            Err(ToolError::WRITE_REFUSED_TAG.to_string())
         }
-        other => Err(format!("unknown tool {other}")),
+        other => Err(format!("{}{other}", ToolError::UNKNOWN_TOOL_TAG)),
     };
     match outcome {
         Ok((status, body)) if status < 400 => serde_json::json!({
@@ -451,12 +451,45 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             "isError": true,
             "content": [{ "type": "text", "text": format!("bridge returned {status}: {body}") }],
         }),
+        // Each failure says what actually went wrong. Until the 2026-08
+        // audit (P-8) every one of these - including a plain typo in the
+        // tool name - was reported as "Could not reach Test Case Manager.
+        // Start the app and sign in", sending an assistant off to debug a
+        // healthy bridge instead of fixing its own call.
         Err(e) => serde_json::json!({
             "isError": true,
-            "content": [{ "type": "text", "text": format!(
-                "Could not reach Test Case Manager ({e}). Start the app and sign in, then retry."
-            )}],
+            "content": [{ "type": "text", "text": ToolError::message(&e) }],
         }),
+    }
+}
+
+/// Why a tool call could not be answered.
+///
+/// The dispatch arms above all yield `Result<_, String>` (the bridge's own
+/// error type), so the KIND travels as a short internal prefix that this
+/// classifier strips. Until the 2026-08 audit (P-8) there was no kind at
+/// all: every failure - including a plain typo in the tool name - was
+/// reported as "Could not reach Test Case Manager. Start the app and sign
+/// in", which sent assistants off to debug a healthy bridge.
+struct ToolError;
+
+impl ToolError {
+    // U+0001 cannot occur in a tool name or a bridge error message, so a
+    // tag can never be produced by accident.
+    const UNKNOWN_TOOL_TAG: &'static str = "\u{1}unknown-tool\u{1}";
+    const WRITE_REFUSED_TAG: &'static str = "\u{1}write-refused\u{1}";
+
+    /// The user-facing sentence for one failed tool call.
+    fn message(raw: &str) -> String {
+        if let Some(name) = raw.strip_prefix(Self::UNKNOWN_TOOL_TAG) {
+            return format!(
+                "Unknown tool: {name}. Call tools/list for the tools this server offers."
+            );
+        }
+        if raw == Self::WRITE_REFUSED_TAG {
+            return crate::ai_bridge::WRITE_REFUSAL.to_string();
+        }
+        format!("Could not reach Test Case Manager ({raw}). Start the app and sign in, then retry.")
     }
 }
 

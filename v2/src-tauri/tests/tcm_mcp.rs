@@ -241,3 +241,54 @@ fn every_intake_question_is_answerable_through_the_mcp_schema() {
         );
     }
 }
+
+/// Audit finding P-8: every tool-call failure used to be reported as
+/// "Could not reach Test Case Manager ... Start the app and sign in",
+/// including a plain typo in the tool name. An assistant that reads that
+/// goes off to debug a healthy bridge instead of correcting its own call -
+/// and the live smoke confirmed the message was identical whether the
+/// bridge was up or down, so it carried no information at all.
+#[test]
+fn a_failed_tool_call_says_which_kind_of_failure_it_was() {
+    let call_tool = |name: &str| -> String {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{{"name":"{name}","arguments":{{}}}}}}"#
+        );
+        // The bridge is HEALTHY in every case here: any "cannot reach"
+        // wording would therefore be a lie, not a race.
+        let resp = handle_message(&req, "1.0.0", &stub(200, "{}")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        v["result"]["content"][0]["text"].as_str().unwrap().to_string()
+    };
+
+    // 1. A misspelled tool name names itself and points at the tool list.
+    let unknown = call_tool("get_test_casez");
+    assert!(unknown.contains("Unknown tool: get_test_casez"), "{unknown}");
+    assert!(unknown.contains("tools/list"), "{unknown}");
+    assert!(
+        !unknown.contains("Could not reach"),
+        "a healthy bridge must never be reported as unreachable: {unknown}"
+    );
+
+    // 2. A write-smelling unknown name still gets the refusal - and ONLY
+    //    the refusal, not the refusal wrapped in a bridge error.
+    let write = call_tool("create_test_case");
+    assert!(
+        write.contains("must be done through the app itself"),
+        "the write refusal should be the whole message: {write}"
+    );
+    assert!(!write.contains("Could not reach"), "{write}");
+
+    // 3. A REAL transport failure still says so - the fix must not have
+    //    swapped one blanket message for another.
+    let req = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_writing_guide","arguments":{}}}"#;
+    let down = |_m: &str, _p: &str, _b: &str| -> Result<(u16, String), String> {
+        Err("handshake file missing - is the app running?".into())
+    };
+    let resp = handle_message(req, "1.0.0", &down).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Could not reach Test Case Manager"), "{text}");
+    assert!(text.contains("handshake file missing"), "{text}");
+    assert_eq!(v["result"]["isError"], true);
+}
