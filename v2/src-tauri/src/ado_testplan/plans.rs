@@ -14,10 +14,11 @@ impl AdoClient {
     pub async fn get_test_plans(&self, org: &str, project: &str) -> Result<Vec<TestPlan>, AdoError> {
         let mut plans = vec![];
         let mut continuation: Option<String> = None;
+        let mut pages = 0usize;
         loop {
             let mut url = format!("{}/testplan/plans?api-version=7.1", self.tp_base(org, project));
             if let Some(c) = &continuation {
-                url.push_str(&format!("&continuationToken={c}"));
+                super::push_continuation(&mut url, c);
             }
             let (data, cont) = self.get_json_with_continuation(url).await?;
             for p in data["value"].as_array().cloned().unwrap_or_default() {
@@ -28,10 +29,13 @@ impl AdoClient {
                     root_suite_id: p["rootSuite"]["id"].as_i64().map(|i| i as i32),
                 });
             }
-            continuation = cont;
-            if continuation.is_none() {
-                break;
-            }
+            pages += 1;
+            continuation = match cont {
+                Some(next) if super::may_continue(pages, continuation.as_ref(), &next, "test plans") => {
+                    Some(next)
+                }
+                _ => break,
+            };
         }
         Ok(plans)
     }
@@ -62,6 +66,7 @@ impl AdoClient {
         pbi_id: i32,
     ) -> Result<Option<SuiteRef>, AdoError> {
         let mut continuation: Option<String> = None;
+        let mut pages = 0usize;
         loop {
             let mut url = format!(
                 "{}/testplan/Plans/{}/suites?api-version=7.1",
@@ -69,7 +74,7 @@ impl AdoClient {
                 plan_id
             );
             if let Some(c) = &continuation {
-                url.push_str(&format!("&continuationToken={c}"));
+                super::push_continuation(&mut url, c);
             }
             let (data, cont) = self.get_json_with_continuation(url).await?;
             for s in data["value"].as_array().cloned().unwrap_or_default() {
@@ -85,10 +90,15 @@ impl AdoClient {
                     }));
                 }
             }
-            continuation = cont;
-            if continuation.is_none() {
-                return Ok(None);
-            }
+            pages += 1;
+            continuation = match cont {
+                Some(next)
+                    if super::may_continue(pages, continuation.as_ref(), &next, "plan suites") =>
+                {
+                    Some(next)
+                }
+                _ => return Ok(None),
+            };
         }
     }
 
@@ -102,6 +112,7 @@ impl AdoClient {
     ) -> Result<Vec<SuiteRef>, AdoError> {
         let mut suites = vec![];
         let mut continuation: Option<String> = None;
+        let mut pages = 0usize;
         loop {
             let mut url = format!(
                 "{}/testplan/Plans/{}/suites?api-version=7.1",
@@ -109,7 +120,7 @@ impl AdoClient {
                 plan_id
             );
             if let Some(c) = &continuation {
-                url.push_str(&format!("&continuationToken={c}"));
+                super::push_continuation(&mut url, c);
             }
             let (data, cont) = self.get_json_with_continuation(url).await?;
             for s in data["value"].as_array().cloned().unwrap_or_default() {
@@ -121,10 +132,15 @@ impl AdoClient {
                     parent_id: s["parentSuite"]["id"].as_i64().map(|i| i as i32),
                 });
             }
-            continuation = cont;
-            if continuation.is_none() {
-                break;
-            }
+            pages += 1;
+            continuation = match cont {
+                Some(next)
+                    if super::may_continue(pages, continuation.as_ref(), &next, "plan suites") =>
+                {
+                    Some(next)
+                }
+                _ => break,
+            };
         }
         Ok(suites)
     }

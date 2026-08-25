@@ -177,10 +177,10 @@ impl AdoClient {
         let url = format!(
             "{}/{}/{}/_apis/wiki/wikis/{}/pages?path={}&includeContent=true&api-version=7.1",
             self.base_url,
-            organization,
-            project,
+            percent_encode_segment(organization),
+            percent_encode_segment(project),
             wiki_id,
-            percent_encode_path(path)
+            percent_encode_path(&wiki_page_path(path))
         );
         let body = self.get_json(url).await?;
         Ok(WikiPage {
@@ -1117,6 +1117,39 @@ impl AdoClient {
 /// board screen encoded the same value - so a project named "50% Done"
 /// (a percent sign is legal in ADO project names and is not restricted in
 /// the UI) went out as an invalid escape sequence.
+/// Normalise whatever the caller has into a wiki PAGE path.
+///
+/// Azure DevOps keeps two path namespaces for the same page and this
+/// endpoint accepts only one. `WikiPage.path` is the page path
+/// (`/Auth Flow`); `gitItemPath` is the backing file (`/Auth-Flow.md`) -
+/// and wiki SEARCH results report the file form, which is what
+/// `search_wiki` surfaces. Feeding a search hit straight back in therefore
+/// asked for a page whose name ends in ".md" (2026-08 audit, R-2).
+///
+/// Two conversions, both harmless on an already-correct page path:
+///  - drop a trailing `.md`;
+///  - add the leading `/` this parameter's own samples always carry.
+///
+/// What this deliberately does NOT do is turn hyphens back into spaces.
+/// ADO writes spaces as hyphens in the file name, so "Auth-Flow.md" could
+/// be the page "Auth Flow" OR one genuinely named "Auth-Flow" - the
+/// mapping is not reversible, and guessing would break every page whose
+/// title really contains a hyphen. That residue fails the way it does
+/// today (a 404 the caller can act on), never by silently fetching a
+/// different page.
+fn wiki_page_path(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let without_ext = trimmed.strip_suffix(".md").unwrap_or(trimmed);
+    if without_ext.is_empty() {
+        return "/".to_string();
+    }
+    if without_ext.starts_with('/') {
+        without_ext.to_string()
+    } else {
+        format!("/{without_ext}")
+    }
+}
+
 fn percent_encode_segment(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {

@@ -485,3 +485,53 @@ async fn reset_points_with_no_ids_makes_no_request() {
         .unwrap();
     assert!(server.received_requests().await.unwrap().is_empty());
 }
+
+/// Audit finding R-5: ADO's continuation token is opaque and was
+/// concatenated into the query raw, so a token containing `&`, `+` or `%`
+/// would corrupt paging - and the loops had no page cap or cycle guard, so
+/// a server that repeated a token would spin forever rather than error.
+#[tokio::test]
+async fn continuation_tokens_are_encoded_and_a_repeat_stops_the_loop() {
+    let server = MockServer::start().await;
+    // Page 1 hands back a hostile token; every later page repeats it, which
+    // without a cycle guard is an infinite loop.
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/testplan/plans"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-ms-continuationtoken", "a&b+c%d")
+                .set_body_json(serde_json::json!({
+                    "value": [{ "id": 1, "name": "Plan", "areaPath": "A", "rootSuite": { "id": 9 } }]
+                })),
+        )
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    // Terminates at all - the whole point of the cycle guard.
+    let plans = client.get_test_plans("o", "p").await.unwrap();
+    assert!(!plans.is_empty());
+
+    let asked = server.received_requests().await.unwrap();
+    assert!(
+        asked.len() <= 3,
+        "a repeated token must stop the loop almost immediately, not spin: {} requests",
+        asked.len()
+    );
+    // The second request carries the token ENCODED, not raw.
+    let second = asked[1].url.as_str();
+    assert!(
+        second.contains("continuationToken=a%26b%2Bc%25d"),
+        "the token must be percent-encoded: {second}"
+    );
+    // Decoded back to the original by the query parser - proof the encoding
+    // is correct rather than merely different.
+    let decoded = asked[1]
+        .url
+        .query_pairs()
+        .find(|(k, _)| k == "continuationToken")
+        .unwrap()
+        .1
+        .to_string();
+    assert_eq!(decoded, "a&b+c%d");
+}

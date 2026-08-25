@@ -21,6 +21,55 @@ use serde::Serialize;
 /// are cheap GETs; the write budget (2/s) is unaffected.
 const SUITE_SCAN_CONCURRENCY: usize = 8;
 
+/// Hard stop for any continuation-token loop.
+///
+/// ADO's token is opaque: nothing in its contract promises the server will
+/// eventually stop sending one, and a loop that trusts it has no floor. At
+/// the page sizes these endpoints use this is far past any real project,
+/// so hitting it means something is wrong - and stopping with the pages we
+/// have beats spinning forever behind a UI that only says "Loading".
+pub(crate) const MAX_PAGES: usize = 200;
+
+/// Append a continuation token to a query string, encoded.
+///
+/// The token is server-supplied and opaque, so it may legally contain
+/// characters that are structural in a query string - `&` would start a
+/// bogus parameter, `+` would decode as a space, `%` would begin an escape
+/// sequence. The `url` crate's query encode set covers none of those, so
+/// until the 2026-08 audit (R-5) the token was concatenated raw. Microsoft's
+/// own MCP server encodes it via URLSearchParams for the same reason.
+pub(crate) fn push_continuation(url: &mut String, token: &str) {
+    url.push_str("&continuationToken=");
+    for b in token.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            url.push(b as char);
+        } else {
+            url.push_str(&format!("%{b:02X}"));
+        }
+    }
+}
+
+/// Decide whether a paging loop may continue.
+///
+/// Stops on a repeated token as well as on the page cap: a server that
+/// hands back the token it was just given would otherwise loop forever
+/// fetching the same page, which is indistinguishable from a hang.
+pub(crate) fn may_continue(pages: usize, prev: Option<&String>, next: &str, what: &str) -> bool {
+    if pages >= MAX_PAGES {
+        crate::applog::warn(format!(
+            "stopped paging {what} at the {MAX_PAGES}-page cap - results may be incomplete"
+        ));
+        return false;
+    }
+    if prev.is_some_and(|p| p == next) {
+        crate::applog::warn(format!(
+            "stopped paging {what}: the server repeated its continuation token"
+        ));
+        return false;
+    }
+    true
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct TestPlan {
     pub id: i32,

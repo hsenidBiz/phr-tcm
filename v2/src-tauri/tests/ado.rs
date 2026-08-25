@@ -1151,3 +1151,32 @@ async fn org_and_project_are_percent_encoded_in_urls() {
         "the raw name must not reach the wire: {raw}"
     );
 }
+
+/// Audit finding R-2: wiki SEARCH reports the backing FILE path
+/// ("/Auth-Flow.md", ADO's gitItemPath namespace) while the page-fetch
+/// parameter documents a PAGE path ("/Auth Flow"). Handing a search hit
+/// straight back therefore asked for a page whose name ends in ".md".
+#[tokio::test]
+async fn a_wiki_search_hit_is_normalised_before_the_page_is_fetched() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Auth-Flow", "content": "# Auth"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+
+    // Exactly what search_wiki hands back.
+    client.get_wiki_page("o", "p", "wiki-1", "/Auth-Flow.md").await.unwrap();
+    // A path with no leading slash is rooted rather than sent relative.
+    client.get_wiki_page("o", "p", "wiki-1", "Home").await.unwrap();
+
+    let asked = server.received_requests().await.unwrap();
+    let sent: Vec<String> = asked
+        .iter()
+        .map(|r| r.url.query_pairs().find(|(k, _)| k == "path").unwrap().1.to_string())
+        .collect();
+    assert_eq!(sent[0], "/Auth-Flow", "the .md extension must be dropped");
+    assert_eq!(sent[1], "/Home", "a bare name is rooted");
+}

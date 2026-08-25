@@ -27,6 +27,7 @@ impl AdoClient {
         };
         let mut points = vec![];
         let mut continuation: Option<String> = None;
+        let mut pages = 0usize;
         loop {
             let mut url = format!(
                 "{}/testplan/Plans/{}/Suites/{}/TestPoint?api-version=7.1{}",
@@ -36,7 +37,7 @@ impl AdoClient {
                 tc_filter
             );
             if let Some(c) = &continuation {
-                url.push_str(&format!("&continuationToken={c}"));
+                super::push_continuation(&mut url, c);
             }
             let (data, cont) = self.get_json_with_continuation(url).await?;
             for p in data["value"].as_array().cloned().unwrap_or_default() {
@@ -56,10 +57,15 @@ impl AdoClient {
                     last_result_id: p["results"]["lastResultId"].as_i64().map(|i| i as i32),
                 });
             }
-            continuation = cont;
-            if continuation.is_none() {
-                break;
-            }
+            pages += 1;
+            continuation = match cont {
+                Some(next)
+                    if super::may_continue(pages, continuation.as_ref(), &next, "test points") =>
+                {
+                    Some(next)
+                }
+                _ => break,
+            };
         }
         Ok(points)
     }
