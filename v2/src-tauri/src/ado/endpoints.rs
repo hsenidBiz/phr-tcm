@@ -65,7 +65,10 @@ impl AdoClient {
         );
         let url = format!(
             "{}/{}/{}/_apis/wit/wiql?$top={}&api-version=7.1",
-            self.base_url, organization, project, top
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project),
+            top
         );
         let body = self
             .post_json_query(url, &serde_json::json!({ "query": wiql }))
@@ -88,7 +91,7 @@ impl AdoClient {
             .join(",");
         let url = format!(
             "{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.WorkItemType&api-version=7.1",
-            self.base_url, organization, ids_csv
+            self.base_url, percent_encode_segment(organization), ids_csv
         );
         let fetched = self.get_json(url).await?;
         let by_id: std::collections::HashMap<i64, &serde_json::Value> = fetched["value"]
@@ -213,7 +216,9 @@ impl AdoClient {
         );
         let url = format!(
             "{}/{}/{}/_apis/wit/wiql?$top=200&api-version=7.1",
-            self.base_url, organization, project
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project)
         );
         let body = self
             .post_json_query(url, &serde_json::json!({ "query": wiql }))
@@ -267,7 +272,7 @@ impl AdoClient {
     ) -> Result<Vec<TestCaseSummary>, AdoError> {
         let url = format!(
             "{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
-            self.base_url, organization, pbi_id
+            self.base_url, percent_encode_segment(organization), pbi_id
         );
         let data = self.get_json(url).await?;
         let tc_ids: Vec<i64> = data["relations"]
@@ -275,12 +280,7 @@ impl AdoClient {
             .cloned()
             .unwrap_or_default()
             .iter()
-            .filter(|r| {
-                r["rel"]
-                    .as_str()
-                    .map(|s| s.to_lowercase().contains("testedby"))
-                    .unwrap_or(false)
-            })
+            .filter(|r| r["rel"].as_str().map(is_tested_by_forward).unwrap_or(false))
             .filter_map(|r| r["url"].as_str()?.rsplit('/').next()?.parse().ok())
             .collect();
         if tc_ids.is_empty() {
@@ -296,7 +296,7 @@ impl AdoClient {
                 .join(",");
             let url = format!(
                 "{}/{}/_apis/wit/workitems?ids={}&fields=System.Id,System.Title,System.Tags,Microsoft.VSTS.TCM.AutomationStatus&api-version=7.1",
-                self.base_url, organization, ids_csv
+                self.base_url, percent_encode_segment(organization), ids_csv
             );
             let fetched = self.get_json(url).await?;
             for w in fetched["value"].as_array().cloned().unwrap_or_default() {
@@ -361,7 +361,9 @@ impl AdoClient {
         }
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/$Test%20Case?api-version=7.1",
-            self.base_url, organization, project
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project)
         );
         let data = self
             .send_json_patch(reqwest::Method::POST, url, &serde_json::Value::Array(patch))
@@ -396,7 +398,9 @@ impl AdoClient {
         ]);
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
-            self.base_url, organization, project, wi_id
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), wi_id
         );
         let data = self
             .send_json_patch(reqwest::Method::PATCH, url, &patch)
@@ -448,7 +452,9 @@ impl AdoClient {
     ) -> Result<(), AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
-            self.base_url, organization, project, wi_id
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), wi_id
         );
         self.send_json_patch(reqwest::Method::PATCH, url, &serde_json::Value::Array(ops))
             .await?;
@@ -543,7 +549,9 @@ impl AdoClient {
     ) -> Result<(), AdoError> {
         let pbi_url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}",
-            self.base_url, organization, project, pbi_id
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), pbi_id
         );
         let patch = serde_json::json!([{
             "op": "add",
@@ -556,12 +564,27 @@ impl AdoClient {
         }]);
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
-            self.base_url, organization, project, test_case_id
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), test_case_id
         );
         self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
         Ok(())
     }
 
+}
+
+/// Is this relation "the test cases that test THIS work item"?
+///
+/// Exact match on the forward direction, because the two directions are
+/// different links: `TestedBy-Forward` hangs test cases off a PBI, while
+/// `TestedBy-Reverse` ("Tests") points the other way. A substring test for
+/// "testedby" matched BOTH, so asking for the test cases of an id that was
+/// itself a Test Case followed the reverse link and returned the PBI
+/// rendered as a test case (2026-08 audit, R-3). Microsoft's own MCP
+/// server compares the rel by equality for the same reason.
+fn is_tested_by_forward(rel: &str) -> bool {
+    rel.eq_ignore_ascii_case("Microsoft.VSTS.Common.TestedBy-Forward")
 }
 
 /// One test case's fate after a relink attempt - same shape as
@@ -600,7 +623,7 @@ impl AdoClient {
     ) -> Result<(), AdoError> {
         let url = format!(
             "{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
-            self.base_url, organization, test_case_id
+            self.base_url, percent_encode_segment(organization), test_case_id
         );
         let data = self.get_json(url).await?;
         let relations = data["relations"].as_array().cloned().unwrap_or_default();
@@ -624,7 +647,9 @@ impl AdoClient {
 
         let to_url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}",
-            self.base_url, organization, project, to_pbi
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), to_pbi
         );
         // `test` on rev first: if the case changed between the read above
         // and this write, the whole PATCH is refused rather than removing
@@ -640,7 +665,9 @@ impl AdoClient {
         ]);
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
-            self.base_url, organization, project, test_case_id
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), test_case_id
         );
         self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
         Ok(())
@@ -656,7 +683,9 @@ impl AdoClient {
     ) -> Result<Vec<FieldRef>, AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/workitemtypes/Test%20Case/fields?api-version=7.1",
-            self.base_url, organization, project
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project)
         );
         let data = self.get_json(url).await?;
         let mut fields: Vec<FieldRef> = data["value"]
@@ -699,7 +728,7 @@ impl AdoClient {
     ) -> Result<Vec<TestCaseFull>, AdoError> {
         let url = format!(
             "{}/{}/_apis/wit/workitems/{}?$expand=relations&api-version=7.1",
-            self.base_url, organization, pbi_id
+            self.base_url, percent_encode_segment(organization), pbi_id
         );
         let data = self.get_json(url).await?;
         let tc_ids: Vec<i64> = data["relations"]
@@ -707,12 +736,7 @@ impl AdoClient {
             .cloned()
             .unwrap_or_default()
             .iter()
-            .filter(|r| {
-                r["rel"]
-                    .as_str()
-                    .map(|s| s.to_lowercase().contains("testedby"))
-                    .unwrap_or(false)
-            })
+            .filter(|r| r["rel"].as_str().map(is_tested_by_forward).unwrap_or(false))
             .filter_map(|r| r["url"].as_str()?.rsplit('/').next()?.parse().ok())
             .collect();
         if tc_ids.is_empty() {
@@ -802,7 +826,9 @@ impl AdoClient {
     ) -> Result<BugTypeInfo, AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/workitemtypes?api-version=7.1",
-            self.base_url, organization, project
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project)
         );
         let names: Vec<String> = match self.get_json(url).await {
             Ok(data) => data["value"]
@@ -857,7 +883,9 @@ impl AdoClient {
                 "path": "/relations/-",
                 "value": {
                     "rel": "System.LinkTypes.Related",
-                    "url": format!("{}/{}/{}/_apis/wit/workitems/{}", self.base_url, organization, project, rel_id),
+                    "url": format!("{}/{}/{}/_apis/wit/workitems/{}", self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), rel_id),
                 },
             }));
         }
@@ -869,7 +897,9 @@ impl AdoClient {
                 "path": "/relations/-",
                 "value": {
                     "rel": "System.LinkTypes.Hierarchy-Reverse",
-                    "url": format!("{}/{}/{}/_apis/wit/workitems/{}", self.base_url, organization, project, pid),
+                    "url": format!("{}/{}/{}/_apis/wit/workitems/{}", self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), pid),
                 },
             }));
         }
@@ -931,7 +961,9 @@ impl AdoClient {
         }]);
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1",
-            self.base_url, organization, project, wi_id
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), wi_id
         );
         self.send_json_patch(reqwest::Method::PATCH, url, &patch).await?;
         Ok(())
@@ -942,7 +974,9 @@ impl AdoClient {
     pub async fn get_tags(&self, organization: &str, project: &str) -> Result<Vec<String>, AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/tags?api-version=7.1",
-            self.base_url, organization, project
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project)
         );
         let data = self.get_json(url).await?;
         let mut tags: Vec<String> = data["value"]
@@ -969,7 +1003,9 @@ impl AdoClient {
     ) -> Result<Vec<String>, AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/classificationnodes/{}?$depth=14&api-version=7.1",
-            self.base_url, organization, project, structure
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), structure
         );
         let root = match self.get_json(url).await {
             Ok(v) => v,
@@ -1003,7 +1039,9 @@ impl AdoClient {
     ) -> Result<Vec<crate::work_board::IterationRef>, AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/classificationnodes/iterations?$depth=14&api-version=7.1",
-            self.base_url, organization, project
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project)
         );
         let root = match self.get_json(url).await {
             Ok(v) => v,
@@ -1040,7 +1078,9 @@ impl AdoClient {
     ) -> Result<(String, String), AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.1&$select=System.AreaPath,System.IterationPath",
-            self.base_url, organization, project, wi_id
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project), wi_id
         );
         let data = self.get_json(url).await?;
         Ok((
@@ -1052,7 +1092,7 @@ impl AdoClient {
     pub async fn get_projects(&self, organization: &str) -> Result<Vec<Project>, AdoError> {
         let url = format!(
             "{}/{}/_apis/projects?api-version=7.1&$top=500",
-            self.base_url, organization
+            self.base_url, percent_encode_segment(organization)
         );
         let body = self.get_json(url).await?;
         let projects = body["value"]
@@ -1069,6 +1109,26 @@ impl AdoClient {
 /// RFC 3986 percent-encoding for the wiki page `path` query value: keeps
 /// `/` unescaped (wiki paths are slash-separated segments) plus ALPHA /
 /// DIGIT / `-._~`; escapes everything else (notably spaces).
+/// Percent-encode ONE path segment - an org or project name.
+///
+/// Unlike `percent_encode_path`, `/` is escaped: a project name is a
+/// single segment, so a slash inside it must not read as a separator.
+/// These were interpolated raw until the 2026-08 audit (R-6), while the
+/// board screen encoded the same value - so a project named "50% Done"
+/// (a percent sign is legal in ADO project names and is not restricted in
+/// the UI) went out as an invalid escape sequence.
+fn percent_encode_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 fn percent_encode_path(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {

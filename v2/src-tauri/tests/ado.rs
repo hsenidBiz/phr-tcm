@@ -1077,3 +1077,77 @@ async fn a_field_of_only_spaces_counts_as_blank() {
         String::from_utf8_lossy(&server2.received_requests().await.unwrap()[0].body).to_string();
     assert!(body2.contains(r#""smoke""#), "tags were not trimmed:\n{body2}");
 }
+
+/// Audit finding R-3: `TestedBy-Forward` (a PBI's test cases) and
+/// `TestedBy-Reverse` ("Tests", pointing the other way) are DIFFERENT
+/// links, but the filter matched the substring "testedby", so both passed.
+/// Asking for the test cases of an id that was itself a Test Case followed
+/// the reverse link and returned the PBI dressed as a test case.
+#[tokio::test]
+async fn only_the_forward_tested_by_link_yields_test_cases() {
+    let server = MockServer::start().await;
+    // A work item carrying BOTH directions: 900 is a real test case of it,
+    // 500 is the PBI that this item tests.
+    Mock::given(method("GET"))
+        .and(path("/o/_apis/wit/workitems/42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 42,
+            "relations": [
+                { "rel": "Microsoft.VSTS.Common.TestedBy-Forward",
+                  "url": "https://dev.azure.com/o/_apis/wit/workItems/900" },
+                { "rel": "Microsoft.VSTS.Common.TestedBy-Reverse",
+                  "url": "https://dev.azure.com/o/_apis/wit/workItems/500" },
+            ]
+        })))
+        .mount(&server)
+        .await;
+    // Only 900 may be fetched. A request for 500 would mean the reverse
+    // link leaked through - so the batch stub answers for 900 alone.
+    Mock::given(method("GET"))
+        .and(path("/o/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 900, "fields": { "System.Title": "Real test case" } }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let cases = client.get_pbi_test_cases_full("o", 42, None, None).await.unwrap();
+    assert_eq!(cases.len(), 1, "only the forward link is a test case");
+    assert_eq!(cases[0].id, 900);
+
+    let asked = server.received_requests().await.unwrap();
+    let batch = asked
+        .iter()
+        .find(|r| r.url.path().ends_with("/_apis/wit/workitems"))
+        .expect("the batch fetch happened");
+    let ids = batch.url.query_pairs().find(|(k, _)| k == "ids").unwrap().1.to_string();
+    assert!(!ids.contains("500"), "the reverse ('Tests') link must not be followed: ids={ids}");
+}
+
+/// Audit finding R-6: org and project were interpolated into URLs raw
+/// while other screens encoded them. A percent sign is legal in an ADO
+/// project name and is not UI-restricted, so "50% Done" produced an
+/// invalid escape sequence on the wire.
+#[tokio::test]
+async fn org_and_project_are_percent_encoded_in_urls() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "workItems": []
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let _ = client.search_pbis("my org", "50% Done", "login", 10).await;
+
+    let asked = server.received_requests().await.unwrap();
+    let raw = asked[0].url.as_str();
+    assert!(raw.contains("my%20org"), "space in the org must be encoded: {raw}");
+    assert!(raw.contains("50%25%20Done"), "percent AND space must be encoded: {raw}");
+    assert!(
+        !raw.contains("50% Done"),
+        "the raw name must not reach the wire: {raw}"
+    );
+}
