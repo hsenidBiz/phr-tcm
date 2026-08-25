@@ -282,6 +282,35 @@ test("filtering by Failed and selecting the rows starts a failures-only run", as
   expect(session.planId).toBe(9);
 });
 
+/// The runner walks cases in the order this list shows them, whatever
+/// order they were clicked in - selection is a set, the run is a sequence.
+test("Run selected hands the runner the list's order, not the click order", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  // Click bottom row first, top row second.
+  fireEvent.click(screen.getByText("Invalid login"));
+  fireEvent.click(screen.getByText("Valid login"));
+  fireEvent.click(screen.getByRole("button", { name: /Run 2 in runner/ }));
+
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.caseIds).toEqual([201, 202]);
+});
+
+test("Open runner window carries the list's order without restricting the run", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByRole("button", { name: /Open runner window/ }));
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  // An order hint, not a filter: cases the panel is not showing (a filter,
+  // a later addition) must still run - they just come after these.
+  expect(session.caseOrder).toEqual([201, 202]);
+  expect(session.caseIds).toBeUndefined();
+});
+
 /** The header checkbox is the one selection indicator - dash for partial,
  * tick for the whole group - and it keeps saying so while the group is
  * collapsed. The pulsing dot that used to ride beside collapsed headings

@@ -265,6 +265,24 @@ test("update banner appears when a newer version exists", async () => {
   expect(await screen.findByText(/Version 0.5.0 is available/)).toBeInTheDocument();
 });
 
+// The apply happens after the app has exited, so a failed one used to be
+// invisible: the app restarted on the old version and the banner just came
+// back, as if the click had done nothing. When the backend reports that the
+// last attempt did not land, the banner says WHY - files in use - and what
+// to do about it, instead of blandly re-offering the same version.
+test("a failed update attempt is explained, not silently re-offered", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update")
+      return { available: "0.5.0", blocked: null, failed_attempt: "0.5.0" };
+  });
+  renderApp();
+  expect(await screen.findByText(/couldn't finish - another program was using/)).toBeInTheDocument();
+  // The way out is still one click away.
+  expect(screen.getByRole("button", { name: /restart to update/i })).toBeInTheDocument();
+  expect(screen.queryByText(/Version 0.5.0 is available/)).not.toBeInTheDocument();
+});
+
 /// The app is left open for days, so a launch-only check means a release
 /// lands and nobody hears about it until they next restart. It re-checks
 /// every hour, and silently: nothing appears until there is something to

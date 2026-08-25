@@ -681,10 +681,15 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
                           : `Hide ${col}`
                       }
                       disabled={hiddenCols.size >= COLUMNS.length - 1}
-                      className="ml-auto rounded border border-accent/60 px-1.5 pb-px pt-[3px] text-center text-[10px] font-semibold uppercase tracking-wide text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
+                      className="ml-auto rounded border border-accent/60 px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-accent transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => toggleCol(col)}
                     >
-                      Hide
+                      {/* Symmetric padding + the caps-only ink shift, not a
+                          hand-tuned pt/pb pair: the old pt-[3px] pb-px was a
+                          1px nudge where caps ink needs 1.5px (measured
+                          -0.66px high), and its 1px bottom padding read as
+                          "missing" in an inspector. Same button height. */}
+                      <span className="pill-label-ink">Hide</span>
                     </button>
                   </h3>
                   {items.map((item) => (

@@ -203,17 +203,6 @@ export default function RunPanel({
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
   });
 
-  const openRunner = (caseIds?: number[]) =>
-    openRunnerWindow({
-      org,
-      project,
-      planId: suite.data!.plan_id,
-      planName: suite.data!.plan_name,
-      suiteId: suite.data!.suite_id,
-      pbi: { id: pbiId, title: pbiTitle, work_item_type: "" },
-      caseIds,
-    }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
-
   // No dedicated re-run-failures button (it existed for one release): the
   // outcome filter + a group-header click selects the failed set in two
   // clicks, and one path into a selective run is easier to trust than two.
@@ -249,6 +238,28 @@ export default function RunPanel({
       pts: indices.map((i) => filtered[i]),
     }));
   }, [filtered, grouped]);
+
+  /** The list's order as the eye reads it - filtered, grouped, flattened.
+   * The runner's own fetch (the PBI's Tested-By links) orders differently,
+   * so every handoff carries this: as the ids themselves for a selective
+   * run, as an order hint for a full one. */
+  const visibleCaseOrder = () =>
+    sections
+      .flatMap((s) => s.pts)
+      .map((p) => p.test_case_id)
+      .filter((x): x is number => x != null);
+
+  const openRunner = (caseIds?: number[]) =>
+    openRunnerWindow({
+      org,
+      project,
+      planId: suite.data!.plan_id,
+      planName: suite.data!.plan_name,
+      suiteId: suite.data!.suite_id,
+      pbi: { id: pbiId, title: pbiTitle, work_item_type: "" },
+      caseIds,
+      caseOrder: caseIds ? undefined : visibleCaseOrder(),
+    }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
   /** Groups on screen not yet folded - Collapse all folds these too. */
   const openGroupNames = sections
@@ -580,10 +591,12 @@ export default function RunPanel({
       {suite.data &&
         selected.size > 0 &&
         createPortal(
-          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-1.5 shadow-2xl">
+          // p-2.5: at p-1.5 the button sat nearly flush with the pill's
+          // edge and the pill read as a tight outline, not a surface.
+          <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl">
             {/* No "N selected" text - the count is already in the button's
                 own label. */}
-            <Button size="sm" onClick={() => openRunner([...selected])}>
+            <Button size="sm" onClick={() => openRunner(visibleCaseOrder().filter((id) => selected.has(id)))}>
               <IconRun aria-hidden />
               Run {selected.size} in runner
             </Button>

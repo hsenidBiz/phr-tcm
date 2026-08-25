@@ -3,7 +3,13 @@
 // on a chosen repo. Rows open the PR in the browser; voting/completing
 // stays in Azure DevOps (this panel never writes).
 
-import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useIsFetching,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   Bug,
@@ -19,7 +25,7 @@ import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
 import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
 import PrThreads, { isResolved } from "../components/PrThreads";
-import { Select } from "../components/ui/select";
+import MultiSelect from "../components/ui/multiselect";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
@@ -530,26 +536,61 @@ function PrGroup({
   );
 }
 
+/** The tracked repos for one org/project, with the pre-multi-select
+ * single-repo key folded in so an existing choice keeps working. */
+function readRepoIds(org: string, project: string): string[] {
+  try {
+    const raw = localStorage.getItem(`tcm-v2-pr-repos:${org}/${project}`);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr.filter((s) => typeof s === "string" && s);
+    }
+    const legacy = localStorage.getItem(`tcm-v2-pr-repo:${org}/${project}`);
+    if (legacy) return [legacy];
+  } catch {
+    // session-only
+  }
+  return [];
+}
+
+/** The picker's first, non-repo row. A repo could in principle carry this
+ * name too, but ADO repo names and this label colliding AND the user
+ * needing both is not a case worth complicating the picker's shape for. */
+const YOURS = "Your Pull Requests";
+
 export default function PrPanel({ org, project }: { org: string; project: string }) {
   const qc = useQueryClient();
-  const repoKey = `tcm-v2-pr-repo:${org}/${project}`;
-  const [repoId, setRepoIdRaw] = useState(() => localStorage.getItem(repoKey) ?? "");
+  const repoKey = `tcm-v2-pr-repos:${org}/${project}`;
+  // "Your Pull Requests" is ON unless the user deselected it - the panel's
+  // default view is your own PRs, with repositories opted into alongside.
+  const yoursKey = `tcm-v2-pr-yours:${org}/${project}`;
+  const [showYours, setShowYoursRaw] = useState(() => localStorage.getItem(yoursKey) !== "off");
+  const setShowYours = (on: boolean) => {
+    setShowYoursRaw(on);
+    try {
+      localStorage.setItem(yoursKey, on ? "on" : "off");
+    } catch {
+      // session-only
+    }
+  };
+  const [repoIds, setRepoIdsRaw] = useState<string[]>(() => readRepoIds(org, project));
   // The seed above runs once, but repoKey changes the moment the user
-  // switches org or project - and the previous project's repo stayed
-  // selected, so the panel asked Azure DevOps for pull requests on a repo
-  // that is not in this project and showed the error it got back. Re-seed
+  // switches org or project - and the previous project's repos stayed
+  // selected, so the panel asked Azure DevOps for pull requests on repos
+  // that are not in this project and showed the error it got back. Re-seed
   // from the key that is current. Adjusting state during render (rather
   // than in an effect) is what React prescribes here: it re-renders before
-  // painting, so the wrong repo is never on screen or in a request.
+  // painting, so the wrong repos are never on screen or in a request.
   const seededFor = useRef(repoKey);
   if (seededFor.current !== repoKey) {
     seededFor.current = repoKey;
-    setRepoIdRaw(localStorage.getItem(repoKey) ?? "");
+    setRepoIdsRaw(readRepoIds(org, project));
+    setShowYoursRaw(localStorage.getItem(yoursKey) !== "off");
   }
-  const setRepoId = (id: string) => {
-    setRepoIdRaw(id);
+  const setRepoIds = (ids: string[]) => {
+    setRepoIdsRaw(ids);
     try {
-      localStorage.setItem(repoKey, id);
+      localStorage.setItem(repoKey, JSON.stringify(ids));
     } catch {
       // session-only
     }
@@ -581,37 +622,27 @@ export default function PrPanel({ org, project }: { org: string; project: string
       // session-only
     }
   };
-  // One page at a time (PAGE mirrors Rust's PR_PAGE_SIZE); a full page
-  // means there may be another behind it.
-  const active = useInfiniteQuery({
-    queryKey: ["repo-prs", org, project, repoId, prStatus],
-    queryFn: ({ pageParam }) =>
-      unwrap(commands.repoPullRequests(org, project, repoId, prStatus, pageParam)),
-    initialPageParam: 0,
-    getNextPageParam: (last, all) =>
-      last.length === PR_PAGE ? all.reduce((n, p) => n + p.length, 0) : undefined,
-    enabled: Boolean(org && project && repoId),
-    // Completed history only ever gains newer entries - no need to refetch
-    // the pages themselves for 10 minutes.
-    staleTime: prStatus === "completed" ? 10 * 60_000 : 60_000,
-    retry: false,
-  });
-  const fetched = useMemo(() => active.data?.pages.flat() ?? [], [active.data]);
-
-  const repoName = repos.data?.find((r) => r.id === repoId)?.name;
-
-  // "Active on <repo>" drops any PR already shown above (awaiting/yours), so
-  // your own PRs in the selected repo appear once, under Your pull requests.
+  // "Active on <repo>" drops any PR already shown in a group ABOVE it, so
+  // a PR appears once. Only groups actually on screen count: with "Your
+  // Pull Requests" deselected, your PRs must stay in the repo sections -
+  // deduping against a hidden group would make them vanish entirely.
   const shownAbove = useMemo(() => {
     const ids = new Set<number>();
     for (const pr of overview.data?.awaiting ?? []) ids.add(pr.id);
-    for (const pr of overview.data?.mine ?? []) ids.add(pr.id);
+    if (showYours) for (const pr of overview.data?.mine ?? []) ids.add(pr.id);
     return ids;
-  }, [overview.data]);
-  // Only the active list can collide with the groups above; completed PRs
-  // are never shown there, so they must not be de-duplicated away.
-  const repoPrs =
-    prStatus === "active" ? fetched.filter((pr) => !shownAbove.has(pr.id)) : fetched;
+  }, [overview.data, showYours]);
+
+  // Tracked repos render in the repo list's order, not click order - the
+  // sections keep a stable arrangement however the selection was built.
+  // Ids the project no longer has (a repo deleted, a stale import) simply
+  // don't render; they stay in storage, harmless.
+  const trackedRepos = (repos.data ?? []).filter((r) => repoIds.includes(r.id));
+
+  // Repo NAMES face the MultiSelect (they are what a person recognises,
+  // and ADO keeps them unique within a project); ids face storage and the
+  // API, which survive a repo being renamed.
+  const anyRepoFetching = useIsFetching({ queryKey: ["repo-prs", org, project] }) > 0;
 
   return (
     // Pull requests are a list, so width costs nothing: the cap steps up
@@ -619,19 +650,19 @@ export default function PrPanel({ org, project }: { org: string; project: string
     // than stopping at 1024px and leaving half the screen black.
     <div className="max-w-3xl space-y-6 xl:max-w-5xl 2xl:max-w-none">
       <div className="flex items-center gap-2">
-        <Select
-          aria-label="Repository"
-          className="w-64" triggerClassName="py-1.5"
-          value={repoId}
-          onChange={(e) => setRepoId(e.target.value)}
-        >
-          <option value="">Pick a repository…</option>
-          {(repos.data ?? []).map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </Select>
+        <MultiSelect
+          ariaLabel="Repositories"
+          className="w-64"
+          allLabel="Pick pull requests…"
+          options={[YOURS, ...(repos.data ?? []).map((r) => r.name)]}
+          selected={[...(showYours ? [YOURS] : []), ...trackedRepos.map((r) => r.name)]}
+          onChange={(names) => {
+            setShowYours(names.includes(YOURS));
+            setRepoIds(
+              (repos.data ?? []).filter((r) => names.includes(r.name)).map((r) => r.id),
+            );
+          }}
+        />
         {/* Which slice of the repo's PRs the bottom group shows. */}
         <div className="flex rounded-md border border-border p-0.5">
           {(["active", "completed"] as const).map((s) => (
@@ -654,12 +685,12 @@ export default function PrPanel({ org, project }: { org: string; project: string
           className="rounded p-1.5 text-muted transition-colors hover:text-accent"
           onClick={() => {
             qc.invalidateQueries({ queryKey: ["pr-overview", org, project] });
-            qc.invalidateQueries({ queryKey: ["repo-prs", org, project, repoId] });
+            qc.invalidateQueries({ queryKey: ["repo-prs", org, project] });
           }}
         >
           <RefreshCw
             size={14}
-            className={overview.isFetching || active.isFetching ? "animate-spin" : undefined}
+            className={overview.isFetching || anyRepoFetching ? "animate-spin" : undefined}
           />
         </button>
       </div>
@@ -683,37 +714,92 @@ export default function PrPanel({ org, project }: { org: string; project: string
             org={org}
             project={project}
           />
-          <PrGroup
-            title="Your pull requests"
-            prs={overview.data.mine}
-            empty="You have no active pull requests."
-            org={org}
-            project={project}
-          />
+          {showYours && (
+            <PrGroup
+              title="Your pull requests"
+              prs={overview.data.mine}
+              empty="You have no active pull requests."
+              org={org}
+              project={project}
+            />
+          )}
         </>
       )}
 
-      {repoId &&
-        (active.isError ? (
-          <p className="text-sm text-danger">{active.error.message}</p>
-        ) : (
-          <PrGroup
-            title={`${prStatus === "active" ? "Active" : "Completed"} on ${
-              repoName ?? "repository"
-            }`}
-            prs={repoPrs}
-            empty={
-              active.isLoading
-                ? "Loading…"
-                : prStatus === "active"
-                  ? "No other active pull requests on this repository."
-                  : "No completed pull requests on this repository."
-            }
-            org={org}
-            project={project}
-          />
-        ))}
-      {repoId && active.hasNextPage && (
+      {trackedRepos.map((r) => (
+        <RepoPrSection
+          key={r.id}
+          org={org}
+          project={project}
+          repoId={r.id}
+          repoName={r.name}
+          prStatus={prStatus}
+          shownAbove={shownAbove}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One tracked repo's slice of the panel: its titled PR group, its own
+ * error line, and its own pagination. A section per repo (rather than one
+ * merged feed) keeps "Load more" honest - each repo pages independently
+ * against its own skip count, and one repo's 400 does not blank the rest. */
+function RepoPrSection({
+  org,
+  project,
+  repoId,
+  repoName,
+  prStatus,
+  shownAbove,
+}: {
+  org: string;
+  project: string;
+  repoId: string;
+  repoName: string;
+  prStatus: "active" | "completed";
+  shownAbove: Set<number>;
+}) {
+  // One page at a time (PAGE mirrors Rust's PR_PAGE_SIZE); a full page
+  // means there may be another behind it.
+  const active = useInfiniteQuery({
+    queryKey: ["repo-prs", org, project, repoId, prStatus],
+    queryFn: ({ pageParam }) =>
+      unwrap(commands.repoPullRequests(org, project, repoId, prStatus, pageParam)),
+    initialPageParam: 0,
+    getNextPageParam: (last, all) =>
+      last.length === PR_PAGE ? all.reduce((n, p) => n + p.length, 0) : undefined,
+    enabled: Boolean(org && project && repoId),
+    // Completed history only ever gains newer entries - no need to refetch
+    // the pages themselves for 10 minutes.
+    staleTime: prStatus === "completed" ? 10 * 60_000 : 60_000,
+    retry: false,
+  });
+  const fetched = useMemo(() => active.data?.pages.flat() ?? [], [active.data]);
+  // Only the active list can collide with the groups above; completed PRs
+  // are never shown there, so they must not be de-duplicated away.
+  const repoPrs =
+    prStatus === "active" ? fetched.filter((pr) => !shownAbove.has(pr.id)) : fetched;
+
+  if (active.isError) {
+    return <p className="text-sm text-danger">{active.error.message}</p>;
+  }
+  return (
+    <>
+      <PrGroup
+        title={`${prStatus === "active" ? "Active" : "Completed"} on ${repoName}`}
+        prs={repoPrs}
+        empty={
+          active.isLoading
+            ? "Loading…"
+            : prStatus === "active"
+              ? "No other active pull requests on this repository."
+              : "No completed pull requests on this repository."
+        }
+        org={org}
+        project={project}
+      />
+      {active.hasNextPage && (
         <div className="flex justify-center">
           <button
             className="rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:border-border-strong hover:text-text disabled:opacity-50"
@@ -724,6 +810,6 @@ export default function PrPanel({ org, project }: { org: string; project: string
           </button>
         </div>
       )}
-    </div>
+    </>
   );
 }

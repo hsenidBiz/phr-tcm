@@ -720,7 +720,22 @@ export default function App() {
                   </span>
                 </div>
               ) : (
-                <span>Version {update.data.available} is available.</span>
+                <span>
+                  {update.data.failed_attempt ? (
+                    // The last click on this button did NOT work: the app
+                    // restarted still on the old version because Update.exe
+                    // could not swap the install folder while another
+                    // program sat in it. Saying so beats the banner
+                    // silently reappearing and looking like it did nothing.
+                    <>
+                      The last update couldn't finish - another program was using the app's files
+                      (usually a browser window that was opened from this app). Close your browser
+                      windows and try again, or restart Windows.
+                    </>
+                  ) : (
+                    <>Version {update.data.available} is available.</>
+                  )}
+                </span>
               )}
               <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
                 <IconRefresh aria-hidden className={applyUpdate.isPending ? "animate-spin" : undefined} />
