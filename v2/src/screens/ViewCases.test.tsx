@@ -285,3 +285,34 @@ test("the header checkbox carries the group's selection state through a collapse
 });
 
 
+
+/// Export as JSON follows the View-in-browser scope rule: the selection
+/// when rows are highlighted, otherwise everything shown - written through
+/// the same Import File format so a re-import UPDATES these cases.
+test("Export JSON writes the chosen cases through the save dialog", async () => {
+  const exported: Array<{ path: string; count: number; firstId: number | null }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return [caseA, caseB, caseC];
+    if (cmd === "plugin:dialog|save") return "C:/tmp/test-cases.json";
+    if (cmd === "export_queue_json") {
+      const a = args as { path: string; queue: Array<{ update_id: number | null }> };
+      exported.push({ path: a.path, count: a.queue.length, firstId: a.queue[0]?.update_id ?? null });
+      return null;
+    }
+  });
+  renderView();
+  await screen.findByText("Login - valid");
+
+  // Nothing selected: exports everything shown, as updates of these ids.
+  fireEvent.click(screen.getByRole("button", { name: "Export JSON" }));
+  await waitFor(() => expect(exported).toHaveLength(1));
+  expect(exported[0]).toEqual({ path: "C:/tmp/test-cases.json", count: 3, firstId: 201 });
+
+  // One row selected: the button scopes and says so.
+  fireEvent.click(screen.getByText("Login - locked out"));
+  fireEvent.click(screen.getByRole("button", { name: "Export 1 JSON" }));
+  await waitFor(() => expect(exported).toHaveLength(2));
+  expect(exported[1].count).toBe(1);
+  expect(exported[1].firstId).toBe(202);
+});

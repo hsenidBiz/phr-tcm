@@ -88,3 +88,29 @@ test("Escape still closes the results", async () => {
   fireEvent.keyDown(input, { key: "Escape" });
   expect(screen.queryByText(/Login flow/)).not.toBeInTheDocument();
 });
+
+/// A finished PBI otherwise squats in the recents until enough newer picks
+/// push it out - the X drops it on the spot, without picking it.
+test("a recent can be removed from the dropdown without picking it", async () => {
+  mockIPC(() => undefined);
+  localStorage.setItem(
+    "tcm-v2-recent-pbis:acme/Web",
+    JSON.stringify([
+      { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      { id: 43, title: "Checkout", work_item_type: "Product Backlog Item" },
+    ]),
+  );
+  renderPicker();
+
+  fireEvent.focus(screen.getByLabelText("Find PBI"));
+  await screen.findByText("Recently used");
+
+  fireEvent.click(screen.getByLabelText("Remove #42 from recent PBIs"));
+
+  // Gone from the list AND from storage; the other survives; nothing was
+  // picked (no chip, dropdown still open on the remaining recent).
+  expect(screen.queryByText(/Login flow/)).not.toBeInTheDocument();
+  expect(screen.getByText(/Checkout/)).toBeInTheDocument();
+  expect(screen.queryByLabelText("Clear PBI")).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("tcm-v2-recent-pbis:acme/Web")!)).toHaveLength(1);
+});

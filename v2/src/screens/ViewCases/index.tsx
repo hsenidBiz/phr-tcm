@@ -21,11 +21,13 @@ import {
 } from "../../lib/sidebarState";
 import { groupIndices } from "../../lib/grouping";
 import { unwrap, unwrapStr } from "../../lib/ipc";
+import { exportPathFor, rememberExportPath } from "../../lib/exportDir";
 import { pagePalette } from "../../lib/reportTheme";
 import { toTestCase } from "../../lib/testCaseConvert";
+import { save } from "@tauri-apps/plugin-dialog";
 import CaseDetail from "./CaseDetail";
 import CommentModal from "./CommentModal";
-import { IconClear, IconCollapseAll, IconOpenInBrowser } from "../../lib/actionIcons";
+import { IconClear, IconCollapseAll, IconExport, IconOpenInBrowser } from "../../lib/actionIcons";
 
 
 
@@ -191,6 +193,25 @@ export default function ViewCases({
     onError: (e) => toast.error(`Could not open the report: ${e.message ?? e}`),
   });
 
+  // Same scope rule as the browser view: the selection when there is one,
+  // otherwise everything the filter shows. The exported JSON is the
+  // Import File format, ids included - so re-importing it updates these
+  // exact cases rather than creating copies.
+  const exportJson = useMutation({
+    mutationFn: async () => {
+      const path = await save({
+        defaultPath: exportPathFor("test-cases.json"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!path) return;
+      rememberExportPath(path);
+      const r = await commands.exportQueueJson(path, chosen.map(toTestCase));
+      if (r.status === "error") throw new Error(r.error);
+      toast.success(`Exported ${chosen.length} case(s).`);
+    },
+    onError: (e) => toast.error(`Export failed: ${e.message}`),
+  });
+
   // Keep an already-open report in step with what is on screen.
   //
   // The page is a file on disk, so nothing pushes to it: the app rewrites
@@ -270,7 +291,17 @@ export default function ViewCases({
               spin is the ONLY sign the click did anything. */}
           <RefreshCw size={14} className={cases.isFetching ? "animate-spin" : undefined} />
         </button>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            title="Save as an Import File JSON - selected cases when any are highlighted, otherwise everything shown. Ids are included, so re-importing updates these cases."
+            disabled={chosen.length === 0 || exportJson.isPending}
+            onClick={() => exportJson.mutate()}
+          >
+            <IconExport aria-hidden />
+            {selected.size > 0 ? `Export ${selected.size} JSON` : "Export JSON"}
+          </Button>
           <Button
             variant="outline"
             size="sm"

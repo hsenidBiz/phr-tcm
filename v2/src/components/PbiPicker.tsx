@@ -29,6 +29,19 @@ function pushRecent(org: string, project: string, pbi: PbiHit) {
   }
 }
 
+/** Drop one PBI from the recents list - a mis-clicked or long-finished PBI
+ * otherwise squats in the list until seven newer ones push it out. */
+export function removeRecent(org: string, project: string, id: number) {
+  try {
+    localStorage.setItem(
+      recentsKey(org, project),
+      JSON.stringify(loadRecents(org, project).filter((p) => p.id !== id)),
+    );
+  } catch {
+    // storage unavailable -> nothing to remove
+  }
+}
+
 /** Global PBI scope in the context bar - v1's Config-screen PBI search.
  * Searches as you type (debounced); click a hit and everything scopes to
  * the choice. */
@@ -77,6 +90,9 @@ export default function PbiPicker({
     return () => document.removeEventListener("pointerdown", onDown, true);
   }, [open]);
 
+  // Re-read on every render; the bump only forces a render after a remove
+  // (nothing else about the component changes when a recent is dropped).
+  const [, bumpRecents] = useState(0);
   const recents = loadRecents(org, project);
   const pick = (hit: PbiHit) => {
     pushRecent(org, project, hit);
@@ -158,13 +174,25 @@ export default function PbiPicker({
                   Recently used
                 </li>
                 {recents.map((hit) => (
-                  <li key={hit.id}>
+                  <li key={hit.id} className="flex items-center gap-1">
                     <button
-                      className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
                       onClick={() => pick(hit)}
                     >
-                      <History size={12} className="text-faint" />
-                      <span className="id-mono text-faint">#{hit.id}</span> {hit.title}
+                      <History size={12} className="shrink-0 text-faint" />
+                      <span className="id-mono text-faint">#{hit.id}</span>
+                      <span className="truncate">{hit.title}</span>
+                    </button>
+                    <button
+                      aria-label={`Remove #${hit.id} from recent PBIs`}
+                      title="Remove from recent PBIs"
+                      className="shrink-0 rounded p-1 text-muted transition-colors hover:text-danger"
+                      onClick={() => {
+                        removeRecent(org, project, hit.id);
+                        bumpRecents((v) => v + 1);
+                      }}
+                    >
+                      <X size={12} />
                     </button>
                   </li>
                 ))}
