@@ -298,17 +298,18 @@ test("Run selected hands the runner the list's order, not the click order", asyn
   expect(session.caseIds).toEqual([201, 202]);
 });
 
-test("Open runner window carries the list's order without restricting the run", async () => {
+/// The run-everything button is gone: the runner opens only from a
+/// selection, so an idle panel offers no way to start a 50-case session
+/// by mis-click. Selecting rows surfaces the (only) way in.
+test("the runner opens only from a selection", async () => {
   mockAll();
   renderPanel();
   await screen.findByText("Valid login");
 
-  fireEvent.click(screen.getByRole("button", { name: /Open runner window/ }));
-  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
-  // An order hint, not a filter: cases the panel is not showing (a filter,
-  // a later addition) must still run - they just come after these.
-  expect(session.caseOrder).toEqual([201, 202]);
-  expect(session.caseIds).toBeUndefined();
+  expect(screen.queryByRole("button", { name: /runner/i })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Valid login"));
+  expect(screen.getByRole("button", { name: /Run 1 in runner/ })).toBeInTheDocument();
 });
 
 /** The header checkbox is the one selection indicator - dash for partial,
@@ -518,4 +519,36 @@ test("Refresh refetches points without re-resolving the suite; Shift-click re-de
 
   fireEvent.click(screen.getByRole("button", { name: "Refresh outcomes" }), { shiftKey: true });
   await vi.waitFor(() => expect(counts.ensure).toBe(2));
+});
+
+/// Bulk selection without a mouse marathon: ungrouped mode gets a Select
+/// all button (grouped mode already has the per-group checkboxes), and
+/// Ctrl+A selects every visible case - except while typing in a field,
+/// where select-all must keep meaning the text.
+test("Select all button (ungrouped) and Ctrl+A both select every case", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Clear selection"));
+  expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "a", ctrlKey: true });
+  expect(screen.getByRole("button", { name: /Run 2 in runner/ })).toBeInTheDocument();
+});
+
+test("grouped mode hides the Select all button and Ctrl+A skips text fields", async () => {
+  mockAll();
+  renderPanel();
+  await screen.findByText("Valid login");
+
+  fireEvent.click(screen.getByText("Group by title"));
+  expect(screen.queryByRole("button", { name: "Select all" })).not.toBeInTheDocument();
+
+  const filter = screen.getByPlaceholderText(/Filter/i);
+  fireEvent.keyDown(filter, { key: "a", ctrlKey: true });
+  expect(screen.queryByRole("button", { name: /Run \d+ in runner/ })).not.toBeInTheDocument();
 });

@@ -25,7 +25,7 @@ import { describeAdoError, unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
 import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
-import { IconCollapseAll, IconOpenWindow, IconReport, IconRun } from "../../lib/actionIcons";
+import { IconCollapseAll, IconReport, IconRun } from "../../lib/actionIcons";
 
 
 export { outcomeLabel };
@@ -266,15 +266,17 @@ export default function RunPanel({
 
   /** The list's order as the eye reads it - filtered, grouped, flattened.
    * The runner's own fetch (the PBI's Tested-By links) orders differently,
-   * so every handoff carries this: as the ids themselves for a selective
-   * run, as an order hint for a full one. */
+   * so the handoff carries the selection in this order. */
   const visibleCaseOrder = () =>
     sections
       .flatMap((s) => s.pts)
       .map((p) => p.test_case_id)
       .filter((x): x is number => x != null);
 
-  const openRunner = (caseIds?: number[]) =>
+  // The runner opens only for an explicit selection - a run-everything
+  // button invited accidental 50-case sessions, so picking rows is the
+  // one way in (select all via the group checkboxes if that IS the run).
+  const openRunner = (caseIds: number[]) =>
     openRunnerWindow({
       org,
       project,
@@ -283,7 +285,6 @@ export default function RunPanel({
       suiteId: suite.data!.suite_id,
       pbi: { id: pbiId, title: pbiTitle, work_item_type: "" },
       caseIds,
-      caseOrder: caseIds ? undefined : visibleCaseOrder(),
     }).catch((e) => toast.error(`Could not open runner: ${e.message ?? e}`));
 
   /** Groups on screen not yet folded - Collapse all folds these too. */
@@ -330,6 +331,30 @@ export default function RunPanel({
     setAnchor(caseId);
   };
 
+  /** Every case the list is currently showing (the filter applies; a
+   * collapsed group's cases still count - collapsing hides rows, it does
+   * not unpick them). */
+  const selectAllVisible = () => {
+    const ids = filtered.map((p) => p.test_case_id).filter((x): x is number => x != null);
+    if (!ids.length) return;
+    setSelected(new Set(ids));
+    setAnchor(ids[0]);
+  };
+
+  // Ctrl/Cmd+A selects every case instead of the page's text - unless the
+  // user is in a text field, where select-all must keep meaning the text.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      selectAllVisible();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   /** Group-header click: select every case under it (again to clear). */
   const toggleSection = (pts: TestPoint[]) => {
     const ids = pts.map((p) => p.test_case_id).filter((x): x is number => x != null);
@@ -364,17 +389,13 @@ export default function RunPanel({
               <IconReport aria-hidden />
               {report.isPending ? "Building report" : "Execution report"}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => openRunner()}>
-              <IconOpenWindow aria-hidden />
-              Open runner window
-            </Button>
           </div>
         )}
       </div>
       <p className="text-xs text-muted">
         Outcomes are recorded through the runner window - a step-by-step
-        player with screenshots and bug filing. Click rows to pick the cases
-        for a selective runner session.
+        player with screenshots and bug filing. Click rows to select cases,
+        then run them in the runner.
       </p>
 
       {suite.isFetching && !suite.data && (
@@ -452,6 +473,17 @@ export default function RunPanel({
             />
             Group by title
           </label>
+          {!grouped && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={filtered.length === 0}
+              title="Select every case shown (Ctrl+A)"
+              onClick={selectAllVisible}
+            >
+              Select all
+            </Button>
+          )}
         </div>
       )}
 
