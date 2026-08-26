@@ -363,25 +363,44 @@ test("PR chips render from board links and active outranks completed", async () 
   ).toBeTruthy();
 });
 
-test("This sprint toggle refetches with currentSprint=true", async () => {
+/// The sprint filter is an AREA-scope tool: "My work" is already a
+/// personal slice, so the checkbox hides there and the persisted
+/// preference stops applying to the fetch until an area is picked again.
+test("This sprint shows only for an area scope, and only then filters the fetch", async () => {
   const calls: Array<Record<string, unknown>> = [];
   mockIPC((cmd, args) => {
     if (cmd === "fetch_board") {
       calls.push(args as Record<string, unknown>);
       return boardData;
     }
-    if (cmd === "classification_paths") return [];
+    if (cmd === "classification_paths") return ["Web"];
     if (cmd === "board_pr_links") return [];
   });
   renderBoard();
   await screen.findByText("Write docs");
+
+  // My work: no sprint checkbox, no sprint filter.
+  expect(screen.queryByRole("checkbox", { name: /This sprint/ })).not.toBeInTheDocument();
   expect(calls[calls.length - 1].currentSprint).toBe(false);
 
-  fireEvent.click(screen.getByRole("checkbox", { name: /This sprint/ }));
+  // Pick an area: the checkbox appears and toggling it filters the fetch.
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  fireEvent.click(await screen.findByText("Area: Web"));
+  fireEvent.click(await screen.findByRole("checkbox", { name: /This sprint/ }));
   await vi.waitFor(() =>
     expect(calls[calls.length - 1].currentSprint).toBe(true),
   );
   expect(localStorage.getItem("tcm-v2-this-sprint")).toBe("on");
+
+  // Back to My work: checkbox gone, and the stored "on" no longer
+  // filters - the board key flips to sprint=false, so it re-serves the
+  // unfiltered cache and any refetch goes out without the sprint clause.
+  const before = calls.length;
+  fireEvent.click(screen.getByLabelText("Board scope"));
+  fireEvent.click(await screen.findByText("My work"));
+  await screen.findByText("Write docs");
+  expect(screen.queryByRole("checkbox", { name: /This sprint/ })).not.toBeInTheDocument();
+  expect(calls.slice(before).every((c) => c.currentSprint === false)).toBe(true);
   localStorage.removeItem("tcm-v2-this-sprint");
 });
 

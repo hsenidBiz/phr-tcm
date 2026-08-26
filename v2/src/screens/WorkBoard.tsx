@@ -231,6 +231,13 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const [thisSprint, setThisSprint] = useState(
     () => localStorage.getItem("tcm-v2-this-sprint") === "on",
   );
+  // The sprint filter belongs to AREA scope only: "My work" is already a
+  // personal slice ("what is on my plate", sprint or not) and PBI scope is
+  // a parent-child slice - filtering either by iteration mostly hides
+  // items people are looking for. The checkbox hides there, and the query
+  // ignores the persisted preference until an area is picked again.
+  const sprintApplies = Boolean(scope) && !pbiMode;
+  const sprintFilter = sprintApplies && thisSprint;
   const [openItem, setOpenItem] = useState<number | null>(null);
   // Fields ADO said were blocking a move - the drawer rings them.
   const [highlightFields, setHighlightFields] = useState<string[]>([]);
@@ -243,7 +250,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     project,
     scope,
     pbiMode ? (pbiScope?.id ?? "none") : "",
-    thisSprint,
+    sprintFilter,
   ];
 
   // Areas (the classification tree) instead of the project's team list:
@@ -265,7 +272,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           project,
           pbiMode ? null : scope || null,
           pbiMode && pbiScope ? pbiScope.id : null,
-          thisSprint,
+          sprintFilter,
         ),
       ),
     enabled: Boolean(org && project) && (!pbiMode || pbiScope !== null),
@@ -491,20 +498,22 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
               Loading pull requests…
             </span>
           )}
-          <label className="flex items-center gap-1.5 text-xs text-muted" title="Only items in the current sprint (project default team's iteration)">
-            <Checkbox
-              checked={thisSprint}
-              onCheckedChange={(v) => {
-                setThisSprint(v);
-                try {
-                  localStorage.setItem("tcm-v2-this-sprint", v ? "on" : "off");
-                } catch {
-                  // session-only
-                }
-              }}
-            />
-            This sprint
-          </label>
+          {sprintApplies && (
+            <label className="flex items-center gap-1.5 text-xs text-muted" title="Only items in the current sprint (project default team's iteration)">
+              <Checkbox
+                checked={thisSprint}
+                onCheckedChange={(v) => {
+                  setThisSprint(v);
+                  try {
+                    localStorage.setItem("tcm-v2-this-sprint", v ? "on" : "off");
+                  } catch {
+                    // session-only
+                  }
+                }}
+              />
+              This sprint
+            </label>
+          )}
           {/* Creation moved to the sidebar's "New Work Item" screen - the
               board stays a read-and-move surface. */}
         </div>
