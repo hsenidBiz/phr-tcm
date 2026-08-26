@@ -473,3 +473,49 @@ test("Execution report arms on selection and reports only the highlighted cases"
   await vi.waitFor(() => expect(reported).toHaveLength(1));
   expect(reported[0]).toEqual([201]);
 });
+
+/// Refresh means "the outcomes moved", not "find the suite again": suite
+/// resolution scans every test plan in the project, so the button must
+/// refetch points without a second ensure_pbi_suite. Shift-click is the
+/// deliberate full re-detect.
+test("Refresh refetches points without re-resolving the suite; Shift-click re-detects", async () => {
+  const counts = { ensure: 0, points: 0 };
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "plugin:event|listen":
+        return 1;
+      case "plugin:event|unlisten":
+        return null;
+      case "run_history":
+        return [];
+      case "ensure_pbi_suite":
+        counts.ensure += 1;
+        return { plan_id: 9, plan_name: "Auth - Test Plan", suite_id: 91 };
+      case "list_test_points":
+        counts.points += 1;
+        return [
+          {
+            point_id: 7,
+            test_case_id: 201,
+            test_case_name: "Valid login",
+            config_name: "Windows 10",
+            tester: "",
+            last_outcome: "",
+            last_run_id: null,
+            last_result_id: null,
+          },
+        ];
+    }
+  });
+  renderPanel();
+  await screen.findByText("Valid login");
+  expect(counts.ensure).toBe(1);
+  const pointsBefore = counts.points;
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh outcomes" }));
+  await vi.waitFor(() => expect(counts.points).toBeGreaterThan(pointsBefore));
+  expect(counts.ensure).toBe(1); // no re-scan on a plain refresh
+
+  fireEvent.click(screen.getByRole("button", { name: "Refresh outcomes" }), { shiftKey: true });
+  await vi.waitFor(() => expect(counts.ensure).toBe(2));
+});

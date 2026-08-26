@@ -21,7 +21,7 @@ import {
   subscribeSidebar,
 } from "../../lib/sidebarState";
 import { groupIndices } from "../../lib/grouping";
-import { unwrap, unwrapStr } from "../../lib/ipc";
+import { describeAdoError, unwrap, unwrapStr } from "../../lib/ipc";
 import { outcomeLabel } from "../../lib/outcomes";
 import { openRunnerWindow } from "../../lib/openRunner";
 import CasePreview from "./CasePreview";
@@ -138,7 +138,18 @@ export default function RunPanel({
     };
   }, [org, project, qc]);
 
-  const refreshSuite = () => {
+  // The common refresh: outcomes moved (someone ran tests), the suite did
+  // not - plan and suite ids are stable once resolved, so refetching the
+  // points and history is two cheap requests instead of re-scanning every
+  // test plan in the project.
+  const refreshPoints = () => {
+    qc.invalidateQueries({ queryKey: ["points"] });
+    qc.invalidateQueries({ queryKey: ["run-history"] });
+  };
+
+  // The full re-resolve (Shift-click, or automatic when the cached suite
+  // turns out to be deleted): drop the seed and scan plans from scratch.
+  const redetectSuite = () => {
     try {
       localStorage.removeItem(suiteKey);
     } catch {
@@ -173,8 +184,22 @@ export default function RunPanel({
     queryKey: ["points", org, project, suite.data?.plan_id, suite.data?.suite_id],
     ...persistentQuery({
       key: `points:${org}/${project}/${suite.data?.plan_id}/${suite.data?.suite_id}`,
-      fetcher: () =>
-        unwrap(commands.listTestPoints(org, project, suite.data!.plan_id, suite.data!.suite_id)),
+      fetcher: async () => {
+        const r = await commands.listTestPoints(
+          org,
+          project,
+          suite.data!.plan_id,
+          suite.data!.suite_id,
+        );
+        if (r.status === "error") {
+          // The cached suite no longer exists in Azure DevOps (plan or
+          // suite deleted): self-heal by re-resolving instead of leaving
+          // the tab stuck on "Not found." until someone finds Shift-click.
+          if (r.error.kind === "NotFound") redetectSuite();
+          throw new Error(describeAdoError(r.error));
+        }
+        return r.data;
+      },
       ...CACHE.outcomes,
     }),
     enabled: Boolean(suite.data),
@@ -364,12 +389,19 @@ export default function RunPanel({
         <p className="flex items-center gap-1.5 text-xs text-faint">
           Plan "{suite.data.plan_name}" / suite {suite.data.suite_id}
           <button
-            aria-label="Re-detect test suite"
-            title="Re-detect test suite"
+            aria-label="Refresh outcomes"
+            title="Refresh outcomes (Shift-click: re-detect the test suite)"
             className="rounded p-0.5 text-muted hover:text-accent"
-            onClick={refreshSuite}
+            onClick={(e) => (e.shiftKey ? redetectSuite() : refreshPoints())}
           >
-            <RefreshCw size={12} className={suite.isFetching ? "animate-spin" : undefined} />
+            <RefreshCw
+              size={12}
+              className={
+                suite.isFetching || points.isFetching || history.isFetching
+                  ? "animate-spin"
+                  : undefined
+              }
+            />
           </button>
           {suite.isFetching && <span>(re-detecting)</span>}
         </p>
