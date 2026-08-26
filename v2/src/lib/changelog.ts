@@ -20,7 +20,6 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Removing a tag, following a wiki search hit, and reading a PBI's test cases are all more reliable: several requests were built in ways Azure DevOps' own documentation and Microsoft's reference server disagree with. Org and project names containing spaces or symbols are now encoded properly everywhere, wiki search results open the right page, and a test case linked in the opposite direction can no longer masquerade as a PBI's test case.",
       "Long lists of test plans and points can no longer hang the app: paging is bounded, and a server that repeats itself stops the loop instead of spinning forever behind a \"Loading\" label.",
       "For AI assistants: a mistyped tool name now says so and points at the tool list, instead of claiming Test Case Manager could not be reached - which sent assistants off to debug a perfectly healthy connection.",
-      "This release follows a full audit of the app's MCP server and Azure DevOps API usage against Microsoft's own reference implementation; the report lives in claudedocs/mcp-audit-2026-08.md.",
     ],
   },
   {
