@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.11",
+    date: "2026-08-26",
+    items: [
+      "Refreshing Run Tests is fast now: the refresh button refetches the outcomes instead of re-detecting the test suite from scratch, which re-scanned every test plan in the project. Shift-click it if you really do want the suite found again - and if the suite was deleted in Azure DevOps, the tab notices and re-finds it on its own.",
+      "The runner opens only for the cases you select. The \"Open runner window\" button - which started a session over every case on the PBI, one mis-click from a 50-case run - is gone; click rows and use the \"Run N in runner\" pill. To make big selections painless, ungrouped mode gains a Select all button and Ctrl+A selects every visible case from anywhere on the tab.",
+      "The \"This sprint\" filter on the Work Manager now shows only when an area is selected. \"My work\" is already your personal slice - filtering it by iteration mostly hid items you were looking for, especially when the checkbox was left on from an earlier area visit.",
+    ],
+  },
+  {
     version: "1.20.10",
     date: "2026-08-25",
     items: [
