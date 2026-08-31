@@ -145,7 +145,9 @@ export default function RunnerWindow() {
           prefs.preconditionsRef,
         ),
       ),
-    enabled: Boolean(session),
+    // pbi.id 0 = a suite-scoped session (static suites have no PBI):
+    // there is nothing to ask, every case body comes from the backfill.
+    enabled: Boolean(session) && (session?.pbi.id ?? 0) > 0,
     retry: false,
   });
 
@@ -176,8 +178,25 @@ export default function RunnerWindow() {
   // (caseIds for a selective run, caseOrder as a hint for a full one) and
   // the runner follows it. Unlisted cases keep fetch order, at the end.
   const order = session?.caseIds?.length ? session.caseIds : (session?.caseOrder ?? []);
+
+  // The PBI fetch only sees Tested-By links, but a suite can hold cases
+  // without one - and a suite-scoped session has no PBI at all. Any session
+  // case the fetch missed is fetched by id, so "Run N" never quietly walks
+  // fewer than N. `base` is null until the picture is known.
+  const base = (session?.pbi.id ?? 0) > 0 ? (cases.data ?? null) : [];
+  const missingIds = base ? order.filter((id) => !base.some((c) => c.id === id)) : [];
+  const backfill = useQuery({
+    queryKey: ["runner-backfill", session?.org, missingIds],
+    queryFn: () =>
+      unwrap(
+        commands.testCasesByIds(session!.org, missingIds, prefs.moduleRef, prefs.preconditionsRef),
+      ),
+    enabled: missingIds.length > 0,
+    retry: false,
+  });
+
   const rank = new Map(order.map((id, i) => [id, i]));
-  const list = (cases.data ?? [])
+  const list = [...(base ?? []), ...(missingIds.length ? (backfill.data ?? []) : [])]
     .filter((c) => !caseFilter || caseFilter.has(c.id))
     .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
   const current = list[idx];
@@ -744,7 +763,13 @@ export default function RunnerWindow() {
         className="flex select-none items-center gap-2 border-b border-border bg-surface px-3 py-2"
       >
         <span className="pointer-events-none text-sm font-semibold">Runner</span>
-        <span className="id-mono text-xs text-faint">#{session.pbi.id}</span>
+        {/* A suite-scoped session has no PBI - "#0" would name nothing,
+            so the suite's name stands where the id would. */}
+        {session.pbi.id > 0 ? (
+          <span className="id-mono text-xs text-faint">#{session.pbi.id}</span>
+        ) : (
+          <span className="truncate text-xs text-faint">{session.pbi.title}</span>
+        )}
         {caseFilter && (
           <span className="rounded bg-accent-soft px-1.5 text-[11px] text-accent">
             {caseFilter.size} selected
@@ -776,9 +801,12 @@ export default function RunnerWindow() {
         </button>
       </header>
 
-      {cases.isLoading && <p className="p-4 text-sm text-muted">Loading test cases</p>}
+      {(cases.isLoading || backfill.isLoading) && (
+        <p className="p-4 text-sm text-muted">Loading test cases</p>
+      )}
       {cases.isError && <p className="p-4 text-sm text-danger">{cases.error.message}</p>}
-      {cases.data && list.length === 0 && (
+      {backfill.isError && <p className="p-4 text-sm text-danger">{backfill.error.message}</p>}
+      {base && !backfill.isLoading && list.length === 0 && !cases.isError && !backfill.isError && (
         <p className="p-4 text-sm text-muted">No linked test cases to run.</p>
       )}
 

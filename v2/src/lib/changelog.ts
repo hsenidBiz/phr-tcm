@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.12",
+    date: "2026-08-26",
+    items: [
+      "Static test suites are now runnable: every suite in the Test Suites tab has a Run chip, not just the PBI-backed ones. A sprint's hand-curated story suite opens straight into the runner, walking its cases in suite order. Bugs filed from such a run link the test case (there's no PBI to link).",
+      "A test case that sits in a suite without being linked to the PBI no longer silently vanishes from the runner. It showed in the Run Tests list (the suite has it) but the runner fetched cases through the PBI's Tested By links - so \"Run 3\" would quietly walk 2. Cases the link-fetch misses are now fetched by id and run in their proper place.",
+    ],
+  },
+  {
     version: "1.20.11",
     date: "2026-08-26",
     items: [

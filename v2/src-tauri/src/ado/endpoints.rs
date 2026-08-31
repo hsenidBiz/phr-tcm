@@ -877,7 +877,10 @@ impl AdoClient {
             .iter()
             .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
             .collect();
-        for rel_id in related_ids {
+        // A non-positive id is never a real work item - callers use 0 for
+        // "no PBI here" (a bug filed from a suite-scoped runner session),
+        // and a Related link to /workitems/0 would 400 the whole create.
+        for rel_id in related_ids.iter().filter(|i| **i > 0) {
             patch.push(serde_json::json!({
                 "op": "add",
                 "path": "/relations/-",

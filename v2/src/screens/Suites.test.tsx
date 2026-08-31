@@ -197,6 +197,54 @@ test("search filters the tree; results start collapsed and open on demand", asyn
 
 /// Every suite row can hand out ADO's own deep link - opened or copied -
 /// so pointing a teammate at a suite no longer means describing the path.
+/// A static suite has no PBI, so it never had a Run path - its cases were
+/// viewable but not runnable. The Run chip hands the runner a suite-scoped
+/// session: pbi id 0 (nothing to link), the suite's name as the title, and
+/// the suite's cases as ordered caseIds.
+test("a static suite's Run chip opens a suite-scoped runner session", async () => {
+  baseMock((cmd, args) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            {
+              id: 93,
+              name: "Sprint stories",
+              suite_type: "staticTestSuite",
+              requirement_id: null,
+              parent_id: null,
+            },
+          ],
+        },
+      ];
+    if (cmd === "list_test_points" && (args as { suiteId: number }).suiteId === 93)
+      return [301, 302].map((id, i) => ({
+        point_id: i + 1,
+        test_case_id: id,
+        test_case_name: `Case ${id}`,
+        config_name: "Windows 10",
+        tester: "",
+        last_outcome: "",
+        last_run_id: null,
+        last_result_id: null,
+      }));
+  });
+  renderSuites();
+  await screen.findByText("Sprint stories");
+
+  fireEvent.click(screen.getByText("Run"));
+  await vi.waitFor(() => {
+    const raw = localStorage.getItem("tcm-v2-runner-session");
+    expect(raw).toBeTruthy();
+  });
+  const session = JSON.parse(localStorage.getItem("tcm-v2-runner-session") as string);
+  expect(session.pbi).toEqual({ id: 0, title: "Sprint stories", work_item_type: "" });
+  expect(session.caseIds).toEqual([301, 302]);
+  expect(session.planId).toBe(9);
+  expect(session.suiteId).toBe(93);
+});
+
 test("a suite row copies its Azure DevOps link", async () => {
   // copyText goes through the Tauri clipboard plugin first - capture that
   // invoke rather than the navigator fallback (same as AiBridge's test).
