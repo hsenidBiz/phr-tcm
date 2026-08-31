@@ -1482,6 +1482,25 @@ const RUN_FAILURE_DETAIL_CAP: usize = 10;
 /// scan, never the find-or-create one. A PBI with no suite is an answer
 /// ("this PBI has never had a run"), not a reason to create anything -
 /// this is the bridge, and the bridge does not write to Azure DevOps.
+/// pbi -> resolved suite, held for the app's lifetime. Resolving a suite
+/// scans EVERY test plan in the project - throttle-paced, that took ~60s
+/// against a large org, and the MCP proxy used to give up at 30s and
+/// blame the connection. The ids are stable once found (same reason the
+/// Run Tests tab seeds them from disk); a suite deleted in Azure DevOps
+/// is caught by the 404 on its points and re-resolved once. The client's
+/// base_url is in the key so parallel tests on different mock servers
+/// cannot poison each other.
+fn suite_cache() -> &'static std::sync::Mutex<
+    std::collections::HashMap<(String, String, String, i32), crate::ado_testplan::EnsuredSuite>,
+> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<
+            std::collections::HashMap<(String, String, String, i32), crate::ado_testplan::EnsuredSuite>,
+        >,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
 async fn run_failures(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
@@ -1490,32 +1509,57 @@ async fn run_failures(
     let Some(pbi) = q(target, "pbi").and_then(|v| v.parse::<i32>().ok()) else {
         return (400, "pass ?pbi=<work item id> (find one with search_pbis)".into());
     };
-    // No area path here: the scan only uses it to order plans, and it
-    // checks every plan regardless, so "" costs at most a slower hit.
-    let suite = match client
-        .find_pbi_requirement_suite(&ctx.org, &ctx.project, pbi, "")
-        .await
-    {
-        Ok(Some(s)) => s,
-        Ok(None) => {
-            return (
-                200,
-                serde_json::json!({
-                    "pbi": pbi,
-                    "failures": [],
-                    "note": "This PBI has no test suite, so it has never had a test run - there are no failures to read.",
-                })
-                .to_string(),
-            )
+    let key = (
+        client.base_url.clone(),
+        ctx.org.clone(),
+        ctx.project.clone(),
+        pbi,
+    );
+    let mut retried = false;
+    let (suite, points) = loop {
+        let cached = suite_cache().lock().unwrap().get(&key).cloned();
+        let (suite, from_cache) = match cached {
+            Some(s) => (s, true),
+            None => {
+                // No area path here: the scan only uses it to order plans,
+                // and it checks every plan regardless, so "" costs at most
+                // a slower hit.
+                match client
+                    .find_pbi_requirement_suite(&ctx.org, &ctx.project, pbi, "")
+                    .await
+                {
+                    Ok(Some(s)) => {
+                        suite_cache().lock().unwrap().insert(key.clone(), s.clone());
+                        (s, false)
+                    }
+                    Ok(None) => {
+                        return (
+                            200,
+                            serde_json::json!({
+                                "pbi": pbi,
+                                "failures": [],
+                                "note": "This PBI has no test suite, so it has never had a test run - there are no failures to read.",
+                            })
+                            .to_string(),
+                        )
+                    }
+                    Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+                }
+            }
+        };
+        match client
+            .get_test_points(&ctx.org, &ctx.project, suite.plan_id, suite.suite_id, &[])
+            .await
+        {
+            Ok(p) => break (suite, p),
+            // A cached suite that 404s was deleted in Azure DevOps since
+            // it was resolved: forget it and scan once from scratch.
+            Err(crate::ado::AdoError::NotFound) if from_cache && !retried => {
+                suite_cache().lock().unwrap().remove(&key);
+                retried = true;
+            }
+            Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
         }
-        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
-    };
-    let points = match client
-        .get_test_points(&ctx.org, &ctx.project, suite.plan_id, suite.suite_id, &[])
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
     };
 
     let total = points.len();

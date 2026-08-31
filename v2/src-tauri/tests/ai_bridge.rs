@@ -877,6 +877,134 @@ async fn run_failures_returns_failed_cases_with_comment_and_bugs() {
     assert_eq!(v["cases_in_suite"], 3);
 }
 
+/// Resolving a suite scans every test plan in the project (~60s on a
+/// large org) - which is why the bridge remembers the answer: the second
+/// call must reuse it and go straight to the points.
+#[tokio::test]
+async fn run_failures_resolves_the_suite_once_and_reuses_it() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 9, "name": "Web - Auth Plan", "areaPath": "Web", "rootSuite": { "id": 90 } }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 91, "name": "43 : Login flow", "suiteType": "requirementTestSuite", "requirementId": 43 }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "id": 7,
+                "testCaseReference": { "id": 201, "name": "Valid login" },
+                "configuration": { "name": "W10" },
+                "results": { "outcome": "passed", "lastTestRunId": 3, "lastResultId": 30 }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    for _ in 0..2 {
+        let (status, body) =
+            route(&ctx(), Some(&client), "GET", "/run-failures?pbi=43", "", "1.18.11").await;
+        assert_eq!(status, 200, "{body}");
+    }
+    let scans = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path() == "/acme/Web/_apis/testplan/plans")
+        .count();
+    assert_eq!(scans, 1, "the plan scan must run once, not per call");
+}
+
+/// The cached suite is not immortal: when its points come back 404 (the
+/// suite was deleted in Azure DevOps), the bridge forgets it, re-scans
+/// once, and answers from whatever suite the PBI has now.
+#[tokio::test]
+async fn run_failures_re_resolves_a_cached_suite_that_was_deleted() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 9, "name": "Web - Auth Plan", "areaPath": "Web", "rootSuite": { "id": 90 } }]
+        })))
+        .mount(&server)
+        .await;
+    // The suite listing names 91 exactly once - after that, the PBI's
+    // requirement suite is 92 (91 "was deleted and recreated").
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 91, "name": "44 : Login flow", "suiteType": "requirementTestSuite", "requirementId": 44 }]
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 92, "name": "44 : Login flow", "suiteType": "requirementTestSuite", "requirementId": 44 }]
+        })))
+        .mount(&server)
+        .await;
+    // Suite 91's points answer once, then the suite is gone: an unmatched
+    // request gets wiremock's 404, exactly what ADO returns for a deleted
+    // suite. Suite 92 answers steadily.
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{
+                "id": 7,
+                "testCaseReference": { "id": 201, "name": "Valid login" },
+                "configuration": { "name": "W10" },
+                "results": { "outcome": "passed", "lastTestRunId": 3, "lastResultId": 30 }
+            }]
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/92/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {
+                    "id": 8,
+                    "testCaseReference": { "id": 201, "name": "Valid login" },
+                    "configuration": { "name": "W10" },
+                    "results": { "outcome": "passed", "lastTestRunId": 4, "lastResultId": 40 }
+                },
+                {
+                    "id": 9,
+                    "testCaseReference": { "id": 202, "name": "Invalid login" },
+                    "configuration": { "name": "W10" },
+                    "results": { "outcome": "passed", "lastTestRunId": 4, "lastResultId": 41 }
+                }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=44", "", "1.18.11").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["cases_in_suite"], 1);
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/run-failures?pbi=44", "", "1.18.11").await;
+    assert_eq!(status, 200, "the 404 must trigger a re-resolve, not an error: {body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["cases_in_suite"], 2, "the answer must come from the NEW suite");
+}
+
 /// A PBI with no requirement suite is an ANSWER, not an error - and above
 /// all not a reason to create one. The bridge never writes to Azure DevOps.
 #[tokio::test]

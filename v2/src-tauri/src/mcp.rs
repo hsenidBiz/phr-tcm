@@ -510,7 +510,11 @@ fn bridge_call(method: &str, path: &str, body: &str) -> Result<(u16, String), St
     };
     let resp = req
         .header("x-bridge-token", token)
-        .timeout(std::time::Duration::from_secs(30))
+        // 300s, not 30: get_run_failures resolves a PBI's suite by
+        // scanning every test plan in the project, throttle-paced - ~60s
+        // against a large org on a cold cache. At 30s the proxy gave up
+        // mid-scan and reported the app as unreachable, which it wasn't.
+        .timeout(std::time::Duration::from_secs(300))
         .send()
         .map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
