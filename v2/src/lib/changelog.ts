@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.13",
+    date: "2026-08-26",
+    items: [
+      "AI assistants can read a PBI's run failures in a large organization again. Finding the PBI's test suite means scanning every test plan in the project - about a minute here - and the assistant's side gave up at 30 seconds, then blamed the connection: \"Could not reach Test Case Manager\" about an app that was working fine. The app now remembers each PBI's suite once found (so repeat questions answer in seconds), and the assistant waits long enough for a first-time scan to finish.",
+      "A work item description that is mostly a table no longer turns to mush in the drawer. Descriptions written as markdown whose only formatting is a pipe table lost their line breaks on the way into the editor - one run-on paragraph of | characters in both Write and Preview, even though Azure DevOps showed the table fine. The table now survives the trip and renders as a table.",
+    ],
+  },
+  {
     version: "1.20.12",
     date: "2026-08-26",
     items: [
