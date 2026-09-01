@@ -15,12 +15,14 @@ turndown.use(gfm);
 
 /** Content that was authored as markdown SOURCE pasted into ADO's rich-text
  * field: plain text carrying literal markdown tokens. */
-const MD_TOKENS = /(^|\n)#{1,6} |\*\*|```|(^|\n)- |(^|\n)\d+\. /;
+const MD_TOKENS = /(^|\n)#{1,6} |\*\*|```|(^|\n)- |(^|\n)\d+\. |(^|\n)\|/;
 
 /**
  * HTML -> markdown for the drawer's editors. Two field flavors exist here:
  * - Real rich HTML (bold/lists authored in ADO's editor): turndown as-is.
- * - Markdown source pasted as plain text (how this org writes RCA fields):
+ * - Markdown source pasted as plain text (how this org writes RCA and
+ *   estimation fields - a description can be nothing but a pipe table, so
+ *   a line starting with `|` counts as a token too):
  *   the tokens must render, so keep the raw newlines (HTML would collapse
  *   them) and undo turndown's backslash-escaping of the literal tokens.
  */

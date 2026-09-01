@@ -41,3 +41,22 @@ test("empty and whitespace html is empty markdown", () => {
   expect(htmlToMd("")).toBe("");
   expect(htmlToMd("  <div> </div> ")).toBe("");
 });
+
+test("markdown source whose ONLY markdown is a pipe table keeps its rows", () => {
+  // A real estimation description: prose, then a table - no headings, no
+  // bold, no lists, so none of the other tokens fire. Treating it as rich
+  // HTML collapses every newline and the table arrives as one run-on
+  // paragraph of literal pipes (it renders fine in ADO, which knows the
+  // field is markdown).
+  const html =
+    "<div>Two pages; main report + 7 sub-reports.\n" +
+    "| Task | Basis | Hrs |\n" +
+    "|---|---|---|\n" +
+    "| Crystal Report (.rpt) — Page 1 overview | | 2.0 |\n" +
+    "| Stored procedure — `sp_perf_detailed_eval_overview` | | 1.5 |</div>";
+  const md = htmlToMd(html);
+  expect(md).toMatch(/\n\| Task \| Basis \| Hrs \|/);
+  expect(md).toMatch(/\n\|---\|---\|---\|/);
+  expect(md).toMatch(/\n\| Crystal Report/);
+  expect(md).toContain("`sp_perf_detailed_eval_overview`");
+});
