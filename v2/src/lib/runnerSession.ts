@@ -7,6 +7,10 @@ export type RunnerSession = {
   planId: number;
   planName: string;
   suiteId: number;
+  /** The PBI this run belongs to - or, for a run launched from a static
+   * suite (which has no PBI), id 0 with the suite's name as the title.
+   * With id 0 the runner skips the Tested-By fetch entirely and a filed
+   * bug links only the test case. */
   pbi: PbiHit;
   /** Restrict the runner to these test case ids, IN THIS ORDER;
    * empty/absent = all. Ordered because the Run Tests list and the

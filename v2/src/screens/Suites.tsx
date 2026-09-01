@@ -9,6 +9,7 @@ import ScanProgress from "../components/ScanProgress";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { loadNotes } from "../lib/caseNotes";
+import { openRunnerWindow } from "../lib/openRunner";
 import { pagePalette } from "../lib/reportTheme";
 import { CACHE, persistentQuery } from "../lib/persistentQuery";
 import { cn } from "../lib/cn";
@@ -230,6 +231,30 @@ export default function Suites({
     onError: (e) => toast.error(e.message),
   });
 
+  /** Run a suite that has no PBI behind it (static suites): the runner
+   * gets a suite-scoped session - pbi id 0, the suite's name for a title,
+   * and the suite's cases as ordered caseIds. Requirement suites keep
+   * their richer PBI route via onOpenPbi. */
+  const runSuite = useMutation({
+    mutationFn: async ({ planId, suiteId, label }: { planId: number; suiteId: number; label: string }) => {
+      const pts = await unwrap(commands.listTestPoints(org, project, planId, suiteId));
+      const ids: number[] = [];
+      for (const p of pts)
+        if (p.test_case_id != null && !ids.includes(p.test_case_id)) ids.push(p.test_case_id);
+      if (ids.length === 0) throw new Error("No test cases under this item.");
+      await openRunnerWindow({
+        org,
+        project,
+        planId,
+        planName: trees.find((t) => t.plan.id === planId)?.plan.name ?? "",
+        suiteId,
+        pbi: { id: 0, title: label, work_item_type: "" },
+        caseIds: ids,
+      });
+    },
+    onError: (e) => toast.error(`Could not open runner: ${e.message ?? e}`),
+  });
+
   const report = useMutation({
     mutationFn: ({ planId, suiteIds, label }: SuiteAction) =>
       unwrapStr(
@@ -241,7 +266,7 @@ export default function Suites({
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
   });
 
-  const busy = view.isPending || edit.isPending || report.isPending;
+  const busy = view.isPending || edit.isPending || report.isPending || runSuite.isPending;
 
   if (!org || !project) {
     return (
@@ -364,8 +389,13 @@ export default function Suites({
                 {chip("Run", () => onOpenPbi({ id: s.requirement_id!, title: s.name }, "run"))}
               </>
             ) : (
-              onEditCases &&
-              chip("Edit cases", () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))
+              <>
+                {onEditCases &&
+                  chip("Edit cases", () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))}
+                {/* Own points only, not descendants: running is a sitting,
+                    and a folder's whole subtree is a report's job. */}
+                {chip("Run", () => runSuite.mutate({ planId, suiteId: s.id, label: s.name }))}
+              </>
             )}
             {chip("Report", () => report.mutate({ planId, suiteIds: allIds, label: s.name }))}
           </span>

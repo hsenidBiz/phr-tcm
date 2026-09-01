@@ -395,6 +395,71 @@ test("a caseOrder hint orders the full run without restricting it", async () => 
   ).toBeInTheDocument();
 });
 
+/// A case can sit in the suite (so the Run Tests list shows it) without a
+/// Tested-By link to the PBI (so the runner's fetch misses it). It used to
+/// vanish silently - "Run 2" walked 1. Missing session cases are now
+/// fetched by id and merged in the session's order.
+test("a session case missing from the PBI fetch is backfilled by id", async () => {
+  localStorage.setItem(
+    "tcm-v2-runner-session",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      planId: 9,
+      planName: "Plan",
+      suiteId: 91,
+      pbi: { id: 42, title: "Login flow", work_item_type: "Product Backlog Item" },
+      caseIds: [999, 201], // 999 has no Tested-By link; it still leads.
+    }),
+  );
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") return [fullCase];
+    if (cmd === "test_cases_by_ids") {
+      expect((args as { ids: number[] }).ids).toEqual([999]);
+      return [{ ...fullCase, id: 999, title: "Unlinked case" }];
+    }
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  expect(await screen.findByText("Unlinked case")).toBeInTheDocument();
+  expect(
+    screen.getByText((_, el) => el?.tagName === "SPAN" && el.textContent === "1/2"),
+  ).toBeInTheDocument();
+});
+
+/// A static suite has no PBI at all: its runner session says pbi id 0 and
+/// carries every case id. Bodies come from the by-ids fetch alone, and the
+/// header names the suite instead of a meaningless "#0".
+test("a suite-scoped session runs without any PBI", async () => {
+  localStorage.setItem(
+    "tcm-v2-runner-session",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      planId: 9,
+      planName: "Plan",
+      suiteId: 91,
+      pbi: { id: 0, title: "Sprint 1 - Story suite", work_item_type: "" },
+      caseIds: [301, 302],
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full") throw new Error("must not ask a PBI that does not exist");
+    if (cmd === "test_cases_by_ids")
+      return [
+        { ...fullCase, id: 301, title: "Suite case one" },
+        { ...fullCase, id: 302, title: "Suite case two" },
+      ];
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  expect(await screen.findByText("Suite case one")).toBeInTheDocument();
+  expect(screen.getByText("Sprint 1 - Story suite")).toBeInTheDocument();
+  expect(screen.queryByText("#0")).not.toBeInTheDocument();
+});
+
 test("session caseIds restrict the runner's case list", async () => {
   localStorage.setItem(
     "tcm-v2-runner-session",
@@ -411,6 +476,9 @@ test("session caseIds restrict the runner's case list", async () => {
   mockIPC((cmd) => {
     if (cmd === "run_history") return [];
     if (cmd === "pbi_test_cases_full") return [fullCase];
+    // The unknown id is backfilled by id and comes back empty - it
+    // genuinely does not exist, so the run is genuinely empty.
+    if (cmd === "test_cases_by_ids") return [];
     if (cmd === "list_test_points") return [];
   });
   renderRunner();

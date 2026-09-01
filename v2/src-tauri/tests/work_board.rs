@@ -782,3 +782,35 @@ fn an_attachment_url_is_given_an_api_version_when_it_has_none() {
     let already = "https://dev.azure.com/o/p/_apis/wit/attachments/GUID?api-version=6.0";
     assert_eq!(attachment_download_url(already, base), Some(already.into()));
 }
+
+/// A related id of 0 means "no work item here" (a bug filed from a
+/// suite-scoped runner session has no PBI). Linking /workitems/0 would
+/// 400 the whole create, so non-positive ids are skipped, not sent.
+#[tokio::test]
+async fn create_work_item_skips_non_positive_related_ids() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/wit/workitems/$Bug"))
+        .and(wiremock::matchers::body_string_contains("/workitems/77"))
+        .respond_with(move |req: &wiremock::Request| {
+            let body = String::from_utf8_lossy(&req.body).to_string();
+            assert!(
+                !body.contains("/workitems/0"),
+                "a zero related id must not become a relation: {body}"
+            );
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 9002,
+                "_links": {"html": {"href": "https://example.invalid/wi/9002"}}
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let fields = vec![("System.Title".to_string(), "It broke".to_string())];
+    let (id, _) = client
+        .create_work_item("org", "proj", "Bug", &fields, &[77, 0], None)
+        .await
+        .unwrap();
+    assert_eq!(id, 9002);
+}
