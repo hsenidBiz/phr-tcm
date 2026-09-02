@@ -687,3 +687,36 @@ test("a tool with no project config is labelled global", async () => {
   expect(await screen.findByText("Windsurf")).toBeInTheDocument();
   expect(screen.getByText("global")).toBeInTheDocument();
 });
+
+/// Picking a different Default connection must reach the FILE, not just
+/// the form: every tool the database server is already registered in gets
+/// re-registered with the new string, and the toast tells the user the
+/// one thing left to do - restart the coding session that read the old
+/// file at startup. Tools without the server registered are left alone.
+test("picking a preset re-registers the DB server where it is registered, then says to restart", async () => {
+  const registered: Array<{ id: string; conn: string }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\apps\tcm\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        { id: "vscode", name: "VS Code", installed: true, registered_servers: ["phr-db-mcp"], scope: "global" },
+        { id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "global" },
+      ];
+    if (cmd === "db_server_presets")
+      return [{ label: "QA — read only", connection_string: "Server=qa;Database=b;User Id=ro;" }];
+    if (cmd === "register_db_server") {
+      const a = args as { id: string; config: { connection_string: string } };
+      registered.push({ id: a.id, conn: a.config.connection_string });
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  render(<Toaster />);
+
+  fireEvent.click(await screen.findByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("QA — read only"));
+
+  await waitFor(() => expect(registered).toHaveLength(1));
+  expect(registered[0]).toEqual({ id: "vscode", conn: "Server=qa;Database=b;User Id=ro;" });
+  expect(await screen.findByText(/coding session may need to be restarted/)).toBeInTheDocument();
+});

@@ -198,6 +198,33 @@ export default function AiBridge() {
     onError: (e) => toast.error(`Could not register: ${e.message}`),
   });
 
+  // Picking a different Default connection rewrites the config of every
+  // tool the database server is ALREADY registered in - otherwise the
+  // dropdown changes the form and the .mcp.json keeps the old password
+  // until someone remembers to click Register again. Re-registering is an
+  // upsert on every tool path. The running assistants read that file at
+  // startup, so the toast says the one thing the user has to do next.
+  const syncDb = useMutation({
+    mutationFn: async ({ ids, config }: { ids: string[]; config: DbServerConfig }) => {
+      const warnings: string[] = [];
+      for (const id of ids) {
+        const w = await unwrapStr(commands.registerDbServer(id, config, target, global));
+        if (w) warnings.push(w);
+      }
+      return { count: ids.length, warnings };
+    },
+    onSuccess: ({ count, warnings }) => {
+      toast.info(
+        `Updated the connection in ${count} tool config${count === 1 ? "" : "s"}. ` +
+          "Your coding session may need to be restarted for the change to take effect.",
+        { duration: 10000 },
+      );
+      for (const w of warnings) toast.warning(w, { duration: 12000 });
+      qc.invalidateQueries({ queryKey: ["ai-tools"] });
+    },
+    onError: (e) => toast.error(`Could not update the registered connection: ${e.message}`),
+  });
+
   const unregisterDb = useMutation({
     mutationFn: (id: string) => unwrapStr(commands.unregisterDbServer(id, target, global)),
     onSuccess: () => {
@@ -651,12 +678,19 @@ export default function AiBridge() {
                 onChange={(label) => {
                   const preset = dbPresets.data!.find((p) => p.label === label);
                   if (preset) {
-                    editDb({
+                    const patch = {
                       connection_string: preset.connection_string,
                       db_type: "mssql",
                       schema_filter: "PeoplesHR",
-                    });
+                    };
+                    editDb(patch);
                     setRawConn(!isRepresentable(preset.connection_string));
+                    // Push the new string into every config that carries
+                    // the server, so the file agrees with the form.
+                    const ids = installed
+                      .filter((t) => (t.registered_servers ?? []).includes(DB_SERVER))
+                      .map((t) => t.id);
+                    if (ids.length) syncDb.mutate({ ids, config: { ...db, ...patch } });
                   }
                 }}
               />
