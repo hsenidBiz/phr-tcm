@@ -15,6 +15,7 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
         // ~/.claude.json to see whether tcm-testcases is already there.
         config_path: |home, _appdata| PathBuf::from(home).join(".claude.json"),
         entry_key: "mcpServers",
+        project_config: Some(|root| PathBuf::from(root).join(".mcp.json")),
     },
     ToolSpec {
         id: "claude-desktop",
@@ -26,6 +27,7 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
             PathBuf::from(appdata).join("Claude").join("claude_desktop_config.json")
         },
         entry_key: "mcpServers",
+        project_config: None,
     },
     ToolSpec {
         id: "vscode",
@@ -37,6 +39,7 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
             PathBuf::from(appdata).join("Code").join("User").join("mcp.json")
         },
         entry_key: "servers",
+        project_config: Some(|root| PathBuf::from(root).join(".vscode").join("mcp.json")),
     },
     ToolSpec {
         id: "cursor",
@@ -46,6 +49,7 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
         install_appdata_dir: None,
         config_path: |home, _appdata| PathBuf::from(home).join(".cursor").join("mcp.json"),
         entry_key: "mcpServers",
+        project_config: Some(|root| PathBuf::from(root).join(".cursor").join("mcp.json")),
     },
     ToolSpec {
         id: "windsurf",
@@ -57,6 +61,7 @@ pub const TOOL_SPECS: &[ToolSpec] = &[
             PathBuf::from(home).join(".codeium").join("windsurf").join("mcp_config.json")
         },
         entry_key: "mcpServers",
+        project_config: None,
     },
 ];
 
@@ -397,6 +402,9 @@ pub struct ToolSpec {
     pub config_path: fn(home: &str, appdata: &str) -> PathBuf,
     /// JSON key the server entry lives under (e.g. "mcpServers", "servers").
     pub entry_key: &'static str,
+    /// Where a REPOSITORY's own copy of the config lives, for tools that
+    /// read one - `None` for tools that only know a global config.
+    pub project_config: Option<fn(root: &str) -> PathBuf>,
 }
 
 /// One MCP server as it appears in a tool's config file.
@@ -419,6 +427,9 @@ pub struct DetectedTool {
     pub installed: bool,
     /// Which of `MANAGED_SERVERS` this tool's config currently carries.
     pub registered_servers: Vec<String>,
+    /// "project" when this row reflects the working repository's config,
+    /// "global" when the tool has none and the machine-wide config was read.
+    pub scope: String,
 }
 
 /// Shared installed-check used by both `detect` (for every tool) and
@@ -432,23 +443,47 @@ pub fn is_installed(spec: &ToolSpec, home: &str, appdata: &str, on_path: &dyn Fn
             .is_some_and(|dir| PathBuf::from(appdata).join(dir).is_dir())
 }
 
+/// The config a registration for `spec` goes into, and which scope that
+/// is. A repository wins for every tool that reads one; the two that do
+/// not (Claude Desktop, Windsurf) stay global however the app is set.
+pub fn config_for(
+    spec: &ToolSpec,
+    home: &str,
+    appdata: &str,
+    root: Option<&str>,
+) -> (PathBuf, &'static str, &'static str) {
+    match (root, spec.project_config) {
+        (Some(r), Some(f)) => (f(r), spec.entry_key, "project"),
+        _ => ((spec.config_path)(home, appdata), spec.entry_key, "global"),
+    }
+}
+
 /// Detects installed/registered state for every known tool, given injected
 /// base dirs and a PATH probe (so tests never touch the real filesystem).
 pub fn detect(home: &str, appdata: &str, on_path: &dyn Fn(&str) -> bool) -> Vec<DetectedTool> {
+    detect_in(home, appdata, on_path, None)
+}
+
+/// Detects installed/registered state for every known tool, reading each
+/// tool's REPOSITORY config when `root` is given and the tool has one.
+pub fn detect_in(
+    home: &str,
+    appdata: &str,
+    on_path: &dyn Fn(&str) -> bool,
+    root: Option<&str>,
+) -> Vec<DetectedTool> {
     TOOL_SPECS
         .iter()
         .map(|spec| {
             let installed = is_installed(spec, home, appdata, on_path);
-            let config_path = (spec.config_path)(home, appdata);
+            let (config_path, key, scope) = config_for(spec, home, appdata, root);
             let entries = std::fs::read_to_string(&config_path)
                 .ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|v| v.get(spec.entry_key).cloned());
+                .and_then(|v| v.get(key).cloned());
             let registered_servers = MANAGED_SERVERS
                 .iter()
-                .filter(|name| {
-                    entries.as_ref().and_then(|e| e.get(**name)).is_some()
-                })
+                .filter(|name| entries.as_ref().and_then(|e| e.get(**name)).is_some())
                 .map(|name| name.to_string())
                 .collect();
             DetectedTool {
@@ -456,6 +491,7 @@ pub fn detect(home: &str, appdata: &str, on_path: &dyn Fn(&str) -> bool) -> Vec<
                 name: spec.name.to_string(),
                 installed,
                 registered_servers,
+                scope: scope.to_string(),
             }
         })
         .collect()
@@ -494,6 +530,12 @@ pub fn command_dir(home: &str) -> PathBuf {
     PathBuf::from(home).join(".claude").join("commands").join("tcm")
 }
 
+/// `<repo>/.claude/commands/tcm/` - the same namespace, inside the
+/// repository, so `/tcm:*` exists only where the app was pointed.
+pub fn project_command_dir(root: &str) -> PathBuf {
+    PathBuf::from(root).join(".claude").join("commands").join("tcm")
+}
+
 /// The single top-level file an earlier version wrote. Still named here so
 /// registering can clear it: leaving it behind would put `/tcm-testcases`
 /// in the picker next to the namespaced set, pointing at the same thing.
@@ -516,7 +558,11 @@ pub fn command_files(home: &str) -> Vec<(PathBuf, String)> {
 /// from a list it cached. The picker was the one place that still offered
 /// it, which is the place a person looks.
 pub fn command_files_for(home: &str, disabled: &[String]) -> Vec<(PathBuf, String)> {
-    let dir = command_dir(home);
+    command_files_in(&command_dir(home), disabled)
+}
+
+/// Every command file for `dir` - the global or the repository set.
+pub fn command_files_in(dir: &std::path::Path, disabled: &[String]) -> Vec<(PathBuf, String)> {
     COMMANDS
         .iter()
         .filter(|c| !disabled.iter().any(|d| d == c.tool))

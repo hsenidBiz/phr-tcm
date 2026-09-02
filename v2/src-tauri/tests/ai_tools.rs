@@ -3,10 +3,10 @@
 //! the same way it would read the real home/appdata dirs.
 
 use v2_lib::ai_tools::{
-    claude_cli_candidates, command_dir, command_files, command_files_for, command_markdown,
-    detect, merge_entry,
+    claude_cli_candidates, command_dir, command_files, command_files_for, command_files_in,
+    command_markdown, config_for, detect, detect_in, merge_entry, project_command_dir,
     remove_entry, resolve_db_command, tcm_server, McpServer, COMMAND_MARKER, COMMANDS,
-    DB_SERVER, TCM_SERVER,
+    DB_SERVER, TCM_SERVER, TOOL_SPECS,
 };
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
@@ -484,4 +484,73 @@ fn a_source_file_pick_is_refused_with_guidance() {
     std::fs::write(&proj, "<Project/>").unwrap();
     let err = resolve_db_command(&proj).unwrap_err();
     assert!(err.contains("pick the built server executable"), "{err}");
+}
+
+// ---------------------------------------------------------- per-repo scope
+
+/// Which tools can be told about a server per repository, and where.
+#[test]
+fn project_configs_sit_in_the_repo_for_the_tools_that_have_them() {
+    let at = |id: &str| TOOL_SPECS.iter().find(|s| s.id == id).unwrap();
+    let path = |id: &str| {
+        let (p, _, _) = config_for(at(id), "C:/Users/Sam", "C:/Users/Sam/AppData/Roaming", Some("D:/repo"));
+        p.display().to_string().replace(std::path::MAIN_SEPARATOR, "/")
+    };
+    assert_eq!(path("claude-code"), "D:/repo/.mcp.json");
+    assert_eq!(path("cursor"), "D:/repo/.cursor/mcp.json");
+    assert_eq!(path("vscode"), "D:/repo/.vscode/mcp.json");
+    // No project scope exists for these two - a repo changes nothing.
+    assert!(path("claude-desktop").contains("claude_desktop_config.json"));
+    assert!(path("windsurf").contains("mcp_config.json"));
+    assert_eq!(config_for(at("vscode"), "h", "a", Some("D:/repo")).1, "servers");
+    assert_eq!(config_for(at("claude-code"), "h", "a", Some("D:/repo")).2, "project");
+    assert_eq!(config_for(at("claude-code"), "h", "a", None).2, "global");
+    assert_eq!(config_for(at("windsurf"), "h", "a", Some("D:/repo")).2, "global");
+}
+
+/// With a repo given, registration state is read from the repo's own
+/// config - a user-scope entry must not make the repo look registered.
+#[test]
+fn detect_reads_the_repo_config_when_a_working_dir_is_given() {
+    let (home, appdata) = fake_layout(); // ~/.claude.json carries tcm-testcases globally
+    let repo = TempDir::new();
+    std::fs::write(
+        repo.path().join(".mcp.json"),
+        r#"{"mcpServers": {"phr-db-mcp": {"command": "db.exe"}}}"#,
+    )
+    .unwrap();
+    let home_str = home.path().to_string_lossy().to_string();
+    let appdata_str = appdata.path().to_string_lossy().to_string();
+    let repo_str = repo.path().to_string_lossy().to_string();
+    let on_path = |_cmd: &str| false;
+
+    let tools = detect_in(&home_str, &appdata_str, &on_path, Some(repo_str.as_str()));
+    let cc = tools.iter().find(|t| t.id == "claude-code").unwrap();
+    assert_eq!(cc.scope, "project");
+    assert_eq!(cc.registered_servers, vec![DB_SERVER], "the repo has the DB server, not ours");
+    let cd = tools.iter().find(|t| t.id == "claude-desktop").unwrap();
+    assert_eq!(cd.scope, "global", "no project config exists for Claude Desktop");
+}
+
+#[test]
+fn without_a_working_dir_detection_is_global_and_says_so() {
+    let (home, appdata) = fake_layout();
+    let home_str = home.path().to_string_lossy().to_string();
+    let appdata_str = appdata.path().to_string_lossy().to_string();
+    let on_path = |_cmd: &str| false;
+    let tools = detect_in(&home_str, &appdata_str, &on_path, None);
+    assert!(tools.iter().all(|t| t.scope == "global"));
+    assert_eq!(tools, detect(&home_str, &appdata_str, &on_path));
+}
+
+/// The skills go where Claude Code looks for a repository's own commands.
+#[test]
+fn the_repo_commands_land_under_the_repos_dot_claude() {
+    let dir = project_command_dir("D:/repo").display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
+    assert_eq!(dir, "D:/repo/.claude/commands/tcm");
+    let files = command_files_in(&project_command_dir("D:/repo"), &[]);
+    assert_eq!(files.len(), COMMANDS.len());
+    let first = files[0].0.display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
+    assert_eq!(first, "D:/repo/.claude/commands/tcm/write.md");
+    assert!(files[0].1.contains(COMMAND_MARKER), "still ours to remove later");
 }
