@@ -1393,8 +1393,9 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         is allowed when nothing here matches.\n\n{tag_lines}\n\n\
         ## Workflow\n\
         0. Call `begin_test_case_writing` FIRST and put its questions to the\n\
-        developer. Where the file goes, which specs are authoritative and what\n\
-        is out of scope are theirs to decide, not yours to assume.\n\
+        developer. What the file is called (it lives in the repository's\n\
+        .test-cases folder), which specs are authoritative and what is out of\n\
+        scope are theirs to decide, not yours to assume.\n\
         1. Call `get_test_cases` for the PBI you're writing for and mimic\n\
         their style and granularity.\n\
         2. Draft your cases. Write your draft IN SPEC ORDER - cases walking\n\

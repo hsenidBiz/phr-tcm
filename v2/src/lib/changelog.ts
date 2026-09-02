@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.14",
+    date: "2026-09-02",
+    items: [
+      "The AI side of the app now works per repository. Pick a working repository on the AI Bridge tab (the tab asks for one before showing anything else); everything else in the app works as before without one.",
+      "Test-case files live in the repository's .test-cases folder: a file picked in Import File is copied there and imported from the copy, and a writing job started through an assistant creates the folder, names the file inside it, and refuses to write anywhere else - the app watches it there.",
+      "The /tcm:* skills and the MCP registrations for Claude Code, Cursor and VS Code go into the repository (.claude/commands/tcm, .mcp.json, .cursor/mcp.json, .vscode/mcp.json) instead of your user profile; the app removes its own old global copies when you register a repository. Claude Desktop and Windsurf have no per-repository config and stay global, and say so. The database server's .mcp.json is kept out of git status for that checkout.",
+      "Changing the working repository re-checks what is registered there, so Register is offered again wherever it is needed.",
+    ],
+  },
+  {
     version: "1.20.13",
     date: "2026-08-26",
     items: [
