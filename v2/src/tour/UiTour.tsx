@@ -1,106 +1,105 @@
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../components/ui/button";
 import { IconBack, IconConfirm, IconNext } from "../lib/actionIcons";
+import { TOUR_STEPS, type TourStep, type TourWhere } from "./tourScript";
 import { markTourDone } from "./tourState";
 
-type Step = { target: string; title: string; body: string };
-
-const STEPS: Step[] = [
-  {
-    target: '[data-tour="org"]',
-    title: "Pick your scope",
-    body: "Start here: choose the Azure DevOps organization and project you work in. Every screen scopes to this choice.",
-  },
-  {
-    target: '[data-tour="pbi"]',
-    title: "Find your PBI",
-    body: "Search for the Product Backlog Item you're testing (by title or id). Test cases you create are linked to it, and recents are remembered.",
-  },
-  {
-    target: '[data-tour="nav-manual"]',
-    title: "Manual Entry",
-    body: "Write test cases by hand - title, tags, module and a numbered step grid - then queue and create them in bulk.",
-  },
-  {
-    target: '[data-tour="nav-import"]',
-    title: "Import File",
-    body: "Upload test cases from a JSON file (the same format Export JSON produces). A kept id updates that work item; a new entry creates one.",
-  },
-  {
-    target: '[data-tour="nav-edit"]',
-    title: "Update Test Cases",
-    body: "Browse the PBI's linked cases: click to select, ctrl/shift for many, bulk edit fields, group by title, or export.",
-  },
-  {
-    target: '[data-tour="nav-view"]',
-    title: "View Test Cases",
-    body: "A read-only view of the PBI's cases: expand for steps, jot local comments on cases that need changes, and open a selection as a browser report.",
-  },
-  {
-    target: '[data-tour="nav-run"]',
-    title: "Run Tests",
-    body: "See each case's last outcome and history, pick a set, and run them in the always-on-top runner with screenshots and bug filing.",
-  },
-  {
-    target: '[data-tour="nav-suites"]',
-    title: "Test Suites",
-    body: "Browse every test plan's suite folders, search them, view cases in the browser, or jump straight into Edit / Run.",
-  },
-  {
-    target: '[data-tour="work"]',
-    title: "Work Manager",
-    body: "A lightweight board of your work items - drag between To Do / In Progress / Done and open any card for full details.",
-  },
-  {
-    target: '[data-tour="settings"]',
-    title: "Settings",
-    body: "Themes and accents, updates - and you can replay this tour from here anytime.",
-  },
-];
-
 const CARD_W = 340;
-const CARD_H = 190; // estimate for flip-above placement
+const CARD_H = 190; // estimate, for deciding whether the card fits below
 
-/** Spotlight walkthrough: dims the app, rings one area at a time and
- * explains it; Next/Back step through, Skip ends. Steps whose anchor is
- * not currently on screen are dropped automatically. */
-export default function UiTour({ onClose }: { onClose: () => void }) {
-  // Resolve available steps once at open (targets do not change mid-tour).
-  const steps = useMemo(() => STEPS.filter((s) => document.querySelector(s.target)), []);
+/** How long to keep looking for a stop's area before showing the card on
+ * its own. The screen has to mount and fade in first (120ms), and a slow
+ * machine is allowed several times that. */
+const ANCHOR_WAIT_MS = 1500;
+
+/**
+ * The guided tour: it walks the app itself - asking App to switch tab or
+ * cross into the Work Manager - rings one area at a time and says what it
+ * is for. Back and Next move; Skip tour (or Done at the end) closes.
+ *
+ * Nothing behind it can be clicked: App makes the whole shell inert while
+ * this is up, and this layer sits above it in a portal.
+ */
+export default function UiTour({
+  onNavigate,
+  onClose,
+  steps = TOUR_STEPS,
+}: {
+  /** MUST be stable (useCallback in the host) - it is an effect dep. */
+  onNavigate: (where: TourWhere | undefined) => void;
+  onClose: () => void;
+  steps?: TourStep[];
+}) {
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const step = steps[i];
+  const anchor = step?.anchor;
+  const where = step?.where;
 
-  useLayoutEffect(() => {
-    if (!step) return;
-    const el = document.querySelector(step.target);
-    setRect(el ? el.getBoundingClientRect() : null);
-  }, [step]);
+  // Send the app where this stop lives, then wait for the area to appear:
+  // a tab switch has to mount and fade its screen in first.
+  useEffect(() => {
+    onNavigate(where);
+  }, [onNavigate, where]);
 
-  const finish = () => {
+  useEffect(() => {
+    setRect(null);
+    if (!anchor) return;
+    const selector = `[data-tour="${anchor}"]`;
+    const started = Date.now();
+    let raf = 0;
+    const look = () => {
+      const el = document.querySelector(selector);
+      if (el) {
+        setRect(el.getBoundingClientRect());
+        return;
+      }
+      if (Date.now() - started < ANCHOR_WAIT_MS) raf = requestAnimationFrame(look);
+    };
+    look();
+    return () => cancelAnimationFrame(raf);
+  }, [anchor]);
+
+  // A resized window moves the area out from under its ring.
+  useEffect(() => {
+    if (!anchor) return;
+    const onResize = () => {
+      const el = document.querySelector(`[data-tour="${anchor}"]`);
+      if (el) setRect(el.getBoundingClientRect());
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [anchor]);
+
+  const finish = useCallback(() => {
     markTourDone();
     onClose();
-  };
+  }, [onClose]);
 
   if (!step) {
-    // Nothing to anchor to (shouldn't happen signed in) - just close.
     finish();
     return null;
   }
 
   const pad = 6;
   const below = rect ? rect.bottom + CARD_H + 24 < window.innerHeight : true;
-  const cardTop = rect ? (below ? rect.bottom + 12 : Math.max(12, rect.top - CARD_H - 12)) : 80;
+  // No area to ring (the opening and closing cards, or a screen that took
+  // too long): the card sits in the middle and reads as a plain message.
+  const cardTop = rect
+    ? below
+      ? rect.bottom + 12
+      : Math.max(12, rect.top - CARD_H - 12)
+    : Math.max(12, window.innerHeight / 2 - CARD_H / 2);
   const cardLeft = rect
     ? Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - CARD_W - 12))
-    : 80;
+    : Math.max(12, window.innerWidth / 2 - CARD_W / 2);
 
   return createPortal(
     <div className="fixed inset-0 z-[100]" role="dialog" aria-label="Interface tour">
-      {/* Blocks interaction underneath while the tour is open. */}
+      {/* Swallows every click that is not on the card. */}
       <div className="fixed inset-0" onClick={() => {}} />
-      {rect && (
+      {rect ? (
         <div
           className="pointer-events-none fixed rounded-lg border-2 border-accent transition-all duration-300"
           style={{
@@ -111,6 +110,10 @@ export default function UiTour({ onClose }: { onClose: () => void }) {
             boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.62)",
           }}
         />
+      ) : (
+        // Nothing ringed: dim everything, so the card still reads as the
+        // only live thing on screen.
+        <div className="pointer-events-none fixed inset-0 bg-black/60" />
       )}
       <div
         className="fixed space-y-2 rounded-lg border border-border bg-surface p-4 shadow-2xl transition-all duration-300"

@@ -649,7 +649,9 @@ export default function App() {
       <TitleBar
         title={(workMode ? "Work Manager" : "Test Case Manager") + (DEV_TOOLS ? " — DEV" : "")}
       />
-      {tourOpen && signedIn && <UiTour onClose={() => setTourOpen(false)} />}
+      {tourOpen && signedIn && (
+        <UiTour onNavigate={() => {}} onClose={() => setTourOpen(false)} />
+      )}
 
       <div className="flex min-h-0 flex-1">
       {/* Work Manager swaps the rail's contents: its own sections (Pull
