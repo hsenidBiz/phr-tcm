@@ -267,7 +267,7 @@ export default function AiBridge() {
   const dbReady = isDbConfigComplete(db);
 
   const repoCard = (
-    <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+    <section data-tour="ai-repos" className="space-y-3 rounded-md border border-border bg-surface p-4">
       <div className="flex items-center gap-2">
         <FolderOpen size={14} className="shrink-0 text-muted" />
         <h2 className="text-sm font-semibold text-text">Working repositories</h2>
@@ -393,7 +393,7 @@ export default function AiBridge() {
         </p>
       </section>
 
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+      <section data-tour="ai-tools" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-text">Connect your AI tools</h2>
           {/* Detection runs once on mount - rescan after installing a tool
@@ -542,7 +542,7 @@ export default function AiBridge() {
         </details>
       </section>
 
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+      <section data-tour="ai-toolset" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-text">Tools an assistant may use</h2>
           <span className="text-xs text-faint">
@@ -602,7 +602,7 @@ export default function AiBridge() {
           as grid columns 2 and 3 - and space-y's child margins would
           leak through contents into the outer grid, where gap does not. */}
       <div className="grid gap-6 2xl:contents">
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+      <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
           <h2 className="text-sm font-semibold text-text">Company database (PHR-X)</h2>

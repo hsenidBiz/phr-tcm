@@ -72,7 +72,7 @@ export default function ManualEntry({
 
   return (
     <div className="space-y-4">
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+      <section data-tour="case-form" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">New test case</h2>
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2">
@@ -120,7 +120,9 @@ export default function ManualEntry({
         </Button>
       </section>
 
-      <QueueSection org={org} project={project} pbiId={pbi.id} queue={queue} setQueue={setQueue} />
+      <div data-tour="queue">
+        <QueueSection org={org} project={project} pbiId={pbi.id} queue={queue} setQueue={setQueue} />
+      </div>
     </div>
   );
 }

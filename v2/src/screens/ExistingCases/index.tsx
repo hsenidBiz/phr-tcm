@@ -229,7 +229,7 @@ export default function ExistingCases({
   };
 
   return (
-    <section className="space-y-2">
+    <section data-tour="case-list" className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
           {label ? (

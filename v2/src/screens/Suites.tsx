@@ -411,7 +411,7 @@ export default function Suites({
   };
 
   return (
-    <div className="space-y-3">
+    <div data-tour="plans-tree" className="space-y-3">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">Test plans</h2>
         <button

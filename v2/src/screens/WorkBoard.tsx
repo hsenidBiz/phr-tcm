@@ -563,6 +563,7 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
           // collapsed - a 0-width column's wrapped cards once made the board
           // scroll far past the visible items.
           <div
+            data-tour="board-columns"
             className="grid gap-3 transition-[grid-template-columns] duration-300 ease-out"
             style={{
               // All-fr on purpose: Chromium can't interpolate fr<->px track

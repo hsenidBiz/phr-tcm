@@ -487,7 +487,7 @@ export default function ImportFile({
 
   return (
     <div className="space-y-4">
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+      <section data-tour="import-drop" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Import test cases</h2>
         <p className="text-sm text-muted">
           Import your test cases from a JSON file. Imported files are watched -

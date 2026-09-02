@@ -270,7 +270,7 @@ export default function ViewCases({
   }
 
   return (
-    <section className="space-y-2">
+    <section data-tour="view-list" className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-muted">
           {q ? (
