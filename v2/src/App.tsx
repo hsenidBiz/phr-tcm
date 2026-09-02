@@ -22,6 +22,7 @@ import {
 } from "./lib/workAlerts";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
+import { subscribeWorkingDir, workingDirSnapshot } from "./lib/workingDir";
 import { cacheEntry, claimCacheFor } from "./lib/localCache";
 import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
@@ -390,6 +391,9 @@ export default function App() {
   // Re-pushed when the AI Bridge tab toggles a tool, so the change reaches
   // an assistant on its next tools/list rather than after a restart.
   const disabledTools = useSyncExternalStore(subscribeDisabledTools, disabledToolsSnapshot);
+  // The working repository decides where a writing job's file goes, so the
+  // bridge learns of a change the moment the AI Bridge tab makes it.
+  const workingDir = useSyncExternalStore(subscribeWorkingDir, workingDirSnapshot);
   useEffect(() => {
     if (!signedIn || !org || !project) return;
     commands
@@ -401,7 +405,7 @@ export default function App() {
           bridgePrefs.moduleRef,
           bridgePrefs.preconditionsRef,
           disabledTools,
-          null,
+          workingDir || null,
         ),
       )
       .catch(() => {});
@@ -412,6 +416,7 @@ export default function App() {
     bridgePrefs.moduleRef,
     bridgePrefs.preconditionsRef,
     disabledTools,
+    workingDir,
   ]);
 
   // Delete permission, asked ONCE at sign-in per org/project rather than

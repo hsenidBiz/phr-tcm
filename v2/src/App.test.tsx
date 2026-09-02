@@ -182,10 +182,15 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
       return { port: 1, mcp_exe: "x" };
     }
   });
+  localStorage.setItem("tcm-v2-working-dir", "D:\\repo");
   renderApp();
   await screen.findByText("a@b.com");
   await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
-  expect(pushes[pushes.length - 1]).toMatchObject({ organization: "acme", project: "Web" });
+  expect(pushes[pushes.length - 1]).toMatchObject({
+    organization: "acme",
+    project: "Web",
+    workingDir: "D:\\repo",
+  });
   // The bridge must come up WITHOUT visiting the AI Bridge tab - an AI
   // tool connecting right after sign-in gets a live listener.
   expect(bridgeStarted).toBeGreaterThan(0);
