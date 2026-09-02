@@ -13,11 +13,14 @@ afterEach(() => {
 
 function renderApp() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const result = render(
     <QueryClientProvider client={qc}>
       <App />
     </QueryClientProvider>,
   );
+  // Most tests never need the client back; the ones that force a refetch
+  // (e.g. flipping auth mid-test) grab it off the return value.
+  return { ...result, qc };
 }
 
 function signedInMocks(extra: (cmd: string, args: unknown) => unknown = () => undefined) {
@@ -429,6 +432,15 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   expect(await screen.findByRole("heading", { name: "Update Test Cases" })).toBeInTheDocument();
   expect(await screen.findByText(/Guest checkout - a guest can pay by card/)).toBeInTheDocument();
 
+  // Keep going, through View Test Cases, to Run Tests (ninth stop) - the
+  // screen with its own suite-seed writer (RunPanel), separate from the
+  // one App gates in its own warm-up effect. A walk that stopped short of
+  // here is exactly what let that second writer go unnoticed.
+  for (let i = 0; i < 2; i++) {
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  }
+  expect(await screen.findByRole("heading", { name: "Run Tests" })).toBeInTheDocument();
+
   fireEvent.click(screen.getByText("Skip tour"));
 
   // Everything is back: real calls, real scope, and the saved context was
@@ -436,15 +448,24 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   expect(commands.listOrgs).toBe(realOrgs);
   expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
   expect(screen.queryByText(/Guest checkout/)).not.toBeInTheDocument();
-  expect(JSON.parse(localStorage.getItem("tcm-v2-prefs")!).org).toBe("acme");
+  expect(JSON.parse(localStorage.getItem("tcm-v2-prefs")!)).toMatchObject({
+    org: "acme",
+    project: "Payments",
+    pbi: null,
+    workMode: false,
+  });
   expect(localStorage.getItem("tcm-v2-repositories")).toBeNull();
-  // Update Test Cases (the screen this walk ends on) reads its own
+  // Update Test Cases (the screen this walk passed through) reads its own
   // module/preconditions field refs straight from org/project props, not
   // through anything App gates - the guard has to be in saveFieldPrefs
   // itself, and this proves it held from here too. (A real
   // tcm-v2-fields:acme/Payments entry is fine - that one was written for
   // the actual scope, before the tour ever started.)
   expect(localStorage.getItem("tcm-v2-fields:Northwind/Website")).toBeNull();
+  // Run Tests resolves and caches a plan/suite for the PBI on screen -
+  // RunPanel writes that seed directly, not through anything App gates,
+  // so this is the assertion that would have caught it.
+  expect(localStorage.getItem("tcm-v2-suite:Northwind/4821")).toBeNull();
 });
 
 test("the app is locked while the tour runs", async () => {
@@ -456,7 +477,11 @@ test("the app is locked while the tour runs", async () => {
   await screen.findByText("a@b.com");
   await startTour();
 
-  // The shell is inert, so nothing under the overlay can be reached.
+  // The shell is inert, so nothing under the overlay can be reached. jsdom
+  // does not implement inert semantics (a click still "reaches" a button
+  // inside one) - this only proves the attribute made it onto the DOM; the
+  // Ctrl+2 and Ctrl+K assertions below are what actually prove the shell
+  // is unusable.
   const nav = screen.getByRole("navigation");
   expect(nav.closest("[inert]")).not.toBeNull();
 
@@ -466,9 +491,51 @@ test("the app is locked while the tour runs", async () => {
   });
   expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
 
+  // The command palette is the third lock surface - Ctrl+K must not open
+  // it either.
+  await act(async () => {
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  });
+  expect(screen.queryByPlaceholderText(/Type a command/)).not.toBeInTheDocument();
+
   fireEvent.click(screen.getByText("Skip tour"));
   await act(async () => {
     fireEvent.keyDown(window, { key: "2", ctrlKey: true });
   });
   expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
+});
+
+// The overlay only renders `tourOpen && signedIn` - a session that ends
+// mid-tour (an expired token noticed on reconnect, a manual sign-out)
+// makes it vanish on its own, taking the Skip button with it while the
+// shell stayed locked. Nothing short of a restart used to clear that.
+test("signing out mid-tour ends the tour and unlocks the app", async () => {
+  let signedIn = true;
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: signedIn, account: signedIn ? "a@b.com" : null };
+    if (cmd === "check_update") return null;
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "list_plans_with_suites") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  const { qc } = renderApp();
+  await screen.findByText("a@b.com");
+  await startTour();
+
+  signedIn = false;
+  await act(async () => {
+    await qc.invalidateQueries({ queryKey: ["auth"] });
+  });
+
+  // The overlay is gone, and so is everything it was holding: no dialog,
+  // no inert shell, and the sign-in screen is reachable rather than stuck
+  // behind a lock nothing can lift. The cache updates a beat before the
+  // component re-renders off it, so this waits for that rather than
+  // asserting on the instant right after the invalidate settles.
+  const signInButton = await screen.findByRole("button", { name: /sign in with microsoft/i });
+  expect(signInButton).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Interface tour" })).not.toBeInTheDocument();
+  expect(document.querySelector("[inert]")).toBeNull();
 });

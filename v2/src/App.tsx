@@ -38,6 +38,7 @@ import {
   workingDirSnapshot,
 } from "./lib/workingDir";
 import { cacheEntry, claimCacheFor, suspendCache } from "./lib/localCache";
+import { readSuiteSeed, type SuiteSeed, writeSuiteSeed } from "./lib/suiteSeed";
 import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
@@ -173,11 +174,12 @@ export default function App() {
     pbi: PbiHit | null;
     workMode: boolean;
     workSection: WorkSection;
+    caseSelection: { label: string; caseIds: number[] } | null;
   } | null>(null);
   // Read inside stable callbacks, so starting the tour does not depend on
-  // a fresh closure over six pieces of state.
-  const ctx = useRef({ section, org, project, pbi, workMode, workSection });
-  ctx.current = { section, org, project, pbi, workMode, workSection };
+  // a fresh closure over seven pieces of state.
+  const ctx = useRef({ section, org, project, pbi, workMode, workSection, caseSelection });
+  ctx.current = { section, org, project, pbi, workMode, workSection, caseSelection };
 
   const startTour = useCallback(() => {
     if (before.current) return; // already running
@@ -204,6 +206,13 @@ export default function App() {
     clearTourRepositories();
     suspendCache(false);
     setTourQc(null);
+    // The ungated `can-delete` permission query re-keys itself to whatever
+    // org/project it is asked about, including the sample one - and it
+    // lives on the REAL query client, not the throw-away one, so it would
+    // otherwise sit there for the rest of the session. Dropping the whole
+    // prefix rather than just the sample key is deliberate: the real
+    // entry (if any) simply refetches next time it is needed.
+    qc.removeQueries({ queryKey: ["can-delete"] });
     if (!back) return;
     setOrgRaw(back.org);
     setProjectRaw(back.project);
@@ -211,8 +220,8 @@ export default function App() {
     setSection(back.section);
     setWorkMode(back.workMode);
     setWorkSection(back.workSection);
-    setCaseSelection(null);
-  }, []);
+    setCaseSelection(back.caseSelection);
+  }, [qc]);
 
   // Each stop says where it lives; take the app there.
   const tourNavigate = useCallback((where: TourWhere | undefined) => {
@@ -615,6 +624,17 @@ export default function App() {
     return () => window.removeEventListener(START_TOUR_EVENT, startTour);
   }, [startTour]);
 
+  // A session that ends mid-tour (a dropped connection returning with an
+  // expired token, a manual sign-out) must not leave the tour up: `UiTour`
+  // only renders while `signedIn` too, so it would simply vanish - taking
+  // the Skip button with it, while the shell stayed inert and the
+  // stand-ins stayed installed. Ending the tour ourselves the moment
+  // `signedIn` goes false hands everything back exactly as every other
+  // exit path does.
+  useEffect(() => {
+    if (tourOpen && !signedIn) endTour();
+  }, [tourOpen, signedIn, endTour]);
+
   // Warm the Test Suites data in the background so the screen is ready
   // when the user navigates there (same key/staleTime as the screen).
   useEffect(() => {
@@ -658,6 +678,13 @@ export default function App() {
   // mount, so a file that lands while you are elsewhere is picked up when
   // you open the tab.
   useEffect(() => {
+    // Otherwise this would drop the user's real subscription for the
+    // tour's duration and re-subscribe as the sample org/PBI - and an
+    // event arriving while that stand-in subscription is live would call
+    // `saveWatches` with the sample scope. "No write" is the invariant,
+    // not "no Azure DevOps call", so this is gated the same as its four
+    // siblings even though it never reaches ADO itself.
+    if (tourOpen) return;
     if (!signedIn || !org || !pbiId) return;
     let unlisten: (() => void) | undefined;
     let live = true;
@@ -681,20 +708,13 @@ export default function App() {
       live = false;
       detach(unlisten);
     };
-  }, [signedIn, org, pbiId]);
+  }, [signedIn, org, pbiId, tourOpen]);
 
   useEffect(() => {
     if (tourOpen) return;
     if (!signedIn || !org || !project || pbiId == null) return;
-    const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
     (async () => {
-      let suite: { plan_id: number; plan_name: string; suite_id: number } | null = null;
-      try {
-        const raw = localStorage.getItem(suiteKey);
-        suite = raw ? JSON.parse(raw) : null;
-      } catch {
-        suite = null;
-      }
+      let suite: SuiteSeed | null = readSuiteSeed(org, pbiId) ?? null;
       if (!suite) {
         // Before asking the network: the Suites screen's plan tree is
         // already on disk per PROJECT and carries every requirement
@@ -710,11 +730,7 @@ export default function App() {
           );
           if (hit) {
             suite = { plan_id: plan.id, plan_name: plan.name, suite_id: hit.id };
-            try {
-              localStorage.setItem(suiteKey, JSON.stringify(suite));
-            } catch {
-              // cache is best-effort
-            }
+            writeSuiteSeed(org, pbiId, suite);
             break;
           }
         }
@@ -727,11 +743,7 @@ export default function App() {
         const r = await commands.findPbiSuite(org, project, pbiId).catch(() => null);
         if (r && r.status === "ok" && r.data) {
           suite = r.data;
-          try {
-            localStorage.setItem(suiteKey, JSON.stringify(suite));
-          } catch {
-            // cache is best-effort
-          }
+          writeSuiteSeed(org, pbiId, suite);
         }
       }
       if (!suite) return;
@@ -767,230 +779,230 @@ export default function App() {
       {tourOpen && signedIn && <UiTour onNavigate={tourNavigate} onClose={endTour} />}
 
       <QueryClientProvider client={tourQc ?? qc}>
-      <div className="flex min-h-0 flex-1" inert={tourOpen}>
-      {/* Work Manager swaps the rail's contents: its own sections (Pull
-          Requests first, then the board) instead of the test-case tabs. */}
-      {signedIn &&
-        (workMode ? (
-          <Sidebar
-            section={workSection}
-            onSelect={(w) => {
-              logUi(`nav: work/${w}`);
-              setWorkSection(w);
-            }}
-            items={WORK_ITEMS}
-            badges={{ board: workAlerts }}
-          />
-        ) : (
-          <Sidebar section={section} onSelect={goToSection} />
-        ))}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        {signedIn && (
-          <ContextBar
-            org={org}
-            setOrg={setOrg}
-            project={project}
-            setProject={setProject}
-            pbi={pbi}
-            setPbi={setPbiRaw}
-            account={status.data?.account ?? null}
-            workMode={workMode}
-            onToggleWork={() => setWorkMode((w) => !w)}
-            onOpenSettings={toggleSettings}
-            settingsOpen={section === "settings" && !workMode}
-          />
-        )}
-
-        {!online && (
-          <div className="border-b border-warning/40 bg-warning/10 px-6 py-2 text-sm text-warning">
-            No internet connection - network actions are paused until it returns. Drafts,
-            comments and everything local keep working.
-          </div>
-        )}
-
-        {update.data?.available && (
-          <div className="border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
-            {/* One row either way: the version line makes the offer, and
-                once the button is clicked the progress bar takes its slot -
-                the banner never grows a second row mid-download. */}
-            <div className="flex items-center justify-between gap-4">
-              {applyUpdate.isPending ? (
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <div
-                    role="progressbar"
-                    aria-label={`Downloading version ${update.data.available}`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    // Omitted, not zero, until the first event: an indeterminate
-                    // bar is what "we do not know yet" means to a screen reader,
-                    // and 0% would be a claim.
-                    aria-valuenow={dl ? dl.percent : undefined}
-                    aria-valuetext={dl ? formatByteProgress(dl.downloaded, dl.total) : undefined}
-                    className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent/20"
-                  >
-                    <div
-                      className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
-                      style={{ width: `${dl?.percent ?? 0}%` }}
-                    />
-                  </div>
-                  {/* Tabular figures: the numerator changes every few seconds
-                      and proportional digits make the whole line jitter. */}
-                  <span className="shrink-0 tabular-nums text-xs text-muted">
-                    {!dl
-                      ? "Preparing…"
-                      : dl.percent >= 100
-                        ? "Installing…"
-                        : dl.total > 0
-                          ? formatByteProgress(dl.downloaded, dl.total)
-                          : `${dl.percent}%`}
-                  </span>
-                </div>
-              ) : (
-                <span>
-                  {update.data.failed_attempt ? (
-                    // The last click on this button did NOT work: the app
-                    // restarted still on the old version because Update.exe
-                    // could not swap the install folder while another
-                    // program sat in it. Saying so beats the banner
-                    // silently reappearing and looking like it did nothing.
-                    <>
-                      The last update couldn't finish - another program was using the app's files
-                      (usually a browser window that was opened from this app). Close your browser
-                      windows and try again, or restart Windows.
-                    </>
-                  ) : (
-                    <>Version {update.data.available} is available.</>
-                  )}
-                </span>
-              )}
-              <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
-                <IconRefresh aria-hidden className={applyUpdate.isPending ? "animate-spin" : undefined} />
-                {applyUpdate.isPending ? "Updating" : "Restart to update"}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Work Manager scrolls inside its own columns - the outer main
-            must not add a second scrollbar around the board. */}
-        <main
-          className={
-            signedIn && workMode
-              ? // No bottom padding in work mode: the board's columns own
-                // the full height, and a padded strip under them read as a
-                // gap at the bottom of the screen - boards run flush to the
-                // edge, the way every kanban surface does.
-                "flex min-h-0 flex-1 flex-col overflow-hidden px-6 pt-6"
-              : "min-h-0 flex-1 overflow-y-auto p-6"
-          }
-        >
-          {!signedIn ? (
-            <SignIn signingIn={signIn.isPending} onSignIn={() => signIn.mutate()}>
-              {DEV_TOOLS && (
-                <button
-                  className="text-xs text-muted underline underline-offset-2 hover:text-text"
-                  onClick={() => setDevAuth("in")}
-                >
-                  Skip sign-in — dev only (pair with demo data)
-                </button>
-              )}
-            </SignIn>
-          ) : workMode ? (
-            // Same fade-up as the Test Case Manager tabs below: key remounts
-            // on section switch; the flex classes keep the board's height
-            // chain intact (the wrapper sits inside a flex-col main).
-            // 120ms fade chosen for snappiness (user request 2026-08-22).
-            <AnimatedContent
-              key={workSection}
-              distance={8}
-              duration={0.12}
-              threshold={0}
-              className="flex min-h-0 flex-1 flex-col"
-            >
-              {workSection === "board" ? (
-                <>
-                  <h1 className="mb-4 text-lg font-semibold">Board</h1>
-                  <div className="min-h-0 flex-1">
-                    <WorkBoard org={org} project={project} />
-                  </div>
-                </>
-              ) : workSection === "create" ? (
-                <>
-                  <h1 className="mb-4 text-lg font-semibold">New Work Item</h1>
-                  <div className="min-h-0 flex-1 overflow-y-auto">
-                    <CreateWorkItem org={org} project={project} />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
-                  <div className="min-h-0 flex-1 overflow-y-auto">
-                    <PrPanel org={org} project={project} />
-                  </div>
-                </>
-              )}
-            </AnimatedContent>
+        <div className="flex min-h-0 flex-1" inert={tourOpen}>
+        {/* Work Manager swaps the rail's contents: its own sections (Pull
+            Requests first, then the board) instead of the test-case tabs. */}
+        {signedIn &&
+          (workMode ? (
+            <Sidebar
+              section={workSection}
+              onSelect={(w) => {
+                logUi(`nav: work/${w}`);
+                setWorkSection(w);
+              }}
+              items={WORK_ITEMS}
+              badges={{ board: workAlerts }}
+            />
           ) : (
-            // key={section} remounts the wrapper on tab switch, so every
-            // screen fades up briefly (120ms) instead of snapping in.
-            // 120ms fade chosen for snappiness (user request 2026-08-22).
-            <AnimatedContent key={section} distance={8} duration={0.12} threshold={0}>
-              <div className="mb-4 flex items-center gap-2">
-                <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
-                {TITLE_NOTES[section] && (
-                  <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
-                    {TITLE_NOTES[section]}
+            <Sidebar section={section} onSelect={goToSection} />
+          ))}
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          {signedIn && (
+            <ContextBar
+              org={org}
+              setOrg={setOrg}
+              project={project}
+              setProject={setProject}
+              pbi={pbi}
+              setPbi={setPbiRaw}
+              account={status.data?.account ?? null}
+              workMode={workMode}
+              onToggleWork={() => setWorkMode((w) => !w)}
+              onOpenSettings={toggleSettings}
+              settingsOpen={section === "settings" && !workMode}
+            />
+          )}
+
+          {!online && (
+            <div className="border-b border-warning/40 bg-warning/10 px-6 py-2 text-sm text-warning">
+              No internet connection - network actions are paused until it returns. Drafts,
+              comments and everything local keep working.
+            </div>
+          )}
+
+          {update.data?.available && (
+            <div className="border-b border-accent/40 bg-accent-soft px-6 py-2 text-sm">
+              {/* One row either way: the version line makes the offer, and
+                  once the button is clicked the progress bar takes its slot -
+                  the banner never grows a second row mid-download. */}
+              <div className="flex items-center justify-between gap-4">
+                {applyUpdate.isPending ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div
+                      role="progressbar"
+                      aria-label={`Downloading version ${update.data.available}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      // Omitted, not zero, until the first event: an indeterminate
+                      // bar is what "we do not know yet" means to a screen reader,
+                      // and 0% would be a claim.
+                      aria-valuenow={dl ? dl.percent : undefined}
+                      aria-valuetext={dl ? formatByteProgress(dl.downloaded, dl.total) : undefined}
+                      className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent/20"
+                    >
+                      <div
+                        className="h-full rounded-full bg-accent transition-[width] duration-300 ease-out"
+                        style={{ width: `${dl?.percent ?? 0}%` }}
+                      />
+                    </div>
+                    {/* Tabular figures: the numerator changes every few seconds
+                        and proportional digits make the whole line jitter. */}
+                    <span className="shrink-0 tabular-nums text-xs text-muted">
+                      {!dl
+                        ? "Preparing…"
+                        : dl.percent >= 100
+                          ? "Installing…"
+                          : dl.total > 0
+                            ? formatByteProgress(dl.downloaded, dl.total)
+                            : `${dl.percent}%`}
+                    </span>
+                  </div>
+                ) : (
+                  <span>
+                    {update.data.failed_attempt ? (
+                      // The last click on this button did NOT work: the app
+                      // restarted still on the old version because Update.exe
+                      // could not swap the install folder while another
+                      // program sat in it. Saying so beats the banner
+                      // silently reappearing and looking like it did nothing.
+                      <>
+                        The last update couldn't finish - another program was using the app's files
+                        (usually a browser window that was opened from this app). Close your browser
+                        windows and try again, or restart Windows.
+                      </>
+                    ) : (
+                      <>Version {update.data.available} is available.</>
+                    )}
                   </span>
                 )}
+                <Button size="sm" disabled={applyUpdate.isPending} onClick={() => applyUpdate.mutate()}>
+                  <IconRefresh aria-hidden className={applyUpdate.isPending ? "animate-spin" : undefined} />
+                  {applyUpdate.isPending ? "Updating" : "Restart to update"}
+                </Button>
               </div>
-              {section === "manual" && (
-                <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
-              )}
-              {section === "import" && (
-                <ImportFile org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
-              )}
-              {section === "edit" && (
-                <EditCases
-                  org={org}
-                  project={project}
-                  pbi={pbi}
-                  caseSelection={caseSelection}
-                  onClearSelection={() => setCaseSelection(null)}
-                  onPickPbi={setPbiRaw}
-                />
-              )}
-              {section === "view" && (
-                <ViewCases org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
-              )}
-              {section === "run" && (
-                <RunTests org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
-              )}
-              {section === "suites" && (
-                <Suites
-                  org={org}
-                  project={project}
-                  onOpenPbi={(p, target) => {
-                    setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" });
-                    goToSection(target === "edit" ? "edit" : "run");
-                  }}
-                  onEditCases={(label, caseIds) => {
-                    setCaseSelection({ label, caseIds });
-                    setSection("edit");
-                    setWorkMode(false);
-                  }}
-                />
-              )}
-              {AUTO_RUN_ENABLED && section === "autorun" && (
-                <AutoRun org={org} project={project} pbi={pbi} />
-              )}
-              {section === "ai" && <AiBridge />}
-              {section === "settings" && <Settings org={org} project={project} />}
-            </AnimatedContent>
+            </div>
           )}
-        </main>
-      </div>
-      </div>
+
+          {/* Work Manager scrolls inside its own columns - the outer main
+              must not add a second scrollbar around the board. */}
+          <main
+            className={
+              signedIn && workMode
+                ? // No bottom padding in work mode: the board's columns own
+                  // the full height, and a padded strip under them read as a
+                  // gap at the bottom of the screen - boards run flush to the
+                  // edge, the way every kanban surface does.
+                  "flex min-h-0 flex-1 flex-col overflow-hidden px-6 pt-6"
+                : "min-h-0 flex-1 overflow-y-auto p-6"
+            }
+          >
+            {!signedIn ? (
+              <SignIn signingIn={signIn.isPending} onSignIn={() => signIn.mutate()}>
+                {DEV_TOOLS && (
+                  <button
+                    className="text-xs text-muted underline underline-offset-2 hover:text-text"
+                    onClick={() => setDevAuth("in")}
+                  >
+                    Skip sign-in — dev only (pair with demo data)
+                  </button>
+                )}
+              </SignIn>
+            ) : workMode ? (
+              // Same fade-up as the Test Case Manager tabs below: key remounts
+              // on section switch; the flex classes keep the board's height
+              // chain intact (the wrapper sits inside a flex-col main).
+              // 120ms fade chosen for snappiness (user request 2026-08-22).
+              <AnimatedContent
+                key={workSection}
+                distance={8}
+                duration={0.12}
+                threshold={0}
+                className="flex min-h-0 flex-1 flex-col"
+              >
+                {workSection === "board" ? (
+                  <>
+                    <h1 className="mb-4 text-lg font-semibold">Board</h1>
+                    <div className="min-h-0 flex-1">
+                      <WorkBoard org={org} project={project} />
+                    </div>
+                  </>
+                ) : workSection === "create" ? (
+                  <>
+                    <h1 className="mb-4 text-lg font-semibold">New Work Item</h1>
+                    <div className="min-h-0 flex-1 overflow-y-auto">
+                      <CreateWorkItem org={org} project={project} />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
+                    <div className="min-h-0 flex-1 overflow-y-auto">
+                      <PrPanel org={org} project={project} />
+                    </div>
+                  </>
+                )}
+              </AnimatedContent>
+            ) : (
+              // key={section} remounts the wrapper on tab switch, so every
+              // screen fades up briefly (120ms) instead of snapping in.
+              // 120ms fade chosen for snappiness (user request 2026-08-22).
+              <AnimatedContent key={section} distance={8} duration={0.12} threshold={0}>
+                <div className="mb-4 flex items-center gap-2">
+                  <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
+                  {TITLE_NOTES[section] && (
+                    <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
+                      {TITLE_NOTES[section]}
+                    </span>
+                  )}
+                </div>
+                {section === "manual" && (
+                  <ManualEntry org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                )}
+                {section === "import" && (
+                  <ImportFile org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                )}
+                {section === "edit" && (
+                  <EditCases
+                    org={org}
+                    project={project}
+                    pbi={pbi}
+                    caseSelection={caseSelection}
+                    onClearSelection={() => setCaseSelection(null)}
+                    onPickPbi={setPbiRaw}
+                  />
+                )}
+                {section === "view" && (
+                  <ViewCases org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                )}
+                {section === "run" && (
+                  <RunTests org={org} project={project} pbi={pbi} onPickPbi={setPbiRaw} />
+                )}
+                {section === "suites" && (
+                  <Suites
+                    org={org}
+                    project={project}
+                    onOpenPbi={(p, target) => {
+                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" });
+                      goToSection(target === "edit" ? "edit" : "run");
+                    }}
+                    onEditCases={(label, caseIds) => {
+                      setCaseSelection({ label, caseIds });
+                      setSection("edit");
+                      setWorkMode(false);
+                    }}
+                  />
+                )}
+                {AUTO_RUN_ENABLED && section === "autorun" && (
+                  <AutoRun org={org} project={project} pbi={pbi} />
+                )}
+                {section === "ai" && <AiBridge />}
+                {section === "settings" && <Settings org={org} project={project} />}
+              </AnimatedContent>
+            )}
+          </main>
+        </div>
+        </div>
       </QueryClientProvider>
 
       {changelog && <ChangelogModal entries={changelog} onClose={dismissChangelog} />}

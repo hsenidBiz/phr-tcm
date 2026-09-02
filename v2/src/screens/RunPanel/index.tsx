@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, RefreshCw, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { commands, events, type EnsuredSuite, type TestPoint } from "../../bindings";
+import { commands, events, type TestPoint } from "../../bindings";
 import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
@@ -14,6 +14,7 @@ import ScanProgress from "../../components/ScanProgress";
 import { cn } from "../../lib/cn";
 import { pagePalette } from "../../lib/reportTheme";
 import { CACHE, persistentQuery } from "../../lib/persistentQuery";
+import { clearSuiteSeed, readSuiteSeed, writeSuiteSeed } from "../../lib/suiteSeed";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import {
   sidebarCollapsedSnapshot,
@@ -84,16 +85,6 @@ export default function RunPanel({
   );
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
 
-  const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
-  const readSuiteSeed = (): EnsuredSuite | undefined => {
-    try {
-      const raw = localStorage.getItem(suiteKey);
-      return raw ? (JSON.parse(raw) as EnsuredSuite) : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-
   // Suite resolution is expensive (scans plans), so the queryFn itself
   // short-circuits to the persisted seed: no matter what triggers a
   // refetch (remount, focus, gc), the network is only hit when no seed
@@ -101,17 +92,13 @@ export default function RunPanel({
   const suite = useQuery({
     queryKey: ["suite", org, project, pbiId],
     queryFn: async () => {
-      const seed = readSuiteSeed();
+      const seed = readSuiteSeed(org, pbiId);
       if (seed) return seed;
       const s = await unwrap(commands.ensurePbiSuite(org, project, pbiId));
-      try {
-        localStorage.setItem(suiteKey, JSON.stringify(s));
-      } catch {
-        // cache is best-effort
-      }
+      writeSuiteSeed(org, pbiId, s);
       return s;
     },
-    initialData: readSuiteSeed,
+    initialData: () => readSuiteSeed(org, pbiId),
     staleTime: Infinity,
     retry: false,
   });
@@ -150,11 +137,7 @@ export default function RunPanel({
   // The full re-resolve (Shift-click, or automatic when the cached suite
   // turns out to be deleted): drop the seed and scan plans from scratch.
   const redetectSuite = () => {
-    try {
-      localStorage.removeItem(suiteKey);
-    } catch {
-      // cache is best-effort
-    }
+    clearSuiteSeed(org, pbiId);
     setScan(null);
     qc.removeQueries({ queryKey: ["suite", org, project, pbiId] });
     qc.invalidateQueries({ queryKey: ["points"] });
