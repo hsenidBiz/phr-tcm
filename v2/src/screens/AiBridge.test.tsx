@@ -17,6 +17,12 @@ beforeEach(() => {
   Object.assign(navigator, { clipboard: { writeText } });
 });
 
+// Every existing test assumes the tab is usable, which now needs a working
+// repository. The gating tests below clear it themselves.
+beforeEach(() => {
+  localStorage.setItem("tcm-v2-working-dir", "D:\\repo");
+});
+
 function renderBridge(qc: QueryClient) {
   return render(
     <QueryClientProvider client={qc}>
@@ -30,8 +36,8 @@ test("lists installed AI tools with their registered state", async () => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
       return [
-        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases"] },
-        { id: "vscode", name: "VS Code", installed: true, registered_servers: [] },
+        { id: "claude-code", name: "Claude Code", installed: true, registered_servers: ["tcm-testcases"], scope: "global" },
+        { id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" },
       ];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -48,7 +54,7 @@ test("Register invokes register_ai_tool with the tool's id", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
-      return [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [] }];
+      return [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" }];
     if (cmd === "register_ai_tool") {
       registeredId = (args as { id: string }).id;
       return null;
@@ -66,7 +72,7 @@ test("Unregister invokes unregister_ai_tool for a registered tool", async () => 
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
-      return [{ id: "claude-desktop", name: "Claude Desktop", installed: true, registered_servers: ["tcm-testcases"] }];
+      return [{ id: "claude-desktop", name: "Claude Desktop", installed: true, registered_servers: ["tcm-testcases"], scope: "global" }];
     if (cmd === "unregister_ai_tool") {
       unregisteredId = (args as { id: string }).id;
       return null;
@@ -88,7 +94,7 @@ test("Rescan re-runs detection and picks up a newly installed tool", async () =>
       // Second scan sees a tool that wasn't installed at mount.
       return scans === 1
         ? [{ id: "vscode", name: "VS Code", installed: false, registered: false }]
-        : [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [] }];
+        : [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" }];
     }
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -161,7 +167,7 @@ test("the copy button writes the registration command to the clipboard", async (
 
   await waitFor(() =>
     expect(copied).toContain(
-      'claude mcp add --scope user tcm-testcases -- \\"C:\\\\apps\\\\tcm\\\\v2.exe\\" --mcp',
+      'claude mcp add --scope project tcm-testcases -- \\"C:\\\\apps\\\\tcm\\\\v2.exe\\" --mcp',
     ),
   );
 });
@@ -179,7 +185,7 @@ test("shows bridge not running when the status query fails", async () => {
 
 // ------------------------------------------------- company database server
 
-const DB_TOOLS = [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [] }];
+const DB_TOOLS = [{ id: "vscode", name: "VS Code", installed: true, registered_servers: [], scope: "global" }];
 
 test("the database server cannot be registered until it is configured", async () => {
   mockIPC((cmd) => {
@@ -348,4 +354,78 @@ test("shipped DB defaults prefill only a never-configured form", async () => {
   await waitFor(() =>
     expect(screen.getByLabelText("Database server path")).toHaveValue("C:\mine\server.exe"),
   );
+});
+
+// ------------------------------------------------- working repository gate
+
+test("without a working repository only the picker is offered", async () => {
+  localStorage.removeItem("tcm-v2-working-dir");
+  let detected = 0;
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") {
+      detected += 1;
+      return [{ id: "claude-code", name: "Claude Code", installed: true, registered_servers: [], scope: "global" }];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  expect(await screen.findByText("Working repository")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /pick repository/i })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Register" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Connect your AI tools")).not.toBeInTheDocument();
+  expect(detected).toBe(0);
+});
+
+test("picking a folder unlocks the tab and detection runs against it", async () => {
+  localStorage.removeItem("tcm-v2-working-dir");
+  const detectArgs: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "plugin:dialog|open") return "D:\\repo";
+    if (cmd === "detect_ai_tools") {
+      detectArgs.push(args);
+      return [{ id: "claude-code", name: "Claude Code", installed: true, registered_servers: [], scope: "project" }];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByRole("button", { name: /pick repository/i }));
+  expect(await screen.findByText("Claude Code")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-working-dir")).toBe("D:\\repo");
+  expect(detectArgs[0]).toMatchObject({ workingDir: "D:\\repo" });
+  expect(screen.getByText("in this repo")).toBeInTheDocument();
+});
+
+test("Register passes the working repository along", async () => {
+  let seen: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+    if (cmd === "register_ai_tool") {
+      seen = args;
+      return null;
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Register" }));
+  await waitFor(() => expect(seen).toMatchObject({ id: "cursor", workingDir: "D:\\repo" }));
+});
+
+test("a tool with no project config is labelled global", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "windsurf", name: "Windsurf", installed: true, registered_servers: ["tcm-testcases"], scope: "global" }];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  expect(await screen.findByText("Windsurf")).toBeInTheDocument();
+  expect(screen.getByText("global")).toBeInTheDocument();
 });

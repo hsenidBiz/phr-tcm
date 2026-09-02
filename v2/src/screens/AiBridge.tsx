@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
-import { Database } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Database, FolderOpen } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
 import { toast } from "sonner";
 import { commands, type DbServerConfig } from "../bindings";
@@ -22,6 +22,7 @@ import {
 } from "../lib/dbServer";
 import { loadDisabledTools, MCP_TOOLS, saveDisabledTools, toggleTool } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
+import { saveWorkingDir, subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
 import {
   IconBrowse,
   IconConfirm,
@@ -49,6 +50,20 @@ function copy(text: string, label: string) {
 export default function AiBridge() {
   const qc = useQueryClient();
 
+  // The repository everything on this tab is scoped to. Read through the
+  // store so App's bridge push and this tab agree the moment it changes.
+  const workingDir = useSyncExternalStore(subscribeWorkingDir, workingDirSnapshot);
+  const pickWorkingDir = () => {
+    open({ multiple: false, directory: true })
+      .then((path) => {
+        if (typeof path === "string") {
+          saveWorkingDir(path);
+          toast.success(`Working repository set to ${path}`);
+        }
+      })
+      .catch(() => toast.error("Could not open the folder picker."));
+  };
+
   const bridge = useQuery({
     queryKey: ["bridge-status"],
     queryFn: () => unwrapStr(commands.bridgeStatus()),
@@ -56,12 +71,13 @@ export default function AiBridge() {
   });
 
   const tools = useQuery({
-    queryKey: ["ai-tools"],
-    queryFn: () => commands.detectAiTools(),
+    queryKey: ["ai-tools", workingDir],
+    queryFn: () => commands.detectAiTools(workingDir || null),
+    enabled: Boolean(workingDir),
   });
 
   const register = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.registerAiTool(id)),
+    mutationFn: (id: string) => unwrapStr(commands.registerAiTool(id, workingDir || null)),
     onSuccess: () => {
       toast.success("Registered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
@@ -70,7 +86,7 @@ export default function AiBridge() {
   });
 
   const unregister = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.unregisterAiTool(id)),
+    mutationFn: (id: string) => unwrapStr(commands.unregisterAiTool(id, workingDir || null)),
     onSuccess: () => {
       toast.success("Unregistered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
@@ -128,7 +144,7 @@ export default function AiBridge() {
   const [rawConn, setRawConn] = useState(() => !isRepresentable(db.connection_string));
 
   const registerDb = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.registerDbServer(id, db)),
+    mutationFn: (id: string) => unwrapStr(commands.registerDbServer(id, db, workingDir || null)),
     onSuccess: () => {
       toast.success("Database server registered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
@@ -137,7 +153,7 @@ export default function AiBridge() {
   });
 
   const unregisterDb = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.unregisterDbServer(id)),
+    mutationFn: (id: string) => unwrapStr(commands.unregisterDbServer(id, workingDir || null)),
     onSuccess: () => {
       toast.success("Database server unregistered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
@@ -177,6 +193,35 @@ export default function AiBridge() {
   const installed = (tools.data ?? []).filter((t) => t.installed);
   const dbReady = isDbConfigComplete(db);
 
+  const repoCard = (
+    <section className="space-y-3 rounded-md border border-border bg-surface p-4">
+      <div className="flex items-center gap-2">
+        <FolderOpen size={14} className="shrink-0 text-muted" />
+        <h2 className="text-sm font-semibold text-text">Working repository</h2>
+      </div>
+      {workingDir ? (
+        <p className="id-mono break-all text-xs text-text">{workingDir}</p>
+      ) : (
+        <p className="text-xs text-muted">
+          Not set. Pick the repository these test cases belong to: its{" "}
+          <span className="id-mono">.test-cases</span> folder is where written and imported
+          files go, and the AI tools below register into it rather than machine-wide.
+        </p>
+      )}
+      <Button size="sm" variant="outline" onClick={pickWorkingDir}>
+        <FolderOpen aria-hidden />
+        {workingDir ? "Change" : "Pick repository"}
+      </Button>
+    </section>
+  );
+
+  // Nothing else on this tab means anything until there is a repository -
+  // registration would land in a global config, and a writing job would
+  // have nowhere agreed to put its file. The rest of the app is unaffected.
+  if (!workingDir) {
+    return <div className="max-w-lg">{repoCard}</div>;
+  }
+
   return (
     // Two columns once there is room (the window floor is 900px, so
     // this only kicks in above it); a single column below, which is
@@ -185,6 +230,7 @@ export default function AiBridge() {
     // own third column instead of leaving the window's right third empty.
     <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3">
       <div className="space-y-6">
+      {repoCard}
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">Status</h2>
         {bridge.data ? (
@@ -234,6 +280,9 @@ export default function AiBridge() {
             {installed.map((t) => (
               <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-text">{t.name}</span>
+                <span className="flex-1 text-xs text-faint">
+                  {t.scope === "project" ? "in this repo" : "global"}
+                </span>
                 {(t.registered_servers ?? []).includes(TCM_SERVER) ? (
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-success">Registered ✓</span>
@@ -273,16 +322,16 @@ export default function AiBridge() {
           </summary>
           <div className="mt-2 space-y-3">
             <div>
-              <p className="mb-1 text-faint">Command-line registration:</p>
+              <p className="mb-1 text-faint">Command-line registration (run inside the repository):</p>
               <div className="flex items-center gap-2">
                 <code className="id-mono flex-1 truncate rounded bg-surface-2 px-2 py-1 text-xs text-text">
-                  claude mcp add --scope user tcm-testcases -- "{exe}" --mcp
+                  claude mcp add --scope project tcm-testcases -- "{exe}" --mcp
                 </code>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() =>
-                    copy(`claude mcp add --scope user tcm-testcases -- "${exe}" --mcp`, "Command")
+                    copy(`claude mcp add --scope project tcm-testcases -- "${exe}" --mcp`, "Command")
                   }
                 >
                   <IconCopy aria-hidden />
