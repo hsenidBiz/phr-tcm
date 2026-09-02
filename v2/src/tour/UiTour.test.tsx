@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import UiTour, { tourDone } from "./UiTour";
+import UiTour from "./UiTour";
+import { tourDone } from "./tourState";
 
 afterEach(() => {
   localStorage.clear();

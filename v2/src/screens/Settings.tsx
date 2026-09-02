@@ -12,7 +12,7 @@ import { Switch } from "../components/ui/switch";
 import { Modal } from "../components/ui/modal";
 import { Input, Textarea } from "../components/ui/input";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { START_TOUR_EVENT } from "../components/UiTour";
+import { START_TOUR_EVENT } from "../tour/tourState";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
 import { loadDefaultTags, saveDefaultTags } from "../lib/defaultTags";
 import { loadGlobalAllowed, saveGlobalAllowed } from "../lib/aiScope";

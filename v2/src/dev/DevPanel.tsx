@@ -3,7 +3,7 @@ import { Bug, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { PbiHit } from "../bindings";
-import { START_TOUR_EVENT } from "../components/UiTour";
+import { START_TOUR_EVENT } from "../tour/tourState";
 import { Button } from "../components/ui/button";
 import { SHOW_CHANGELOG_EVENT } from "../lib/changelog";
 import { setPbiGlow } from "../lib/pbiGlow";

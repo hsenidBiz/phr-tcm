@@ -1,28 +1,8 @@
 import { useLayoutEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button } from "./ui/button";
+import { Button } from "../components/ui/button";
 import { IconBack, IconConfirm, IconNext } from "../lib/actionIcons";
-
-const TOUR_DONE_KEY = "tcm-v2-tour-done";
-
-/** Fired by Settings' "Show UI tour" button; App listens and reopens. */
-export const START_TOUR_EVENT = "tcm-start-tour";
-
-export function tourDone(): boolean {
-  try {
-    return localStorage.getItem(TOUR_DONE_KEY) === "yes";
-  } catch {
-    return true; // no storage -> never auto-run
-  }
-}
-
-function markTourDone() {
-  try {
-    localStorage.setItem(TOUR_DONE_KEY, "yes");
-  } catch {
-    // session-only
-  }
-}
+import { markTourDone } from "./tourState";
 
 type Step = { target: string; title: string; body: string };
 

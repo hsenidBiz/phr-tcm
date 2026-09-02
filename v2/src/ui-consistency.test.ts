@@ -78,7 +78,7 @@ describe("color system", () => {
       "screens/WorkBoard.tsx", // DevOps state/type colors from the API
       "components/WorkItemDrawer.tsx", // DevOps state colors from the API
       "screens/SignIn.tsx", // flask/branding animation
-      "components/UiTour.tsx", // spotlight overlay math
+      "tour/UiTour.tsx", // spotlight overlay math
     ]);
     expect(violations(/#[0-9a-fA-F]{6}\b/, allow)).toEqual([]);
   });
@@ -92,7 +92,7 @@ describe("color system", () => {
       "components/CommentsPanel.tsx", // initials over hashed avatar color
       "components/TitleBar.tsx", // close button over hover-danger
       "screens/Settings.tsx", // checkmark over accent swatch
-      "components/UiTour.tsx", // spotlight overlay
+      "tour/UiTour.tsx", // spotlight overlay
       "screens/SignIn.tsx", // branding
     ]);
     expect(violations(/(?:text|bg)-(?:white|black)(?![-\w])/, allow)).toEqual([]);
