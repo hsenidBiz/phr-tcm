@@ -444,3 +444,57 @@ async fn a_duplicate_warning_uses_the_first_authors_casing_when_slices_disagree(
     assert!(dup.contains("'Alert Fires On Time'"), "{dup}");
     assert!(dup.contains("2 times"), "{dup}");
 }
+
+// ---------------------------------------------------------------------
+// The merged draft obeys the workspace rules, so the end of a fan-out
+// lands where the app is watching - the same rule the intake applies.
+
+fn ctx_in(root: &std::path::Path) -> BridgeContext {
+    BridgeContext { working_dir: Some(root.to_string_lossy().to_string()), ..Default::default() }
+}
+
+/// A bare file name is a file name, not a path - it resolves into the
+/// repository's `.test-cases`, exactly as `begin_test_case_writing` does.
+#[tokio::test]
+async fn a_bare_output_name_lands_in_the_repos_cases_folder() {
+    let repo = TempDir::new();
+    let slice = repo.path().join("slice-a.json");
+    std::fs::write(&slice, serde_json::json!([case_json("Case A1")]).to_string()).unwrap();
+
+    let body = serde_json::json!({
+        "paths": [slice.to_string_lossy()],
+        "output_path": "merged.json",
+    })
+    .to_string();
+
+    let (status, out) =
+        route(&ctx_in(repo.path()), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let landed = repo.path().join(".test-cases").join("merged.json");
+    assert!(landed.is_file(), "not in the cases folder: {out}");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&landed).unwrap()).unwrap();
+    assert_eq!(doc["test_cases"].as_array().unwrap().len(), 1, "{out}");
+}
+
+/// A path outside the folder is refused, and nothing is written - a fan-out
+/// must not be able to place the finished draft outside the workspace.
+#[tokio::test]
+async fn an_output_path_outside_the_cases_folder_is_refused() {
+    let repo = TempDir::new();
+    let slice = repo.path().join("slice-a.json");
+    std::fs::write(&slice, serde_json::json!([case_json("Case A1")]).to_string()).unwrap();
+    let outside = repo.path().join("merged.json");
+
+    let body = serde_json::json!({
+        "paths": [slice.to_string_lossy()],
+        "output_path": outside.to_string_lossy(),
+    })
+    .to_string();
+
+    let (status, out) =
+        route(&ctx_in(repo.path()), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains(".test-cases"), "the error names the folder: {out}");
+    assert!(!outside.exists(), "a refused merge writes nothing: {out}");
+}

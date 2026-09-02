@@ -103,10 +103,10 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
     let all = serde_json::json!({ "tools": [
         {
             "name": "begin_test_case_writing",
-            "description": "START HERE for any test-case writing job, before reading specs or drafting anything. Call it with only `feature` first: it returns the questions to put to the developer in chat (where the JSON goes, which spec documents are authoritative, whether to check a PBI for duplicates, tags/module/status, what is out of scope) plus this org's real Module values. Ask them those questions - do not answer them yourself - then call this tool again with their answers. It checks the paths and values actually exist, and returns a plan file for them to approve. Do not write a single test case until it returns status \"ready\" and the developer has agreed to the plan.",
+            "description": "START HERE for any test-case writing job, before reading specs or drafting anything. Call it with only `feature` first: it returns the questions to put to the developer in chat (what the file is called, which spec documents are authoritative, whether to check a PBI for duplicates, tags/module/status, what is out of scope) plus this org's real Module values. Ask them those questions - do not answer them yourself - then call this tool again with their answers. It checks the paths and values actually exist, and returns a plan file for them to approve. Do not write a single test case until it returns status \"ready\" and the developer has agreed to the plan.",
             "inputSchema": schema(serde_json::json!({
                 "feature": { "type": "string", "description": "What you are about to write cases for, e.g. \"Manager Assessment landing page\" - becomes the plan's title" },
-                "output_path": { "type": "string", "description": "Full path, including file name, where the finished JSON goes" },
+                "output_path": { "type": "string", "description": "File name for the finished JSON (e.g. login.json) — it goes in the working repository's .test-cases folder; a path outside that folder is refused" },
                 "spec_paths": { "type": "array", "items": { "type": "string" }, "description": "Full paths to the specification documents the cases come from" },
                 "sections": { "type": "string", "description": "Which parts of those documents are in scope" },
                 "authority": { "type": "string", "description": "\"spec\", \"app\", or \"spec-wins\" - which source decides when they disagree" },
@@ -163,7 +163,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             "description": "Merge slice files from a fan-out into one draft through the real importer - never merge by hand. Reads every path in `paths` with the same importer the app uses, concatenates the cases in that order, and writes the result to `output_path` (refused if that path already exists - pick a new one rather than overwriting). Returns the merged case count, a per-file breakdown, and the importer's warnings from every slice, each prefixed with the slice file it came from. A title appearing in more than one slice is warned about by name - fan-out writers cannot see each other's titles, and such a collision usually needs disambiguating, not deduping. Does not deduplicate - if slices may overlap, run optimize_cases or transform_cases' dedupe on the merged file afterward.",
             "inputSchema": schema(serde_json::json!({
                 "paths": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths to the slice files, in the order they should be concatenated" },
-                "output_path": { "type": "string", "description": "Full path, including file name, for the merged draft - must not already exist" },
+                "output_path": { "type": "string", "description": "File name for the merged draft (e.g. login.json) - it goes in the working repository's .test-cases folder, and must not already exist; a path outside that folder is refused" },
             }), &["paths", "output_path"]),
         },
         {

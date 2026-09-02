@@ -141,7 +141,7 @@ pub async fn route(
         ("POST", "/transform") => transform_json(body),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
         ("POST", "/check-coverage") => check_coverage_route(body).await,
-        ("POST", "/merge-cases") => merge_cases_route(body),
+        ("POST", "/merge-cases") => merge_cases_route(body, ctx),
         ("POST", "/begin") => begin_writing(body, target, ctx, client).await,
         ("GET", "/guide") => match client {
             Some(c) => (200, guide(ctx, c).await),
@@ -981,8 +981,16 @@ struct MergeRequest {
 /// no cross-slice deduplication - a caller merging slices that may overlap
 /// should run `optimize_cases` or `transform_cases`' dedupe on the merged
 /// file afterward.
-fn merge_cases_route(body: &str) -> (u16, String) {
-    let req: MergeRequest = match serde_json::from_str(body) {
+///
+/// With a working repository set, the merged draft obeys the same rule the
+/// intake does: a bare name resolves into `<repo>/.test-cases`, and a path
+/// outside that folder is refused. A fan-out's merged file is the file the
+/// app then watches and imports, so letting it land anywhere would put the
+/// end of the writing job outside the workspace the rest of it lives in.
+/// Without a repository nothing changes - a merge is a file operation, not
+/// an intake, and it still works.
+fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
+    let mut req: MergeRequest = match serde_json::from_str(body) {
         Ok(r) => r,
         Err(e) => {
             return (
@@ -1005,6 +1013,35 @@ fn merge_cases_route(body: &str) -> (u16, String) {
                 .to_string(),
         );
     }
+    // The workspace rules, when there is a workspace - before the
+    // already-exists check, so a bare name is judged where it will land.
+    if let Some(root) = ctx
+        .working_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+    {
+        let cases_dir = match crate::workspace::ensure_cases_dir(&root) {
+            Ok(d) => d,
+            Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
+        };
+        req.output_path = crate::workspace::resolve_output(&root, &req.output_path);
+        if !crate::workspace::is_inside(&cases_dir, std::path::Path::new(&req.output_path)) {
+            return (
+                400,
+                serde_json::json!({
+                    "error": format!(
+                        "output_path must be inside the working repository's .test-cases folder \
+                         ({}) - give a file name, or a path under that folder.",
+                        cases_dir.display()
+                    )
+                })
+                .to_string(),
+            );
+        }
+    }
+
     if std::path::Path::new(&req.output_path).exists() {
         return (
             400,
