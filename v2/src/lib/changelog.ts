@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.21.2",
+    date: "2026-09-02",
+    items: [
+      "Picking a different Default connection now updates the AI tools that already use the database server, instead of only changing the form. Before this, the tool's config file kept the old connection string until you remembered to press Register again - so the app and the file could quietly disagree about which environment you were querying. The app also reminds you that a coding session already running may need to be restarted before it picks the new connection up.",
+    ],
+  },
+  {
     version: "1.21.1",
     date: "2026-09-02",
     items: [
