@@ -5,6 +5,7 @@
  */
 import type {
   BoardData,
+  BridgeStatus,
   CaseHistory,
   DbPresetOut,
   DbServerConfig,
@@ -16,6 +17,7 @@ import type {
   PrOverview,
   Project,
   Step,
+  TestCase,
   TestCaseFull,
   TestCaseSummary,
   TestPoint,
@@ -94,6 +96,55 @@ export const TOUR_CASES: TestCaseFull[] = [
     steps_xml: "",
     module_value: "Checkout",
     preconditions: "A guest email address is available.",
+  },
+];
+
+/**
+ * The batch waiting to be sent, for the tour's Manual Entry stop.
+ *
+ * Every other area the tour shows is fed by a command, and the tour stands
+ * those in - but the queue comes off a saved draft, which is empty for
+ * everyone on their first run. Without this the stop ringed a box with
+ * nothing in it. One of them updates an existing case, so the main button
+ * has both halves of its "create N · update N" wording to say.
+ */
+export const TOUR_QUEUE: TestCase[] = [
+  {
+    title: "Guest checkout - the basket survives a sign-in",
+    tags: "Checkout; Regression",
+    automation_status: "Not Automated",
+    steps: steps(
+      ["Add a product to the basket as a guest.", "The basket shows one item."],
+      ["Sign in from the checkout page.", "The basket still holds the same item."],
+    ),
+    module_value: "Checkout",
+    preconditions: "A product is in stock.",
+    update_id: null,
+  },
+  {
+    title: "Guest checkout - the total includes delivery",
+    tags: "Checkout",
+    automation_status: "Not Automated",
+    steps: steps(
+      ["Choose a delivery option.", "The delivery cost is shown."],
+      ["Read the order total.", "The total covers the basket and the delivery."],
+    ),
+    module_value: "Checkout",
+    preconditions: "A product is in the basket.",
+    update_id: null,
+  },
+  {
+    title: "Guest checkout - the delivery address is required",
+    tags: "Checkout; Regression",
+    automation_status: "Not Automated",
+    steps: steps(
+      ["Leave the delivery address empty.", "The address box is empty."],
+      ["Choose Continue.", "The form asks for a delivery address."],
+      ["Fill the address in and choose Continue.", "The payment page opens."],
+    ),
+    module_value: "Checkout",
+    preconditions: "A product is in the basket.",
+    update_id: TOUR_CASES[1].id,
   },
 ];
 
@@ -221,7 +272,7 @@ export const TOUR_DB_DEFAULTS: DbServerConfig = {
   schema_filter: "dbo",
 };
 
-export const TOUR_BRIDGE = {
+export const TOUR_BRIDGE: BridgeStatus = {
   port: 51999,
   mcp_exe: "C:\\Program Files\\Test Case Manager\\app.exe",
 };

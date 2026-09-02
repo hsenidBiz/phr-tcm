@@ -190,12 +190,22 @@ export default function App() {
     setTourQc(
       new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } }),
     );
+    // The context bar is not remounted by the tour (only the screens
+    // below it are, on their `key={section}`), and a mounted query keeps
+    // the client it started on - so the org list it is already holding
+    // stays the REAL one while everything around it turns to sample data.
+    // Northwind is then not in the list and the picker reads blank, which
+    // is exactly what the stop that rings it is pointing at. Dropping the
+    // entry makes it ask again, and the ask now reaches the stand-in.
+    // Dropped again when the tour ends, below, so the sample list does not
+    // outlive it.
+    qc.removeQueries({ queryKey: ["orgs"] });
     setOrgRaw(TOUR_ORG);
     setProjectRaw(TOUR_PROJECT);
     setPbiRaw(TOUR_PBI);
     setTourRunning(true);
     setTourOpen(true);
-  }, []);
+  }, [qc]);
 
   const endTour = useCallback(() => {
     const back = before.current;
@@ -213,6 +223,10 @@ export default function App() {
     // prefix rather than just the sample key is deliberate: the real
     // entry (if any) simply refetches next time it is needed.
     qc.removeQueries({ queryKey: ["can-delete"] });
+    // Same for the org list the context bar was made to re-ask for at the
+    // start: it is holding Northwind now, and Northwind is not a place
+    // the user can work.
+    qc.removeQueries({ queryKey: ["orgs"] });
     if (!back) return;
     setOrgRaw(back.org);
     setProjectRaw(back.project);

@@ -52,11 +52,16 @@ export function Select({
   onChange,
   disabled,
   "aria-label": ariaLabel,
+  "data-tour": dataTour,
 }: SelectHTMLAttributes<HTMLSelectElement> & {
   /** The wrapper div takes `className` (width, positioning). Padding and
    * sizing belong HERE - callers used to put py-* on `className` and
    * silently pad the wrapper around an unchanged 38px trigger. */
   triggerClassName?: string;
+  /** The guided tour rings elements by this attribute. Named explicitly
+   * because this component takes only the props it uses - anything else
+   * is dropped, and a dropped anchor is a tour stop ringing nothing. */
+  "data-tour"?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -86,7 +91,7 @@ export function Select({
   };
 
   return (
-    <div ref={rootRef} className={cn("relative", className)}>
+    <div ref={rootRef} data-tour={dataTour} className={cn("relative", className)}>
       <button
         type="button"
         role="combobox"

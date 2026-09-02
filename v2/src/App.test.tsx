@@ -1,8 +1,9 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
+import { TOUR_STEPS } from "./tour/tourScript";
 import { START_TOUR_EVENT } from "./tour/tourState";
 import { commands } from "./bindings";
 
@@ -409,6 +410,145 @@ async function startTour() {
   await screen.findByRole("dialog", { name: "Interface tour" });
 }
 
+const next = () => fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+// Stop 5 rings the queue, and the queue is the one area on the route that
+// is NOT fed by a command the tour stands in for - it comes off the saved
+// draft, which is empty for everyone. The stop drew a ~12px ring around
+// nothing. This walks the whole route and checks each ringed area is
+// there AND has something in it.
+//
+// jsdom does no layout, so "an area with non-zero size" cannot be measured
+// here: every element reports 0x0 whatever it holds. The honest proxy is
+// content - an anchor wrapping a component that returned null renders
+// empty, which is exactly the shape of the bug this catches.
+test("every stop rings an area that is there, with something in it", async () => {
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
+    if (cmd === "list_plans_with_suites") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await startTour();
+
+  for (let i = 0; i < TOUR_STEPS.length; i++) {
+    const step = TOUR_STEPS[i];
+    const at = `stop ${i + 1} ("${step.title}")`;
+    if (step.anchor) {
+      await waitFor(() => {
+        const found = document.querySelector(`[data-tour="${step.anchor}"]`);
+        expect(found, `${at} rings nothing - no [data-tour="${step.anchor}"] on screen`).not.toBeNull();
+        const el = found as HTMLElement;
+        // The gear is the one anchor with no words in it by design.
+        if (step.anchor === "settings") {
+          expect(el.querySelector("svg"), `${at} rings an EMPTY box`).not.toBeNull();
+        } else {
+          expect(el.textContent?.trim(), `${at} rings an EMPTY box`).not.toBe("");
+        }
+      });
+    }
+    if (i < TOUR_STEPS.length - 1) next();
+  }
+
+  fireEvent.click(screen.getByText("Skip tour"));
+  // Eighteen stops, each waiting for a screen to mount: comfortably under
+  // the 5s default on its own, but not while the whole suite is running.
+}, 30_000);
+
+// The queue is served from a draft in storage, not from a command, so the
+// tour has to hand it sample cases itself - and it must do that WITHOUT
+// reading, writing or clearing the user's own draft. This proves both:
+// the sample queue is on screen at the Manual Entry stop, and the real
+// draft is byte-identical afterwards - including at every instant in
+// between, which is where a seed-plus-guard would have clobbered it.
+test("the tour's queue is populated and the real draft is never touched", async () => {
+  const draft = [
+    {
+      title: "My own queued case",
+      steps: [{ action: "Open the app", expected: "It opens" }],
+      tags: "smoke",
+      automation_status: "Not Automated",
+      module_value: "",
+      preconditions: "",
+      update_id: null,
+    },
+  ];
+  const REAL_KEY = "tcm-v2-draft:acme/99";
+  const raw = JSON.stringify(draft);
+  localStorage.setItem(REAL_KEY, raw);
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Payments",
+      section: "manual",
+      pbi: { id: 99, title: "Checkout", work_item_type: "Product Backlog Item" },
+      workMode: false,
+    }),
+  );
+
+  // Every value the real key is ever given, not just the one it ends on.
+  const writes: string[] = [];
+  const setItem = Storage.prototype.setItem;
+  const removeItem = Storage.prototype.removeItem;
+  const spy = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(function (this: Storage, k: string, v: string) {
+      if (k === REAL_KEY) writes.push(v);
+      setItem.call(this, k, v);
+    });
+  const rmSpy = vi
+    .spyOn(Storage.prototype, "removeItem")
+    .mockImplementation(function (this: Storage, k: string) {
+      if (k === REAL_KEY) writes.push("<removed>");
+      removeItem.call(this, k);
+    });
+
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
+      if (cmd === "list_plans_with_suites") return [];
+      if (cmd === "ensure_pbi_suite") return { plan_id: 9, plan_name: "Plan", suite_id: 91 };
+      if (cmd === "pbi_test_cases") return [];
+      if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+    // The user's own queue is on screen before the tour starts.
+    expect(await screen.findByText(/Queue for PBI #99/)).toBeInTheDocument();
+
+    await startTour();
+    // Welcome, scope, item, form, batch - stop 5 is the queue.
+    for (let i = 0; i < 4; i++) next();
+
+    const queue = await waitFor(() => {
+      const el = document.querySelector('[data-tour="queue"]') as HTMLElement;
+      expect(el?.textContent ?? "").toContain("Queue for PBI #4821");
+      return el;
+    });
+    // A batch worth showing: several cases, and at least one update, so
+    // the main button has both halves of its wording to say.
+    expect(queue.textContent).toMatch(/Review \d+ test cases/);
+    expect(queue.textContent).toContain("UPDATE #");
+
+    fireEvent.click(screen.getByText("Skip tour"));
+    await screen.findByRole("heading", { name: "Manual Entry" });
+    expect(await screen.findByText(/Queue for PBI #99/)).toBeInTheDocument();
+  } finally {
+    spy.mockRestore();
+    rmSpy.mockRestore();
+  }
+
+  // The sample queue was never saved anywhere...
+  expect(localStorage.getItem("tcm-v2-draft:Northwind/4821")).toBeNull();
+  // ...and the user's own draft came back exactly as it went in - at no
+  // point did it hold anything else.
+  expect(localStorage.getItem(REAL_KEY)).toBe(raw);
+  for (const v of writes) expect(v).toBe(raw);
+  expect(screen.getByText("My own queued case")).toBeInTheDocument();
+});
+
 test("the tour shows sample data, then hands the app back untouched", async () => {
   localStorage.setItem(
     "tcm-v2-prefs",
@@ -466,6 +606,104 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   // RunPanel writes that seed directly, not through anything App gates,
   // so this is the assertion that would have caught it.
   expect(localStorage.getItem("tcm-v2-suite:Northwind/4821")).toBeNull();
+});
+
+// The walk above starts from Manual Entry, which stop 2 navigates to
+// anyway - so it never actually asked whether the section is put back.
+// Settings is where most people press "Show UI tour", which makes it the
+// section that most often has to come back.
+test("the tour hands the app back to the section it was started from", async () => {
+  signedInMocks((cmd) => {
+    if (cmd === "list_plans_with_suites") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  fireEvent.click(screen.getByLabelText("Settings"));
+  expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+
+  // Started the way a user starts it: Settings' own button.
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Show UI tour" }));
+  });
+  await screen.findByRole("dialog", { name: "Interface tour" });
+
+  // Far enough in that the tour has driven the app somewhere else.
+  for (let i = 0; i < 3; i++) next();
+  expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Skip tour"));
+  expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
+});
+
+// Test Suites can hand a set of cases to Update Test Cases; that handoff
+// is App state, not a saved preference, and the tour clears it on its way
+// through (every "cases" stop does). It is captured and put back with
+// everything else - which nothing was asserting.
+test("the tour gives the Test Suites handoff back", async () => {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Payments",
+      section: "suites",
+      pbi: null,
+      workMode: false,
+    }),
+  );
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj", root_suite_id: 90 },
+          suites: [
+            {
+              id: 95,
+              name: "Regression",
+              suite_type: "staticTestSuite",
+              requirement_id: null,
+              parent_id: null,
+            },
+          ],
+        },
+      ];
+    if (cmd === "list_test_points")
+      return (args as { suiteId: number }).suiteId === 95
+        ? [
+            {
+              point_id: 7,
+              test_case_id: 201,
+              test_case_name: "Valid login",
+              config_name: "W10",
+              tester: "",
+              last_outcome: "",
+              last_run_id: null,
+              last_result_id: null,
+            },
+          ]
+        : [];
+    if (cmd === "test_cases_by_ids") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await screen.findByText("Regression");
+
+  fireEvent.click(screen.getAllByText("Edit cases")[0]);
+  const handedOver = "Showing cases handed over from the Test Suites browser.";
+  expect(await screen.findByText(handedOver)).toBeInTheDocument();
+
+  await startTour();
+  // Stop 7 is Update Test Cases - the same screen, on the sample data, so
+  // the handoff really has to have been cleared and then restored.
+  for (let i = 0; i < 6; i++) next();
+  expect(await screen.findByRole("heading", { name: "Update Test Cases" })).toBeInTheDocument();
+  expect(screen.queryByText(handedOver)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Skip tour"));
+  expect(await screen.findByText(handedOver)).toBeInTheDocument();
 });
 
 test("the app is locked while the tour runs", async () => {
