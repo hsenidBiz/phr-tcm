@@ -49,6 +49,7 @@ function writeList(list: Repository[], current: string): void {
 /** The saved list, migrating a pre-list single value into its first entry
  * (enabled and current) so nobody loses the repository they had set. */
 function readList(): { list: Repository[]; current: string } {
+  if (tourList) return tourList;
   try {
     const raw = localStorage.getItem(LIST_KEY);
     if (raw) {
@@ -89,6 +90,22 @@ const listeners = new Set<() => void>();
 const notify = () => {
   for (const l of listeners) l();
 };
+
+// The tour shows the AI Bridge tab as it looks once a repository has been
+// chosen - a new user would otherwise only ever see the empty card. In
+// memory only: the saved list is not touched and comes straight back.
+let tourList: { list: Repository[]; current: string } | null = null;
+
+export function setTourRepositories(list: Repository[], current: string): void {
+  tourList = { list, current };
+  notify();
+}
+
+export function clearTourRepositories(): void {
+  if (!tourList) return;
+  tourList = null;
+  notify();
+}
 
 /** Save a repository (deduped by path), switch it on, and make it current. */
 export function addRepository(path: string): void {

@@ -1,7 +1,10 @@
 import { afterEach, expect, test } from "vitest";
-import { cacheRead, cacheWrite, cached } from "./localCache";
+import { cacheRead, cacheWrite, cached, suspendCache } from "./localCache";
 
-afterEach(() => localStorage.clear());
+afterEach(() => {
+  suspendCache(false);
+  localStorage.clear();
+});
 
 test("round-trips within the TTL and expires after it", () => {
   cacheWrite("k", { a: 1 });
@@ -37,4 +40,17 @@ test("demo mode never reads or writes the cache", async () => {
 test("unreadable entries are dropped, not served", () => {
   localStorage.setItem("tcm-v2-cache:bad", "{not json");
   expect(cacheRead("bad", 60_000)).toBeNull();
+});
+
+test("a suspended cache neither reads nor writes", () => {
+  cacheWrite("tour-check", { a: 1 });
+  expect(cacheRead("tour-check", 60_000)).toEqual({ a: 1 });
+
+  suspendCache(true);
+  expect(cacheRead("tour-check", 60_000)).toBeNull();
+  cacheWrite("tour-check", { a: 2 });
+
+  suspendCache(false);
+  // The write while suspended was dropped - the earlier value survives.
+  expect(cacheRead("tour-check", 60_000)).toEqual({ a: 1 });
 });

@@ -3,6 +3,7 @@ import {
   addRepository,
   CASES_DIR,
   casesDir,
+  clearTourRepositories,
   isInsideCasesDir,
   loadCurrentPath,
   loadRepositories,
@@ -12,6 +13,7 @@ import {
   saveWorkingDir,
   setCurrentRepository,
   setRepositoryEnabled,
+  setTourRepositories,
   subscribeWorkingDir,
   workingDirSnapshot,
 } from "./workingDir";
@@ -100,4 +102,19 @@ test("inside-check ignores case and slash style, and is exact about the prefix",
   expect(isInsideCasesDir("D:\\repo", "d:/REPO/.test-cases/login.json")).toBe(true);
   expect(isInsideCasesDir("D:\\repo", "D:\\repo\\login.json")).toBe(false);
   expect(isInsideCasesDir("D:\\repo", "D:\\repo\\.test-cases-old\\login.json")).toBe(false);
+});
+
+test("a tour override hides the saved list without touching it", () => {
+  addRepository("C:\\real\\project");
+  const seen: string[] = [];
+  const un = subscribeWorkingDir(() => seen.push(loadWorkingDir()));
+
+  setTourRepositories([{ path: "C:\\Work\\website", enabled: true }], "C:\\Work\\website");
+  expect(loadWorkingDir()).toBe("C:\\Work\\website");
+  expect(repositoriesSnapshot()).toHaveLength(1);
+
+  clearTourRepositories();
+  expect(loadWorkingDir()).toBe("C:\\real\\project");
+  un();
+  expect(seen).toEqual(["C:\\Work\\website", "C:\\real\\project"]);
 });

@@ -61,10 +61,23 @@ function demoMode(): boolean {
   }
 }
 
+/** The guided tour shows sample data: while it runs nothing may be read
+ * from disk (real data would appear inside the tour) and nothing written
+ * to it (sample data would outlive the tour). */
+let suspended = false;
+
+export function suspendCache(value: boolean): void {
+  suspended = value;
+}
+
+function off(): boolean {
+  return suspended || demoMode();
+}
+
 /** The entry WITH its age, for callers that need to tell React Query how
  * old the seed is (so it can decide whether to revalidate). */
 export function cacheEntry<T>(key: string, maxAgeMs: number): { data: T; at: number } | null {
-  if (demoMode()) return null;
+  if (off()) return null;
   try {
     const raw = localStorage.getItem(PREFIX + key);
     if (!raw) return null;
@@ -82,7 +95,7 @@ export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
 }
 
 export function cacheWrite<T>(key: string, data: T): void {
-  if (demoMode()) return;
+  if (off()) return;
   try {
     localStorage.setItem(PREFIX + key, JSON.stringify({ at: Date.now(), data }));
     prune();
