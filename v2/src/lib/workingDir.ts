@@ -46,10 +46,11 @@ function writeList(list: Repository[], current: string): void {
   }
 }
 
-/** The saved list, migrating a pre-list single value into its first entry
- * (enabled and current) so nobody loses the repository they had set. */
-function readList(): { list: Repository[]; current: string } {
-  if (tourList) return tourList;
+/** The saved list from storage, migrating a pre-list single value into its first entry
+ * (enabled and current) so nobody loses the repository they had set. Used by all reads
+ * and by mutators: readers see the tour override via readList(), writers always use
+ * this to ensure tour sample data never persists to disk. */
+function readSaved(): { list: Repository[]; current: string } {
   try {
     const raw = localStorage.getItem(LIST_KEY);
     if (raw) {
@@ -68,6 +69,13 @@ function readList(): { list: Repository[]; current: string } {
     // corrupt storage -> start empty
   }
   return { list: [], current: "" };
+}
+
+/** The saved list, with the tour override applied for readers if active.
+ * Mutators bypass this and use readSaved() directly. */
+function readList(): { list: Repository[]; current: string } {
+  if (tourList) return tourList;
+  return readSaved();
 }
 
 export function loadRepositories(): Repository[] {
@@ -111,7 +119,7 @@ export function clearTourRepositories(): void {
 export function addRepository(path: string): void {
   const trimmed = path.trim();
   if (!trimmed) return;
-  const { list } = readList();
+  const { list } = readSaved();
   const existing = list.find((r) => samePath(r.path, trimmed));
   const next = existing
     ? list.map((r) => (r === existing ? { ...r, enabled: true } : r))
@@ -121,14 +129,14 @@ export function addRepository(path: string): void {
 }
 
 export function removeRepository(path: string): void {
-  const { list, current } = readList();
+  const { list, current } = readSaved();
   const next = list.filter((r) => !samePath(r.path, path));
   writeList(next, samePath(current, path) ? "" : current);
   notify();
 }
 
 export function setRepositoryEnabled(path: string, enabled: boolean): void {
-  const { list, current } = readList();
+  const { list, current } = readSaved();
   writeList(
     list.map((r) => (samePath(r.path, path) ? { ...r, enabled } : r)),
     current,
@@ -138,7 +146,7 @@ export function setRepositoryEnabled(path: string, enabled: boolean): void {
 
 /** Make a saved repository the current one; an unknown path is ignored. */
 export function setCurrentRepository(path: string): void {
-  const { list } = readList();
+  const { list } = readSaved();
   const entry = list.find((r) => samePath(r.path, path));
   if (!entry) return;
   writeList(list, entry.path);
@@ -152,7 +160,7 @@ export function saveWorkingDir(path: string): void {
     addRepository(path);
     return;
   }
-  const { list } = readList();
+  const { list } = readSaved();
   writeList(list, "");
   notify();
 }

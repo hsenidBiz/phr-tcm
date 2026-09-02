@@ -18,7 +18,10 @@ import {
   workingDirSnapshot,
 } from "./workingDir";
 
-afterEach(() => localStorage.clear());
+afterEach(() => {
+  clearTourRepositories();
+  localStorage.clear();
+});
 
 test("unset reads as empty, and saving persists and notifies", () => {
   expect(loadWorkingDir()).toBe("");
@@ -117,4 +120,29 @@ test("a tour override hides the saved list without touching it", () => {
   expect(loadWorkingDir()).toBe("C:\\real\\project");
   un();
   expect(seen).toEqual(["C:\\Work\\website", "C:\\real\\project"]);
+});
+
+test("background writes during a tour land in the real list, not the sample", () => {
+  addRepository("C:\\real\\project");
+  setTourRepositories([{ path: "C:\\Work\\website", enabled: true }], "C:\\Work\\website");
+
+  // Simulate a background event (e.g., intake path) adding a new repository
+  // while the tour is active. The tour's view should not show it, but it
+  // should land in the saved list.
+  addRepository("C:\\real\\second-project");
+
+  // The tour's view is still the sample.
+  expect(repositoriesSnapshot()).toHaveLength(1);
+  expect(repositoriesSnapshot()[0].path).toBe("C:\\Work\\website");
+
+  // Clear the tour and verify the real list has both the pre-existing
+  // repository and the newly added one - no sample path persisted.
+  clearTourRepositories();
+  const saved = loadRepositories();
+  expect(saved).toHaveLength(2);
+  expect(saved.map((r) => r.path).sort()).toEqual([
+    "C:\\real\\project",
+    "C:\\real\\second-project",
+  ]);
+  expect(saved.every((r) => r.enabled)).toBe(true);
 });
