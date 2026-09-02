@@ -8,10 +8,9 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::ai_tools::{
-    atomic_write, command_dir, command_files, command_files_for, detect, is_installed,
-    legacy_command_path,
-    merge_entry, remove_entry, tcm_server, DetectedTool, McpServer, COMMAND_MARKER, DB_SERVER,
-    TOOL_SPECS,
+    atomic_write, command_dir, command_files_in, config_for, detect_in, is_installed,
+    legacy_command_path, merge_entry, project_command_dir, remove_entry, tcm_server,
+    DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, DB_SERVER, TCM_SERVER, TOOL_SPECS,
 };
 
 #[cfg(windows)]
@@ -40,20 +39,25 @@ fn is_on_path(cmd: &str) -> bool {
     command.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub fn detect_ai_tools() -> Vec<DetectedTool> {
-    detect(&home_dir(), &appdata_dir(), &is_on_path)
+/// A trimmed, non-empty working directory, or None.
+fn root_of(working_dir: Option<&str>) -> Option<&str> {
+    working_dir.map(str::trim).filter(|s| !s.is_empty())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn register_ai_tool(id: String) -> Result<(), String> {
+pub fn detect_ai_tools(working_dir: Option<String>) -> Vec<DetectedTool> {
+    detect_in(&home_dir(), &appdata_dir(), &is_on_path, root_of(working_dir.as_deref()))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn register_ai_tool(id: String, working_dir: Option<String>) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
         .to_string();
-    register_server(&id, &tcm_server(&exe))
+    register_server(&id, &tcm_server(&exe), working_dir.as_deref())
 }
 
 /// The company's SQL Server MCP server, registered beside ours so an
@@ -147,19 +151,66 @@ pub fn db_server_presets() -> Vec<DbPresetOut> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn register_db_server(id: String, config: DbServerConfig) -> Result<(), String> {
-    register_server(&id, &config.to_server()?)
+pub fn register_db_server(id: String, config: DbServerConfig, working_dir: Option<String>) -> Result<(), String> {
+    register_server(&id, &config.to_server()?, working_dir.as_deref())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn unregister_db_server(id: String) -> Result<(), String> {
-    unregister_server(&id, DB_SERVER)
+pub fn unregister_db_server(id: String, working_dir: Option<String>) -> Result<(), String> {
+    unregister_server(&id, DB_SERVER, working_dir.as_deref())
 }
 
-/// Shared by both servers: refuse a tool that isn't installed, then either
-/// shell out to the claude CLI or merge into the tool's JSON config.
-fn register_server(id: &str, server: &McpServer) -> Result<(), String> {
+/// The repository a registration for `spec` targets: a tool with a project
+/// config needs one and refuses without (the UI never offers that - the
+/// AI Bridge tab is gated on the repository); a tool without one ignores it.
+fn project_root<'a>(spec: &ToolSpec, working_dir: Option<&'a str>) -> Result<Option<&'a str>, String> {
+    match (spec.project_config, root_of(working_dir)) {
+        (Some(_), Some(r)) => Ok(Some(r)),
+        (Some(_), None) => Err(format!(
+            "pick a working repository first - {} registers per repository",
+            spec.name
+        )),
+        (None, _) => Ok(None),
+    }
+}
+
+/// Merge `server` into the JSON config at `path` (created if absent).
+fn merge_into_file(path: &std::path::Path, key: &str, server: &McpServer) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    let merged = merge_entry(&existing, key, server)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    atomic_write(path, &merged)
+}
+
+/// Remove `name` from the JSON config at `path`. Missing file or entry is
+/// a clean no-op - the state the caller asked for.
+fn remove_from_file(path: &std::path::Path, key: &str, name: &str) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    match remove_entry(&existing, key, name)? {
+        Some(updated) => atomic_write(path, &updated),
+        None => Ok(()),
+    }
+}
+
+/// Shared by both servers: refuse a tool that isn't installed, pick the
+/// repository or global target, then either shell out to the claude CLI
+/// or merge into the tool's JSON config. A repository registration also
+/// retires the app's own global copies - a user-scope server of the same
+/// name would shadow the project one, and `/tcm:*` twice in the picker is
+/// exactly the confusion per-repo scoping removes.
+fn register_server(id: &str, server: &McpServer, working_dir: Option<&str>) -> Result<(), String> {
     let spec = TOOL_SPECS
         .iter()
         .find(|s| s.id == id)
@@ -168,33 +219,58 @@ fn register_server(id: &str, server: &McpServer) -> Result<(), String> {
     if !is_installed(spec, &home_dir(), &appdata_dir(), &is_on_path) {
         return Err(format!("{} is not installed", spec.name));
     }
+    let root = project_root(spec, working_dir)?;
 
     if spec.id == "claude-code" {
-        register_claude_code(server)?;
-        // Best-effort, and deliberately after the server is in: a
-        // command pointing at tools that are not registered would be
-        // worse than no command. A failure here does not undo a
-        // registration that worked.
-        if server.name == crate::ai_tools::TCM_SERVER {
-            if let Err(e) = write_command() {
-                crate::applog::warn(format!("could not write the Claude Code command: {e}"));
+        // `project_root` guarantees Some for a tool with a project config.
+        let r = root.ok_or_else(|| "pick a working repository first".to_string())?;
+        register_claude_code_in(r, server)?;
+        if server.name == TCM_SERVER {
+            // Best-effort, and deliberately after the server is in: a
+            // command pointing at tools that are not registered would be
+            // worse than no command. A failure here does not undo a
+            // registration that worked.
+            if let Err(e) = write_commands_in(&project_command_dir(r), &[]) {
+                crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
             }
         }
+        if server.name == DB_SERVER {
+            // The connection string is in .mcp.json now; keep that file out
+            // of `git status` for this checkout (owner's decision - the
+            // repo's .gitignore is not ours to edit).
+            if let Err(e) = crate::workspace::exclude_locally(std::path::Path::new(r), ".mcp.json") {
+                crate::applog::warn(format!("could not exclude .mcp.json locally: {e}"));
+            }
+        }
+        retire_global(spec, &server.name);
         return Ok(());
     }
 
-    let config_path: PathBuf = (spec.config_path)(&home_dir(), &appdata_dir());
-    let existing = match std::fs::read_to_string(&config_path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
-        Err(e) => return Err(format!("failed to read {}: {e}", config_path.display())),
-    };
-    let merged = merge_entry(&existing, spec.entry_key, server)?;
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    let (config_path, key, _scope) = config_for(spec, &home_dir(), &appdata_dir(), root);
+    merge_into_file(&config_path, key, server)?;
+    if root.is_some() {
+        retire_global(spec, &server.name);
     }
-    atomic_write(&config_path, &merged)
+    Ok(())
+}
+
+/// Take the app's OWN global copy away once the repository carries it.
+/// Only managed names ever reach here, and command files are removed only
+/// when they carry our marker. Best-effort: the repository registration
+/// has already succeeded, and a global leftover is a nuisance, not a fault.
+fn retire_global(spec: &ToolSpec, server_name: &str) {
+    let result = if spec.id == "claude-code" {
+        if server_name == TCM_SERVER {
+            let _ = remove_commands_in(&command_dir(&home_dir()));
+        }
+        unregister_claude_code(server_name)
+    } else {
+        let (path, key, _) = config_for(spec, &home_dir(), &appdata_dir(), None);
+        remove_from_file(&path, key, server_name)
+    };
+    if let Err(e) = result {
+        crate::applog::warn(format!("could not retire the global {server_name} registration: {e}"));
+    }
 }
 
 /// Removes a server from the tool's config. No installed-guard: if a
@@ -202,86 +278,86 @@ fn register_server(id: &str, server: &McpServer) -> Result<(), String> {
 /// it is exactly what the user wants. Missing file/entry is a clean no-op.
 #[tauri::command]
 #[specta::specta]
-pub fn unregister_ai_tool(id: String) -> Result<(), String> {
-    unregister_server(&id, crate::ai_tools::TCM_SERVER)
+pub fn unregister_ai_tool(id: String, working_dir: Option<String>) -> Result<(), String> {
+    unregister_server(&id, TCM_SERVER, working_dir.as_deref())
 }
 
-fn unregister_server(id: &str, server_name: &str) -> Result<(), String> {
+/// Removes a server from the repository's config when one is set and the
+/// tool has such a config, else from the global one. No installed-guard:
+/// if a config still carries an entry after the tool was uninstalled,
+/// removing it is exactly what the user wants.
+fn unregister_server(id: &str, server_name: &str, working_dir: Option<&str>) -> Result<(), String> {
     let spec = TOOL_SPECS
         .iter()
         .find(|s| s.id == id)
         .ok_or_else(|| format!("unknown AI tool id: {id}"))?;
+    let root = match (spec.project_config, root_of(working_dir)) {
+        (Some(_), Some(r)) => Some(r),
+        _ => None,
+    };
 
     if spec.id == "claude-code" {
-        if server_name == crate::ai_tools::TCM_SERVER {
-            if let Err(e) = remove_command() {
-                crate::applog::warn(format!("could not remove the Claude Code command: {e}"));
+        return match root {
+            Some(r) => {
+                if server_name == TCM_SERVER {
+                    let _ = remove_commands_in(&project_command_dir(r));
+                }
+                unregister_claude_code_in(r, server_name)
             }
-        }
-        return unregister_claude_code(server_name);
+            None => {
+                if server_name == TCM_SERVER {
+                    let _ = remove_commands_in(&command_dir(&home_dir()));
+                }
+                unregister_claude_code(server_name)
+            }
+        };
     }
 
-    let config_path: PathBuf = (spec.config_path)(&home_dir(), &appdata_dir());
-    let existing = match std::fs::read_to_string(&config_path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("failed to read {}: {e}", config_path.display())),
-    };
-    match remove_entry(&existing, spec.entry_key, server_name)? {
-        Some(updated) => atomic_write(&config_path, &updated),
-        None => Ok(()),
-    }
+    let (config_path, key, _) = config_for(spec, &home_dir(), &appdata_dir(), root);
+    remove_from_file(&config_path, key, server_name)
 }
 
-/// Drop the commands next to the registration, so the whole tool set is in
-/// the picker under `tcm:` instead of a name somebody has to remember.
-///
-/// Refuses to overwrite a file this app did not write. The paths are
-/// predictable and shared with whatever else the user keeps in
-/// `~/.claude/commands`; replacing somebody's own command because it
-/// happens to sit under our name is not a trade to make on their behalf.
-/// Same rule the intake plan file follows.
-///
-/// One failure does not abandon the rest - a single unwritable file should
-/// cost that command, not all ten - but the first reason is reported.
-fn write_command() -> Result<(), String> {
-    write_commands_for(&[])
-}
-
-/// Bring `~/.claude/commands/tcm/` into line with which tools are on.
+/// Bring a command directory into line with which tools are on: the
+/// repository's when one is set, else the global one. A no-op unless the
+/// directory already exists - somebody who never registered should not
+/// acquire a command set because they changed an unrelated setting.
 ///
 /// Public so `set_bridge_context` can call it when the AI Bridge tab's
-/// toggles move. A no-op unless the directory already exists: somebody who
-/// never registered should not acquire a command set because they changed
-/// an unrelated setting.
-pub fn sync_commands(disabled: &[String]) {
-    if !command_dir(&home_dir()).is_dir() {
+/// toggles move.
+pub fn sync_commands(disabled: &[String], working_dir: Option<&str>) {
+    let dir = match root_of(working_dir) {
+        Some(r) => project_command_dir(r),
+        None => command_dir(&home_dir()),
+    };
+    if !dir.is_dir() {
         return;
     }
-    if let Err(e) = write_commands_for(disabled) {
+    if let Err(e) = write_commands_in(&dir, disabled) {
         crate::applog::warn(format!("could not sync the Claude Code commands: {e}"));
     }
 }
 
-fn write_commands_for(disabled: &[String]) -> Result<(), String> {
-    let home = home_dir();
-
-    // An earlier version wrote one top-level file. Leaving it would put
-    // `/tcm-testcases` in the picker beside the namespaced set, pointing at
-    // the same thing. Only ours is removed.
-    let legacy = legacy_command_path(&home);
-    if matches!(std::fs::read_to_string(&legacy), Ok(t) if t.contains(COMMAND_MARKER)) {
-        let _ = std::fs::remove_file(&legacy);
+/// Write the command set into `dir`, dropping ours for any tool that is
+/// switched off. Refuses to overwrite a file this app did not write - the
+/// paths are predictable and shared with whatever else the user keeps
+/// there. One failure does not abandon the rest, but the first reason is
+/// reported.
+fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), String> {
+    // An earlier version wrote one top-level GLOBAL file. Leaving it would
+    // put `/tcm-testcases` in the picker beside the namespaced set. Only
+    // ours, and only when writing the global set.
+    if dir == command_dir(&home_dir()) {
+        let legacy = legacy_command_path(&home_dir());
+        if matches!(std::fs::read_to_string(&legacy), Ok(t) if t.contains(COMMAND_MARKER)) {
+            let _ = std::fs::remove_file(&legacy);
+        }
     }
 
-    let dir = command_dir(&home);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
 
     // A tool switched off loses its command; switched back on, it returns.
-    // Only ours is removed - see the marker check below.
-    let wanted = command_files_for(&home, disabled);
-    for (path, _) in command_files(&home) {
+    let wanted = command_files_in(dir, disabled);
+    for (path, _) in command_files_in(dir, &[]) {
         let keep = wanted.iter().any(|(p, _)| *p == path);
         if !keep && matches!(std::fs::read_to_string(&path), Ok(t) if t.contains(COMMAND_MARKER)) {
             let _ = std::fs::remove_file(&path);
@@ -308,61 +384,70 @@ fn write_commands_for(disabled: &[String]) -> Result<(), String> {
     }
 }
 
-/// Take them away again with the registration - a command pointing at tools
-/// that are no longer connected is worse than none.
-fn remove_command() -> Result<(), String> {
-    let home = home_dir();
-    for path in command_files(&home)
-        .into_iter()
-        .map(|(p, _)| p)
-        .chain(std::iter::once(legacy_command_path(&home)))
-    {
-        // Ours only: a file at one of these paths that we did not write
-        // belongs to the user.
+/// Take a command set away with its registration - a command pointing at
+/// tools that are no longer connected is worse than none. Ours only.
+fn remove_commands_in(dir: &std::path::Path) -> Result<(), String> {
+    let mut paths: Vec<PathBuf> = command_files_in(dir, &[]).into_iter().map(|(p, _)| p).collect();
+    if dir == command_dir(&home_dir()) {
+        paths.push(legacy_command_path(&home_dir()));
+    }
+    for path in paths {
         if matches!(std::fs::read_to_string(&path), Ok(t) if t.contains(COMMAND_MARKER)) {
             let _ = std::fs::remove_file(&path);
         }
     }
     // Only if empty - `remove_dir` refuses otherwise, which is exactly the
     // guard wanted when the user has put something of their own in there.
-    let _ = std::fs::remove_dir(command_dir(&home));
+    let _ = std::fs::remove_dir(dir);
     Ok(())
 }
 
+// ------------------------------------------------------------ claude code
+
+/// User scope, as before per-repo scoping: still used to retire the app's
+/// old global entry. CLI first, PATH second, the config file last.
 fn unregister_claude_code(server_name: &str) -> Result<(), String> {
-    // Mirrors register: resolve the CLI, fall back to PATH, and failing
-    // both take the entry out of ~/.claude.json ourselves. A machine that
-    // could only be registered by the config route has to be
-    // unregisterable by it too, or Remove reports success and leaves the
-    // server in place.
     match claude_cli() {
-        Some(cli) => run_claude_mcp_remove(&cli, server_name),
-        None => match run_claude_mcp_remove(&PathBuf::from("claude"), server_name) {
+        Some(cli) => run_claude_mcp_remove(&cli, server_name, "user", None),
+        None => match run_claude_mcp_remove(&PathBuf::from("claude"), server_name, "user", None) {
             Ok(()) => Ok(()),
-            Err(_) => unregister_claude_code_via_config(server_name),
+            Err(_) => remove_from_file(
+                &PathBuf::from(home_dir()).join(".claude.json"),
+                "mcpServers",
+                server_name,
+            ),
         },
     }
 }
 
-fn unregister_claude_code_via_config(server_name: &str) -> Result<(), String> {
-    let path = PathBuf::from(home_dir()).join(".claude.json");
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        // Nothing to remove from is the state the user asked for.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
-    };
-    match remove_entry(&existing, "mcpServers", server_name)? {
-        Some(updated) => atomic_write(&path, &updated),
-        None => Ok(()),
+/// Project scope: `claude mcp remove --scope project` run INSIDE the repo
+/// (the CLI keys project scope on its cwd), falling back to editing
+/// `<repo>/.mcp.json` - the file that command would have edited.
+fn unregister_claude_code_in(root: &str, server_name: &str) -> Result<(), String> {
+    let cwd = std::path::Path::new(root);
+    let via_file = || remove_from_file(&cwd.join(".mcp.json"), "mcpServers", server_name);
+    match claude_cli() {
+        Some(cli) => run_claude_mcp_remove(&cli, server_name, "project", Some(cwd)).or_else(|_| via_file()),
+        None => match run_claude_mcp_remove(&PathBuf::from("claude"), server_name, "project", Some(cwd)) {
+            Ok(()) => Ok(()),
+            Err(_) => via_file(),
+        },
     }
 }
 
-fn run_claude_mcp_remove(cli: &std::path::Path, server_name: &str) -> Result<(), String> {
+fn run_claude_mcp_remove(
+    cli: &std::path::Path,
+    server_name: &str,
+    scope: &str,
+    cwd: Option<&std::path::Path>,
+) -> Result<(), String> {
     let mut command = Command::new("cmd");
     command.arg("/C");
     command.arg(cli);
-    command.args(["mcp", "remove", "--scope", "user", server_name]);
+    command.args(["mcp", "remove", "--scope", scope, server_name]);
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -396,37 +481,20 @@ fn claude_cli() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// Write the server straight into `~/.claude.json`, the file
-/// `claude mcp add --scope user` would have written.
-///
-/// The last resort, and the one that cannot fail for want of a CLI. Same
-/// `merge_entry` + `atomic_write` every other tool already registers
-/// through, so it preserves the rest of that file rather than replacing
-/// it - and `~/.claude.json` holds a great deal more than MCP servers.
-fn register_claude_code_via_config(server: &McpServer) -> Result<(), String> {
-    let path = PathBuf::from(home_dir()).join(".claude.json");
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
-        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
-    };
-    let updated = merge_entry(&existing, "mcpServers", server)?;
-    atomic_write(&path, &updated)
-}
-
-fn register_claude_code(server: &McpServer) -> Result<(), String> {
-    // Prefer the CLI - it owns the config's schema and will keep working
-    // if that schema moves - but only when we can name it absolutely.
+/// Project scope: `claude mcp add --scope project` run INSIDE the repo -
+/// the CLI writes `<cwd>/.mcp.json`. Prefer the CLI (it owns the schema),
+/// try PATH when it is not where the installers put it, and edit
+/// `<repo>/.mcp.json` ourselves as the last resort, with the same
+/// `merge_entry` every other tool registers through.
+fn register_claude_code_in(root: &str, server: &McpServer) -> Result<(), String> {
+    let cwd = std::path::Path::new(root);
+    let via_file = || merge_into_file(&cwd.join(".mcp.json"), "mcpServers", server);
     if let Some(cli) = claude_cli() {
-        return run_claude_mcp_add(&cli, server);
+        return run_claude_mcp_add(&cli, server, "project", Some(cwd)).or_else(|_| via_file());
     }
-    // No CLI where the installers put it. `claude` may still be on PATH
-    // for an install we do not know about; if it is not, edit the file
-    // ourselves rather than telling the user their working Claude Code
-    // is not there.
-    match run_claude_mcp_add(&PathBuf::from("claude"), server) {
+    match run_claude_mcp_add(&PathBuf::from("claude"), server, "project", Some(cwd)) {
         Ok(()) => Ok(()),
-        Err(_) => register_claude_code_via_config(server),
+        Err(_) => via_file(),
     }
 }
 
@@ -439,12 +507,12 @@ fn register_claude_code(server: &McpServer) -> Result<(), String> {
 /// too, and the CLI then bound the server binary to `name` and reported
 /// `missing required argument 'commandOrUrl'`. Only the database server
 /// sends env pairs, which is why registering it was the first to break.
-fn mcp_add_args(server: &McpServer) -> Vec<String> {
+fn mcp_add_args(server: &McpServer, scope: &str) -> Vec<String> {
     let mut args = vec![
         "mcp".into(),
         "add".into(),
         "--scope".into(),
-        "user".into(),
+        scope.into(),
         server.name.clone(),
     ];
     for (k, v) in &server.env {
@@ -457,13 +525,21 @@ fn mcp_add_args(server: &McpServer) -> Vec<String> {
     args
 }
 
-fn run_claude_mcp_add(cli: &std::path::Path, server: &McpServer) -> Result<(), String> {
+fn run_claude_mcp_add(
+    cli: &std::path::Path,
+    server: &McpServer,
+    scope: &str,
+    cwd: Option<&std::path::Path>,
+) -> Result<(), String> {
     // Still via `cmd /C`: the npm install is a `.cmd` shim, which cannot be
     // executed directly.
     let mut command = Command::new("cmd");
     command.arg("/C");
     command.arg(cli);
-    command.args(mcp_add_args(server));
+    command.args(mcp_add_args(server, scope));
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -500,7 +576,7 @@ mod tests {
             args: vec![],
             env,
         };
-        let args = mcp_add_args(&server);
+        let args = mcp_add_args(&server, "project");
 
         let name_at = args.iter().position(|a| a == "phr-db-mcp").unwrap();
         let first_env = args.iter().position(|a| a == "-e").unwrap();
@@ -521,8 +597,23 @@ mod tests {
             env: Default::default(),
         };
         assert_eq!(
-            mcp_add_args(&server),
+            mcp_add_args(&server, "user"),
             vec!["mcp", "add", "--scope", "user", "tcm-testcases", "--", "v2.exe", "--mcp"]
         );
+    }
+
+    /// A repository registration is `--scope project`, which the CLI keys
+    /// on its cwd - the caller runs it inside the repo (see
+    /// `run_claude_mcp_add`).
+    #[test]
+    fn a_repo_registration_asks_for_project_scope() {
+        let server = McpServer {
+            name: "tcm-testcases".to_string(),
+            command: "v2.exe".to_string(),
+            args: vec!["--mcp".to_string()],
+            env: Default::default(),
+        };
+        let args = mcp_add_args(&server, "project");
+        assert_eq!(&args[2..4], ["--scope", "project"]);
     }
 }

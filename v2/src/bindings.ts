@@ -450,16 +450,16 @@ export const commands = {
 	 *  bridge routes have defaults the AI never has to guess.
 	 */
 	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir }),
-	detectAiTools: () => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools"),
-	registerAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id })),
+	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
+	registerAiTool: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir })),
 	/**
 	 *  Removes a server from the tool's config. No installed-guard: if a
 	 *  config still carries an entry after the tool was uninstalled, removing
 	 *  it is exactly what the user wants. Missing file/entry is a clean no-op.
 	 */
-	unregisterAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id })),
-	registerDbServer: (id: string, config: DbServerConfig) => typedError<null, string>(__TAURI_INVOKE("register_db_server", { id, config })),
-	unregisterDbServer: (id: string) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id })),
+	unregisterAiTool: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id, workingDir })),
+	registerDbServer: (id: string, config: DbServerConfig, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("register_db_server", { id, config, workingDir })),
+	unregisterDbServer: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id, workingDir })),
 	/**  Create `<root>/.test-cases` if needed and return its path. */
 	ensureCasesDir: (root: string) => typedError<string, string>(__TAURI_INVOKE("ensure_cases_dir", { root })),
 	/**
@@ -703,6 +703,11 @@ export type DetectedTool = {
 	installed: boolean,
 	/**  Which of `MANAGED_SERVERS` this tool's config currently carries. */
 	registered_servers: string[],
+	/**
+	 *  "project" when this row reflects the working repository's config,
+	 *  "global" when the tool has none and the machine-wide config was read.
+	 */
+	scope: string,
 };
 
 /**

@@ -106,7 +106,7 @@ pub fn set_bridge_context(
     let mut last = LAST.lock().unwrap();
     if last.as_deref() != Some(disabled_tools.as_slice()) {
         *last = Some(disabled_tools.clone());
-        crate::commands::ai_tools::sync_commands(&disabled_tools);
+        crate::commands::ai_tools::sync_commands(&disabled_tools, working_dir.as_deref());
     }
 }
 
