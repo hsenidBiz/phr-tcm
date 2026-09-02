@@ -39,6 +39,13 @@ import {
   IconStopWatching,
 } from "../lib/actionIcons";
 
+/** Two spellings of the same file. Windows paths compare case-insensitively
+ * and either separator reaches us (the picker, a recent-imports entry, a
+ * path the copy command returned), so a plain `===` would miss a watch that
+ * is genuinely on the same file. */
+const samePath = (a: string, b: string) =>
+  a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase();
+
 export default function ImportFile({
   org,
   project,
@@ -383,6 +390,7 @@ export default function ImportFile({
       if (r.status === "error") throw new Error(r.error);
       return {
         path,
+        picked,
         copied,
         stamp: await commands.fileStamp(path),
         data: r.data,
@@ -393,7 +401,16 @@ export default function ImportFile({
     },
     onSuccess: (res) => {
       if (!res) return;
-      const { path, copied, stamp, data, comment } = res;
+      const { path, picked, copied, stamp, data, comment } = res;
+      // The copy is the file from here on, so a watch left on the ORIGINAL
+      // would keep feeding the queue from the download folder - two files
+      // claiming the same cases, and the one the assistant edits is not the
+      // one being followed. Only the entry goes; the cases stay, since the
+      // copy carries exactly the same ones.
+      if (copied) {
+        const stale = watches.filter((w) => samePath(w.path, picked));
+        if (stale.length > 0) dropWatch(stale, false);
+      }
       setQueue((q) => [...q, ...data.cases]);
       setWarnings(data.warnings);
       setReport(null);

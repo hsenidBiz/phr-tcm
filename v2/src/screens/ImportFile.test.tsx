@@ -541,6 +541,49 @@ test("a picked file is copied into the repo's .test-cases and imported from ther
   expect(watches[0].path).toBe("D:\\repo\\.test-cases\\cases.json");
 });
 
+/// Re-importing a file that is already being watched from OUTSIDE the repo:
+/// the copy takes over, so the watch on the original has to go with it -
+/// two files claiming the same cases, and the one the assistant edits is
+/// not the one being followed.
+test("copying on import stops watching the original file", async () => {
+  localStorage.setItem("tcm-v2-working-dir", "D:\\repo");
+  localStorage.setItem(
+    "tcm-v2-watch:acme/42",
+    JSON.stringify([
+      { path: "C:\\Downloads\\cases.json", stamp: "old", snapshot: [oneCase] },
+    ]),
+  );
+  const unwatched: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\cases.json";
+    if (cmd === "copy_into_cases") return "D:\\repo\\.test-cases\\cases.json";
+    if (cmd === "parse_import_file") return { cases: [oneCase], warnings: [] };
+    if (cmd === "file_stamp") return "abc";
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "watch_file") return null;
+    if (cmd === "unwatch_file") {
+      unwatched.push((args as { path: string }).path);
+      return null;
+    }
+    if (cmd === "unwatch_all_files") return null;
+    return [];
+  });
+  renderScreen();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Copied case");
+
+  await waitFor(() => {
+    const stored = JSON.parse(localStorage.getItem("tcm-v2-watch:acme/42") as string);
+    expect(stored.map((w: { path: string }) => w.path)).toEqual([
+      "D:\\repo\\.test-cases\\cases.json",
+    ]);
+  });
+  expect(unwatched).toContain("C:\\Downloads\\cases.json");
+});
+
 test("without a working repository the picked file is imported where it is", async () => {
   let copied = false;
   const parsed: string[] = [];

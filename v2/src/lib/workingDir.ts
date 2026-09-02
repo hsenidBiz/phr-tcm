@@ -24,7 +24,7 @@ export function saveWorkingDir(path: string): void {
     if (trimmed) localStorage.setItem(KEY, trimmed);
     else localStorage.removeItem(KEY);
   } catch {
-    // storage unavailable -> the choice lasts for this session only
+    // storage unavailable -> nothing is remembered; the tab will ask again
   }
   for (const l of listeners) l();
 }
