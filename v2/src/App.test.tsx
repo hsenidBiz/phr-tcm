@@ -534,19 +534,23 @@ test("the tour's queue is populated and the real draft is never touched", async 
 
     fireEvent.click(screen.getByText("Skip tour"));
     await screen.findByRole("heading", { name: "Manual Entry" });
-    expect(await screen.findByText(/Queue for PBI #99/)).toBeInTheDocument();
+    // The user's own queue is back - waited for, because the reload lands
+    // a render after the scope changes (which is precisely why the save
+    // has to sit that render out).
+    expect(await screen.findByText("My own queued case")).toBeInTheDocument();
+    expect(screen.getByText(/Queue for PBI #99/)).toBeInTheDocument();
+
+    // The sample queue was never saved anywhere...
+    expect(localStorage.getItem("tcm-v2-draft:Northwind/4821")).toBeNull();
+    // ...and the user's own draft came back exactly as it went in - at no
+    // point did it hold anything else. Asserted with the spies still on,
+    // so a late write would be caught too.
+    expect(localStorage.getItem(REAL_KEY)).toBe(raw);
+    for (const v of writes) expect(v).toBe(raw);
   } finally {
     spy.mockRestore();
     rmSpy.mockRestore();
   }
-
-  // The sample queue was never saved anywhere...
-  expect(localStorage.getItem("tcm-v2-draft:Northwind/4821")).toBeNull();
-  // ...and the user's own draft came back exactly as it went in - at no
-  // point did it hold anything else.
-  expect(localStorage.getItem(REAL_KEY)).toBe(raw);
-  for (const v of writes) expect(v).toBe(raw);
-  expect(screen.getByText("My own queued case")).toBeInTheDocument();
 });
 
 test("the tour shows sample data, then hands the app back untouched", async () => {
