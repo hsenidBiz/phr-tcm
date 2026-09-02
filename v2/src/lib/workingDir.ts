@@ -47,9 +47,10 @@ function writeList(list: Repository[], current: string): void {
 }
 
 /** The saved list from storage, migrating a pre-list single value into its first entry
- * (enabled and current) so nobody loses the repository they had set. Used by all reads
- * and by mutators: readers see the tour override via readList(), writers always use
- * this to ensure tour sample data never persists to disk. */
+ * (enabled and current) so nobody loses the repository they had set. What is ON DISK,
+ * never the tour's override - this is the MUTATORS' way in, so a write during the tour
+ * edits the user's real list and cannot persist sample data. Readers go through
+ * `readList()`, which is where the override is applied. */
 function readSaved(): { list: Repository[]; current: string } {
   try {
     const raw = localStorage.getItem(LIST_KEY);

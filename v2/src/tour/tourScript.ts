@@ -114,7 +114,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     where: cases("ai"),
     anchor: "ai-repos",
-    title: "Working folders",
+    title: "Working repositories",
     body: "Point the app at the folder your project lives in. Cases written or imported for it are kept there.",
   },
   {
