@@ -438,6 +438,13 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   expect(screen.queryByText(/Guest checkout/)).not.toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem("tcm-v2-prefs")!).org).toBe("acme");
   expect(localStorage.getItem("tcm-v2-repositories")).toBeNull();
+  // Update Test Cases (the screen this walk ends on) reads its own
+  // module/preconditions field refs straight from org/project props, not
+  // through anything App gates - the guard has to be in saveFieldPrefs
+  // itself, and this proves it held from here too. (A real
+  // tcm-v2-fields:acme/Payments entry is fine - that one was written for
+  // the actual scope, before the tour ever started.)
+  expect(localStorage.getItem("tcm-v2-fields:Northwind/Website")).toBeNull();
 });
 
 test("the app is locked while the tour runs", async () => {

@@ -1,4 +1,5 @@
 import type { FieldRef } from "../bindings";
+import { tourRunningSnapshot } from "../tour/tourState";
 
 /** Org-specific module/preconditions reference names, per project. */
 export type FieldPrefs = {
@@ -20,6 +21,12 @@ export function loadFieldPrefs(org: string, project: string): FieldPrefs | null 
 }
 
 export function saveFieldPrefs(org: string, project: string, prefs: FieldPrefs) {
+  // The tour shows a made-up project - whatever it auto-picks for Module
+  // and Preconditions must not sit on disk under that project's name once
+  // the tour is gone. Every caller runs through here, so guarding this one
+  // spot covers all of them, present and future - no second write path to
+  // remember.
+  if (tourRunningSnapshot()) return;
   try {
     localStorage.setItem(key(org, project), JSON.stringify(prefs));
   } catch {
