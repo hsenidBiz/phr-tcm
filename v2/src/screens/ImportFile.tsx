@@ -8,6 +8,7 @@ import {
   recordRecentImport,
 } from "../lib/recentImports";
 import { commands, events, type PbiHit, type SharedQueue } from "../bindings";
+import { CASES_DIR, isInsideCasesDir, loadWorkingDir } from "../lib/workingDir";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import GeneralComments from "../components/GeneralComments";
 import QueueSection from "../components/QueueSection";
@@ -358,17 +359,31 @@ export default function ImportFile({
     // dialog. Absent: the Import button's normal picker flow.
     mutationFn: async (givenPath: string | undefined) => {
       // JSON is the import format (the AI round-trip file exports produce).
-      const path =
+      const picked =
         givenPath ??
         (await open({
           multiple: false,
           filters: [{ name: "Test cases (JSON)", extensions: ["json"] }],
         }));
-      if (typeof path !== "string") return null;
+      if (typeof picked !== "string") return null;
+      // With a working repository set, the repo's .test-cases folder is
+      // where files live: a pick from anywhere else is copied in, and the
+      // COPY is what gets parsed, remembered and watched - so an assistant
+      // editing "the file" edits the one the app is following.
+      const root = loadWorkingDir();
+      let path = picked;
+      let copied = false;
+      if (root && !isInsideCasesDir(root, picked)) {
+        const c = await commands.copyIntoCases(root, picked);
+        if (c.status === "error") throw new Error(c.error);
+        path = c.data;
+        copied = path !== picked;
+      }
       const r = await commands.parseImportFile(path);
       if (r.status === "error") throw new Error(r.error);
       return {
         path,
+        copied,
         stamp: await commands.fileStamp(path),
         data: r.data,
         // Whatever the file already says about the set as a whole - very
@@ -378,7 +393,7 @@ export default function ImportFile({
     },
     onSuccess: (res) => {
       if (!res) return;
-      const { path, stamp, data, comment } = res;
+      const { path, copied, stamp, data, comment } = res;
       setQueue((q) => [...q, ...data.cases]);
       setWarnings(data.warnings);
       setReport(null);
@@ -390,7 +405,8 @@ export default function ImportFile({
         setWatches((prev) => upsertWatch(prev, { path, stamp, snapshot: data.cases, comment }));
       toast.success(
         `Imported ${data.cases.length} case${data.cases.length === 1 ? "" : "s"}` +
-          (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : ""),
+          (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : "") +
+          (copied ? ` - copied into ${CASES_DIR}` : ""),
       );
     },
     // A recent whose file is gone (or unreadable) is not worth offering

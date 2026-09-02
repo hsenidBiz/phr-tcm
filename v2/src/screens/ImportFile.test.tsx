@@ -496,3 +496,76 @@ test("a watch stored before multi-file support still loads", async () => {
 
   expect(await screen.findByText("cases.json")).toBeInTheDocument();
 });
+
+// ---------------------------------------------------------------------
+// Per-repo workspace: with a working repository set, a picked file is
+// copied into its .test-cases folder before it is parsed/watched.
+
+const oneCase = {
+  title: "Copied case", steps: [{ action: "A", expected: "" }], tags: "",
+  automation_status: "Not Automated", module_value: "", preconditions: "", update_id: null,
+};
+
+/// With a working repository set, a picked file is copied into its
+/// .test-cases folder and THAT copy is what gets parsed and watched - the
+/// repo, not wherever the file happened to be, is the source of truth.
+test("a picked file is copied into the repo's .test-cases and imported from there", async () => {
+  localStorage.setItem("tcm-v2-working-dir", "D:\\repo");
+  let copyArgs: unknown;
+  const parsed: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\cases.json";
+    if (cmd === "copy_into_cases") {
+      copyArgs = args;
+      return "D:\\repo\\.test-cases\\cases.json";
+    }
+    if (cmd === "parse_import_file") {
+      parsed.push((args as { path: string }).path);
+      return { cases: [oneCase], warnings: [] };
+    }
+    if (cmd === "file_stamp") return "abc";
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "watch_file") return null;
+    if (cmd === "unwatch_all_files") return null;
+    return [];
+  });
+  renderScreen();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Copied case");
+  expect(copyArgs).toMatchObject({ root: "D:\\repo", source: "C:\\Downloads\\cases.json" });
+  expect(parsed).toEqual(["D:\\repo\\.test-cases\\cases.json"]);
+  const watches = JSON.parse(localStorage.getItem("tcm-v2-watch:acme/42") as string);
+  expect(watches[0].path).toBe("D:\\repo\\.test-cases\\cases.json");
+});
+
+test("without a working repository the picked file is imported where it is", async () => {
+  let copied = false;
+  const parsed: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\cases.json";
+    if (cmd === "copy_into_cases") {
+      copied = true;
+      return "never";
+    }
+    if (cmd === "parse_import_file") {
+      parsed.push((args as { path: string }).path);
+      return { cases: [oneCase], warnings: [] };
+    }
+    if (cmd === "file_stamp") return "abc";
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "watch_file") return null;
+    if (cmd === "unwatch_all_files") return null;
+    return [];
+  });
+  renderScreen();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Copied case");
+  expect(copied).toBe(false);
+  expect(parsed).toEqual(["C:\\Downloads\\cases.json"]);
+});
