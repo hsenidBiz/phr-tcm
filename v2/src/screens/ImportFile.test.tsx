@@ -647,3 +647,70 @@ test("without a working repository the picked file is imported where it is", asy
   expect(copied).toBe(false);
   expect(parsed).toEqual(["C:\\Downloads\\cases.json"]);
 });
+
+/// Field report: an assistant saved twice, and the first save's changes
+/// vanished from the panel - they were only visible again at review time.
+/// Changes now pile up until the user clears them by hand.
+test("a second save adds to the report instead of replacing it", async () => {
+  seedWatchedImport();
+  let contents: unknown[] = [jsonCase("Login works")];
+  let stamp = "stamp-1";
+  mockIPC((cmd) => {
+    if (cmd === "file_stamp") return stamp;
+    if (cmd === "watch_file") return null;
+    if (cmd === "unwatch_file") return null;
+    if (cmd === "unwatch_all_files") return null;
+    if (cmd === "parse_import_file") return { cases: contents, warnings: [] };
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  }, { shouldMockEvents: true });
+  renderScreen();
+  await screen.findByText("cases.json");
+
+  // First save: the existing case grows a step.
+  contents = [
+    jsonCase("Login works", {
+      steps: [{ action: "do", expected: "ok" }, { action: "then", expected: "done" }],
+    }),
+  ];
+  stamp = "stamp-2";
+  await act(async () => {
+    await fileChanged("stamp-2");
+  });
+  expect(await screen.findByText(/~1 changed/)).toBeInTheDocument();
+
+  // Second save: a brand new case. The first save's change is STILL there.
+  contents = [
+    jsonCase("Login works", {
+      steps: [{ action: "do", expected: "ok" }, { action: "then", expected: "done" }],
+    }),
+    jsonCase("Login rejects a bad password"),
+  ];
+  stamp = "stamp-3";
+  await act(async () => {
+    await fileChanged("stamp-3");
+  });
+  expect(await screen.findByText(/\+1 added/)).toBeInTheDocument();
+  expect(screen.getByText(/~1 changed/)).toBeInTheDocument();
+
+  // The X is the only thing that clears them.
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss the change report" }));
+  expect(screen.queryByText(/~1 changed/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/\+1 added/)).not.toBeInTheDocument();
+
+  // And the next save starts a fresh report, not the old pile.
+  contents = [
+    jsonCase("Login works", {
+      steps: [{ action: "do", expected: "ok" }, { action: "then", expected: "done" }],
+    }),
+    jsonCase("Login rejects a bad password"),
+    jsonCase("Login locks after five tries"),
+  ];
+  stamp = "stamp-4";
+  await act(async () => {
+    await fileChanged("stamp-4");
+  });
+  expect(await screen.findByText(/\+1 added/)).toBeInTheDocument();
+  expect(screen.queryByText(/~1 changed/)).not.toBeInTheDocument();
+});

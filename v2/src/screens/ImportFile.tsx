@@ -7,7 +7,7 @@ import {
   loadRecentImports,
   recordRecentImport,
 } from "../lib/recentImports";
-import { commands, events, type PbiHit, type SharedQueue } from "../bindings";
+import { commands, events, type PbiHit, type SharedQueue, type TestCase } from "../bindings";
 import { CASES_DIR, isInsideCasesDir, loadWorkingDir } from "../lib/workingDir";
 import PickPbiEmpty from "../components/PickPbiEmpty";
 import GeneralComments from "../components/GeneralComments";
@@ -80,13 +80,24 @@ export default function ImportFile({
   // any of them flows straight through. Persisted per PBI, so leaving the
   // tab (or the app) doesn't stop the watches.
   const [watches, setWatchesState] = useState<WatchedFile[]>([]);
-  const [report, setReport] = useState<{
-    changes: SyncChange[];
-    file: string;
-    warnings: number;
-    /** The sync landed in an empty queue - a load, not an edit. */
-    intoEmpty?: boolean;
-  } | null>(null);
+  // What each watched file has done to the queue since the user last
+  // cleared it. Piles up on purpose: an assistant saving three times in a
+  // row used to leave only the third save visible, and the earlier edits
+  // could then only be found by diffing the file by hand. The X on the
+  // panel is the only thing that clears one.
+  const [reports, setReports] = useState<
+    {
+      path: string;
+      file: string;
+      /** The queue and the file's contents when this pile started - what
+       * the accumulated changes are measured against. */
+      baseQueue: TestCase[];
+      baseSnapshot: TestCase[];
+      changes: SyncChange[];
+      warnings: number;
+      intoEmpty: boolean;
+    }[]
+  >([]);
   // The watches the user asked to drop, pending the "and their cases?"
   // answer. A list rather than one file so Stop and Remove all go through
   // the same confirmation - the question is identical, only the count
@@ -111,7 +122,7 @@ export default function ImportFile({
   // Scope switch -> that PBI's watches, and drop a report about the old one.
   useEffect(() => {
     setWatchesState(pbiId != null ? loadWatches(org, pbiId) : []);
-    setReport(null);
+    setReports([]);
     setDropping(null);
   }, [org, pbiId]);
 
@@ -255,11 +266,33 @@ export default function ImportFile({
         // Report a save that produced only warnings too - a draft that
         // stopped being valid is exactly what someone needs to hear about.
         if (synced.changes.length > 0 || r.data.warnings.length > 0) {
-          setReport({
-            changes: synced.changes,
-            file: fileName(stale.path),
-            warnings: r.data.warnings.length,
-            intoEmpty: wasEmpty,
+          setReports((prev) => {
+            const open = prev.find((x) => x.path === stale.path);
+            // A pile that is already open keeps its baselines, so the panel
+            // shows everything since the user last cleared it - not just
+            // this save.
+            const baseQueue = open?.baseQueue ?? queueRef.current;
+            const baseSnapshot = open?.baseSnapshot ?? stale.snapshot;
+            const entry = {
+              path: stale.path,
+              file: fileName(stale.path),
+              baseQueue,
+              baseSnapshot,
+              // The whole point: measured from the baseline, not from the
+              // previous save. syncFromFile's queue and snapshot outputs
+              // are not used here - the queue above already synced.
+              changes: syncFromFile(baseQueue, baseSnapshot, r.data.cases).changes,
+              warnings: r.data.warnings.length,
+              intoEmpty: baseQueue.length === 0,
+            };
+            // An edit that puts the file back the way it started leaves
+            // nothing to report - the pile goes rather than showing zero.
+            if (entry.changes.length === 0 && entry.warnings === 0) {
+              return prev.filter((x) => x.path !== stale.path);
+            }
+            return open
+              ? prev.map((x) => (x.path === stale.path ? entry : x))
+              : [...prev, entry];
           });
           // The whole point of watching a file is that an assistant can
           // edit it while you are somewhere else. If the app is behind
@@ -305,7 +338,10 @@ export default function ImportFile({
     };
   }, [setWatches]);
 
-  const dismissReport = useCallback(() => setReport(null), []);
+  const dismissReport = useCallback(
+    (path: string) => setReports((prev) => prev.filter((r) => r.path !== path)),
+    [],
+  );
 
   /** Stop following these files, optionally taking their cases with them.
    *
@@ -336,13 +372,15 @@ export default function ImportFile({
   // Rows the last sync touched, so the queue itself shows where the change
   // landed rather than only naming it in the banner.
   const flash = useMemo(() => {
-    if (!report) return undefined;
+    if (reports.length === 0) return undefined;
     const m: Record<string, "added" | "changed"> = {};
-    for (const c of report.changes) {
-      if (c.kind !== "removed") m[c.key] = c.kind;
+    for (const r of reports) {
+      for (const c of r.changes) {
+        if (c.kind !== "removed") m[c.key] = c.kind;
+      }
     }
     return m;
-  }, [report]);
+  }, [reports]);
 
   useEffect(() => {
     if (!pendingFor || pbi?.id !== pendingFor.pbiId) return;
@@ -448,7 +486,7 @@ export default function ImportFile({
       }
       setQueue((q) => [...q, ...data.cases]);
       setWarnings(data.warnings);
-      setReport(null);
+      setReports([]);
       setRecents(recordRecentImport(path));
       // From here on, edits to this file land in the queue by themselves.
       // Re-importing the same file replaces its entry rather than adding a
@@ -562,15 +600,16 @@ export default function ImportFile({
             }
           />
         )}
-        {report && (
+        {reports.map((r) => (
           <SyncReport
-            changes={report.changes}
-            fileName={report.file}
-            warnings={report.warnings}
-            intoEmptyQueue={report.intoEmpty}
-            onDismiss={dismissReport}
+            key={r.path}
+            changes={r.changes}
+            fileName={r.file}
+            warnings={r.warnings}
+            intoEmptyQueue={r.intoEmpty}
+            onDismiss={() => dismissReport(r.path)}
           />
-        )}
+        ))}
         <div className="space-y-1 border-t border-border/60 pt-3">
           <p className="text-xs text-muted">
             Paste a share link a teammate sent you. Links are one-time use -
@@ -622,7 +661,7 @@ export default function ImportFile({
         // per-file general comments, which were notes for that review.
         onQueueCleared={() => {
           if (watches.length > 0) dropWatch(watches, false);
-          setReport(null);
+          setReports([]);
         }}
         // A bulk change was written into a watched file: move the watch's
         // fingerprint and snapshot forward so the watcher stays silent
