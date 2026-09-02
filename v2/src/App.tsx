@@ -1,7 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
-import { lazy, Suspense, useEffect, useRef, useState, type ComponentType, useSyncExternalStore } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  useSyncExternalStore,
+} from "react";
 import { Toaster, toast } from "sonner";
 import { commands, events, type PbiHit, type PlanWithSuites } from "./bindings";
 import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
@@ -22,8 +31,13 @@ import {
 } from "./lib/workAlerts";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
-import { subscribeWorkingDir, workingDirSnapshot } from "./lib/workingDir";
-import { cacheEntry, claimCacheFor } from "./lib/localCache";
+import {
+  clearTourRepositories,
+  setTourRepositories,
+  subscribeWorkingDir,
+  workingDirSnapshot,
+} from "./lib/workingDir";
+import { cacheEntry, claimCacheFor, suspendCache } from "./lib/localCache";
 import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
@@ -42,7 +56,10 @@ import ContextBar from "./components/ContextBar";
 import Sidebar, { AUTO_RUN_ENABLED, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
-import { START_TOUR_EVENT, tourDone } from "./tour/tourState";
+import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
+import { TOUR_ORG, TOUR_PBI, TOUR_PROJECT, TOUR_REPO_PATH } from "./tour/tourData";
+import type { TourWhere } from "./tour/tourScript";
+import { START_TOUR_EVENT, setTourRunning, tourDone, tourRunningSnapshot } from "./tour/tourState";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
 import { logUi } from "./lib/uiLog";
@@ -139,6 +156,89 @@ export default function App() {
     null,
   );
 
+  // First-run walkthrough: opens once after the first sign-in, and again
+  // whenever Settings asks for it. While it is up the app runs on sample
+  // data, saves nothing, and cannot be touched. Declared here, ahead of
+  // every other effect in this component, because several of them gate on
+  // `tourOpen` and a hook cannot read a binding declared after itself.
+  const [tourOpen, setTourOpen] = useState(false);
+  // A throw-away cache for the toured screens: the sample data never
+  // mixes with the real one, and dies with the tour.
+  const [tourQc, setTourQc] = useState<QueryClient | null>(null);
+  // Where the user was before the tour took over.
+  const before = useRef<{
+    section: Section;
+    org: string;
+    project: string;
+    pbi: PbiHit | null;
+    workMode: boolean;
+    workSection: WorkSection;
+  } | null>(null);
+  // Read inside stable callbacks, so starting the tour does not depend on
+  // a fresh closure over six pieces of state.
+  const ctx = useRef({ section, org, project, pbi, workMode, workSection });
+  ctx.current = { section, org, project, pbi, workMode, workSection };
+
+  const startTour = useCallback(() => {
+    if (before.current) return; // already running
+    before.current = { ...ctx.current };
+    suspendCache(true);
+    installTourBackend();
+    setTourRepositories([{ path: TOUR_REPO_PATH, enabled: true }], TOUR_REPO_PATH);
+    setTourQc(
+      new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } }),
+    );
+    setOrgRaw(TOUR_ORG);
+    setProjectRaw(TOUR_PROJECT);
+    setPbiRaw(TOUR_PBI);
+    setTourRunning(true);
+    setTourOpen(true);
+  }, []);
+
+  const endTour = useCallback(() => {
+    const back = before.current;
+    before.current = null;
+    setTourOpen(false);
+    setTourRunning(false);
+    restoreTourBackend();
+    clearTourRepositories();
+    suspendCache(false);
+    setTourQc(null);
+    if (!back) return;
+    setOrgRaw(back.org);
+    setProjectRaw(back.project);
+    setPbiRaw(back.pbi);
+    setSection(back.section);
+    setWorkMode(back.workMode);
+    setWorkSection(back.workSection);
+    setCaseSelection(null);
+  }, []);
+
+  // Each stop says where it lives; take the app there.
+  const tourNavigate = useCallback((where: TourWhere | undefined) => {
+    if (!where) return;
+    if (where.area === "cases") {
+      setWorkMode(false);
+      setCaseSelection(null);
+      setSection(where.section);
+    } else {
+      setWorkMode(true);
+      setWorkSection(where.workSection);
+    }
+  }, []);
+
+  // A tour that is still up when the window goes away must not leave the
+  // stand-ins installed for whatever mounts next.
+  useEffect(
+    () => () => {
+      restoreTourBackend();
+      clearTourRepositories();
+      suspendCache(false);
+      setTourRunning(false);
+    },
+    [],
+  );
+
   useEffect(() => initTheme(), []);
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
@@ -152,6 +252,7 @@ export default function App() {
       ["manual", "import", "edit", "view", "run", "autorun", "suites", "ai"] as Section[]
     ).filter((s) => s !== "autorun" || AUTO_RUN_ENABLED);
     const onKey = (e: KeyboardEvent) => {
+      if (tourRunningSnapshot()) return; // the tour drives, not the keyboard
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();
@@ -180,10 +281,12 @@ export default function App() {
     };
   }, []);
 
-  // One writer for all prefs so no path forgets to persist.
+  // One writer for all prefs so no path forgets to persist. Silent during
+  // the tour: the sample scope is not the user's, and must not outlive it.
   useEffect(() => {
+    if (tourOpen) return;
     savePrefs({ org, project, section, pbi, workMode });
-  }, [org, project, section, pbi, workMode]);
+  }, [org, project, section, pbi, workMode, tourOpen]);
 
   // Changing scope drops the case selection too. It is a list of work item
   // ids handed over from Test Suites, and ids mean nothing in a different
@@ -400,6 +503,7 @@ export default function App() {
   // bridge learns of a change the moment the AI Bridge tab makes it.
   const workingDir = useSyncExternalStore(subscribeWorkingDir, workingDirSnapshot);
   useEffect(() => {
+    if (tourOpen) return;
     if (!signedIn || !org || !project) return;
     commands
       .bridgeStatus()
@@ -422,6 +526,7 @@ export default function App() {
     bridgePrefs.preconditionsRef,
     disabledTools,
     workingDir,
+    tourOpen,
   ]);
 
   // Delete permission, asked ONCE at sign-in per org/project rather than
@@ -443,9 +548,10 @@ export default function App() {
   // emits; the choice of toast vs Windows notification is made here,
   // because "can the user see the app" is a frontend question.
   useEffect(() => {
+    if (tourOpen) return;
     if (!signedIn || !org || !project) return;
     commands.watchAssignedWork(org, project).catch(() => {});
-  }, [signedIn, org, project]);
+  }, [signedIn, org, project, tourOpen]);
 
   useEffect(() => {
     const un = events.workAssigned.listen((e) => {
@@ -488,23 +594,25 @@ export default function App() {
   }, []);
 
   // First-run walkthrough: opens once after the first sign-in, and again
-  // whenever Settings fires the start-tour event.
-  const [tourOpen, setTourOpen] = useState(false);
+  // whenever Settings asks for it (see the tour state block declared with
+  // the rest of App's own state, above, for why `tourOpen` has to exist
+  // before every effect that gates on it).
   useEffect(() => {
     if (signedIn && !tourDone()) {
-      const t = setTimeout(() => setTourOpen(true), 800);
+      const t = setTimeout(startTour, 800);
       return () => clearTimeout(t);
     }
-  }, [signedIn]);
+  }, [signedIn, startTour]);
+
   useEffect(() => {
-    const start = () => setTourOpen(true);
-    window.addEventListener(START_TOUR_EVENT, start);
-    return () => window.removeEventListener(START_TOUR_EVENT, start);
-  }, []);
+    window.addEventListener(START_TOUR_EVENT, startTour);
+    return () => window.removeEventListener(START_TOUR_EVENT, startTour);
+  }, [startTour]);
 
   // Warm the Test Suites data in the background so the screen is ready
   // when the user navigates there (same key/staleTime as the screen).
   useEffect(() => {
+    if (tourOpen) return;
     if (!signedIn || !org || !project) return;
     const key = `plans-suites:${org}/${project}`;
     // A fresh disk seed means the screen already has its data - warming
@@ -525,7 +633,7 @@ export default function App() {
       // after 5 minutes and the screen loads from scratch again.
       gcTime: 60 * 60_000,
     });
-  }, [signedIn, org, project, qc]);
+  }, [signedIn, org, project, qc, tourOpen]);
 
   // Warm Run Tests: resolve the PBI's suite via the READ-ONLY finder
   // (never creates a plan/suite - creation stays on the Run screen),
@@ -570,6 +678,7 @@ export default function App() {
   }, [signedIn, org, pbiId]);
 
   useEffect(() => {
+    if (tourOpen) return;
     if (!signedIn || !org || !project || pbiId == null) return;
     const suiteKey = `tcm-v2-suite:${org}/${pbiId}`;
     (async () => {
@@ -628,7 +737,7 @@ export default function App() {
         gcTime: 30 * 60_000,
       });
     })();
-  }, [signedIn, org, project, pbiId, qc]);
+  }, [signedIn, org, project, pbiId, qc, tourOpen]);
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
@@ -649,11 +758,10 @@ export default function App() {
       <TitleBar
         title={(workMode ? "Work Manager" : "Test Case Manager") + (DEV_TOOLS ? " — DEV" : "")}
       />
-      {tourOpen && signedIn && (
-        <UiTour onNavigate={() => {}} onClose={() => setTourOpen(false)} />
-      )}
+      {tourOpen && signedIn && <UiTour onNavigate={tourNavigate} onClose={endTour} />}
 
-      <div className="flex min-h-0 flex-1">
+      <QueryClientProvider client={tourQc ?? qc}>
+      <div className="flex min-h-0 flex-1" inert={tourOpen}>
       {/* Work Manager swaps the rail's contents: its own sections (Pull
           Requests first, then the board) instead of the test-case tabs. */}
       {signedIn &&
@@ -877,6 +985,7 @@ export default function App() {
         </main>
       </div>
       </div>
+      </QueryClientProvider>
 
       {changelog && <ChangelogModal entries={changelog} onClose={dismissChangelog} />}
 

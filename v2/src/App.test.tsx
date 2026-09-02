@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
+import { START_TOUR_EVENT } from "./tour/tourState";
+import { commands } from "./bindings";
 
 afterEach(() => {
   clearMocks();
@@ -394,4 +396,72 @@ test("a failed update check shows no banner", async () => {
   await screen.findByRole("button", { name: /sign in/i });
   expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
   expect(screen.queryByText(/Could not reach/)).not.toBeInTheDocument();
+});
+
+/** The tour has to be visibly running before we assert on it. */
+async function startTour() {
+  await act(async () => {
+    window.dispatchEvent(new Event(START_TOUR_EVENT));
+  });
+  await screen.findByRole("dialog", { name: "Interface tour" });
+}
+
+test("the tour shows sample data, then hands the app back untouched", async () => {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Payments", section: "manual", pbi: null, workMode: false }),
+  );
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
+    if (cmd === "list_plans_with_suites") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  const realOrgs = commands.listOrgs;
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  await startTour();
+  // Walk to the seventh stop (Update Test Cases), where the sample cases
+  // are on screen: welcome, scope, item, form, batch, import, update.
+  for (let i = 0; i < 6; i++) {
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  }
+  expect(await screen.findByRole("heading", { name: "Update Test Cases" })).toBeInTheDocument();
+  expect(await screen.findByText(/Guest checkout - a guest can pay by card/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Skip tour"));
+
+  // Everything is back: real calls, real scope, and the saved context was
+  // never overwritten with the sample one.
+  expect(commands.listOrgs).toBe(realOrgs);
+  expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+  expect(screen.queryByText(/Guest checkout/)).not.toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("tcm-v2-prefs")!).org).toBe("acme");
+  expect(localStorage.getItem("tcm-v2-repositories")).toBeNull();
+});
+
+test("the app is locked while the tour runs", async () => {
+  signedInMocks((cmd) => {
+    if (cmd === "list_plans_with_suites") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await startTour();
+
+  // The shell is inert, so nothing under the overlay can be reached.
+  const nav = screen.getByRole("navigation");
+  expect(nav.closest("[inert]")).not.toBeNull();
+
+  // And the tab shortcuts are off: Ctrl+2 would normally open Import File.
+  await act(async () => {
+    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+  });
+  expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Skip tour"));
+  await act(async () => {
+    fireEvent.keyDown(window, { key: "2", ctrlKey: true });
+  });
+  expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
 });

@@ -8,6 +8,7 @@ import AstryxIsland from "./AstryxIsland";
 import { unwrap } from "../lib/ipc";
 import { cached } from "../lib/localCache";
 import { getTheme, setTheme } from "../lib/theme";
+import { tourRunningSnapshot } from "../tour/tourState";
 import type { Section } from "./Sidebar";
 
 export default function CommandPalette({
@@ -26,6 +27,7 @@ export default function CommandPalette({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (tourRunningSnapshot()) return;
       if (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setOpen((o) => !o);
