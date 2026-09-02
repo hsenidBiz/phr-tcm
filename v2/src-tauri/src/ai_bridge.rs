@@ -544,6 +544,32 @@ async fn begin_writing(
     };
     let modules: Vec<String> = allowed.known().to_vec();
 
+    // No repository, no job: the whole point of the intake is agreeing
+    // where the file goes, and that place is now `<repo>/.test-cases`.
+    let root = ctx
+        .working_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
+    let Some(root) = root else {
+        return (
+            409,
+            serde_json::json!({
+                "status": "blocked",
+                "error": "No working repository is set in Test Case Manager. Ask the developer to open the AI Bridge tab and pick the repository these cases belong to, then call this tool again.",
+            })
+            .to_string(),
+        );
+    };
+    let cases_dir = match crate::workspace::ensure_cases_dir(&root) {
+        Ok(d) => d,
+        Err(e) => {
+            return (500, serde_json::json!({ "status": "error", "error": e }).to_string());
+        }
+    };
+    let cases_dir_str = cases_dir.to_string_lossy().to_string();
+
     // Phase 1: nothing sent, so hand back the questions.
     if body.trim().is_empty() || body.trim() == "{}" {
         return (
@@ -551,11 +577,13 @@ async fn begin_writing(
             serde_json::json!({
                 "status": "questions",
                 "feature": feature,
-                "ask_the_developer": crate::intake::questions(),
+                "ask_the_developer": crate::intake::questions_for(Some(&cases_dir_str)),
                 "context": {
                     "organization": ctx.org,
                     "project": ctx.project,
                     "allowed_modules": modules,
+                    "output_dir": cases_dir_str,
+                    "suggested_output_path": crate::workspace::default_output_path(&root, &feature),
                     "tags_hint": "Call get_tags (with a query filter) to reuse existing tags.",
                 },
                 "note": "Put these to the developer in chat - one at a time, and let them \
@@ -567,7 +595,7 @@ async fn begin_writing(
         );
     }
 
-    let answers: crate::intake::IntakeAnswers = match serde_json::from_str(body) {
+    let mut answers: crate::intake::IntakeAnswers = match serde_json::from_str(body) {
         Ok(a) => a,
         Err(e) => {
             return (
@@ -578,7 +606,8 @@ async fn begin_writing(
         }
     };
 
-    let problems = crate::intake::problems(&answers, &modules);
+    answers.output_path = crate::workspace::resolve_output(&root, &answers.output_path);
+    let problems = crate::intake::problems_in(&answers, &modules, Some(&cases_dir));
     if !problems.is_empty() {
         return (
             200,

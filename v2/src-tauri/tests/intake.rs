@@ -15,8 +15,10 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 }
 
 fn good(dir: &std::path::Path, spec: &std::path::Path) -> IntakeAnswers {
+    let cases = dir.join(".test-cases");
+    std::fs::create_dir_all(&cases).unwrap();
     IntakeAnswers {
-        output_path: dir.join("cases.json").to_string_lossy().to_string(),
+        output_path: cases.join("cases.json").to_string_lossy().to_string(),
         spec_paths: vec![spec.to_string_lossy().to_string()],
         sections: "3.1-3.4".into(),
         ordering: "tester".into(),
@@ -459,11 +461,19 @@ fn ctx() -> BridgeContext {
     }
 }
 
+/// A context whose working repository is `root` - what every `/begin`
+/// call needs, because without one the intake cannot say where the file
+/// goes and refuses to start.
+fn ctx_in(root: &std::path::Path) -> BridgeContext {
+    BridgeContext { working_dir: Some(root.to_string_lossy().to_string()), ..ctx() }
+}
+
 /// Phase 1: no answers sent, so the questions come back - and the
 /// assistant is told in as many words not to answer them itself.
 #[tokio::test]
 async fn phase_one_returns_the_questions_and_the_apps_context() {
-    let (status, body) = route(&ctx(), None, "POST", "/begin?feature=Login", "", "test").await;
+    let dir = temp_dir("phase-one");
+    let (status, body) = route(&ctx_in(&dir), None, "POST", "/begin?feature=Login", "", "test").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
 
@@ -473,19 +483,21 @@ async fn phase_one_returns_the_questions_and_the_apps_context() {
     assert_eq!(v["context"]["organization"], "acme");
     let note = v["note"].as_str().unwrap();
     assert!(note.contains("Do NOT answer them yourself"), "got: {note}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Phase 2 with bad answers: problems come back, no plan is written, and
 /// guessing past them is explicitly ruled out.
 #[tokio::test]
 async fn phase_two_refuses_answers_that_do_not_check_out() {
+    let dir = temp_dir("phase-two-bad");
     let body_in = serde_json::json!({
         "output_path": "Z:/nowhere/at/all/cases.json",
         "spec_paths": ["Z:/nowhere/spec.md"],
         "authority": "spec",
     })
     .to_string();
-    let (status, body) = route(&ctx(), None, "POST", "/begin", &body_in, "test").await;
+    let (status, body) = route(&ctx_in(&dir), None, "POST", "/begin", &body_in, "test").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
 
@@ -493,6 +505,7 @@ async fn phase_two_refuses_answers_that_do_not_check_out() {
     assert!(v["problems"].as_array().unwrap().len() >= 2);
     assert!(v["note"].as_str().unwrap().contains("do not guess"));
     assert!(v.get("plan").is_none(), "no plan until the answers are sound");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Phase 2 with sound answers: the plan is written next to the output.
@@ -501,7 +514,7 @@ async fn phase_two_writes_the_plan_when_the_answers_are_sound() {
     let dir = temp_dir("route");
     let spec = dir.join("spec.md");
     std::fs::write(&spec, "# spec").unwrap();
-    let out = dir.join("cases.json");
+    let out = dir.join(".test-cases").join("cases.json");
 
     let body_in = serde_json::json!({
         "output_path": out.to_string_lossy(),
@@ -512,7 +525,7 @@ async fn phase_two_writes_the_plan_when_the_answers_are_sound() {
     })
     .to_string();
     let (status, body) =
-        route(&ctx(), None, "POST", "/begin?feature=Orders", &body_in, "test").await;
+        route(&ctx_in(&dir), None, "POST", "/begin?feature=Orders", &body_in, "test").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
 
@@ -580,7 +593,7 @@ fn ordering_is_asked_and_checked() {
 async fn a_ready_intake_carries_the_scale_block() {
     let dir = temp_dir("scale-route");
     let spec = spec_with_sections(&dir, "spec.md", 16, 50);
-    let out = dir.join("cases.json");
+    let out = dir.join(".test-cases").join("cases.json");
 
     let body_in = serde_json::json!({
         "output_path": out.to_string_lossy(),
@@ -590,7 +603,7 @@ async fn a_ready_intake_carries_the_scale_block() {
         "reference_cases": "none",
     })
     .to_string();
-    let (status, body) = route(&ctx(), None, "POST", "/begin?feature=Big", &body_in, "test").await;
+    let (status, body) = route(&ctx_in(&dir), None, "POST", "/begin?feature=Big", &body_in, "test").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
 
@@ -611,7 +624,7 @@ async fn scale_is_absent_not_an_error_when_no_spec_file_is_readable() {
     let dir = temp_dir("scale-route-none");
     let folder = dir.join("specs");
     std::fs::create_dir_all(&folder).unwrap();
-    let out = dir.join("cases.json");
+    let out = dir.join(".test-cases").join("cases.json");
 
     let body_in = serde_json::json!({
         "output_path": out.to_string_lossy(),
@@ -621,7 +634,7 @@ async fn scale_is_absent_not_an_error_when_no_spec_file_is_readable() {
         "reference_cases": "none",
     })
     .to_string();
-    let (status, body) = route(&ctx(), None, "POST", "/begin?feature=NoSpec", &body_in, "test").await;
+    let (status, body) = route(&ctx_in(&dir), None, "POST", "/begin?feature=NoSpec", &body_in, "test").await;
     assert_eq!(status, 200);
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
 
@@ -630,5 +643,70 @@ async fn scale_is_absent_not_an_error_when_no_spec_file_is_readable() {
         v.get("scale").is_none_or(|s| s.is_null()),
         "scale should be absent/null when nothing was readable: {v}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn begin_is_blocked_without_a_working_repository() {
+    let (status, body) = route(&ctx(), None, "POST", "/begin?feature=Login", "", "test").await;
+    assert_eq!(status, 409, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["status"], "blocked");
+    assert!(
+        v["error"].as_str().unwrap().contains("AI Bridge"),
+        "must tell the assistant where the developer fixes it: {body}"
+    );
+}
+
+#[tokio::test]
+async fn begin_creates_the_cases_folder_and_names_it_in_the_questions() {
+    let dir = temp_dir("begin-folder");
+    let (status, body) = route(&ctx_in(&dir), None, "POST", "/begin?feature=Login flow", "", "test").await;
+    assert_eq!(status, 200, "{body}");
+    assert!(dir.join(".test-cases").is_dir(), "the folder is the app's to create, not the developer's");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["status"], "questions");
+    let out_dir = v["context"]["output_dir"].as_str().unwrap();
+    assert!(out_dir.ends_with(".test-cases"), "{out_dir}");
+    let suggested = v["context"]["suggested_output_path"].as_str().unwrap();
+    assert!(suggested.ends_with("login-flow.json"), "{suggested}");
+    // The question itself says where the file goes, so the assistant asks
+    // for a NAME rather than inviting an arbitrary path.
+    let first = v["ask_the_developer"][0]["ask"].as_str().unwrap();
+    assert!(first.contains(".test-cases"), "{first}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_bare_file_name_lands_in_the_cases_folder() {
+    let dir = temp_dir("begin-bare");
+    let spec = dir.join("spec.md");
+    std::fs::write(&spec, "# spec").unwrap();
+    let mut a = good(&dir, &spec);
+    a.output_path = "login.json".into();
+    let body_in = serde_json::to_string(&a).unwrap();
+    let (status, body) = route(&ctx_in(&dir), None, "POST", "/begin?feature=Login", &body_in, "test").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["status"], "ready", "{body}");
+    let out = v["answers"]["output_path"].as_str().unwrap();
+    assert!(out.contains(".test-cases") && out.ends_with("login.json"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn an_output_path_outside_the_cases_folder_is_refused() {
+    let dir = temp_dir("begin-outside");
+    let spec = dir.join("spec.md");
+    std::fs::write(&spec, "# spec").unwrap();
+    let mut a = good(&dir, &spec);
+    a.output_path = dir.join("elsewhere.json").to_string_lossy().to_string();
+    let body_in = serde_json::to_string(&a).unwrap();
+    let (status, body) = route(&ctx_in(&dir), None, "POST", "/begin?feature=Login", &body_in, "test").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["status"], "needs_answers", "{body}");
+    let problems: Vec<String> = v["problems"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().to_string()).collect();
+    assert!(problems.iter().any(|p| p.contains(".test-cases")), "{problems:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

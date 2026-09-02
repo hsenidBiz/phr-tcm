@@ -90,16 +90,29 @@ pub struct Question {
 /// ones first, the one that decides everything (`authority`) early enough
 /// to matter.
 pub fn questions() -> Vec<Question> {
+    questions_for(None)
+}
+
+/// The same checklist, with the output question phrased for a working
+/// repository when one is set: the folder is decided, so the assistant asks
+/// for a NAME rather than inviting an arbitrary path.
+pub fn questions_for(output_dir: Option<&str>) -> Vec<Question> {
     let q = |field: &str, ask: &str, why: &str, required: bool| Question {
         field: field.into(),
         ask: ask.into(),
         why: why.into(),
         required,
     };
+    let output_ask = match output_dir {
+        Some(dir) => format!(
+            "What should the finished JSON file be called? It goes in {dir} - give the file name (e.g. login.json), or a full path inside that folder."
+        ),
+        None => "Where should the finished JSON be written? Give the full path, including the file name.".to_string(),
+    };
     vec![
         q(
             "output_path",
-            "Where should the finished JSON be written? Give the full path, including the file name.",
+            &output_ask,
             "The developer imports this file by hand; it has to land somewhere they expect.",
             true,
         ),
@@ -179,6 +192,17 @@ pub fn questions() -> Vec<Question> {
 /// invents a plausible-looking path is caught here rather than at the end
 /// of the job when the file turns up somewhere nobody expects.
 pub fn problems(a: &IntakeAnswers, allowed_modules: &[String]) -> Vec<String> {
+    problems_in(a, allowed_modules, None)
+}
+
+/// `problems`, plus - when a working repository's cases folder is given -
+/// the rule that the output must be inside it: the app imports and watches
+/// files there and nowhere else.
+pub fn problems_in(
+    a: &IntakeAnswers,
+    allowed_modules: &[String],
+    cases_dir: Option<&std::path::Path>,
+) -> Vec<String> {
     let mut out = vec![];
 
     let output = a.output_path.trim();
@@ -192,6 +216,15 @@ pub fn problems(a: &IntakeAnswers, allowed_modules: &[String]) -> Vec<String> {
             if !dir.as_os_str().is_empty() && !dir.is_dir() {
                 out.push(format!(
                     "the folder for output_path does not exist: {} - confirm the path with the developer rather than creating it.",
+                    dir.display()
+                ));
+            }
+        }
+        if let Some(dir) = cases_dir {
+            if !crate::workspace::is_inside(dir, std::path::Path::new(output)) {
+                out.push(format!(
+                    "output_path must be inside the working repository's {} folder ({}) - the app only imports and watches files there. Give a file name, or a path under that folder.",
+                    crate::workspace::CASES_DIR,
                     dir.display()
                 ));
             }
