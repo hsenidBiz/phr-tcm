@@ -495,7 +495,20 @@ export default function App() {
   // Keep the AI bridge's defaults in sync with what the user is looking at:
   // org/project + the detected custom-field refs. Fire-and-forget; the
   // bridge simply serves stale context until the next push.
-  const { prefs: bridgePrefs } = useFieldRefs(org, project);
+  //
+  // Withheld during the tour: unlike the effects below, this hook does its
+  // own reads AND writes during render (`saveFieldPrefs`), not inside a
+  // gated `useEffect` - passing it the sample org/project would have this
+  // one call writing a `tcm-v2-fields:Northwind/Website` entry to disk. The
+  // result is unused while touring (setBridgeContext is gated below), so
+  // blanking the args here is free. NOTE: the same hook is also called
+  // directly, with the live org/project props, by several toured screens
+  // (ModuleField/QueueSection under Manual Entry, ExistingCases under
+  // Update Test Cases, ViewCases) - blanking it here does not reach those,
+  // so the same key can still be written while the tour shows those
+  // screens. Fixing that is out of this task's file scope; see the task
+  // report.
+  const { prefs: bridgePrefs } = useFieldRefs(tourOpen ? "" : org, tourOpen ? "" : project);
   // Re-pushed when the AI Bridge tab toggles a tool, so the change reaches
   // an assistant on its next tools/list rather than after a restart.
   const disabledTools = useSyncExternalStore(subscribeDisabledTools, disabledToolsSnapshot);
