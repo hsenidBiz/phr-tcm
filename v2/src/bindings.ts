@@ -460,6 +460,13 @@ export const commands = {
 	unregisterAiTool: (id: string) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id })),
 	registerDbServer: (id: string, config: DbServerConfig) => typedError<null, string>(__TAURI_INVOKE("register_db_server", { id, config })),
 	unregisterDbServer: (id: string) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id })),
+	/**  Create `<root>/.test-cases` if needed and return its path. */
+	ensureCasesDir: (root: string) => typedError<string, string>(__TAURI_INVOKE("ensure_cases_dir", { root })),
+	/**
+	 *  Copy a picked JSON file into `<root>/.test-cases` (a file already there
+	 *  is returned as is) and return the path the app should import from.
+	 */
+	copyIntoCases: (root: string, source: string) => typedError<string, string>(__TAURI_INVOKE("copy_into_cases", { root, source })),
 };
 
 /** Events */

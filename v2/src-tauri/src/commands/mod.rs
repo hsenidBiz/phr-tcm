@@ -15,3 +15,4 @@ pub mod prs;
 pub mod queue;
 pub mod runs;
 pub mod testplan;
+pub mod workspace;

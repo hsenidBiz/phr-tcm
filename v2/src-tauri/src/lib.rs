@@ -55,7 +55,7 @@ pub use state::SubmitCancel;
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
         ai_bridge, ai_tools, auth, autorun, board, bugs, cases, discovery, misc, prs, queue, runs,
-        testplan,
+        testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
         .events(collect_events![
@@ -179,7 +179,9 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_tools::register_ai_tool,
             ai_tools::unregister_ai_tool,
             ai_tools::register_db_server,
-            ai_tools::unregister_db_server
+            ai_tools::unregister_db_server,
+            workspace::ensure_cases_dir,
+            workspace::copy_into_cases
         ])
 }
 
