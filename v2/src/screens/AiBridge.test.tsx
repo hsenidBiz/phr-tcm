@@ -359,6 +359,29 @@ test("shipped DB defaults prefill only a never-configured form", async () => {
 
 // ------------------------------------------------- working repository gate
 
+/// Clearing the repository is the off switch for the AI tooling: the gate
+/// closes again, and a machine-wide choice does not survive it - clearing
+/// means "stop", and going global is a fresh, deliberate click.
+test("Clear removes the working repository and closes the gate", async () => {
+  localStorage.setItem("tcm-v2-ai-global-allowed", "on");
+  localStorage.setItem("tcm-v2-ai-scope", "global");
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "global" }];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+  expect(await screen.findByText("Cursor")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(localStorage.getItem("tcm-v2-working-dir")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-ai-scope")).toBeNull();
+  expect(await screen.findByRole("button", { name: /pick repository/i })).toBeInTheDocument();
+  expect(screen.queryByText("Cursor")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+});
+
 test("without a working repository only the picker is offered", async () => {
   localStorage.removeItem("tcm-v2-working-dir");
   let detected = 0;

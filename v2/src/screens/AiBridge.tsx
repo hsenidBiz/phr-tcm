@@ -241,10 +241,30 @@ export default function AiBridge() {
           files go, and the AI tools below register into it rather than machine-wide.
         </p>
       )}
-      <Button size="sm" variant="outline" onClick={pickWorkingDir}>
-        <FolderOpen aria-hidden />
-        {workingDir ? "Change" : "Pick repository"}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" onClick={pickWorkingDir}>
+          <FolderOpen aria-hidden />
+          {workingDir ? "Change" : "Pick repository"}
+        </Button>
+        {workingDir && (
+          // The way to switch the AI tooling OFF: no repository means the
+          // gate below closes again. Machine-wide is reset too - clearing
+          // the repository is "stop", not "go global"; the choice is one
+          // click away if that is what was meant.
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              saveWorkingDir("");
+              saveScope("project");
+              toast.info("Working repository cleared - the AI tools are off until one is picked.");
+            }}
+          >
+            <IconUnregister aria-hidden />
+            Clear
+          </Button>
+        )}
+      </div>
       {/* Only with the Settings switch on: machine-wide is the
           pre-per-repo behaviour, kept as an explicit choice for a machine
           that does not work from a repository. Writing test cases still
