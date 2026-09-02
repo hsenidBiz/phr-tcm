@@ -2,10 +2,15 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { TestCase } from "../bindings";
 import type { WatchedFile } from "../lib/fileSync";
 import QueueSection from "./QueueSection";
+
+/** The floating copy only exists while the real row is off screen, so the
+ * tests drive the hook rather than jsdom's (non-existent) layout. */
+vi.mock("../hooks/useOnScreen", () => ({ useOnScreen: () => onScreen }));
+let onScreen = true;
 
 afterEach(() => {
   clearMocks();
@@ -636,4 +641,43 @@ test("a mixed queue still gets the check-the-PBI stage", async () => {
   // Armed, not submitted: the warning is up and nothing was written.
   expect(await screen.findByText(/Check the highlighted PBI/)).toBeInTheDocument();
   expect(submits).toBe(0);
+});
+
+test("a floating copy of the main button appears once the real one scrolls away", async () => {
+  onScreen = false;
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderQueue([makeCase(), makeCase({ title: "Logout works" })]);
+
+  const floating = await waitFor(() => {
+    const el = document.querySelector("[data-sticky-action]");
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  // Same words as the real control, and out of the reading order.
+  expect(floating).toHaveTextContent("Review 2 test cases");
+  expect(floating).toHaveAttribute("aria-hidden");
+
+  // It does exactly what the real button does.
+  fireEvent.click(floating.querySelector("button")!);
+  expect(await screen.findByRole("button", { name: /Confirm & create 2/ })).toBeInTheDocument();
+});
+
+test("the floating copy stands down when the real button is in view", async () => {
+  onScreen = true;
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderQueue([makeCase()]);
+  await screen.findByRole("button", { name: /Review 1 test case/ });
+
+  // Still mounted (it animates out), but hidden and unclickable.
+  const floating = document.querySelector("[data-sticky-action]") as HTMLElement;
+  expect(floating.className).toContain("opacity-0");
+  expect(floating.className).toContain("pointer-events-none");
 });

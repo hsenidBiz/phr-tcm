@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
 import { commands, events, type SubmitItemResult, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
+import { useOnScreen } from "../hooks/useOnScreen";
 import { diffCase, diffSummary } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
@@ -850,6 +851,21 @@ export default function QueueSection({
   const duplicates = queue.map((tc) => duplicateWarning(tc, existingCases));
   const hasBlockers = problems.some(Boolean);
 
+  // What the primary action is about to do, in words. Lifted out of the
+  // review branch because the floating copy has to say the same thing.
+  const updateCount = queue.filter((tc) => tc.update_id != null).length;
+  const createCount = queue.length - updateCount;
+  const actionLabel = [
+    createCount > 0 && `create ${createCount}`,
+    updateCount > 0 && `update ${updateCount}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const actionRow = useRef<HTMLDivElement | null>(null);
+  // -24px so the real row has to be properly in view, not just peeking
+  // over the bottom edge, before the floating copy stands down.
+  const actionOnScreen = useOnScreen(actionRow, "0px 0px -24px 0px");
+
   // Diffing is word-level and runs per row - recomputing all of it on
   // every keystroke/selection render made an 80-case review sluggish.
   // Recomputed only when the queue, the fetched originals, or the field
@@ -1295,7 +1311,7 @@ export default function QueueSection({
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div ref={actionRow} className="flex items-center gap-3">
         {!reviewing ? (
           <Button disabled={queue.length === 0} onClick={() => setReviewing(true)}>
             <IconReview aria-hidden />
@@ -1303,14 +1319,6 @@ export default function QueueSection({
           </Button>
         ) : (
           (() => {
-            const updates = queue.filter((tc) => tc.update_id != null).length;
-            const creates = queue.length - updates;
-            const label = [
-              creates > 0 && `create ${creates}`,
-              updates > 0 && `update ${updates}`,
-            ]
-              .filter(Boolean)
-              .join(" · ");
             if (dupGate) {
               return (
                 <div className="w-full space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
@@ -1359,7 +1367,7 @@ export default function QueueSection({
                     onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
                   >
                     <IconConfirm aria-hidden />
-                    {submit.isPending ? "Processing" : `Confirm & ${label || "create 0"}`}
+                    {submit.isPending ? "Processing" : `Confirm & ${actionLabel || "create 0"}`}
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
                     <IconBack aria-hidden />
@@ -1391,7 +1399,7 @@ export default function QueueSection({
                     }}
                   >
                     <IconConfirm aria-hidden />
-                    {submit.isPending ? "Processing" : `Yes — ${label}`}
+                    {submit.isPending ? "Processing" : `Yes — ${actionLabel}`}
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => arm(false)}>
                     <IconBack aria-hidden />
@@ -1463,6 +1471,48 @@ export default function QueueSection({
               Collapse all (
               {expandedSteps.size + expandedDiffs.size + (editingIdx != null ? 1 : 0)})
             </Button>
+          </div>,
+          document.body,
+        )}
+
+      {/* The same main button, following the user down a long queue.
+          Bottom CENTRE: Collapse all owns bottom-left and the toasts own
+          bottom-right. Portalled for the same reason Collapse all is -
+          AnimatedContent's transform would make `fixed` mean this scroll
+          region instead of the window. It is aria-hidden and unfocusable
+          on purpose: it duplicates a control that is already in the page.
+          It never covers the armed confirmation or the duplicate gate -
+          those are there to be read before a write that cannot be undone. */}
+      {queue.length > 0 &&
+        !armed &&
+        !dupGate &&
+        createPortal(
+          <div
+            aria-hidden
+            data-sticky-action
+            className={cn(
+              "fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border bg-bg p-1 shadow-2xl transition-all duration-200",
+              actionOnScreen
+                ? "pointer-events-none translate-y-3 opacity-0"
+                : "translate-y-0 opacity-100",
+            )}
+          >
+            {!reviewing ? (
+              <Button tabIndex={-1} onClick={() => setReviewing(true)}>
+                <IconReview aria-hidden />
+                Review {queue.length} test case{queue.length === 1 ? "" : "s"}
+              </Button>
+            ) : (
+              <Button
+                tabIndex={-1}
+                disabled={hasBlockers || submit.isPending || !online}
+                title={online ? undefined : OFFLINE_HINT}
+                onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
+              >
+                <IconConfirm aria-hidden />
+                {submit.isPending ? "Processing" : `Confirm & ${actionLabel || "create 0"}`}
+              </Button>
+            )}
           </div>,
           document.body,
         )}
