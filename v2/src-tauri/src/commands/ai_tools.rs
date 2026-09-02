@@ -44,6 +44,15 @@ fn root_of(working_dir: Option<&str>) -> Option<&str> {
     working_dir.map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// `path` relative to `root`, forward-slashed - the shape
+/// `crate::workspace::exclude_locally` wants. None when `path` is not
+/// actually under `root`, which the caller treats as "cannot exclude".
+fn project_relative(root: &str, path: &std::path::Path) -> Option<String> {
+    path.strip_prefix(std::path::Path::new(root))
+        .ok()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn detect_ai_tools(working_dir: Option<String>) -> Vec<DetectedTool> {
@@ -235,12 +244,11 @@ fn register_server(id: &str, server: &McpServer, working_dir: Option<&str>) -> R
             }
         }
         if server.name == DB_SERVER {
-            // The connection string is in .mcp.json now; keep that file out
-            // of `git status` for this checkout (owner's decision - the
-            // repo's .gitignore is not ours to edit).
-            if let Err(e) = crate::workspace::exclude_locally(std::path::Path::new(r), ".mcp.json") {
-                crate::applog::warn(format!("could not exclude .mcp.json locally: {e}"));
-            }
+            // The connection string is in the config now; keep every
+            // project-scoped tool's config out of `git status` for this
+            // checkout (owner's decision - the repo's .gitignore is not
+            // ours to edit), not just Claude Code's - see `exclude_db_config`.
+            exclude_db_config(r, ".mcp.json");
         }
         retire_global(spec, &server.name);
         return Ok(());
@@ -248,10 +256,28 @@ fn register_server(id: &str, server: &McpServer, working_dir: Option<&str>) -> R
 
     let (config_path, key, _scope) = config_for(spec, &home_dir(), &appdata_dir(), root);
     merge_into_file(&config_path, key, server)?;
-    if root.is_some() {
+    if let Some(r) = root {
+        if server.name == DB_SERVER {
+            match project_relative(r, &config_path) {
+                Some(rel) => exclude_db_config(r, &rel),
+                None => crate::applog::warn(format!(
+                    "could not exclude {} locally - not inside {r}",
+                    config_path.display()
+                )),
+            }
+        }
         retire_global(spec, &server.name);
     }
     Ok(())
+}
+
+/// Keep the DB server's connection string out of git for this project-scoped
+/// config file. Best-effort like every other retirement/exclude step here -
+/// a failure to exclude does not undo a registration that already worked.
+fn exclude_db_config(root: &str, rel: &str) {
+    if let Err(e) = crate::workspace::exclude_locally(std::path::Path::new(root), rel) {
+        crate::applog::warn(format!("could not exclude {rel} locally: {e}"));
+    }
 }
 
 /// Take the app's OWN global copy away once the repository carries it.
@@ -615,5 +641,17 @@ mod tests {
         };
         let args = mcp_add_args(&server, "project");
         assert_eq!(&args[2..4], ["--scope", "project"]);
+    }
+
+    /// The path handed to `exclude_locally` for a non-Claude tool's
+    /// project config (e.g. Cursor's `.cursor/mcp.json`) - forward-slashed
+    /// regardless of platform, and None for anything not under the root.
+    #[test]
+    fn project_relative_forward_slashes_a_path_under_the_root() {
+        assert_eq!(
+            project_relative(r"D:\repo", std::path::Path::new(r"D:\repo\.cursor\mcp.json")),
+            Some(".cursor/mcp.json".to_string())
+        );
+        assert_eq!(project_relative(r"D:\repo", std::path::Path::new(r"D:\elsewhere\mcp.json")), None);
     }
 }
