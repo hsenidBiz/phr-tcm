@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.21.1",
+    date: "2026-09-02",
+    items: [
+      "Fixed: a test-case file written by an assistant while the Import File tab was already open did not import itself. The \"Watching …\" notice appeared, but the open tab kept its own list of watched files and only re-read it when opened - so the new file was never watched. The tab now hears the assistant's announced path directly and starts watching at once.",
+      "Auto Run is no longer shown in released builds - it is still in development and stays available in the development build only. The number shortcuts close up accordingly (Ctrl+6 is Test Suites, Ctrl+7 is AI Bridge).",
+    ],
+  },
+  {
     version: "1.21.0",
     date: "2026-09-02",
     items: [

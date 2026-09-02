@@ -115,6 +115,41 @@ export default function ImportFile({
     setDropping(null);
   }, [org, pbiId]);
 
+  // The intake's output path, while THIS tab is open. App persists it to
+  // storage for the case where the developer is elsewhere, and this tab
+  // re-reads storage only on mount or a scope switch - so with the tab
+  // already open during intake, the new path never reached the list above
+  // and no watcher was armed: the assistant wrote the file and nothing
+  // imported it. Folding it into state here arms the watcher at once (the
+  // effect below keys on the set of paths). Idempotent with App's write.
+  useEffect(() => {
+    if (pbiId == null) return;
+    let live = true;
+    let unlisten: (() => void) | undefined;
+    void events.intakeOutputPath
+      .listen((e) => {
+        const path = e.payload.path?.trim();
+        if (!path) return;
+        setWatches((prev) =>
+          prev.some((w) => w.path === path) ? prev : upsertWatch(prev, { path, stamp: "", snapshot: [] }),
+        );
+      })
+      .then((f) => {
+        if (live) unlisten = f;
+        else f();
+      });
+    return () => {
+      live = false;
+      void (async () => {
+        try {
+          await unlisten?.();
+        } catch {
+          /* already detached */
+        }
+      })();
+    };
+  }, [pbiId, setWatches]);
+
   // The reconcile reads the queue but must not re-run when it changes -
   // only a new file fingerprint should trigger it.
   const queueRef = useRef(queue);

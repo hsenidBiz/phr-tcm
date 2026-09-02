@@ -39,7 +39,7 @@ import ChangelogModal from "./components/ChangelogModal";
 import SessionExpiredModal from "./components/SessionExpiredModal";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
-import Sidebar, { WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
+import Sidebar, { AUTO_RUN_ENABLED, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
 import UiTour, { START_TOUR_EVENT, tourDone } from "./components/UiTour";
 import { Button } from "./components/ui/button";
@@ -145,7 +145,11 @@ export default function App() {
   // Keyboard shortcuts: Ctrl+1..8 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
-    const order: Section[] = ["manual", "import", "edit", "view", "run", "autorun", "suites", "ai"];
+    // Mirrors the sidebar's rows: without Auto Run (release builds) the
+    // numbers close up, so Ctrl+6 is Test Suites there and Auto Run here.
+    const order: Section[] = (
+      ["manual", "import", "edit", "view", "run", "autorun", "suites", "ai"] as Section[]
+    ).filter((s) => s !== "autorun" || AUTO_RUN_ENABLED);
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       if (e.shiftKey && e.key.toLowerCase() === "m") {
@@ -860,7 +864,9 @@ export default function App() {
                   }}
                 />
               )}
-              {section === "autorun" && <AutoRun org={org} project={project} pbi={pbi} />}
+              {AUTO_RUN_ENABLED && section === "autorun" && (
+                <AutoRun org={org} project={project} pbi={pbi} />
+              )}
               {section === "ai" && <AiBridge />}
               {section === "settings" && <Settings org={org} project={project} />}
             </AnimatedContent>

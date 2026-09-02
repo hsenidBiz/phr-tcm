@@ -4,7 +4,7 @@ name = "v2"
 # test in tests/bindings.rs fails the gate when the two drift. Only
 # tauri.conf.json drives the app's real version; this one is what the
 # compiler prints and what cargo metadata reports.
-version = "1.21.0"
+version = "1.21.1"
 description = "Bulk-create and edit Azure DevOps Test Cases"
 authors = ["Avin Alwis"]
 edition = "2021"

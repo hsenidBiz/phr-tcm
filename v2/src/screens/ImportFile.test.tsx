@@ -333,6 +333,41 @@ function mockWatched(contents: unknown[], stampNow: string) {
 const fileChanged = (stamp: string) =>
   emit("watched-file-changed", { path: CASE_PATH, stamp });
 
+/// Field report 2026-09-02: Import File was already open during intake,
+/// the "Watching …" toast appeared, the assistant wrote the file - and
+/// nothing imported. App had saved the watch to storage, but the mounted
+/// tab only re-reads storage on mount or a scope switch, so no OS watcher
+/// was ever armed for the new path. The tab must hear the intake itself.
+test("an intake path announced while the tab is open is watched at once", async () => {
+  const watched: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "file_stamp") return null; // not written yet
+    if (cmd === "watch_file") {
+      watched.push((args as { path: string }).path);
+      return null;
+    }
+    if (cmd === "unwatch_file") return null;
+    if (cmd === "unwatch_all_files") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  }, { shouldMockEvents: true });
+  renderScreen();
+  expect(await screen.findByRole("button", { name: "Import JSON" })).toBeInTheDocument();
+  expect(watched).toEqual([]);
+
+  const path = "D:\\repo\\.test-cases\\login.json";
+  await act(async () => {
+    await emit("intake-output-path", { path });
+  });
+
+  await waitFor(() => expect(watched).toContain(path));
+  expect(screen.getByText(/Watching 1 file/)).toBeInTheDocument();
+  expect(JSON.parse(localStorage.getItem("tcm-v2-watch:acme/42") as string)).toEqual([
+    { path, stamp: "", snapshot: [] },
+  ]);
+});
+
 test("a stored watch is re-armed on mount and named on screen", async () => {
   seedWatchedImport();
   mockWatched([jsonCase("Login works")], "stamp-1"); // unchanged

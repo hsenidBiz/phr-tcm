@@ -37,6 +37,12 @@ type Item<T extends string> = {
   note?: string;
 };
 
+/** Auto Run ships only in development builds: it is still "In Dev", and a
+ * released app should not offer a tab that is not finished. `DEV` is true
+ * for `tauri dev` and for vitest, false in `tauri build` - so the tests
+ * still see the tab, and the release does not. */
+export const AUTO_RUN_ENABLED: boolean = import.meta.env.DEV;
+
 const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine, tone: "nav-ico nav-ico-manual" },
   { id: "import", label: "Import File", icon: FileUp, tone: "nav-ico nav-ico-import" },
@@ -77,7 +83,9 @@ export default function Sidebar<T extends string = Section>({
    * Zero or absent renders nothing - the rail stays quiet by default. */
   badges?: Partial<Record<T, number>>;
 }) {
-  const list = items ?? (CASE_ITEMS as unknown as Item<T>[]);
+  const list =
+    items ??
+    (CASE_ITEMS.filter((i) => i.id !== "autorun" || AUTO_RUN_ENABLED) as unknown as Item<T>[]);
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(COLLAPSE_KEY) === "collapsed",
   );
