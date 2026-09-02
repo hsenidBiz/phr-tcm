@@ -8,8 +8,11 @@ import type { WatchedFile } from "../lib/fileSync";
 import QueueSection from "./QueueSection";
 
 /** The floating copy only exists while the real row is off screen, so the
- * tests drive the hook rather than jsdom's (non-existent) layout. */
-vi.mock("../hooks/useOnScreen", () => ({ useOnScreen: () => onScreen }));
+ * tests drive the hook rather than jsdom's (non-existent) layout. The
+ * hook itself - including the part that has to notice the action row
+ * arriving in a queue that started empty - is exercised UNMOCKED in
+ * QueueSection.floating.test.tsx. */
+vi.mock("../hooks/useOnScreen", () => ({ useOnScreen: () => [() => {}, onScreen] }));
 let onScreen = true;
 
 afterEach(() => {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -861,10 +861,12 @@ export default function QueueSection({
   ]
     .filter(Boolean)
     .join(" · ");
-  const actionRow = useRef<HTMLDivElement | null>(null);
   // -24px so the real row has to be properly in view, not just peeking
-  // over the bottom edge, before the floating copy stands down.
-  const actionOnScreen = useOnScreen(actionRow, "0px 0px -24px 0px");
+  // over the bottom edge, before the floating copy stands down. The ref
+  // is the hook's own callback ref, because the action row is NOT in the
+  // page while the queue is empty - and an empty queue growing long is
+  // exactly the flow the floating copy exists for.
+  const [actionRow, actionOnScreen] = useOnScreen("0px 0px -24px 0px");
 
   // Diffing is word-level and runs per row - recomputing all of it on
   // every keystroke/selection render made an 80-case review sluggish.
