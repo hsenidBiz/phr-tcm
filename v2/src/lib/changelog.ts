@@ -13,7 +13,7 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: "1.20.14",
+    version: "1.21.0",
     date: "2026-09-02",
     items: [
       "The AI side of the app now works per repository. Pick a working repository on the AI Bridge tab (the tab asks for one before showing anything else); everything else in the app works as before without one.",
