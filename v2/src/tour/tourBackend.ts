@@ -14,6 +14,7 @@ import {
   TOUR_BRIDGE,
   TOUR_CASES,
   TOUR_CASE_SUMMARIES,
+  TOUR_DB_DEFAULTS,
   TOUR_DB_PRESETS,
   TOUR_HISTORY,
   TOUR_ORGS,
@@ -31,7 +32,12 @@ const ok = <T,>(data: T) => Promise.resolve({ status: "ok" as const, data });
 type Commands = typeof commands;
 let saved: Record<string, unknown> | null = null;
 
-function standIns(): Record<string, unknown> {
+// Typed against the real command map, not `Record<string, unknown>`: a
+// renamed command or a changed signature in the generated bindings fails
+// `tsc`, which is the whole point of standing this in instead of a bespoke
+// mock. `TOUR_STAND_IN_COMMANDS` below is derived from this same object so
+// the list of what is covered can never drift from what is installed.
+function standIns(): Partial<Commands> {
   return {
     // Scope pickers.
     listOrgs: () => ok(TOUR_ORGS),
@@ -50,6 +56,7 @@ function standIns(): Record<string, unknown> {
     pbiTestCases: () => ok(TOUR_CASE_SUMMARIES),
     pbiTestCasesFull: () => ok(TOUR_CASES),
     testCasesByIds: () => ok(TOUR_CASES),
+    canDeleteTestCases: () => ok(false), // the tour never mentions deleting
 
     // Suites and runs.
     ensurePbiSuite: () => ok(TOUR_SUITE),
@@ -67,8 +74,12 @@ function standIns(): Record<string, unknown> {
     bridgeStatus: () => ok(TOUR_BRIDGE),
     detectAiTools: () => Promise.resolve(TOUR_TOOLS),
     dbServerPresets: () => Promise.resolve(TOUR_DB_PRESETS),
+    dbServerDefaults: () => Promise.resolve(TOUR_DB_DEFAULTS),
   };
 }
+
+/** Every command name the tour stands in for - the coverage test iterates this. */
+export const TOUR_STAND_IN_COMMANDS: readonly string[] = Object.keys(standIns());
 
 export function tourBackendInstalled(): boolean {
   return saved !== null;

@@ -7,6 +7,7 @@ import type {
   BoardData,
   CaseHistory,
   DbPresetOut,
+  DbServerConfig,
   DetectedTool,
   EnsuredSuite,
   Org,
@@ -210,6 +211,15 @@ export const TOUR_TOOLS: DetectedTool[] = [
 export const TOUR_DB_PRESETS: DbPresetOut[] = [
   { label: "Sample - read only", connection_string: "Server=sample;Database=Northwind;User Id=reader;" },
 ];
+
+// The AI Bridge screen's own default config - shown before the user picks a
+// preset or types their own. Obviously sample: no real host or credential.
+export const TOUR_DB_DEFAULTS: DbServerConfig = {
+  exe_path: "C:\\Program Files\\Test Case Manager\\PeoplesHR.DBMCPServer.exe",
+  db_type: "mssql",
+  connection_string: "Server=sample;Database=Northwind;User Id=reader;",
+  schema_filter: "dbo",
+};
 
 export const TOUR_BRIDGE = {
   port: 51999,

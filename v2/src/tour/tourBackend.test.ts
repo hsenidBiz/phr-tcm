@@ -1,7 +1,12 @@
 import { afterEach, expect, test } from "vitest";
 import { commands } from "../bindings";
 import { TOUR_ORG, TOUR_PBI, TOUR_PROJECT } from "./tourData";
-import { installTourBackend, restoreTourBackend, tourBackendInstalled } from "./tourBackend";
+import {
+  installTourBackend,
+  restoreTourBackend,
+  tourBackendInstalled,
+  TOUR_STAND_IN_COMMANDS,
+} from "./tourBackend";
 
 afterEach(() => restoreTourBackend());
 
@@ -35,10 +40,26 @@ test("installing twice does not trap the stand-ins as the originals", () => {
   expect(commands.listOrgs).toBe(realOrgs);
 });
 
-test("every call the toured screens make is answered locally", async () => {
+test("every stand-in command is answered locally", async () => {
   installTourBackend();
+
+  // Deletion and the user's real DB config must never be able to fall
+  // through to the real binding during a tour - assert by name so removing
+  // either stand-in later is a test failure, not a silent regression.
+  expect(TOUR_STAND_IN_COMMANDS).toContain("canDeleteTestCases");
+  expect(TOUR_STAND_IN_COMMANDS).toContain("dbServerDefaults");
+
   // No mockIPC in this file: a call that fell through to the real binding
-  // would reject, because vitest has no Tauri runtime behind it.
+  // would reject, because vitest has no Tauri runtime behind it. Every
+  // stand-in ignores its real parameters, so calling each with none still
+  // exercises it - this is what makes "answered locally" a checked claim
+  // instead of an aspiration.
+  const target = commands as unknown as Record<string, () => Promise<unknown>>;
+  for (const name of TOUR_STAND_IN_COMMANDS) {
+    await expect(target[name](), `commands.${name}`).resolves.toBeDefined();
+  }
+
+  // A few shapes worth pinning down explicitly.
   await expect(commands.detectAiTools(null)).resolves.toHaveLength(3);
   await expect(commands.dbServerPresets()).resolves.toHaveLength(1);
   await expect(
