@@ -23,6 +23,7 @@ import {
 import { loadDisabledTools, MCP_TOOLS, saveDisabledTools, toggleTool } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import { saveWorkingDir, subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
+import { globalAllowedSnapshot, saveScope, scopeSnapshot, subscribeAiScope } from "../lib/aiScope";
 import {
   IconBrowse,
   IconConfirm,
@@ -70,10 +71,20 @@ export default function AiBridge() {
     retry: false,
   });
 
+  // Machine-wide registration is opt-in from Settings; with it on, the
+  // repository card offers the choice, and "global" lifts the gate below.
+  const globalAllowed = useSyncExternalStore(subscribeAiScope, globalAllowedSnapshot);
+  const scopeChoice = useSyncExternalStore(subscribeAiScope, scopeSnapshot);
+  const global = globalAllowed && scopeChoice === "global";
+  // What every call below is told: the repository, or null for the whole
+  // machine (detection reads the global configs on null; registration is
+  // ALSO told `global` explicitly, so null alone can never mean "global").
+  const target = global ? null : workingDir || null;
+
   const tools = useQuery({
-    queryKey: ["ai-tools", workingDir],
-    queryFn: () => commands.detectAiTools(workingDir || null),
-    enabled: Boolean(workingDir),
+    queryKey: ["ai-tools", global ? "global" : workingDir],
+    queryFn: () => commands.detectAiTools(target),
+    enabled: global || Boolean(workingDir),
   });
 
   // The disabled set travels with the registration: it writes this
@@ -81,7 +92,7 @@ export default function AiBridge() {
   // commands for tools switched off on this very tab.
   const register = useMutation({
     mutationFn: (id: string) =>
-      unwrapStr(commands.registerAiTool(id, workingDir || null, loadDisabledTools())),
+      unwrapStr(commands.registerAiTool(id, target, loadDisabledTools(), global)),
     onSuccess: () => {
       toast.success("Registered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
@@ -102,7 +113,7 @@ export default function AiBridge() {
   });
 
   const unregister = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.unregisterAiTool(id, workingDir || null)),
+    mutationFn: (id: string) => unwrapStr(commands.unregisterAiTool(id, target, global)),
     onSuccess: () => {
       toast.success("Unregistered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
@@ -165,7 +176,7 @@ export default function AiBridge() {
   // one thing on this tab worth reading, so it replaces the toast and stays
   // up long enough to act on.
   const registerDb = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.registerDbServer(id, db, workingDir || null)),
+    mutationFn: (id: string) => unwrapStr(commands.registerDbServer(id, db, target, global)),
     onSuccess: (warning) => {
       if (warning) toast.warning(warning, { duration: 12000 });
       else toast.success("Database server registered.");
@@ -175,7 +186,7 @@ export default function AiBridge() {
   });
 
   const unregisterDb = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.unregisterDbServer(id, workingDir || null)),
+    mutationFn: (id: string) => unwrapStr(commands.unregisterDbServer(id, target, global)),
     onSuccess: () => {
       toast.success("Database server unregistered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
@@ -234,13 +245,39 @@ export default function AiBridge() {
         <FolderOpen aria-hidden />
         {workingDir ? "Change" : "Pick repository"}
       </Button>
+      {/* Only with the Settings switch on: machine-wide is the
+          pre-per-repo behaviour, kept as an explicit choice for a machine
+          that does not work from a repository. Writing test cases still
+          needs a repository - this decides where the TOOLS register. */}
+      {globalAllowed && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+          <span>Register in:</span>
+          <div className="flex rounded-md border border-border p-0.5">
+            {(["project", "global"] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={scopeChoice === s}
+                className={cn(
+                  "rounded px-2 py-1 text-xs transition-colors",
+                  scopeChoice === s ? "bg-accent-soft text-accent" : "text-muted hover:text-text",
+                )}
+                onClick={() => saveScope(s)}
+              >
+                {s === "project" ? "This repository" : "Machine-wide"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 
   // Nothing else on this tab means anything until there is a repository -
   // registration would land in a global config, and a writing job would
   // have nowhere agreed to put its file. The rest of the app is unaffected.
-  if (!workingDir) {
+  // The one way past it is the explicit machine-wide choice above.
+  if (!workingDir && !global) {
     return <div className="max-w-lg">{repoCard}</div>;
   }
 

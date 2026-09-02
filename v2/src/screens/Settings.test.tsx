@@ -50,6 +50,21 @@ test("the changelog history section lists released versions", async () => {
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
 });
 
+/// Machine-wide registration is an explicit opt-in, and this switch is the
+/// only place it is granted - the AI Bridge tab reads the same key.
+test("the machine-wide AI registration switch persists its choice", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const sw = await screen.findByLabelText("Allow registering AI tools machine-wide");
+  expect(localStorage.getItem("tcm-v2-ai-global-allowed")).toBeNull();
+  fireEvent.click(sw);
+  expect(localStorage.getItem("tcm-v2-ai-global-allowed")).toBe("on");
+  fireEvent.click(sw);
+  expect(localStorage.getItem("tcm-v2-ai-global-allowed")).toBeNull();
+  localStorage.clear();
+});
+
 test("Settings carries no AI Bridge content (it lives in its own tab)", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

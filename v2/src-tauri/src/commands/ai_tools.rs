@@ -69,6 +69,7 @@ pub fn register_ai_tool(
     id: String,
     working_dir: Option<String>,
     disabled_tools: Vec<String>,
+    global: bool,
 ) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
@@ -77,7 +78,8 @@ pub fn register_ai_tool(
     // The warning `register_server` can return is about the database
     // server's connection string; ours carries no secret, so there is
     // nothing to say here.
-    register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools).map(|_| ())
+    register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools, global)
+        .map(|_| ())
 }
 
 /// The company's SQL Server MCP server, registered beside ours so an
@@ -178,22 +180,38 @@ pub fn register_db_server(
     id: String,
     config: DbServerConfig,
     working_dir: Option<String>,
+    global: bool,
 ) -> Result<Option<String>, String> {
     // No command files are written for the database server, so the disabled
     // set is irrelevant here.
-    register_server(&id, &config.to_server()?, working_dir.as_deref(), &[])
+    register_server(&id, &config.to_server()?, working_dir.as_deref(), &[], global)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn unregister_db_server(id: String, working_dir: Option<String>) -> Result<(), String> {
-    unregister_server(&id, DB_SERVER, working_dir.as_deref())
+pub fn unregister_db_server(
+    id: String,
+    working_dir: Option<String>,
+    global: bool,
+) -> Result<(), String> {
+    unregister_server(&id, DB_SERVER, working_dir.as_deref(), global)
 }
 
 /// The repository a registration for `spec` targets: a tool with a project
 /// config needs one and refuses without (the UI never offers that - the
 /// AI Bridge tab is gated on the repository); a tool without one ignores it.
-fn project_root<'a>(spec: &ToolSpec, working_dir: Option<&'a str>) -> Result<Option<&'a str>, String> {
+fn project_root<'a>(
+    spec: &ToolSpec,
+    working_dir: Option<&'a str>,
+    global: bool,
+) -> Result<Option<&'a str>, String> {
+    // Machine-wide by explicit choice (Settings allows it, the AI Bridge
+    // card picked it): every tool goes to its global config, the way
+    // registering worked before per-repo scoping. Explicit, so a missing
+    // repository can never turn into a global registration by accident.
+    if global {
+        return Ok(None);
+    }
     match (spec.project_config, root_of(working_dir)) {
         (Some(_), Some(r)) => Ok(Some(r)),
         (Some(_), None) => Err(format!(
@@ -244,6 +262,7 @@ fn register_server(
     server: &McpServer,
     working_dir: Option<&str>,
     disabled: &[String],
+    global: bool,
 ) -> Result<Option<String>, String> {
     let spec = TOOL_SPECS
         .iter()
@@ -253,11 +272,22 @@ fn register_server(
     if !is_installed(spec, &home_dir(), &appdata_dir(), &is_on_path) {
         return Err(format!("{} is not installed", spec.name));
     }
-    let root = project_root(spec, working_dir)?;
+    let root = project_root(spec, working_dir, global)?;
 
     if spec.id == "claude-code" {
-        // `project_root` guarantees Some for a tool with a project config.
-        let r = root.ok_or_else(|| "pick a working repository first".to_string())?;
+        // `project_root` gives None here only for the machine-wide choice:
+        // user scope and the global command set, exactly what registering
+        // did before per-repo scoping. No git is involved, so there is no
+        // exclusion and nothing to warn about.
+        let Some(r) = root else {
+            register_claude_code_global(server)?;
+            if server.name == TCM_SERVER {
+                if let Err(e) = write_commands_in(&command_dir(&home_dir()), disabled) {
+                    crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
+                }
+            }
+            return Ok(None);
+        };
         register_claude_code_in(r, server)?;
         if server.name == TCM_SERVER {
             // Best-effort, and deliberately after the server is in: a
@@ -355,8 +385,12 @@ fn retire_global(spec: &ToolSpec, server_name: &str, root: Option<&str>) {
 /// it is exactly what the user wants. Missing file/entry is a clean no-op.
 #[tauri::command]
 #[specta::specta]
-pub fn unregister_ai_tool(id: String, working_dir: Option<String>) -> Result<(), String> {
-    unregister_server(&id, TCM_SERVER, working_dir.as_deref())
+pub fn unregister_ai_tool(
+    id: String,
+    working_dir: Option<String>,
+    global: bool,
+) -> Result<(), String> {
+    unregister_server(&id, TCM_SERVER, working_dir.as_deref(), global)
 }
 
 /// Take away every global registration this app made for `id` - the copies
@@ -385,13 +419,21 @@ pub fn retire_global_registrations(id: String) -> Result<(), String> {
 /// tool has such a config, else from the global one. No installed-guard:
 /// if a config still carries an entry after the tool was uninstalled,
 /// removing it is exactly what the user wants.
-fn unregister_server(id: &str, server_name: &str, working_dir: Option<&str>) -> Result<(), String> {
+fn unregister_server(
+    id: &str,
+    server_name: &str,
+    working_dir: Option<&str>,
+    global: bool,
+) -> Result<(), String> {
     let spec = TOOL_SPECS
         .iter()
         .find(|s| s.id == id)
         .ok_or_else(|| format!("unknown AI tool id: {id}"))?;
-    let root = match (spec.project_config, root_of(working_dir)) {
-        (Some(_), Some(r)) => Some(r),
+    // The machine-wide choice removes the global entry even when a
+    // repository happens to be set - the row the user clicked showed the
+    // global state, so that is the one to act on.
+    let root = match (global, spec.project_config, root_of(working_dir)) {
+        (false, Some(_), Some(r)) => Some(r),
         _ => None,
     };
 
@@ -516,6 +558,21 @@ fn unregister_claude_code(server_name: &str) -> Result<(), String> {
                 server_name,
             ),
         },
+    }
+}
+
+/// User scope, by the machine-wide choice: `claude mcp add --scope user`,
+/// which applies regardless of cwd. CLI first, PATH second, and
+/// `~/.claude.json` - the file that command would have written - last,
+/// merged the same way every other tool registers.
+fn register_claude_code_global(server: &McpServer) -> Result<(), String> {
+    let via_file = || merge_into_file(&PathBuf::from(home_dir()).join(".claude.json"), "mcpServers", server);
+    if let Some(cli) = claude_cli() {
+        return run_claude_mcp_add(&cli, server, "user", None).or_else(|_| via_file());
+    }
+    match run_claude_mcp_add(&PathBuf::from("claude"), server, "user", None) {
+        Ok(()) => Ok(()),
+        Err(_) => via_file(),
     }
 }
 
@@ -726,5 +783,19 @@ mod tests {
             Some(".cursor/mcp.json".to_string())
         );
         assert_eq!(project_relative(r"D:\repo", std::path::Path::new(r"D:\elsewhere\mcp.json")), None);
+    }
+
+    /// The machine-wide choice is explicit: it sends every tool to its
+    /// global config even with a repository set, and without it a tool
+    /// that registers per repository still refuses to go anywhere else.
+    #[test]
+    fn the_machine_wide_choice_targets_the_global_config_for_every_tool() {
+        let cc = TOOL_SPECS.iter().find(|s| s.id == "claude-code").unwrap();
+        assert_eq!(project_root(cc, None, true).unwrap(), None);
+        assert_eq!(project_root(cc, Some("D:/repo"), true).unwrap(), None, "explicit global wins");
+        assert!(project_root(cc, None, false).is_err(), "no choice, no repo: refused");
+        assert_eq!(project_root(cc, Some("D:/repo"), false).unwrap(), Some("D:/repo"));
+        let desktop = TOOL_SPECS.iter().find(|s| s.id == "claude-desktop").unwrap();
+        assert_eq!(project_root(desktop, Some("D:/repo"), false).unwrap(), None, "no project config");
     }
 }

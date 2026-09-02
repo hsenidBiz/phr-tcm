@@ -15,6 +15,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { START_TOUR_EVENT } from "../components/UiTour";
 import { RATE_LEVELS, getRateLevel, setRateLevel, type RateLevel } from "../lib/adoRate";
 import { loadDefaultTags, saveDefaultTags } from "../lib/defaultTags";
+import { loadGlobalAllowed, saveGlobalAllowed } from "../lib/aiScope";
 import { applyLocalStorage, collectLocalStorage } from "../lib/backup";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import TagsField from "../components/TagsField";
@@ -79,6 +80,9 @@ export default function Settings({ org, project }: { org: string; project: strin
   // hides it until it is asked for - someone opening this panel wants
   // "what happened", not every 200 OK.
   const [showRequests, setShowRequests] = useState(false);
+  // Machine-wide AI tool registration is opt-in; the AI Bridge tab reads
+  // the same store and offers the choice only while this is on.
+  const [globalAllowed, setGlobalAllowed] = useState(loadGlobalAllowed);
   // Reporting a bug in the APP itself (bugs in the test cases go to
   // Azure DevOps from the runner). Nothing is posted from here - the
   // reporter reviews the prefilled issue and presses the button, which
@@ -316,6 +320,26 @@ export default function Settings({ org, project }: { org: string; project: strin
           <IconTour aria-hidden />
           Show UI tour
         </Button>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">AI tool registration</h2>
+        <p className="text-sm text-muted">
+          AI tools register into the working repository picked on the AI Bridge tab. Allow
+          machine-wide registration for a machine that does not work from a repository - the
+          AI Bridge tab then offers the choice. Writing test cases still needs a repository.
+        </p>
+        <label className="flex items-center gap-2 text-sm text-text">
+          <Switch
+            checked={globalAllowed}
+            onCheckedChange={(on) => {
+              saveGlobalAllowed(on);
+              setGlobalAllowed(on);
+            }}
+            ariaLabel="Allow registering AI tools machine-wide"
+          />
+          Allow registering AI tools machine-wide
+        </label>
       </section>
 
       {/* The Module / Preconditions field mapping is auto-detected

@@ -403,6 +403,60 @@ test("picking a folder unlocks the tab and detection runs against it", async () 
 /// Registering writes this repository's command files, so it has to be told
 /// which tools are switched off - otherwise registering hands back the
 /// commands for tools the user turned off on this very tab.
+/// Machine-wide registration is the pre-per-repo behaviour, kept as an
+/// explicit choice for a machine that does not work from a repository:
+/// Settings has to allow it, the card then offers it, and choosing it is
+/// the one way past the repository gate.
+test("with machine-wide allowed, choosing it lifts the gate and registers globally", async () => {
+  localStorage.removeItem("tcm-v2-working-dir");
+  localStorage.setItem("tcm-v2-ai-global-allowed", "on");
+  const detectArgs: unknown[] = [];
+  let registered: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") {
+      detectArgs.push(args);
+      return [{ id: "claude-code", name: "Claude Code", installed: true, registered_servers: [], scope: "global" }];
+    }
+    if (cmd === "register_ai_tool") {
+      registered = args;
+      return null;
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  // Still gated: the choice defaults to the repository.
+  expect(await screen.findByRole("button", { name: "Machine-wide" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Register" })).not.toBeInTheDocument();
+  expect(detectArgs).toHaveLength(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "Machine-wide" }));
+  expect(await screen.findByText("Claude Code")).toBeInTheDocument();
+  expect(detectArgs[0]).toMatchObject({ workingDir: null });
+  expect(screen.getByText("global")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Register" }));
+  await waitFor(() =>
+    expect(registered).toMatchObject({ id: "claude-code", workingDir: null, global: true }),
+  );
+  expect(localStorage.getItem("tcm-v2-ai-scope")).toBe("global");
+});
+
+test("without the Settings switch, the machine-wide choice is not offered", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  expect(await screen.findByText("Cursor")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Machine-wide" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Register in:")).not.toBeInTheDocument();
+});
+
 test("Register passes the working repository and the disabled tools along", async () => {
   localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["optimize_cases"]));
   let seen: unknown;

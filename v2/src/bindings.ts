@@ -456,13 +456,13 @@ export const commands = {
 	 *  writes the repository's command files, and writing them from an empty
 	 *  set would hand back the commands for tools the user has switched off.
 	 */
-	registerAiTool: (id: string, workingDir: string | null, disabledTools: string[]) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir, disabledTools })),
+	registerAiTool: (id: string, workingDir: string | null, disabledTools: string[], global: boolean) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir, disabledTools, global })),
 	/**
 	 *  Removes a server from the tool's config. No installed-guard: if a
 	 *  config still carries an entry after the tool was uninstalled, removing
 	 *  it is exactly what the user wants. Missing file/entry is a clean no-op.
 	 */
-	unregisterAiTool: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id, workingDir })),
+	unregisterAiTool: (id: string, workingDir: string | null, global: boolean) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id, workingDir, global })),
 	/**
 	 *  Take away every global registration this app made for `id` - the copies
 	 *  `detect_ai_tools` reports in `global_registered_servers`.
@@ -480,8 +480,8 @@ export const commands = {
 	 *  string is somewhere git can carry it away - the UI shows that instead of
 	 *  the plain success toast. `Ok(None)` = registered and excluded.
 	 */
-	registerDbServer: (id: string, config: DbServerConfig, workingDir: string | null) => typedError<string | null, string>(__TAURI_INVOKE("register_db_server", { id, config, workingDir })),
-	unregisterDbServer: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id, workingDir })),
+	registerDbServer: (id: string, config: DbServerConfig, workingDir: string | null, global: boolean) => typedError<string | null, string>(__TAURI_INVOKE("register_db_server", { id, config, workingDir, global })),
+	unregisterDbServer: (id: string, workingDir: string | null, global: boolean) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id, workingDir, global })),
 	/**  Create `<root>/.test-cases` if needed and return its path. */
 	ensureCasesDir: (root: string) => typedError<string, string>(__TAURI_INVOKE("ensure_cases_dir", { root })),
 	/**
