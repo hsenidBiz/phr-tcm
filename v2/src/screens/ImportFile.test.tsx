@@ -694,8 +694,11 @@ test("a second save adds to the report instead of replacing it", async () => {
   expect(await screen.findByText(/\+1 added/)).toBeInTheDocument();
   expect(screen.getByText(/~1 changed/)).toBeInTheDocument();
 
-  // The X is the only thing that clears them.
-  fireEvent.click(screen.getByRole("button", { name: "Dismiss the change report" }));
+  // The X is the only thing that clears them - and it says WHICH file's
+  // report it clears, because several can be open at once.
+  fireEvent.click(
+    screen.getByRole("button", { name: "Dismiss the change report for cases.json" }),
+  );
   expect(screen.queryByText(/~1 changed/)).not.toBeInTheDocument();
   expect(screen.queryByText(/\+1 added/)).not.toBeInTheDocument();
 

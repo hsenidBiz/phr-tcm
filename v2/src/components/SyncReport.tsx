@@ -99,7 +99,11 @@ export default function SyncReport({
           {open ? "Hide details" : "Show details"}
         </button>
         <button
-          aria-label="Dismiss the change report"
+          // Named by file: one pile per watched file is the designed
+          // normal case now, so two open reports would otherwise announce
+          // themselves identically and a screen-reader user could not
+          // tell which X clears which.
+          aria-label={`Dismiss the change report for ${fileName}`}
           className="rounded p-0.5 text-muted hover:text-text"
           onClick={onDismiss}
         >

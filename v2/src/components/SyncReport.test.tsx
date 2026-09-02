@@ -135,3 +135,33 @@ test("a mixed sync keeps edit wording even into an empty queue", () => {
   expect(screen.getByText("Updated from x.json")).toBeInTheDocument();
   expect(screen.getByText("+1 added")).toBeInTheDocument();
 });
+
+// One pile per watched file is the designed normal case, so two can be up
+// at once. A fixed "Dismiss the change report" on both left a screen
+// reader with two identical buttons and no way to tell which pile it was
+// clearing.
+test("each open report's dismiss button names its own file", () => {
+  const dismissed: string[] = [];
+  render(
+    <>
+      <SyncReport
+        changes={[fourStepEdit()]}
+        fileName="cases.json"
+        onDismiss={() => dismissed.push("cases.json")}
+      />
+      <SyncReport
+        changes={[fourStepEdit()]}
+        fileName="checkout.json"
+        onDismiss={() => dismissed.push("checkout.json")}
+      />
+    </>,
+  );
+
+  const first = screen.getByRole("button", { name: "Dismiss the change report for cases.json" });
+  expect(
+    screen.getByRole("button", { name: "Dismiss the change report for checkout.json" }),
+  ).toBeInTheDocument();
+
+  fireEvent.click(first);
+  expect(dismissed).toEqual(["cases.json"]);
+});
