@@ -22,7 +22,17 @@ import {
 } from "../lib/dbServer";
 import { loadDisabledTools, MCP_TOOLS, saveDisabledTools, toggleTool } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
-import { saveWorkingDir, subscribeWorkingDir, workingDirSnapshot } from "../lib/workingDir";
+import {
+  addRepository,
+  currentPathSnapshot,
+  removeRepository,
+  repositoriesSnapshot,
+  samePath,
+  setCurrentRepository,
+  setRepositoryEnabled,
+  subscribeWorkingDir,
+  workingDirSnapshot,
+} from "../lib/workingDir";
 import { globalAllowedSnapshot, saveScope, scopeSnapshot, subscribeAiScope } from "../lib/aiScope";
 import {
   IconBrowse,
@@ -51,15 +61,18 @@ function copy(text: string, label: string) {
 export default function AiBridge() {
   const qc = useQueryClient();
 
-  // The repository everything on this tab is scoped to. Read through the
+  // The repository everything on this tab is scoped to: the CURRENT one of
+  // the saved list, while its AI-tools switch is on. Read through the
   // store so App's bridge push and this tab agree the moment it changes.
   const workingDir = useSyncExternalStore(subscribeWorkingDir, workingDirSnapshot);
-  const pickWorkingDir = () => {
+  const repos = useSyncExternalStore(subscribeWorkingDir, repositoriesSnapshot);
+  const currentPath = useSyncExternalStore(subscribeWorkingDir, currentPathSnapshot);
+  const addRepo = () => {
     open({ multiple: false, directory: true })
       .then((path) => {
         if (typeof path === "string") {
-          saveWorkingDir(path);
-          toast.success(`Working repository set to ${path}`);
+          addRepository(path);
+          toast.success(`Working repository: ${path}`);
         }
       })
       .catch(() => toast.error("Could not open the folder picker."));
@@ -230,40 +243,68 @@ export default function AiBridge() {
     <section className="space-y-3 rounded-md border border-border bg-surface p-4">
       <div className="flex items-center gap-2">
         <FolderOpen size={14} className="shrink-0 text-muted" />
-        <h2 className="text-sm font-semibold text-text">Working repository</h2>
+        <h2 className="text-sm font-semibold text-text">Working repositories</h2>
       </div>
-      {workingDir ? (
-        <p className="id-mono break-all text-xs text-text">{workingDir}</p>
-      ) : (
+      {repos.length === 0 ? (
         <p className="text-xs text-muted">
-          Not set. Pick the repository these test cases belong to: its{" "}
+          None yet. Add the repository these test cases belong to: its{" "}
           <span className="id-mono">.test-cases</span> folder is where written and imported
           files go, and the AI tools below register into it rather than machine-wide.
         </p>
+      ) : (
+        <ul className="space-y-1">
+          {/* One row per saved repository: the dot picks which one is
+              CURRENT (files and registration go there), the switch is that
+              repository's AI tooling. The current one switched off is how
+              the tooling is turned off without forgetting the folder. */}
+          {repos.map((r) => {
+            const isCurrent = samePath(r.path, currentPath);
+            return (
+              <li key={r.path} className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={isCurrent}
+                  aria-label={`Use ${r.path}`}
+                  title="Make this the current repository"
+                  className={cn(
+                    "h-3 w-3 shrink-0 rounded-full border transition-colors",
+                    isCurrent ? "border-accent bg-accent" : "border-border-strong hover:border-accent",
+                  )}
+                  onClick={() => setCurrentRepository(r.path)}
+                />
+                <span
+                  className={cn(
+                    "id-mono min-w-0 flex-1 break-all",
+                    r.enabled ? "text-text" : "text-faint line-through",
+                  )}
+                >
+                  {r.path}
+                </span>
+                <Switch
+                  checked={r.enabled}
+                  onCheckedChange={(on) => setRepositoryEnabled(r.path, on)}
+                  ariaLabel={`AI tools for ${r.path}`}
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove ${r.path}`}
+                  title="Remove from the list"
+                  className="rounded p-1 text-muted transition-colors hover:text-danger"
+                  onClick={() => removeRepository(r.path)}
+                >
+                  <IconUnregister aria-hidden />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" onClick={pickWorkingDir}>
+        <Button size="sm" variant="outline" onClick={addRepo}>
           <FolderOpen aria-hidden />
-          {workingDir ? "Change" : "Pick repository"}
+          Add repository
         </Button>
-        {workingDir && (
-          // The way to switch the AI tooling OFF: no repository means the
-          // gate below closes again. Machine-wide is reset too - clearing
-          // the repository is "stop", not "go global"; the choice is one
-          // click away if that is what was meant.
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              saveWorkingDir("");
-              saveScope("project");
-              toast.info("Working repository cleared - the AI tools are off until one is picked.");
-            }}
-          >
-            <IconUnregister aria-hidden />
-            Clear
-          </Button>
-        )}
       </div>
       {/* Only with the Settings switch on: machine-wide is the
           pre-per-repo behaviour, kept as an explicit choice for a machine

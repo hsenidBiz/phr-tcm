@@ -359,27 +359,76 @@ test("shipped DB defaults prefill only a never-configured form", async () => {
 
 // ------------------------------------------------- working repository gate
 
-/// Clearing the repository is the off switch for the AI tooling: the gate
-/// closes again, and a machine-wide choice does not survive it - clearing
-/// means "stop", and going global is a fresh, deliberate click.
-test("Clear removes the working repository and closes the gate", async () => {
-  localStorage.setItem("tcm-v2-ai-global-allowed", "on");
-  localStorage.setItem("tcm-v2-ai-scope", "global");
+/// Several repositories can be saved; the dot picks the CURRENT one, and
+/// switching it re-detects against that repository's own configs.
+test("saved repositories are listed and switching the current one re-detects", async () => {
+  localStorage.removeItem("tcm-v2-working-dir");
+  localStorage.setItem(
+    "tcm-v2-repositories",
+    JSON.stringify([
+      { path: "D:\\repo", enabled: true },
+      { path: "E:\\other", enabled: true },
+    ]),
+  );
+  localStorage.setItem("tcm-v2-current-repo", "D:\\repo");
+  const detectArgs: Array<{ workingDir: string | null }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") {
+      detectArgs.push(args as { workingDir: string | null });
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+    }
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+  expect(await screen.findByText("Cursor")).toBeInTheDocument();
+  expect(screen.getByText("D:\\repo")).toBeInTheDocument();
+  expect(screen.getByText("E:\\other")).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Use D:\\repo" })).toHaveAttribute("aria-checked", "true");
+  expect(detectArgs.map((a) => a.workingDir)).toEqual(["D:\\repo"]);
+
+  fireEvent.click(screen.getByRole("radio", { name: "Use E:\\other" }));
+  await waitFor(() => expect(detectArgs.map((a) => a.workingDir)).toContain("E:\\other"));
+  expect(localStorage.getItem("tcm-v2-current-repo")).toBe("E:\\other");
+});
+
+/// The current repository's switch is the off switch for the AI tooling:
+/// off closes the gate without forgetting the folder, on reopens it.
+test("switching the current repository's AI tools off closes the gate", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools")
-      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "global" }];
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
   expect(await screen.findByText("Cursor")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-  expect(localStorage.getItem("tcm-v2-working-dir")).toBeNull();
-  expect(localStorage.getItem("tcm-v2-ai-scope")).toBeNull();
-  expect(await screen.findByRole("button", { name: /pick repository/i })).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("AI tools for D:\\repo"));
+  await waitFor(() => expect(screen.queryByText("Cursor")).not.toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "Register" })).not.toBeInTheDocument();
+  // Still listed - paused, not forgotten.
+  expect(screen.getByText("D:\\repo")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("AI tools for D:\\repo"));
+  expect(await screen.findByText("Cursor")).toBeInTheDocument();
+});
+
+test("Remove drops a repository from the list and deselects it", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+  expect(await screen.findByText("Cursor")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Remove D:\\repo" }));
+  await waitFor(() => expect(screen.queryByText("D:\\repo")).not.toBeInTheDocument());
   expect(screen.queryByText("Cursor")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Clear" })).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-repositories")).toBeNull();
+  expect(await screen.findByRole("button", { name: /add repository/i })).toBeInTheDocument();
 });
 
 test("without a working repository only the picker is offered", async () => {
@@ -395,8 +444,8 @@ test("without a working repository only the picker is offered", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
 
-  expect(await screen.findByText("Working repository")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /pick repository/i })).toBeInTheDocument();
+  expect(await screen.findByText("Working repositories")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /add repository/i })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Register" })).not.toBeInTheDocument();
   expect(screen.queryByText("Connect your AI tools")).not.toBeInTheDocument();
   expect(detected).toBe(0);
@@ -416,9 +465,9 @@ test("picking a folder unlocks the tab and detection runs against it", async () 
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
 
-  fireEvent.click(await screen.findByRole("button", { name: /pick repository/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /add repository/i }));
   expect(await screen.findByText("Claude Code")).toBeInTheDocument();
-  expect(localStorage.getItem("tcm-v2-working-dir")).toBe("D:\\repo");
+  expect(localStorage.getItem("tcm-v2-current-repo")).toBe("D:\\repo");
   expect(detectArgs[0]).toMatchObject({ workingDir: "D:\\repo" });
   expect(screen.getByText("in this repo")).toBeInTheDocument();
 });
