@@ -38,6 +38,7 @@ pub mod steps_xml;
 pub mod transform;
 pub mod updater;
 pub mod webtheme;
+pub mod workspace;
 pub mod work_board;
 
 use std::sync::Mutex;
