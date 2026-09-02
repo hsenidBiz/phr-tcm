@@ -455,6 +455,7 @@ fn ctx() -> BridgeContext {
         module_ref: None,
         preconditions_ref: None,
         disabled_tools: vec![],
+        working_dir: None,
     }
 }
 

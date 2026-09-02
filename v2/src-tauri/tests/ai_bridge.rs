@@ -11,6 +11,7 @@ fn ctx() -> BridgeContext {
         module_ref: Some("Custom.Module".into()),
         preconditions_ref: Some("Custom.Preconditions".into()),
         disabled_tools: vec![],
+        working_dir: None,
     }
 }
 
@@ -1099,6 +1100,7 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         module_ref: None,
         preconditions_ref: None,
         disabled_tools: vec![],
+        working_dir: None,
     };
     let key = v2_lib::refcache::tags_key("cap-org", "CapProj");
     let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();

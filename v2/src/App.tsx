@@ -401,6 +401,7 @@ export default function App() {
           bridgePrefs.moduleRef,
           bridgePrefs.preconditionsRef,
           disabledTools,
+          null,
         ),
       )
       .catch(() => {});

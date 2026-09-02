@@ -79,6 +79,7 @@ pub fn set_bridge_context(
     module_ref: Option<String>,
     preconditions_ref: Option<String>,
     disabled_tools: Vec<String>,
+    working_dir: Option<String>,
 ) {
     use tauri::Manager;
     let handle = app.state::<BridgeHandle>();
@@ -90,6 +91,7 @@ pub fn set_bridge_context(
             module_ref,
             preconditions_ref,
             disabled_tools: disabled_tools.clone(),
+            working_dir: working_dir.clone(),
         };
     }
     // A tool switched off in the AI Bridge tab loses its slash command too.

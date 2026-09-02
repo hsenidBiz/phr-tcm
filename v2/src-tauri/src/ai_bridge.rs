@@ -25,6 +25,10 @@ pub struct BridgeContext {
     /// everything is available - the default - so an unset context can
     /// never accidentally disable the whole server.
     pub disabled_tools: Vec<String>,
+    /// The working repository picked on the AI Bridge tab, or None when
+    /// none is set - in which case a writing job cannot start, because
+    /// there is nowhere agreed for its file to go.
+    pub working_dir: Option<String>,
 }
 
 /// Where `/begin` announces the path the assistant is about to write to.
