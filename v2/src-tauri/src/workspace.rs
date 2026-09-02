@@ -119,26 +119,82 @@ pub fn resolve_output(root: &Path, output_path: &str) -> String {
     cases_dir(root).join(t).to_string_lossy().to_string()
 }
 
-/// Keep `rel` out of `git status` for THIS checkout only, via
-/// `.git/info/exclude` - the repo's `.gitignore` is the user's and is not
-/// edited. `Ok(false)` when the root is not a git checkout.
-pub fn exclude_locally(root: &Path, rel: &str) -> Result<bool, String> {
-    if !root.join(".git").is_dir() {
-        return Ok(false);
+/// What `exclude_locally` actually managed to do. Not a bool: two of the
+/// three outcomes leave a password where git can carry it away, and the
+/// caller has to be able to say which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exclusion {
+    /// The file is untracked and now sits in this checkout's exclude list.
+    Excluded,
+    /// git already TRACKS the file: `.git/info/exclude` does nothing for it,
+    /// and the next commit takes the contents with it.
+    Tracked,
+    /// Not a git checkout at all - there was nothing to exclude.
+    NotGit,
+}
+
+/// Run `git` inside `root`. `None` when git is missing or could not start;
+/// no console window flashes, as everywhere else this app shells out.
+fn git_in(root: &Path, args: &[&str]) -> Option<std::process::Output> {
+    let mut command = std::process::Command::new("git");
+    command.args(args).current_dir(root);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
-    let info = root.join(".git").join("info");
-    std::fs::create_dir_all(&info).map_err(|e| format!("could not create {}: {e}", info.display()))?;
-    let file = info.join("exclude");
+    command.output().ok()
+}
+
+/// Keep `rel` out of `git status` for THIS checkout only, via the exclude
+/// file git itself names - the repo's `.gitignore` is the user's and is not
+/// edited.
+///
+/// Everything here goes through the git CLI rather than looking for a
+/// `.git` DIRECTORY: in a worktree or a submodule `.git` is a FILE pointing
+/// elsewhere, so the directory test called those "not a checkout" and
+/// excluded nothing, silently. `git rev-parse --git-path` answers correctly
+/// in all three layouts.
+///
+/// And an exclude line only ever affects UNTRACKED files. When the config
+/// is already in the index the line is written anyway (harmless, and it
+/// starts working the moment the file leaves the index) but the answer is
+/// `Tracked`, because the caller has a password to warn about.
+pub fn exclude_locally(root: &Path, rel: &str) -> Result<Exclusion, String> {
+    let Some(out) = git_in(root, &["rev-parse", "--git-path", "info/exclude"]) else {
+        return Ok(Exclusion::NotGit);
+    };
+    if !out.status.success() {
+        return Ok(Exclusion::NotGit);
+    }
+    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if printed.is_empty() {
+        return Ok(Exclusion::NotGit);
+    }
+    // git prints the path relative to the repository root it was run in
+    // (absolute for a worktree/submodule), so resolve it against `root`.
+    let printed = Path::new(&printed);
+    let file = if printed.is_absolute() { printed.to_path_buf() } else { root.join(printed) };
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
     let existing = std::fs::read_to_string(&file).unwrap_or_default();
-    if existing.lines().any(|l| l.trim() == rel) {
-        return Ok(true);
-    }
-    let mut next = existing;
-    if !next.is_empty() && !next.ends_with('\n') {
+    if !existing.lines().any(|l| l.trim() == rel) {
+        let mut next = existing;
+        if !next.is_empty() && !next.ends_with('\n') {
+            next.push('\n');
+        }
+        next.push_str(rel);
         next.push('\n');
+        std::fs::write(&file, next)
+            .map_err(|e| format!("could not write {}: {e}", file.display()))?;
     }
-    next.push_str(rel);
-    next.push('\n');
-    std::fs::write(&file, next).map_err(|e| format!("could not write {}: {e}", file.display()))?;
-    Ok(true)
+
+    // Exit 0 = the path is in the index; anything else = it is not.
+    let tracked = git_in(root, &["ls-files", "--error-unmatch", rel])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    Ok(if tracked { Exclusion::Tracked } else { Exclusion::Excluded })
 }

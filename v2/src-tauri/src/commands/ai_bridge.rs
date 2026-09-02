@@ -102,10 +102,17 @@ pub fn set_bridge_context(
     // Only when the set has really moved: this command also fires on an
     // org or project change, and rewriting ten files for that would be ten
     // pointless writes.
-    static LAST: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+    //
+    // Keyed on the REPOSITORY too, not just the set: the command files live
+    // per repository now, so switching repository with the same toggles has
+    // to re-sync - into the new repository's dir. Still a no-op unless that
+    // dir already exists (see `sync_commands`).
+    type SyncKey = (Vec<String>, Option<String>);
+    static LAST: std::sync::Mutex<Option<SyncKey>> = std::sync::Mutex::new(None);
     let mut last = LAST.lock().unwrap();
-    if last.as_deref() != Some(disabled_tools.as_slice()) {
-        *last = Some(disabled_tools.clone());
+    let key: SyncKey = (disabled_tools.clone(), working_dir.clone());
+    if last.as_ref() != Some(&key) {
+        *last = Some(key);
         crate::commands::ai_tools::sync_commands(&disabled_tools, working_dir.as_deref());
     }
 }

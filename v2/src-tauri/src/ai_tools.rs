@@ -173,7 +173,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         stem: "write",
         tool: "begin_test_case_writing",
-        desc: "Start a test-case writing job (asks where the file goes and what is in scope)",
+        desc: "Start a test-case writing job (asks what the file is called and what is in scope)",
         hint: "[PBI id, or what the cases should cover]",
         body: &[
             "Start a test-case writing job for: $ARGUMENTS",
@@ -431,6 +431,12 @@ pub struct DetectedTool {
     /// "project" when this row reflects the working repository's config,
     /// "global" when the tool has none and the machine-wide config was read.
     pub scope: String,
+    /// Our own servers still sitting in the tool's MACHINE-WIDE config while
+    /// this row reads a repository's. A user-scope entry shadows the project
+    /// one in most clients, so a leftover from before per-repo scoping is
+    /// worth surfacing - the UI offers to retire it. Always empty for a
+    /// "global" row, where it would just repeat `registered_servers`.
+    pub global_registered_servers: Vec<String>,
 }
 
 /// Shared installed-check used by both `detect` (for every tool) and
@@ -478,23 +484,39 @@ pub fn detect_in(
         .map(|spec| {
             let installed = is_installed(spec, home, appdata, on_path);
             let (config_path, key, scope) = config_for(spec, home, appdata, root);
-            let entries = std::fs::read_to_string(&config_path)
-                .ok()
-                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .and_then(|v| v.get(key).cloned());
-            let registered_servers = MANAGED_SERVERS
-                .iter()
-                .filter(|name| entries.as_ref().and_then(|e| e.get(**name)).is_some())
-                .map(|name| name.to_string())
-                .collect();
+            let registered_servers = managed_servers_in(&config_path, key);
+            // Only for a repository row: on a global row this is the very
+            // config already read above.
+            let global_registered_servers = if scope == "project" {
+                let (global_path, global_key, _) = config_for(spec, home, appdata, None);
+                managed_servers_in(&global_path, global_key)
+            } else {
+                vec![]
+            };
             DetectedTool {
                 id: spec.id.to_string(),
                 name: spec.name.to_string(),
                 installed,
                 registered_servers,
                 scope: scope.to_string(),
+                global_registered_servers,
             }
         })
+        .collect()
+}
+
+/// Which of `MANAGED_SERVERS` the config at `path` carries under `key`.
+/// A missing or unparseable config reads as "none" - detection reports
+/// state, it never repairs a file it could not understand.
+fn managed_servers_in(path: &std::path::Path, key: &str) -> Vec<String> {
+    let entries = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get(key).cloned());
+    MANAGED_SERVERS
+        .iter()
+        .filter(|name| entries.as_ref().and_then(|e| e.get(**name)).is_some())
+        .map(|name| name.to_string())
         .collect()
 }
 

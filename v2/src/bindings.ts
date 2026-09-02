@@ -451,14 +451,36 @@ export const commands = {
 	 */
 	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir }),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
-	registerAiTool: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir })),
+	/**
+	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering
+	 *  writes the repository's command files, and writing them from an empty
+	 *  set would hand back the commands for tools the user has switched off.
+	 */
+	registerAiTool: (id: string, workingDir: string | null, disabledTools: string[]) => typedError<null, string>(__TAURI_INVOKE("register_ai_tool", { id, workingDir, disabledTools })),
 	/**
 	 *  Removes a server from the tool's config. No installed-guard: if a
 	 *  config still carries an entry after the tool was uninstalled, removing
 	 *  it is exactly what the user wants. Missing file/entry is a clean no-op.
 	 */
 	unregisterAiTool: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("unregister_ai_tool", { id, workingDir })),
-	registerDbServer: (id: string, config: DbServerConfig, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("register_db_server", { id, config, workingDir })),
+	/**
+	 *  Take away every global registration this app made for `id` - the copies
+	 *  `detect_ai_tools` reports in `global_registered_servers`.
+	 * 
+	 *  Registering into a repository already retires them, so this exists for
+	 *  the leftovers of a machine that registered globally before per-repo
+	 *  scoping, or of a tool registered from another repository. Same
+	 *  best-effort contract as that automatic retirement: only our own managed
+	 *  names, only marker-stamped command files, and a failure is logged rather
+	 *  than surfaced - the point is to leave nothing shadowing the repository.
+	 */
+	retireGlobalRegistrations: (id: string) => typedError<null, string>(__TAURI_INVOKE("retire_global_registrations", { id })),
+	/**
+	 *  `Ok(Some(warning))` when the registration worked but the connection
+	 *  string is somewhere git can carry it away - the UI shows that instead of
+	 *  the plain success toast. `Ok(None)` = registered and excluded.
+	 */
+	registerDbServer: (id: string, config: DbServerConfig, workingDir: string | null) => typedError<string | null, string>(__TAURI_INVOKE("register_db_server", { id, config, workingDir })),
 	unregisterDbServer: (id: string, workingDir: string | null) => typedError<null, string>(__TAURI_INVOKE("unregister_db_server", { id, workingDir })),
 	/**  Create `<root>/.test-cases` if needed and return its path. */
 	ensureCasesDir: (root: string) => typedError<string, string>(__TAURI_INVOKE("ensure_cases_dir", { root })),
@@ -708,6 +730,14 @@ export type DetectedTool = {
 	 *  "global" when the tool has none and the machine-wide config was read.
 	 */
 	scope: string,
+	/**
+	 *  Our own servers still sitting in the tool's MACHINE-WIDE config while
+	 *  this row reads a repository's. A user-scope entry shadows the project
+	 *  one in most clients, so a leftover from before per-repo scoping is
+	 *  worth surfacing - the UI offers to retire it. Always empty for a
+	 *  "global" row, where it would just repeat `registered_servers`.
+	 */
+	global_registered_servers: string[],
 };
 
 /**

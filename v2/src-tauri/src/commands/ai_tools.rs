@@ -10,7 +10,8 @@ use std::process::Command;
 use crate::ai_tools::{
     atomic_write, command_dir, command_files_in, config_for, detect_in, is_installed,
     legacy_command_path, merge_entry, project_command_dir, remove_entry, tcm_server,
-    DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, DB_SERVER, TCM_SERVER, TOOL_SPECS,
+    DetectedTool, McpServer, ToolSpec, COMMAND_MARKER, DB_SERVER, MANAGED_SERVERS, TCM_SERVER,
+    TOOL_SPECS,
 };
 
 #[cfg(windows)]
@@ -59,14 +60,24 @@ pub fn detect_ai_tools(working_dir: Option<String>) -> Vec<DetectedTool> {
     detect_in(&home_dir(), &appdata_dir(), &is_on_path, root_of(working_dir.as_deref()))
 }
 
+/// `disabled_tools` is the AI Bridge tab's current on/off set: registering
+/// writes the repository's command files, and writing them from an empty
+/// set would hand back the commands for tools the user has switched off.
 #[tauri::command]
 #[specta::specta]
-pub fn register_ai_tool(id: String, working_dir: Option<String>) -> Result<(), String> {
+pub fn register_ai_tool(
+    id: String,
+    working_dir: Option<String>,
+    disabled_tools: Vec<String>,
+) -> Result<(), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("failed to resolve current exe: {e}"))?
         .to_string_lossy()
         .to_string();
-    register_server(&id, &tcm_server(&exe), working_dir.as_deref())
+    // The warning `register_server` can return is about the database
+    // server's connection string; ours carries no secret, so there is
+    // nothing to say here.
+    register_server(&id, &tcm_server(&exe), working_dir.as_deref(), &disabled_tools).map(|_| ())
 }
 
 /// The company's SQL Server MCP server, registered beside ours so an
@@ -158,10 +169,19 @@ pub fn db_server_presets() -> Vec<DbPresetOut> {
         .collect()
 }
 
+/// `Ok(Some(warning))` when the registration worked but the connection
+/// string is somewhere git can carry it away - the UI shows that instead of
+/// the plain success toast. `Ok(None)` = registered and excluded.
 #[tauri::command]
 #[specta::specta]
-pub fn register_db_server(id: String, config: DbServerConfig, working_dir: Option<String>) -> Result<(), String> {
-    register_server(&id, &config.to_server()?, working_dir.as_deref())
+pub fn register_db_server(
+    id: String,
+    config: DbServerConfig,
+    working_dir: Option<String>,
+) -> Result<Option<String>, String> {
+    // No command files are written for the database server, so the disabled
+    // set is irrelevant here.
+    register_server(&id, &config.to_server()?, working_dir.as_deref(), &[])
 }
 
 #[tauri::command]
@@ -219,7 +239,12 @@ fn remove_from_file(path: &std::path::Path, key: &str, name: &str) -> Result<(),
 /// retires the app's own global copies - a user-scope server of the same
 /// name would shadow the project one, and `/tcm:*` twice in the picker is
 /// exactly the confusion per-repo scoping removes.
-fn register_server(id: &str, server: &McpServer, working_dir: Option<&str>) -> Result<(), String> {
+fn register_server(
+    id: &str,
+    server: &McpServer,
+    working_dir: Option<&str>,
+    disabled: &[String],
+) -> Result<Option<String>, String> {
     let spec = TOOL_SPECS
         .iter()
         .find(|s| s.id == id)
@@ -239,54 +264,80 @@ fn register_server(id: &str, server: &McpServer, working_dir: Option<&str>) -> R
             // command pointing at tools that are not registered would be
             // worse than no command. A failure here does not undo a
             // registration that worked.
-            if let Err(e) = write_commands_in(&project_command_dir(r), &[]) {
+            if let Err(e) = write_commands_in(&project_command_dir(r), disabled) {
                 crate::applog::warn(format!("could not write the Claude Code commands: {e}"));
             }
         }
-        if server.name == DB_SERVER {
+        let warning = if server.name == DB_SERVER {
             // The connection string is in the config now; keep every
             // project-scoped tool's config out of `git status` for this
             // checkout (owner's decision - the repo's .gitignore is not
             // ours to edit), not just Claude Code's - see `exclude_db_config`.
-            exclude_db_config(r, ".mcp.json");
-        }
-        retire_global(spec, &server.name);
-        return Ok(());
+            exclude_db_config(r, ".mcp.json")
+        } else {
+            None
+        };
+        retire_global(spec, &server.name, Some(r));
+        return Ok(warning);
     }
 
     let (config_path, key, _scope) = config_for(spec, &home_dir(), &appdata_dir(), root);
     merge_into_file(&config_path, key, server)?;
+    let mut warning = None;
     if let Some(r) = root {
         if server.name == DB_SERVER {
             match project_relative(r, &config_path) {
-                Some(rel) => exclude_db_config(r, &rel),
+                Some(rel) => warning = exclude_db_config(r, &rel),
                 None => crate::applog::warn(format!(
                     "could not exclude {} locally - not inside {r}",
                     config_path.display()
                 )),
             }
         }
-        retire_global(spec, &server.name);
+        retire_global(spec, &server.name, Some(r));
     }
-    Ok(())
+    Ok(warning)
 }
 
 /// Keep the DB server's connection string out of git for this project-scoped
-/// config file. Best-effort like every other retirement/exclude step here -
-/// a failure to exclude does not undo a registration that already worked.
-fn exclude_db_config(root: &str, rel: &str) {
-    if let Err(e) = crate::workspace::exclude_locally(std::path::Path::new(root), rel) {
-        crate::applog::warn(format!("could not exclude {rel} locally: {e}"));
-    }
+/// config file, and say so when that could not be done: `None` means the
+/// file is genuinely out of git's way, `Some(text)` is a sentence for the
+/// person who just clicked Register.
+///
+/// Best-effort like every other retirement/exclude step here - a failure to
+/// exclude does not undo a registration that already worked, it warns.
+fn exclude_db_config(root: &str, rel: &str) -> Option<String> {
+    let warning = match crate::workspace::exclude_locally(std::path::Path::new(root), rel) {
+        Ok(crate::workspace::Exclusion::Excluded) => return None,
+        Ok(crate::workspace::Exclusion::Tracked) => format!(
+            "The connection string is in {rel}, which git is tracking in this repository — it \
+             will be committed unless you remove the file from the index (git rm --cached {rel}) \
+             or move the secret out."
+        ),
+        Ok(crate::workspace::Exclusion::NotGit) => format!(
+            "{root} is not a git checkout, so nothing was excluded — the connection string sits \
+             in {rel} in plain text."
+        ),
+        Err(e) => e,
+    };
+    crate::applog::warn(warning.clone());
+    Some(warning)
 }
 
 /// Take the app's OWN global copy away once the repository carries it.
 /// Only managed names ever reach here, and command files are removed only
 /// when they carry our marker. Best-effort: the repository registration
 /// has already succeeded, and a global leftover is a nuisance, not a fault.
-fn retire_global(spec: &ToolSpec, server_name: &str) {
+///
+/// `root` is the repository just registered, when there is one - needed
+/// only to avoid deleting the command set that registration itself wrote.
+fn retire_global(spec: &ToolSpec, server_name: &str, root: Option<&str>) {
     let result = if spec.id == "claude-code" {
-        if server_name == TCM_SERVER {
+        // A repository that IS the home directory makes the project and
+        // global command dirs the same folder - "retiring the global copy"
+        // would then delete the set just written.
+        let same_dir = root.is_some_and(|r| project_command_dir(r) == command_dir(&home_dir()));
+        if server_name == TCM_SERVER && !same_dir {
             let _ = remove_commands_in(&command_dir(&home_dir()));
         }
         unregister_claude_code(server_name)
@@ -306,6 +357,28 @@ fn retire_global(spec: &ToolSpec, server_name: &str) {
 #[specta::specta]
 pub fn unregister_ai_tool(id: String, working_dir: Option<String>) -> Result<(), String> {
     unregister_server(&id, TCM_SERVER, working_dir.as_deref())
+}
+
+/// Take away every global registration this app made for `id` - the copies
+/// `detect_ai_tools` reports in `global_registered_servers`.
+///
+/// Registering into a repository already retires them, so this exists for
+/// the leftovers of a machine that registered globally before per-repo
+/// scoping, or of a tool registered from another repository. Same
+/// best-effort contract as that automatic retirement: only our own managed
+/// names, only marker-stamped command files, and a failure is logged rather
+/// than surfaced - the point is to leave nothing shadowing the repository.
+#[tauri::command]
+#[specta::specta]
+pub fn retire_global_registrations(id: String) -> Result<(), String> {
+    let spec = TOOL_SPECS
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| format!("unknown AI tool id: {id}"))?;
+    for name in MANAGED_SERVERS {
+        retire_global(spec, name, None);
+    }
+    Ok(())
 }
 
 /// Removes a server from the repository's config when one is set and the

@@ -76,13 +76,29 @@ export default function AiBridge() {
     enabled: Boolean(workingDir),
   });
 
+  // The disabled set travels with the registration: it writes this
+  // repository's command files, and an empty set would hand back the
+  // commands for tools switched off on this very tab.
   const register = useMutation({
-    mutationFn: (id: string) => unwrapStr(commands.registerAiTool(id, workingDir || null)),
+    mutationFn: (id: string) =>
+      unwrapStr(commands.registerAiTool(id, workingDir || null, loadDisabledTools())),
     onSuccess: () => {
       toast.success("Registered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
     },
     onError: (e) => toast.error(`Could not register: ${e.message}`),
+  });
+
+  // Our own leftovers in a tool's machine-wide config, once the repository
+  // carries its own. Surfaced rather than removed silently: it is a
+  // registration the user (or an older version of this app) made.
+  const retireGlobal = useMutation({
+    mutationFn: (id: string) => unwrapStr(commands.retireGlobalRegistrations(id)),
+    onSuccess: () => {
+      toast.success("Global copies retired.");
+      qc.invalidateQueries({ queryKey: ["ai-tools"] });
+    },
+    onError: (e) => toast.error(`Could not retire the global copies: ${e.message}`),
   });
 
   const unregister = useMutation({
@@ -143,10 +159,16 @@ export default function AiBridge() {
     editDb({ connection_string: buildConnString({ ...conn, ...patch }) });
   const [rawConn, setRawConn] = useState(() => !isRepresentable(db.connection_string));
 
+  // A warning back means the registration worked but the connection string
+  // is somewhere git can carry it away (the file is already tracked, or the
+  // folder is not a checkout). That is not a success sentence - it is the
+  // one thing on this tab worth reading, so it replaces the toast and stays
+  // up long enough to act on.
   const registerDb = useMutation({
     mutationFn: (id: string) => unwrapStr(commands.registerDbServer(id, db, workingDir || null)),
-    onSuccess: () => {
-      toast.success("Database server registered.");
+    onSuccess: (warning) => {
+      if (warning) toast.warning(warning, { duration: 12000 });
+      else toast.success("Database server registered.");
       qc.invalidateQueries({ queryKey: ["ai-tools"] });
     },
     onError: (e) => toast.error(`Could not register: ${e.message}`),
@@ -278,38 +300,61 @@ export default function AiBridge() {
         ) : (
           <ul className="space-y-2">
             {installed.map((t) => (
-              <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
-                <span className="text-text">{t.name}</span>
-                <span className="flex-1 text-xs text-faint">
-                  {t.scope === "project" ? "in this repo" : "global"}
-                </span>
-                {(t.registered_servers ?? []).includes(TCM_SERVER) ? (
-                  <span className="flex items-center gap-2">
-                    <span className="text-xs text-success">Registered ✓</span>
+              <li key={t.id} className="text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-text">{t.name}</span>
+                  <span className="flex-1 text-xs text-faint">
+                    {t.scope === "project" ? "in this repo" : "global"}
+                  </span>
+                  {(t.registered_servers ?? []).includes(TCM_SERVER) ? (
+                    <span className="flex items-center gap-2">
+                      <span className="text-xs text-success">Registered ✓</span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={unregister.isPending && unregister.variables === t.id}
+                        onClick={() => unregister.mutate(t.id)}
+                      >
+                        <IconUnregister aria-hidden />
+                        {unregister.isPending && unregister.variables === t.id
+                          ? "Removing"
+                          : "Unregister"}
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={register.isPending && register.variables === t.id}
+                      onClick={() => register.mutate(t.id)}
+                    >
+                      <IconRegister aria-hidden />
+                      {register.isPending && register.variables === t.id
+                        ? "Registering"
+                        : "Register"}
+                    </Button>
+                  )}
+                </div>
+                {/* A machine-wide copy of our servers, left from before this
+                    repository was registered (or from another one). Most
+                    clients let a user-scope server shadow the project one,
+                    so it is worth saying - and worth being able to remove
+                    from here, since nothing else in the app reaches it. */}
+                {(t.global_registered_servers ?? []).length > 0 && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="flex-1 text-xs text-faint">also registered globally</span>
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={unregister.isPending && unregister.variables === t.id}
-                      onClick={() => unregister.mutate(t.id)}
+                      disabled={retireGlobal.isPending && retireGlobal.variables === t.id}
+                      onClick={() => retireGlobal.mutate(t.id)}
                     >
                       <IconUnregister aria-hidden />
-                      {unregister.isPending && unregister.variables === t.id
-                        ? "Removing"
-                        : "Unregister"}
+                      {retireGlobal.isPending && retireGlobal.variables === t.id
+                        ? "Retiring"
+                        : "Retire global copies"}
                     </Button>
-                  </span>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={register.isPending && register.variables === t.id}
-                    onClick={() => register.mutate(t.id)}
-                  >
-                    <IconRegister aria-hidden />
-                    {register.isPending && register.variables === t.id
-                      ? "Registering"
-                      : "Register"}
-                  </Button>
+                  </div>
                 )}
               </li>
             ))}
@@ -633,6 +678,12 @@ export default function AiBridge() {
             {installed.map((t) => (
               <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-text">{t.name}</span>
+                {/* The same label as the list above: which config this row
+                    is about is exactly what a person needs to know before
+                    putting a connection string into it. */}
+                <span className="flex-1 text-xs text-faint">
+                  {t.scope === "project" ? "in this repo" : "global"}
+                </span>
                 {(t.registered_servers ?? []).includes(DB_SERVER) ? (
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-success">Registered ✓</span>
@@ -696,10 +747,12 @@ export default function AiBridge() {
           <li>
             <code className="id-mono text-text">begin_test_case_writing</code> — the
             starting point. It hands the assistant a checklist to put to you in chat:
-            where the JSON goes, which spec documents are authoritative, whether to
-            check a PBI for duplicates, tags and module, what is out of scope. Your
-            answers are checked against the real paths and values, and written to a
-            plan file for you to approve before a single case exists.
+            what the file is called (it goes in this repository's{" "}
+            <span className="id-mono">.test-cases</span> folder), which spec documents
+            are authoritative, whether to check a PBI for duplicates, tags and module,
+            what is out of scope. Your answers are checked against the real paths and
+            values, and written to a plan file for you to approve before a single case
+            exists.
           </li>
           <li>
             <code className="id-mono text-text">get_writing_guide</code> — the live

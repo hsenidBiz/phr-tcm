@@ -532,6 +532,31 @@ fn detect_reads_the_repo_config_when_a_working_dir_is_given() {
     assert_eq!(cd.scope, "global", "no project config exists for Claude Desktop");
 }
 
+/// An entry left in the MACHINE-WIDE config while the row reads a
+/// repository's is reported separately - it shadows the project one in most
+/// clients, so the UI has to be able to offer to retire it. It must NOT
+/// appear as `registered_servers`, which is what "Registered ✓" means.
+#[test]
+fn a_repo_row_reports_the_leftover_global_entry_separately() {
+    let (home, appdata) = fake_layout(); // ~/.claude.json carries tcm-testcases globally
+    let repo = TempDir::new();
+    std::fs::write(repo.path().join(".mcp.json"), r#"{"mcpServers": {}}"#).unwrap();
+    let home_str = home.path().to_string_lossy().to_string();
+    let appdata_str = appdata.path().to_string_lossy().to_string();
+    let repo_str = repo.path().to_string_lossy().to_string();
+    let on_path = |_cmd: &str| false;
+
+    let tools = detect_in(&home_str, &appdata_str, &on_path, Some(repo_str.as_str()));
+    let cc = tools.iter().find(|t| t.id == "claude-code").unwrap();
+    assert!(cc.registered_servers.is_empty(), "the repo carries nothing: {cc:?}");
+    assert_eq!(cc.global_registered_servers, vec![TCM_SERVER]);
+    // A tool with no project config reads its global config as its own row -
+    // repeating it here would show every such tool as doubly registered.
+    let cd = tools.iter().find(|t| t.id == "claude-desktop").unwrap();
+    assert_eq!(cd.scope, "global");
+    assert!(cd.global_registered_servers.is_empty(), "{cd:?}");
+}
+
 #[test]
 fn without_a_working_dir_detection_is_global_and_says_so() {
     let (home, appdata) = fake_layout();

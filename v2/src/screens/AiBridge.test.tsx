@@ -2,6 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { Toaster } from "sonner";
 import AiBridge from "./AiBridge";
 
 afterEach(() => {
@@ -399,7 +400,11 @@ test("picking a folder unlocks the tab and detection runs against it", async () 
   expect(screen.getByText("in this repo")).toBeInTheDocument();
 });
 
-test("Register passes the working repository along", async () => {
+/// Registering writes this repository's command files, so it has to be told
+/// which tools are switched off - otherwise registering hands back the
+/// commands for tools the user turned off on this very tab.
+test("Register passes the working repository and the disabled tools along", async () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["optimize_cases"]));
   let seen: unknown;
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -414,7 +419,134 @@ test("Register passes the working repository along", async () => {
   renderBridge(qc);
 
   fireEvent.click(await screen.findByRole("button", { name: "Register" }));
-  await waitFor(() => expect(seen).toMatchObject({ id: "cursor", workingDir: "D:\\repo" }));
+  await waitFor(() =>
+    expect(seen).toMatchObject({
+      id: "cursor",
+      workingDir: "D:\\repo",
+      disabledTools: ["optimize_cases"],
+    }),
+  );
+});
+
+// ------------------------------------------- the connection-string warning
+
+/// The registration worked, but the connection string is somewhere git can
+/// carry it away. That is the one thing on this tab worth reading, so it
+/// replaces the success toast rather than sitting in a log.
+test("a warning from register_db_server is shown instead of the success toast", async () => {
+  const warning =
+    "The connection string is in .cursor/mcp.json, which git is tracking in this repository";
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "register_db_server") return warning;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  render(<Toaster />);
+
+  fireEvent.change(await screen.findByLabelText("Database server path"), {
+    target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
+  });
+  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "db" } });
+  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "HR" } });
+
+  const buttons = await screen.findAllByRole("button", { name: "Register" });
+  fireEvent.click(buttons[buttons.length - 1]);
+
+  expect(await screen.findByText(/git is tracking in this repository/)).toBeInTheDocument();
+  expect(screen.queryByText("Database server registered.")).not.toBeInTheDocument();
+});
+
+test("no warning means the plain success toast", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+    if (cmd === "register_db_server") return null;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  render(<Toaster />);
+
+  fireEvent.change(await screen.findByLabelText("Database server path"), {
+    target: { value: "C:/tools/PeoplesHR.DBMCPServer.exe" },
+  });
+  fireEvent.change(screen.getByLabelText("Database host"), { target: { value: "db" } });
+  fireEvent.change(screen.getByLabelText("Database name"), { target: { value: "HR" } });
+
+  const buttons = await screen.findAllByRole("button", { name: "Register" });
+  fireEvent.click(buttons[buttons.length - 1]);
+
+  expect(await screen.findByText("Database server registered.")).toBeInTheDocument();
+});
+
+// ------------------------------------------- leftover global registrations
+
+test("a leftover global registration is surfaced and can be retired", async () => {
+  let retired: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        {
+          id: "claude-code", name: "Claude Code", installed: true,
+          registered_servers: ["tcm-testcases"], scope: "project",
+          global_registered_servers: ["tcm-testcases"],
+        },
+      ];
+    if (cmd === "retire_global_registrations") {
+      retired = args;
+      return null;
+    }
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("also registered globally")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retire global copies" }));
+  await waitFor(() => expect(retired).toMatchObject({ id: "claude-code" }));
+});
+
+test("a tool with nothing left globally is not offered the retire button", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [
+        {
+          id: "claude-code", name: "Claude Code", installed: true,
+          registered_servers: ["tcm-testcases"], scope: "project",
+          global_registered_servers: [],
+        },
+      ];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("Claude Code")).toBeInTheDocument();
+  expect(screen.queryByText("also registered globally")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retire global copies" }),
+  ).not.toBeInTheDocument();
+});
+
+/// The database list carries the same scope label as the list above it:
+/// which config a connection string is about to go into is exactly what a
+/// person needs to know before clicking Register.
+test("the database server list labels each row's scope too", async () => {
+  localStorage.setItem(
+    "tcm-v2-db-mcp",
+    JSON.stringify({
+      exe_path: "C:/tools/PeoplesHR.DBMCPServer.exe",
+      db_type: "mssql",
+      connection_string: "Server=db,1433;Database=HR;User Id=sa;Password=p;",
+      schema_filter: "",
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  // Once in the tools list, once in the database list.
+  await waitFor(() => expect(screen.getAllByText("in this repo")).toHaveLength(2));
 });
 
 test("a tool with no project config is labelled global", async () => {

@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use v2_lib::workspace::{
     cases_dir, copy_into_cases, default_output_path, ensure_cases_dir, exclude_locally,
-    is_inside, resolve_output, slug, CASES_DIR,
+    is_inside, resolve_output, slug, Exclusion, CASES_DIR,
 };
 
 fn temp_root(tag: &str) -> PathBuf {
@@ -111,18 +111,80 @@ fn a_bare_name_resolves_into_the_folder_and_a_path_is_left_alone() {
     assert_eq!(resolve_output(root, "  "), "");
 }
 
-#[test]
-fn exclude_writes_once_and_only_in_a_git_checkout() {
-    let plain = temp_root("plain");
-    assert_eq!(exclude_locally(&plain, ".mcp.json").unwrap(), false);
-    assert!(!plain.join(".git").exists());
+// ------------------------------------------------------------ git exclusion
+//
+// The connection string for the database MCP server lands in a project
+// config file, so "is this file going to be committed?" is a security
+// question, not a tidiness one. These go through the real `git` CLI - the
+// same thing that decides the answer on the user's machine.
 
-    let repo = temp_root("repo");
-    std::fs::create_dir_all(repo.join(".git")).unwrap();
-    assert_eq!(exclude_locally(&repo, ".mcp.json").unwrap(), true);
-    assert_eq!(exclude_locally(&repo, ".mcp.json").unwrap(), true);
+fn git_is_available() -> bool {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn git_in(root: &Path, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .unwrap_or_else(|e| panic!("could not run git {args:?}: {e}"));
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn an_untracked_config_is_excluded_and_the_line_is_written_once() {
+    if !git_is_available() {
+        eprintln!("skipped: git is not on PATH");
+        return;
+    }
+    let repo = temp_root("git-untracked");
+    git_in(&repo, &["init", "-q"]);
+    std::fs::write(repo.join(".mcp.json"), "{}").unwrap();
+
+    assert_eq!(exclude_locally(&repo, ".mcp.json").unwrap(), Exclusion::Excluded);
+    assert_eq!(exclude_locally(&repo, ".mcp.json").unwrap(), Exclusion::Excluded);
     let text = std::fs::read_to_string(repo.join(".git").join("info").join("exclude")).unwrap();
     assert_eq!(text.matches(".mcp.json").count(), 1, "{text}");
-    let _ = std::fs::remove_dir_all(&plain);
     let _ = std::fs::remove_dir_all(&repo);
+}
+
+/// The reason this went through the CLI at all: `.git/info/exclude` has no
+/// effect on a file git already TRACKS, so the password would show up as a
+/// plain modification and be committed with the next `git add -A`.
+#[test]
+fn a_tracked_config_is_reported_as_tracked() {
+    if !git_is_available() {
+        eprintln!("skipped: git is not on PATH");
+        return;
+    }
+    let repo = temp_root("git-tracked");
+    git_in(&repo, &["init", "-q"]);
+    git_in(&repo, &["config", "user.email", "tcm@example.test"]);
+    git_in(&repo, &["config", "user.name", "TCM Tests"]);
+    std::fs::write(repo.join(".mcp.json"), "{}").unwrap();
+    git_in(&repo, &["add", ".mcp.json"]);
+    git_in(&repo, &["commit", "-q", "-m", "add config"]);
+
+    assert_eq!(exclude_locally(&repo, ".mcp.json").unwrap(), Exclusion::Tracked);
+    // The line is still written - harmless, and it starts working the
+    // moment the file leaves the index.
+    let text = std::fs::read_to_string(repo.join(".git").join("info").join("exclude")).unwrap();
+    assert_eq!(text.matches(".mcp.json").count(), 1, "{text}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn a_folder_that_is_not_a_checkout_says_so_and_gets_no_git_dir() {
+    let plain = temp_root("git-plain");
+    assert_eq!(exclude_locally(&plain, ".mcp.json").unwrap(), Exclusion::NotGit);
+    assert!(!plain.join(".git").exists(), "nothing is created in a plain folder");
+    let _ = std::fs::remove_dir_all(&plain);
 }

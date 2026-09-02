@@ -178,6 +178,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_tools::detect_ai_tools,
             ai_tools::register_ai_tool,
             ai_tools::unregister_ai_tool,
+            ai_tools::retire_global_registrations,
             ai_tools::register_db_server,
             ai_tools::unregister_db_server,
             workspace::ensure_cases_dir,
