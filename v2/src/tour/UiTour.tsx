@@ -64,6 +64,10 @@ export default function UiTour({
     const look = () => {
       const el = document.querySelector(selector);
       if (el) {
+        // Scroll the area into view before measuring it - it may be below
+        // the fold (the app scrolls inside an inner container, not the
+        // window), and a ring measured off screen is useless.
+        el.scrollIntoView({ block: "center" });
         setRect(el.getBoundingClientRect());
         return;
       }
@@ -73,15 +77,24 @@ export default function UiTour({
     return () => cancelAnimationFrame(raf);
   }, [anchor]);
 
-  // A resized window moves the area out from under its ring.
+  // The ring is `position: fixed`, measured in viewport coordinates, so
+  // either a resized window or a scroll moves the area out from under it.
+  // Scrolling happens inside the app's own inner container, not the
+  // window, so a plain bubbling listener on window would never see it -
+  // scroll events don't bubble at all, only the capture phase reaches
+  // window as the event travels down to its real target.
   useEffect(() => {
     if (!anchor) return;
-    const onResize = () => {
+    const remeasure = () => {
       const el = document.querySelector(`[data-tour="${anchor}"]`);
       if (el) setRect(el.getBoundingClientRect());
     };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    window.addEventListener("resize", remeasure);
+    window.addEventListener("scroll", remeasure, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("resize", remeasure);
+      window.removeEventListener("scroll", remeasure, { capture: true });
+    };
   }, [anchor]);
 
   const finish = useCallback(() => {

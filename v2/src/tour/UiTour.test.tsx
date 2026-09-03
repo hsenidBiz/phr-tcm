@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import UiTour from "./UiTour";
 import { tourDone } from "./tourState";
@@ -147,6 +147,87 @@ test("Back across several undeclared stops still lands on the right destination"
   fireEvent.click(screen.getByRole("button", { name: "Back" })); // -> queue (still manual)
   expect(await screen.findByText("Build up a batch")).toBeInTheDocument();
   expect(onNavigate).toHaveBeenLastCalledWith(MANUAL_WHERE);
+});
+
+test("scrollIntoView is called for an anchored stop and not for an unanchored one", async () => {
+  addAnchor("import-drop");
+  const spy = vi.spyOn(Element.prototype, "scrollIntoView");
+  render(<UiTour steps={STEPS} onNavigate={vi.fn()} onClose={vi.fn()} />);
+
+  // Stop 0 has no anchor - nothing to scroll to.
+  expect(spy).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" })); // -> anchored stop
+  await screen.findByText("Bring cases in from a file");
+
+  expect(spy).toHaveBeenCalledWith({ block: "center" });
+  const el = document.querySelector('[data-tour="import-drop"]');
+  expect(spy.mock.instances).toContain(el);
+
+  spy.mockRestore();
+});
+
+test("a scroll event re-measures the ring, even dispatched on a non-bubbling target", async () => {
+  addAnchor("import-drop");
+  render(<UiTour steps={STEPS} onNavigate={vi.fn()} onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Bring cases in from a file");
+
+  const el = document.querySelector('[data-tour="import-drop"]') as HTMLElement;
+  const moved = {
+    top: 900,
+    left: 40,
+    right: 240,
+    bottom: 940,
+    width: 200,
+    height: 40,
+    x: 40,
+    y: 900,
+    toJSON: () => ({}),
+  } as DOMRect;
+  vi.spyOn(el, "getBoundingClientRect").mockReturnValue(moved);
+
+  // The app scrolls inside an inner container, not the window, so scroll
+  // events do not bubble to window - only the capture phase sees them.
+  // Dispatch on an unrelated, non-bubbling target to prove that's what is
+  // actually relied on here, not accidental bubbling.
+  const inner = document.createElement("div");
+  document.body.appendChild(inner);
+  inner.dispatchEvent(new Event("scroll", { bubbles: false }));
+  inner.remove();
+
+  // The listener runs outside React's own event system (it's a native
+  // window listener, not a synthetic one), so the resulting state update
+  // is not necessarily flushed by the time dispatchEvent returns.
+  await waitFor(() => {
+    const ring = document.querySelector(".border-accent") as HTMLElement;
+    expect(ring.style.top).toBe("894px"); // moved.top - pad(6)
+  });
+});
+
+test("scroll and resize listeners are torn down on step change and on unmount", async () => {
+  addAnchor("import-drop");
+  addAnchor("board-columns");
+  const addSpy = vi.spyOn(window, "addEventListener");
+  const removeSpy = vi.spyOn(window, "removeEventListener");
+  const { unmount } = render(<UiTour steps={STEPS} onNavigate={vi.fn()} onClose={vi.fn()} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" })); // -> anchored stop
+  await screen.findByText("Bring cases in from a file");
+  expect(addSpy).toHaveBeenCalledWith("scroll", expect.any(Function), { capture: true, passive: true });
+  expect(addSpy).toHaveBeenCalledWith("resize", expect.any(Function));
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" })); // step change tears the old pair down
+  expect(removeSpy).toHaveBeenCalledWith("scroll", expect.any(Function), { capture: true });
+  expect(removeSpy).toHaveBeenCalledWith("resize", expect.any(Function));
+
+  removeSpy.mockClear();
+  unmount();
+  expect(removeSpy).toHaveBeenCalledWith("scroll", expect.any(Function), { capture: true });
+  expect(removeSpy).toHaveBeenCalledWith("resize", expect.any(Function));
+
+  addSpy.mockRestore();
+  removeSpy.mockRestore();
 });
 
 test("moving between stops that share an effective destination does not re-navigate", async () => {
