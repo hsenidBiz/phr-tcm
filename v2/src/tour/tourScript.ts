@@ -125,7 +125,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     anchor: "ai-toolset",
     title: "Decide what it may do",
-    body: "Switch each ability on or off. Anything switched off is simply never offered to your assistant.",
+    body: "Switch each tool on or off. Anything switched off is simply never offered to your assistant.",
   },
   {
     anchor: "ai-db",
