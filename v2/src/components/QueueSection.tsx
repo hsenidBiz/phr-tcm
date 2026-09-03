@@ -1478,13 +1478,16 @@ export default function QueueSection({
         )}
 
       {/* The same main button, following the user down a long queue.
-          Bottom CENTRE: Collapse all owns bottom-left and the toasts own
-          bottom-right. Portalled for the same reason Collapse all is -
-          AnimatedContent's transform would make `fixed` mean this scroll
-          region instead of the window. It is aria-hidden and unfocusable
-          on purpose: it duplicates a control that is already in the page.
-          It never covers the armed confirmation or the duplicate gate -
-          those are there to be read before a write that cannot be undone. */}
+          Bottom RIGHT, keeping clear of Collapse all on the left. It does
+          share that corner with the toasts, which render above it and can
+          cover it for the few seconds one is up - the trade the placement
+          makes, since the button is persistent and a toast is not.
+          Portalled for the same reason Collapse all is - AnimatedContent's
+          transform would make `fixed` mean this scroll region instead of
+          the window. It is aria-hidden and unfocusable on purpose: it
+          duplicates a control that is already in the page. It never covers
+          the armed confirmation or the duplicate gate - those are there to
+          be read before a write that cannot be undone. */}
       {queue.length > 0 &&
         !armed &&
         !dupGate &&
@@ -1493,7 +1496,7 @@ export default function QueueSection({
             aria-hidden
             data-sticky-action
             className={cn(
-              "fixed bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-full border border-border bg-bg p-1 shadow-2xl transition-all duration-200",
+              "fixed bottom-6 right-6 z-40 rounded-full border border-border bg-bg p-2 shadow-2xl transition-all duration-200",
               actionOnScreen
                 ? "pointer-events-none translate-y-3 opacity-0"
                 : "translate-y-0 opacity-100",
