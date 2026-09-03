@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.22.1",
+    date: "2026-09-03",
+    items: [
+      "The interface tour now asks you to open each tab yourself instead of switching for you. It stops at each crossing, tells you what to open, and carries on once you have - so you finish the tour knowing where things are rather than having watched them go past. Only the tab it is asking for responds, so the tour cannot be skipped ahead of, and everything else stays locked exactly as before.",
+      "Fixed: with the tour waiting for you to open a tab, clicking that tab did nothing. The tour's overlay was still catching every click, so the one thing it asked you to do was the one thing you could not do.",
+      "The tour now scrolls each area it is explaining into view, keeps its highlight on that area as you scroll, and re-measures when a screen finishes loading - the highlight on Update Test Cases used to be drawn around an empty list and stay that way.",
+      "The sidebar stays open for the length of the tour, so the tab you are asked to click is readable. Your own collapsed or expanded setting is untouched and comes straight back afterwards.",
+      "The tour's wording follows the screens it points at: expected result, PBI, tools, and the import step now says what the file actually is - a .json your AI assistant generated.",
+    ],
+  },
+  {
     version: "1.22.0",
     date: "2026-09-03",
     items: [
