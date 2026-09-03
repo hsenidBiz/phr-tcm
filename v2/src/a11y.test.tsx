@@ -15,12 +15,20 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import axe from "axe-core";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { ReactElement } from "react";
 import AiBridge from "./screens/AiBridge";
 import PrPanel from "./screens/PrPanel";
 import Settings from "./screens/Settings";
 import SignIn from "./screens/SignIn";
+
+// axe walks the whole rendered tree of a real screen, which is slow by
+// nature: Settings sits around 4.5s idle and has crossed vitest's 5s
+// default under full-suite load more than once - always as a timeout,
+// never as a violation. Raised for this file only, for the same reason as
+// App.test.tsx: a release gate that fails at random teaches people to
+// ignore it.
+vi.setConfig({ testTimeout: 15_000 });
 
 afterEach(() => {
   clearMocks();

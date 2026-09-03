@@ -7,6 +7,20 @@ import { TOUR_STEPS } from "./tour/tourScript";
 import { START_TOUR_EVENT } from "./tour/tourState";
 import { commands } from "./bindings";
 
+// Every test here mounts the WHOLE app - sidebar, context bar, screens,
+// queries - and several walk the tour across most of its stops. Idle, they
+// land between 2 and 4.5 seconds; sharing a laptop with the other 90 test
+// files they routinely cross vitest's 5s default, and it arrives as a bare
+// timeout on a test whose assertions are all fine. Two different tests
+// have failed that way on three full runs, which makes the suite useless
+// as a release gate - and a gate people learn to wave through is worse
+// than no gate.
+//
+// Raised for this file only: the 5s default still holds for the ~90 files
+// of unit tests, so a genuinely hung one there still fails fast. A timeout
+// is for catching a hang, and nothing in this file takes 15s honestly.
+vi.setConfig({ testTimeout: 15_000 });
+
 afterEach(() => {
   clearMocks();
   localStorage.clear();
