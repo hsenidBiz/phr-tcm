@@ -69,7 +69,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     anchor: "pbi",
     title: "Pick what you are testing",
-    body: "Search for a backlog item by name or number. The test cases you write attach themselves to it.",
+    body: "Search for a PBI by name or number. The test cases you write attach themselves to it.",
   },
   {
     anchor: "case-form",
