@@ -79,7 +79,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     anchor: "queue",
     title: "Build up a batch",
-    body: "Finished cases wait here until you send them across together.",
+    body: "Your finished test cases queue up here, ready to upload to Azure DevOps in one go. The same panel appears on the Import File tab.",
   },
   {
     where: cases("import"),
