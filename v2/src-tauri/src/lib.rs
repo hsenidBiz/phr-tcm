@@ -69,7 +69,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::DraftGeneralCommentSaved,
             events::WorkAssigned,
             events::IntakeOutputPath,
-            events::UpdateProgress
+            events::UpdateProgress,
+            events::SlowdownRequested
         ])
         .commands(collect_commands![
             misc::ping,
@@ -269,6 +270,13 @@ pub fn run() {
             // this every specta Event::emit panics with "EventRegistry not
             // found in Tauri state".
             builder.mount_events(app);
+
+            // The ADO pacer lives in a static module with no per-call
+            // AppHandle - `note_server_delay` is reached from deep inside
+            // the transport layer, not a command. Same problem as
+            // `autorun::store::set_root` below, same fix: stash the handle
+            // once, here, where `app` is in scope.
+            ado::throttle::set_app_handle(app.handle().clone());
 
             // App log: file per day next to the OS's other app logs, plus
             // an in-memory tail Settings can show for bug reports.

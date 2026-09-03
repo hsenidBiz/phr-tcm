@@ -402,6 +402,41 @@ test("the update banner shows how much of the package has downloaded", async () 
   });
 });
 
+// Azure DevOps throttles per user, not per app - the same slowdown can be
+// hitting the person's browser tabs with no explanation, so the app has to
+// say so when it happens. `note_server_delay` only re-fires the backing
+// Rust event for a hold that is new or longer, but that guard lives on the
+// Rust side; the frontend gets no such promise from the wire and must not
+// assume it - a long import can still deliver two events close together
+// (e.g. a slightly shorter one racing a longer one that already logged),
+// so the toast itself has to debounce.
+test("a slowdown toast appears once, and is debounced against a second event", async () => {
+  mockIPC(
+    (cmd) => {
+      if (cmd === "auth_status") return { signed_in: false, account: null };
+      if (cmd === "check_update") return null;
+    },
+    { shouldMockEvents: true },
+  );
+  renderApp();
+  await screen.findByRole("button", { name: /sign in/i });
+
+  const { emit } = await import("@tauri-apps/api/event");
+  await act(async () => {
+    await emit("slowdown-requested", { secs: 12 });
+  });
+
+  expect(await screen.findByText(/asked this app to slow down/i)).toBeInTheDocument();
+  expect(screen.getByText(/12s/)).toBeInTheDocument();
+  expect(screen.getByText(/Azure DevOps request rate/)).toBeInTheDocument();
+
+  // A second event straight after must not produce a second toast.
+  await act(async () => {
+    await emit("slowdown-requested", { secs: 5 });
+  });
+  expect(screen.getAllByText(/asked this app to slow down/i)).toHaveLength(1);
+});
+
 /// A check that could not run is not the same as being up to date, and the
 /// banner must not treat it as either - it has nothing to offer. The
 /// difference is told to the person who ASKED, in the toast.

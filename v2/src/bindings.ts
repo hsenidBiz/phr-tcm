@@ -499,6 +499,7 @@ export const events = {
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
+	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 	updateProgress: makeEvent<UpdateProgress>("update-progress"),
@@ -1283,6 +1284,25 @@ export type SharedQueue_Serialize = {
 	project: string,
 	cases: TestCase_Serialize[],
 	warnings: string[],
+};
+
+/**
+ *  Emitted when Azure DevOps has asked the app to slow down and
+ *  `ado::throttle::note_server_delay` has started a fresh hold on it - see
+ *  that function for why this is not a 429 handler. ADO's limit is per
+ *  *user*, not per app, so by the time this fires the same slowdown may
+ *  already be reaching the user's browser tabs and git operations with no
+ *  explanation. The frontend says so, and points at the Settings pacing
+ *  control that can hand some of the shared budget back.
+ * 
+ *  Only fired for a hold that is new or longer than the one already in
+ *  force - see the `if extend` guard around the emit - so one long import
+ *  getting repeatedly told to slow down raises this once per hold, not
+ *  once per response.
+ */
+export type SlowdownRequested = {
+	/**  Seconds the pacer is holding requests for, after the 30s cap. */
+	secs: number,
 };
 
 export type StateInfo = {

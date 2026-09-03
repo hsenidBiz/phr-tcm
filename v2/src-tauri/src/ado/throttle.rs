@@ -13,6 +13,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use tauri_specta::Event;
 
 /// The longest server-requested delay we will actually sleep. ADO
 /// documents delays "up to 30 seconds"; a longer value than that is more
@@ -56,6 +57,23 @@ fn backoff_until() -> &'static std::sync::Mutex<Option<Instant>> {
     UNTIL.get_or_init(|| std::sync::Mutex::new(None))
 }
 
+/// The handle needed to emit `SlowdownRequested`. This module has no
+/// per-call `AppHandle` of its own - `note_server_delay` is reached from
+/// deep inside the transport layer, not a Tauri command - so `lib.rs::run`
+/// stashes one here, once, from its `.setup(...)` closure, the same way
+/// `autorun::store::set_root` does (see that comment for the same problem
+/// stated the other way round).
+///
+/// Never set in the integration test binaries, where `AdoClient` is
+/// exercised directly with no Tauri app at all - `note_server_delay` must
+/// stay safe with this unset.
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+/// Called once during app setup.
+pub fn set_app_handle(app: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(app);
+}
+
 /// Record a delay Azure DevOps ASKED us to take.
 ///
 /// The important part is that this is not a 429 handler. ADO throttles
@@ -84,6 +102,12 @@ pub fn note_server_delay(secs: u64) {
                 "Azure DevOps asked us to slow down: holding requests for {capped}s                 {}",
                 if capped < secs { format!(" (it asked for {secs}s, capped)") } else { String::new() }
             ));
+            // Same guard as the log above: a hold that only got extended
+            // (not started or lengthened) must not raise a second toast on
+            // top of the one already shown for it.
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = crate::events::SlowdownRequested { secs: capped as u32 }.emit(app);
+            }
         }
     }
 }

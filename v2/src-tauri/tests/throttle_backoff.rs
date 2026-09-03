@@ -125,3 +125,42 @@ fn zero_is_ignored_and_absurd_delays_are_capped() {
     // cannot be more than 30s out.
     reset();
 }
+
+/// This binary is `AdoClient` exercised with no Tauri app anywhere in it -
+/// see the note at the top of tests/bindings.rs, and the same reason
+/// `note_server_delay`'s `AppHandle` is a `OnceLock` nobody has set here.
+/// The emit added for `SlowdownRequested` must not assume `set_app_handle`
+/// was ever called; if it did, every test in this crate that crosses a
+/// throttled response would panic instead of this one failing on its own.
+#[test]
+fn note_server_delay_is_safe_with_no_app_handle_registered() {
+    let _g = gate().lock().unwrap_or_else(|e| e.into_inner());
+    reset();
+    throttle::note_server_delay(5); // must return, not panic
+    reset();
+}
+
+/// The log line and the `SlowdownRequested` emit sit behind the same
+/// `if extend` guard in `note_server_delay`, so proving the guard holds
+/// for a second, SHORTER delay proves both at once: the hold is not
+/// shortened, and - since that is the only branch the emit lives in - the
+/// event does not fire again either. Without this, one long import that
+/// gets told to slow down on every response would refresh the toast (and
+/// the deadline) on each one instead of holding a single, growing-only
+/// deadline from the first.
+#[tokio::test]
+async fn a_shorter_delay_inside_an_existing_hold_does_not_extend_it() {
+    let _g = gate().lock().unwrap_or_else(|e| e.into_inner());
+    reset();
+    throttle::note_server_delay(2); // starts a ~2s hold
+    throttle::note_server_delay(1); // shorter - must be a no-op
+
+    let started = std::time::Instant::now();
+    throttle::pace().await; // at level "full" this only waits out the hold
+    let waited = started.elapsed();
+    assert!(
+        waited >= std::time::Duration::from_millis(1_700),
+        "a shorter, later delay must not have shortened the hold; waited only {waited:?}"
+    );
+    reset();
+}

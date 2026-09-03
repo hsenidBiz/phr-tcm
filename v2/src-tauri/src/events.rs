@@ -104,3 +104,21 @@ pub struct DraftGeneralCommentSaved {
     pub stamp: String,
     pub text: String,
 }
+
+/// Emitted when Azure DevOps has asked the app to slow down and
+/// `ado::throttle::note_server_delay` has started a fresh hold on it - see
+/// that function for why this is not a 429 handler. ADO's limit is per
+/// *user*, not per app, so by the time this fires the same slowdown may
+/// already be reaching the user's browser tabs and git operations with no
+/// explanation. The frontend says so, and points at the Settings pacing
+/// control that can hand some of the shared budget back.
+///
+/// Only fired for a hold that is new or longer than the one already in
+/// force - see the `if extend` guard around the emit - so one long import
+/// getting repeatedly told to slow down raises this once per hold, not
+/// once per response.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct SlowdownRequested {
+    /// Seconds the pacer is holding requests for, after the 30s cap.
+    pub secs: u32,
+}

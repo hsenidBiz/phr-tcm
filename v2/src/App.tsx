@@ -103,6 +103,16 @@ import { IconRefresh } from "./lib/actionIcons";
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
 
 /**
+ * Floor between two slowdown toasts. Azure DevOps can ask the app to slow
+ * down repeatedly over one long import - `note_server_delay` on the Rust
+ * side only re-emits for a hold that is new or longer, but that promise
+ * does not reach the wire, so the frontend debounces on its own rather
+ * than trust it. One every five minutes is plenty to make the user aware
+ * without burying them.
+ */
+const SLOWDOWN_TOAST_MIN_GAP_MS = 5 * 60 * 1000;
+
+/**
  * Stop listening, without letting the teardown throw.
  *
  * The event plugin's `unlisten` reaches into
@@ -299,6 +309,33 @@ export default function App() {
     const un = events.caseNoteSaved.listen((e) =>
       saveNote(e.payload.org, e.payload.case_id, e.payload.text),
     );
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  // Azure DevOps throttles per USER, not per app - so once the account
+  // trips the limit, ADO can be slowing down the person's browser tabs and
+  // git operations too, with nothing telling them why. When the Rust pacer
+  // starts holding requests for that reason, say so here rather than leave
+  // it in the log panel nobody watches, and point at the one control that
+  // can hand some of that speed back.
+  //
+  // `lastSlowdownToastAt` is local to this one listener - nothing outside
+  // this effect needs it - so a ref (the same shape as `shownChangelogRef`
+  // further down) is simpler than a module-level store like
+  // sessionExpired.ts.
+  const lastSlowdownToastAt = useRef(0);
+  useEffect(() => {
+    const un = events.slowdownRequested.listen((e) => {
+      const now = Date.now();
+      if (now - lastSlowdownToastAt.current < SLOWDOWN_TOAST_MIN_GAP_MS) return;
+      lastSlowdownToastAt.current = now;
+      toast.info("Azure DevOps asked this app to slow down", {
+        description: `Requests are paused for ${e.payload.secs}s. If you're also working in Azure DevOps in your browser, the "Azure DevOps request rate" setting in Settings can hand back some speed.`,
+        duration: 8_000,
+      });
+    });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
