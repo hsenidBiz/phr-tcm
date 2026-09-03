@@ -58,7 +58,7 @@ const work = (workSection: WorkSection): TourWhere => ({ area: "work", workSecti
 export const TOUR_STEPS: TourStep[] = [
   {
     title: "Welcome to Test Case Manager",
-    body: "This tour will briefly show you around the app, using made-up data. Nothing here touches your real work, and Skip tour ends it whenever you like.",
+    body: "This tour will briefly show you around the app, using made-up data. Skip tour ends it whenever you like.",
   },
   {
     where: cases("manual"),
@@ -73,7 +73,7 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     anchor: "case-form",
-    title: "Write a test case",
+    title: "Manually write a test case",
     body: "Give it a title, then fill in the numbered steps and what you expect to see at each one.",
   },
   {
@@ -85,7 +85,7 @@ export const TOUR_STEPS: TourStep[] = [
     where: cases("import"),
     anchor: "import-drop",
     title: "Bring cases in from a file",
-    body: "Drop in a file of ready-written cases. Edit that file later and the changes follow through on their own.",
+    body: "Import a .json file your AI assistant generated. Edit that file later and the changes follow through on their own.",
   },
   {
     where: cases("edit"),

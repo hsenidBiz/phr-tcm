@@ -112,6 +112,14 @@ export default function UiTour({
     const selector = `[data-tour="${anchor}"]`;
     const started = Date.now();
     let raf = 0;
+    // The area is measured the moment it EXISTS, and on a screen that
+    // fetches, that is before it holds anything - so the ring came out the
+    // size of an empty list and stayed there. Walking Back and forward
+    // again appeared to fix it only because that re-measured once the
+    // content had arrived. Watching the element keeps the ring on it while
+    // it grows, which is also what an expanding case or a loaded board
+    // needs.
+    let grow: ResizeObserver | null = null;
     const look = () => {
       const el = document.querySelector(selector);
       if (el) {
@@ -120,12 +128,19 @@ export default function UiTour({
         // window), and a ring measured off screen is useless.
         el.scrollIntoView({ block: "center" });
         setRect(el.getBoundingClientRect());
+        if (typeof ResizeObserver !== "undefined") {
+          grow = new ResizeObserver(() => setRect(el.getBoundingClientRect()));
+          grow.observe(el);
+        }
         return;
       }
       if (Date.now() - started < ANCHOR_WAIT_MS) raf = requestAnimationFrame(look);
     };
     look();
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      grow?.disconnect();
+    };
   }, [anchor]);
 
   // The ring is `position: fixed`, measured in viewport coordinates, so
@@ -142,6 +157,7 @@ export default function UiTour({
     };
     window.addEventListener("resize", remeasure);
     window.addEventListener("scroll", remeasure, { capture: true, passive: true });
+
     return () => {
       window.removeEventListener("resize", remeasure);
       window.removeEventListener("scroll", remeasure, { capture: true });

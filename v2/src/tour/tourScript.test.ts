@@ -4,9 +4,17 @@ import { TOUR_ANCHORS, TOUR_CHROME_ANCHORS, TOUR_STEPS, tourAwaitedWhere, tourCo
 import { tourWaitingCard } from "./UiTour";
 
 /** Goal 4: the tour describes the app the user can see, in the words a
- * tester would use. Anything on this list is about the inside. */
+ * tester would use. Anything on this list is about the inside.
+ *
+ * JSON was on this list and has been taken off deliberately. The test the
+ * ban exists to pass is "would a tester recognise this word", and here
+ * they would: the Import screen's own heading says "Import your test cases
+ * from a JSON file", and the file an assistant hands them really is a
+ * .json. Banning it forced the tour to describe that file more vaguely
+ * than the screen it is pointing at - which is the opposite of the goal.
+ * Everything else on the list is still about the inside. */
 const JARGON =
-  /\b(MCP|IPC|API|JSON|cache|caching|query|endpoint|binding|localStorage|repo|work item|payload|schema|backend|frontend)\b/i;
+  /\b(MCP|IPC|API|cache|caching|query|endpoint|binding|localStorage|repo|work item|payload|schema|backend|frontend)\b/i;
 
 test("every stop is short, plain and finished", () => {
   for (const s of TOUR_STEPS) {

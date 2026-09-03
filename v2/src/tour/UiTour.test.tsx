@@ -55,6 +55,49 @@ const overlay = () => screen.getByRole("dialog", { name: "Interface tour" });
 /// element happily and cannot reproduce this. What CAN be held here is the
 /// structural rule the fix rests on: the container never takes pointer
 /// events, and each child that must be clickable turns them back on.
+/// Field report: on Update Test Cases the ring came out the wrong size and
+/// walking Back then Next corrected it. The area is measured the moment it
+/// exists, which on a fetching screen is while it is still empty - so the
+/// ring was sized to an empty list and never re-measured. The element is
+/// now watched for growth.
+///
+/// jsdom implements no layout, so a real size change cannot be produced
+/// here. What is held instead is that the anchored element IS observed and
+/// that the observer is disconnected on unmount - without which the ring
+/// could only ever be correct by luck of timing.
+test("the ringed area is watched, so a screen that fills in re-measures", () => {
+  const observed: Element[] = [];
+  let disconnected = 0;
+  const real = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    observe(el: Element) {
+      observed.push(el);
+    }
+    unobserve() {}
+    disconnect() {
+      disconnected += 1;
+    }
+  } as unknown as typeof ResizeObserver;
+
+  try {
+    addAnchor("case-form");
+    const { unmount } = render(
+      <UiTour
+        steps={SINGLE_HOP_STEPS}
+        at={MANUAL_WHERE}
+        onNavigate={vi.fn()}
+        onAwait={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(observed).toEqual([document.querySelector('[data-tour="case-form"]')]);
+    unmount();
+    expect(disconnected).toBeGreaterThan(0);
+  } finally {
+    globalThis.ResizeObserver = real;
+  }
+});
+
 test("the overlay's container never swallows clicks meant for the app", () => {
   addAnchor("case-form");
   render(
