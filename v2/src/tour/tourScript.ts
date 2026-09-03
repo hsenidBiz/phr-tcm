@@ -74,7 +74,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     anchor: "case-form",
     title: "Manually write a test case",
-    body: "Give it a title, then fill in the numbered steps and what you expect to see at each one.",
+    body: "Give it a title, then fill in the numbered steps and the expected result at each one.",
   },
   {
     anchor: "queue",
@@ -91,7 +91,7 @@ export const TOUR_STEPS: TourStep[] = [
     where: cases("edit"),
     anchor: "case-list",
     title: "Change what you already have",
-    body: "Every case on the chosen item, ready to edit - one at a time, or a whole selection at once.",
+    body: "Every case on the chosen PBI, ready to edit - one at a time, or a whole selection at once.",
   },
   {
     where: cases("view"),
@@ -136,7 +136,7 @@ export const TOUR_STEPS: TourStep[] = [
     where: work("board"),
     anchor: "board-columns",
     title: "The other half of the app",
-    body: "Your own items as cards. Drag one across to move it along.",
+    body: "Your own items as cards. Move a card to the next column to change its status.",
   },
   {
     anchor: "nav-prs",
