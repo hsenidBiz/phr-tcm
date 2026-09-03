@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 import { TOUR_STEPS } from "./tour/tourScript";
@@ -20,6 +20,16 @@ import { commands } from "./bindings";
 // of unit tests, so a genuinely hung one there still fails fast. A timeout
 // is for catching a hang, and nothing in this file takes 15s honestly.
 vi.setConfig({ testTimeout: 15_000 });
+
+// A SECOND clock, and the one that actually bit: Testing Library's
+// `findBy*` gives up after 1s by default, which vitest's testTimeout above
+// does nothing about. Under full-suite load this app's first render can
+// take longer than that, so a `findByText` for something that does arrive
+// fails at 1s - and reports "Unable to find an element", which reads like
+// a broken assertion rather than the machine being busy. That cost a real
+// diagnosis: the failure moved between tests run to run and vanished when
+// the file ran alone.
+configure({ asyncUtilTimeout: 5_000 });
 
 afterEach(() => {
   clearMocks();
