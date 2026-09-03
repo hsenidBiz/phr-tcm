@@ -1,5 +1,7 @@
 import { expect, test } from "vitest";
-import { TOUR_ANCHORS, TOUR_CHROME_ANCHORS, TOUR_STEPS, tourAwaitedWhere, tourControl, tourDestination, type TourWhere } from "./tourScript";
+import { CASE_ITEMS, WORK_ITEMS } from "../components/Sidebar";
+import { TOUR_ANCHORS, TOUR_CHROME_ANCHORS, TOUR_STEPS, tourAwaitedWhere, tourControl, tourDestination, type TourControl, type TourWhere } from "./tourScript";
+import { tourWaitingCard } from "./UiTour";
 
 /** Goal 4: the tour describes the app the user can see, in the words a
  * tester would use. Anything on this list is about the inside. */
@@ -125,4 +127,78 @@ test("the control to click is the rail row, or the pill when the half changes", 
   expect(tourControl(manual, board)).toEqual({ kind: "switch", to: "cases" });
   expect(tourControl(board, prs)).toEqual({ kind: "work", workSection: "board" });
   expect(tourControl(manual, manual)).toBeNull();
+});
+
+// --- crossing into Work Manager can take two clicks -----------------------
+//
+// The pill's real handler is `onToggleWork` in App.tsx, which is just
+// `setWorkMode((w) => !w)` - it does not also reset `workSection`. So a
+// user who last had Pull Requests open lands there, not on Board, and has
+// to click Board separately. `walkFrom` above always starts with
+// `workSection: "board"` (its default), so it never exercises this second
+// hop - this test does, by hand.
+
+test("crossing into Work Manager can take two clicks when the user's last section was not Board", () => {
+  const boardIndex = TOUR_STEPS.findIndex(
+    (s) => s.where?.area === "work" && s.where.workSection === "board",
+  );
+  const dest = tourDestination(boardIndex, TOUR_STEPS)!;
+  expect(dest).toEqual({ area: "work", workSection: "board" });
+
+  // Start from the tour's last cases stop (AI Bridge), the way the route
+  // actually arrives at this stop.
+  const atCases: TourWhere = { area: "cases", section: "ai" };
+  expect(tourAwaitedWhere(boardIndex, atCases, TOUR_STEPS)).toEqual(dest);
+  expect(tourControl(dest, atCases)).toEqual({ kind: "switch", to: "work" });
+
+  // Click the pill: the user crosses into Work Manager, but lands wherever
+  // they last were there - Pull Requests, not Board.
+  const atWorkPrs: TourWhere = { area: "work", workSection: "prs" };
+  expect(tourAwaitedWhere(boardIndex, atWorkPrs, TOUR_STEPS)).toEqual(dest); // still waiting
+  expect(tourControl(dest, atWorkPrs)).toEqual({ kind: "work", workSection: "board" });
+
+  // Click Board: now the stop is satisfied.
+  const atBoard: TourWhere = { area: "work", workSection: "board" };
+  expect(tourAwaitedWhere(boardIndex, atBoard, TOUR_STEPS)).toBeNull();
+});
+
+// --- the waiting card's own copy obeys the same gates ----------------------
+//
+// The card shown while the tour waits builds its title/body at runtime
+// (`tourWaitingCard` in UiTour.tsx) from the rail's own labels, so the gates
+// above - which only scan TOUR_STEPS - never see it. Drive every rail label
+// the tour can actually put in front of a user through the same helper the
+// app renders, and hold it to the same caps and the same jargon regex as the
+// script copy.
+//
+// Scoped to sections a stop's `where` can actually name - the same reason
+// "the route covers both areas..." above excludes Auto Run and Settings:
+// `tourControl` can only ever be asked for a destination that appears as a
+// `where`, so a label that is never one (Auto Run, Settings, New Work Item)
+// can never reach this card. Derived from TOUR_STEPS, not a hand-kept
+// exclude list, so a future stop that starts targeting one of them pulls it
+// into this test automatically.
+
+test("the waiting card's copy, for every rail label the tour can actually show, obeys the script's own gates", () => {
+  const reachableSections = new Set(
+    TOUR_STEPS.filter((s) => s.where?.area === "cases").map((s) => (s.where as { section: string }).section),
+  );
+  const reachableWorkSections = new Set(
+    TOUR_STEPS.filter((s) => s.where?.area === "work").map((s) => (s.where as { workSection: string }).workSection),
+  );
+  const controls: TourControl[] = [
+    ...CASE_ITEMS.filter((c) => reachableSections.has(c.id)).map((c): TourControl => ({ kind: "case", section: c.id })),
+    ...WORK_ITEMS.filter((w) => reachableWorkSections.has(w.id)).map((w): TourControl => ({ kind: "work", workSection: w.id })),
+    { kind: "switch", to: "work" },
+    { kind: "switch", to: "cases" },
+  ];
+  // Sanity check on the scoping itself: it should still cover a real spread
+  // of rail rows, not have quietly emptied out.
+  expect(controls.length).toBeGreaterThanOrEqual(7);
+  for (const control of controls) {
+    const { title, body } = tourWaitingCard(control);
+    expect(title.length, title).toBeLessThanOrEqual(34);
+    expect(body.length, title).toBeLessThanOrEqual(160);
+    expect(JARGON.test(`${title} ${body}`), `jargon in "${title}"`).toBe(false);
+  }
 });

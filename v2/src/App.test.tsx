@@ -640,7 +640,7 @@ test("the tour's queue is populated and the real draft is never touched", async 
     // as "the queue never came back" rather than "the machine was busy",
     // which has misdiagnosed this suite more than once.
     expect(
-      await screen.findByText(/Queue for PBI #99/, undefined, { timeout: 12_000 }),
+      await screen.findByText(/Queue for PBI #99/, undefined, { timeout: 8_000 }),
     ).toBeInTheDocument();
 
     // The sample queue was never saved anywhere...

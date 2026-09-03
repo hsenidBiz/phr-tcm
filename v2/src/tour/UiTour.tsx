@@ -40,6 +40,21 @@ function controlAnchor(control: TourControl): string {
   return "work";
 }
 
+/** The waiting card's title and body for the control it names - the exact
+ * text the render below shows, pulled out so `tourScript.test.ts` can hold
+ * every rail label to the same copy gates as the script itself, without a
+ * second copy of this text drifting out of sync with the real one. */
+export function tourWaitingCard(control: TourControl): { title: string; body: string } {
+  const label = controlLabel(control);
+  return {
+    title: `Go to ${label}`,
+    body:
+      control.kind === "switch"
+        ? `Click ${label} at the top of the screen to carry on.`
+        : `Click ${label} in the menu on the left to carry on.`,
+  };
+}
+
 /**
  * The guided tour: it rings one area at a time and says what it is for.
  * It never moves the app - a stop that lives somewhere else asks the user
@@ -199,19 +214,13 @@ export default function UiTour({
       >
         <div className="flex items-baseline justify-between gap-2">
           <h2 className="text-sm font-semibold text-text">
-            {control ? `Go to ${controlLabel(control)}` : step.title}
+            {control ? tourWaitingCard(control).title : step.title}
           </h2>
           <span className="shrink-0 text-xs text-faint">
             {i + 1} / {steps.length}
           </span>
         </div>
-        <p className="text-sm text-muted">
-          {control
-            ? control.kind === "switch"
-              ? `Click ${controlLabel(control)} at the top of the screen to carry on.`
-              : `Click ${controlLabel(control)} in the menu on the left to carry on.`
-            : step.body}
-        </p>
+        <p className="text-sm text-muted">{control ? tourWaitingCard(control).body : step.body}</p>
         <div className="flex items-center gap-2 pt-1">
           <button className="text-xs text-faint hover:text-text" onClick={finish}>
             Skip tour
