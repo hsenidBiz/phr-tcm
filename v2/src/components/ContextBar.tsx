@@ -26,6 +26,8 @@ export default function ContextBar({
   onToggleWork,
   onOpenSettings,
   settingsOpen = false,
+  locked = false,
+  workLive = false,
 }: {
   org: string;
   setOrg: (v: string) => void;
@@ -38,6 +40,13 @@ export default function ContextBar({
   onToggleWork: () => void;
   onOpenSettings: () => void;
   settingsOpen?: boolean;
+  /** The guided tour is running: this bar sits outside the inert shell so
+   * its Work Manager pill can be the one live control, which means every
+   * other control here has to lock itself. */
+  locked?: boolean;
+  /** ...and the pill is live only when the current stop is waiting for
+   * the user to cross between the two halves of the app. */
+  workLive?: boolean;
 }) {
   // The review gate's final confirmation spotlights the PBI chip so the
   // user verifies the target before an irreversible create.
@@ -76,6 +85,7 @@ export default function ContextBar({
         data-tour="org"
         aria-label="Organization"
         className="w-44" triggerClassName="py-1.5"
+        disabled={locked}
         value={org}
         onChange={(e) => {
           setOrg(e.target.value);
@@ -94,7 +104,7 @@ export default function ContextBar({
         aria-label="Project"
         className="w-44" triggerClassName="py-1.5"
         value={project}
-        disabled={!org}
+        disabled={!org || locked}
         onChange={(e) => {
           setProject(e.target.value);
           setPbi(null);
@@ -109,7 +119,7 @@ export default function ContextBar({
       </Select>
       {/* The PBI chip gets all remaining width so long titles stay readable;
           min-w keeps it usable and forces a wrap instead of a squeeze. */}
-      <div className="min-w-56 flex-1" data-tour="pbi">
+      <div className="min-w-56 flex-1" data-tour="pbi" inert={locked}>
         {/* React Bits ElectricBorder wraps the chip while confirmation is
             armed, in the theme accent so it follows light/dark and presets. */}
         {pbiGlow ? (
@@ -142,7 +152,11 @@ export default function ContextBar({
                 ? "Test Case Manager"
                 : "Work Manager"
           }
-          onClick={onToggleWork}
+          disabled={locked && !workLive}
+          onClick={() => {
+            if (locked && !workLive) return;
+            onToggleWork();
+          }}
         >
           {/* The icon names the DESTINATION, same as the label: a board
               on the way out to Work Manager, the flask on the way back.
@@ -175,10 +189,12 @@ export default function ContextBar({
           aria-pressed={settingsOpen}
           className={
             settingsOpen
-              ? "rounded-md bg-accent-soft p-2 text-accent transition-colors"
-              : "rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text"
+              ? "rounded-md bg-accent-soft p-2 text-accent transition-colors disabled:pointer-events-none"
+              : "rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none"
           }
-          onClick={onOpenSettings}
+          // The tour spotlights the gear; it never opens it.
+          disabled={locked}
+          onClick={() => !locked && onOpenSettings()}
         >
           <SettingsIcon size={16} />
         </button>

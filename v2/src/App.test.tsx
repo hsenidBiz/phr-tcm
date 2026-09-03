@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 import { TOUR_STEPS } from "./tour/tourScript";
@@ -471,6 +471,37 @@ async function startTour() {
 
 const next = () => fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
+/** The tour never moves the app: a stop that lives somewhere else waits
+ * for the user to click their way there. */
+const tourWaiting = () =>
+  screen.getByRole("dialog", { name: "Interface tour" }).getAttribute("data-waiting") === "true";
+
+/** The ONE control the tour has left live - a rail row, or the pill that
+ * crosses into the Work Manager. Throws if the lock has leaked. */
+function liveControl(): HTMLElement {
+  const nav = screen.getByRole("navigation");
+  const rows = within(nav)
+    .getAllByRole("button")
+    .filter((b) => !(b as HTMLButtonElement).disabled);
+  if (rows.length > 1) throw new Error(`${rows.length} rail controls are live, expected one`);
+  if (rows.length === 1) return rows[0];
+  return screen.getByRole("button", { name: /^(Work Manager|Test Case Manager)$/ });
+}
+
+/** Next when the tour offers it, otherwise the click it is waiting for. */
+const advance = () => (tourWaiting() ? fireEvent.click(liveControl()) : next());
+
+/** Walk the tour to stop `n` (1-based), doing whatever each stop asks. */
+async function walkToStop(n: number) {
+  const label = `${n} / ${TOUR_STEPS.length}`;
+  for (let guard = 0; guard < 3 * TOUR_STEPS.length; guard++) {
+    if (screen.queryByText(label) && !tourWaiting()) return;
+    advance();
+    await act(async () => {});
+  }
+  throw new Error(`the tour never reached stop ${n}`);
+}
+
 // Stop 5 rings the queue, and the queue is the one area on the route that
 // is NOT fed by a command the tour stands in for - it comes off the saved
 // draft, which is empty for everyone. The stop drew a ~12px ring around
@@ -494,6 +525,9 @@ test("every stop rings an area that is there, with something in it", async () =>
   for (let i = 0; i < TOUR_STEPS.length; i++) {
     const step = TOUR_STEPS[i];
     const at = `stop ${i + 1} ("${step.title}")`;
+    // Walking is the user's job now: a stop that lives elsewhere asks, and
+    // this clicks the one control it left live.
+    await walkToStop(i + 1);
     if (step.anchor) {
       await waitFor(() => {
         const found = document.querySelector(`[data-tour="${step.anchor}"]`);
@@ -507,7 +541,6 @@ test("every stop rings an area that is there, with something in it", async () =>
         }
       });
     }
-    if (i < TOUR_STEPS.length - 1) next();
   }
 
   fireEvent.click(screen.getByText("Skip tour"));
@@ -579,7 +612,7 @@ test("the tour's queue is populated and the real draft is never touched", async 
 
     await startTour();
     // Welcome, scope, item, form, batch - stop 5 is the queue.
-    for (let i = 0; i < 4; i++) next();
+    await walkToStop(5);
 
     const queue = await waitFor(() => {
       const el = document.querySelector('[data-tour="queue"]') as HTMLElement;
@@ -597,7 +630,18 @@ test("the tour's queue is populated and the real draft is never touched", async 
     // a render after the scope changes (which is precisely why the save
     // has to sit that render out).
     expect(await screen.findByText("My own queued case")).toBeInTheDocument();
-    expect(screen.getByText(/Queue for PBI #99/)).toBeInTheDocument();
+    // Awaited, not read synchronously: the heading and the case body do
+    // not necessarily land in the same render, so a sync query here races
+    // the one above. And given longer than this file's 5s query budget,
+    // because this is the heaviest test in the suite - it walks the whole
+    // tour and then waits on a teardown that restores the stand-in calls,
+    // three overrides, seven pieces of state and a reloaded draft. Under
+    // full-suite load that has taken over five seconds. The failure reads
+    // as "the queue never came back" rather than "the machine was busy",
+    // which has misdiagnosed this suite more than once.
+    expect(
+      await screen.findByText(/Queue for PBI #99/, undefined, { timeout: 12_000 }),
+    ).toBeInTheDocument();
 
     // The sample queue was never saved anywhere...
     expect(localStorage.getItem("tcm-v2-draft:Northwind/4821")).toBeNull();
@@ -629,9 +673,9 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   await startTour();
   // Walk to the seventh stop (Update Test Cases), where the sample cases
   // are on screen: welcome, scope, item, form, batch, import, update.
-  for (let i = 0; i < 6; i++) {
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  }
+  // The last two live on other tabs, so the tour asks instead of moving -
+  // walkToStop clicks whichever row it left live.
+  await walkToStop(7);
   expect(await screen.findByRole("heading", { name: "Update Test Cases" })).toBeInTheDocument();
   expect(await screen.findByText(/Guest checkout - a guest can pay by card/)).toBeInTheDocument();
 
@@ -639,9 +683,7 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   // screen with its own suite-seed writer (RunPanel), separate from the
   // one App gates in its own warm-up effect. A walk that stopped short of
   // here is exactly what let that second writer go unnoticed.
-  for (let i = 0; i < 2; i++) {
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-  }
+  await walkToStop(9);
   expect(await screen.findByRole("heading", { name: "Run Tests" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Skip tour"));
@@ -692,8 +734,14 @@ test("the tour hands the app back to the section it was started from", async () 
   });
   await screen.findByRole("dialog", { name: "Interface tour" });
 
-  // Far enough in that the tour has driven the app somewhere else.
-  for (let i = 0; i < 3; i++) next();
+  // Stop 2 lives on Manual Entry, and the app is on Settings - so the tour
+  // asks for that click rather than making it. Nothing moves until it comes.
+  next();
+  await waitFor(() => expect(tourWaiting()).toBe(true));
+  expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+
+  // Far enough in that the app has been walked somewhere else.
+  await walkToStop(4);
   expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Skip tour"));
@@ -760,8 +808,9 @@ test("the tour gives the Test Suites handoff back", async () => {
 
   await startTour();
   // Stop 7 is Update Test Cases - the same screen, on the sample data, so
-  // the handoff really has to have been cleared and then restored.
-  for (let i = 0; i < 6; i++) next();
+  // the handoff really has to have been cleared and then restored. Getting
+  // there means clicking the tabs the tour asks for, one at a time.
+  await walkToStop(7);
   expect(await screen.findByRole("heading", { name: "Update Test Cases" })).toBeInTheDocument();
   expect(screen.queryByText(handedOver)).not.toBeInTheDocument();
 
@@ -778,19 +827,50 @@ test("the app is locked while the tour runs", async () => {
   await screen.findByText("a@b.com");
   await startTour();
 
-  // The shell is inert, so nothing under the overlay can be reached. jsdom
-  // does not implement inert semantics (a click still "reaches" a button
-  // inside one) - this only proves the attribute made it onto the DOM; the
-  // Ctrl+2 and Ctrl+K assertions below are what actually prove the shell
-  // is unusable.
+  // Stops 1-5 all live on Manual Entry, where the app already is; stop 6
+  // lives on Import File, so the tour stops and asks for that one click.
+  await walkToStop(5);
+  next();
+  await waitFor(() => expect(tourWaiting()).toBe(true));
+
+  // The screens are inert, so nothing under the overlay can be reached.
+  // jsdom does not implement inert semantics (a click still "reaches" a
+  // button inside one) - this only proves the attribute made it onto the
+  // DOM; the disabled-row and Ctrl+2 assertions below are what actually
+  // prove the shell is unusable.
+  const main = document.querySelector("main")!;
+  expect(main.closest("[inert]")).not.toBeNull();
+  // The rail deliberately sits OUTSIDE that region - `inert` is inherited,
+  // so a hole cannot be punched through it for the row being asked for.
+  // It locks itself instead, which is what the next block checks.
   const nav = screen.getByRole("navigation");
-  expect(nav.closest("[inert]")).not.toBeNull();
+  expect(nav.closest("[inert]")).toBeNull();
+
+  // Exactly one row answers: the one the stop is waiting for. Every other
+  // row - and the collapse toggle - is disabled, and a disabled button
+  // does not run its handler however it is pressed.
+  const row = (name: string) => within(nav).getByRole("button", { name });
+  expect(row("Import File")).toBeEnabled();
+  expect(row("Update Test Cases")).toBeDisabled();
+  expect(row("Manual Entry")).toBeDisabled();
+  expect(within(nav).getByRole("button", { name: "Close sidebar" })).toBeDisabled();
+  expect(liveControl()).toBe(row("Import File"));
+
+  fireEvent.click(row("Update Test Cases"));
+  await act(async () => {});
+  expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+  // ...and the tour did not take that for the click it was waiting for.
+  expect(tourWaiting()).toBe(true);
+  expect(screen.getByText(`6 / ${TOUR_STEPS.length}`)).toBeInTheDocument();
 
   // And the tab shortcuts are off: Ctrl+2 would normally open Import File.
+  // The click above is the only way past this stop - a shortcut must not
+  // skip the sequence it enforces.
   await act(async () => {
     fireEvent.keyDown(window, { key: "2", ctrlKey: true });
   });
   expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+  expect(tourWaiting()).toBe(true);
 
   // The command palette is the third lock surface - Ctrl+K must not open
   // it either.
@@ -804,6 +884,36 @@ test("the app is locked while the tour runs", async () => {
     fireEvent.keyDown(window, { key: "2", ctrlKey: true });
   });
   expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
+});
+
+// The other half of the lock: the one row it does leave live has to
+// actually work, and the tour has to pick itself up when the app arrives.
+test("clicking the tab the tour asks for moves the app and carries the tour on", async () => {
+  signedInMocks((cmd) => {
+    if (cmd === "list_plans_with_suites") return [];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await startTour();
+
+  await walkToStop(5);
+  next();
+  await waitFor(() => expect(tourWaiting()).toBe(true));
+  // While it waits, the card asks for the row by the name the rail shows.
+  expect(screen.getByText("Go to Import File")).toBeInTheDocument();
+  // ...and takes Next away, so the ask cannot be shrugged off.
+  expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument();
+
+  fireEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "Import File" }));
+
+  expect(await screen.findByRole("heading", { name: "Import File" })).toBeInTheDocument();
+  await waitFor(() => expect(tourWaiting()).toBe(false));
+  expect(screen.getByText("Bring cases in from a file")).toBeInTheDocument();
+  // Arrived, so Next is back.
+  expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Skip tour"));
 });
 
 // The overlay only renders `tourOpen && signedIn` - a session that ends

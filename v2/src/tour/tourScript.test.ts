@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { TOUR_ANCHORS, TOUR_CHROME_ANCHORS, TOUR_STEPS } from "./tourScript";
+import { TOUR_ANCHORS, TOUR_CHROME_ANCHORS, TOUR_STEPS, tourAwaitedWhere, tourControl, tourDestination, type TourWhere } from "./tourScript";
 
 /** Goal 4: the tour describes the app the user can see, in the words a
  * tester would use. Anything on this list is about the inside. */
@@ -58,4 +58,71 @@ test("every anchor a stop names is a declared anchor", () => {
 test("it opens and closes with a card that needs nothing on screen", () => {
   expect(TOUR_STEPS[0].anchor).toBeUndefined();
   expect(TOUR_STEPS[TOUR_STEPS.length - 1].anchor).toBeUndefined();
+});
+
+// --- "is this stop waiting for the user?" -------------------------------
+//
+// The tour never moves the app: a stop whose destination is somewhere else
+// waits for the user to walk there. Which stops those are is DERIVED - it
+// depends on where the app was when the tour started, so the script alone
+// cannot answer it.
+
+/** Walk the whole route from `start`, clicking through each stop that
+ * waits, and report the stops that asked to be walked to. */
+function walkFrom(start: TourWhere): string[] {
+  let at = start;
+  const waited: string[] = [];
+  for (let i = 0; i < TOUR_STEPS.length; i++) {
+    const dest = tourAwaitedWhere(i, at, TOUR_STEPS);
+    if (dest) {
+      waited.push(TOUR_STEPS[i].title);
+      at = dest; // the user clicks the control the tour asked for
+    }
+  }
+  return waited;
+}
+
+const AFTER_MANUAL = [
+  "Bring cases in from a file",
+  "Change what you already have",
+  "Read without changing",
+  "Run your tests",
+  "Find any set of tests",
+  "Working repositories",
+  "The other half of the app",
+];
+
+test("a tour started from Settings waits for Manual Entry first", () => {
+  expect(walkFrom({ area: "cases", section: "settings" })).toEqual([
+    "Choose where you work",
+    ...AFTER_MANUAL,
+  ]);
+});
+
+test("a tour started on Manual Entry does not wait for it", () => {
+  expect(walkFrom({ area: "cases", section: "manual" })).toEqual(AFTER_MANUAL);
+});
+
+test("a stop with no destination of its own inherits the last declared one", () => {
+  // Stop 5 (the queue) declares nothing and belongs to Manual Entry.
+  expect(tourDestination(4, TOUR_STEPS)).toEqual({ area: "cases", section: "manual" });
+  // The opening card is before any destination at all.
+  expect(tourDestination(0, TOUR_STEPS)).toBeUndefined();
+  // ...and it is the script's own object, so consecutive stops that share
+  // a destination compare equal by reference.
+  expect(tourDestination(4, TOUR_STEPS)).toBe(tourDestination(3, TOUR_STEPS));
+});
+
+test("the control to click is the rail row, or the pill when the half changes", () => {
+  const manual = { area: "cases", section: "manual" } as const;
+  const board = { area: "work", workSection: "board" } as const;
+  const prs = { area: "work", workSection: "prs" } as const;
+  expect(tourControl({ area: "cases", section: "import" }, manual)).toEqual({
+    kind: "case",
+    section: "import",
+  });
+  expect(tourControl(board, manual)).toEqual({ kind: "switch", to: "work" });
+  expect(tourControl(manual, board)).toEqual({ kind: "switch", to: "cases" });
+  expect(tourControl(board, prs)).toEqual({ kind: "work", workSection: "board" });
+  expect(tourControl(manual, manual)).toBeNull();
 });

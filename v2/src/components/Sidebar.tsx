@@ -48,7 +48,7 @@ type Item<T extends string> = {
  * still see the tab, and the release does not. */
 export const AUTO_RUN_ENABLED: boolean = import.meta.env.DEV;
 
-const CASE_ITEMS: Item<Section>[] = [
+export const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine, tone: "nav-ico nav-ico-manual" },
   { id: "import", label: "Import File", icon: FileUp, tone: "nav-ico nav-ico-import" },
   // A circular arrow, not a second pencil: Manual Entry already owns the
@@ -77,6 +77,8 @@ export default function Sidebar<T extends string = Section>({
   onSelect,
   items,
   badges,
+  locked = false,
+  liveItem = null,
 }: {
   section: T;
   onSelect: (s: T) => void;
@@ -85,6 +87,12 @@ export default function Sidebar<T extends string = Section>({
   /** Unseen-count bubbles per item (e.g. new assignments on the Board).
    * Zero or absent renders nothing - the rail stays quiet by default. */
   badges?: Partial<Record<T, number>>;
+  /** The guided tour is running: every row is dead except `liveItem`, the
+   * one the current stop is waiting to be clicked. The collapse toggle is
+   * dead too - it writes the user's own stored setting, and the tour
+   * promised to leave that exactly as it found it. */
+  locked?: boolean;
+  liveItem?: T | null;
 }) {
   const list =
     items ??
@@ -125,13 +133,18 @@ export default function Sidebar<T extends string = Section>({
     >
       {list.map(({ id, label, icon: Icon, tone, note }) => {
         const badge = badges?.[id] ?? 0;
+        const dead = locked && id !== liveItem;
         return (
         // Only when collapsed: with the rail open the label is right there.
         // The note joins the tooltip so the status survives the icon rail.
         <Tooltip key={id} label={note ? `${label} — In Development` : label} side="right" disabled={!collapsed}>
         <button
           data-tour={`nav-${id}`}
-          onClick={() => onSelect(id)}
+          disabled={dead}
+          // Belt and braces: `disabled` already stops a click and a
+          // keyboard activation, and this stops anything that reaches the
+          // handler another way.
+          onClick={() => !dead && onSelect(id)}
           aria-current={section === id ? "page" : undefined}
           aria-label={badge > 0 ? `${label} (${badge} new)` : label}
           className={cn(
@@ -139,7 +152,7 @@ export default function Sidebar<T extends string = Section>({
             // wide or collapsed (8px nav pad + 12px = centered in w-14), so
             // icons stay perfectly still while the width animates.
             // relative anchors the badge bubble on the icon.
-            "group relative flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors",
+            "group relative flex items-center overflow-hidden rounded-md px-3 py-2 text-left text-sm transition-colors disabled:pointer-events-none",
             section === id
               ? "bg-accent-soft font-medium text-accent"
               : "text-muted hover:bg-surface-2 hover:text-text",
@@ -192,8 +205,9 @@ export default function Sidebar<T extends string = Section>({
         <button
           aria-label={collapsed ? "Expand sidebar" : "Close sidebar"}
           title={collapsed ? "Expand sidebar" : "Close sidebar"}
-          className="flex w-full items-center overflow-hidden rounded-md px-3 py-2 text-sm text-faint hover:bg-surface-2 hover:text-text"
-          onClick={toggle}
+          className="flex w-full items-center overflow-hidden rounded-md px-3 py-2 text-sm text-faint hover:bg-surface-2 hover:text-text disabled:pointer-events-none"
+          disabled={locked}
+          onClick={() => !locked && toggle()}
         >
           {collapsed ? <ChevronsRight size={15} className="shrink-0" /> : <ChevronsLeft size={15} className="shrink-0" />}
           <span className={labelCls} style={labelDelay}>

@@ -60,7 +60,7 @@ import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
 import { TOUR_ORG, TOUR_PBI, TOUR_PROJECT, TOUR_REPO_PATH } from "./tour/tourData";
-import type { TourWhere } from "./tour/tourScript";
+import { tourControl, type TourWhere } from "./tour/tourScript";
 import { START_TOUR_EVENT, setTourRunning, tourDone, tourRunningSnapshot } from "./tour/tourState";
 import { Button } from "./components/ui/button";
 import { unwrap } from "./lib/ipc";
@@ -177,6 +177,15 @@ export default function App() {
   // A throw-away cache for the toured screens: the sample data never
   // mixes with the real one, and dies with the tour.
   const [tourQc, setTourQc] = useState<QueryClient | null>(null);
+  // The destination the current stop is waiting for the user to walk to,
+  // reported by the overlay - null while it is not waiting for anything.
+  const [tourAwaited, setTourAwaited] = useState<TourWhere | null>(null);
+  // Where the app is - the overlay measures "is this stop a move?" against
+  // it - and, while the tour waits, the ONE control that gets the user
+  // from here to there. Every other rail row, and the whole context bar,
+  // locks itself on `tourOpen` alone.
+  const tourAt: TourWhere = workMode ? { area: "work", workSection } : { area: "cases", section };
+  const tourControlNow = tourOpen && tourAwaited ? tourControl(tourAwaited, tourAt) : null;
   // Where the user was before the tour took over.
   const before = useRef<{
     section: Section;
@@ -224,6 +233,7 @@ export default function App() {
     before.current = null;
     setTourOpen(false);
     setTourRunning(false);
+    setTourAwaited(null);
     restoreTourBackend();
     clearTourRepositories();
     clearTourExpanded();
@@ -831,10 +841,15 @@ export default function App() {
       <TitleBar
         title={(workMode ? "Work Manager" : "Test Case Manager") + (DEV_TOOLS ? " — DEV" : "")}
       />
-      {tourOpen && signedIn && <UiTour onNavigate={tourNavigate} onClose={endTour} />}
+      {tourOpen && signedIn && (
+        <UiTour at={tourAt} onNavigate={tourNavigate} onAwait={setTourAwaited} onClose={endTour} />
+      )}
 
       <QueryClientProvider client={tourQc ?? qc}>
-        <div className="flex min-h-0 flex-1" inert={tourOpen}>
+        {/* The rail and the bar sit OUTSIDE the inert region below: `inert`
+            is inherited, so a hole cannot be punched through it for the one
+            control the tour is waiting for. They lock themselves instead. */}
+        <div className="flex min-h-0 flex-1">
         {/* Work Manager swaps the rail's contents: its own sections (Pull
             Requests first, then the board) instead of the test-case tabs. */}
         {signedIn &&
@@ -847,9 +862,16 @@ export default function App() {
               }}
               items={WORK_ITEMS}
               badges={{ board: workAlerts }}
+              locked={tourOpen}
+              liveItem={tourControlNow?.kind === "work" ? tourControlNow.workSection : null}
             />
           ) : (
-            <Sidebar section={section} onSelect={goToSection} />
+            <Sidebar
+              section={section}
+              onSelect={goToSection}
+              locked={tourOpen}
+              liveItem={tourControlNow?.kind === "case" ? tourControlNow.section : null}
+            />
           ))}
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -866,8 +888,11 @@ export default function App() {
               onToggleWork={() => setWorkMode((w) => !w)}
               onOpenSettings={toggleSettings}
               settingsOpen={section === "settings" && !workMode}
+              locked={tourOpen}
+              workLive={tourControlNow?.kind === "switch"}
             />
           )}
+          <div className="flex min-h-0 flex-1 flex-col" inert={tourOpen}>
 
           {!online && (
             <div className="border-b border-warning/40 bg-warning/10 px-6 py-2 text-sm text-warning">
@@ -1056,6 +1081,7 @@ export default function App() {
               </AnimatedContent>
             )}
           </main>
+          </div>
         </div>
         </div>
       </QueryClientProvider>

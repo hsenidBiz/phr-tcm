@@ -153,3 +153,61 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Close it and the made-up data disappears. You are back in your own work, exactly where you left it.",
   },
 ];
+
+/** Where the app is right now, in the same shape a stop declares. */
+export type TourAt = TourWhere;
+
+/** Two locations are the same place. */
+export function sameTourWhere(a: TourWhere | undefined, b: TourWhere | undefined): boolean {
+  if (!a || !b) return a === b;
+  if (a.area === "cases") return b.area === "cases" && a.section === b.section;
+  return b.area === "work" && a.workSection === b.workSection;
+}
+
+/**
+ * Where a stop needs the app to be: its own `where`, or - for a stop that
+ * leaves it out - the last one declared at or before it. Returns the
+ * script's own object, so the identity is stable across calls and two
+ * consecutive stops that share a destination compare equal by reference.
+ */
+export function tourDestination(i: number, steps: TourStep[] = TOUR_STEPS): TourWhere | undefined {
+  for (let j = Math.min(i, steps.length - 1); j >= 0; j--) {
+    if (steps[j]?.where) return steps[j].where;
+  }
+  return undefined;
+}
+
+/**
+ * The destination this stop is waiting for the user to walk to, or null
+ * when the app is already there.
+ *
+ * Deliberately measured against where the app IS, not against the previous
+ * stop's destination: the tour can be started from anywhere (usually
+ * Settings, where the button lives), so whether the second stop is a move
+ * is not something the script alone can answer.
+ */
+export function tourAwaitedWhere(
+  i: number,
+  at: TourWhere,
+  steps: TourStep[] = TOUR_STEPS,
+): TourWhere | null {
+  const dest = tourDestination(i, steps);
+  if (!dest || sameTourWhere(dest, at)) return null;
+  return dest;
+}
+
+/** The one control that takes the user from `at` towards `dest`: a rail
+ * row when both are in the same half of the app, otherwise the context
+ * bar's pill that crosses between the two halves. */
+export type TourControl =
+  | { kind: "case"; section: Section }
+  | { kind: "work"; workSection: WorkSection }
+  | { kind: "switch"; to: "cases" | "work" };
+
+export function tourControl(dest: TourWhere, at: TourWhere): TourControl | null {
+  if (sameTourWhere(dest, at)) return null;
+  if (dest.area !== at.area) return { kind: "switch", to: dest.area };
+  return dest.area === "cases"
+    ? { kind: "case", section: dest.section }
+    : { kind: "work", workSection: dest.workSection };
+}

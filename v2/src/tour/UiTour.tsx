@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../components/ui/button";
+import { CASE_ITEMS, WORK_ITEMS } from "../components/Sidebar";
 import { IconBack, IconConfirm, IconNext } from "../lib/actionIcons";
-import { TOUR_STEPS, type TourStep, type TourWhere } from "./tourScript";
+import {
+  TOUR_STEPS,
+  tourAwaitedWhere,
+  tourControl,
+  tourDestination,
+  type TourControl,
+  type TourStep,
+  type TourWhere,
+} from "./tourScript";
 import { markTourDone } from "./tourState";
 
 const CARD_W = 340;
@@ -13,47 +22,74 @@ const CARD_H = 190; // estimate, for deciding whether the card fits below
  * machine is allowed several times that. */
 const ANCHOR_WAIT_MS = 1500;
 
+/** The name the rail actually shows for the control a waiting stop asks
+ * for - read off the rail's own lists, never invented here. */
+function controlLabel(control: TourControl): string {
+  if (control.kind === "case") return CASE_ITEMS.find((c) => c.id === control.section)?.label ?? "";
+  if (control.kind === "work")
+    return WORK_ITEMS.find((w) => w.id === control.workSection)?.label ?? "";
+  // The pill is named after where it takes you, in both directions.
+  return control.to === "work" ? "Work Manager" : "Test Case Manager";
+}
+
+/** That control's `data-tour`, so the ring lands on the very thing the
+ * card is asking the user to click. */
+function controlAnchor(control: TourControl): string {
+  if (control.kind === "case") return `nav-${control.section}`;
+  if (control.kind === "work") return `nav-${control.workSection}`;
+  return "work";
+}
+
 /**
- * The guided tour: it walks the app itself - asking App to switch tab or
- * cross into the Work Manager - rings one area at a time and says what it
- * is for. Back and Next move; Skip tour (or Done at the end) closes.
+ * The guided tour: it rings one area at a time and says what it is for.
+ * It never moves the app - a stop that lives somewhere else asks the user
+ * to go there and waits, with Next taken away so the ask is not
+ * decorative, and picks itself up when the app arrives. Back still
+ * navigates for you: forward is taught, backward is convenience.
  *
- * Nothing behind it can be clicked: App makes the whole shell inert while
- * this is up, and this layer sits above it in a portal.
+ * Nothing behind it can be clicked: App makes the screens inert while this
+ * is up and disables every rail row except the one the current stop is
+ * waiting for, and this layer sits above it in a portal.
  */
 export default function UiTour({
+  at,
   onNavigate,
+  onAwait,
   onClose,
   steps = TOUR_STEPS,
 }: {
-  /** MUST be stable (useCallback in the host) - it is an effect dep. */
+  /** Where the app is right now - what "is this stop a move?" is measured
+   * against. The tour can be started from any tab, so the script on its
+   * own cannot answer that. */
+  at: TourWhere;
   onNavigate: (where: TourWhere | undefined) => void;
+  /** Told which destination the tour is waiting for, and null when it is
+   * not, so the host can leave exactly that one control live. MUST be
+   * stable (useCallback in the host) - it is an effect dep. */
+  onAwait?: (where: TourWhere | null) => void;
   onClose: () => void;
   steps?: TourStep[];
 }) {
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const step = steps[i];
-  const anchor = step?.anchor;
 
-  // A stop with no `where` of its own stays wherever the last one that
-  // declared one left the app - so the destination to navigate to is the
-  // last `where` at or before this stop, not the stop's own (possibly
-  // undefined) one. Walking back to the same declaring stop's object
-  // (rather than copying it) keeps its identity stable, so the effect
-  // below does not fire again when consecutive stops share a destination.
-  const effectiveWhere = useMemo(() => {
-    for (let j = i; j >= 0; j--) {
-      if (steps[j]?.where) return steps[j].where;
-    }
-    return undefined;
-  }, [steps, i]);
+  // The destination this stop needs, when the app is not there yet - the
+  // script's own object (see `tourDestination`), so its identity changes
+  // only when the answer does and the effect below does not re-fire on
+  // every render.
+  const awaited = tourAwaitedWhere(i, at, steps);
+  const control = awaited ? tourControl(awaited, at) : null;
+  const waiting = control !== null;
+  // While waiting, the ring belongs on the control being asked for: this
+  // stop's own area is on a screen that is not up yet.
+  const anchor = control ? controlAnchor(control) : step?.anchor;
 
-  // Send the app where this stop lives, then wait for the area to appear:
-  // a tab switch has to mount and fade its screen in first.
+  // Let the host leave that one control live, and nothing else.
   useEffect(() => {
-    onNavigate(effectiveWhere);
-  }, [onNavigate, effectiveWhere]);
+    onAwait?.(awaited ?? null);
+    return () => onAwait?.(null);
+  }, [onAwait, awaited]);
 
   useEffect(() => {
     setRect(null);
@@ -97,6 +133,17 @@ export default function UiTour({
     };
   }, [anchor]);
 
+  // Back is the one direction the tour still walks for the user: it puts
+  // the app on the earlier stop's destination (its own, or the last one
+  // declared before it) instead of stranding it on this stop's tab.
+  const goBack = useCallback(() => {
+    // Outside the state updater on purpose: an updater can be re-run, and
+    // navigating twice is not free.
+    const prev = Math.max(0, i - 1);
+    onNavigate(tourDestination(prev, steps));
+    setI(prev);
+  }, [i, onNavigate, steps]);
+
   const finish = useCallback(() => {
     markTourDone();
     onClose();
@@ -121,9 +168,15 @@ export default function UiTour({
     : Math.max(12, window.innerWidth / 2 - CARD_W / 2);
 
   return createPortal(
-    <div className="fixed inset-0 z-[100]" role="dialog" aria-label="Interface tour">
-      {/* Swallows every click that is not on the card. */}
-      <div className="fixed inset-0" onClick={() => {}} />
+    <div
+      className="fixed inset-0 z-[100]"
+      role="dialog"
+      aria-label="Interface tour"
+      data-waiting={waiting ? "true" : undefined}
+    >
+      {/* Swallows every click that is not on the card - except while the
+          tour is waiting for one, which has to get through. */}
+      {waiting ? null : <div className="fixed inset-0" onClick={() => {}} />}
       {rect ? (
         <div
           className="pointer-events-none fixed rounded-lg border-2 border-accent transition-all duration-300"
@@ -145,24 +198,34 @@ export default function UiTour({
         style={{ top: cardTop, left: cardLeft, width: CARD_W }}
       >
         <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-sm font-semibold text-text">{step.title}</h2>
+          <h2 className="text-sm font-semibold text-text">
+            {control ? `Go to ${controlLabel(control)}` : step.title}
+          </h2>
           <span className="shrink-0 text-xs text-faint">
             {i + 1} / {steps.length}
           </span>
         </div>
-        <p className="text-sm text-muted">{step.body}</p>
+        <p className="text-sm text-muted">
+          {control
+            ? control.kind === "switch"
+              ? `Click ${controlLabel(control)} at the top of the screen to carry on.`
+              : `Click ${controlLabel(control)} in the menu on the left to carry on.`
+            : step.body}
+        </p>
         <div className="flex items-center gap-2 pt-1">
           <button className="text-xs text-faint hover:text-text" onClick={finish}>
             Skip tour
           </button>
           <div className="ml-auto flex gap-2">
             {i > 0 && (
-              <Button variant="outline" size="sm" onClick={() => setI((n) => n - 1)}>
+              <Button variant="outline" size="sm" onClick={goBack}>
                 <IconBack aria-hidden />
                 Back
               </Button>
             )}
-            {i < steps.length - 1 ? (
+            {/* No Next while the tour is waiting to be walked somewhere:
+                if it still advanced, the ask would be decorative. */}
+            {waiting ? null : i < steps.length - 1 ? (
               <Button size="sm" onClick={() => setI((n) => n + 1)}>
                 <IconNext aria-hidden />
                 Next
