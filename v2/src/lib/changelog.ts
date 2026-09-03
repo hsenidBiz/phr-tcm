@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.22.0",
+    date: "2026-09-03",
+    items: [
+      "The interface tour now walks the app for you. Instead of pointing at each icon in turn, it moves through the tabs with example data already in place - writing a case, importing a file, updating, running, the test-suite browser, the fuller AI Bridge tab a new user never normally sees, and the Work Manager board - explaining one or two things per screen. The app stays locked while it runs, and Skip tour puts everything back exactly as you left it: the same tab, organisation, project and backlog item, with none of the example data saved anywhere.",
+      "The queue's main button now follows you down a long list. Importing a hundred cases used to put Review and Confirm below a screenful of queue, so sending them meant scrolling all the way to the bottom first. A copy of the same button now sits at the bottom of the window while the real one is out of sight, and fades away as soon as you reach it. It stays out of the way of the confirmation step, which is still there to be read.",
+      "Changes from a watched file now stay until you close them. When an assistant saved twice in a row, the second save replaced the first in the change panel and the earlier edits could only be seen again at the review stage. Each watched file now keeps its own list of everything it has done since you last closed it, and the X on the panel is the only thing that clears it.",
+      "When Azure DevOps asks the app to slow down, you now hear about it. The app has always listened and paced itself, but it only said so in its log, so a rate limit looked like nothing at all - or like your browser being mysteriously slow, since Azure DevOps counts requests per person rather than per program. A short notice now says it is happening and points at the request-rate setting, which is worth turning down while you are working in Azure DevOps yourself.",
+    ],
+  },
+  {
     version: "1.21.2",
     date: "2026-09-02",
     items: [
