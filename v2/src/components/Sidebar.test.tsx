@@ -2,8 +2,23 @@
 // nothing at all when the count is zero.
 
 import { render, screen } from "@testing-library/react";
-import { expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import Sidebar, { WORK_ITEMS, type WorkSection } from "./Sidebar";
+import { clearTourExpanded, setTourExpanded } from "../lib/sidebarState";
+
+afterEach(() => {
+  clearTourExpanded();
+  localStorage.clear();
+});
+
+test("the tour override renders the sidebar expanded over a stored collapsed setting", () => {
+  localStorage.setItem("tcm-v2-sidebar", "collapsed");
+  setTourExpanded(true);
+  render(<Sidebar section="manual" onSelect={() => {}} />);
+  // Expanded: the label text is present in the DOM (collapsed only fades it).
+  expect(screen.getByText("Manual Entry")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close sidebar" })).toBeInTheDocument();
+});
 
 test("a badge count lands on its item and reaches the accessible name", () => {
   render(

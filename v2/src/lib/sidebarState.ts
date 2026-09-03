@@ -4,7 +4,9 @@
 // listener set exists because a storage write does not notify the same
 // window - only the Sidebar ever toggles, everyone else subscribes.
 
-const KEY = "tcm-v2-sidebar";
+/** The Sidebar's own storage key - shared here so this module and the
+ * component read/write the exact same key. */
+export const COLLAPSE_KEY = "tcm-v2-sidebar";
 
 /** Tailwind w-52 / w-14, as pixels, for the sticky buttons' left offset. */
 export const SIDEBAR_OPEN_PX = 208;
@@ -12,9 +14,26 @@ export const SIDEBAR_RAIL_PX = 56;
 
 const listeners = new Set<() => void>();
 
+// The tour keeps the sidebar expanded for its duration, whatever the user
+// last chose - in memory only, same shape as `workingDir.ts`'s tour
+// override. Consulted by the snapshot; never written to storage, so the
+// user's own setting comes straight back once the override clears.
+let tourExpanded = false;
+
+export function setTourExpanded(on: boolean): void {
+  if (tourExpanded === on) return;
+  tourExpanded = on;
+  publishSidebarChange();
+}
+
+export function clearTourExpanded(): void {
+  setTourExpanded(false);
+}
+
 export function sidebarCollapsedSnapshot(): boolean {
+  if (tourExpanded) return false;
   try {
-    return localStorage.getItem(KEY) === "collapsed";
+    return localStorage.getItem(COLLAPSE_KEY) === "collapsed";
   } catch {
     return false;
   }

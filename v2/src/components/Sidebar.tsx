@@ -13,9 +13,14 @@ import {
   RotateCcw,
   SquarePlay,
 } from "lucide-react";
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { Tooltip } from "./ui/tooltip";
-import { publishSidebarChange } from "../lib/sidebarState";
+import {
+  COLLAPSE_KEY,
+  publishSidebarChange,
+  sidebarCollapsedSnapshot,
+  subscribeSidebar,
+} from "../lib/sidebarState";
 import { cn } from "../lib/cn";
 
 /** The v1 tabs, one screen each. Settings and the Work Manager switch live
@@ -67,8 +72,6 @@ export const WORK_ITEMS: Item<WorkSection>[] = [
   { id: "create", label: "New Work Item", icon: FilePlus2, tone: "nav-ico nav-ico-create" },
 ];
 
-const COLLAPSE_KEY = "tcm-v2-sidebar";
-
 export default function Sidebar<T extends string = Section>({
   section,
   onSelect,
@@ -86,22 +89,21 @@ export default function Sidebar<T extends string = Section>({
   const list =
     items ??
     (CASE_ITEMS.filter((i) => i.id !== "autorun" || AUTO_RUN_ENABLED) as unknown as Item<T>[]);
-  const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem(COLLAPSE_KEY) === "collapsed",
-  );
+  // Reads back through the shared store rather than its own state, so a
+  // tour override (or any other future writer) can move it - the toggle
+  // below still writes storage and publishes exactly as before.
+  const collapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
   const toggle = () => {
-    setCollapsed((c) => {
-      const next = !c;
-      try {
-        localStorage.setItem(COLLAPSE_KEY, next ? "collapsed" : "open");
-      } catch {
-        // storage unavailable -> session-only
-      }
-      // The sticky bottom-left buttons key their offset off this - a
-      // storage write does not notify the same window, so tell them.
-      publishSidebarChange();
-      return next;
-    });
+    const next = !collapsed;
+    try {
+      localStorage.setItem(COLLAPSE_KEY, next ? "collapsed" : "open");
+    } catch {
+      // storage unavailable -> session-only
+    }
+    // The sticky bottom-left buttons (and this component itself) key
+    // their state off this - a storage write does not notify the same
+    // window, so tell them.
+    publishSidebarChange();
   };
 
   /** Labels stay mounted and never wrap: collapsing fades them out FIRST,

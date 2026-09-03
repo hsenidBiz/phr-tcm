@@ -38,6 +38,7 @@ import {
   workingDirSnapshot,
 } from "./lib/workingDir";
 import { cacheEntry, claimCacheFor, suspendCache } from "./lib/localCache";
+import { clearTourExpanded, setTourExpanded } from "./lib/sidebarState";
 import { readSuiteSeed, type SuiteSeed, writeSuiteSeed } from "./lib/suiteSeed";
 import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
@@ -195,6 +196,7 @@ export default function App() {
     if (before.current) return; // already running
     before.current = { ...ctx.current };
     suspendCache(true);
+    setTourExpanded(true);
     installTourBackend();
     setTourRepositories([{ path: TOUR_REPO_PATH, enabled: true }], TOUR_REPO_PATH);
     setTourQc(
@@ -224,6 +226,7 @@ export default function App() {
     setTourRunning(false);
     restoreTourBackend();
     clearTourRepositories();
+    clearTourExpanded();
     suspendCache(false);
     setTourQc(null);
     // The ungated `can-delete` permission query re-keys itself to whatever
@@ -266,6 +269,7 @@ export default function App() {
     () => () => {
       restoreTourBackend();
       clearTourRepositories();
+      clearTourExpanded();
       suspendCache(false);
       setTourRunning(false);
     },
