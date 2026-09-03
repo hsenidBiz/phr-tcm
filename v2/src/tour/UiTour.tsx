@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../components/ui/button";
 import { IconBack, IconConfirm, IconNext } from "../lib/actionIcons";
@@ -35,13 +35,25 @@ export default function UiTour({
   const [rect, setRect] = useState<DOMRect | null>(null);
   const step = steps[i];
   const anchor = step?.anchor;
-  const where = step?.where;
+
+  // A stop with no `where` of its own stays wherever the last one that
+  // declared one left the app - so the destination to navigate to is the
+  // last `where` at or before this stop, not the stop's own (possibly
+  // undefined) one. Walking back to the same declaring stop's object
+  // (rather than copying it) keeps its identity stable, so the effect
+  // below does not fire again when consecutive stops share a destination.
+  const effectiveWhere = useMemo(() => {
+    for (let j = i; j >= 0; j--) {
+      if (steps[j]?.where) return steps[j].where;
+    }
+    return undefined;
+  }, [steps, i]);
 
   // Send the app where this stop lives, then wait for the area to appear:
   // a tab switch has to mount and fade its screen in first.
   useEffect(() => {
-    onNavigate(where);
-  }, [onNavigate, where]);
+    onNavigate(effectiveWhere);
+  }, [onNavigate, effectiveWhere]);
 
   useEffect(() => {
     setRect(null);
