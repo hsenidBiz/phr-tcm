@@ -57,8 +57,8 @@ const work = (workSection: WorkSection): TourWhere => ({ area: "work", workSecti
 
 export const TOUR_STEPS: TourStep[] = [
   {
-    title: "Welcome",
-    body: "A quick look around, using made-up data. Nothing here touches your real work, and Skip tour ends it whenever you like.",
+    title: "Welcome to Test Case Manager",
+    body: "This tour will briefly show you around the app, using made-up data. Nothing here touches your real work, and Skip tour ends it whenever you like.",
   },
   {
     where: cases("manual"),

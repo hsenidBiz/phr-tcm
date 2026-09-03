@@ -43,6 +43,34 @@ const AT_IMPORT: TourWhere = IMPORT_WHERE;
 const waiting = () =>
   screen.getByRole("dialog", { name: "Interface tour" }).getAttribute("data-waiting") === "true";
 
+const overlay = () => screen.getByRole("dialog", { name: "Interface tour" });
+
+/// Field report: with the tour waiting, clicking the rail row it had just
+/// asked for did nothing. The swallowing layer was correctly dropped while
+/// waiting, but the overlay's own full-viewport container was still the
+/// element every click landed on - a transparent covering element is still
+/// a hit-test target, and only `pointer-events` changes that.
+///
+/// jsdom does no hit testing, so `fireEvent.click` reaches a covered
+/// element happily and cannot reproduce this. What CAN be held here is the
+/// structural rule the fix rests on: the container never takes pointer
+/// events, and each child that must be clickable turns them back on.
+test("the overlay's container never swallows clicks meant for the app", () => {
+  addAnchor("case-form");
+  render(
+    <UiTour
+      steps={SINGLE_HOP_STEPS}
+      at={MANUAL_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(overlay().className).toContain("pointer-events-none");
+  const card = screen.getByText(SINGLE_HOP_STEPS[0].title).closest("div.fixed");
+  expect(card?.className).toContain("pointer-events-auto");
+});
+
 /** A stand-in for App: it holds where the app is, follows the tour when
  * Back walks it somewhere, and offers one button that does what clicking
  * the awaited rail row does - move the app to the awaited destination. */

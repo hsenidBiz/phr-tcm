@@ -184,14 +184,20 @@ export default function UiTour({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100]"
+      // pointer-events-none is load-bearing, not tidiness: this container
+      // covers the whole viewport, and a transparent covering element is
+      // still what a click hits. Without it, dropping the swallow layer
+      // below changes nothing - every click lands here instead of on the
+      // rail the tour just asked the user to click. Each child that must
+      // be clickable turns pointer events back on for itself.
+      className="pointer-events-none fixed inset-0 z-[100]"
       role="dialog"
       aria-label="Interface tour"
       data-waiting={waiting ? "true" : undefined}
     >
       {/* Swallows every click that is not on the card - except while the
           tour is waiting for one, which has to get through. */}
-      {waiting ? null : <div className="fixed inset-0" onClick={() => {}} />}
+      {waiting ? null : <div className="pointer-events-auto fixed inset-0" onClick={() => {}} />}
       {rect ? (
         <div
           className="pointer-events-none fixed rounded-lg border-2 border-accent transition-all duration-300"
@@ -209,7 +215,7 @@ export default function UiTour({
         <div className="pointer-events-none fixed inset-0 bg-black/60" />
       )}
       <div
-        className="fixed space-y-2 rounded-lg border border-border bg-surface p-4 shadow-2xl transition-all duration-300"
+        className="pointer-events-auto fixed space-y-2 rounded-lg border border-border bg-surface p-4 shadow-2xl transition-all duration-300"
         style={{ top: cardTop, left: cardLeft, width: CARD_W }}
       >
         <div className="flex items-baseline justify-between gap-2">
