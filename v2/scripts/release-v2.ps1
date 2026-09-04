@@ -37,6 +37,17 @@ if ($SkipGitHub -and $DevOpsBranch -eq "main") {
 if ($SkipSourcePush -and $DevOpsBranch -eq "main") {
     throw "-SkipSourcePush is for rehearsals on a throwaway branch. A real release publishes the source it was built from."
 }
+# A non-main -DevOpsBranch IS a rehearsal, whether or not the caller also
+# passed the rehearsal switches. Without both, a "rehearsal" still pushes
+# real source to origin/master and publishes a real GitHub release while
+# only the DevOps half points at a throwaway branch - half real, half
+# rehearsal, which is worse than either.
+if ($DevOpsBranch -ne "main" -and -not ($SkipGitHub -and $SkipSourcePush)) {
+    $missing = @()
+    if (-not $SkipGitHub) { $missing += "-SkipGitHub" }
+    if (-not $SkipSourcePush) { $missing += "-SkipSourcePush" }
+    throw "-DevOpsBranch '$DevOpsBranch' is a rehearsal (only main is a real release) - add $($missing -join ' and ') too, or this pushes source and/or publishes to GitHub for real."
+}
 
 # -Version is only the Velopack tag. The version the APP reports - in the
 # title bar, in a bug report, on the bridge's /ping, and to the "What's new"
@@ -157,8 +168,17 @@ Copy-Item (Join-Path $PSScriptRoot "phr-tcm-README.md") (Join-Path $clone "READM
 # One orphan commit, force-pushed: the repo is a shelf, not a history, and
 # a git history of 30 MB packages is the one thing that would make it grow.
 Push-Location $clone
+# If this checkout fails silently, add/commit below run on whatever branch
+# the clone actually has checked out - the just-pruned working tree - so
+# the commit lands ON TOP of existing history instead of starting a fresh
+# orphan. The force-push would then publish that, and the releases repo
+# quietly stops being one commit deep: exactly the history growth this
+# orphan-commit design exists to prevent, with nothing to distinguish it
+# from a normal release.
 git checkout --quiet --orphan "release-$Version"
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git checkout --orphan failed in the releases clone - refusing to commit onto existing history" }
 git add -A
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git add -A failed in the releases clone" }
 git commit --quiet -m "release $Version"
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git commit in the releases clone failed" }
 git push --force --quiet origin "HEAD:$DevOpsBranch"
@@ -170,7 +190,11 @@ if ($SkipGitHub) {
     Write-Host "Skipped GitHub (-SkipGitHub): this was a rehearsal on $DevOpsBranch."
 } else {
     $token = (gh auth token | Out-String).Trim()
-    if (-not $token) { throw "DevOps has v$Version but GitHub does not: gh auth token returned nothing - run gh auth login, then re-run only: vpk upload github --repoUrl $repoUrl --publish --releaseName v$Version --tag v$Version --outputDir v2\Releases" }
+    # vpk upload github --help documents --token as "OAuth token to use as
+    # login credentials" with no mention of resolving one on its own (no
+    # env var, no gh fallback) - so the recovery command below must supply
+    # one itself, or copy-pasting it just fails the same way again.
+    if (-not $token) { throw "DevOps has v$Version but GitHub does not: gh auth token returned nothing - run gh auth login, then re-run only: vpk upload github --repoUrl $repoUrl --publish --releaseName v$Version --tag v$Version --token (gh auth token) --outputDir v2\Releases" }
     vpk upload github --repoUrl $repoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
     if ($LASTEXITCODE -ne 0) { throw "DevOps has v$Version but GitHub does not (vpk upload exit $LASTEXITCODE). The fallback is now a version behind - re-run only the vpk upload github step above until it succeeds." }
     gh release view "v$Version" --repo AvinAlwis/azure-devops-test-case-manager-v2-releases
