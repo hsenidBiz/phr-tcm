@@ -20,9 +20,15 @@ export const UPDATES_MOVED = {
 export function reportUpdateCheck(status: UpdateStatus): void {
   if (status.available) {
     toast.info(`Version ${status.available} is available - use the banner to update.`);
-  } else if (status.blocked) {
+    // A blocked check is reported generically - except when the reason IS
+    // the missing access, because then the notice below already says it,
+    // and saying both stacked three clauses on one line: "Could not check
+    // for updates: could not reach the update feed: you don't have access
+    // yet...". The reader had to get past two of our sentences to reach
+    // the one telling them what to do.
+  } else if (status.blocked && !status.no_access) {
     toast.warning(`Could not check for updates: ${status.blocked}`, { duration: 10_000 });
-  } else if (!status.no_access) {
+  } else if (!status.blocked && !status.no_access) {
     toast.success("You are on the latest version.");
   }
   // Told on top of whichever of the above applied: access being missing
