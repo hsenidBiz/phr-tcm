@@ -98,6 +98,49 @@ async fn a_branch_with_no_tip_is_an_error_not_a_panic() {
     assert!(!denied.get());
 }
 
+/// DevOps' `filter` query param is a prefix match: `filter=heads/main` also
+/// matches a ref named `refs/heads/main-hotfix`. The mock lists that
+/// prefix-matching sibling FIRST - so an implementation that just takes
+/// `.next()` off the response would pin to the sibling's commit - and the
+/// real `refs/heads/main` second. The feed must still come from `main`'s
+/// commit, not the sibling's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prefix_matching_sibling_branch_listed_first_is_not_mistaken_for_the_real_branch() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/refs"))
+        .and(query_param("filter", "heads/main"))
+        .and(header("authorization", "Bearer tok"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "name": "refs/heads/main-hotfix", "objectId": "wrong" },
+                { "name": "refs/heads/main", "objectId": "abc123" }
+            ],
+            "count": 2
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("path", "/releases.win.json"))
+        .and(query_param("versionDescriptor.version", "abc123"))
+        .and(header("authorization", "Bearer tok"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let (src, denied) = AdoSource::at(&server.uri(), "main", "tok".into());
+    let feed = tokio::task::spawn_blocking(move || src.get_release_feed("win", &Manifest::default(), ""))
+        .await
+        .unwrap()
+        .expect("feed");
+    assert_eq!(feed.Assets.len(), 1);
+    assert_eq!(feed.Assets[0].Version, "1.23.0");
+    assert!(!denied.get());
+}
+
 /// Until Task 2 lands, downloading is unsupported - and says so rather
 /// than pretending.
 #[test]

@@ -113,6 +113,13 @@ impl AdoSource {
     }
 
     /// The commit `branch` points at right now.
+    ///
+    /// DevOps' `filter` query param is a prefix match, not an exact one: a
+    /// filter of `heads/main` also matches `refs/heads/main-hotfix`, and the
+    /// API is free to list that sibling first. So the response is scanned
+    /// for the ref whose name equals `refs/heads/<branch>` exactly, never
+    /// just the first row - taking the first row would risk pinning to the
+    /// wrong branch's tip, which defeats the whole point of this source.
     fn commit_id(&self) -> Result<String, Error> {
         #[derive(serde::Deserialize)]
         struct Refs {
@@ -121,6 +128,7 @@ impl AdoSource {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct RefRow {
+            name: String,
             object_id: String,
         }
         let url = format!(
@@ -128,9 +136,10 @@ impl AdoSource {
             self.base, self.branch
         );
         let refs: Refs = serde_json::from_str(&self.get_text(&url)?)?;
+        let wanted = format!("refs/heads/{}", self.branch);
         refs.value
             .into_iter()
-            .next()
+            .find(|r| r.name == wanted)
             .map(|r| r.object_id)
             .ok_or_else(|| Error::Other(format!("devops: branch {} has no commits", self.branch)))
     }
