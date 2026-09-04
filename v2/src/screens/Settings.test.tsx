@@ -201,3 +201,27 @@ test("cancelling the import confirmation touches nothing", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(imported).toBe(false);
 });
+
+// The switch is a testing aid: with it on, DevOps has to serve the update
+// on its own, because there is no GitHub to fall back to. What matters is
+// that the backend is TOLD - the Rust side keeps no copy of the setting.
+test("the DevOps-only switch is passed to the backend on a manual check", async () => {
+  localStorage.clear();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const seen: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "check_update") {
+      seen.push(args);
+      return { available: null, blocked: null, failed_attempt: null, no_access: false };
+    }
+    if (cmd === "plugin:app|version") return "1.6.0";
+  });
+  renderSettings(qc);
+
+  fireEvent.click(screen.getByRole("switch", { name: /Only check Azure DevOps for updates/ }));
+  expect(localStorage.getItem("tcm-v2-updates-github-off")).toBe("1");
+  fireEvent.click(screen.getByRole("button", { name: /Check for updates/ }));
+  await waitFor(() => expect(seen).toHaveLength(1));
+  expect(seen[0]).toEqual({ githubOff: true });
+  localStorage.clear();
+});

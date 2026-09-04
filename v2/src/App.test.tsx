@@ -1040,3 +1040,19 @@ test("signing out mid-tour ends the tour and unlocks the app", async () => {
   expect(screen.queryByRole("dialog", { name: "Interface tour" })).not.toBeInTheDocument();
   expect(document.querySelector("[inert]")).toBeNull();
 });
+
+test("the hourly check passes the DevOps-only switch too", async () => {
+  localStorage.setItem("tcm-v2-updates-github-off", "1");
+  const seen: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update") {
+      seen.push(args);
+      return { available: null, blocked: null, failed_attempt: null, no_access: false };
+    }
+  });
+  renderApp();
+  await waitFor(() => expect(seen).toHaveLength(1));
+  expect(seen[0]).toEqual({ githubOff: true });
+  localStorage.removeItem("tcm-v2-updates-github-off");
+});
