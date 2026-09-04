@@ -104,7 +104,16 @@ impl AdoSource {
         let status = resp.status();
         if status == 401 || status == 403 {
             self.denied.set();
-            return Err(Error::Other(format!("devops: no access to the releases repo ({status})")));
+            // The status code is diagnostic, not something a user can act
+            // on - keep it in the log (where `name` from the caller's
+            // `applog::warn` already says which source this was) and hand
+            // the caller only what a person can actually do about it. This
+            // string can end up in a user-facing toast (via `resolve`'s
+            // `blocked`), so no "devops:" prefix and no raw status code.
+            crate::applog::warn(format!("devops: access denied fetching {url} ({status})"));
+            return Err(Error::Other(
+                "you don't have access yet - ask for access to PHR-TCM in Azure DevOps".into(),
+            ));
         }
         if !status.is_success() {
             return Err(Error::Other(format!("devops: http {status}")));
