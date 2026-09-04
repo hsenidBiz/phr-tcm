@@ -510,6 +510,11 @@ export default function App() {
       // on the modal's own re-sign-in path.
       clearSessionExpired();
       qc.invalidateQueries({ queryKey: ["auth"] });
+      // The launch-time `["update"]` check necessarily ran with no token
+      // (tokens are in-memory only, so every launch starts signed out) -
+      // `sources()` skipped DevOps entirely and only GitHub was consulted.
+      // This is the first real chance for the DevOps-first check to run.
+      qc.invalidateQueries({ queryKey: ["update"] });
     },
     onError: (e) => toast.error(`Sign-in failed: ${e.message}`),
   });

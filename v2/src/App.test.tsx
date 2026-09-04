@@ -464,11 +464,18 @@ test("a failed update check shows no banner", async () => {
 // DevOps said this user cannot read the releases repo. That is not an
 // error to hide: it is the one thing the user can fix, and the notice says
 // how. It is independent of whether GitHub still served an update.
+//
+// Signed IN, not out: `no_access` can only ever come back true when a token
+// was sent (no token means `sources()` omits DevOps entirely, so the flag
+// stays false) - mocking signed-out here would assert a state the real
+// backend can never produce.
 test("no access to the releases repo shows the notice with the next step", async () => {
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update")
       return { available: null, blocked: null, failed_attempt: null, no_access: true };
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "plugin:event|listen") return 1;
   });
   renderApp();
   expect(await screen.findByText(/updates have moved to Azure DevOps/)).toBeInTheDocument();
@@ -478,9 +485,11 @@ test("no access to the releases repo shows the notice with the next step", async
 
 test("the notice and an update from the fallback show together", async () => {
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update")
       return { available: "0.5.0", blocked: null, failed_attempt: null, no_access: true };
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "plugin:event|listen") return 1;
   });
   renderApp();
   expect(await screen.findByText(/Version 0.5.0 is available/)).toBeInTheDocument();
@@ -489,9 +498,11 @@ test("the notice and an update from the fallback show together", async () => {
 
 test("the notice can be dismissed, and stays away until the next launch", async () => {
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update")
       return { available: null, blocked: null, failed_attempt: null, no_access: true };
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "plugin:event|listen") return 1;
   });
   const { unmount } = renderApp();
   await screen.findByText(/updates have moved/);
@@ -523,9 +534,11 @@ test("with access, no notice", async () => {
 test("dismissing, then losing access again after it was restored, shows the notice again", async () => {
   let noAccess = true;
   mockIPC((cmd) => {
-    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "auth_status") return { signed_in: true, account: "a@b.com" };
     if (cmd === "check_update")
       return { available: null, blocked: null, failed_attempt: null, no_access: noAccess };
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "plugin:event|listen") return 1;
   });
   const { qc } = renderApp();
   await screen.findByText(/updates have moved/);
@@ -549,6 +562,46 @@ test("dismissing, then losing access again after it was restored, shows the noti
     await qc.invalidateQueries({ queryKey: ["update"] });
   });
   expect(await screen.findByText(/updates have moved/)).toBeInTheDocument();
+});
+
+// Regression guard for the sign-in fix: the launch-time `["update"]` check
+// necessarily runs signed out (tokens are in-memory only, so every launch
+// starts that way), which means it can never reach DevOps. Signing in has
+// to give the query a second, real chance rather than leaving it parked on
+// the launch-time answer for up to an hour.
+test("signing in triggers a second update check", async () => {
+  let signedIn = false;
+  let checkUpdateCalls = 0;
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: signedIn, account: signedIn ? "a@b.com" : null };
+    if (cmd === "check_update") {
+      checkUpdateCalls += 1;
+      return { available: null, blocked: null, failed_attempt: null, no_access: false };
+    }
+    if (cmd === "sign_in") {
+      signedIn = true;
+      return { signed_in: true, account: "a@b.com" };
+    }
+    if (cmd === "list_orgs") return [{ name: "acme", url: "" }];
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "plugin:event|listen") return 1;
+  });
+  // `mockIPC` fakes `window.__TAURI_INTERNALS__` but not the `globalThis.isTauri`
+  // flag the sign-in mutation guards on - without it every click would hit
+  // the "plain browser" early-throw instead of ever calling `sign_in`.
+  (globalThis as unknown as { isTauri?: boolean }).isTauri = true;
+  try {
+    renderApp();
+    const signInButton = await screen.findByRole("button", { name: /sign in with microsoft/i });
+    await waitFor(() => expect(checkUpdateCalls).toBe(1));
+
+    fireEvent.click(signInButton);
+    await screen.findByText("a@b.com");
+
+    await waitFor(() => expect(checkUpdateCalls).toBeGreaterThan(1));
+  } finally {
+    delete (globalThis as unknown as { isTauri?: boolean }).isTauri;
+  }
 });
 
 /** The tour has to be visibly running before we assert on it. */
