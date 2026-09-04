@@ -15,8 +15,10 @@ import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync, 
 import { join } from "node:path";
 
 const FEED = "releases.win.json";
+/** The installer: the first-install path the repo's README points people at. */
+const LATEST_ONLY_SETUP = (name) => /-Setup\.exe$/i.test(name);
 /** Files the pack produces that are published as-is, latest only. */
-const LATEST_ONLY = (name) => /-Setup\.exe$/i.test(name) || /-Portable\.zip$/i.test(name) || name === "RELEASES";
+const LATEST_ONLY = (name) => LATEST_ONLY_SETUP(name) || /-Portable\.zip$/i.test(name) || name === "RELEASES";
 
 function parseVersion(v) {
   return v.split(".").map((n) => Number.parseInt(n, 10) || 0);
@@ -61,6 +63,15 @@ export function applyToDir(repoDir, packDir, keep) {
   const keepNames = new Set(kept.map((a) => a.FileName));
   const packNames = readdirSync(packDir);
 
+  // Guard checked BEFORE anything is touched: `wanted` below only keeps a
+  // Setup.exe by naming the one in THIS pack. A pack that somehow has none
+  // would make `wanted` name none either, and the removal loop below would
+  // then delete the clone's existing Setup.exe - silently removing the
+  // first-install path the repo's README points people at. Refuse instead.
+  if (!packNames.some(LATEST_ONLY_SETUP)) {
+    throw new Error(`prune-releases: pack directory has no -Setup.exe (${packDir}); refusing to prune`);
+  }
+
   // Copy what the pack made and the feed still names, plus the latest-only files.
   for (const name of packNames) {
     if (keepNames.has(name) || LATEST_ONLY(name)) copyFileSync(join(packDir, name), join(repoDir, name));
@@ -73,6 +84,18 @@ export function applyToDir(repoDir, packDir, keep) {
     rmSync(join(repoDir, name), { recursive: true, force: true });
     removed.push(name);
   }
+
+  // A feed that names fewer packages than exist is fine; one that names
+  // more is not - a pushed feed naming a file the clone lacks turns an
+  // install reaching for it into a 404. Every kept entry must actually be
+  // on disk in repoDir before the feed naming it is written.
+  const missing = kept.filter((a) => !existsSync(join(repoDir, a.FileName)));
+  if (missing.length > 0) {
+    throw new Error(
+      `prune-releases: feed would name missing file(s): ${missing.map((a) => a.FileName).join(", ")}`,
+    );
+  }
+
   writeFileSync(join(repoDir, FEED), JSON.stringify({ Assets: kept }));
   return { kept: kept.map((a) => a.FileName), removed };
 }

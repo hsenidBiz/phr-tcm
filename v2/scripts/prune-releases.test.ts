@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -38,13 +38,17 @@ test("an empty clone (first release) is fine", () => {
 
 function fakeRepo(
   versions: string[],
-  opts: { feed?: boolean; templateJunk?: boolean; setupExe?: boolean } = {},
+  opts: { feed?: boolean; templateJunk?: boolean; setupExe?: boolean; missingVersions?: string[] } = {},
 ) {
-  const { feed = true, templateJunk = true, setupExe = true } = opts;
+  const { feed = true, templateJunk = true, setupExe = true, missingVersions = [] } = opts;
   const repo = mkdtempSync(join(tmpdir(), "prune-repo-"));
   mkdirSync(join(repo, ".git"));
   writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
-  for (const v of versions) writeFileSync(join(repo, asset(v).FileName), v);
+  // `missingVersions` still gets a feed entry (below) but no file on disk -
+  // models a clone whose feed already names a package the clone lacks.
+  for (const v of versions) {
+    if (!missingVersions.includes(v)) writeFileSync(join(repo, asset(v).FileName), v);
+  }
   if (setupExe) writeFileSync(join(repo, "AzureDevOpsTestCaseManager.V2-win-Setup.exe"), "old-setup");
   writeFileSync(join(repo, "README.md"), "readme");
   if (templateJunk) writeFileSync(join(repo, "src"), "template junk"); // a leftover from the DevOps template
@@ -52,10 +56,11 @@ function fakeRepo(
   return repo;
 }
 
-function fakePack(version: string) {
+function fakePack(version: string, opts: { setupExe?: boolean } = {}) {
+  const { setupExe = true } = opts;
   const pack = mkdtempSync(join(tmpdir(), "prune-pack-"));
   writeFileSync(join(pack, asset(version).FileName), version);
-  writeFileSync(join(pack, "AzureDevOpsTestCaseManager.V2-win-Setup.exe"), "new-setup");
+  if (setupExe) writeFileSync(join(pack, "AzureDevOpsTestCaseManager.V2-win-Setup.exe"), "new-setup");
   writeFileSync(join(pack, "AzureDevOpsTestCaseManager.V2-win-Portable.zip"), "zip");
   writeFileSync(join(pack, "RELEASES"), "legacy");
   writeFileSync(join(pack, "assets.win.json"), "{}");
@@ -137,6 +142,35 @@ test("applyToDir: retrying a pack whose version already exists in the clone over
   );
   expect(kept).toContain("AzureDevOpsTestCaseManager.V2-1.23.0-full.nupkg");
   expect(removed).not.toContain("AzureDevOpsTestCaseManager.V2-1.23.0-full.nupkg");
+});
+
+test("applyToDir refuses to write a feed naming a file that is not on disk", () => {
+  // The clone's own feed already names 1.22.0, but that package's file was
+  // never written (e.g. lost between runs) - the invariant from the spec
+  // ("a feed that names fewer packages than exist is fine; one that names
+  // more is not") means this must throw rather than push a feed with a
+  // dangling entry.
+  const repo = fakeRepo(["1.21.0", "1.22.0", "1.22.1"], { missingVersions: ["1.22.0"] });
+  const pack = fakePack("1.23.0");
+  expect(() => applyToDir(repo, pack, 5)).toThrow(/1\.22\.0/);
+  // Nothing was written on the way to the throw - the stale feed on disk
+  // (if any) is untouched, not overwritten with a bad one.
+  expect(existsSync(join(repo, "releases.win.json"))).toBe(true);
+  const feed = JSON.parse(readFileSync(join(repo, "releases.win.json"), "utf8"));
+  expect(feed.Assets.map((a: { Version: string }) => a.Version)).toEqual(["1.21.0", "1.22.0", "1.22.1"]);
+});
+
+test("applyToDir refuses to prune when the pack has no Setup.exe", () => {
+  // `wanted` only keeps a Setup.exe by naming the one from THIS pack - a
+  // pack that somehow lacks one would make the removal loop delete the
+  // clone's existing Setup.exe, the first-install path the repo's README
+  // points people at. This must throw before anything is deleted.
+  const repo = fakeRepo(["1.22.1"]);
+  const pack = fakePack("1.23.0", { setupExe: false });
+  expect(() => applyToDir(repo, pack, 5)).toThrow(/Setup\.exe/i);
+  // The existing installer is still there - the throw happened before the
+  // removal loop, not after it had already deleted the file.
+  expect(readFileSync(join(repo, "AzureDevOpsTestCaseManager.V2-win-Setup.exe"), "utf8")).toBe("old-setup");
 });
 
 test("parseKeep accepts a positive integer and rejects everything else", () => {
