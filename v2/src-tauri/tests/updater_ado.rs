@@ -144,7 +144,7 @@ async fn a_prefix_matching_sibling_branch_listed_first_is_not_mistaken_for_the_r
 #[tokio::test(flavor = "multi_thread")]
 async fn a_package_is_downloaded_from_the_same_commit_as_the_feed() {
     let server = MockServer::start().await;
-    refs_answer("abc123").mount(&server).await;
+    refs_answer("abc123").expect(1).mount(&server).await;
     Mock::given(method("GET"))
         .and(path("/items"))
         .and(query_param("path", "/releases.win.json"))
