@@ -6,6 +6,8 @@
 use std::sync::Mutex;
 use velopack::{sources, UpdateCheck, UpdateInfo, UpdateManager};
 
+pub mod ado;
+
 /// v2 has its own releases repo so v1's and v2's "latest release" (which is
 /// what Velopack's HttpSource reads) can never fight over the update feed.
 pub const REPO_URL: &str = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases";

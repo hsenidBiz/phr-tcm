@@ -56,7 +56,7 @@ urlencoding = "2.1.3"
 quick-xml = "0.41.0"
 regex = "1.13.0"
 tauri-plugin-dialog = "2.7.1"
-velopack = "1.2.0"
+velopack = { version = "1.2.0", features = ["public-utils"] }
 xcap = "0.9.6"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 futures = { version = "0.3.32", default-features = false, features = ["std", "async-await"] }
