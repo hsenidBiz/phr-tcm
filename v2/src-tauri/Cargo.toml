@@ -81,6 +81,7 @@ tauri-plugin-single-instance = "2"
 
 [dev-dependencies]
 wiremock = "0.6.5"
+tempfile = "3"
 
 
 # The test profile links 27 separate integration binaries, and on Windows

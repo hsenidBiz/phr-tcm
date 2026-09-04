@@ -141,13 +141,63 @@ async fn a_prefix_matching_sibling_branch_listed_first_is_not_mistaken_for_the_r
     assert!(!denied.get());
 }
 
-/// Until Task 2 lands, downloading is unsupported - and says so rather
-/// than pretending.
-#[test]
-fn download_is_not_yet_supported() {
-    let (src, _) = AdoSource::at("http://127.0.0.1:1", "main", "tok".into());
+#[tokio::test(flavor = "multi_thread")]
+async fn a_package_is_downloaded_from_the_same_commit_as_the_feed() {
+    let server = MockServer::start().await;
+    refs_answer("abc123").mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("path", "/releases.win.json"))
+        .and(query_param("versionDescriptor.version", "abc123"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(FEED))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("path", "/AzureDevOpsTestCaseManager.V2-1.23.0-full.nupkg"))
+        .and(query_param("download", "true"))
+        .and(query_param("versionDescriptor.versionType", "commit"))
+        .and(query_param("versionDescriptor.version", "abc123"))
+        .and(header("authorization", "Bearer tok"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"hello".to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("pkg.nupkg");
+    let (src, _) = AdoSource::at(&server.uri(), "main", "tok".into());
+    let (tx, rx) = mpsc::channel::<i16>();
+    let t = target.clone();
+    tokio::task::spawn_blocking(move || {
+        let feed = src.get_release_feed("win", &Manifest::default(), "").unwrap();
+        src.download_release_entry(&feed.Assets[0], &t, Some(tx)).unwrap();
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read(&target).unwrap(), b"hello");
+    let last = rx.iter().last();
+    assert_eq!(last, Some(100), "progress must reach 100 for a body with Content-Length");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_download_with_no_prior_check_reads_the_branch_tip_itself() {
+    let server = MockServer::start().await;
+    refs_answer("fresh9").expect(1).mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("path", "/x.nupkg"))
+        .and(query_param("versionDescriptor.version", "fresh9"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"x".to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("x.nupkg");
+    let (src, _) = AdoSource::at(&server.uri(), "main", "tok".into());
     let asset = velopack::VelopackAsset { FileName: "x.nupkg".into(), ..Default::default() };
-    let (tx, _rx) = mpsc::channel::<i16>();
-    let r = src.download_release_entry(&asset, std::path::Path::new("nope"), Some(tx));
-    assert!(r.is_err());
+    tokio::task::spawn_blocking(move || src.download_release_entry(&asset, &target, None).unwrap())
+        .await
+        .unwrap();
 }

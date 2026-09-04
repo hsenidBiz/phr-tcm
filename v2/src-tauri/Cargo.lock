@@ -5951,6 +5951,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-specta",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",

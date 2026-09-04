@@ -165,7 +165,21 @@ impl UpdateSource for AdoSource {
         Ok(feed)
     }
 
-    fn download_release_entry(&self, _asset: &VelopackAsset, _local_file: &Path, _progress: Option<Sender<i16>>) -> Result<(), Error> {
-        Err(Error::NotSupported("devops download lands in Task 2".into()))
+    fn download_release_entry(&self, asset: &VelopackAsset, local_file: &Path, progress: Option<Sender<i16>>) -> Result<(), Error> {
+        // The commit the feed came from; without one (no check in this
+        // process yet), read the tip now - a moving pointer is still
+        // better than nothing, and the feed re-check in `download_and_apply`
+        // normally means this branch is never taken.
+        let commit = match self.pinned.lock().unwrap().clone() {
+            Some(c) => c,
+            None => self.commit_id()?,
+        };
+        let url = self.item_url(&asset.FileName, &commit);
+        let auth = format!("Bearer {}", self.token);
+        velopack::download::download_url_to_file_with_headers(&url, local_file, &[("Authorization", &auth)], |p| {
+            if let Some(tx) = &progress {
+                let _ = tx.send(p);
+            }
+        })
     }
 }
