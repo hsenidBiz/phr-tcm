@@ -28,6 +28,7 @@ read from changes, plus the words shown when DevOps says "no".
 | Update check timing | Unchanged: at launch and hourly. Without a token the check skips DevOps and goes straight to GitHub. |
 | No access to `PHR-TCM` | Show a notice asking for a Redmine ticket, even when GitHub still serves the update. |
 | First install | `AzureDevOpsTestCaseManager.V2-win-Setup.exe` is downloaded from the repo's file view in DevOps (sign-in required) and run. |
+| Proving DevOps alone works | A Settings switch, **Only check Azure DevOps for updates**, drops the GitHub sources entirely. A testing aid; off by default. |
 | Releases | Nothing is published as part of this work. The first real release after it is a separate, explicit instruction. |
 
 ## Why a git repo and not Azure Artifacts or pipeline artifacts
@@ -127,7 +128,21 @@ re-check old.
 
 `check` and `try_source` keep their existing fall-through: the first
 source that answers wins, later ones are only tried when an earlier one
-errors. A version served by DevOps and then downloaded from GitHub (or
+errors.
+
+### The "Only check Azure DevOps for updates" switch
+
+With GitHub as a fallback, a DevOps failure is invisible — the update
+still arrives. So Settings → Updates gets a switch, off by default,
+that leaves the two GitHub sources out of the list altogether. The
+frontend keeps it (`localStorage`, key `tcm-v2-updates-github-off`) and
+passes it as a boolean argument on every `check_update` and
+`apply_update` call; the Rust side holds no copy. With it on and no
+token, the check reports `blocked: "Sign in to check for updates -
+GitHub updates are switched off in Settings."` rather than the
+not-an-install message an empty source list would otherwise produce.
+Its helper text says plainly that it is for checking DevOps works and
+should normally stay off. A version served by DevOps and then downloaded from GitHub (or
 the reverse) is fine — the file names, sizes and hashes are the same
 `vpk pack` output published to both.
 

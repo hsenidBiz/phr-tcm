@@ -15,7 +15,7 @@
 - Releases repo: `https://dev.azure.com/PeoplesHR/HRM/_git/PHR-TCM`, branch `main`. Items API base: `https://dev.azure.com/PeoplesHR/HRM/_apis/git/repositories/PHR-TCM`, `api-version=7.1`.
 - Keep the newest **5** versions on DevOps. `main` is always one commit deep.
 - `packId` `AzureDevOpsTestCaseManager.V2` never changes.
-- **Nothing is published as part of this work.** No `vpk upload`, no push to `PHR-TCM` `main`, no version bump, no changelog entry. Task 7's dry run needs the user's explicit go and touches only a throwaway branch.
+- **Nothing is published as part of this work.** No `vpk upload`, no push to `PHR-TCM` `main`, no version bump, no changelog entry. Task 8's dry run needs the user's explicit go and touches only a throwaway branch.
 - Source is pushed to GitHub `origin/master` only when the user asks, as today.
 - All Rust tests live in `v2/src-tauri/tests/` (integration targets) — never as `#[cfg(test)]` lib unit tests; see the note at the top of `tests/bindings.rs` (test binaries linking tauri die at startup without the manifest link args only integration targets get).
 - Never run the full frontend or Rust suite while another run is in progress on this machine; run the targeted file for each task, and the full suites once, alone, at the end.
@@ -38,11 +38,16 @@
 | `v2/src/lib/updateToast.ts` | Owns the notice copy (`UPDATES_MOVED`) and the toast branch for it (Task 4). |
 | `v2/src/lib/updateToast.test.ts` | **New.** Toast branches (Task 4). |
 | `v2/src/App.tsx` | Renders the notice under the update banner, dismissible per session (Task 4). |
-| `v2/src/App.test.tsx` | Notice tests (Task 4). |
-| `v2/scripts/prune-releases.mjs` | **New.** Node ESM: merge pack output into the clone, keep newest 5, write the feed (Task 5). |
-| `v2/scripts/prune-releases.test.ts` | **New.** Pure merge + on-disk tests (Task 5). |
-| `v2/scripts/phr-tcm-README.md` | **New.** The README committed into `PHR-TCM` on every release (Task 6). |
-| `v2/scripts/release-v2.ps1` | DevOps publish step, `-DevOpsBranch`, both-or-neither failure message (Task 6). |
+| `v2/src/App.test.tsx` | Notice tests (Task 4); the hourly check passes the switch (Task 5). |
+| `v2/src/lib/updatePrefs.ts` | **New.** The "Only check Azure DevOps for updates" switch as a module store; every `checkUpdate`/`applyUpdate` caller reads it (Task 3). |
+| `v2/src/lib/updatePrefs.test.ts` | **New.** Store tests (Task 5). |
+| `v2/src/screens/Settings.tsx` | Passes the switch on a manual check (Task 3); renders the switch in the Updates section (Task 5). |
+| `v2/src/screens/Settings.test.tsx` | The switch reaches the backend (Task 5). |
+| `v2/src/components/CommandPalette.tsx` | Passes the switch on its check (Task 3). |
+| `v2/scripts/prune-releases.mjs` | **New.** Node ESM: merge pack output into the clone, keep newest 5, write the feed (Task 6). |
+| `v2/scripts/prune-releases.test.ts` | **New.** Pure merge + on-disk tests (Task 6). |
+| `v2/scripts/phr-tcm-README.md` | **New.** The README committed into `PHR-TCM` on every release (Task 7). |
+| `v2/scripts/release-v2.ps1` | DevOps publish step, `-DevOpsBranch`, both-or-neither failure message (Task 7). |
 
 ---
 
@@ -530,18 +535,21 @@ git log -1 --oneline
 - Modify: `v2/src-tauri/src/updater/mod.rs` — `sources` (line ~42), `managers` (~57), `UpdateStatus` (~70), `check` (~134), `download_and_apply` (~218)
 - Modify: `v2/src-tauri/src/commands/misc.rs:42-91`
 - Modify: `v2/src/dev/demo.ts:230`
+- Create: `v2/src/lib/updatePrefs.ts`
+- Modify: `v2/src/App.tsx:423` and its `applyUpdate` mutation; `v2/src/screens/Settings.tsx:118`; `v2/src/components/CommandPalette.tsx:95`
 - Regenerate: `v2/src/bindings.ts`
 - Test: `v2/src-tauri/tests/updater.rs`
 
 **Interfaces:**
 - Consumes: `ado::AdoSource::new(token) -> (AdoSource, AccessDenied)`; `crate::state::get_fresh_token(&AppHandle) -> Result<String, AdoError>` (pub(crate), async).
 - Produces:
-  - `pub fn sources(token: Option<String>) -> (Vec<(&'static str, Box<dyn UpdateSource>)>, Option<AccessDenied>)` — `"ado"` first only when `token` is `Some`.
+  - `pub fn sources(token: Option<String>, github_off: bool) -> (Vec<(&'static str, Box<dyn UpdateSource>)>, Option<AccessDenied>)` — `"ado"` first only when `token` is `Some`; the two GitHub entries left out when `github_off`.
   - `pub struct UpdateStatus { available, blocked, failed_attempt, pub no_access: bool }`
   - `pub enum Attempt { Available(Box<UpdateInfo>), UpToDate, Failed(String) }`
   - `pub fn resolve(attempts: Vec<(&'static str, Attempt)>, no_access: bool, state: &UpdateState) -> UpdateStatus`
-  - `pub fn check(state: &UpdateState, token: Option<String>) -> UpdateStatus`
-  - `pub fn download_and_apply(state, data_dir, token: Option<String>, on_progress) -> Result<(), String>`
+  - `pub fn check(state: &UpdateState, token: Option<String>, github_off: bool) -> UpdateStatus`
+  - `pub fn download_and_apply(state, data_dir, token: Option<String>, github_off: bool, on_progress) -> Result<(), String>`
+  - Tauri commands `check_update(github_off: bool)` and `apply_update(github_off: bool)` → TS `commands.checkUpdate(githubOff)` / `commands.applyUpdate(githubOff)`. `github_off` is the Settings switch from Task 5 ("Only check Azure DevOps for updates"), passed by the frontend on every call.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -555,7 +563,7 @@ use v2_lib::updater::{resolve, sources, Attempt, UpdateState};
 /// exactly as it did before DevOps existed.
 #[test]
 fn without_a_token_devops_is_not_in_the_list() {
-    let (list, denied) = sources(None);
+    let (list, denied) = sources(None, false);
     let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
     assert_eq!(names, ["github api", "latest/download"]);
     assert!(denied.is_none());
@@ -563,10 +571,23 @@ fn without_a_token_devops_is_not_in_the_list() {
 
 #[test]
 fn with_a_token_devops_is_tried_first() {
-    let (list, denied) = sources(Some("tok".into()));
+    let (list, denied) = sources(Some("tok".into()), false);
     let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
     assert_eq!(names, ["ado", "github api", "latest/download"]);
     assert!(denied.is_some());
+}
+
+/// The Settings switch that exists to prove DevOps works on its own: with
+/// it on, GitHub is not merely tried last - it is not tried at all.
+#[test]
+fn with_github_switched_off_devops_is_the_only_source() {
+    let (list, _) = sources(Some("tok".into()), true);
+    let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
+    assert_eq!(names, ["ado"]);
+    // ...and signed out there is nothing left to ask. `check` turns this
+    // into a "sign in" message rather than the not-an-install one.
+    let (list, _) = sources(None, true);
+    assert!(list.is_empty());
 }
 
 fn info(version: &str) -> Box<velopack::UpdateInfo> {
@@ -638,13 +659,19 @@ Replace `fn sources()` (keep its doc comment; add one paragraph at the end of it
 /// tries GitHub straight away, as it always has. The `AccessDenied` handle
 /// is how `check` learns that DevOps said 401/403 rather than merely
 /// failing.
-pub fn sources(token: Option<String>) -> (Vec<(&'static str, Box<dyn sources::UpdateSource>)>, Option<ado::AccessDenied>) {
+pub fn sources(token: Option<String>, github_off: bool) -> (Vec<(&'static str, Box<dyn sources::UpdateSource>)>, Option<ado::AccessDenied>) {
     let mut list: Vec<(&'static str, Box<dyn sources::UpdateSource>)> = Vec::new();
     let mut denied = None;
     if let Some(token) = token {
         let (src, flag) = ado::AdoSource::new(token);
         list.push(("ado", Box::new(src)));
         denied = Some(flag);
+    }
+    // The Settings switch "Only check Azure DevOps for updates": a way to
+    // prove DevOps works on its own, which the fallback would otherwise
+    // quietly mask.
+    if github_off {
+        return (list, denied);
     }
     list.push((
         "github api",
@@ -660,8 +687,8 @@ pub fn sources(token: Option<String>) -> (Vec<(&'static str, Box<dyn sources::Up
 Replace `fn managers()`:
 
 ```rust
-fn managers(token: Option<String>) -> (Vec<(&'static str, UpdateManager)>, Option<ado::AccessDenied>) {
-    let (list, denied) = sources(token);
+fn managers(token: Option<String>, github_off: bool) -> (Vec<(&'static str, UpdateManager)>, Option<ado::AccessDenied>) {
+    let (list, denied) = sources(token, github_off);
     let mans = list
         .into_iter()
         .filter_map(|(name, src)| UpdateManager::new_boxed(src, None, None).ok().map(|um| (name, um)))
@@ -690,8 +717,17 @@ pub enum Attempt {
 }
 
 /// Ask each source in turn, stopping at the first that answers.
-pub fn check(state: &UpdateState, token: Option<String>) -> UpdateStatus {
-    let (mans, denied) = managers(token);
+pub fn check(state: &UpdateState, token: Option<String>, github_off: bool) -> UpdateStatus {
+    // GitHub off and signed out leaves nothing to ask - and that is not
+    // the same as "this build cannot update itself", which is what an
+    // empty manager list would otherwise be reported as.
+    if github_off && token.is_none() {
+        return UpdateStatus {
+            blocked: Some("Sign in to check for updates - GitHub updates are switched off in Settings.".into()),
+            ..UpdateStatus::default()
+        };
+    }
+    let (mans, denied) = managers(token, github_off);
     let mut attempts = Vec::new();
     for (name, um) in mans {
         let a = match um.check_for_updates() {
@@ -751,9 +787,10 @@ pub fn download_and_apply(
     state: &UpdateState,
     data_dir: Option<std::path::PathBuf>,
     token: Option<String>,
+    github_off: bool,
     on_progress: impl Fn(Progress) + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let (mans, _) = managers(token);
+    let (mans, _) = managers(token, github_off);
     if mans.is_empty() {
         return Err("not a Velopack install".into());
     }
@@ -762,14 +799,17 @@ pub fn download_and_apply(
 In `src/commands/misc.rs`, `check_update`:
 
 ```rust
-pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
+/// `github_off` is the Settings switch "Only check Azure DevOps for
+/// updates", read by the frontend and passed on every call - the Rust
+/// side keeps no copy of it.
+pub async fn check_update(app: tauri::AppHandle, github_off: bool) -> updater::UpdateStatus {
     // Fetched here, on the async side, because the check below is
     // synchronous and the token helper is not. None when signed out - the
     // check then skips DevOps, which is the intended signed-out behaviour.
     let token = crate::state::get_fresh_token(&app).await.ok();
     tauri::async_runtime::spawn_blocking(move || {
         …unchanged…
-        updater::UpdateStatus { failed_attempt, ..updater::check(&state, token) }
+        updater::UpdateStatus { failed_attempt, ..updater::check(&state, token, github_off) }
     })
     .await
     .unwrap_or_else(|e| updater::UpdateStatus {
@@ -779,13 +819,61 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
 }
 ```
 
-and `apply_update` likewise: `let token = crate::state::get_fresh_token(&app).await.ok();` before `spawn_blocking`, and `updater::download_and_apply(&state, data_dir, token, move |p| { … })`.
+and `apply_update` likewise: signature `pub async fn apply_update(app: tauri::AppHandle, github_off: bool)`, `let token = crate::state::get_fresh_token(&app).await.ok();` before `spawn_blocking`, and `updater::download_and_apply(&state, data_dir, token, github_off, move |p| { … })`.
 
 In `src/dev/demo.ts:230`:
 
 ```ts
     checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null, no_access: false }),
 ```
+
+The two commands now take an argument, so every frontend caller has to supply it or `tsc` fails. The value is a Settings switch that Task 5 builds the UI for; this task creates the store it reads and wires the callers, so the tree compiles at every commit.
+
+Create `v2/src/lib/updatePrefs.ts`:
+
+```ts
+// The Settings switch "Only check Azure DevOps for updates". Read by every
+// caller of checkUpdate / applyUpdate and passed to the backend on each
+// call - the Rust side keeps no copy, so flipping it takes effect on the
+// next check with nothing to sync. localStorage, same shape as
+// `sidebarState.ts`: a storage write does not notify the same window, so
+// the listener set does.
+export const GITHUB_OFF_KEY = "tcm-v2-updates-github-off";
+
+const listeners = new Set<() => void>();
+
+export function githubOffSnapshot(): boolean {
+  try {
+    return localStorage.getItem(GITHUB_OFF_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setGithubOff(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(GITHUB_OFF_KEY, "1");
+    else localStorage.removeItem(GITHUB_OFF_KEY);
+  } catch {
+    // Storage unavailable: the switch is simply not remembered.
+  }
+  for (const l of listeners) l();
+}
+
+export function subscribeGithubOff(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+```
+
+Then change the four callers to pass it:
+
+- `v2/src/App.tsx:423`: `queryFn: () => commands.checkUpdate(githubOffSnapshot()),`
+- `v2/src/App.tsx`, the `applyUpdate` mutation's `mutationFn` (search `commands.applyUpdate(`): `commands.applyUpdate(githubOffSnapshot())`
+- `v2/src/screens/Settings.tsx:118`: `mutationFn: () => commands.checkUpdate(githubOffSnapshot()),`
+- `v2/src/components/CommandPalette.tsx:95`: `const v = await commands.checkUpdate(githubOffSnapshot());`
+
+each with `import { githubOffSnapshot } from "…/lib/updatePrefs";` (path relative to the file).
 
 - [ ] **Step 4: Run the Rust tests and regenerate the bindings**
 
@@ -797,7 +885,7 @@ Then: `cd v2 && npx tsc --noEmit` — expected clean (`demo.ts` now matches the 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd v2 && git add src-tauri/src/updater/mod.rs src-tauri/src/commands/misc.rs src-tauri/tests/updater.rs src/bindings.ts src/dev/demo.ts
+cd v2 && git add src-tauri/src/updater/mod.rs src-tauri/src/commands/misc.rs src-tauri/tests/updater.rs src/bindings.ts src/dev/demo.ts src/lib/updatePrefs.ts src/App.tsx src/screens/Settings.tsx src/components/CommandPalette.tsx
 git commit -F - <<'EOF'
 feat(v2): try DevOps first when signed in, GitHub after, and say when access is missing
 
@@ -1023,7 +1111,165 @@ git log -1 --oneline
 
 ---
 
-### Task 5: `prune-releases.mjs` — merge the pack into the clone, keep the newest 5
+### Task 5: The "Only check Azure DevOps for updates" switch
+
+**Files:**
+- Create: `v2/src/lib/updatePrefs.test.ts`
+- Modify: `v2/src/screens/Settings.tsx` — the Updates section (lines ~415–425)
+- Test: `v2/src/screens/Settings.test.tsx`, `v2/src/App.test.tsx`
+
+**Interfaces:**
+- Consumes: `githubOffSnapshot`, `setGithubOff`, `subscribeGithubOff`, `GITHUB_OFF_KEY` from `src/lib/updatePrefs.ts` (Task 3); `Switch` from `src/components/ui/switch.tsx` (`checked`, `onCheckedChange`, `ariaLabel`; renders `role="switch"`).
+- Produces: a switch in Settings → Updates, labelled exactly **Only check Azure DevOps for updates**, that every check and download honours.
+
+Why it exists: with GitHub as a fallback, a DevOps failure is invisible — the update still arrives. This switch is how DevOps is proved to work on its own. It is a testing aid, and its helper text says so.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `v2/src/lib/updatePrefs.test.ts`:
+
+```ts
+import { beforeEach, expect, test, vi } from "vitest";
+import { GITHUB_OFF_KEY, githubOffSnapshot, setGithubOff, subscribeGithubOff } from "./updatePrefs";
+
+beforeEach(() => localStorage.clear());
+
+test("off by default; on is remembered; off again removes the key", () => {
+  expect(githubOffSnapshot()).toBe(false);
+  setGithubOff(true);
+  expect(githubOffSnapshot()).toBe(true);
+  expect(localStorage.getItem(GITHUB_OFF_KEY)).toBe("1");
+  setGithubOff(false);
+  expect(localStorage.getItem(GITHUB_OFF_KEY)).toBeNull();
+});
+
+test("subscribers hear every change until they unsubscribe", () => {
+  const heard = vi.fn();
+  const stop = subscribeGithubOff(heard);
+  setGithubOff(true);
+  expect(heard).toHaveBeenCalledTimes(1);
+  stop();
+  setGithubOff(false);
+  expect(heard).toHaveBeenCalledTimes(1);
+});
+```
+
+Append to `v2/src/screens/Settings.test.tsx`:
+
+```tsx
+// The switch is a testing aid: with it on, DevOps has to serve the update
+// on its own, because there is no GitHub to fall back to. What matters is
+// that the backend is TOLD - the Rust side keeps no copy of the setting.
+test("the DevOps-only switch is passed to the backend on a manual check", async () => {
+  localStorage.clear();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const seen: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "check_update") {
+      seen.push(args);
+      return { available: null, blocked: null, failed_attempt: null, no_access: false };
+    }
+    if (cmd === "plugin:app|version") return "1.6.0";
+  });
+  renderSettings(qc);
+
+  fireEvent.click(screen.getByRole("switch", { name: /Only check Azure DevOps for updates/ }));
+  expect(localStorage.getItem("tcm-v2-updates-github-off")).toBe("1");
+  fireEvent.click(screen.getByRole("button", { name: /Check for updates/ }));
+  await waitFor(() => expect(seen).toHaveLength(1));
+  expect(seen[0]).toEqual({ githubOff: true });
+  localStorage.clear();
+});
+```
+
+Append to `v2/src/App.test.tsx`:
+
+```tsx
+test("the hourly check passes the DevOps-only switch too", async () => {
+  localStorage.setItem("tcm-v2-updates-github-off", "1");
+  const seen: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update") {
+      seen.push(args);
+      return { available: null, blocked: null, failed_attempt: null, no_access: false };
+    }
+  });
+  renderApp();
+  await waitFor(() => expect(seen).toHaveLength(1));
+  expect(seen[0]).toEqual({ githubOff: true });
+  localStorage.removeItem("tcm-v2-updates-github-off");
+});
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `cd v2 && npx vitest run src/lib/updatePrefs.test.ts src/screens/Settings.test.tsx src/App.test.tsx -t "switch|DevOps-only|subscribers|off by default" 2>&1 | tail -12`
+Expected: the store tests PASS already (the store landed in Task 3); the Settings test FAILS — no element with role `switch` and that name; the App test PASSES already (Task 3 wired the caller). That is the expected shape: this task's new behaviour is the Settings UI.
+
+- [ ] **Step 3: Add the switch to Settings**
+
+In `v2/src/screens/Settings.tsx`, import `useSyncExternalStore` from React (add to the existing React import) and
+
+```ts
+import { githubOffSnapshot, setGithubOff, subscribeGithubOff } from "../lib/updatePrefs";
+```
+
+Near the other hooks at the top of the component:
+
+```ts
+  const githubOff = useSyncExternalStore(subscribeGithubOff, githubOffSnapshot);
+```
+
+Replace the Updates section:
+
+```tsx
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Updates</h2>
+        <p className="text-sm text-muted">
+          Version {version.data ?? "-"} - updates install automatically from
+          the releases feed.
+        </p>
+        <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
+          <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
+          {check.isPending ? "Checking" : "Check for updates"}
+        </Button>
+        <label className="flex items-center gap-2 text-sm text-text">
+          <Switch
+            checked={githubOff}
+            onCheckedChange={setGithubOff}
+            ariaLabel="Only check Azure DevOps for updates"
+          />
+          Only check Azure DevOps for updates
+        </label>
+        <p className="text-xs text-muted">
+          For checking that updates from Azure DevOps work on their own. Leave it off
+          normally: with it on the app never falls back to GitHub, and you have to be
+          signed in for it to check at all.
+        </p>
+      </section>
+```
+
+- [ ] **Step 4: Run to verify pass**
+
+Run: `cd v2 && npx vitest run src/lib/updatePrefs.test.ts src/screens/Settings.test.tsx src/App.test.tsx src/ui-consistency.test.ts 2>&1 | tail -8`
+Expected: all pass. Then `npx tsc --noEmit` — clean.
+
+- [ ] **Step 5: Commit**
+
+```bash
+cd v2 && git add src/lib/updatePrefs.test.ts src/screens/Settings.tsx src/screens/Settings.test.tsx src/App.test.tsx
+git commit -F - <<'EOF'
+feat(v2): a Settings switch to check Azure DevOps alone, for proving it works
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+EOF
+git log -1 --oneline
+```
+
+---
+
+### Task 6: `prune-releases.mjs` — merge the pack into the clone, keep the newest 5
 
 **Files:**
 - Create: `v2/scripts/prune-releases.mjs`
@@ -1034,7 +1280,7 @@ git log -1 --oneline
   - `export function mergeFeeds(oldAssets: Asset[], newAssets: Asset[], keep: number): { kept: Asset[], droppedVersions: string[] }` — pure. An `Asset` is one entry of Velopack's `releases.win.json` (`{ PackageId, Version, Type, FileName, SHA1, SHA256, Size, … }`).
   - `export function applyToDir(repoDir: string, packDir: string, keep: number): { kept: string[], removed: string[] }` — makes `repoDir` contain exactly: the kept `*.nupkg`, the pack's `*-Setup.exe`, `*-Portable.zip` and `RELEASES`, a merged `releases.win.json`, and `README.md` if present. Everything else except `.git` is deleted.
   - CLI: `node scripts/prune-releases.mjs --repo <dir> --pack <dir> --keep 5`.
-- Consumed by Task 6.
+- Consumed by Task 7.
 
 Facts the implementer needs: `vpk pack` writes to `v2/Releases/`: `AzureDevOpsTestCaseManager.V2-<ver>-full.nupkg`, `AzureDevOpsTestCaseManager.V2-win-Setup.exe`, `AzureDevOpsTestCaseManager.V2-win-Portable.zip`, `RELEASES`, `assets.win.json` (vpk-internal, not published), and `releases.win.json` listing **only the version just packed** — which is why the old feed in the clone must be merged, not overwritten. Vitest's default include picks up `scripts/*.test.ts`; `tsconfig.json` includes only `src`, so `tsc` does not check this test — vitest transpiles it itself.
 
@@ -1259,15 +1505,15 @@ git log -1 --oneline
 
 ---
 
-### Task 6: The release script publishes to DevOps, then GitHub
+### Task 7: The release script publishes to DevOps, then GitHub
 
 **Files:**
 - Create: `v2/scripts/phr-tcm-README.md`
 - Modify: `v2/scripts/release-v2.ps1` — `param(…)` (line 7), the publish section (lines 108–115)
 
 **Interfaces:**
-- Consumes: `node scripts/prune-releases.mjs --repo <dir> --pack <dir> --keep 5` (Task 5).
-- Produces: `release-v2.ps1 -Version X.Y.Z [-SkipChecks] [-DevOpsBranch main] [-SkipGitHub]`. `-SkipGitHub` exists **only** for Task 7's rehearsal on a throwaway branch and refuses to run when `-DevOpsBranch` is `main`.
+- Consumes: `node scripts/prune-releases.mjs --repo <dir> --pack <dir> --keep 5` (Task 6).
+- Produces: `release-v2.ps1 -Version X.Y.Z [-SkipChecks] [-DevOpsBranch main] [-SkipGitHub]`. `-SkipGitHub` exists **only** for Task 8's rehearsal on a throwaway branch and refuses to run when `-DevOpsBranch` is `main`.
 
 No automated test drives the script (it builds and publishes). What is verified here is that PowerShell parses it and that the guard refuses the dangerous combination — both without building anything.
 
@@ -1405,14 +1651,14 @@ git log -1 --oneline
 
 ---
 
-### Task 7: Full gates, then the rehearsal on a throwaway branch (user go required)
+### Task 8: Full gates, then the rehearsal on a throwaway branch (user go required)
 
 **Files:** none changed. This task verifies; it does not commit code.
 
 - [ ] **Step 1: Run both suites, alone**
 
 Run: `cd v2 && npx tsc --noEmit && npx vitest run 2>&1 | tail -6`
-Expected: clean, all files pass (657 + the 3 + 4 + 4 added here).
+Expected: clean, all files pass (657 + the 3 toast, 5 App, 2 store, 1 Settings and 4 prune tests added here).
 
 Run: `cd v2/src-tauri && $env:CARGO_TARGET_DIR="target-gate"; cargo test --tests 2>&1 | Select-String "test result|^error" | Select-Object -Last 20`
 Expected: every binary `ok`, zero `error` lines.
