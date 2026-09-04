@@ -149,7 +149,7 @@ export default function PbiPicker({
         }}
       />
       {open && (query || recents.length > 0) && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-96 rounded-md border border-border bg-surface shadow-xl">
+        <div className="absolute left-0 top-full z-30 mt-1 w-[28rem] max-w-[calc(100vw-2rem)] rounded-md border border-border bg-surface shadow-xl">
           {query && hits.isLoading && <p className="px-3 py-2 text-sm text-muted">Searching</p>}
           {query && hits.isError && (
             <p className="px-3 py-2 text-sm text-danger">{hits.error.message}</p>
@@ -174,19 +174,22 @@ export default function PbiPicker({
                   Recently used
                 </li>
                 {recents.map((hit) => (
-                  <li key={hit.id} className="flex items-center gap-1">
+                  <li key={hit.id} className="flex items-start gap-1">
                     <button
-                      className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
+                      className="flex min-w-0 flex-1 items-start gap-1.5 rounded px-2 py-1.5 text-left text-sm text-text hover:bg-accent-soft"
                       onClick={() => pick(hit)}
                     >
-                      <History size={12} className="shrink-0 text-faint" />
-                      <span className="id-mono text-faint">#{hit.id}</span>
-                      <span className="truncate">{hit.title}</span>
+                      {/* The whole title shows: it wraps beside the icon and
+                          id rather than being cut off, and these two keep
+                          their place on the first line. */}
+                      <History size={12} className="mt-1 shrink-0 text-faint" />
+                      <span className="id-mono shrink-0 text-faint">#{hit.id}</span>
+                      <span className="min-w-0 break-words">{hit.title}</span>
                     </button>
                     <button
                       aria-label={`Remove #${hit.id} from recent PBIs`}
                       title="Remove from recent PBIs"
-                      className="shrink-0 rounded p-1 text-muted transition-colors hover:text-danger"
+                      className="mt-1 shrink-0 rounded p-1 text-muted transition-colors hover:text-danger"
                       onClick={() => {
                         removeRecent(org, project, hit.id);
                         bumpRecents((v) => v + 1);
