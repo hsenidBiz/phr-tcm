@@ -45,6 +45,12 @@ export function mergeFeeds(oldAssets, newAssets, keep) {
   return { kept, droppedVersions };
 }
 
+/** Parses a --keep value; returns a positive integer, or null if it isn't one. */
+export function parseKeep(raw) {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 function readFeed(dir) {
   const p = join(dir, FEED);
   return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")).Assets ?? [] : [];
@@ -77,9 +83,17 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "
     const i = process.argv.indexOf(flag);
     return i >= 0 ? process.argv[i + 1] : dflt;
   };
-  const repo = arg("--repo"), pack = arg("--pack"), keep = Number(arg("--keep", "5"));
-  if (!repo || !pack || !statSync(repo).isDirectory() || !statSync(pack).isDirectory()) {
-    console.error("usage: node prune-releases.mjs --repo <clone> --pack <Releases dir> --keep 5");
+  const repo = arg("--repo"), pack = arg("--pack");
+  const keep = parseKeep(arg("--keep", "5"));
+  const isDir = (p) => {
+    try {
+      return !!p && statSync(p).isDirectory();
+    } catch {
+      return false; // a nonexistent path fails the usage check below instead of throwing
+    }
+  };
+  if (!repo || !pack || keep === null || !isDir(repo) || !isDir(pack)) {
+    console.error("usage: node prune-releases.mjs --repo <clone> --pack <Releases dir> --keep <positive integer>");
     process.exit(2);
   }
   const r = applyToDir(repo, pack, keep);
