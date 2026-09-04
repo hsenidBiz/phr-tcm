@@ -27,7 +27,7 @@ read from changes, plus the words shown when DevOps says "no".
 | Fallback | GitHub releases repo, tried when DevOps fails for any reason. |
 | Update check timing | Unchanged: at launch and hourly. Without a token the check skips DevOps and goes straight to GitHub. |
 | No access to `PHR-TCM` | Show a notice asking for a Redmine ticket, even when GitHub still serves the update. |
-| First install | `TestCaseManager-win-Setup.exe` is downloaded from the repo's file view in DevOps (sign-in required) and run. |
+| First install | `AzureDevOpsTestCaseManager.V2-win-Setup.exe` is downloaded from the repo's file view in DevOps (sign-in required) and run. |
 | Releases | Nothing is published as part of this work. The first real release after it is a separate, explicit instruction. |
 
 ## Why a git repo and not Azure Artifacts or pipeline artifacts
@@ -44,20 +44,26 @@ artifacts expire on retention and have no notion of "latest".
 Flat, at the root of `main`:
 
 ```
-README.md                                       how to install; the Setup.exe link
-releases.win.json                               Velopack's feed, as `vpk pack` writes it
-AzureDevOpsTestCaseManager.V2-<ver>-full.nupkg  one per kept version
-AzureDevOpsTestCaseManager.V2-<ver>-delta.nupkg one per kept version (except the oldest kept, which may have none)
-TestCaseManager-win-Setup.exe                   the newest version only
+README.md                                        how to install; the Setup.exe link
+releases.win.json                                Velopack's feed, merged across the kept versions
+AzureDevOpsTestCaseManager.V2-<ver>-full.nupkg   one per kept version
+AzureDevOpsTestCaseManager.V2-win-Setup.exe      the newest version only
+AzureDevOpsTestCaseManager.V2-win-Portable.zip   the newest version only
+RELEASES                                         the newest version only (a legacy file vpk writes)
 ```
 
-The template's `src/`, `docs/` and `.gitignore` are removed.
+These are exactly the files `vpk pack` produces today, minus its internal
+`assets.win.json`. There are **no delta packages**: none have ever been
+published (GitHub 1.22.1 holds only a `-full.nupkg`), and adding them is
+a separate change. The template's `src/`, `docs/` and `.gitignore` are
+removed.
 
 `main` is always **one commit deep**: every release replaces it with a
 fresh orphan commit and force-pushes. GitHub Releases store assets
 outside git history, so deleting a release frees its space; a git repo
 keeps history forever unless it is rewritten, and rewriting is the only
-way to hold the size at roughly `5 × 30 MB + 28 MB`.
+way to hold the size at roughly `5 × 13 MB` of packages plus one
+installer and one portable zip — about 100 MB.
 
 ## The app side
 
@@ -76,10 +82,20 @@ fn download_release_entry(&self, asset: &VelopackAsset, local_file: &Path,
 Construction takes the bearer token as a `String`. Both `check_update`
 and `apply_update` in `commands/misc.rs` already run their work under
 `tauri::async_runtime::spawn_blocking`; they `await
-state::get_fresh_token` **before** spawning and hand the token in. HTTP
-is `reqwest::blocking`, whose feature is already enabled in `Cargo.toml`.
-Velopack's own `download` module is private, so it cannot be reused with
-custom headers.
+state::get_fresh_token` **before** spawning and hand the token in.
+
+Velopack keeps `bundle::Manifest` — which the trait's signature names —
+behind its `public-utils` cargo feature, so that feature is turned on.
+It also makes Velopack's own downloader public, so the package download
+reuses `velopack::download::download_url_to_file_with_headers` with the
+bearer header (whole-percent progress included, floored to 5 as today).
+The two small JSON requests (branch tip, feed) go through
+`reqwest::blocking`, already enabled, because their status code has to be
+read exactly: 401 and 403 are the "no access" signal.
+
+`TCM_UPDATE_BRANCH` in the environment overrides the branch read (`main`
+by default). It exists for one purpose: rehearsing a release on a
+throwaway branch from an installed build without touching `main`.
 
 Requests, all against
 `https://dev.azure.com/PeoplesHR/HRM/_apis/git/repositories/PHR-TCM/`
@@ -163,30 +179,30 @@ do, not what the app did.
 
 The publish step publishes to **both** places, DevOps first:
 
-1. Clone `PHR-TCM` shallowly into a temp directory (the release machine's
+1. `vpk pack` as today, into `v2/Releases/`. Its `releases.win.json`
+   names **only the version just packed**.
+2. Clone `PHR-TCM` shallowly into a temp directory (the release machine's
    own git credentials, as the GitHub push already relies on).
-2. `vpk download http --url <raw-items-url-of-main>` is **not** used: it
-   needs an unauthenticated URL. Instead the clone *is* the previous
-   release set — copy its `*.nupkg` and `releases.win.json` into the
-   `Releases/` staging dir before `pack.ps1` runs, so `vpk pack` builds a
-   delta against the last version. `pack.ps1` currently wipes
-   `Releases/`; it gains a `-Previous <dir>` switch that seeds it after
-   the wipe.
-3. `vpk pack` as today.
-4. Copy the pack output over the clone, then prune: keep the `full` and
-   `delta` packages of the newest 5 versions (by semantic version parsed
-   from the file name), delete every other `*.nupkg`, keep exactly one
-   `TestCaseManager-win-Setup.exe`, and rewrite `releases.win.json` to
-   list only the kept assets (Velopack tolerates a feed that names fewer
-   packages than exist, not more).
+3. `node scripts/prune-releases.mjs --repo <clone> --pack v2/Releases
+   --keep 5`: merge the clone's feed with the pack's (the pack wins a
+   tie), keep the newest 5 versions by numeric semantic version, copy
+   their packages plus the latest-only files in, delete every other file
+   in the clone except `.git` and `README.md`, and write the merged feed.
+   A feed that names fewer packages than exist is fine; one that names
+   more is not, which is why the feed is written last from what was kept.
+4. Copy `scripts/phr-tcm-README.md` in as `README.md`.
 5. `git checkout --orphan`, commit everything as one commit
-   `release <ver>`, `git push --force origin HEAD:main`.
+   `release <ver>`, `git push --force origin HEAD:<branch>`.
 6. Then the existing `vpk upload github …`, unchanged.
+
+Two switches exist only for rehearsals: `-DevOpsBranch <name>` (default
+`main`) and `-SkipGitHub`, which the script refuses when the branch is
+`main` — a real release goes to both places or to neither.
 
 Both or neither: if step 6 fails after step 5 succeeded, the script
 stops with a message naming exactly that — DevOps is ahead of GitHub —
-so the fallback is never left a version behind without anyone knowing.
-There is no automatic rollback; the fix is to re-run the GitHub upload.
+and the one command to re-run, so the fallback is never left a version
+behind without anyone knowing. There is no automatic rollback.
 
 GitHub is retired, whenever that is decided, by deleting step 6.
 Installs that predate this change read GitHub only and keep working
