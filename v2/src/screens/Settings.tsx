@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
+import { githubOffSnapshot } from "../lib/updatePrefs";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Modal } from "../components/ui/modal";
@@ -115,7 +116,7 @@ export default function Settings({ org, project }: { org: string; project: strin
   });
 
   const check = useMutation({
-    mutationFn: () => commands.checkUpdate(),
+    mutationFn: () => commands.checkUpdate(githubOffSnapshot()),
     onSuccess: (v) => {
       // App's update banner renders from the ["update"] query (fetched once
       // at startup) - seed it so the banner appears for a manual check too.

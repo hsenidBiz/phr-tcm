@@ -40,9 +40,17 @@ pub fn app_log_dir() -> String {
 }
 
 /// Non-blocking update check; Some(version) when a newer build is published.
+///
+/// `github_off` is the Settings switch "Only check Azure DevOps for
+/// updates", read by the frontend and passed on every call - the Rust
+/// side keeps no copy of it.
 #[tauri::command]
 #[specta::specta]
-pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
+pub async fn check_update(app: tauri::AppHandle, github_off: bool) -> updater::UpdateStatus {
+    // Fetched here, on the async side, because the check below is
+    // synchronous and the token helper is not. None when signed out - the
+    // check then skips DevOps, which is the intended signed-out behaviour.
+    let token = crate::state::get_fresh_token(&app).await.ok();
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager;
         let running = app.package_info().version.to_string();
@@ -55,13 +63,12 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
             .ok()
             .and_then(|dir| updater::failed_attempt(&dir, &running));
         let state = app.state::<updater::UpdateState>();
-        updater::UpdateStatus { failed_attempt, ..updater::check(&state) }
+        updater::UpdateStatus { failed_attempt, ..updater::check(&state, token, github_off) }
     })
     .await
     .unwrap_or_else(|e| updater::UpdateStatus {
-        available: None,
         blocked: Some(format!("The update check did not run: {e}")),
-        failed_attempt: None,
+        ..Default::default()
     })
 }
 
@@ -69,13 +76,14 @@ pub async fn check_update(app: tauri::AppHandle) -> updater::UpdateStatus {
 /// `UpdateProgress` so the banner can show how much is left.
 #[tauri::command]
 #[specta::specta]
-pub async fn apply_update(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn apply_update(app: tauri::AppHandle, github_off: bool) -> Result<(), String> {
+    let token = crate::state::get_fresh_token(&app).await.ok();
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager;
         let emitter = app.clone();
         let data_dir = app.path().app_data_dir().ok();
         let state = app.state::<updater::UpdateState>();
-        updater::download_and_apply(&state, data_dir, move |p| {
+        updater::download_and_apply(&state, data_dir, token, github_off, move |p| {
             use tauri_specta::Event as _;
             let _ = crate::events::UpdateProgress {
                 percent: p.percent as i32,
