@@ -1560,7 +1560,11 @@ param(
     [string]$DevOpsBranch = "main",
     # Rehearsals only: publish to the DevOps branch and NOT to GitHub.
     # Refused on main - a real release goes to both, or to neither.
-    [switch]$SkipGitHub
+    [switch]$SkipGitHub,
+    # Rehearsals only: do not push the source branch. A rehearsal bumps the
+    # version locally and reverts it afterwards; pushing that bump to
+    # origin/master would be a lie about what was released.
+    [switch]$SkipSourcePush
 )
 ```
 
@@ -1569,6 +1573,20 @@ Immediately after `if ($Version -notmatch …) { throw … }` add:
 ```powershell
 if ($SkipGitHub -and $DevOpsBranch -eq "main") {
     throw "-SkipGitHub is for rehearsals on a throwaway branch. A release to main goes to DevOps AND GitHub."
+}
+if ($SkipSourcePush -and $DevOpsBranch -eq "main") {
+    throw "-SkipSourcePush is for rehearsals on a throwaway branch. A real release publishes the source it was built from."
+}
+```
+
+and wrap the existing source push (the `git push origin HEAD` under `# --- Source first`) so a rehearsal cannot reach it:
+
+```powershell
+if ($SkipSourcePush) {
+    Write-Host "Skipped the source push (-SkipSourcePush): rehearsal on $DevOpsBranch."
+} else {
+    git push origin HEAD
+    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git push failed - source must be pushed before publishing" }
 }
 ```
 
@@ -1591,6 +1609,9 @@ if ($LASTEXITCODE -ne 0) {
     # A branch that does not exist yet (a fresh rehearsal branch): start from
     # an empty clone. main always exists.
     if ($DevOpsBranch -eq "main") { throw "could not clone $devopsRepo" }
+    # A failed clone can leave the directory behind, and the retry would then
+    # die on "destination path already exists" rather than on anything real.
+    if (Test-Path $clone) { Remove-Item -Recurse -Force $clone }
     git clone --quiet --depth 1 $devopsRepo $clone
     if ($LASTEXITCODE -ne 0) { throw "could not clone $devopsRepo" }
     Get-ChildItem $clone -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force
@@ -1672,17 +1693,17 @@ Everything below touches DevOps (a throwaway branch), installs a build on this m
 Local, uncommitted, reverted afterwards: set `version` to `1.22.2` in `v2/src-tauri/tauri.conf.json` and `v2/src-tauri/Cargo.toml` and add a placeholder changelog entry `{ version: "1.22.2", … }` at the top of `v2/src/lib/changelog.ts` (the script refuses otherwise). Then:
 
 ```powershell
-cd v2; .\scripts\release-v2.ps1 -Version 1.22.2 -DevOpsBranch rehearsal -SkipGitHub -SkipChecks
+cd v2; .\scripts\release-v2.ps1 -Version 1.22.2 -DevOpsBranch rehearsal -SkipGitHub -SkipSourcePush -SkipChecks
 ```
 
-`-SkipChecks` is acceptable here only because Step 1 just ran the gates. It does **not** skip the source push: `git push origin HEAD` runs unconditionally, and a rehearsal must not push a 1.22.2 bump to `origin/master`. Before running, comment out that `git push origin HEAD` line and the `if ($LASTEXITCODE…)` line under it; Step 5 restores them.
+`-SkipChecks` is acceptable here only because Step 1 just ran the gates. `-SkipSourcePush` is what keeps the throwaway 1.22.2 bump off `origin/master`; never run a rehearsal without it. No hand-editing of the script — all three switches refuse to work against `main`.
 
 Expected: `Published v1.22.2 to DevOps (rehearsal)` and the skip message. Check in the DevOps web UI that branch `rehearsal` has one commit holding `README.md`, `releases.win.json`, one `.nupkg`, Setup.exe, Portable.zip, RELEASES.
 
 - [ ] **Step 4: Install the rehearsal build and watch it find the next one**
 
 1. Run `v2\Releases\AzureDevOpsTestCaseManager.V2-win-Setup.exe` — this installs 1.22.2 over 1.22.1 on this machine.
-2. Re-pack the same binary as 1.22.3 and publish it to the branch: bump the three version spots to `1.22.3`, run `.\scripts\pack.ps1 -Version 1.22.3`, then only the DevOps half — the easiest way is to run the release script again with the build gates and `npm run tauri build` lines temporarily commented out, `-Version 1.22.3 -DevOpsBranch rehearsal -SkipGitHub -SkipChecks`.
+2. Re-pack the same binary as 1.22.3 and publish it to the branch: bump the three version spots to `1.22.3`, then run `.\scripts\release-v2.ps1 -Version 1.22.3 -DevOpsBranch rehearsal -SkipGitHub -SkipSourcePush -SkipChecks`. It rebuilds (a no-op incremental build, since only version strings changed), re-packs and publishes to the branch.
 3. Set `TCM_UPDATE_BRANCH=rehearsal` in the environment and launch the installed app from that same shell (`& "$env:LOCALAPPDATA\AzureDevOpsTestCaseManager.V2\current\v2.exe"`), sign in.
 
 Expected: the **Version 1.22.3 is available** banner within a few seconds of sign-in. Click **Restart to update**: the download progresses and the app restarts. Because the binary still reports 1.22.2 while Velopack now calls it 1.22.3, the next launch shows the *failed attempt* banner — that is expected for this rehearsal and proves the apply ran; it is not a defect.
@@ -1692,7 +1713,7 @@ Also verify: sign out and re-launch **without** `TCM_UPDATE_BRANCH` — the chec
 - [ ] **Step 5: Clean up**
 
 1. Delete the branch: `git push https://dev.azure.com/PeoplesHR/HRM/_git/PHR-TCM --delete rehearsal`.
-2. Revert every local edit from Steps 3–4: `git checkout -- v2/src-tauri/tauri.conf.json v2/src-tauri/Cargo.toml v2/src-tauri/Cargo.lock v2/src/lib/changelog.ts v2/scripts/release-v2.ps1`, then `git status` must show a clean tree.
+2. Revert the temporary version bumps from Steps 3–4: `git checkout -- v2/src-tauri/tauri.conf.json v2/src-tauri/Cargo.toml v2/src-tauri/Cargo.lock v2/src/lib/changelog.ts`, then `git status` must show a clean tree. (`release-v2.ps1` is not on that list: the rehearsal used its switches rather than editing it.)
 3. Reinstall 1.22.1 from GitHub (`gh release download v1.22.1 --repo AvinAlwis/azure-devops-test-case-manager-v2-releases --pattern "*Setup.exe"`, run it) so this machine is back on the real release.
 4. Confirm `PHR-TCM` `main` still has exactly the template commit `da69cf0` — nothing here may have touched it.
 
