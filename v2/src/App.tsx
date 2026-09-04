@@ -441,6 +441,13 @@ export default function App() {
   // access is granted, at which point `no_access` comes back false and it
   // goes away on its own with nothing to clear.
   const [movedDismissed, setMovedDismissed] = useState(false);
+  // The dismissal covers only the current episode of missing access, not
+  // the whole session: once a check reports access restored, the flag is
+  // spent, so if access is later lost again the notice is told again
+  // rather than staying silent from a dismiss that happened episodes ago.
+  useEffect(() => {
+    if (update.data?.no_access === false) setMovedDismissed(false);
+  }, [update.data?.no_access]);
   const showMoved = Boolean(update.data?.no_access) && !movedDismissed;
 
   // One shared signal for "the machine has no network". Reads pause via

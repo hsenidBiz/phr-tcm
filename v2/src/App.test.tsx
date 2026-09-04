@@ -514,6 +514,43 @@ test("with access, no notice", async () => {
   expect(screen.queryByText(/updates have moved/)).not.toBeInTheDocument();
 });
 
+// The app runs for days and re-checks hourly, so access can be granted and
+// then lost again within one session (revoked, or a transient auth failure
+// that recurs). A dismiss must only cover the episode of missing access
+// that was on screen when it was clicked - once that episode ends because
+// access came back, a later loss has to be told again, not swallowed by a
+// dismiss from episodes ago.
+test("dismissing, then losing access again after it was restored, shows the notice again", async () => {
+  let noAccess = true;
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update")
+      return { available: null, blocked: null, failed_attempt: null, no_access: noAccess };
+  });
+  const { qc } = renderApp();
+  await screen.findByText(/updates have moved/);
+  fireEvent.click(screen.getByRole("button", { name: /dismiss update notice/i }));
+  expect(screen.queryByText(/updates have moved/)).not.toBeInTheDocument();
+
+  // Access restored: the notice hides on its own, and the spent dismissal
+  // stops mattering.
+  noAccess = false;
+  await act(async () => {
+    await qc.invalidateQueries({ queryKey: ["update"] });
+  });
+  await waitFor(() => {
+    expect(screen.queryByText(/updates have moved/)).not.toBeInTheDocument();
+  });
+
+  // Access lost again: this is a new episode, so the old dismiss must not
+  // apply to it.
+  noAccess = true;
+  await act(async () => {
+    await qc.invalidateQueries({ queryKey: ["update"] });
+  });
+  expect(await screen.findByText(/updates have moved/)).toBeInTheDocument();
+});
+
 /** The tour has to be visibly running before we assert on it. */
 async function startTour() {
   await act(async () => {
