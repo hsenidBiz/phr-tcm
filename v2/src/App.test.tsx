@@ -461,6 +461,59 @@ test("a failed update check shows no banner", async () => {
   expect(screen.queryByText(/Could not reach/)).not.toBeInTheDocument();
 });
 
+// DevOps said this user cannot read the releases repo. That is not an
+// error to hide: it is the one thing the user can fix, and the notice says
+// how. It is independent of whether GitHub still served an update.
+test("no access to the releases repo shows the notice with the next step", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update")
+      return { available: null, blocked: null, failed_attempt: null, no_access: true };
+  });
+  renderApp();
+  expect(await screen.findByText(/updates have moved to Azure DevOps/)).toBeInTheDocument();
+  expect(screen.getByText(/Redmine ticket/)).toBeInTheDocument();
+  expect(screen.queryByText(/is available/)).not.toBeInTheDocument();
+});
+
+test("the notice and an update from the fallback show together", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update")
+      return { available: "0.5.0", blocked: null, failed_attempt: null, no_access: true };
+  });
+  renderApp();
+  expect(await screen.findByText(/Version 0.5.0 is available/)).toBeInTheDocument();
+  expect(screen.getByText(/updates have moved to Azure DevOps/)).toBeInTheDocument();
+});
+
+test("the notice can be dismissed, and stays away until the next launch", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update")
+      return { available: null, blocked: null, failed_attempt: null, no_access: true };
+  });
+  const { unmount } = renderApp();
+  await screen.findByText(/updates have moved/);
+  fireEvent.click(screen.getByRole("button", { name: /dismiss update notice/i }));
+  expect(screen.queryByText(/updates have moved/)).not.toBeInTheDocument();
+  unmount();
+  // A fresh mount is a fresh launch: the dismissal was never written down.
+  renderApp();
+  expect(await screen.findByText(/updates have moved/)).toBeInTheDocument();
+});
+
+test("with access, no notice", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auth_status") return { signed_in: false, account: null };
+    if (cmd === "check_update")
+      return { available: null, blocked: null, failed_attempt: null, no_access: false };
+  });
+  renderApp();
+  await screen.findByRole("button", { name: /sign in/i });
+  expect(screen.queryByText(/updates have moved/)).not.toBeInTheDocument();
+});
+
 /** The tour has to be visibly running before we assert on it. */
 async function startTour() {
   await act(async () => {

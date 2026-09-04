@@ -99,7 +99,9 @@ import AutoRun from "./screens/AutoRun";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
+import { X } from "lucide-react";
 import { IconRefresh } from "./lib/actionIcons";
+import { UPDATES_MOVED } from "./lib/updateToast";
 
 /** How often to look for a new release, in the background. */
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
@@ -434,6 +436,12 @@ export default function App() {
   // is also the first moment the size is known - the backend has to re-ask
   // the feed before it can say how big the download is.
   const [dl, setDl] = useState<{ percent: number; downloaded: number; total: number } | null>(null);
+
+  // Session-only on purpose: the notice returns on the next launch until
+  // access is granted, at which point `no_access` comes back false and it
+  // goes away on its own with nothing to clear.
+  const [movedDismissed, setMovedDismissed] = useState(false);
+  const showMoved = Boolean(update.data?.no_access) && !movedDismissed;
 
   // One shared signal for "the machine has no network". Reads pause via
   // React Query's own networkMode; the banner below is the part that
@@ -962,6 +970,24 @@ export default function App() {
                   {applyUpdate.isPending ? "Updating" : "Restart to update"}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {showMoved && (
+            <div
+              role="status"
+              className="flex items-start justify-between gap-4 border-b border-warning/40 bg-warning/10 px-6 py-2 text-sm"
+            >
+              <span>
+                <strong>{UPDATES_MOVED.title}</strong> {UPDATES_MOVED.body}
+              </span>
+              <button
+                aria-label="Dismiss update notice"
+                className="shrink-0 text-muted hover:text-text"
+                onClick={() => setMovedDismissed(true)}
+              >
+                <X size={14} />
+              </button>
             </div>
           )}
 
