@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.1",
+    date: "2026-09-05",
+    items: [
+      "Fixed: after uploading a file that both updated existing cases and added new ones, every case in the queue came back highlighted and the queue refilled itself with the cases you had just uploaded. The app writes the new work item ids back into your file, and it was mistaking that write for someone editing the file behind it.",
+      "That one was more than untidy: it put cases that had just been created back into the queue, where uploading again would have made a second copy of each in Azure DevOps.",
+    ],
+  },
+  {
     version: "1.23.0",
     date: "2026-09-05",
     items: [

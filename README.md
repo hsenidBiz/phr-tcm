@@ -15,8 +15,7 @@ architecture, and the develop / build / release workflow.
 Updates are read from the company Azure DevOps repository `HRM / PHR-TCM`
 using your existing sign-in, with the public
 [releases repo](https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases)
-as a fallback. If the app tells you it cannot reach `PHR-TCM`, raise a Redmine
-ticket asking for read access to it.
+as a fallback.
 
 ---
 
