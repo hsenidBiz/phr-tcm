@@ -666,9 +666,23 @@ export default function ImportFile({
         // A bulk change was written into a watched file: move the watch's
         // fingerprint and snapshot forward so the watcher stays silent
         // about our own write, and ownership keeps matching the new titles.
-        onWatchPatched={(path, fields) =>
-          setWatches((prev) => patchWatch(prev, path, fields))
-        }
+        onWatchPatched={(path, fields) => {
+          setWatches((prev) => patchWatch(prev, path, fields));
+          // `detected` has to move with it. It holds the fingerprint last
+          // OBSERVED for this file, and the staleness test above is a
+          // plain inequality - so a watch stamp moved AHEAD of it reads
+          // exactly like an outside edit, and the app reports its own
+          // write back to itself.
+          //
+          // Harmless while the queue is full, since the sync then finds
+          // nothing to do - which is why bulk edits never showed it. After
+          // a submit it was not harmless: the prune has just emptied the
+          // queue, so the phantom edit loaded the whole file back in,
+          // ringed every case as newly added, and put cases that had just
+          // been created back one Create away from a duplicate.
+          const moved = fields.stamp;
+          if (moved) setDetected((d) => ({ ...d, [path]: moved }));
+        }}
       />
 
       {dropping && (

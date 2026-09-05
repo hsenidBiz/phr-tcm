@@ -735,3 +735,73 @@ test("a second save adds to the report instead of replacing it", async () => {
   expect(await screen.findByText(/\+1 added/)).toBeInTheDocument();
   expect(screen.queryByText(/~1 changed/)).not.toBeInTheDocument();
 });
+
+// Field report 2026-09-05: after uploading a file that both updated some
+// cases and added new ones, EVERY row in the queue came back ringed green
+// and the queue refilled itself with the cases that had just been uploaded.
+//
+// The cause is a stamp comparison that cannot tell direction. `detected`
+// holds the fingerprint last OBSERVED for a file; the watch holds the one
+// last folded in. The change test is a plain inequality, so when the app
+// writes the file itself - stamping the new work item ids in after a
+// submit - and moves the watch's stamp forward, `detected` is left behind
+// and the two differ. That reads exactly like an outside edit.
+//
+// It only showed after an upload because that is the one moment the queue
+// is empty: the prune has just taken the uploaded cases out, so the
+// phantom "edit" loads the whole file back in and every case in it is new.
+// That also put cases one Create away from a duplicate back in the queue.
+test("the app's own id write-back after a submit does not re-import the file", async () => {
+  const before = [jsonCase("Already there", { update_id: 151340 }), jsonCase("Brand new")];
+  const after = [
+    jsonCase("Already there", { update_id: 151340 }),
+    jsonCase("Brand new", { update_id: 153450 }),
+  ];
+  localStorage.setItem("tcm-v2-draft:acme/42", JSON.stringify(before));
+  localStorage.setItem(
+    "tcm-v2-watch:acme/42",
+    JSON.stringify([{ path: CASE_PATH, stamp: "stamp-1", snapshot: before }]),
+  );
+
+  let onDisk = before;
+  mockIPC((cmd, args) => {
+    if (cmd === "file_stamp") return onDisk === before ? "stamp-1" : "stamp-2";
+    if (cmd === "watch_file" || cmd === "unwatch_file" || cmd === "unwatch_all_files") return null;
+    if (cmd === "parse_import_file") return { cases: onDisk, warnings: [] };
+    if (cmd === "read_general_comment") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+    // The write-back: the created case's id goes into the file, and the
+    // file's fingerprint moves on.
+    if (cmd === "save_draft_cases") {
+      onDisk = after;
+      return "stamp-2";
+    }
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string; update_id: number | null }> };
+      return a.queue.map((tc, index) => ({
+        index,
+        title: tc.title,
+        action: tc.update_id == null ? "created" : "updated",
+        id: tc.update_id ?? 153450,
+        error: null,
+      }));
+    }
+  }, { shouldMockEvents: true });
+
+  renderScreen();
+  await screen.findByText("Already there");
+  fireEvent.click(screen.getByRole("button", { name: /Review 2 test case/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & / }));
+  const dupGate = screen.queryByRole("button", { name: /Yes — create/ });
+  if (dupGate) fireEvent.click(dupGate);
+  await screen.findByText(/uploaded/);
+
+  // Both cases were written, so the prune empties the queue and it stays
+  // empty - the file must not pour them back in.
+  await waitFor(() =>
+    expect(document.querySelectorAll("li.rounded-md")).toHaveLength(0),
+  );
+  expect(screen.queryByText(/Loaded 2 cases/)).not.toBeInTheDocument();
+});
