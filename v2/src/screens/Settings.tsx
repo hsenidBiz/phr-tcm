@@ -2,11 +2,12 @@ import { reportUpdateCheck } from "../lib/updateToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
+import { githubOffSnapshot, setGithubOff, subscribeGithubOff } from "../lib/updatePrefs";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Modal } from "../components/ui/modal";
@@ -114,8 +115,10 @@ export default function Settings({ org, project }: { org: string; project: strin
     staleTime: Infinity,
   });
 
+  const githubOff = useSyncExternalStore(subscribeGithubOff, githubOffSnapshot);
+
   const check = useMutation({
-    mutationFn: () => commands.checkUpdate(),
+    mutationFn: () => commands.checkUpdate(githubOffSnapshot()),
     onSuccess: (v) => {
       // App's update banner renders from the ["update"] query (fetched once
       // at startup) - seed it so the banner appears for a manual check too.
@@ -422,6 +425,19 @@ export default function Settings({ org, project }: { org: string; project: strin
           <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
           {check.isPending ? "Checking" : "Check for updates"}
         </Button>
+        <label className="flex items-center gap-2 text-sm text-text">
+          <Switch
+            checked={githubOff}
+            onCheckedChange={setGithubOff}
+            ariaLabel="Only check Azure DevOps for updates"
+          />
+          Only check Azure DevOps for updates
+        </label>
+        <p className="text-xs text-muted">
+          For checking that updates from Azure DevOps work on their own. Leave it off
+          normally: with it on the app never falls back to GitHub, and you have to be
+          signed in for it to check at all.
+        </p>
       </section>
       </div>
 

@@ -179,3 +179,86 @@ mod update_attempt_marker {
         let _ = std::fs::remove_dir_all(&d);
     }
 }
+
+use v2_lib::updater::{resolve, sources, Attempt, UpdateState};
+
+/// Signed out, DevOps is not even tried: the token is what makes it
+/// answerable, and a launch-time check with no session must behave
+/// exactly as it did before DevOps existed.
+#[test]
+fn without_a_token_devops_is_not_in_the_list() {
+    let (list, denied) = sources(None, false);
+    let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
+    assert_eq!(names, ["github api", "latest/download"]);
+    assert!(denied.is_none());
+}
+
+#[test]
+fn with_a_token_devops_is_tried_first() {
+    let (list, denied) = sources(Some("tok".into()), false);
+    let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
+    assert_eq!(names, ["ado", "github api", "latest/download"]);
+    assert!(denied.is_some());
+}
+
+/// The Settings switch that exists to prove DevOps works on its own: with
+/// it on, GitHub is not merely tried last - it is not tried at all.
+#[test]
+fn with_github_switched_off_devops_is_the_only_source() {
+    let (list, _) = sources(Some("tok".into()), true);
+    let names: Vec<_> = list.iter().map(|(n, _)| *n).collect();
+    assert_eq!(names, ["ado"]);
+    // ...and signed out there is nothing left to ask. `check` turns this
+    // into a "sign in" message rather than the not-an-install one.
+    let (list, _) = sources(None, true);
+    assert!(list.is_empty());
+}
+
+fn info(version: &str) -> Box<velopack::UpdateInfo> {
+    let mut i = velopack::UpdateInfo::default();
+    i.TargetFullRelease.Version = version.into();
+    Box::new(i)
+}
+
+/// DevOps said no, GitHub served the update: the user gets the update AND
+/// is told access is missing - both are true, neither hides the other.
+#[test]
+fn no_access_and_an_update_from_github_are_both_reported() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![("ado", Attempt::Failed("403".into())), ("github api", Attempt::Available(info("1.23.0")))],
+        true,
+        &state,
+    );
+    assert_eq!(s.available.as_deref(), Some("1.23.0"));
+    assert!(s.no_access);
+    assert!(s.blocked.is_none());
+    assert!(state.pending.lock().unwrap().is_some(), "the pending info is kept for the download");
+}
+
+#[test]
+fn no_access_and_no_fallback_is_blocked_and_no_access() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![("ado", Attempt::Failed("403".into())), ("github api", Attempt::Failed("timeout".into()))],
+        true,
+        &state,
+    );
+    assert!(s.available.is_none());
+    assert!(s.no_access);
+    assert!(s.blocked.as_deref().unwrap().contains("timeout"), "the LAST failure is the one named");
+}
+
+#[test]
+fn up_to_date_from_the_first_source_is_a_plain_up_to_date() {
+    let state = UpdateState::default();
+    let s = resolve(vec![("ado", Attempt::UpToDate)], false, &state);
+    assert!(s.available.is_none() && s.blocked.is_none() && !s.no_access);
+}
+
+#[test]
+fn no_attempts_at_all_means_this_build_cannot_update() {
+    let state = UpdateState::default();
+    let s = resolve(vec![], false, &state);
+    assert!(s.blocked.as_deref().unwrap().contains("does not update itself"));
+}

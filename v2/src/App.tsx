@@ -17,6 +17,7 @@ import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
 import { formatByteProgress } from "./lib/bytes";
 import { onlineSnapshot, subscribeOnline } from "./lib/network";
+import { githubOffSnapshot } from "./lib/updatePrefs";
 import {
   clearSessionExpired,
   sessionExpiredSnapshot,
@@ -98,7 +99,9 @@ import AutoRun from "./screens/AutoRun";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
 import WorkBoard from "./screens/WorkBoard";
+import { X } from "lucide-react";
 import { IconRefresh } from "./lib/actionIcons";
+import { UPDATES_MOVED } from "./lib/updateToast";
 
 /** How often to look for a new release, in the background. */
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
@@ -420,7 +423,7 @@ export default function App() {
   // an app left open all week is sitting.
   const update = useQuery({
     queryKey: ["update"],
-    queryFn: () => commands.checkUpdate(),
+    queryFn: () => commands.checkUpdate(githubOffSnapshot()),
     staleTime: UPDATE_CHECK_MS,
     refetchInterval: UPDATE_CHECK_MS,
     refetchIntervalInBackground: true,
@@ -433,6 +436,19 @@ export default function App() {
   // is also the first moment the size is known - the backend has to re-ask
   // the feed before it can say how big the download is.
   const [dl, setDl] = useState<{ percent: number; downloaded: number; total: number } | null>(null);
+
+  // Session-only on purpose: the notice returns on the next launch until
+  // access is granted, at which point `no_access` comes back false and it
+  // goes away on its own with nothing to clear.
+  const [movedDismissed, setMovedDismissed] = useState(false);
+  // The dismissal covers only the current episode of missing access, not
+  // the whole session: once a check reports access restored, the flag is
+  // spent, so if access is later lost again the notice is told again
+  // rather than staying silent from a dismiss that happened episodes ago.
+  useEffect(() => {
+    if (update.data?.no_access === false) setMovedDismissed(false);
+  }, [update.data?.no_access]);
+  const showMoved = Boolean(update.data?.no_access) && !movedDismissed;
 
   // One shared signal for "the machine has no network". Reads pause via
   // React Query's own networkMode; the banner below is the part that
@@ -454,7 +470,7 @@ export default function App() {
         }),
       );
       try {
-        const r = await commands.applyUpdate();
+        const r = await commands.applyUpdate(githubOffSnapshot());
         if (r.status === "error") throw new Error(r.error);
       } finally {
         // On success the app restarts into the new build, so this only
@@ -494,6 +510,11 @@ export default function App() {
       // on the modal's own re-sign-in path.
       clearSessionExpired();
       qc.invalidateQueries({ queryKey: ["auth"] });
+      // The launch-time `["update"]` check necessarily ran with no token
+      // (tokens are in-memory only, so every launch starts signed out) -
+      // `sources()` skipped DevOps entirely and only GitHub was consulted.
+      // This is the first real chance for the DevOps-first check to run.
+      qc.invalidateQueries({ queryKey: ["update"] });
     },
     onError: (e) => toast.error(`Sign-in failed: ${e.message}`),
   });
@@ -961,6 +982,24 @@ export default function App() {
                   {applyUpdate.isPending ? "Updating" : "Restart to update"}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {showMoved && (
+            <div
+              role="status"
+              className="flex items-start justify-between gap-4 border-b border-warning/40 bg-warning/10 px-6 py-2 text-sm"
+            >
+              <span>
+                <strong>{UPDATES_MOVED.title}</strong> {UPDATES_MOVED.body}
+              </span>
+              <button
+                aria-label="Dismiss update notice"
+                className="shrink-0 text-muted hover:text-text"
+                onClick={() => setMovedDismissed(true)}
+              >
+                <X size={14} />
+              </button>
             </div>
           )}
 
