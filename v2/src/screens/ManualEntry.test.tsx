@@ -83,11 +83,16 @@ test("manual add, review gate, submit reports results", async () => {
   // alive long after the code stops backing it up.
   expect(screen.getByText(/needs delete permission/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
-  expect(await screen.findByText(/Created #900: Login works/)).toBeInTheDocument();
+  // The results panel leads with the headline, then names the case: a NEW
+  // badge, the id, and the title as separate parts rather than one
+  // run-together line.
+  expect(await screen.findByText("1 test case uploaded - 1 created")).toBeInTheDocument();
+  expect(screen.getByText("NEW")).toBeInTheDocument();
+  expect(screen.getByText("#900")).toBeInTheDocument();
 
   // Clear results returns the screen to normal and removes itself.
   fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
-  expect(screen.queryByText(/Created #900/)).not.toBeInTheDocument();
+  expect(screen.queryByText("#900")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Clear results" })).not.toBeInTheDocument();
 });
 

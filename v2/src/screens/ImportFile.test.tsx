@@ -163,8 +163,26 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
   fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 2/ }));
   fireEvent.click(screen.getByRole("button", { name: /Yes — create 2/ }));
-  expect(await screen.findByText(/Failed: Bad - boom/)).toBeInTheDocument();
+  // The results panel reports a failure as a badge, the title and the
+  // reason rather than one run-together sentence, and the headline counts
+  // only what actually reached Azure DevOps.
+  expect(await screen.findByText("1 test case uploaded - 1 created, 1 failed")).toBeInTheDocument();
+  expect(screen.getByText("FAILED")).toBeInTheDocument();
+  expect(screen.getByText("boom")).toBeInTheDocument();
   expect(screen.getByText(/1 queued/)).toBeInTheDocument();
+
+  // "Good" was created and pruned away, so the one row left looks exactly
+  // like a queue nobody has uploaded yet. The ring is the only thing on
+  // screen saying this one still needs a decision.
+  //
+  // "Bad" is on screen twice now - once as the queue row, once in the
+  // results panel - so pick the queue row by the shape only it has.
+  const queueRow = screen
+    .getAllByText("Bad")
+    .map((el) => el.closest("li"))
+    .find((li) => li?.className.includes("rounded-md"));
+  expect(queueRow, "the failed case should still be queued").toBeTruthy();
+  expect(queueRow?.className).toMatch(/border-danger/);
 });
 
 test("a matching PBI imports straight into the queue", async () => {

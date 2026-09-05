@@ -14,6 +14,7 @@ import { cn } from "../lib/cn";
 import { caseKey, fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { pruneCreated } from "../lib/queuePrune";
+import { failedKeys, summariseSubmit } from "../lib/submitSummary";
 import {
   queueWriterFor,
   registerQueueWriter,
@@ -168,6 +169,11 @@ export default function QueueSection({
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
+  // The rows a submit left behind because they failed. Everything that
+  // worked is pruned out, so what remains looks exactly like a queue
+  // nobody has uploaded yet - these are the ones still needing a decision,
+  // and the ring is the only thing separating them.
+  const [failedRows, setFailedRows] = useState<Set<string>>(() => new Set());
   const [reviewing, setReviewing] = useState(false);
   // Progress lives at MODULE scope (lib/submitRun), not in this component:
   // the upload takes minutes and the person watching it is exactly the
@@ -589,6 +595,11 @@ export default function QueueSection({
       return next;
     };
 
+    // Which of the surviving rows are survivors because they FAILED, as
+    // opposed to rows the user added while the upload ran. Computed from
+    // the sent list so the occurrence numbering lines up with the prune's.
+    setFailedRows(failedKeys(sent, results));
+
     const writer = queueWriterFor(org, sentFor);
     if (writer) {
       // The submitted queue is on screen (this mount or a fresh one):
@@ -986,6 +997,7 @@ export default function QueueSection({
             onClick={() => {
               const n = queue.length;
               setQueue([]);
+              setFailedRows(new Set());
               onQueueCleared?.();
               toast.info(`Removed ${n} queued case${n === 1 ? "" : "s"}.`);
             }}
@@ -1111,6 +1123,10 @@ export default function QueueSection({
           {queue.map((tc, i) => {
             const { diff, diffFailed } = reviewRows[i];
             const touched = flash?.[rowKeys[i]];
+            // Ranked above the file-sync colours on purpose: a row that
+            // failed to upload needs a decision now, and that outranks
+            // where its text last came from.
+            const failedHere = failedRows.has(rowKeys[i]);
             return (
               <li
                 key={i}
@@ -1120,7 +1136,9 @@ export default function QueueSection({
                   // would clip it, so drop cv-row while this row is being edited.
                   editingIdx !== i && "cv-row",
                   "rounded-md border text-sm transition-colors",
-                  touched === "added"
+                  failedHere
+                    ? "border-danger/60 bg-danger/5"
+                    : touched === "added"
                     ? "border-success/50 bg-success/5"
                     : touched === "changed"
                       ? "border-warning/50 bg-warning/5"
@@ -1414,35 +1432,54 @@ export default function QueueSection({
         )}
       </div>
 
+      {/* What just happened, as a panel rather than a paragraph of coloured
+          text pasted under the queue. The headline answers "did it work"
+          on its own; the rows below are for finding one case. */}
       {results && (
-        <div className="space-y-2">
-          <ul className="space-y-0.5 text-sm">
+        <div className="space-y-2 rounded-md border border-border bg-surface-2 p-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="text-sm font-semibold text-text">
+              {summariseSubmit(results).headline}
+            </h3>
+            {/* Dismiss the results once read - the button goes with them. */}
+            <Button variant="outline" size="sm" onClick={() => setResults(null)}>
+              <IconClear aria-hidden />
+              Clear results
+            </Button>
+          </div>
+          <ul className="space-y-1 text-sm">
             {results.map((r) => (
-              <li
-                key={r.index}
-                className={
-                  r.action === "failed"
-                    ? "text-danger"
-                    : // Created or updated, but something after the write
-                      // went wrong - the case exists, so this is a warning
-                      // to act on, not a failure to retry.
-                      r.error
-                      ? "text-warning"
-                      : "text-success"
-                }
-              >
-                {r.action === "created" && `Created #${r.id}: ${r.title}`}
-                {r.action === "updated" && `Updated #${r.id}: ${r.title}`}
-                {r.action === "failed" && `Failed: ${r.title} - ${r.error}`}
-                {r.action !== "failed" && r.error && ` - ${r.error}`}
+              <li key={r.index} className="flex items-baseline gap-2">
+                <Badge
+                  className={cn(
+                    "shrink-0",
+                    r.action === "created"
+                      ? "bg-success/20 text-success"
+                      : r.action === "updated"
+                        ? "bg-warning/20 text-warning"
+                        : "bg-danger/20 text-danger",
+                  )}
+                >
+                  {r.action === "created" ? "NEW" : r.action === "updated" ? "UPDATED" : "FAILED"}
+                </Badge>
+                {r.id != null && <span className="id-mono shrink-0 text-faint">#{r.id}</span>}
+                <span className="min-w-0 break-words text-text">{r.title}</span>
+                {/* A case that WAS written and then hit trouble afterwards
+                    still exists in Azure DevOps, so its note is a warning
+                    beside it, not a failure badge in front of it. */}
+                {r.error && (
+                  <span
+                    className={cn(
+                      "min-w-0 break-words",
+                      r.action === "failed" ? "text-danger" : "text-warning",
+                    )}
+                  >
+                    {r.error}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
-          {/* Dismiss the results once read - the button goes with them. */}
-          <Button variant="outline" size="sm" onClick={() => setResults(null)}>
-            <IconClear aria-hidden />
-            Clear results
-          </Button>
         </div>
       )}
 
