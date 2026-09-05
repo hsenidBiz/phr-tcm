@@ -13,6 +13,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.0",
+    date: "2026-09-05",
+    items: [
+      "The app now looks for updates in the company's Azure DevOps first, using the sign-in you already have, and falls back to the public releases repository if it cannot reach it. Nothing to set up: sign in and it checks.",
+      "If you do not have access to the PHR-TCM repository yet, the app tells you so and asks you to raise a Redmine ticket for read access - and keeps updating you from the old place in the meantime, so you are never left behind while that is sorted out.",
+      "Settings has a new switch, Only check Azure DevOps for updates. It is for checking that the new path works on its own, and normally stays off.",
+      "The report after an upload is now a panel rather than a block of coloured text: it opens with what happened - \"9 test cases uploaded - 3 created, 6 updated\" - and lists each case with its number and title. A case that was written but hit trouble afterwards is counted as uploaded, with its note beside it, because it does exist in Azure DevOps.",
+      "A test case that failed to upload now keeps a red outline in the queue. Everything that worked is cleared out, so without it a failed case looked exactly like one you had not uploaded yet.",
+      "Recently used items in the PBI search now show their whole name instead of cutting it off - on projects where the names differ only near the end, three entries could look identical.",
+    ],
+  },
+  {
     version: "1.22.1",
     date: "2026-09-03",
     items: [
