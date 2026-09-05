@@ -22,7 +22,7 @@ read from changes, plus the words shown when DevOps says "no".
 | Decision | Choice |
 | --- | --- |
 | Source repo | Stays on GitHub (`AvinAlwis/azure-devops-test-case-creator`). |
-| Releases repo on DevOps | `https://dev.azure.com/PeoplesHR/HRM/_git/PHR-TCM`, branch `main`. Exists today as an empty DevOps template. |
+| Releases repo on DevOps | `https://dev.azure.com/PeoplesHR/HRM/_git/PHR-TCM`, branch `releases`. NOT `main`: `main` carries a policy requiring a pull request, which rejected 1.23.0 with TF402455 - a release replaces the branch with one orphan commit, which no protected branch can accept. `main` keeps the DevOps template README. |
 | Retention on DevOps | The newest **5** versions. |
 | Fallback | GitHub releases repo, tried when DevOps fails for any reason. |
 | Update check timing | Unchanged: at launch and hourly. Without a token the check skips DevOps and goes straight to GitHub. |
@@ -42,7 +42,7 @@ artifacts expire on retention and have no notion of "latest".
 
 ## Layout of `PHR-TCM`
 
-Flat, at the root of `main`:
+Flat, at the root of `releases`:
 
 ```
 README.md                                        how to install; the Setup.exe link
@@ -59,7 +59,7 @@ published (GitHub 1.22.1 holds only a `-full.nupkg`), and adding them is
 a separate change. The template's `src/`, `docs/` and `.gitignore` are
 removed.
 
-`main` is always **one commit deep**: every release replaces it with a
+The release branch is always **one commit deep**: every release replaces it with a
 fresh orphan commit and force-pushes. GitHub Releases store assets
 outside git history, so deleting a release frees its space; a git repo
 keeps history forever unless it is rewritten, and rewriting is the only
@@ -94,15 +94,15 @@ The two small JSON requests (branch tip, feed) go through
 `reqwest::blocking`, already enabled, because their status code has to be
 read exactly: 401 and 403 are the "no access" signal.
 
-`TCM_UPDATE_BRANCH` in the environment overrides the branch read (`main`
+`TCM_UPDATE_BRANCH` in the environment overrides the branch read (`releases`
 by default). It exists for one purpose: rehearsing a release on a
-throwaway branch from an installed build without touching `main`.
+throwaway branch from an installed build without touching the release branch.
 
 Requests, all against
 `https://dev.azure.com/PeoplesHR/HRM/_apis/git/repositories/PHR-TCM/`
 with `api-version=7.1` and `Authorization: Bearer <token>`:
 
-1. `refs?filter=heads/main` — the commit id `main` points at now.
+1. `refs?filter=heads/releases` — the commit id `releases` points at now.
 2. `items?path=/releases.win.json&download=true&versionDescriptor.versionType=commit&versionDescriptor.version=<id>`
    — the feed, pinned to that commit.
 3. `items?path=/<asset.FileName>&download=true&versionDescriptor…=<id>`
@@ -211,8 +211,8 @@ The publish step publishes to **both** places, DevOps first:
 6. Then the existing `vpk upload github …`, unchanged.
 
 Two switches exist only for rehearsals: `-DevOpsBranch <name>` (default
-`main`) and `-SkipGitHub`, which the script refuses when the branch is
-`main` — a real release goes to both places or to neither.
+the release branch) and `-SkipGitHub`, which the script refuses when the branch is
+the release branch — a real release goes to both places or to neither.
 
 Both or neither: if step 6 fails after step 5 succeeded, the script
 stops with a message naming exactly that — DevOps is ahead of GitHub —
@@ -247,9 +247,9 @@ Automated, in the frontend:
 
 Manual, before the first real release, from an installed build:
 
-- Publish a throwaway version to a `PHR-TCM` **branch** (not `main`) with
+- Publish a throwaway version to a `PHR-TCM` **branch** (not the release branch) with
   the script pointed at that branch, confirm the installed app sees and
-  downloads it, then delete the branch. `main` is untouched until a real
+  downloads it, then delete the branch. the release branch is untouched until a real
   release is asked for.
 - Sign out and confirm the check still reaches GitHub.
 - With an account that cannot read `PHR-TCM`, confirm the notice appears

@@ -18,5 +18,5 @@ it shows a **Restart to update** banner.
 If the app tells you it cannot reach this repository, raise a Redmine
 ticket asking for read access to `HRM / PHR-TCM`.
 
-*The files in this repository are replaced on every release; only the
+*The files on this branch are replaced on every release; only the
 newest five versions are kept. Do not commit here by hand.*

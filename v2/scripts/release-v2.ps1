@@ -7,12 +7,12 @@
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [switch]$SkipChecks,
-    # The DevOps branch the release is pushed to. Anything but main is a
-    # rehearsal: the app only reads main unless TCM_UPDATE_BRANCH says
-    # otherwise.
-    [string]$DevOpsBranch = "main",
+    # The DevOps branch the release is pushed to. Left unset it is the real
+    # release branch; anything else is a rehearsal, since the app reads only
+    # the release branch unless TCM_UPDATE_BRANCH says otherwise.
+    [string]$DevOpsBranch,
     # Rehearsals only: publish to the DevOps branch and NOT to GitHub.
-    # Refused on main - a real release goes to both, or to neither.
+    # Refused on the release branch - a real release goes to both, or neither.
     [switch]$SkipGitHub,
     # Rehearsals only: do not push the source branch. A rehearsal bumps the
     # version locally and reverts it afterwards; pushing that bump to
@@ -31,22 +31,33 @@ $repoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-relea
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }
 
-if ($SkipGitHub -and $DevOpsBranch -eq "main") {
-    throw "-SkipGitHub is for rehearsals on a throwaway branch. A release to main goes to DevOps AND GitHub."
+# The branch a real release publishes to, in ONE place. It must match
+# ADO_BRANCH in v2/src-tauri/src/updater/ado.rs, which is the branch the
+# app reads - publishing to a branch nothing reads is a silent no-release.
+#
+# Deliberately not `main`: that branch carries a policy requiring a pull
+# request, and 1.23.0's first attempt was rejected with TF402455. A release
+# replaces this branch with one orphan commit, which no policy-protected
+# branch can accept.
+$RELEASE_BRANCH = "releases"
+if (-not $DevOpsBranch) { $DevOpsBranch = $RELEASE_BRANCH }
+
+if ($SkipGitHub -and $DevOpsBranch -eq $RELEASE_BRANCH) {
+    throw "-SkipGitHub is for rehearsals on a throwaway branch. A release to $RELEASE_BRANCH goes to DevOps AND GitHub."
 }
-if ($SkipSourcePush -and $DevOpsBranch -eq "main") {
+if ($SkipSourcePush -and $DevOpsBranch -eq $RELEASE_BRANCH) {
     throw "-SkipSourcePush is for rehearsals on a throwaway branch. A real release publishes the source it was built from."
 }
-# A non-main -DevOpsBranch IS a rehearsal, whether or not the caller also
-# passed the rehearsal switches. Without both, a "rehearsal" still pushes
-# real source to origin/master and publishes a real GitHub release while
-# only the DevOps half points at a throwaway branch - half real, half
-# rehearsal, which is worse than either.
-if ($DevOpsBranch -ne "main" -and -not ($SkipGitHub -and $SkipSourcePush)) {
+# A -DevOpsBranch that is not the release branch IS a rehearsal, whether or
+# not the caller also passed the rehearsal switches. Without both, a
+# "rehearsal" still pushes real source to origin/master and publishes a real
+# GitHub release while only the DevOps half points at a throwaway branch -
+# half real, half rehearsal, which is worse than either.
+if ($DevOpsBranch -ne $RELEASE_BRANCH -and -not ($SkipGitHub -and $SkipSourcePush)) {
     $missing = @()
     if (-not $SkipGitHub) { $missing += "-SkipGitHub" }
     if (-not $SkipSourcePush) { $missing += "-SkipSourcePush" }
-    throw "-DevOpsBranch '$DevOpsBranch' is a rehearsal (only main is a real release) - add $($missing -join ' and ') too, or this pushes source and/or publishes to GitHub for real."
+    throw "-DevOpsBranch '$DevOpsBranch' is a rehearsal (only '$RELEASE_BRANCH' is a real release) - add $($missing -join ' and ') too, or this pushes source and/or publishes to GitHub for real."
 }
 
 # -Version is only the Velopack tag. The version the APP reports - in the
@@ -150,9 +161,12 @@ $clone = Join-Path $env:TEMP "phr-tcm-release"
 if (Test-Path $clone) { Remove-Item -Recurse -Force $clone }
 git clone --quiet --depth 1 --branch $DevOpsBranch $devopsRepo $clone
 if ($LASTEXITCODE -ne 0) {
-    # A branch that does not exist yet (a fresh rehearsal branch): start from
-    # an empty clone. main always exists.
-    if ($DevOpsBranch -eq "main") { throw "could not clone $devopsRepo" }
+    # The branch does not exist yet. That is the FIRST release to it as well
+    # as any fresh rehearsal branch, so it is not an error - start from an
+    # empty tree and let the push create the branch. (This used to treat a
+    # missing release branch as fatal on the assumption it always existed,
+    # which was true only while that branch was `main`.)
+    #
     # A failed clone can leave the directory behind, and the retry would then
     # die on "destination path already exists" rather than on anything real.
     if (Test-Path $clone) { Remove-Item -Recurse -Force $clone }

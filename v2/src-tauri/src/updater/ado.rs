@@ -20,8 +20,15 @@ pub const ADO_ITEMS_BASE: &str = "https://dev.azure.com/PeoplesHR/HRM/_apis/git/
 
 /// The branch releases are published to. `TCM_UPDATE_BRANCH` overrides it
 /// at runtime, which is how a release is rehearsed on a throwaway branch
-/// without touching `main` - see `AdoSource::new`.
-pub const ADO_BRANCH: &str = "main";
+/// without touching this one - see `AdoSource::new`.
+///
+/// NOT `main`, and not by preference: `main` carries a branch policy that
+/// requires a pull request, so the 1.23.0 release was rejected with
+/// TF402455 the first time it tried. A release replaces this branch with a
+/// single orphan commit, which a policy-protected branch can never accept
+/// and which would read as a total rewrite in a pull request. `main` keeps
+/// the README that tells a person landing on the repo how to install.
+pub const ADO_BRANCH: &str = "releases";
 
 const API_VERSION: &str = "7.1";
 
