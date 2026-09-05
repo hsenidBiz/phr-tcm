@@ -8,7 +8,7 @@ dist/
 build/
 Releases/
 *.spec
-!devops_test_case_creator.spec
+# (v1 kept an exception here for its PyInstaller spec; v1 lives on the v1 branch now)
 
 # Virtual environments
 .venv/
@@ -52,3 +52,6 @@ v2/Releases/
 # The global package.json ignore above is for local tooling only - v2's are real source.
 !v2/package.json
 !v2/package-lock.json
+
+# Superpowers scratch: SDD ledgers, review packages, rehearsal installers.
+.superpowers/

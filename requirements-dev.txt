@@ -1,8 +1,0 @@
-# Test/lint dependencies (CI installs only this file — the pure-logic test
-# targets never import PyQt5, so the heavy GUI deps stay out of CI). `requests`
-# is here because the API-client tests import DevOpsClient (which imports
-# requests at module load); its import chain stays PyQt5-free.
-pytest>=8.0
-ruff>=0.6
-openpyxl>=3.0.0
-requests>=2.28.0
