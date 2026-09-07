@@ -173,7 +173,7 @@ test("an all-failed delete claims nothing and keeps the selection", async () => 
 
   expect(await screen.findByText(/2 could not be deleted/)).toBeInTheDocument();
   expect(screen.getByText(/Nothing was deleted/)).toBeInTheDocument();
-  expect(screen.queryByText(/moved to the recycle bin/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Permanently deleted \d/)).not.toBeInTheDocument();
   expect(onDeleted).not.toHaveBeenCalled();
   expect(onClose).not.toHaveBeenCalled();
 });

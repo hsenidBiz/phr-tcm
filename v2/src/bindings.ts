@@ -414,6 +414,7 @@ export const commands = {
 	repoPullRequests: (organization: string, project: string, repoId: string, status: string, skip: number) => typedError<PullRequest[], AdoError>(__TAURI_INVOKE("repo_pull_requests", { organization, project, repoId, status, skip })),
 	boardPrLinks: (organization: string, project: string) => typedError<PrLink[], AdoError>(__TAURI_INVOKE("board_pr_links", { organization, project })),
 	prWorkItems: (organization: string, project: string, repo: string, prId: number) => typedError<PrWorkItem[], AdoError>(__TAURI_INVOKE("pr_work_items", { organization, project, repo, prId })),
+	prDescription: (organization: string, project: string, repo: string, prId: number) => typedError<string, AdoError>(__TAURI_INVOKE("pr_description", { organization, project, repo, prId })),
 	/**
 	 *  Validation state for a whole list of PRs in one repository - one call,
 	 *  not one per row. See `pr_build_states`.

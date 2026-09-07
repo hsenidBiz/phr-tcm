@@ -43,7 +43,7 @@ test count.
 - Writing is **two-stage**: the confirm button spells out *create X · update
   Y*, then a final warning spotlights the target PBI in the context bar (an
   animated border runs around the chip) before anything is sent — removing a
-  created case needs delete permission and only reaches the recycle bin, so
+  created case needs delete permission and is permanent, so
   the target gets one last check. A red **Cancel**
   stops the batch mid-run, and a **Clear results** button resets the screen
   afterwards.
@@ -145,15 +145,20 @@ test count.
 The app talks to Azure DevOps with your credentials, so it is deliberately
 conservative — the same invariants as v1, now enforced structurally:
 
-- **One DELETE, and only the recoverable one.** Every file in the Rust client
-  is scanned and fails the build if it issues a DELETE — with a single carved-out
-  exception, `src/ado/recycle.rs`, which moves a Test Case to the project's
-  RECYCLE BIN so Azure DevOps can restore it. That file is held to a *tighter*
-  rule than the others: Azure DevOps accepts a parameter on the same endpoint
-  that erases an item permanently, and a test asserts its name appears nowhere
-  in the file, comments included. The delete is permission-gated and fails
-  closed. Nothing else — plans, suites, runs, attachments, comments, board
-  items, pull requests — is ever removed (guard-tested).
+- **One DELETE, and it is permanent.** Every file in the Rust client is
+  scanned and fails the build if it issues a DELETE — with a single
+  carved-out exception, `src/ado/deletion.rs`, which deletes a Test Case
+  through the Test Management API (`DELETE _apis/test/testcases/{id}`).
+  Azure DevOps offers no recoverable API deletion for test artifacts — the
+  work-item recycle bin refuses them outright — so this removes the case
+  and its run history irreversibly, and the confirmation dialog says so in
+  plain terms before it will proceed. That file is held to a *tighter* rule
+  than the others: the work-item endpoint's permanent-erase query parameter,
+  which would give this the worse of two already-irreversible semantics, is
+  banned from the file by name — including in comments — and a test asserts
+  it appears nowhere in it. The delete is permission-gated and fails closed.
+  Nothing else — plans, suites, runs, attachments, comments, board items,
+  pull requests — is ever removed (guard-tested).
 - **Token never crosses the IPC boundary.** The Microsoft access token lives
   only in Rust memory for the session — never returned to the web layer, never
   written to disk, never logged (guard-tested).
