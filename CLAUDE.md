@@ -63,9 +63,10 @@ v1 and went with it. The suites above are the gate.
   exposed to the frontend through the generated bindings.
 - **Screens live in `v2/src/screens/`**, shared UI in `v2/src/components/`,
   module-scope stores (`useSyncExternalStore`) in `v2/src/lib/`.
-- **Updates** come from the `releases` branch of the company Azure DevOps repo `PHR-TCM` first (not `main`, which requires a pull request),
-  using the user's own sign-in, falling back to the public GitHub releases
-  repo. See `docs/superpowers/specs/2026-09-04-devops-update-feed-design.md`.
+- **Updates** come from the public GitHub releases repo, checked at launch
+  and hourly. `updater/mod.rs` tries the GitHub API first and the
+  `latest/download` mirror second - the comment there explains why that
+  order matters.
 
 ## Testing notes that have cost real time
 
@@ -106,11 +107,8 @@ v1 and went with it. The suites above are the gate.
   `git log -1`.
 - **Releases: run `v2/scripts/release-v2.ps1 -Version X.Y.Z`.** It gates
   (cargo test + vitest + a production build), pushes source **first**,
-  builds, packs with Velopack, publishes to the DevOps releases repo as a
-  single orphan commit, then to GitHub. Never publish without the source
-  pushed. `-DevOpsBranch` / `-SkipGitHub` / `-SkipSourcePush` exist only to
-  rehearse on a throwaway branch, and all three refuse to work against the
-  real release branch (`releases`).
+  builds, packs with Velopack, and publishes to GitHub. Never publish
+  without the source pushed.
 - **The version lives in three places** and the release script refuses if
   they disagree: `v2/src-tauri/tauri.conf.json`, `v2/src-tauri/Cargo.toml`,
   and a matching entry in `v2/src/lib/changelog.ts`.

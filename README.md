@@ -12,10 +12,9 @@ It lives in **[`v2/`](v2/)**.
 That is the real documentation: features, security model, authentication,
 architecture, and the develop / build / release workflow.
 
-Updates are read from the company Azure DevOps repository `HRM / PHR-TCM`
-using your existing sign-in, with the public
+Updates are read from the public
 [releases repo](https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases)
-as a fallback.
+and install themselves.
 
 ---
 

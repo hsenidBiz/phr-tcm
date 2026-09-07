@@ -1,5 +1,12 @@
 # Update feed on Azure DevOps — design
 
+> **Superseded on 2026-09-07** by
+> `2026-09-07-retire-devops-update-feed-design.md`. The DevOps update
+> source described here shipped in 1.23.0 and was retired shortly after;
+> the app reads the public GitHub releases repo alone. Kept because
+> `PHR-TCM`'s `releases` branch still exists and this explains what put
+> it there.
+
 **Date:** 2026-09-04
 **Status:** approved in conversation, awaiting written review
 **Scope:** the v2 (Tauri) app only. The source repo stays on GitHub.
