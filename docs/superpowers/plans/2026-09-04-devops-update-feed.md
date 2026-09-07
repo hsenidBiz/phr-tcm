@@ -1,5 +1,12 @@
 # DevOps Update Feed Implementation Plan
 
+> **Superseded on 2026-09-07** by
+> `docs/superpowers/plans/2026-09-07-retire-devops-update-feed.md`. The
+> DevOps update source, the Settings switch and the DevOps publish step
+> this plan describes shipped in 1.23.0 and were retired shortly after;
+> the app reads the public GitHub releases repo alone. Kept as a record of
+> what was built and why.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** The app reads updates from the `PHR-TCM` repo in the company's Azure DevOps using the sign-in it already has, falls back to the public GitHub releases repo, and tells a user who cannot read `PHR-TCM` how to ask for access.

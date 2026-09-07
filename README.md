@@ -13,8 +13,9 @@ That is the real documentation: features, security model, authentication,
 architecture, and the develop / build / release workflow.
 
 Updates are read from the public
-[releases repo](https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases)
-and install themselves.
+[releases repo](https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases).
+The app checks, shows a **Restart to update** banner, and applies the
+update only when you click it.
 
 ---
 

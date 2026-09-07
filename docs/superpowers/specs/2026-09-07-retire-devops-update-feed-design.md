@@ -50,10 +50,37 @@ go to DevOps at all**. It ships to GitHub like every release before 1.23.0,
 the publishing path can be removed before or after it, and the sequencing
 section below is history rather than instruction.
 
-One residual, stated rather than hidden: a machine that *does* have access
-**and** is running 1.23.0 or 1.23.1 would still hear "up to date" from the
-frozen branch. That is at most the maintainer's own machine, and the fix is
-to install the new version directly rather than wait for the check.
+One residual, stated rather than hidden — and it is not the access case
+above. It is the Settings switch "Only check Azure DevOps for updates"
+(`tcm-v2-updates-github-off=1` in localStorage), left ON on a machine still
+running 1.23.x:
+
+- **Signed out** — which is every launch, since tokens are held in memory
+  only — `check` takes its early return and reports `blocked: "Sign in to
+  check for updates - GitHub updates are switched off in Settings."`
+  before any source is asked.
+- **Signed in** — `sources` returns only the DevOps source (the switch
+  skips appending GitHub), and with no access that source fails; with
+  nothing else to try, the result is `blocked`. GitHub is never reached
+  either way.
+
+That install never sees release N, in either state, and the hourly check
+says nothing about it: it fails silently by design, not loudly. The
+localStorage key lives in the WebView2 user-data directory, which a
+Velopack update does not clear, so the setting is sticky across upgrades —
+installing N does not turn it off.
+
+There is also a second, independent reason no install can freeze on the
+access question specifically: `get_fresh_token` returns an error when
+there is no token to refresh, and tokens are held in memory only, so
+**every launch-time check on 1.23.x is tokenless**. A tokenless check in
+1.23.1 omits the DevOps source from `sources` entirely and consults only
+GitHub — the access question never even arises on a fresh launch.
+
+Operationally: before or alongside shipping release N, any machine still
+on 1.23.x that ever turned that switch on must either turn it back off in
+Settings (the switch still exists there, in that version) or be updated to
+the new version directly rather than left to notice on its own.
 
 The section that follows is kept because it explains why the code is shaped
 the way it is, and why `PHR-TCM`'s `releases` branch is being left alone.

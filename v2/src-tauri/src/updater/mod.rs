@@ -143,6 +143,12 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
     for (name, um) in managers() {
         let a = match um.check_for_updates() {
             Ok(UpdateCheck::UpdateAvailable(info)) => Attempt::Available(info),
+            // The feed parsed but named no `Full` asset - not the same as
+            // "checked and you're current". Treat it as a failed attempt so
+            // `resolve` falls through to the next source instead of telling
+            // someone whose feed just came back empty that they're up to
+            // date, a claim this has not actually verified.
+            Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed("the update feed listed no releases".into()),
             Ok(_) => Attempt::UpToDate,
             Err(e) => {
                 crate::applog::warn(format!("update check failed via {name}: {e}"));
@@ -158,8 +164,9 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
     resolve(attempts, state)
 }
 
-/// The status a run of attempts adds up to. Pure, so the three-way split
-/// (no attempts / unreachable / an update) is testable without an install.
+/// The status a run of attempts adds up to. Pure, so the four-way split
+/// (no attempts / an update / up to date / unreachable) is testable
+/// without an install.
 pub fn resolve(attempts: Vec<(&'static str, Attempt)>, state: &UpdateState) -> UpdateStatus {
     if attempts.is_empty() {
         return UpdateStatus {

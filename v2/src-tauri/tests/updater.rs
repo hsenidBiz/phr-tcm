@@ -245,3 +245,44 @@ fn no_attempts_at_all_means_this_build_cannot_update() {
     let s = resolve(vec![], &state);
     assert!(s.blocked.as_deref().unwrap().contains("does not update itself"));
 }
+
+/// Velopack's `UpdateCheck::RemoteIsEmpty` (a feed that parsed but named no
+/// `Full` asset) is mapped in `check` to `Attempt::Failed`, not
+/// `Attempt::UpToDate` - an empty feed is not a claim that the running
+/// version is current, and folding it into the catch-all would tell someone
+/// "You are on the latest version" without having checked. That mapping
+/// itself needs a live Velopack install to exercise (see the module doc at
+/// the top of this file), so what is pinned here is `resolve`'s side of the
+/// contract: a failed attempt for this reason must behave exactly like any
+/// other failure - fall through when a later source answers, and never
+/// resolve to up to date when every source gives it.
+#[test]
+fn an_empty_feed_falls_through_to_the_next_source() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![
+            ("github api", Attempt::Failed("the update feed listed no releases".into())),
+            ("latest/download", Attempt::Available(info("1.24.0"))),
+        ],
+        &state,
+    );
+    assert_eq!(s.available.as_deref(), Some("1.24.0"), "the second source's update must still be reported");
+}
+
+#[test]
+fn an_empty_feed_from_every_source_is_blocked_not_up_to_date() {
+    let state = UpdateState::default();
+    let s = resolve(
+        vec![
+            ("github api", Attempt::Failed("the update feed listed no releases".into())),
+            ("latest/download", Attempt::Failed("the update feed listed no releases".into())),
+        ],
+        &state,
+    );
+    assert!(s.available.is_none(), "must not report an update that was never seen");
+    assert!(
+        s.blocked.as_deref().unwrap().contains("no releases"),
+        "must not silently become up to date: {:?}",
+        s.blocked
+    );
+}
