@@ -254,10 +254,38 @@ test("expanding a PR shows its linked work items as DevOps-style chips", async (
   expect(screen.queryByText(/143783/)).not.toBeInTheDocument();
   fireEvent.click((await screen.findByText("!8")).closest("[aria-expanded]")!);
 
-  expect(await screen.findByText("Related work items")).toBeInTheDocument();
+  expect(await screen.findByText("Work items")).toBeInTheDocument();
   const chip = screen.getByText("143783").closest("button")!;
   expect(chip).toHaveTextContent("Participants - department inconsistencies");
   expect(chip).toHaveTextContent("In Progress");
+});
+
+test("work items render inside their own right-hand panel, not the description column", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(44)], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_work_items")
+      return [
+        {
+          id: 555,
+          work_item_type: "Task",
+          title: "Wire up the panel",
+          state: "Active",
+          state_color: "b2b2b2",
+          url: "https://example.invalid/wi/555",
+        },
+      ];
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!44")).closest("[aria-expanded]")!);
+
+  // Structure, not styling: the heading and the chip sit in the same
+  // container, and that container is not the one the description lives in.
+  const heading = await screen.findByText("Work items");
+  const panel = heading.parentElement!;
+  const chip = screen.getByText("555").closest("button")!;
+  expect(panel).toContainElement(chip);
+  expect(panel).not.toContainElement(screen.getByText("Why this change exists"));
 });
 
 test("the description renders markdown like Azure DevOps", async () => {
@@ -278,6 +306,82 @@ test("the description renders markdown like Azure DevOps", async () => {
   const summary = await screen.findByText("Issue Summary");
   expect(summary.tagName).toBe("STRONG");
   expect(screen.getByText("one").closest("li")).toBeInTheDocument();
+});
+
+// ---- "View more" and the full description ------------------------------
+
+test("a short description shows no View more button", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(30, { description: "Fixes a typo." })], mine: [] };
+    if (cmd === "list_repos") return [];
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!30")).closest("[aria-expanded]")!);
+
+  await screen.findByText("Fixes a typo.");
+  expect(screen.queryByRole("button", { name: "View more" })).not.toBeInTheDocument();
+});
+
+test("a description at the truncation cap shows View more, and the modal renders the full body from pr_description", async () => {
+  // >= 380 chars: at the API's ~400-char cutoff, so it was almost
+  // certainly cut mid-word even though jsdom can't tell us it overflows.
+  const truncated = "Alpha ".repeat(70).trim();
+  const full = `${truncated} ...and the rest of the story that only pr_description returns.`;
+  let askedFor: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(31, { description: truncated })], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_description") {
+      askedFor = args;
+      return full;
+    }
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!31")).closest("[aria-expanded]")!);
+
+  const more = await screen.findByRole("button", { name: "View more" });
+  fireEvent.click(more);
+
+  const dialog = await screen.findByRole("dialog");
+  expect(await within(dialog).findByText(/rest of the story/)).toBeInTheDocument();
+  expect(askedFor).toMatchObject({ organization: "acme", project: "Web", repo: "web", prId: 31 });
+});
+
+test("the modal shows the truncated text immediately, before the full description arrives", async () => {
+  const truncated = "Beta ".repeat(80).trim();
+  let resolveFull: (v: string) => void = () => {};
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(32, { description: truncated })], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_description") return new Promise<string>((res) => (resolveFull = res));
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!32")).closest("[aria-expanded]")!);
+  fireEvent.click(await screen.findByRole("button", { name: "View more" }));
+
+  // A slow network must never hand back an empty box: the text we already
+  // have is on screen the instant the modal opens, before the fetch settles.
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(truncated, { exact: false })).toBeInTheDocument();
+
+  resolveFull(`${truncated} plus everything that came after.`);
+  expect(await within(dialog).findByText(/plus everything that came after/)).toBeInTheDocument();
+});
+
+test("when pr_description fails, the modal keeps the truncated text and says the full body could not load", async () => {
+  const truncated = "Gamma ".repeat(70).trim();
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(33, { description: truncated })], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "pr_description") throw new Error("network down");
+  });
+  renderPanel();
+  fireEvent.click((await screen.findByText("!33")).closest("[aria-expanded]")!);
+  fireEvent.click(await screen.findByRole("button", { name: "View more" }));
+
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText(truncated, { exact: false })).toBeInTheDocument();
+  expect(await within(dialog).findByText(/could not be loaded/i)).toBeInTheDocument();
 });
 
 test("the completed filter runs a separate query and titles the group", async () => {

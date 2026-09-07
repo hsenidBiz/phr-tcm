@@ -19,13 +19,15 @@ import {
   GitBranch,
   RefreshCw,
   Rocket,
+  X,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
 import PipelineDialog, { duration, failurePath, label, tone } from "../components/PipelineDialog";
 import PrThreads, { isResolved } from "../components/PrThreads";
 import MultiSelect from "../components/ui/multiselect";
+import { Modal } from "../components/ui/modal";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
@@ -83,6 +85,125 @@ function WorkItemChip({ wi }: { wi: PrWorkItem }) {
         {wi.state}
       </span>
     </button>
+  );
+}
+
+/** Azure DevOps truncates `description` in the pull request LIST response
+ * around 400 characters, mid-word, with nothing marking it - so "was this
+ * cut?" can't be answered from the API alone. 380 gives a small margin
+ * below the documented-nowhere cutoff, catching anything close enough that
+ * it was almost certainly cut mid-word. */
+const DESCRIPTION_TRUNCATION_CAP = 380;
+
+/** Same Markdown, same props, wherever a PR description renders - this is
+ * the security-relevant bit (Astryx renders remote-authored text as React,
+ * never dangerouslySetInnerHTML) as much as a style one. */
+function DescriptionMarkdown({ text }: { text: string }) {
+  return (
+    <AstryxIsland>
+      <Markdown
+        density="compact"
+        autolink="gfm"
+        contentWidth="100%"
+        className="text-text"
+        onLinkClick={(href) => {
+          openUrl(href).catch(() => toast.error("Could not open the browser."));
+          return false;
+        }}
+      >
+        {text}
+      </Markdown>
+    </AstryxIsland>
+  );
+}
+
+/**
+ * The row's description, clamped with a soft fade, plus "View more" when
+ * there is more to see - either signal on its own is enough:
+ *
+ *  - the text is at the API's truncation cap, so it WAS cut server-side
+ *    (this is the one that matters: it's what this feature exists to fix),
+ *  - or it overflows the on-screen clamp, for a description short enough
+ *    to dodge the cap but still too long to show in full.
+ *
+ * jsdom lays nothing out, so scrollHeight/clientHeight are both 0 there -
+ * the overflow check can never fire in a test (or reveal a bug in it). The
+ * char-length check has to stand on its own, which is also why it is
+ * checked first.
+ */
+function PrDescription({ pr, org, project }: { pr: PullRequest; org: string; project: string }) {
+  const [open, setOpen] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const clamped = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = clamped.current;
+    if (el) setOverflowing(el.scrollHeight > el.clientHeight + 1);
+  }, [pr.description]);
+
+  // Fetched lazily, only while the modal is open - the row already has the
+  // truncated text to show, so nothing blocks on this.
+  const full = useQuery({
+    queryKey: ["pr-description", org, project, pr.repo, pr.id],
+    queryFn: () => unwrap(commands.prDescription(org, project, pr.repo, pr.id)),
+    enabled: open && Boolean(org && project),
+    retry: false,
+  });
+
+  if (!pr.description.trim()) return <p className="text-faint">No description.</p>;
+
+  const wasTruncated = pr.description.length >= DESCRIPTION_TRUNCATION_CAP;
+  const showMore = wasTruncated || overflowing;
+  const body = full.data ?? pr.description;
+
+  return (
+    <>
+      <div className="relative">
+        <div ref={clamped} className="max-h-40 overflow-hidden">
+          <DescriptionMarkdown text={pr.description} />
+        </div>
+        {/* The clamp is deliberate - without it a long description makes
+            the row enormous. The fade signals there is more below it. */}
+        {showMore && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-surface to-transparent" />
+        )}
+      </div>
+      {showMore && (
+        <button
+          className="text-[11px] font-medium text-accent hover:underline"
+          onClick={() => setOpen(true)}
+        >
+          View more
+        </button>
+      )}
+      {open && (
+        <Modal
+          onClose={() => setOpen(false)}
+          className="flex max-h-[85vh] w-[min(46rem,92vw)] flex-col"
+        >
+          <header className="flex items-center gap-2 border-b border-border px-4 py-3">
+            <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-text">
+              <span className="id-mono text-faint">!{pr.id}</span> {pr.title}
+            </h3>
+            <button
+              aria-label="Close description"
+              className="shrink-0 rounded p-1 text-muted hover:text-text"
+              onClick={() => setOpen(false)}
+            >
+              <X size={15} />
+            </button>
+          </header>
+          <div className="min-h-0 flex-1 overflow-auto p-4 text-xs">
+            <DescriptionMarkdown text={body} />
+            {/* Keep the modal, and the truncated text, on failure - losing
+                both over a flaky fetch is worse than a short description. */}
+            {full.isError && (
+              <p className="mt-3 text-faint">The full description could not be loaded.</p>
+            )}
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -384,91 +505,85 @@ function PrRow({
       </button>
 
       {open && (
-        <div className="space-y-2 border-t border-border/60 px-9 py-2 text-xs">
-          {pr.description.trim() ? (
-            // Astryx Markdown renders remote-authored text as React (no
-            // dangerouslySetInnerHTML - PR descriptions are an XSS surface).
-            // Links open in the system browser via the opener plugin.
-            <AstryxIsland>
-              <Markdown
-                density="compact"
-                autolink="gfm"
-                contentWidth="100%"
-                className="text-text"
-                onLinkClick={(href) => {
-                  openUrl(href).catch(() => toast.error("Could not open the browser."));
-                  return false;
-                }}
-              >
-                {pr.description}
-              </Markdown>
-            </AstryxIsland>
-          ) : (
-            <p className="text-faint">No description.</p>
-          )}
-          {/* Related work items, rendered as DevOps-style chips (icon + id +
-              title + state) from the PR's real linkage, not the description. */}
-          {(workItems.data?.length ?? 0) > 0 && (
-            <div className="space-y-1 pt-1">
-              <p className="font-semibold text-muted">Related work items</p>
-              {workItems.data!.map((wi) => (
-                <WorkItemChip key={wi.id} wi={wi} />
-              ))}
+        <div className="border-t border-border/60 px-9 py-2 text-xs">
+          {/* Two columns once there's room, Azure DevOps' own layout: the
+              description/threads/reviewers/pipeline stack on the left, work
+              items as a side panel on the right. Below `lg` there isn't
+              room for both, so it goes back to one stack, work items last -
+              a squeezed two-column layout is worse than a stack on a
+              narrow window. */}
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+            <div className="min-w-0 flex-1 space-y-2">
+              <PrDescription pr={pr} org={org} project={project} />
+              {/* The review conversation, and the only write this panel
+                  makes (resolving a thread). Lazy like the work items - one
+                  more ADO call per PR, only for the row that was opened. */}
+              <PrThreads
+                org={org}
+                project={project}
+                repo={pr.repo}
+                prId={pr.id}
+                enabled={open}
+                finalized={finalized}
+              />
+              <div className="space-y-1">
+                {pr.reviewers.length === 0 && <p className="text-faint">No reviewers assigned.</p>}
+                {pr.reviewers.map((r, i) => {
+                  const d = voteDot(r.vote);
+                  return (
+                    <p key={i} className="flex items-center gap-2 text-muted">
+                      <span className={cn("inline-block h-2 w-2 rounded-full", d.cls)} />
+                      {r.display_name}
+                      <span className="text-faint">— {d.label}</span>
+                    </p>
+                  );
+                })}
+              </div>
+              {/* Pipeline: which builds ran for this PR and where they got
+                  deployed. Best-effort - a PR with no pipeline just says so. */}
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-muted">Last Run Pipeline</p>
+                  {(pipeline.data?.length ?? 0) > 0 && (
+                    <button
+                      className="ml-auto rounded border border-border px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-border-strong hover:text-text"
+                      onClick={() => setShowPipeline(true)}
+                    >
+                      View history
+                    </button>
+                  )}
+                </div>
+                {pipeline.isPending ? (
+                  <Skeleton className="h-10" />
+                ) : pipeline.isError ? (
+                  // Show what Azure DevOps actually said - a bare "could not
+                  // read" hid a 400 from a bad repositoryId for a whole release.
+                  <p className="text-danger">{pipeline.error.message}</p>
+                ) : (pipeline.data?.length ?? 0) === 0 ? (
+                  <p className="text-faint">No builds found for this pull request.</p>
+                ) : (
+                  <BuildCard b={pipeline.data![0]} total={pipeline.data!.length} />
+                )}
+              </div>
+              <div className="flex flex-wrap gap-x-3 text-faint">
+                {created && <p>Created {created}</p>}
+                {closed && <p>Closed {closed}</p>}
+              </div>
             </div>
-          )}
-          {/* The review conversation, and the only write this panel makes
-              (resolving a thread). Lazy like the work items - one more ADO
-              call per PR, only for the row that was opened. */}
-          <PrThreads
-            org={org}
-            project={project}
-            repo={pr.repo}
-            prId={pr.id}
-            enabled={open}
-            finalized={finalized}
-          />
-          <div className="space-y-1">
-            {pr.reviewers.length === 0 && <p className="text-faint">No reviewers assigned.</p>}
-            {pr.reviewers.map((r, i) => {
-              const d = voteDot(r.vote);
-              return (
-                <p key={i} className="flex items-center gap-2 text-muted">
-                  <span className={cn("inline-block h-2 w-2 rounded-full", d.cls)} />
-                  {r.display_name}
-                  <span className="text-faint">— {d.label}</span>
-                </p>
-              );
-            })}
-          </div>
-          {/* Pipeline: which builds ran for this PR and where they got
-              deployed. Best-effort - a PR with no pipeline just says so. */}
-          <div className="space-y-1 pt-1">
-            <div className="flex items-center gap-2">
-              <p className="font-semibold text-muted">Last Run Pipeline</p>
-              {(pipeline.data?.length ?? 0) > 0 && (
-                <button
-                  className="ml-auto rounded border border-border px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-border-strong hover:text-text"
-                  onClick={() => setShowPipeline(true)}
-                >
-                  View history
-                </button>
-              )}
-            </div>
-            {pipeline.isPending ? (
-              <Skeleton className="h-10" />
-            ) : pipeline.isError ? (
-              // Show what Azure DevOps actually said - a bare "could not
-              // read" hid a 400 from a bad repositoryId for a whole release.
-              <p className="text-danger">{pipeline.error.message}</p>
-            ) : (pipeline.data?.length ?? 0) === 0 ? (
-              <p className="text-faint">No builds found for this pull request.</p>
-            ) : (
-              <BuildCard b={pipeline.data![0]} total={pipeline.data!.length} />
+            {/* Related work items, rendered as DevOps-style chips (icon + id
+                + title + state) from the PR's real linkage, not the
+                description. No add/remove affordances: this panel never
+                writes, and those are Azure DevOps' own UI's, not ours. */}
+            {(workItems.data?.length ?? 0) > 0 && (
+              <div className="w-full shrink-0 space-y-1 lg:w-64">
+                <p className="font-semibold text-muted">Work items</p>
+                <div className="space-y-1">
+                  {workItems.data!.map((wi) => (
+                    <WorkItemChip key={wi.id} wi={wi} />
+                  ))}
+                </div>
+              </div>
             )}
-          </div>
-          <div className="flex flex-wrap gap-x-3 text-faint">
-            {created && <p>Created {created}</p>}
-            {closed && <p>Closed {closed}</p>}
           </div>
         </div>
       )}
