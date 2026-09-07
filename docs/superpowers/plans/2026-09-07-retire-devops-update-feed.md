@@ -443,7 +443,7 @@ In `v2/src/App.tsx`:
 
 - [ ] **Step 5: Remove the App tests that cover the notice**
 
-In `v2/src/App.test.tsx`, delete these seven tests together with their comment blocks (line numbers as they stand before any edit — they shift as you go, so match on the name):
+In `v2/src/App.test.tsx`, delete these six tests together with their comment blocks (line numbers as they stand before any edit — they shift as you go, so match on the name):
 
 - line 472 — `"no access to the releases repo shows the notice with the next step"`
 - line 486 — `"the notice and an update from the fallback show together"`
@@ -451,7 +451,8 @@ In `v2/src/App.test.tsx`, delete these seven tests together with their comment b
 - line 517 — `"with access, no notice"`
 - line 534 — `"dismissing, then losing access again after it was restored, shows the notice again"`
 - line 572 — `"signing in triggers a second update check"` — the behaviour it guards is being removed in Step 4
-- line 1097 — `"the hourly check passes the DevOps-only switch too"`
+
+**`"the hourly check passes the DevOps-only switch too"` is already gone.** Task 1 made `check_update` zero-argument, which left that test asserting an IPC payload key that can no longer exist, so it was failing from Task 1's commit onward; Task 2 deleted it rather than leave a red test lying around. Six remain, not seven — do not go looking for the seventh.
 
 Leave `"a release published while the app is open is noticed within the hour"` (line 325) alone — that covers the hourly refetch, which is not going anywhere.
 
