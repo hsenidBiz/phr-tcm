@@ -138,15 +138,31 @@ function PrDescription({ pr, org, project }: { pr: PullRequest; org: string; pro
 
   useEffect(() => {
     const el = clamped.current;
-    if (el) setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    if (!el) return;
+    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    // A description that fits on first paint can still reflow past the
+    // clamp later - the window narrows, a markdown image finishes loading -
+    // and that reflow needs to be caught too, not just the first layout.
+    // jsdom's ResizeObserver (see test-setup.ts) is a no-op, matching the
+    // scrollHeight/clientHeight-are-both-0 reality noted above: it neither
+    // fires in a test nor needs to.
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [pr.description]);
 
   // Fetched lazily, only while the modal is open - the row already has the
-  // truncated text to show, so nothing blocks on this.
+  // truncated text to show, so nothing blocks on this. A completed or
+  // abandoned PR's description cannot change again, so once fetched it
+  // never needs re-asking - same reasoning as pipeline's staleTime below.
+  const finalized = pr.status === "completed" || pr.status === "abandoned";
   const full = useQuery({
     queryKey: ["pr-description", org, project, pr.repo, pr.id],
     queryFn: () => unwrap(commands.prDescription(org, project, pr.repo, pr.id)),
     enabled: open && Boolean(org && project),
+    staleTime: finalized ? Infinity : 60_000,
     retry: false,
   });
 
@@ -154,7 +170,10 @@ function PrDescription({ pr, org, project }: { pr: PullRequest; org: string; pro
 
   const wasTruncated = pr.description.length >= DESCRIPTION_TRUNCATION_CAP;
   const showMore = wasTruncated || overflowing;
-  const body = full.data ?? pr.description;
+  // ?? would keep a legitimately empty fetch result ("" - description was
+  // cleared between the list call and this fetch) and render a blank
+  // modal with no explanation; || falls back to the text already on hand.
+  const body = full.data || pr.description;
 
   return (
     <>
@@ -163,8 +182,15 @@ function PrDescription({ pr, org, project }: { pr: PullRequest; org: string; pro
           <DescriptionMarkdown text={pr.description} />
         </div>
         {/* The clamp is deliberate - without it a long description makes
-            the row enormous. The fade signals there is more below it. */}
-        {showMore && (
+            the row enormous. The fade signals there is more below it - but
+            only when the clamp actually cut something: a server-truncated
+            ~400-char description usually renders well inside max-h-40, and
+            painting a fade over text that isn't clipped just washes out the
+            last visible line. `showMore` (which also covers wasTruncated)
+            still gates the button - the button means "there is more to
+            read", true either way; the fade means "this is cut off here",
+            true only when the clamp did the cutting. */}
+        {overflowing && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-surface to-transparent" />
         )}
       </div>
@@ -195,6 +221,10 @@ function PrDescription({ pr, org, project }: { pr: PullRequest; org: string; pro
           </header>
           <div className="min-h-0 flex-1 overflow-auto p-4 text-xs">
             <DescriptionMarkdown text={body} />
+            {/* The truncated text shows immediately, but while the full
+                fetch is in flight it visibly stops mid-word - say more is
+                coming rather than leaving that unexplained. */}
+            {full.isPending && <p className="mt-3 text-faint">Loading the full description…</p>}
             {/* Keep the modal, and the truncated text, on failure - losing
                 both over a flaky fetch is worse than a short description. */}
             {full.isError && (

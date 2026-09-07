@@ -260,9 +260,15 @@ test("expanding a PR shows its linked work items as DevOps-style chips", async (
   expect(chip).toHaveTextContent("In Progress");
 });
 
-test("work items render inside their own right-hand panel, not the description column", async () => {
+test("work items render inside their own right-hand panel, sibling to the description column, not nested in it", async () => {
+  // Long enough to sit at the truncation cap, so "View more" renders and
+  // the description's own lazy fetch (pr_description) can be exercised too.
+  const longDescription = "Alpha ".repeat(70).trim();
+  const calls: string[] = [];
   mockIPC((cmd) => {
-    if (cmd === "pr_overview") return { awaiting: [pr(44)], mine: [] };
+    calls.push(cmd as string);
+    if (cmd === "pr_overview")
+      return { awaiting: [pr(44, { description: longDescription })], mine: [] };
     if (cmd === "list_repos") return [];
     if (cmd === "pr_work_items")
       return [
@@ -275,17 +281,36 @@ test("work items render inside their own right-hand panel, not the description c
           url: "https://example.invalid/wi/555",
         },
       ];
+    if (cmd === "pr_description") return `${longDescription} ...and the rest of it.`;
   });
   renderPanel();
   fireEvent.click((await screen.findByText("!44")).closest("[aria-expanded]")!);
 
-  // Structure, not styling: the heading and the chip sit in the same
-  // container, and that container is not the one the description lives in.
+  // Structure, not styling: the work-items panel and the description
+  // column are the two children of one shared row container - siblings,
+  // not one nested inside the other. A single-stack layout would also
+  // satisfy "not nested inside", so what actually pins the two-column
+  // change is that the shared parent has exactly these two children.
   const heading = await screen.findByText("Work items");
-  const panel = heading.parentElement!;
   const chip = screen.getByText("555").closest("button")!;
-  expect(panel).toContainElement(chip);
-  expect(panel).not.toContainElement(screen.getByText("Why this change exists"));
+  const workItemsPanel = heading.parentElement!;
+  expect(workItemsPanel).toContainElement(chip);
+  const row = workItemsPanel.parentElement!;
+  const siblings = Array.from(row.children) as HTMLElement[];
+  expect(siblings).toContain(workItemsPanel);
+  expect(siblings).toHaveLength(2);
+  const descriptionColumn = siblings.find((el) => el !== workItemsPanel)!;
+  expect(descriptionColumn).toContainElement(screen.getByText(longDescription, { exact: false }));
+  expect(descriptionColumn).not.toContainElement(workItemsPanel);
+  expect(workItemsPanel).not.toContainElement(descriptionColumn);
+
+  // Laziness: expanding the row fetches work items, but must not also
+  // reach for the full description - that only happens once its own
+  // "View more" modal is opened, mirroring the work-items test above.
+  expect(calls).not.toContain("pr_description");
+  fireEvent.click(await screen.findByRole("button", { name: "View more" }));
+  await screen.findByRole("dialog");
+  expect(calls).toContain("pr_description");
 });
 
 test("the description renders markdown like Azure DevOps", async () => {

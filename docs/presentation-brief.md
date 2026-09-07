@@ -91,8 +91,9 @@ no-op updates are flagged so they are not written at all.
 update Y*; then a final warning spotlights the target PBI — an animated
 border runs around the chip in the context bar — before anything is sent.
 A red Cancel stops the batch mid-run. The reason for the second stage is
-worth saying out loud: **removing a created case needs delete permission
-and only reaches the recycle bin**, so the target gets one last check.
+worth saying out loud: **removing a created case is permanent** — deleting
+a test case in Azure DevOps has no recycle bin behind it — so the target
+gets one last check before anything is written to the wrong PBI.
 
 **Afterwards.** A results panel opens with the outcome — *"9 test cases
 uploaded — 3 created, 6 updated"* — and each case listed with its new work
@@ -205,12 +206,16 @@ review conversations, linked work items, and the build that ran for each.
 This deserves a slide of its own, because it is what makes the app
 adoptable in an organisation that is careful about its work items.
 
-- **It cannot destroy work.** Every file in the Rust client is scanned at
-  build time and the build fails if it issues a DELETE. There is exactly
-  one carved-out exception — moving a test case to the project's recycle
-  bin, from which Azure DevOps can restore it — and that file is held to a
-  *tighter* rule: the parameter that would erase an item permanently is
-  asserted to appear nowhere in it, comments included. Plans, suites, runs,
+- **The one thing it can destroy, it says so about.** A test fails the
+  build if any file in the Rust client issues a DELETE. There is exactly
+  one carved-out exception — deleting a test case, permission-gated and
+  held to a *tighter* rule than the rest: the parameter that would also
+  wipe results via a different, more destructive endpoint is asserted to
+  appear nowhere in that file, comments included. That delete is also
+  **permanent** — Azure DevOps offers no recoverable API deletion for test
+  artifacts — and the app never dresses it up as anything else: its own
+  confirmation dialog says "permanent" outright and will not proceed until
+  the user has explicitly acknowledged it. Plans, suites, runs,
   attachments, comments, board items and pull requests are never removed.
 - **The sign-in token never leaves the Rust core.** It lives in memory for
   the session only — never returned to the UI layer, never written to

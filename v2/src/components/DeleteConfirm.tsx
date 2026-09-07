@@ -43,7 +43,7 @@ export default function DeleteConfirm({
       const gone = outcomes.length - failed.length;
       if (failed.length === 0) {
         toast.success(
-          `Moved ${gone} test case${gone === 1 ? "" : "s"} to the recycle bin in Azure DevOps.`,
+          `Permanently deleted ${gone} test case${gone === 1 ? "" : "s"} in Azure DevOps.`,
         );
         onDeleted();
         onClose();
