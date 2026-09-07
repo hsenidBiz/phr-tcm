@@ -1533,7 +1533,9 @@ export default function QueueSection({
             aria-hidden
             data-sticky-action
             className={cn(
-              "fixed bottom-6 right-6 z-40 rounded-full border border-border bg-bg p-2 shadow-2xl transition-all duration-200",
+              // No pill behind it: the button is its own affordance, and the
+              // ring of background around it read as a second control.
+              "fixed bottom-6 right-6 z-40 transition-all duration-200",
               actionOnScreen
                 ? "pointer-events-none translate-y-3 opacity-0"
                 : "translate-y-0 opacity-100",
