@@ -45,6 +45,21 @@ pub async fn pr_work_items(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn pr_description(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    repo: String,
+    pr_id: i32,
+) -> Result<String, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .pr_description(&organization, &project, &repo, pr_id)
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn board_pr_links(
     app: tauri::AppHandle,
     organization: String,

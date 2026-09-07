@@ -323,3 +323,63 @@ async fn resolving_a_thread_patches_only_the_status_and_reports_what_stuck() {
         "a thread PATCH must carry the status and nothing else: {body}"
     );
 }
+
+/// Azure DevOps truncates `description` in the pull request LIST response
+/// (around 400 characters, mid-word, with no marker saying it did). The
+/// panel therefore cannot show a long description from the list alone - it
+/// has to ask for the pull request itself, which returns the whole thing.
+#[tokio::test]
+async fn pr_description_returns_the_untruncated_body() {
+    let server = MockServer::start().await;
+    let long = "x".repeat(1200);
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/web/pullRequests/20"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "pullRequestId": 20,
+            "title": "Stage notifications",
+            "description": long,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let body = client.pr_description("org", "proj", "web", 20).await.unwrap();
+    assert_eq!(body.len(), 1200, "the full description, not the list's 400-char cut");
+}
+
+/// A pull request with no description at all is not an error - the panel
+/// says "No description." and must not be handed a failure to render.
+#[tokio::test]
+async fn pr_description_of_a_pr_without_one_is_empty_not_an_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/web/pullRequests/7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "pullRequestId": 7, "title": "Tidy up"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    assert_eq!(client.pr_description("org", "proj", "web", 7).await.unwrap(), "");
+}
+
+/// The repo name goes in the path and can contain characters that are not
+/// URL-safe. `pr_work_items` encodes it; this must too, or a repo with a
+/// space in its name 404s.
+#[tokio::test]
+async fn pr_description_encodes_the_repo_name() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/git/repositories/my%20repo/pullRequests/3"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "description": "body"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    assert_eq!(client.pr_description("org", "proj", "my repo", 3).await.unwrap(), "body");
+}

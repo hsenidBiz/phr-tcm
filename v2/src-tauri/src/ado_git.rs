@@ -415,6 +415,30 @@ impl AdoClient {
             .collect())
     }
 
+    /// The full description of one pull request.
+    ///
+    /// The LIST endpoint truncates `description` (around 400 characters,
+    /// mid-word, with no marker), so the panel has to ask for the pull
+    /// request itself before it can show a long one.
+    pub async fn pr_description(
+        &self,
+        org: &str,
+        project: &str,
+        repo: &str,
+        pr_id: i32,
+    ) -> Result<String, AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}?api-version=7.1",
+            self.base_url,
+            org,
+            project,
+            urlencoding::encode(repo),
+            pr_id
+        );
+        let pr = self.get_json(url).await?;
+        Ok(pr["description"].as_str().unwrap_or_default().to_string())
+    }
+
     /// The review conversation on one PR: human comment threads only,
     /// oldest activity first, each with where it is anchored and whether it
     /// is resolved.

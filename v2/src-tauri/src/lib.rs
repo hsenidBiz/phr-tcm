@@ -167,6 +167,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             prs::repo_pull_requests,
             prs::board_pr_links,
             prs::pr_work_items,
+            prs::pr_description,
             prs::pr_build_states,
             prs::pr_threads,
             prs::set_pr_thread_status,
