@@ -28,7 +28,7 @@
 | --- | --- |
 | `v2/src-tauri/src/updater/ado.rs` | **Delete** (Task 1) |
 | `v2/src-tauri/tests/updater_ado.rs` | **Delete** (Task 1) |
-| `v2/src-tauri/src/updater/mod.rs` | Drop `pub mod ado`, the `"ado"` source, `AccessDenied`, `no_access`, and the `token`/`github_off` parameters (Task 1) |
+| `v2/src-tauri/src/updater/mod.rs` | Drop `pub mod ado`, the `"ado"` source, `AccessDenied` and the `token`/`github_off` parameters (Task 1); the `no_access` field goes in Task 3 |
 | `v2/src-tauri/src/commands/misc.rs` | `check_update`/`apply_update` lose `github_off` and the token fetch (Task 1) |
 | `v2/src-tauri/Cargo.toml` | velopack's `public-utils` feature reverts (Task 1) |
 | `v2/src-tauri/tests/updater.rs` | Update the `sources`/`resolve` tests (Task 1) |
@@ -61,7 +61,7 @@
   - `pub fn check(state: &UpdateState) -> UpdateStatus`
   - `pub fn resolve(attempts: Vec<(&'static str, Attempt)>, state: &UpdateState) -> UpdateStatus` — the `no_access` parameter goes
   - `pub fn download_and_apply(state, data_dir, on_progress) -> Result<(), String>`
-  - `pub struct UpdateStatus { available, blocked, failed_attempt }` — no `no_access`
+  - `pub struct UpdateStatus { available, blocked, failed_attempt, no_access }` — `no_access` STAYS, dead, until Task 3 removes it with its readers
   - Tauri commands `check_update()` and `apply_update()` take no arguments → TS `commands.checkUpdate()` / `commands.applyUpdate()`
 
 - [ ] **Step 1: Rewrite the affected tests in `tests/updater.rs`**
@@ -158,7 +158,15 @@ fn managers() -> Vec<(&'static str, UpdateManager)> {
 
 Keep the existing doc comment above `sources` that explains why the API comes before the mirror; delete only its final paragraph about DevOps going first.
 
-Delete the `pub no_access: bool,` field from `UpdateStatus` (line 111) and its doc comment.
+**Leave the `pub no_access: bool` field on `UpdateStatus` (line 111) exactly where it is.** With no DevOps source nothing can ever set it, so it is dead — but it is read by `updateToast.ts` and `App.tsx`, which are Task 3's to change. Removing the field here would break their compilation and leave this commit unbuildable, which is the very thing this task's call-site work exists to prevent. **Task 3 removes the field, regenerates the bindings and deletes every reader in one commit**, so the notice and the data behind it go together.
+
+Delete only its second doc-comment sentence, the one describing DevOps returning 401/403, and replace the comment with:
+
+```rust
+    /// Dead since the Azure DevOps source was retired: nothing sets it.
+    /// Removed together with the notice that reads it - see Task 3.
+    pub no_access: bool,
+```
 
 Replace `check` with:
 
@@ -238,10 +246,12 @@ Run: `cd v2/src-tauri && cargo test --test updater --test bindings 2>&1 | tail -
 Expected: both pass. Then confirm the generated TypeScript no longer mentions the removed shapes:
 
 ```bash
-grep -c "no_access\|githubOff" v2/src/bindings.ts
+grep -c "githubOff" v2/src/bindings.ts
 ```
 
-Expected: `0`.
+Expected: `0`. Note that `no_access` IS still expected in `bindings.ts` — the
+field stays on `UpdateStatus` until Task 3 removes it together with the
+notice that reads it.
 
 Then, from `v2`: `npx tsc --noEmit`
 Expected: clean. If it is not, a call site was missed — that is the whole
@@ -330,14 +340,36 @@ git log -1
 ### Task 3: Remove the "updates have moved" notice
 
 **Files:**
+- Modify: `v2/src-tauri/src/updater/mod.rs` — remove the `no_access` field
+- Regenerate: `v2/src/bindings.ts`
 - Modify: `v2/src/lib/updateToast.ts:13-18,26-40`
 - Modify: `v2/src/lib/updateToast.test.ts`
 - Modify: `v2/src/App.tsx:104,441-451,517,986-1000`
 - Modify: `v2/src/App.test.tsx:462-585,1095-1112`
 
 **Interfaces:**
-- Consumes: `UpdateStatus` without `no_access` (Task 1); `commands.checkUpdate()` with no argument (Task 2).
-- Produces: `reportUpdateCheck(status)` back to three outcomes, and no export named `UPDATES_MOVED`.
+- Consumes: `commands.checkUpdate()` with no argument (Task 1); no `updatePrefs` module (Task 2).
+- Produces: `pub struct UpdateStatus { available, blocked, failed_attempt }` — the `no_access` field is gone; `reportUpdateCheck(status)` back to three outcomes; no export named `UPDATES_MOVED`.
+
+**Why the Rust field is removed here and not in Task 1.** `no_access` is
+read by `updateToast.ts` — which imports the real generated `UpdateStatus`
+type — and by `App.tsx`. Deleting the field in Task 1 would have broken
+both and left that commit unbuildable. The field and the notice it exists
+to drive are one change, so they go together, in this task.
+
+- [ ] **Step 0: Remove the field, and regenerate**
+
+In `v2/src-tauri/src/updater/mod.rs`, delete the `pub no_access: bool`
+field from `UpdateStatus` along with the "Dead since the Azure DevOps
+source was retired" comment Task 1 left on it. Then, from
+`v2/src-tauri`: `cargo test --test bindings`, and confirm with
+
+```bash
+grep -c "no_access" v2/src/bindings.ts
+```
+
+Expected: `0`. `npx tsc --noEmit` will now fail in `updateToast.ts` and
+`App.tsx` — that is expected, and the rest of this task fixes it.
 
 - [ ] **Step 1: Rewrite the toast tests**
 
