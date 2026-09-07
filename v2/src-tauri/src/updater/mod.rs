@@ -83,9 +83,6 @@ pub struct UpdateStatus {
     /// invisible - the app restarts, the banner comes back, and the user
     /// is left to wonder whether clicking it did anything at all.
     pub failed_attempt: Option<String>,
-    /// Dead since the Azure DevOps source was retired: nothing sets it.
-    /// Removed together with the notice that reads it - see Task 3.
-    pub no_access: bool,
 }
 
 /// The file that remembers what the last "Restart to update" aimed for.

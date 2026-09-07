@@ -1608,11 +1608,6 @@ export type UpdateStatus = {
 	 *  is left to wonder whether clicking it did anything at all.
 	 */
 	failed_attempt: string | null,
-	/**
-	 *  Dead since the Azure DevOps source was retired: nothing sets it.
-	 *  Removed together with the notice that reads it - see Task 3.
-	 */
-	no_access: boolean,
 };
 
 /**
