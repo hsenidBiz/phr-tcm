@@ -17,7 +17,6 @@ import { loadWatches, saveWatches, upsertWatch } from "./lib/fileSync";
 import { applyRateLevel } from "./lib/adoRate";
 import { formatByteProgress } from "./lib/bytes";
 import { onlineSnapshot, subscribeOnline } from "./lib/network";
-import { githubOffSnapshot } from "./lib/updatePrefs";
 import {
   clearSessionExpired,
   sessionExpiredSnapshot,
@@ -423,7 +422,7 @@ export default function App() {
   // an app left open all week is sitting.
   const update = useQuery({
     queryKey: ["update"],
-    queryFn: () => commands.checkUpdate(githubOffSnapshot()),
+    queryFn: () => commands.checkUpdate(),
     staleTime: UPDATE_CHECK_MS,
     refetchInterval: UPDATE_CHECK_MS,
     refetchIntervalInBackground: true,
@@ -470,7 +469,7 @@ export default function App() {
         }),
       );
       try {
-        const r = await commands.applyUpdate(githubOffSnapshot());
+        const r = await commands.applyUpdate();
         if (r.status === "error") throw new Error(r.error);
       } finally {
         // On success the app restarts into the new build, so this only

@@ -118,7 +118,7 @@ export default function Settings({ org, project }: { org: string; project: strin
   const githubOff = useSyncExternalStore(subscribeGithubOff, githubOffSnapshot);
 
   const check = useMutation({
-    mutationFn: () => commands.checkUpdate(githubOffSnapshot()),
+    mutationFn: () => commands.checkUpdate(),
     onSuccess: (v) => {
       // App's update banner renders from the ["update"] query (fetched once
       // at startup) - seed it so the banner appears for a manual check too.

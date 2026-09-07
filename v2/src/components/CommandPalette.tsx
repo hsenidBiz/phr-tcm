@@ -4,7 +4,6 @@ import { Kbd } from "@astryxdesign/core/Kbd";
 import { Command } from "cmdk";
 import { useEffect, useState } from "react";
 import { commands } from "../bindings";
-import { githubOffSnapshot } from "../lib/updatePrefs";
 import AstryxIsland from "./AstryxIsland";
 import { unwrap } from "../lib/ipc";
 import { cached } from "../lib/localCache";
@@ -93,7 +92,7 @@ export default function CommandPalette({
           <Item
             onSelect={() =>
               run(async () => {
-                const v = await commands.checkUpdate(githubOffSnapshot());
+                const v = await commands.checkUpdate();
                 // Seed the ["update"] query so App's update banner appears.
                 qc.setQueryData(["update"], v);
                 reportUpdateCheck(v);

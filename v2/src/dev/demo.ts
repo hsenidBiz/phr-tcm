@@ -227,7 +227,7 @@ function applyPatches() {
   Object.assign(commands, {
     authStatus: () => Promise.resolve(auth),
     signIn: () => ok(auth),
-    checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null, no_access: false }),
+    checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
     applyUpdate: () => err("Demo mode: updates are disabled"),
 
     listOrgs: () => ok([{ name: "DemoOrg", url: "https://example.invalid/demo" }]),
