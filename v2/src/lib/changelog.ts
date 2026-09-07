@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.2",
+    date: "2026-09-07",
+    items: [
+      "Updates come from the same public place they always did. The app no longer looks in the company's Azure DevOps for them first, and the notice about repository access and the Settings switch that went with it are both gone.",
+      "Fixed: if the list of available versions came back empty, the app said \"You are on the latest version.\" It had not actually checked, and now says so instead of guessing.",
+    ],
+  },
+  {
     version: "1.23.1",
     date: "2026-09-05",
     items: [
