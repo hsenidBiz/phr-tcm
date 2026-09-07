@@ -35,7 +35,7 @@
 | `v2/src/bindings.ts` | Regenerated (Task 1) |
 | `v2/src/lib/updatePrefs.ts`, `updatePrefs.test.ts` | **Delete** (Task 2) |
 | `v2/src/screens/Settings.tsx`, `Settings.test.tsx` | Drop the switch and its test (Task 2) |
-| `v2/src/components/CommandPalette.tsx`, `v2/src/dev/demo.ts` | Drop the argument and the stub field (Task 2) |
+| `v2/src/App.tsx`, `Settings.tsx`, `CommandPalette.tsx`, `dev/demo.ts` | Stop passing the removed argument, so every commit builds (Task 1); the dangling imports go in Task 2 |
 | `v2/src/lib/updateToast.ts`, `updateToast.test.ts` | Drop `UPDATES_MOVED` and the `no_access` branches (Task 3) |
 | `v2/src/App.tsx`, `App.test.tsx` | Drop the notice, the dismissal, the sign-in invalidation and its tests (Task 3) |
 | `README.md`, `CLAUDE.md`, the 2026-09-04 spec | Documentation (Task 4) |
@@ -52,6 +52,7 @@
 - Modify: `v2/src-tauri/src/updater/mod.rs:9,51,62,77-78,111,167,171,177,200,284-288`
 - Modify: `v2/src-tauri/src/commands/misc.rs:44,49,53,66,79,80,86`
 - Modify: `v2/src-tauri/Cargo.toml:59`
+- Modify (call sites only, so the commit builds): `v2/src/App.tsx:426,473`, `v2/src/screens/Settings.tsx:121`, `v2/src/components/CommandPalette.tsx:96`, `v2/src/dev/demo.ts:230`
 - Test: `v2/src-tauri/tests/updater.rs`
 
 **Interfaces:**
@@ -210,7 +211,28 @@ velopack = "1.2.0"
 
 `public-utils` was enabled only so `AdoSource` could name `bundle::Manifest` and reuse velopack's downloader; nothing else uses it.
 
-- [ ] **Step 7: Run the Rust tests and regenerate the bindings**
+- [ ] **Step 7: Stop the callers passing an argument that no longer exists**
+
+The two commands now take no arguments, so the four call sites that pass
+one would fail to compile. Fixing them here rather than in Task 2 is what
+keeps every commit on this branch buildable:
+
+- `v2/src/App.tsx:426` → `queryFn: () => commands.checkUpdate(),`
+- `v2/src/App.tsx:473` → `const r = await commands.applyUpdate();`
+- `v2/src/screens/Settings.tsx:121` → `mutationFn: () => commands.checkUpdate(),`
+- `v2/src/components/CommandPalette.tsx:96` → `const v = await commands.checkUpdate();`
+
+Leave the now-unused `githubOffSnapshot` imports in place — Task 2 deletes
+the module and its imports together, and removing the import here without
+the module would just be churn.
+
+Also drop the removed field from the demo stub, `v2/src/dev/demo.ts:230`:
+
+```ts
+    checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
+```
+
+- [ ] **Step 8: Run the Rust tests, regenerate the bindings, and typecheck**
 
 Run: `cd v2/src-tauri && cargo test --test updater --test bindings 2>&1 | tail -12`
 Expected: both pass. Then confirm the generated TypeScript no longer mentions the removed shapes:
@@ -221,10 +243,14 @@ grep -c "no_access\|githubOff" v2/src/bindings.ts
 
 Expected: `0`.
 
-- [ ] **Step 8: Commit**
+Then, from `v2`: `npx tsc --noEmit`
+Expected: clean. If it is not, a call site was missed — that is the whole
+point of doing this step here.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-cd v2 && git add -A src-tauri src/bindings.ts
+cd v2 && git add -A src-tauri src/bindings.ts src/App.tsx src/screens/Settings.tsx src/components/CommandPalette.tsx src/dev/demo.ts
 git commit -F - <<'EOF'
 refactor(v2): the app stops reading updates from Azure DevOps
 
@@ -241,9 +267,9 @@ git log -1
 - Delete: `v2/src/lib/updatePrefs.ts`, `v2/src/lib/updatePrefs.test.ts`
 - Modify: `v2/src/screens/Settings.tsx:5,10,118,121,425-440`
 - Modify: `v2/src/screens/Settings.test.tsx:205-230`
-- Modify: `v2/src/components/CommandPalette.tsx:7,96`
-- Modify: `v2/src/dev/demo.ts:230`
-- Modify: `v2/src/App.tsx:20,426,473`
+- Modify: `v2/src/components/CommandPalette.tsx:7` (the import only)
+- (`v2/src/dev/demo.ts` was handled in Task 1)
+- Modify: `v2/src/App.tsx:20` (the import only - Task 1 handled the call sites)
 
 **Interfaces:**
 - Consumes: `commands.checkUpdate()` and `commands.applyUpdate()` from Task 1 — both now take no arguments.
@@ -268,15 +294,15 @@ Delete the whole `<label>` block containing the `Switch` with `ariaLabel="Only c
 
 On line 5, drop `useSyncExternalStore` from the React import **only if nothing else in the file uses it** — check with `grep -c useSyncExternalStore src/screens/Settings.tsx` after the edit.
 
-- [ ] **Step 4: Remove the remaining callers**
+- [ ] **Step 4: Remove the now-dangling imports**
 
-- `v2/src/components/CommandPalette.tsx`: delete the import on line 7; line 96 becomes `const v = await commands.checkUpdate();`
-- `v2/src/App.tsx`: delete the import on line 20; line 426 becomes `queryFn: () => commands.checkUpdate(),` and line 473 becomes `const r = await commands.applyUpdate();`
-- `v2/src/dev/demo.ts` line 230 becomes:
+Task 1 already stopped these files passing an argument; what is left is the
+import of a module that no longer exists.
 
-```ts
-    checkUpdate: () => Promise.resolve({ available: null, blocked: null, failed_attempt: null }),
-```
+- `v2/src/components/CommandPalette.tsx`: delete the `updatePrefs` import on line 7.
+- `v2/src/App.tsx`: delete the `updatePrefs` import on line 20.
+
+`v2/src/dev/demo.ts` was handled in Task 1 and needs nothing here.
 
 - [ ] **Step 5: Remove the Settings test**
 
