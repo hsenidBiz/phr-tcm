@@ -33,7 +33,32 @@ Two things this is **not**:
 | `resolve` / `Attempt` | **Kept.** Pure, tested decision logic; it earns its place with one source or three. |
 | Retention/pruning on DevOps | Deleted with the rest of the publishing path. |
 
-## The migration hazard, and why the stale branch solves it
+## Update 2026-09-07: the hazard below does not apply
+
+**Read access to `PHR-TCM` was never granted to anyone.** That was confirmed
+after this design was written, and it removes the whole problem.
+
+The freeze needs DevOps to *answer* — `check` stops at the first source that
+returns `UpdateAvailable` or `UpToDate`. An install that cannot read the
+repository gets a 401/403, which the source turns into `Attempt::Failed`,
+and a failed attempt falls straight through to GitHub. Verified against the
+shipped 1.23.1 code: `ado.rs` sets the no-access flag and returns `Err` on
+either status, and `resolve` only short-circuits on a non-`Failed` attempt.
+
+So no install in the field can be frozen, and **release N does not need to
+go to DevOps at all**. It ships to GitHub like every release before 1.23.0,
+the publishing path can be removed before or after it, and the sequencing
+section below is history rather than instruction.
+
+One residual, stated rather than hidden: a machine that *does* have access
+**and** is running 1.23.0 or 1.23.1 would still hear "up to date" from the
+frozen branch. That is at most the maintainer's own machine, and the fix is
+to install the new version directly rather than wait for the check.
+
+The section that follows is kept because it explains why the code is shaped
+the way it is, and why `PHR-TCM`'s `releases` branch is being left alone.
+
+## The migration hazard (superseded — see above)
 
 `check` stops at the first source that **answers**, and "you are up to
 date" is an answer:
