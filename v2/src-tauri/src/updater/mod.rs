@@ -6,8 +6,6 @@
 use std::sync::Mutex;
 use velopack::{sources, UpdateCheck, UpdateInfo, UpdateManager};
 
-pub mod ado;
-
 /// v2 has its own releases repo so v1's and v2's "latest release" (which is
 /// what Velopack's HttpSource reads) can never fight over the update feed.
 pub const REPO_URL: &str = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases";
@@ -42,45 +40,25 @@ pub struct UpdateState {
 /// The old mirror stays as a second try: it needs only github.com, so a
 /// network that allows the site but blocks `api.github.com` keeps working
 /// exactly as well as it did before.
-///
-/// DevOps goes first, and only when there is a token to send: without one
-/// the request would 401 and say nothing useful, so a signed-out launch
-/// tries GitHub straight away, as it always has. The `AccessDenied` handle
-/// is how `check` learns that DevOps said 401/403 rather than merely
-/// failing.
-pub fn sources(token: Option<String>, github_off: bool) -> (Vec<(&'static str, Box<dyn sources::UpdateSource>)>, Option<ado::AccessDenied>) {
-    let mut list: Vec<(&'static str, Box<dyn sources::UpdateSource>)> = Vec::new();
-    let mut denied = None;
-    if let Some(token) = token {
-        let (src, flag) = ado::AdoSource::new(token);
-        list.push(("ado", Box::new(src)));
-        denied = Some(flag);
-    }
-    // The Settings switch "Only check Azure DevOps for updates": a way to
-    // prove DevOps works on its own, which the fallback would otherwise
-    // quietly mask.
-    if github_off {
-        return (list, denied);
-    }
-    list.push((
-        "github api",
-        // No token: the releases repo is public, and this ships to
-        // machines we do not control - there is nothing safe to embed.
-        Box::new(sources::GithubSource::new(REPO_URL, None, false)),
-    ));
-    list.push(("latest/download", Box::new(sources::HttpSource::new(RELEASES_URL))));
-    (list, denied)
+pub fn sources() -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
+    vec![
+        (
+            "github api",
+            // No token: the releases repo is public, and this ships to
+            // machines we do not control - there is nothing safe to embed.
+            Box::new(sources::GithubSource::new(REPO_URL, None, false)),
+        ),
+        ("latest/download", Box::new(sources::HttpSource::new(RELEASES_URL))),
+    ]
 }
 
 /// One manager per reachable source. Empty means "not a Velopack install"
 /// (a dev build), which is the app's cue to offer no update UX at all.
-fn managers(token: Option<String>, github_off: bool) -> (Vec<(&'static str, UpdateManager)>, Option<ado::AccessDenied>) {
-    let (list, denied) = sources(token, github_off);
-    let mans = list
+fn managers() -> Vec<(&'static str, UpdateManager)> {
+    sources()
         .into_iter()
         .filter_map(|(name, src)| UpdateManager::new_boxed(src, None, None).ok().map(|um| (name, um)))
-        .collect();
-    (mans, denied)
+        .collect()
 }
 
 /// The outcome of an update check - all THREE of them.
@@ -105,10 +83,6 @@ pub struct UpdateStatus {
     /// invisible - the app restarts, the banner comes back, and the user
     /// is left to wonder whether clicking it did anything at all.
     pub failed_attempt: Option<String>,
-    /// DevOps answered 401/403: this user cannot read the releases repo.
-    /// Independent of `available` - GitHub may still have served an update,
-    /// and the user is told both.
-    pub no_access: bool,
 }
 
 /// The file that remembers what the last "Restart to update" aimed for.
@@ -164,21 +138,17 @@ pub enum Attempt {
 /// A source that ANSWERS settles it, whichever way it answers - "you are up
 /// to date" is a real answer and the fallback is not asked to second-guess
 /// it. Only a source that could not be reached moves on to the next.
-pub fn check(state: &UpdateState, token: Option<String>, github_off: bool) -> UpdateStatus {
-    // GitHub off and signed out leaves nothing to ask - and that is not
-    // the same as "this build cannot update itself", which is what an
-    // empty manager list would otherwise be reported as.
-    if github_off && token.is_none() {
-        return UpdateStatus {
-            blocked: Some("Sign in to check for updates - GitHub updates are switched off in Settings.".into()),
-            ..UpdateStatus::default()
-        };
-    }
-    let (mans, denied) = managers(token, github_off);
+pub fn check(state: &UpdateState) -> UpdateStatus {
     let mut attempts = Vec::new();
-    for (name, um) in mans {
+    for (name, um) in managers() {
         let a = match um.check_for_updates() {
             Ok(UpdateCheck::UpdateAvailable(info)) => Attempt::Available(info),
+            // The feed parsed but named no `Full` asset - not the same as
+            // "checked and you're current". Treat it as a failed attempt so
+            // `resolve` falls through to the next source instead of telling
+            // someone whose feed just came back empty that they're up to
+            // date, a claim this has not actually verified.
+            Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed("the update feed listed no releases".into()),
             Ok(_) => Attempt::UpToDate,
             Err(e) => {
                 crate::applog::warn(format!("update check failed via {name}: {e}"));
@@ -191,13 +161,13 @@ pub fn check(state: &UpdateState, token: Option<String>, github_off: bool) -> Up
             break;
         }
     }
-    let no_access = denied.map(|d| d.get()).unwrap_or(false);
-    resolve(attempts, no_access, state)
+    resolve(attempts, state)
 }
 
-/// The status a run of attempts adds up to. Pure, so the three-way split
-/// (no token / unreachable / no access) is testable without an install.
-pub fn resolve(attempts: Vec<(&'static str, Attempt)>, no_access: bool, state: &UpdateState) -> UpdateStatus {
+/// The status a run of attempts adds up to. Pure, so the four-way split
+/// (no attempts / an update / up to date / unreachable) is testable
+/// without an install.
+pub fn resolve(attempts: Vec<(&'static str, Attempt)>, state: &UpdateState) -> UpdateStatus {
     if attempts.is_empty() {
         return UpdateStatus {
             blocked: Some("This build does not update itself - it was not installed by the installer.".into()),
@@ -210,9 +180,9 @@ pub fn resolve(attempts: Vec<(&'static str, Attempt)>, no_access: bool, state: &
             Attempt::Available(info) => {
                 let version = info.TargetFullRelease.Version.clone();
                 *state.pending.lock().unwrap() = Some(*info);
-                return UpdateStatus { available: Some(version), no_access, ..UpdateStatus::default() };
+                return UpdateStatus { available: Some(version), ..UpdateStatus::default() };
             }
-            Attempt::UpToDate => return UpdateStatus { no_access, ..UpdateStatus::default() },
+            Attempt::UpToDate => return UpdateStatus::default(),
             Attempt::Failed(e) => last = Some(e),
         }
     }
@@ -221,7 +191,6 @@ pub fn resolve(attempts: Vec<(&'static str, Attempt)>, no_access: bool, state: &
             "Could not reach the update feed: {}",
             last.unwrap_or_else(|| "no source answered".into())
         )),
-        no_access,
         ..UpdateStatus::default()
     }
 }
@@ -281,11 +250,9 @@ pub fn bytes_at(percent: i16, total: u64) -> u64 {
 pub fn download_and_apply(
     state: &UpdateState,
     data_dir: Option<std::path::PathBuf>,
-    token: Option<String>,
-    github_off: bool,
     on_progress: impl Fn(Progress) + Send + Sync + 'static,
 ) -> Result<(), String> {
-    let (mans, _) = managers(token, github_off);
+    let mans = managers();
     if mans.is_empty() {
         return Err("not a Velopack install".into());
     }

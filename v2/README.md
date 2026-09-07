@@ -236,7 +236,7 @@ src-tauri/                  Rust core
     auth.rs                 MSAL PKCE loopback sign-in + in-memory token
     steps_xml.rs            Steps XML build/parse (golden-tested)
     model.rs                TestCase / Step domain types
-    updater.rs              Velopack auto-update
+    updater/mod.rs          Velopack auto-update
   tests/                    Integration tests (wiremock + golden vectors)
 
 src/                        React / TypeScript frontend

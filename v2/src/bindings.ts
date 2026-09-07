@@ -96,14 +96,8 @@ export const commands = {
 	audioCaptureStart: () => typedError<null, string>(__TAURI_INVOKE("audio_capture_start")),
 	/**  Stop the AudioSpectrum stream (last UI subscriber unmounted). */
 	audioCaptureStop: () => __TAURI_INVOKE<void>("audio_capture_stop"),
-	/**
-	 *  Non-blocking update check; Some(version) when a newer build is published.
-	 * 
-	 *  `github_off` is the Settings switch "Only check Azure DevOps for
-	 *  updates", read by the frontend and passed on every call - the Rust
-	 *  side keeps no copy of it.
-	 */
-	checkUpdate: (githubOff: boolean) => __TAURI_INVOKE<UpdateStatus>("check_update", { githubOff }),
+	/**  Non-blocking update check; Some(version) when a newer build is published. */
+	checkUpdate: () => __TAURI_INVOKE<UpdateStatus>("check_update"),
 	/**
 	 *  How hard the app is allowed to hit Azure DevOps: "full" | "balanced" |
 	 *  "gentle". The limit ADO enforces is per USER, so the app shares one
@@ -130,7 +124,7 @@ export const commands = {
 	 *  Download the pending update and restart into it, streaming
 	 *  `UpdateProgress` so the banner can show how much is left.
 	 */
-	applyUpdate: (githubOff: boolean) => typedError<null, string>(__TAURI_INVOKE("apply_update", { githubOff })),
+	applyUpdate: () => typedError<null, string>(__TAURI_INVOKE("apply_update")),
 	/**
 	 *  Start the background check for newly assigned work items. Idempotent:
 	 *  the first call arms the loop, later calls only update the scope it
@@ -1614,12 +1608,6 @@ export type UpdateStatus = {
 	 *  is left to wonder whether clicking it did anything at all.
 	 */
 	failed_attempt: string | null,
-	/**
-	 *  DevOps answered 401/403: this user cannot read the releases repo.
-	 *  Independent of `available` - GitHub may still have served an update,
-	 *  and the user is told both.
-	 */
-	no_access: boolean,
 };
 
 /**
