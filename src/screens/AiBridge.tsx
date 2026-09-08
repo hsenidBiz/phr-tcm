@@ -33,7 +33,8 @@ import {
   subscribeWorkingDir,
   workingDirSnapshot,
 } from "../lib/workingDir";
-import { globalAllowedSnapshot, saveScope, scopeSnapshot, subscribeAiScope } from "../lib/aiScope";
+import { globalAllowedSnapshot, saveScope, scopeSnapshot, showDbSnapshot, subscribeAiScope, subscribeShowDb } from "../lib/aiScope";
+import { subscribeTour, tourRunningSnapshot } from "../tour/tourState";
 import {
   IconBrowse,
   IconConfirm,
@@ -89,6 +90,10 @@ export default function AiBridge() {
   const globalAllowed = useSyncExternalStore(subscribeAiScope, globalAllowedSnapshot);
   const scopeChoice = useSyncExternalStore(subscribeAiScope, scopeSnapshot);
   const global = globalAllowed && scopeChoice === "global";
+  // The PHR-X card is on by default, but hides when the Settings switch is
+  // off - except during the guided tour, whose step is anchored on it.
+  const showDb = useSyncExternalStore(subscribeShowDb, showDbSnapshot);
+  const tourRunning = useSyncExternalStore(subscribeTour, tourRunningSnapshot);
   // What every call below is told: the repository, or null for the whole
   // machine (detection reads the global configs on null; registration is
   // ALSO told `global` explicitly, so null alone can never mean "global").
@@ -163,7 +168,7 @@ export default function AiBridge() {
   });
   useEffect(() => {
     const d = dbDefaults.data;
-    if (!d || !d.connection_string.trim()) return; // no defaults shipped
+    if (!d || !d.connection_string?.trim()) return; // no defaults shipped
     if (hasStoredDbConfig()) return;
     // Only replace a still-pristine form, in case typing raced the IPC.
     setDb((cur) => (JSON.stringify(cur) === JSON.stringify(loadDbConfig()) ? { ...d } : cur));
@@ -610,6 +615,7 @@ export default function AiBridge() {
           as grid columns 2 and 3 - and space-y's child margins would
           leak through contents into the outer grid, where gap does not. */}
       <div className="grid gap-6 2xl:contents">
+      {(showDb || tourRunning) && (
       <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
@@ -873,6 +879,7 @@ export default function AiBridge() {
           — this clears the form only; unregister above to remove them from a tool.
         </p>
       </section>
+      )}
 
       <section className="space-y-3 rounded-md border border-border bg-surface p-4">
         <h2 className="text-sm font-semibold text-text">How it works</h2>

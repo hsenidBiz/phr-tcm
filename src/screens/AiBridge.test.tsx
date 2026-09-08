@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "sonner";
 import AiBridge from "./AiBridge";
+import { setTourRunning } from "../tour/tourState";
 
 afterEach(() => {
   clearMocks();
@@ -737,4 +738,24 @@ test("the tool list shows core tools without a switch and never the autorun tool
   expect(within(toolSection).getByText("begin_test_case_writing")).toBeInTheDocument();
   expect(screen.getAllByText("always on").length).toBe(5);
   expect(screen.getByLabelText("get_tags")).toBeInTheDocument();
+});
+
+test("the PHR-X card hides when switched off in Settings, except during the tour", async () => {
+  localStorage.setItem("tcm-v2-ai-show-db", "off");
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { unmount } = renderBridge(qc);
+  await screen.findByText("How it works");
+  expect(screen.queryByText("Company database (PHR-X)")).not.toBeInTheDocument();
+  unmount();
+
+  setTourRunning(true);
+  renderBridge(qc);
+  expect(await screen.findByText("Company database (PHR-X)")).toBeInTheDocument();
+  setTourRunning(false);
+  localStorage.clear();
 });
