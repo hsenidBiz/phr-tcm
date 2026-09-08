@@ -49,6 +49,8 @@ pub enum Op {
     SuffixTitle(String),
     /// Literal find/replace across every step's action and expected.
     ReplaceInSteps { find: String, replace: String },
+    /// Literal find/replace across the preconditions field.
+    ReplaceInPreconditions { find: String, replace: String },
     /// Sort the whole draft: "title" | "module" | "tags" | "preconditions".
     SortBy(String),
     /// Stable grouping: cases sharing the field's value become contiguous,
@@ -77,6 +79,8 @@ pub enum Op {
     SplitStep { find: String, into: Vec<crate::steps_xml::Step> },
     /// Round 8 §7.2 - see normalise_citation_notes.
     NormaliseCitations,
+    /// Set (or, with an empty value, clear) the local comment.
+    SetComment(String),
 }
 
 /// Where `insert_cases` puts its cases.
@@ -312,6 +316,11 @@ pub fn parse_ops_full(
                 find: str_of(v, "find"),
                 replace: str_of(v, "replace"),
             },
+            "replace_in_preconditions" => Op::ReplaceInPreconditions {
+                find: str_of(v, "find"),
+                replace: str_of(v, "replace"),
+            },
+            "set_comment" => Op::SetComment(value),
             "sort_by" | "group_by" => {
                 if !["title", "module", "tags", "preconditions"].contains(&value.as_str()) {
                     return Err(format!(
@@ -493,7 +502,8 @@ pub fn parse_ops_full(
                     "{label}: unknown op \"{other}\". Supported: set_tags, add_tags, \
                      remove_tags, set_module, set_automation_status, set_preconditions, \
                      set_reviewer_notes, replace_in_title, prefix_title, suffix_title, \
-                     replace_in_steps, replace_in_notes, prepend_step, append_step, \
+                     replace_in_steps, replace_in_notes, replace_in_preconditions, \
+                     set_comment, prepend_step, append_step, \
                      remove_step_matching, split_step, sort_by, group_by, dedupe, \
                      remove_cases, insert_cases, normalise_citations."
                 ))
@@ -503,7 +513,8 @@ pub fn parse_ops_full(
         // between every character - refuse rather than mangle the draft.
         if let Op::ReplaceInTitle { find, .. }
         | Op::ReplaceInSteps { find, .. }
-        | Op::ReplaceInNotes { find, .. } = &op
+        | Op::ReplaceInNotes { find, .. }
+        | Op::ReplaceInPreconditions { find, .. } = &op
         {
             if find.is_empty() {
                 return Err(format!("{label}: \"find\" must not be empty."));
@@ -767,6 +778,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                 let mut modified = 0usize;
                 let (mut normalised, mut exempted, mut unchanged, mut by_hand) =
                     (0usize, 0usize, 0usize, 0usize);
+                let (mut occurrences, mut variants, mut in_quotes) = (0usize, 0usize, 0usize);
                 for (i, c) in cases.iter_mut().enumerate() {
                     if !operation.filter.matches_at(c, i) {
                         continue;
@@ -777,6 +789,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::ReplaceInTitle { .. }
                             | Op::ReplaceInSteps { .. }
                             | Op::ReplaceInNotes { .. }
+                            | Op::ReplaceInPreconditions { .. }
                             | Op::RemoveStepMatching(_)
                             | Op::SplitStep { .. }
                             | Op::NormaliseCitations
@@ -806,19 +819,56 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::SetPreconditions(v) => c.preconditions = v.clone(),
                         Op::SetReviewerNotes(v) => c.reviewer_notes = v.clone(),
                         Op::ReplaceInTitle { find, replace } => {
+                            occurrences += c.title.matches(find.as_str()).count();
+                            if !c.title.contains(find.as_str())
+                                && c.title.to_lowercase().contains(&find.to_lowercase())
+                            {
+                                variants += 1;
+                            }
                             c.title = c.title.replace(find.as_str(), replace);
                         }
                         Op::ReplaceInNotes { find, replace } => {
+                            occurrences += c.reviewer_notes.matches(find.as_str()).count();
+                            if !c.reviewer_notes.contains(find.as_str())
+                                && c.reviewer_notes.to_lowercase().contains(&find.to_lowercase())
+                            {
+                                variants += 1;
+                            }
+                            in_quotes += c
+                                .reviewer_notes
+                                .lines()
+                                .filter(|l| l.trim_start().starts_with('>'))
+                                .map(|l| l.matches(find.as_str()).count())
+                                .sum::<usize>();
                             c.reviewer_notes = c.reviewer_notes.replace(find.as_str(), replace);
                         }
                         Op::PrefixTitle(v) => c.title = format!("{v}{}", c.title),
                         Op::SuffixTitle(v) => c.title = format!("{}{v}", c.title),
                         Op::ReplaceInSteps { find, replace } => {
                             for s in c.steps.iter_mut() {
+                                occurrences += s.action.matches(find.as_str()).count();
+                                occurrences += s.expected.matches(find.as_str()).count();
+                                if (!s.action.contains(find.as_str())
+                                    && s.action.to_lowercase().contains(&find.to_lowercase()))
+                                    || (!s.expected.contains(find.as_str())
+                                        && s.expected.to_lowercase().contains(&find.to_lowercase()))
+                                {
+                                    variants += 1;
+                                }
                                 s.action = s.action.replace(find.as_str(), replace);
                                 s.expected = s.expected.replace(find.as_str(), replace);
                             }
                         }
+                        Op::ReplaceInPreconditions { find, replace } => {
+                            occurrences += c.preconditions.matches(find.as_str()).count();
+                            if !c.preconditions.contains(find.as_str())
+                                && c.preconditions.to_lowercase().contains(&find.to_lowercase())
+                            {
+                                variants += 1;
+                            }
+                            c.preconditions = c.preconditions.replace(find.as_str(), replace);
+                        }
+                        Op::SetComment(v) => c.comment = v.clone(),
                         Op::PrependStep { action, expected } => {
                             c.steps.insert(
                                 0,
@@ -901,6 +951,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         if before.title != c.title
                             || before.steps != c.steps
                             || before.reviewer_notes != c.reviewer_notes
+                            || before.preconditions != c.preconditions
                         {
                             modified += 1;
                         }
@@ -911,8 +962,16 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                     Op::ReplaceInTitle { .. }
                         | Op::ReplaceInSteps { .. }
                         | Op::ReplaceInNotes { .. }
+                        | Op::ReplaceInPreconditions { .. }
                         | Op::RemoveStepMatching(_)
                         | Op::SplitStep { .. }
+                );
+                let occurrence_counted = matches!(
+                    other,
+                    Op::ReplaceInTitle { .. }
+                        | Op::ReplaceInNotes { .. }
+                        | Op::ReplaceInSteps { .. }
+                        | Op::ReplaceInPreconditions { .. }
                 );
                 if matches!(other, Op::NormaliseCitations) {
                     report.applied.push(format!(
@@ -920,9 +979,16 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                          {unchanged} unchanged, {by_hand} left for hand."
                     ));
                 } else if find_driven {
-                    report
-                        .applied
-                        .push(format!("{} modified {modified} case(s).", describe(other)));
+                    if occurrence_counted {
+                        report.applied.push(format!(
+                            "{} modified {modified} case(s), {occurrences} occurrence(s).",
+                            describe(other)
+                        ));
+                    } else {
+                        report
+                            .applied
+                            .push(format!("{} modified {modified} case(s).", describe(other)));
+                    }
                     // The find hit nothing anywhere it looked. Same shape as
                     // the empty-filter line below, because it is the same
                     // failure: an operation that quietly did nothing. This
@@ -932,6 +998,20 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         report
                             .applied
                             .push("  (the find matched no text - check it)".to_string());
+                    }
+                    if variants > 0 {
+                        if let Some(find) = find_of(other) {
+                            report.warnings.push(format!(
+                                "{variants} case(s) contain '{find}' in different capitalisation \
+                                 and were left alone - replace is case-sensitive."
+                            ));
+                        }
+                    }
+                    if in_quotes > 0 {
+                        report.warnings.push(format!(
+                            "{in_quotes} replacement(s) landed inside a verbatim quote - \
+                             check_spec_coverage may now report quote_not_in_document for those cases."
+                        ));
                     }
                 } else {
                     report
@@ -961,6 +1041,18 @@ fn field_key(c: &TestCase, key: &str) -> String {
     }
 }
 
+/// The `find` text of the four literal-replace ops - used for the
+/// capitalisation-variant warning, which names what was looked for.
+fn find_of(op: &Op) -> Option<&str> {
+    match op {
+        Op::ReplaceInTitle { find, .. }
+        | Op::ReplaceInNotes { find, .. }
+        | Op::ReplaceInSteps { find, .. }
+        | Op::ReplaceInPreconditions { find, .. } => Some(find.as_str()),
+        _ => None,
+    }
+}
+
 fn describe(op: &Op) -> String {
     match op {
         Op::SetTags(v) => format!("Set tags to '{v}'"),
@@ -977,6 +1069,10 @@ fn describe(op: &Op) -> String {
         Op::PrefixTitle(v) => format!("Prefixed titles with '{v}'"),
         Op::SuffixTitle(v) => format!("Suffixed titles with '{v}'"),
         Op::ReplaceInSteps { find, replace } => format!("Replaced '{find}' with '{replace}' in steps"),
+        Op::ReplaceInPreconditions { find, replace } => {
+            format!("Replaced '{find}' with '{replace}' in preconditions")
+        }
+        Op::SetComment(v) => format!("Set comment to '{v}'"),
         Op::SortBy(k) => format!("Sorted by {k}"),
         Op::GroupBy(k) => format!("Grouped by {k}"),
         Op::Dedupe => "Deduped".to_string(),
@@ -999,8 +1095,8 @@ fn known_keys(op_name: &str) -> &'static [&'static str] {
     match op_name {
         "set_tags" | "add_tags" | "remove_tags" | "set_module" | "set_automation_status"
         | "set_preconditions" | "set_reviewer_notes" | "prefix_title" | "suffix_title"
-        | "sort_by" | "group_by" => &["op", "where", "value"],
-        "replace_in_title" | "replace_in_steps" | "replace_in_notes" => {
+        | "sort_by" | "group_by" | "set_comment" => &["op", "where", "value"],
+        "replace_in_title" | "replace_in_steps" | "replace_in_notes" | "replace_in_preconditions" => {
             &["op", "where", "find", "replace"]
         }
         "prepend_step" | "append_step" => &["op", "where", "action", "expected"],

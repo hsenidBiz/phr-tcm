@@ -460,3 +460,68 @@ fn the_op_reports_per_case_and_respects_where() {
     assert!(line.contains("2 normalised") && line.contains("1 exempted") && line.contains("1 unchanged"), "{line}");
     assert!(report.warnings.iter().any(|w| w.contains("Table") && w.contains("table/diagram")), "{:?}", report.warnings);
 }
+
+// ---- round 8 §10: the fields transform could not reach --------------------
+
+/// The claim in §10 - "replaces only the first occurrence" - is false for
+/// this code, and this pins it so the question stays settled.
+#[test]
+fn replace_in_ops_replace_every_occurrence_and_report_the_count() {
+    let mut c = noted("Appraisee and Appraisee", "Appraisee, Appraisee, Appraisee");
+    c.steps = vec![step("Appraisee opens; Appraisee saves.")];
+    let cases = vec![c, noted("lowercase appraisee only", "an appraisee")];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "replace_in_title", "find": "Appraisee", "replace": "Employee" },
+        { "op": "replace_in_notes", "find": "Appraisee", "replace": "Employee" },
+        { "op": "replace_in_steps", "find": "Appraisee", "replace": "Employee" },
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert_eq!(out[0].title, "Employee and Employee");
+    assert_eq!(out[0].reviewer_notes, "Employee, Employee, Employee");
+    assert_eq!(out[0].steps[0].action, "Employee opens; Employee saves.");
+    assert!(report.applied[0].contains("2 occurrence(s)"), "{:?}", report.applied);
+    assert!(report.applied.iter().any(|l| l.contains("3 occurrence(s)")), "{:?}", report.applied);
+    // The case-variant hint: what actually left cases behind in the field.
+    assert!(
+        report.warnings.iter().any(|w| w.contains("different capitalisation") && w.contains("1 case")),
+        "{:?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn replace_in_preconditions_and_set_comment_exist() {
+    let mut c = noted("A", "n");
+    c.preconditions = "Signed in as Appraisee".into();
+    c.comment = "Blocked on a decision".into();
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "replace_in_preconditions", "find": "Appraisee", "replace": "Employee" },
+        { "op": "set_comment", "value": "" },
+    ]))
+    .unwrap();
+    let (out, _) = apply(vec![c], &ops);
+    assert_eq!(out[0].preconditions, "Signed in as Employee");
+    assert_eq!(out[0].comment, "", "an empty value clears the comment");
+    let (out, _) = apply(out, &parse_ops(&serde_json::json!([{ "op": "set_comment", "value": "Reviewed" }])).unwrap());
+    assert_eq!(out[0].comment, "Reviewed");
+    let err = parse_ops(&serde_json::json!([{ "op": "replace_in_preconditions", "find": "", "replace": "x" }])).unwrap_err();
+    assert!(err.contains("find"), "{err}");
+}
+
+/// A blanket replace that lands inside a verbatim quote silently breaks the
+/// citation contract; the diff does not show it. The report has to.
+#[test]
+fn a_replacement_inside_a_verbatim_quote_is_reported() {
+    let cases = vec![noted("Q", "Checks it.\nSpec: S.md 1\n> \"The Appraisee list refreshes.\"")];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "replace_in_notes", "find": "Appraisee", "replace": "Employee" }
+    ]))
+    .unwrap();
+    let (_, report) = apply(cases, &ops);
+    assert!(
+        report.warnings.iter().any(|w| w.contains("inside a verbatim quote") && w.contains("1 ")),
+        "{:?}",
+        report.warnings
+    );
+}
