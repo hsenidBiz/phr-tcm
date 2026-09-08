@@ -13,6 +13,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.24.0",
+    date: "2026-09-08",
+    items: [
+      "Updates now come from the company repository (hsenidBiz/phr-tcm). This version was also published to the old feed so every install crosses over; nothing to do on your side.",
+      "Importing a file you had picked before, with new content, now replaces the copy the app follows instead of writing it to a numbered file beside it. The obvious name used to keep the OLDEST content - on a set carrying work item ids, importing it would have silently undone corrections in Azure DevOps. The previous copy is kept under .test-cases/.history.",
+      "AI Bridge: begin_test_case_writing, get_writing_guide, get_test_cases, check_spec_coverage and transform_cases are always on - they no longer have switches. The two Auto Run script tools are no longer offered to assistants; the Auto Run screen itself is unchanged.",
+      "Settings has a switch to hide the company database (PHR-X) section on the AI Bridge tab.",
+      "The runner's header now shows the number of the test case on screen instead of the PBI.",
+      "Network problems are reported as what to try - check your connection, restart the app, look in Settings > Logs - instead of the address that failed. The address is in the log, where it always was.",
+      "For assistants: optimize_cases no longer trims away a second sentence that carries the assertion; transform_cases gains normalise_citations, replace_in_preconditions and set_comment, and its replace reports now count occurrences; the citation advisories say where a misplaced quote should go; merge_case_files names the slice files it superseded.",
+    ],
+  },
+  {
     version: "1.23.2",
     date: "2026-09-07",
     items: [
