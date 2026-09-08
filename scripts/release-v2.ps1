@@ -6,7 +6,8 @@
 # Token comes from gh auth token in-process and is never printed.
 param(
     [Parameter(Mandatory = $true)][string]$Version,
-    [switch]$SkipChecks
+    [switch]$SkipChecks,
+    [switch]$AlsoLegacy
 )
 $ErrorActionPreference = "Stop"
 trap {
@@ -16,7 +17,12 @@ trap {
     }
 }
 $v2 = Split-Path -Parent $PSScriptRoot            # repo root (the app used to live in v2/)
-$repoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
+$repoUrl = "https://github.com/hsenidBiz/phr-tcm"
+# The feed every install read before 1.24.0. -AlsoLegacy publishes there
+# TOO - used exactly once, for the release that switches the updater to
+# $repoUrl, so that an older install still finds a newer version where it
+# looks. After that release the old repo is left frozen, on purpose.
+$legacyRepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }
 
@@ -94,7 +100,7 @@ if (-not $SkipChecks) {
     Pop-Location
 }
 
-# --- Source first (private repo), then build -------------------------------
+# --- Source first, then build -----------------------------------------
 Push-Location $v2
 git push origin HEAD
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git push failed - source must be pushed before publishing" }
@@ -111,7 +117,12 @@ $token = (gh auth token | Out-String).Trim()
 if (-not $token) { throw "gh auth token returned nothing - run gh auth login" }
 vpk upload github --repoUrl $repoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
 if ($LASTEXITCODE -ne 0) { throw "vpk upload failed with exit code $LASTEXITCODE" }
-gh release view "v$Version" --repo AvinAlwis/azure-devops-test-case-manager-v2-releases
+if ($AlsoLegacy) {
+    vpk upload github --repoUrl $legacyRepoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
+    if ($LASTEXITCODE -ne 0) { throw "vpk upload to the legacy feed failed with exit code $LASTEXITCODE" }
+    gh release view "v$Version" --repo AvinAlwis/azure-devops-test-case-manager-v2-releases
+}
+gh release view "v$Version" --repo hsenidBiz/phr-tcm
 # The caller's shell keeps whatever we set here, so put it back - on the
 # error paths too, which is why this is a trap rather than a last line.
 $me.ProcessorAffinity = $affinityWas
