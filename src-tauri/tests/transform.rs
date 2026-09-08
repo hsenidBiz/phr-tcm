@@ -377,3 +377,86 @@ fn remove_cases_accepts_an_index_only_filter() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].title, "Keep");
 }
+
+// ---- round 8 §7.2: normalise_citations ----------------------------------
+
+use v2_lib::transform::{normalise_citation_notes, CitationOutcome};
+
+#[test]
+fn a_quote_above_the_pointer_moves_beneath_it_in_quotation_marks() {
+    let notes = "Checks the report identifies the right person.\n\n> Report Navigator resolves the context accordingly\n\nSpec: R.md General Requirements\n\nThe counterpart negative is a separate case.";
+    let (out, outcome) = normalise_citation_notes(notes);
+    assert!(matches!(outcome, CitationOutcome::Normalised));
+    assert_eq!(
+        out,
+        "Checks the report identifies the right person.\n\nSpec: R.md General Requirements\n\n> \"Report Navigator resolves the context accordingly\"\n\nThe counterpart negative is a separate case."
+    );
+    // And the accepted form is what parse_citations reads as a quote.
+    let c = v2_lib::speccov::parse_citations(&out).unwrap();
+    assert_eq!(c.specs[0].quote.as_deref(), Some("Report Navigator resolves the context accordingly"));
+}
+
+#[test]
+fn a_table_row_becomes_an_exemption_and_the_block_is_kept() {
+    let notes = "Checks the four fields.\n\n> | Employee Details | Name, ID |\n\nSpec: R.md Report Design";
+    let (out, outcome) = normalise_citation_notes(notes);
+    assert!(matches!(outcome, CitationOutcome::Exempted("table/diagram")));
+    assert_eq!(
+        out,
+        "Checks the four fields.\n\nSpec: R.md Report Design - no quotable text (table/diagram)\n\n> | Employee Details | Name, ID |"
+    );
+    let c = v2_lib::speccov::parse_citations(&out).unwrap();
+    assert!(c.specs[0].exemption.is_some() && c.specs[0].quote.is_none());
+}
+
+#[test]
+fn sql_is_code_not_prose() {
+    let notes = "Spec: R.md Database Scripts\n\n> SELECT emp_id FROM perf_cycle WHERE stage = 'done'";
+    let (_, outcome) = normalise_citation_notes(notes);
+    assert!(matches!(outcome, CitationOutcome::Exempted("code-not-prose")));
+}
+
+#[test]
+fn an_already_correct_note_is_unchanged_and_the_op_is_idempotent() {
+    let good = "Checks it.\n\nSpec: R.md 7.1\n\n> \"The list refreshes.\"";
+    let (out, outcome) = normalise_citation_notes(good);
+    assert!(matches!(outcome, CitationOutcome::Unchanged));
+    assert_eq!(out, good);
+    let messy = "> The list refreshes.\nSpec: R.md 7.1";
+    let (once, _) = normalise_citation_notes(messy);
+    let (twice, second) = normalise_citation_notes(&once);
+    assert_eq!(once, twice);
+    assert!(matches!(second, CitationOutcome::Unchanged));
+}
+
+#[test]
+fn two_pointers_or_two_blocks_are_left_for_a_person() {
+    let (out, outcome) = normalise_citation_notes("> a\nSpec: A.md 1\nSpec: B.md 2");
+    assert!(matches!(outcome, CitationOutcome::ByHand(ref why) if why.contains("2 Spec lines")));
+    assert_eq!(out, "> a\nSpec: A.md 1\nSpec: B.md 2", "untouched");
+    let (_, outcome) = normalise_citation_notes("> a\n\n> b\nSpec: A.md 1");
+    assert!(matches!(outcome, CitationOutcome::ByHand(ref why) if why.contains("2 blockquotes")));
+    let (_, outcome) = normalise_citation_notes("Spec: A.md 1\nprose only");
+    assert!(matches!(outcome, CitationOutcome::Unchanged), "nothing to move");
+}
+
+#[test]
+fn the_op_reports_per_case_and_respects_where() {
+    let cases = vec![
+        noted("Moves", "> q\nSpec: A.md 1"),
+        noted("Table", "> | a |\nSpec: A.md 2"),
+        noted("Fine", "Spec: A.md 3\n> \"q\""),
+        noted("Skipped", "> q\nSpec: A.md 4"),
+    ];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "normalise_citations", "where": { "title_contains": "" } }
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert_eq!(out[0].reviewer_notes, "Spec: A.md 1\n\n> \"q\"");
+    assert!(out[1].reviewer_notes.starts_with("Spec: A.md 2 - no quotable text (table/diagram)"));
+    assert_eq!(out[2].reviewer_notes, "Spec: A.md 3\n> \"q\"", "already correct stays byte-identical");
+    let line = &report.applied[0];
+    assert!(line.contains("2 normalised") && line.contains("1 exempted") && line.contains("1 unchanged"), "{line}");
+    assert!(report.warnings.iter().any(|w| w.contains("Table") && w.contains("table/diagram")), "{:?}", report.warnings);
+}

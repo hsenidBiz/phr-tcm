@@ -75,6 +75,8 @@ pub enum Op {
     /// Replace each step whose action contains `find` with the `into`
     /// sequence, at the same index.
     SplitStep { find: String, into: Vec<crate::steps_xml::Step> },
+    /// Round 8 §7.2 - see normalise_citation_notes.
+    NormaliseCitations,
 }
 
 /// Where `insert_cases` puts its cases.
@@ -319,6 +321,7 @@ pub fn parse_ops_full(
                 if name == "sort_by" { Op::SortBy(value) } else { Op::GroupBy(value) }
             }
             "dedupe" => Op::Dedupe,
+            "normalise_citations" => Op::NormaliseCitations,
             "prepend_step" | "append_step" => {
                 let action = str_of(v, "action");
                 if action.trim().is_empty() {
@@ -492,7 +495,7 @@ pub fn parse_ops_full(
                      set_reviewer_notes, replace_in_title, prefix_title, suffix_title, \
                      replace_in_steps, replace_in_notes, prepend_step, append_step, \
                      remove_step_matching, split_step, sort_by, group_by, dedupe, \
-                     remove_cases, insert_cases."
+                     remove_cases, insert_cases, normalise_citations."
                 ))
             }
         };
@@ -512,6 +515,147 @@ pub fn parse_ops_full(
         });
     }
     Ok((out, ignored))
+}
+
+/// What `normalise_citations` did to one note.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CitationOutcome {
+    Normalised,
+    /// The block was a table or code: the pointer got the exemption form
+    /// and the block was KEPT beneath it for the writer to fold into prose.
+    Exempted(&'static str),
+    Unchanged,
+    /// More than one pointer or more than one block - refused, with why.
+    ByHand(String),
+}
+
+/// Put a note's citation into the one shape the checker reads: prose,
+/// `Spec:` line, `> "quote"`, remaining prose - in that order.
+///
+/// Round 8 §5: 66 notes needed exactly this, and the only route was
+/// retyping every one. This is deliberately narrow - one pointer, one
+/// blockquote run, or hands off - because a note with two of either has no
+/// single right answer, and a wrong guess here corrupts a citation silently.
+pub fn normalise_citation_notes(notes: &str) -> (String, CitationOutcome) {
+    let lines: Vec<&str> = notes.lines().collect();
+    let is_spec = |l: &str| l.trim_start().to_lowercase().starts_with("spec:");
+    let is_block = |l: &str| l.trim_start().starts_with('>');
+
+    let spec_lines: Vec<usize> = (0..lines.len()).filter(|&i| is_spec(lines[i])).collect();
+    // Runs of consecutive blockquote lines, as (start, end-exclusive).
+    let mut runs: Vec<(usize, usize)> = vec![];
+    let mut i = 0;
+    while i < lines.len() {
+        if is_block(lines[i]) {
+            let start = i;
+            while i < lines.len() && is_block(lines[i]) {
+                i += 1;
+            }
+            runs.push((start, i));
+        } else {
+            i += 1;
+        }
+    }
+
+    if spec_lines.len() > 1 || runs.len() > 1 {
+        return (
+            notes.to_string(),
+            CitationOutcome::ByHand(format!(
+                "{} Spec lines / {} blockquotes - normalise by hand",
+                spec_lines.len(),
+                runs.len()
+            )),
+        );
+    }
+    let (Some(&spec_at), Some(&(run_start, run_end))) = (spec_lines.first(), runs.first()) else {
+        return (notes.to_string(), CitationOutcome::Unchanged);
+    };
+
+    let spec_line = lines[spec_at].trim().to_string();
+    let block_lines: Vec<&str> = lines[run_start..run_end].to_vec();
+    let stripped: Vec<String> = block_lines
+        .iter()
+        .map(|l| l.trim_start().trim_start_matches('>').trim().to_string())
+        .collect();
+    let first = stripped.first().map(String::as_str).unwrap_or("");
+    let joined = stripped.join(" ");
+
+    let unquotable: Option<&'static str> = if first.starts_with('|') {
+        Some("table/diagram")
+    } else if looks_like_code(&joined) {
+        Some("code-not-prose")
+    } else {
+        None
+    };
+
+    // Already in the accepted shape? The run must be the first non-blank
+    // line after the pointer, and either the pointer carries an exemption
+    // (block kept as is) or the run is one `> "..."` line.
+    let next_nonblank = (spec_at + 1..lines.len()).find(|&j| !lines[j].trim().is_empty());
+    let run_follows = next_nonblank == Some(run_start);
+    let spec_exempt = spec_line.to_lowercase().contains("no quotable text");
+    let one_quoted_line = block_lines.len() == 1 && first.starts_with('"') && first.ends_with('"') && first.len() >= 2;
+    if run_follows && ((unquotable.is_some() && spec_exempt) || (unquotable.is_none() && one_quoted_line && !spec_exempt)) {
+        return (notes.to_string(), CitationOutcome::Unchanged);
+    }
+
+    let (new_spec, new_block, outcome) = match unquotable {
+        Some(why) => {
+            let spec = if spec_exempt { spec_line.clone() } else { format!("{spec_line} - no quotable text ({why})") };
+            (spec, block_lines.iter().map(|l| l.trim_end().to_string()).collect::<Vec<_>>(), CitationOutcome::Exempted(why))
+        }
+        None => {
+            let text = joined.trim_matches(|c| c == '"' || c == '\u{201c}' || c == '\u{201d}').trim().to_string();
+            (spec_line.clone(), vec![format!("> \"{text}\"")], CitationOutcome::Normalised)
+        }
+    };
+
+    // Everything that is neither the pointer nor the run, split at the
+    // earlier of the two: what came before stays before, the rest follows.
+    let cut = spec_at.min(run_start);
+    let mut before: Vec<&str> = vec![];
+    let mut after: Vec<&str> = vec![];
+    for (j, l) in lines.iter().enumerate() {
+        if j == spec_at || (run_start..run_end).contains(&j) {
+            continue;
+        }
+        if j < cut { before.push(l) } else { after.push(l) }
+    }
+    let trim_blank = |v: &[&str]| -> Vec<String> {
+        let s = v.iter().position(|l| !l.trim().is_empty()).unwrap_or(v.len());
+        let e = v.iter().rposition(|l| !l.trim().is_empty()).map(|p| p + 1).unwrap_or(s);
+        v[s..e].iter().map(|l| l.trim_end().to_string()).collect()
+    };
+    let before = trim_blank(&before);
+    let after = trim_blank(&after);
+
+    let mut out: Vec<String> = vec![];
+    if !before.is_empty() {
+        out.extend(before);
+        out.push(String::new());
+    }
+    out.push(new_spec);
+    out.push(String::new());
+    out.extend(new_block);
+    if !after.is_empty() {
+        out.push(String::new());
+        out.extend(after);
+    }
+    (out.join("\n"), outcome)
+}
+
+/// A blockquote that is code rather than a sentence: SQL, a comment
+/// marker, or a fence. A quote of code is not a quote of the requirement.
+fn looks_like_code(s: &str) -> bool {
+    let t = s.trim_start();
+    if t.starts_with("--") || t.contains("```") {
+        return true;
+    }
+    let first = t.split_whitespace().next().unwrap_or("").to_uppercase();
+    matches!(
+        first.as_str(),
+        "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "EXEC" | "DECLARE" | "WITH"
+    )
 }
 
 pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, TransformReport) {
@@ -621,6 +765,8 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                 // counts cases whose content actually changed, and that is
                 // the number the report gives for those ops.
                 let mut modified = 0usize;
+                let (mut normalised, mut exempted, mut unchanged, mut by_hand) =
+                    (0usize, 0usize, 0usize, 0usize);
                 for (i, c) in cases.iter_mut().enumerate() {
                     if !operation.filter.matches_at(c, i) {
                         continue;
@@ -633,6 +779,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             | Op::ReplaceInNotes { .. }
                             | Op::RemoveStepMatching(_)
                             | Op::SplitStep { .. }
+                            | Op::NormaliseCitations
                     )
                     .then(|| c.clone());
                     match other {
@@ -723,6 +870,27 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             }
                             c.steps = rebuilt;
                         }
+                        Op::NormaliseCitations => {
+                            let (text, outcome) = normalise_citation_notes(&c.reviewer_notes);
+                            match &outcome {
+                                CitationOutcome::Normalised => normalised += 1,
+                                CitationOutcome::Exempted(why) => {
+                                    exempted += 1;
+                                    report.warnings.push(format!(
+                                        "'{}': the blockquote is a {why} - the pointer now carries the \
+                                         exemption and the block was kept beneath it; fold it into \
+                                         prose if you would rather.",
+                                        c.title
+                                    ));
+                                }
+                                CitationOutcome::Unchanged => unchanged += 1,
+                                CitationOutcome::ByHand(why) => {
+                                    by_hand += 1;
+                                    report.warnings.push(format!("'{}': {why}.", c.title));
+                                }
+                            }
+                            c.reviewer_notes = text;
+                        }
                         Op::SortBy(_)
                         | Op::GroupBy(_)
                         | Op::Dedupe
@@ -746,7 +914,12 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         | Op::RemoveStepMatching(_)
                         | Op::SplitStep { .. }
                 );
-                if find_driven {
+                if matches!(other, Op::NormaliseCitations) {
+                    report.applied.push(format!(
+                        "Normalised citations: {normalised} normalised, {exempted} exempted, \
+                         {unchanged} unchanged, {by_hand} left for hand."
+                    ));
+                } else if find_driven {
                     report
                         .applied
                         .push(format!("{} modified {modified} case(s).", describe(other)));
@@ -815,6 +988,7 @@ fn describe(op: &Op) -> String {
         }
         Op::RemoveCases => "Removed cases".to_string(),
         Op::InsertCases { cases, .. } => format!("Inserted {} case(s)", cases.len()),
+        Op::NormaliseCitations => "Normalised citations".to_string(),
     }
 }
 
@@ -832,7 +1006,7 @@ fn known_keys(op_name: &str) -> &'static [&'static str] {
         "prepend_step" | "append_step" => &["op", "where", "action", "expected"],
         "remove_step_matching" => &["op", "where", "value", "find", "action"],
         "split_step" => &["op", "where", "value", "find", "into"],
-        "remove_cases" | "dedupe" => &["op", "where"],
+        "remove_cases" | "dedupe" | "normalise_citations" => &["op", "where"],
         "insert_cases" => &["op", "where", "cases", "at_index", "before", "after"],
         _ => &["op", "where"],
     }
