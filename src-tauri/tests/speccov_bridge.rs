@@ -209,9 +209,10 @@ async fn merge_preserves_order_and_reports_per_file_counts() {
     .unwrap();
     std::fs::write(&slice_b, serde_json::json!([case_json("Case B1")]).to_string()).unwrap();
     let output_path = dir.path().join("merged.json");
+    let paths = vec![slice_a.to_string_lossy().to_string(), slice_b.to_string_lossy().to_string()];
 
     let body = serde_json::json!({
-        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "paths": paths,
         "output_path": output_path.to_string_lossy(),
     })
     .to_string();
@@ -235,6 +236,16 @@ async fn merge_preserves_order_and_reports_per_file_counts() {
         .map(|c| c["title"].as_str().unwrap())
         .collect();
     assert_eq!(titles, vec!["Case A1", "Case A2", "Case B1"], "{written}");
+
+    // Round 8 §11.4: the response names the slices it consumed as
+    // superseded, and confirms it deleted nothing - removal stays a human
+    // action.
+    let superseded = v["superseded"].as_array().expect("the consumed slices are named");
+    assert_eq!(superseded.len(), 2, "{body}");
+    assert!(v["note"].as_str().unwrap_or_default().contains("safe to remove"), "{body}");
+    for p in &paths {
+        assert!(std::path::Path::new(p).exists(), "the tool deletes nothing: {p}");
+    }
 }
 
 /// A slice that cannot be read fails the WHOLE merge, naming the path -

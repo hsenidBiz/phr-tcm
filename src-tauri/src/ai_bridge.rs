@@ -1146,6 +1146,12 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
             "cases": merged.len(),
             "per_file": per_file,
             "warnings": warnings,
+            "superseded": req.paths,
+            "note": format!(
+                "The {} slice file(s) above are now superseded by {} and safe to remove from .test-cases - they are importable and id-less, and the importer will happily offer them.",
+                req.paths.len(),
+                req.output_path
+            ),
         })
         .to_string(),
     )
