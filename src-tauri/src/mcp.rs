@@ -83,12 +83,12 @@ fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
 /// that then say "sign in first".
 fn disabled(call: BridgeCall) -> Vec<String> {
     let Ok((status, body)) = call("GET", "/tools", "") else {
-        return vec![];
+        return crate::ai_tools::effective_disabled(&[]);
     };
     if status != 200 {
-        return vec![];
+        return crate::ai_tools::effective_disabled(&[]);
     }
-    serde_json::from_str::<serde_json::Value>(&body)
+    let list: Vec<String> = serde_json::from_str::<serde_json::Value>(&body)
         .ok()
         .and_then(|v| v["disabled"].as_array().cloned())
         .map(|a| {
@@ -96,7 +96,8 @@ fn disabled(call: BridgeCall) -> Vec<String> {
                 .filter_map(|n| n.as_str().map(str::to_string))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    crate::ai_tools::effective_disabled(&list)
 }
 
 fn tools_list(disabled: Vec<String>) -> serde_json::Value {
@@ -265,12 +266,18 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     if disabled(call).iter().any(|d| d == name) {
+        let text = if crate::ai_tools::HIDDEN_TOOLS.contains(&name) {
+            format!("The `{name}` tool is not available.")
+        } else {
+            format!(
+                "The `{name}` tool is switched off in Test Case Manager. \
+                 Turn it back on in the app's AI Bridge tab if you need it."
+            )
+        };
         return serde_json::json!({
             "content": [{
                 "type": "text",
-                "text": format!(
-                    "The `{name}` tool is switched off in Test Case Manager.                      Turn it back on in the app's AI Bridge tab if you need it."
-                ),
+                "text": text,
             }],
             "isError": true,
         });

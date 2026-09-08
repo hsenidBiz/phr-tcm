@@ -20,7 +20,7 @@ import {
   loadDbConfig,
   saveDbConfig,
 } from "../lib/dbServer";
-import { loadDisabledTools, MCP_TOOLS, saveDisabledTools, toggleTool } from "../lib/mcpTools";
+import { isCoreTool, loadDisabledTools, saveDisabledTools, toggleTool, visibleTools } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import {
   addRepository,
@@ -136,6 +136,7 @@ export default function AiBridge() {
 
   // Tools the user has switched off; App re-pushes these to the bridge.
   const [disabled, setDisabled] = useState<string[]>(loadDisabledTools);
+  const visible = visibleTools();
   // The company's database MCP server. Settings persist locally so a
   // second editor can be registered without retyping the connection
   // string - see lib/dbServer.ts for why that is acceptable here.
@@ -546,29 +547,36 @@ export default function AiBridge() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-text">Tools an assistant may use</h2>
           <span className="text-xs text-faint">
-            {MCP_TOOLS.length - disabled.length} of {MCP_TOOLS.length} on
+            {visible.length - disabled.length} of {visible.length} on
           </span>
         </div>
         <p className="text-xs text-muted">
-          Switch a tool off to keep it out of an assistant's reach. It disappears from
-          the tool list on their next request, and a call to it is refused even if they
-          cached the old list. Applies to this app's tools only.
+          Switch a tool off to keep it out of an assistant's reach. The five marked
+          always on cannot be switched off - they are what makes the assistant useful
+          at all.
         </p>
         <ul className="space-y-1.5">
-          {MCP_TOOLS.map((t) => {
-            const on = !disabled.includes(t.name);
+          {visible.map((t) => {
+            const core = isCoreTool(t.name);
+            const on = core || !disabled.includes(t.name);
             return (
               <li key={t.name} className="flex items-start gap-2">
-                <Switch
-                  checked={on}
-                  ariaLabel={t.name}
-                  onCheckedChange={() => {
-                    const next = toggleTool(disabled, t.name);
-                    setDisabled(next);
-                    saveDisabledTools(next);
-                  }}
-                  className="mt-0.5"
-                />
+                {core ? (
+                  <span className="mt-0.5 w-9 shrink-0 text-center text-[10px] uppercase tracking-wide text-faint">
+                    always on
+                  </span>
+                ) : (
+                  <Switch
+                    checked={on}
+                    ariaLabel={t.name}
+                    onCheckedChange={() => {
+                      const next = toggleTool(disabled, t.name);
+                      setDisabled(next);
+                      saveDisabledTools(next);
+                    }}
+                    className="mt-0.5"
+                  />
+                )}
                 <span className="min-w-0 flex-1">
                   <span className={cn("id-mono text-xs", on ? "text-text" : "text-faint")}>
                     {t.name}
@@ -931,16 +939,6 @@ export default function AiBridge() {
             slice files of a fanned-out draft into one file through the real
             importer, with each slice's warnings labelled by the file they came
             from.
-          </li>
-          <li>
-            <code className="id-mono text-text">get_autorun_guide</code> — how to
-            write an Auto Run browser script: the actions the runner understands
-            and where assertions are allowed to come from.
-          </li>
-          <li>
-            <code className="id-mono text-text">save_autorun_script</code> — saves
-            browser scripts for a PBI's cases so Auto Run can drive them; one call
-            covers the whole set, saved locally, all-or-nothing.
           </li>
           <li>
             <code className="id-mono text-text">search_pbis</code> — finds the right

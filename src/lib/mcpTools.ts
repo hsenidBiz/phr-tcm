@@ -38,12 +38,27 @@ export const MCP_TOOLS: McpToolInfo[] = [
   { name: "get_wiki_page", summary: "Read a wiki page found by search_wiki." },
 ];
 
+/** Mirrors ai_tools.rs - the Rust side is the one that enforces both. */
+export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_test_cases", "check_spec_coverage", "transform_cases"] as const;
+export const HIDDEN_TOOLS = ["get_autorun_guide", "save_autorun_script"] as const;
+
+export function isCoreTool(name: string): boolean {
+  return (CORE_TOOLS as readonly string[]).includes(name);
+}
+
+/** The rows the AI Bridge tab renders: everything but the hidden two. */
+export function visibleTools(): McpToolInfo[] {
+  return MCP_TOOLS.filter((t) => !(HIDDEN_TOOLS as readonly string[]).includes(t.name));
+}
+
 export function loadDisabledTools(): string[] {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((t) => typeof t === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((t) => typeof t === "string" && !isCoreTool(t) && !(HIDDEN_TOOLS as readonly string[]).includes(t))
+      : [];
   } catch {
     return [];
   }
@@ -90,6 +105,7 @@ export function disabledToolsSnapshot(): string[] {
 }
 
 export function toggleTool(disabled: string[], name: string): string[] {
+  if (isCoreTool(name)) return disabled;
   return disabled.includes(name)
     ? disabled.filter((n) => n !== name)
     : [...disabled, name];

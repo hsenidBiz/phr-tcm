@@ -590,3 +590,19 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
     assert_eq!(first, "D:/repo/.claude/commands/tcm/write.md");
     assert!(files[0].1.contains(COMMAND_MARKER), "still ours to remove later");
 }
+
+use v2_lib::ai_tools::{effective_disabled, CORE_TOOLS, HIDDEN_TOOLS};
+
+/// The policy: two tools are never offered (no way back on), five can
+/// never be switched off - whatever the frontend's list says.
+#[test]
+fn the_effective_disabled_set_hides_autorun_and_protects_the_core() {
+    assert_eq!(HIDDEN_TOOLS, ["get_autorun_guide", "save_autorun_script"]);
+    assert_eq!(
+        CORE_TOOLS,
+        ["begin_test_case_writing", "get_writing_guide", "get_test_cases", "check_spec_coverage", "transform_cases"]
+    );
+    let got = effective_disabled(&["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()]);
+    assert_eq!(got, vec!["get_autorun_guide", "save_autorun_script", "search_wiki"], "hidden first, core dropped, no duplicates");
+    assert_eq!(effective_disabled(&[]), vec!["get_autorun_guide", "save_autorun_script"]);
+}

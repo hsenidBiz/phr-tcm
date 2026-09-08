@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "sonner";
 import AiBridge from "./AiBridge";
@@ -719,4 +719,22 @@ test("picking a preset re-registers the DB server where it is registered, then s
   await waitFor(() => expect(registered).toHaveLength(1));
   expect(registered[0]).toEqual({ id: "vscode", conn: "Server=qa;Database=b;User Id=ro;" });
   expect(await screen.findByText(/coding session may need to be restarted/)).toBeInTheDocument();
+});
+
+test("the tool list shows core tools without a switch and never the autorun tools", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+  await screen.findByText("Tools an assistant may use");
+  const toolSection = screen.getByText("Tools an assistant may use").closest("section")!;
+  expect(screen.queryByText("get_autorun_guide")).not.toBeInTheDocument();
+  expect(screen.queryByText("save_autorun_script")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("begin_test_case_writing")).not.toBeInTheDocument();
+  expect(within(toolSection).getByText("begin_test_case_writing")).toBeInTheDocument();
+  expect(screen.getAllByText("always on").length).toBe(5);
+  expect(screen.getByLabelText("get_tags")).toBeInTheDocument();
 });

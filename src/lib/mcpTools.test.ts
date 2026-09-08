@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "vitest";
-import { MCP_TOOLS, toggleTool } from "./mcpTools";
+import { CORE_TOOLS, HIDDEN_TOOLS, loadDisabledTools, MCP_TOOLS, toggleTool, visibleTools } from "./mcpTools";
 
 /**
  * The toggle list is a hand-written mirror of `mcp.rs`. If the two drift, a
@@ -28,7 +28,19 @@ test("every tool carries a summary the settings screen can show", () => {
 });
 
 test("toggling is its own inverse", () => {
-  const once = toggleTool([], "get_test_cases");
-  expect(once).toEqual(["get_test_cases"]);
-  expect(toggleTool(once, "get_test_cases")).toEqual([]);
+  const once = toggleTool([], "search_wiki");
+  expect(once).toEqual(["search_wiki"]);
+  expect(toggleTool(once, "search_wiki")).toEqual([]);
+});
+
+test("core tools cannot be toggled and hidden tools are not offered", () => {
+  for (const name of CORE_TOOLS) expect(toggleTool([], name)).toEqual([]);
+  expect(visibleTools().map((t) => t.name)).not.toEqual(expect.arrayContaining([...HIDDEN_TOOLS]));
+  expect(visibleTools().map((t) => t.name)).toEqual(expect.arrayContaining([...CORE_TOOLS]));
+});
+
+test("a saved list naming a core tool is ignored on load", () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_test_cases", "search_wiki"]));
+  expect(loadDisabledTools()).toEqual(["search_wiki"]);
+  localStorage.clear();
 });
