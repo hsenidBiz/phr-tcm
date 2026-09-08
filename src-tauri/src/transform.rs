@@ -186,6 +186,19 @@ fn str_of(v: &serde_json::Value, key: &str) -> String {
     v[key].as_str().unwrap_or_default().to_string()
 }
 
+/// Shared by every `replace_in_*` op: how many times `find` occurs in
+/// `field` (exact, case-sensitive), and whether `field` has NO exact hit
+/// but does have one once case is ignored - a capitalisation variant the
+/// replace will silently skip. Callers OR the bool across the fields (and,
+/// for steps, across a case's steps) and count `variants` at most once per
+/// case - see review of round 8 §10.
+fn count_hits(field: &str, find: &str) -> (usize, bool) {
+    let occurrences = field.matches(find).count();
+    let variant_only =
+        !field.contains(find) && field.to_lowercase().contains(&find.to_lowercase());
+    (occurrences, variant_only)
+}
+
 /// A string the caller MUST have written, distinguishing "absent" from
 /// "deliberately empty".
 ///
@@ -819,19 +832,17 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::SetPreconditions(v) => c.preconditions = v.clone(),
                         Op::SetReviewerNotes(v) => c.reviewer_notes = v.clone(),
                         Op::ReplaceInTitle { find, replace } => {
-                            occurrences += c.title.matches(find.as_str()).count();
-                            if !c.title.contains(find.as_str())
-                                && c.title.to_lowercase().contains(&find.to_lowercase())
-                            {
+                            let (hits, variant) = count_hits(&c.title, find.as_str());
+                            occurrences += hits;
+                            if variant {
                                 variants += 1;
                             }
                             c.title = c.title.replace(find.as_str(), replace);
                         }
                         Op::ReplaceInNotes { find, replace } => {
-                            occurrences += c.reviewer_notes.matches(find.as_str()).count();
-                            if !c.reviewer_notes.contains(find.as_str())
-                                && c.reviewer_notes.to_lowercase().contains(&find.to_lowercase())
-                            {
+                            let (hits, variant) = count_hits(&c.reviewer_notes, find.as_str());
+                            occurrences += hits;
+                            if variant {
                                 variants += 1;
                             }
                             in_quotes += c
@@ -845,25 +856,25 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::PrefixTitle(v) => c.title = format!("{v}{}", c.title),
                         Op::SuffixTitle(v) => c.title = format!("{}{v}", c.title),
                         Op::ReplaceInSteps { find, replace } => {
+                            let mut case_variant = false;
                             for s in c.steps.iter_mut() {
-                                occurrences += s.action.matches(find.as_str()).count();
-                                occurrences += s.expected.matches(find.as_str()).count();
-                                if (!s.action.contains(find.as_str())
-                                    && s.action.to_lowercase().contains(&find.to_lowercase()))
-                                    || (!s.expected.contains(find.as_str())
-                                        && s.expected.to_lowercase().contains(&find.to_lowercase()))
-                                {
-                                    variants += 1;
-                                }
+                                let (action_hits, action_variant) =
+                                    count_hits(&s.action, find.as_str());
+                                let (expected_hits, expected_variant) =
+                                    count_hits(&s.expected, find.as_str());
+                                occurrences += action_hits + expected_hits;
+                                case_variant |= action_variant || expected_variant;
                                 s.action = s.action.replace(find.as_str(), replace);
                                 s.expected = s.expected.replace(find.as_str(), replace);
                             }
+                            if case_variant {
+                                variants += 1;
+                            }
                         }
                         Op::ReplaceInPreconditions { find, replace } => {
-                            occurrences += c.preconditions.matches(find.as_str()).count();
-                            if !c.preconditions.contains(find.as_str())
-                                && c.preconditions.to_lowercase().contains(&find.to_lowercase())
-                            {
+                            let (hits, variant) = count_hits(&c.preconditions, find.as_str());
+                            occurrences += hits;
+                            if variant {
                                 variants += 1;
                             }
                             c.preconditions = c.preconditions.replace(find.as_str(), replace);

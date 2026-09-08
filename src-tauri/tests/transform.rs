@@ -490,6 +490,33 @@ fn replace_in_ops_replace_every_occurrence_and_report_the_count() {
     );
 }
 
+/// Review of round 8 §10: `replace_in_steps` counted `variants` once per
+/// offending STEP, not once per case, so a case with two case-variant-only
+/// steps was reported as "2 case(s)" - contradicting the warning's own
+/// text. A case with several such steps is still one case.
+#[test]
+fn replace_in_steps_counts_a_case_with_several_variant_steps_once() {
+    let mut two_step_variant = case("Two-step case", vec![
+        step("appraisee opens the form."),
+        step("appraisee saves the form."),
+    ]);
+    two_step_variant.steps[0].expected = "It happens.".into();
+    let exact_hit = case("Exact case", vec![step("Appraisee opens the form.")]);
+    let cases = vec![two_step_variant, exact_hit];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "replace_in_steps", "find": "Appraisee", "replace": "Employee" },
+    ]))
+    .unwrap();
+    let (_out, report) = apply(cases, &ops);
+    let variant_warnings: Vec<&String> = report
+        .warnings
+        .iter()
+        .filter(|w| w.contains("different capitalisation"))
+        .collect();
+    assert_eq!(variant_warnings.len(), 1, "{:?}", report.warnings);
+    assert!(variant_warnings[0].contains("1 case"), "{:?}", variant_warnings);
+}
+
 #[test]
 fn replace_in_preconditions_and_set_comment_exist() {
     let mut c = noted("A", "n");
