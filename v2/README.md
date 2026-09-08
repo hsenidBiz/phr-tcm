@@ -7,9 +7,9 @@ DevOps test cases against a Product Backlog Item (PBI), plus a lightweight
 Built with **Tauri 2 + Rust + React/TypeScript**. Signs in with your own
 Microsoft account; ships and auto-updates via Velopack.
 
-> Internal tool. Current version: **1.7.1**. This is the **primary product**
-> since the 2026-07-12 cutover; the PyQt5 v1 (repo root) is in feature freeze
-> and prompts its users to upgrade.
+> Internal tool. The version lives in `src-tauri/tauri.conf.json`,
+> `src-tauri/Cargo.toml` and `src/lib/changelog.ts`, and the release script
+> refuses to ship unless all three agree.
 
 ---
 
@@ -55,7 +55,7 @@ test count.
   or tag; the header shows *matched / total*.
 - **Bulk edit** selected cases (status, module, tags add/replace,
   preconditions) — titles and steps are never touched.
-- **Group by title** (v1 smart grouping — shared delimiter/word prefixes),
+- **Group by title** (smart grouping by shared delimiter/word prefixes),
   refresh, and view/export the selection. Clicking a selected case again
   deselects it, and expanded/collapsed groups are remembered across sessions.
 
@@ -143,7 +143,7 @@ test count.
 ## Security model
 
 The app talks to Azure DevOps with your credentials, so it is deliberately
-conservative — the same invariants as v1, now enforced structurally:
+conservative, and the invariants are enforced structurally:
 
 - **One DELETE, and it is permanent.** Every file in the Rust client is
   scanned and fails the build if it issues a DELETE — with a single
