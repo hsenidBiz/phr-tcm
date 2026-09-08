@@ -55,3 +55,6 @@ v2/Releases/
 
 # Superpowers scratch: SDD ledgers, review packages, rehearsal installers.
 .superpowers/
+
+# Local git worktrees (superpowers)
+.worktrees/
