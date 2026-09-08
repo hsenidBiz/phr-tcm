@@ -6,8 +6,5 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
-    // Playwright owns visual/ (npm run visual); vitest must not try to
-    // load @playwright/test specs - that fails the release gate.
-    exclude: ["**/node_modules/**", "visual/**"],
   },
 });

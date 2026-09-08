@@ -8,9 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "tauri": "tauri",
-    "visual": "playwright test",
-    "visual:update": "playwright test --update-snapshots"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.1.7",
@@ -45,7 +43,6 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.0",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

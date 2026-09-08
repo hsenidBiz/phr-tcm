@@ -17,10 +17,6 @@ src-tauri/target/
 # Velopack local staging (scripts/pack.ps1 writes it, release-v2.ps1 uploads it)
 Releases/
 
-# Playwright visual-regression artifacts (the goldens in visual/ ARE committed)
-test-results/
-playwright-report/
-
 # IDE / tool metadata
 .serena/
 .idea/
