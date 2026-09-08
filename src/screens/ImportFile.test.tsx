@@ -572,7 +572,7 @@ test("a picked file is copied into the repo's .test-cases and imported from ther
     if (cmd === "plugin:dialog|open") return "C:\\Downloads\\cases.json";
     if (cmd === "copy_into_cases") {
       copyArgs = args;
-      return "D:\\repo\\.test-cases\\cases.json";
+      return { path: "D:\\repo\\.test-cases\\cases.json", displaced: null };
     }
     if (cmd === "parse_import_file") {
       parsed.push((args as { path: string }).path);
@@ -611,7 +611,7 @@ test("copying on import stops watching the original file", async () => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
     if (cmd === "plugin:dialog|open") return "C:\\Downloads\\cases.json";
-    if (cmd === "copy_into_cases") return "D:\\repo\\.test-cases\\cases.json";
+    if (cmd === "copy_into_cases") return { path: "D:\\repo\\.test-cases\\cases.json", displaced: null };
     if (cmd === "parse_import_file") return { cases: [oneCase], warnings: [] };
     if (cmd === "file_stamp") return "abc";
     if (cmd === "read_general_comment") return "";
@@ -635,6 +635,30 @@ test("copying on import stops watching the original file", async () => {
     ]);
   });
   expect(unwatched).toContain("C:\\Downloads\\cases.json");
+});
+
+/// Round 8 §11: a re-pick with different content replaces the copy the app
+/// follows, and the toast says where the old one went.
+test("a re-picked file with new content replaces the copy and says so", async () => {
+  localStorage.setItem("tcm-v2-working-dir", "D:\\repo");
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:\\Downloads\\cases.json";
+    if (cmd === "copy_into_cases")
+      return { path: "D:\\repo\\.test-cases\\cases.json", displaced: "D:\\repo\\.test-cases\\.history\\cases.20260908-101500.json" };
+    if (cmd === "parse_import_file") return { cases: [oneCase], warnings: [] };
+    if (cmd === "file_stamp") return "abc";
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "watch_file") return null;
+    if (cmd === "unwatch_all_files") return null;
+    return [];
+  });
+  renderScreen();
+  render(<Toaster />);
+  fireEvent.click(await screen.findByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Copied case");
+  expect(await screen.findByText(/previous one is in \.history/)).toBeInTheDocument();
 });
 
 test("without a working repository the picked file is imported where it is", async () => {

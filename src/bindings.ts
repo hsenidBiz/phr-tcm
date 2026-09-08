@@ -487,9 +487,12 @@ export const commands = {
 	ensureCasesDir: (root: string) => typedError<string, string>(__TAURI_INVOKE("ensure_cases_dir", { root })),
 	/**
 	 *  Copy a picked JSON file into `<root>/.test-cases` (a file already there
-	 *  is returned as is) and return the path the app should import from.
+	 *  is returned as is) and return the path the app should import from. A
+	 *  different file already under that name is replaced - the pick is the
+	 *  user's statement of intent - and the copy it displaces moves to
+	 *  `.test-cases/.history`, never deleted.
 	 */
-	copyIntoCases: (root: string, source: string) => typedError<string, string>(__TAURI_INVOKE("copy_into_cases", { root, source })),
+	copyIntoCases: (root: string, source: string) => typedError<CopiedIn, string>(__TAURI_INVOKE("copy_into_cases", { root, source })),
 };
 
 /** Events */
@@ -657,6 +660,16 @@ export type CaseScript = {
 	case_id: number,
 	title: string,
 	steps: StepScript[],
+};
+
+/**  Where a picked file landed, and where the copy it replaced went. */
+export type CopiedIn = {
+	path: string,
+	/**
+	 *  Set when a different file of the same name was already there - it
+	 *  now lives under `.test-cases/.history`.
+	 */
+	displaced: string | null,
 };
 
 export type CreatedItem = {

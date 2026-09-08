@@ -53,41 +53,59 @@ pub fn is_inside(dir: &Path, path: &Path) -> bool {
     p == d || p.starts_with(&format!("{d}\\"))
 }
 
-/// Copy `source` into the cases folder and return where it landed. A
-/// file already inside is returned as is. Never overwrites: identical
-/// bytes reuse the existing file, different bytes take `name-2.json`,
-/// `name-3.json`, ...
-pub fn copy_into_cases(root: &Path, source: &Path) -> Result<PathBuf, String> {
+/// Copy `source` into the cases folder and return where it landed, plus
+/// where anything it displaced went. A file already inside is returned as
+/// is; identical bytes reuse the existing file.
+///
+/// Different bytes under the same name REPLACE the file - the pick is the
+/// user's statement of which content they want - and the previous copy
+/// moves to `.history/<stem>.<stamp>.json`. Nothing is ever deleted.
+///
+/// Round 8 §11: this used to refuse to overwrite and write `name-2.json`,
+/// `name-3.json` instead, which kept the OLDEST bytes under the obvious
+/// name. On a set carrying work item ids, importing that file silently
+/// reverted fifteen corrected cases in Azure DevOps. Safety was the intent;
+/// the naming had it backwards.
+pub fn copy_into_cases(root: &Path, source: &Path) -> Result<(PathBuf, Option<PathBuf>), String> {
     let dir = ensure_cases_dir(root)?;
     if is_inside(&dir, source) {
-        return Ok(source.to_path_buf());
+        return Ok((source.to_path_buf(), None));
     }
     let name = source
         .file_name()
         .ok_or_else(|| format!("not a file: {}", source.display()))?;
     let bytes =
         std::fs::read(source).map_err(|e| format!("could not read {}: {e}", source.display()))?;
-    let stem = Path::new(name)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "test-cases".to_string());
-    let ext = Path::new(name)
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default();
+    let target = dir.join(name);
+    let displaced = match std::fs::read(&target) {
+        Ok(existing) if existing == bytes => return Ok((target, None)),
+        Ok(_) => Some(displace(&dir, &target)?),
+        Err(_) => None,
+    };
+    std::fs::write(&target, &bytes)
+        .map_err(|e| format!("could not write {}: {e}", target.display()))?;
+    Ok((target, displaced))
+}
+
+/// Move `target` into `.history` under a stamped name and return the new
+/// path. A clash within the same second takes `-2`, `-3`, ...
+fn displace(dir: &Path, target: &Path) -> Result<PathBuf, String> {
+    let history = dir.join(".history");
+    std::fs::create_dir_all(&history)
+        .map_err(|e| format!("could not create {}: {e}", history.display()))?;
+    let stem = target.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "test-cases".into());
+    let ext = target.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let stamp = crate::applog::file_stamp();
     let mut n = 1u32;
     loop {
-        let file = if n == 1 { format!("{stem}{ext}") } else { format!("{stem}-{n}{ext}") };
-        let candidate = dir.join(file);
-        match std::fs::read(&candidate) {
-            Ok(existing) if existing == bytes => return Ok(candidate),
-            Ok(_) => n += 1,
-            Err(_) => {
-                std::fs::write(&candidate, &bytes)
-                    .map_err(|e| format!("could not write {}: {e}", candidate.display()))?;
-                return Ok(candidate);
-            }
+        let file = if n == 1 { format!("{stem}.{stamp}{ext}") } else { format!("{stem}.{stamp}-{n}{ext}") };
+        let candidate = history.join(file);
+        if !candidate.exists() {
+            std::fs::rename(target, &candidate)
+                .map_err(|e| format!("could not move {} aside: {e}", target.display()))?;
+            return Ok(candidate);
         }
+        n += 1;
     }
 }
 
