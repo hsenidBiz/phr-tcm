@@ -5,6 +5,7 @@
 //! screen.
 
 use v2_lib::ai_bridge::{route, BridgeContext};
+use v2_lib::speccov::{bare_citation_hint, has_blockquote};
 
 struct TempDir(std::path::PathBuf);
 
@@ -497,4 +498,14 @@ async fn an_output_path_outside_the_cases_folder_is_refused() {
     assert_eq!(status, 400, "{out}");
     assert!(out.contains(".test-cases"), "the error names the folder: {out}");
     assert!(!outside.exists(), "a refused merge writes nothing: {out}");
+}
+
+/// Round 8 §4: with a blockquote ABOVE the pointer the finding names
+/// the position; with none it keeps the plain advice.
+#[test]
+fn a_bare_citation_hint_depends_on_whether_a_quote_exists_anywhere() {
+    assert!(has_blockquote("x\n> | a | b |\nSpec: S.md 1"));
+    assert!(!has_blockquote("Spec: S.md 1\nplain prose"));
+    assert!(bare_citation_hint("> \"q\"\nSpec: S.md 1").contains("not where the checker reads it"));
+    assert!(bare_citation_hint("Spec: S.md 1").starts_with("quote the source sentence"));
 }
