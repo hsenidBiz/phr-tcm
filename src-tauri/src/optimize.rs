@@ -21,6 +21,7 @@
 
 use crate::model::TestCase;
 use crate::steps_xml::Step;
+use regex::Regex;
 
 /// Sentence openers that mean "navigate", not "be in this state". These
 /// are what gets promoted out of preconditions into real steps.
@@ -119,6 +120,9 @@ pub struct OptimizeReport {
     pub switches_after: usize,
     pub preamble_steps_added: usize,
     pub expected_trimmed: usize,
+    /// Trailing sentences kept because they carried an assertion - the
+    /// count that used to be inside `expected_trimmed` as damage.
+    pub assertions_kept: usize,
     pub duplicates_removed: usize,
     pub empty_steps_removed: usize,
     /// Anything a human should look at rather than trust blindly.
@@ -290,13 +294,20 @@ fn starts_with_a_bare_copula(s: &str) -> bool {
     COPULAS.iter().any(|c| starts_with_ascii_ci(s, c))
 }
 
-/// Reduce an expected result to the observable outcome. Bails out and
-/// keeps the original whenever trimming would leave nothing useful -
-/// losing information is worse than an untidy sentence.
+/// Reduce an expected result to the observable outcome. See
+/// `clean_expected_keeping` for the one thing it will not cut.
 pub fn clean_expected(raw: &str) -> String {
+    clean_expected_keeping(raw).0
+}
+
+/// As `clean_expected`, but also says whether a trailing sentence survived
+/// because it carried an assertion the first sentence did not. Bails out
+/// and keeps the original whenever trimming would leave nothing useful -
+/// losing information is worse than an untidy sentence.
+pub fn clean_expected_keeping(raw: &str) -> (String, bool) {
     let mut s = squash(raw);
     if s.is_empty() {
-        return s;
+        return (s, false);
     }
 
     // Drop parenthetical and bracketed asides - but only the ones long
@@ -348,11 +359,28 @@ pub fn clean_expected(raw: &str) -> String {
         }
     }
 
-    // One sentence: the outcome. `". "` is not always a sentence end - an
-    // abbreviation carries one too, and "Approx. 30 results are returned"
-    // was being cut down to the single word "Approx".
+    // One sentence: the outcome - unless a later one carries an assertion
+    // the first does not, in which case it is kept too. `". "` is not
+    // always a sentence end - an abbreviation carries one too, and "Approx.
+    // 30 results are returned" was being cut down to the single word
+    // "Approx".
+    let mut kept_assertion = false;
     if let Some(i) = sentence_break(&s) {
-        s = s[..i].to_string();
+        let mut kept = s[..i].to_string();
+        let mut rest = s[i + 2..].trim().to_string();
+        while !rest.is_empty() {
+            let (sentence, after) = match sentence_break(&rest) {
+                Some(j) => (rest[..j].to_string(), rest[j + 2..].trim().to_string()),
+                None => (rest.trim_end_matches('.').to_string(), String::new()),
+            };
+            if !carries_assertion(&kept, &sentence) {
+                break;
+            }
+            kept = format!("{kept}. {sentence}");
+            kept_assertion = true;
+            rest = after;
+        }
+        s = kept;
     }
 
     // Strip the openers that restate the act of testing.
@@ -423,7 +451,7 @@ pub fn clean_expected(raw: &str) -> String {
         .trim()
         .to_string();
     if s.is_empty() {
-        return squash(raw); // trimming ate everything - keep the original
+        return (squash(raw), false); // trimming ate everything - keep the original
     }
     // A closing quote PRECEDED by its own stop (`."`) is terminal
     // punctuation: appending another manufactures the `".` malformed tail
@@ -440,9 +468,50 @@ pub fn clean_expected(raw: &str) -> String {
     // quotation, the trim was wrong by construction - losing a tidy-up is
     // cheaper than shipping a case that asserts half a message.
     if out.matches('"').count() % 2 == 1 {
-        return squash(raw);
+        return (squash(raw), false);
     }
-    out
+    (out, kept_assertion)
+}
+
+/// Does a later sentence still TEST something, or only explain?
+///
+/// Round 8 §8/§12: on two independent drafts, nine trims in ten removed the
+/// sentence carrying the assertion - house style puts the observation first
+/// and the discriminating detail second, so "keep the first sentence" kept
+/// the half that does no testing. A sentence is an assertion when it
+/// negates (the "and nothing else" half of a check) or names something the
+/// kept text does not - a placeholder, a parameter, an identifier, a quoted
+/// value, a number, a proper noun, an ordering. Explanations do none of
+/// those.
+fn carries_assertion(kept: &str, sentence: &str) -> bool {
+    let lowered = sentence.to_lowercase();
+    let negation = Regex::new(r"(?i)\b(no|not|never|neither|none|nothing)\b|n't\b").unwrap();
+    if negation.is_match(&lowered) {
+        return true;
+    }
+    let ordering = Regex::new(r"(?i)\b(first|last|before|after|top|bottom|ascending|descending|order|only)\b").unwrap();
+    if ordering.is_match(&lowered) {
+        return true;
+    }
+    let kept_lower = kept.to_lowercase();
+    let mut first_word = true;
+    for raw in sentence.split_whitespace() {
+        let tok = raw.trim_matches(|c: char| ",.;:()".contains(c));
+        if tok.is_empty() {
+            continue;
+        }
+        let names = tok.starts_with('{')
+            || tok.starts_with('@')
+            || tok.contains('_')
+            || tok.chars().any(|c| c.is_ascii_digit())
+            || tok.starts_with(['\'', '"', '\u{2018}', '\u{201c}'])
+            || (!first_word && tok.chars().next().is_some_and(|c| c.is_uppercase()));
+        first_word = false;
+        if names && !kept_lower.contains(&tok.to_lowercase()) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Everything in preconditions that is NOT navigation - the state a
@@ -777,7 +846,10 @@ pub fn optimize_with(
         for (i, s) in c.steps.iter_mut().enumerate() {
             s.action = squash(&s.action);
             let original = squash(&s.expected);
-            let cleaned_expected = clean_expected(&s.expected);
+            let (cleaned_expected, kept) = clean_expected_keeping(&s.expected);
+            if kept {
+                report.assertions_kept += 1;
+            }
             if cleaned_expected != original {
                 report.expected_trimmed += 1;
                 // A count on its own could not tell "added a full stop"
