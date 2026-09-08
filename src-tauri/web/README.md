@@ -2,7 +2,7 @@
 
 The CSS, HTML and JS for the pages this app opens in a **real browser** —
 the execution report and the test-case view/export. Not the app's own UI:
-that is React, under `v2/src`, and none of it comes through here.
+that is React, under `src`, and none of it comes through here.
 
 These used to live as `r#"..."#` string constants inside the Rust files,
 which meant a third of `import_parser/html.rs` was stylesheet with no

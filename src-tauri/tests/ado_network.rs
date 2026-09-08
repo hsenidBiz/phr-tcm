@@ -62,7 +62,7 @@ fn no_message_can_carry_a_url() {
 #[test]
 fn the_dev_fault_injector_still_quotes_them_exactly() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/dev/faults.ts");
-    let src = std::fs::read_to_string(path).expect("read v2/src/dev/faults.ts");
+    let src = std::fs::read_to_string(path).expect("read src/dev/faults.ts");
     for msg in [
         NET_TIMEOUT,
         NET_UNREACHABLE,

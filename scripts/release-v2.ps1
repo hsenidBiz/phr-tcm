@@ -15,7 +15,7 @@ trap {
         try { $me.ProcessorAffinity = $affinityWas; $me.PriorityClass = $priorWas } catch {}
     }
 }
-$v2 = Split-Path -Parent $PSScriptRoot            # v2/
+$v2 = Split-Path -Parent $PSScriptRoot            # repo root (the app used to live in v2/)
 $repoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }

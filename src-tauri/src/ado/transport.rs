@@ -43,7 +43,7 @@ fn tidy(url: &str) -> String {
 /// These say what to try instead and point at where the detail lives.
 ///
 /// Pinned by `tests/ado_network.rs` (the exact text, and the rule that no
-/// URL may appear here) and mirrored by `v2/src/dev/faults.ts`, which
+/// URL may appear here) and mirrored by `src/dev/faults.ts`, which
 /// replays them to simulate a failure. The test fails if the two drift.
 pub const NET_TIMEOUT: &str =
     "Azure DevOps didn't respond in time. Check your connection and try again. Settings → Logs has the details.";

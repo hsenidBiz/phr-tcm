@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`v2/` is the product: a Tauri 2 desktop app (Rust backend, React 19 +
+This repository is a Tauri 2 desktop app (Rust backend, React 19 +
 TypeScript frontend) for bulk-creating and editing Azure DevOps **Test
 Case** work items against a Product Backlog Item, plus a Work Manager
 board. Users sign in with Microsoft (Entra ID), pick an org/project/PBI,
@@ -12,17 +12,17 @@ build test cases by hand / by importing JSON / by editing existing ones,
 review a queue, then upload them — each linked to the PBI and surfaced on
 the board via a requirement-based test suite.
 
-Read `v2/README.md` for the feature set, security model and architecture.
+Read `README.md` for the feature set, security model and architecture.
 
 **The old PyQt5 app (v1) is frozen on the `v1` branch** and is no longer
-developed. It is not on `master` and takes no further updates; that
+developed. It is not on `main` and takes no further updates; that
 branch's own `CLAUDE.md` still describes it. v1 installs update themselves
 through Velopack from their own public releases repo, so they are
 unaffected by anything here.
 
 ## Commands
 
-All of these run from `v2/`:
+All of these run from the repository root:
 
 ```bash
 npm install                  # install frontend deps
@@ -35,7 +35,7 @@ cd src-tauri && cargo test --tests   # the Rust suite
 ```
 
 **Every Rust test in this crate is an integration test under
-`v2/src-tauri/tests/`** — never a `#[cfg(test)]` module inside `src/`.
+`src-tauri/tests/`** — never a `#[cfg(test)]` module inside `src/`.
 Only integration-test binaries get the Common-Controls v6 manifest link
 args, and a test binary that links tauri dies at startup without them
 (`STATUS_ENTRYPOINT_NOT_FOUND`). See the note at the top of
@@ -45,12 +45,12 @@ args, and a test binary that links tauri dies at startup without them
 Rust command signatures via tauri-specta. Never hand-edit it; change the
 Rust and regenerate.
 
-There is currently **no CI on `master`** — the workflow that existed tested
+There is currently **no CI on `main`** — the workflow that existed tested
 v1 and went with it. The suites above are the gate.
 
 ## Architecture
 
-`v2/README.md` has the full picture. The essentials:
+`README.md` has the full picture. The essentials:
 
 - **Rust owns every secret.** Tokens live in `AuthState` in memory only,
   never persisted, never crossing the IPC boundary. `tests/bindings.rs`
@@ -61,8 +61,8 @@ v1 and went with it. The suites above are the gate.
   and that is a safety invariant, not an accident. Preserve it.
 - **Commands live in `src-tauri/src/commands/`**, one module per area,
   exposed to the frontend through the generated bindings.
-- **Screens live in `v2/src/screens/`**, shared UI in `v2/src/components/`,
-  module-scope stores (`useSyncExternalStore`) in `v2/src/lib/`.
+- **Screens live in `src/screens/`**, shared UI in `src/components/`,
+  module-scope stores (`useSyncExternalStore`) in `src/lib/`.
 - **Updates** come from the public GitHub releases repo, checked at launch
   and hourly. `updater/mod.rs` tries the GitHub API first and the
   `latest/download` mirror second - the comment there explains why that
@@ -74,16 +74,16 @@ v1 and went with it. The suites above are the gate.
   swallowed every click while 655 tests passed, because `fireEvent.click`
   reaches an element a real browser has completely covered. Tests cannot
   catch that class of bug — a manual walk-through can.
-- `v2/src/App.test.tsx` mounts the whole app and is slow; it raises both
+- `src/App.test.tsx` mounts the whole app and is slow; it raises both
   vitest's `testTimeout` and Testing Library's `asyncUtilTimeout`, and it
   still has a documented load-induced flake. One failure that passes on a
   re-run is usually that; two different ones are not.
-- `v2/src/ui-consistency.test.ts` is a gate on this app's own UI
+- `src/ui-consistency.test.ts` is a gate on this app's own UI
   conventions. Never weaken it to make code pass.
 
 ## Important conventions
 
-- **Import/export format** is JSON (`v2/src-tauri/src/import_parser/`). A
+- **Import/export format** is JSON (`src-tauri/src/import_parser/`). A
   populated case id flags an **update** of that exact work item; a blank
   one creates. This is the only reliable way to update — title matching is
   treated as a duplicate warning, never an update.
@@ -93,7 +93,7 @@ v1 and went with it. The suites above are the gate.
 - **Theming.** Colours come from CSS custom properties and Tailwind tokens
   (`text-text`, `bg-surface`, `border-border`, `text-success`…). Never
   hardcode a colour; the consistency gate checks this.
-- **Icons** come from the shared vocabulary in `v2/src/lib/actionIcons.ts`,
+- **Icons** come from the shared vocabulary in `src/lib/actionIcons.ts`,
   named for what the button DOES, not what it looks like.
 - **User-facing errors name no URL.** `reqwest`'s `Display` is `error
   sending request for url (https://dev.azure.com/...?$top=500)` - the
@@ -102,7 +102,7 @@ v1 and went with it. The suites above are the gate.
   (`applog`, which is what a bug report ships) and return one of the
   sentences in `ado/transport.rs` via `network_error`. Each says what to
   try and points at Settings → Logs. `tests/ado_network.rs` enforces it.
-- **Seeing an error state** is what `v2/src/dev/faults.ts` is for: the dev
+- **Seeing an error state** is what `src/dev/faults.ts` is for: the dev
   panel's "Force a failure" arms the next command - or every command - to
   come back as a chosen `AdoError`. It patches the bindings rather than
   raising a toast, so the failure travels the real path and the screen's
@@ -117,13 +117,13 @@ v1 and went with it. The suites above are the gate.
   parses as a pathspec; and a failing cleanup command later in the same
   block aborts it so the commit silently never lands. Confirm with
   `git log -1`.
-- **Releases: run `v2/scripts/release-v2.ps1 -Version X.Y.Z`.** It gates
+- **Releases: run `scripts/release-v2.ps1 -Version X.Y.Z`.** It gates
   (cargo test + vitest + a production build), pushes source **first**,
   builds, packs with Velopack, and publishes to GitHub. Never publish
   without the source pushed.
 - **The version lives in three places** and the release script refuses if
-  they disagree: `v2/src-tauri/tauri.conf.json`, `v2/src-tauri/Cargo.toml`,
-  and a matching entry in `v2/src/lib/changelog.ts`.
+  they disagree: `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
+  and a matching entry in `src/lib/changelog.ts`.
 - **Big modules** (`QueueSection.tsx`, `App.tsx`, `ImportFile.tsx`,
   `Settings.tsx`) are large: Grep for the region, then a bounded Read —
   don't re-read whole files repeatedly.

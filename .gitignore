@@ -1,57 +1,53 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
+# Node
+node_modules/
 dist/
-build/
-Releases/
-*.spec
-# (v1 kept an exception here for its PyInstaller spec; v1 lives on the v1 branch now)
+dist-ssr/
+*.local
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Virtual environments
-.venv/
-venv/
-env/
+# Rust / Tauri
+src-tauri/target/
+
+# Velopack local staging (scripts/pack.ps1 writes it, release-v2.ps1 uploads it)
+Releases/
+
+# Playwright visual-regression artifacts (the goldens in visual/ ARE committed)
+test-results/
+playwright-report/
 
 # IDE / tool metadata
 .serena/
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 *.swp
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
 # OS
 Thumbs.db
 .DS_Store
 
-# App runtime data
-*.log
-
 # Claude Code / MCP tool data.
-# Share project skills (e.g. /release) but keep local settings out of git.
+# Share project skills and the browser launch config; keep local settings out of git.
 .claude/*
 !.claude/skills/
 !.claude/skills/**
+!.claude/launch.json
 .playwright-mcp/
 .tokensave/
 
-# Node-based local tooling (headroom, etc.) — not app source
-node_modules/
-package.json
-package-lock.json
-
 # Local test-authoring scratch (not app source)
 /Test Case Writing/
-
-# Tauri v2 rewrite (v2/)
-v2/node_modules/
-v2/dist/
-v2/src-tauri/target/
-v2/Releases/
-# The global package.json ignore above is for local tooling only - v2's are real source.
-!v2/package.json
-!v2/package-lock.json
 
 # Superpowers scratch: SDD ledgers, review packages, rehearsal installers.
 .superpowers/

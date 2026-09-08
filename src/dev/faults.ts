@@ -24,7 +24,7 @@ import { describeAdoError } from "../lib/ipc";
 
 /**
  * The three network sentences, mirrored from `network_error` in
- * `v2/src-tauri/src/ado/transport.rs`.
+ * `src-tauri/src/ado/transport.rs`.
  *
  * A copy, because the Rust constants cannot be imported here - but not an
  * unguarded one: `v2/src-tauri/tests/ado_network.rs` reads THIS FILE and
