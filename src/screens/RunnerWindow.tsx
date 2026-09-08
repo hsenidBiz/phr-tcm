@@ -763,9 +763,15 @@ export default function RunnerWindow() {
         className="flex select-none items-center gap-2 border-b border-border bg-surface px-3 py-2"
       >
         <span className="pointer-events-none text-sm font-semibold">Runner</span>
-        {/* A suite-scoped session has no PBI - "#0" would name nothing,
-            so the suite's name stands where the id would. */}
-        {session.pbi.id > 0 ? (
+        {/* The case on screen, not the PBI: the tester is looking at ONE
+            work item and this is the number they would quote in a bug or
+            look up in Azure DevOps - the PBI is the main window's context,
+            already in its title. With nothing to run, a suite-scoped
+            session (no PBI, "#0" would name nothing) shows the suite's
+            name instead. */}
+        {current ? (
+          <span className="id-mono text-xs text-faint">#{current.id}</span>
+        ) : session.pbi.id > 0 ? (
           <span className="id-mono text-xs text-faint">#{session.pbi.id}</span>
         ) : (
           <span className="truncate text-xs text-faint">{session.pbi.title}</span>
