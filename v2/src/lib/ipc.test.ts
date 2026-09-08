@@ -41,6 +41,20 @@ test("an html body or an oversized one falls back to the status", () => {
   expect(describeAdoError(http(503, ""))).toBe("Azure DevOps returned HTTP 503.");
 });
 
+/**
+ * The message the user gets for a network failure is written in Rust
+ * (`network_error` in ado/transport.rs) and arrives finished. This branch
+ * used to wrap it in "Network error: " and hand over reqwest's own Display
+ * - "error sending request for url (https://dev.azure.com/...?$top=500)" -
+ * which named the endpoint and told the reader nothing they could act on.
+ */
+test("a network failure is shown as written, with nothing bolted in front", () => {
+  const written =
+    "Can't reach Azure DevOps. Check your internet connection or VPN, then try again. " +
+    "Settings → Logs has the details.";
+  expect(describeAdoError({ kind: "Network", detail: written } as AdoError)).toBe(written);
+});
+
 /** The typed variants are unchanged - they never carried a body. */
 test("the typed errors keep their own wording", () => {
   expect(describeAdoError({ kind: "Unauthorized" } as AdoError)).toMatch(/sign in again/i);

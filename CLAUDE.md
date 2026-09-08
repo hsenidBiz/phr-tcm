@@ -95,6 +95,18 @@ v1 and went with it. The suites above are the gate.
   hardcode a colour; the consistency gate checks this.
 - **Icons** come from the shared vocabulary in `v2/src/lib/actionIcons.ts`,
   named for what the button DOES, not what it looks like.
+- **User-facing errors name no URL.** `reqwest`'s `Display` is `error
+  sending request for url (https://dev.azure.com/...?$top=500)` - the
+  endpoint and its query string, and nothing anyone can act on. Never pass
+  a transport error's `to_string()` to the user: log the raw error
+  (`applog`, which is what a bug report ships) and return one of the
+  sentences in `ado/transport.rs` via `network_error`. Each says what to
+  try and points at Settings → Logs. `tests/ado_network.rs` enforces it.
+- **Seeing an error state** is what `v2/src/dev/faults.ts` is for: the dev
+  panel's "Force a failure" arms the next command - or every command - to
+  come back as a chosen `AdoError`. It patches the bindings rather than
+  raising a toast, so the failure travels the real path and the screen's
+  own handling is what you are looking at.
 
 ## Working conventions (this machine)
 

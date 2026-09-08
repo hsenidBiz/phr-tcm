@@ -34,6 +34,43 @@ fn tidy(url: &str) -> String {
     }
 }
 
+/// The only three sentences a transport failure may show a user.
+///
+/// reqwest's `Display` is `error sending request for url (https://...)`:
+/// the endpoint, its query string, and nothing anyone can act on. That is
+/// also, word for word, what `send` already writes to the log - so putting
+/// it in a toast repeated the log at the one person who cannot use it.
+/// These say what to try instead and point at where the detail lives.
+///
+/// Pinned by `tests/ado_network.rs` (the exact text, and the rule that no
+/// URL may appear here) and mirrored by `v2/src/dev/faults.ts`, which
+/// replays them to simulate a failure. The test fails if the two drift.
+pub const NET_TIMEOUT: &str =
+    "Azure DevOps didn't respond in time. Check your connection and try again. Settings → Logs has the details.";
+pub const NET_UNREACHABLE: &str =
+    "Can't reach Azure DevOps. Check your internet connection or VPN, then try again. Settings → Logs has the details.";
+pub const NET_GENERIC: &str =
+    "The connection to Azure DevOps failed. Try again - restart the app if it keeps happening. Settings → Logs has the details.";
+
+/// Classify a transport failure into something a user can act on.
+///
+/// Deliberately reqwest's typed predicates rather than matching on the
+/// message text: that text is theirs to reword between versions, and a
+/// classifier that quietly stopped recognising timeouts would degrade to
+/// the generic advice with nothing failing to say so.
+pub(crate) fn network_error(e: &reqwest::Error) -> AdoError {
+    AdoError::Network(
+        if e.is_timeout() {
+            NET_TIMEOUT
+        } else if e.is_connect() {
+            NET_UNREACHABLE
+        } else {
+            NET_GENERIC
+        }
+        .to_string(),
+    )
+}
+
 impl AdoClient {
     /// Azure DevOps caps the workitems batch-GET (?ids=) endpoint at 200 ids.
     pub(crate) const WORKITEM_BATCH_SIZE: usize = 200;
@@ -95,7 +132,7 @@ impl AdoClient {
                     "{method} {} failed after {ms} ms: {e}",
                     tidy(url)
                 ));
-                Err(AdoError::Network(e.to_string()))
+                Err(network_error(&e))
             }
         }
     }
@@ -126,7 +163,10 @@ impl AdoClient {
             200..=299 => Ok(resp
                 .bytes()
                 .await
-                .map_err(|e| AdoError::Network(e.to_string()))?
+                .map_err(|e| {
+                    crate::applog::warn(format!("reading {} body failed: {e}", tidy(&url)));
+                    network_error(&e)
+                })?
                 .to_vec()),
             401 => Err(AdoError::Unauthorized),
             403 => Err(AdoError::Forbidden),
@@ -145,7 +185,10 @@ impl AdoClient {
             })
             .await?;
         match resp.status().as_u16() {
-            200..=299 => resp.text().await.map_err(|e| AdoError::Network(e.to_string())),
+            200..=299 => resp.text().await.map_err(|e| {
+                crate::applog::warn(format!("reading {} body failed: {e}", tidy(&url)));
+                network_error(&e)
+            }),
             401 => Err(AdoError::Unauthorized),
             403 => Err(AdoError::Forbidden),
             404 => Err(AdoError::NotFound),
@@ -259,10 +302,16 @@ impl AdoClient {
 
     pub(crate) async fn handle_json(resp: reqwest::Response) -> Result<serde_json::Value, AdoError> {
         match resp.status().as_u16() {
-            200..=299 => resp
-                .json()
-                .await
-                .map_err(|e| AdoError::Network(e.to_string())),
+            200..=299 => {
+                // Taken before `json()` consumes the response - a decode
+                // failure has to name the endpoint whose body we could not
+                // read, and by then the response is gone.
+                let url = tidy(resp.url().as_str());
+                resp.json().await.map_err(|e| {
+                    crate::applog::warn(format!("decoding {url} response failed: {e}"));
+                    network_error(&e)
+                })
+            }
             401 => Err(AdoError::Unauthorized),
             403 => Err(AdoError::Forbidden),
             404 => Err(AdoError::NotFound),

@@ -25,9 +25,19 @@ test("a newer version is offered, not announced as done", () => {
 // has not checked and cannot make, told to exactly the person most likely
 // to be running something stale.
 test("a check that could not run is never reported as up to date", () => {
-  reportUpdateCheck({ ...base, blocked: "Could not reach the update feed: timeout" });
+  reportUpdateCheck({
+    ...base,
+    blocked: "the update server could not be reached. Check your internet connection and try again.",
+  });
   expect(toast.warning).toHaveBeenCalledTimes(1);
-  expect(String(toast.warning.mock.calls[0][0])).toContain("Could not check for updates");
+  const said = String(toast.warning.mock.calls[0][0]);
+  expect(said).toContain("Could not check for updates");
+  // One frame, not two. `resolve` used to add "Could not reach the update
+  // feed: " of its own in front of a raw velopack error, so the finished
+  // toast read "Could not check for updates: Could not reach the update
+  // feed: error sending request for url (https://...)".
+  expect(said).not.toContain("Could not reach the update feed");
+  expect(said).not.toContain("http");
   expect(toast.success).not.toHaveBeenCalled();
 });
 

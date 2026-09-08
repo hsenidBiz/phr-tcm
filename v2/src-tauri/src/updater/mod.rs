@@ -126,7 +126,25 @@ fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
     }
 }
 
+/// A source could not be reached.
+///
+/// Velopack's own error is `error sending request for url (https://...)` -
+/// the feed URL and nothing actionable. It goes to the log, where a bug
+/// report can find it; this is what the person in front of the app gets.
+/// Lowercase because `updateToast.ts` renders it after "Could not check
+/// for updates: ".
+pub const FEED_UNREACHABLE: &str =
+    "the update server could not be reached. Check your internet connection and try again. Settings → Logs has the details.";
+
+/// The feed parsed but named no package. Not a network problem, so it gets
+/// its own wording rather than advice about connections.
+pub const FEED_EMPTY: &str = "the update feed listed no releases.";
+
 /// What one source said when asked.
+///
+/// `Failed` carries USER-FACING prose, not the underlying error - the raw
+/// error is logged at the point it happens, and `resolve` puts this
+/// straight into `blocked`.
 pub enum Attempt {
     Available(Box<UpdateInfo>),
     UpToDate,
@@ -148,11 +166,11 @@ pub fn check(state: &UpdateState) -> UpdateStatus {
             // `resolve` falls through to the next source instead of telling
             // someone whose feed just came back empty that they're up to
             // date, a claim this has not actually verified.
-            Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed("the update feed listed no releases".into()),
+            Ok(UpdateCheck::RemoteIsEmpty) => Attempt::Failed(FEED_EMPTY.into()),
             Ok(_) => Attempt::UpToDate,
             Err(e) => {
                 crate::applog::warn(format!("update check failed via {name}: {e}"));
-                Attempt::Failed(e.to_string())
+                Attempt::Failed(FEED_UNREACHABLE.into())
             }
         };
         let stop = !matches!(a, Attempt::Failed(_));
@@ -187,10 +205,7 @@ pub fn resolve(attempts: Vec<(&'static str, Attempt)>, state: &UpdateState) -> U
         }
     }
     UpdateStatus {
-        blocked: Some(format!(
-            "Could not reach the update feed: {}",
-            last.unwrap_or_else(|| "no source answered".into())
-        )),
+        blocked: Some(last.unwrap_or_else(|| "no source answered.".into())),
         ..UpdateStatus::default()
     }
 }
@@ -309,7 +324,11 @@ fn try_source(
                 .lock()
                 .unwrap()
                 .clone()
-                .ok_or_else(|| Refusal::Failed(format!("no update pending - check first ({e})")))?
+                .ok_or_else(|| {
+                    Refusal::Failed(
+                        "the update could not be started - check for updates again.".into(),
+                    )
+                })?
         }
     };
 
@@ -338,7 +357,12 @@ fn try_source(
     // the loop above - so the join cannot outlive the download.
     let downloaded = um.download_updates(&info, Some(tx));
     let _ = pump.join();
-    downloaded.map_err(|e| Refusal::Failed(format!("could not download {version}: {e}")))?;
+    downloaded.map_err(|e| {
+        crate::applog::warn(format!("downloading {version} failed: {e}"));
+        Refusal::Failed(format!(
+            "version {version} could not be downloaded. Check your internet connection and try again. Settings → Logs has the details."
+        ))
+    })?;
 
     report(Progress { percent: 100, downloaded: total, total });
     // The last thing written before the hand-off: if the next launch is
@@ -353,5 +377,10 @@ fn try_source(
     // the sources rather than specially, because the caller's job is only to
     // say what went wrong.
     um.apply_updates_and_restart(&info.TargetFullRelease)
-        .map_err(|e| Refusal::Failed(format!("could not apply {version}: {e}")))
+        .map_err(|e| {
+            crate::applog::warn(format!("applying {version} failed: {e}"));
+            Refusal::Failed(format!(
+                "version {version} downloaded but could not be installed. Restart the app and try again. Settings → Logs has the details."
+            ))
+        })
 }

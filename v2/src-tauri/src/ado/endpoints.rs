@@ -944,7 +944,10 @@ impl AdoClient {
             .body(bytes)
             .send()
             .await
-            .map_err(|e| AdoError::Network(e.to_string()))?;
+            .map_err(|e| {
+                crate::applog::warn(format!("attachment upload failed to send: {e}"));
+                super::transport::network_error(&e)
+            })?;
         let data = Self::handle_json(resp).await?;
         Ok(data["url"].as_str().unwrap_or_default().to_string())
     }

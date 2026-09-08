@@ -15,6 +15,7 @@ pub use endpoints::{tags_write_ops, RelinkOutcome};
 pub mod deletion;
 pub mod throttle;
 mod transport;
+pub use transport::{NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
 
 use serde::{Deserialize, Serialize};
 

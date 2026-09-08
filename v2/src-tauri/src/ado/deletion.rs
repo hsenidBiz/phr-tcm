@@ -304,7 +304,7 @@ impl AdoClient {
             .await
             .map_err(|e| {
                 crate::applog::error(format!("delete of #{id} failed to send: {e}"));
-                AdoError::Network(e.to_string())
+                super::transport::network_error(&e)
             })?;
         let status = resp.status().as_u16();
         let retry_after = super::transport::retry_after(&resp);

@@ -34,8 +34,12 @@ window.addEventListener("contextmenu", (e) => {
 if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
   const { maybeEnableDemoMode } = await import("./dev/demo");
   maybeEnableDemoMode();
-  // Latency wraps AFTER the demo patches, so real IPC and the demo fakes
-  // both answer through the same configurable delay (DevPanel knob).
+  // Fault injection wraps next, so an injected failure replaces whichever
+  // implementation is live - real IPC or the demo fakes.
+  const { applyDevFaults } = await import("./dev/faults");
+  applyDevFaults();
+  // Latency wraps LAST, so it is the outermost layer: a fake failure
+  // arrives after the fake delay, the order a real one would.
   const { applyDevLatency } = await import("./dev/latency");
   applyDevLatency();
 }

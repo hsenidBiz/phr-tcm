@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Bug, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import type { PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../tour/tourState";
@@ -8,6 +8,16 @@ import { Button } from "../components/ui/button";
 import { SHOW_CHANGELOG_EVENT } from "../lib/changelog";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { isDemoMode, toggleDemoMode } from "./demo";
+import {
+  armFault,
+  disarmFault,
+  faultSnapshot,
+  subscribeFaults,
+  toggleUpdateBlocked,
+  FAULTS,
+  type FaultId,
+  type FaultMode,
+} from "./faults";
 import { latencyMs, setLatencyMs, LATENCY_STEPS } from "./latency";
 
 /** Remembered panel position - by default it sits bottom-left, which covers
@@ -52,6 +62,10 @@ export default function DevPanel({
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [latency, setLatency] = useState(latencyMs);
+  const fault = useSyncExternalStore(subscribeFaults, faultSnapshot);
+  // Which failure the once/always buttons will arm. Separate from what IS
+  // armed: picking a kind must not fire anything by itself.
+  const [faultId, setFaultId] = useState<FaultId>("timeout");
 
   const [pos, setPos] = useState<{ x: number; y: number } | null>(loadPos);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -114,6 +128,8 @@ export default function DevPanel({
     doomed.forEach((k) => localStorage.removeItem(k));
     toast.info(`[dev] cleared ${doomed.length} ${what} key(s) - reload to take effect`);
   };
+
+  const armedLabel = FAULTS.find((f) => f.id === fault.armed?.id)?.label ?? "";
 
   return (
     <div
@@ -178,6 +194,59 @@ export default function DevPanel({
                   {ms === 0 ? "Off" : ms < 1000 ? `${ms}ms` : `${ms / 1000}s`}
                 </Button>
               ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <p className="font-semibold text-text">Force a failure</p>
+            <p className="text-muted">
+              {fault.armed
+                ? `ARMED - ${armedLabel} on ${fault.armed.mode === "once" ? "the next command" : "every command"}.`
+                : fault.fired
+                  ? "Fired - the next command failed. Arm another to repeat."
+                  : "Make commands come back as an error, so failure states are seen instead of imagined."}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {FAULTS.map((f) => (
+                <Button
+                  key={f.id}
+                  size="sm"
+                  variant={faultId === f.id ? "danger" : "outline"}
+                  aria-pressed={faultId === f.id}
+                  onClick={() => setFaultId(f.id)}
+                >
+                  {f.label}
+                </Button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {(["once", "always"] as FaultMode[]).map((mode) => (
+                <Button
+                  key={mode}
+                  size="sm"
+                  variant={fault.armed?.mode === mode ? "danger" : "outline"}
+                  aria-pressed={fault.armed?.mode === mode}
+                  onClick={() => armFault(faultId, mode)}
+                >
+                  {mode === "once" ? "Fail next call" : "Fail every call"}
+                </Button>
+              ))}
+              <Button size="sm" variant="outline" disabled={!fault.armed} onClick={disarmFault}>
+                Stop
+              </Button>
+            </div>
+            {/* Its own switch: an unreachable update feed is a `blocked`
+                field on a SUCCESSFUL check, not a rejected command, so the
+                injector above cannot express it. */}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <Button
+                size="sm"
+                variant={fault.updateBlocked ? "danger" : "outline"}
+                aria-pressed={fault.updateBlocked}
+                onClick={toggleUpdateBlocked}
+              >
+                {fault.updateBlocked ? "Update check blocked" : "Block update check"}
+              </Button>
             </div>
           </div>
 

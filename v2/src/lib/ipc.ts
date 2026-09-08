@@ -39,7 +39,13 @@ export function describeAdoError(e: AdoError): string {
       return `Azure DevOps returned HTTP ${e.detail.status}.`;
     }
     case "Network":
-      return `Network error: ${e.detail}`;
+      // Already a finished, user-facing sentence - see `network_error` in
+      // ado/transport.rs. It used to be reqwest's own Display, which is
+      // "error sending request for url (https://dev.azure.com/...)": the
+      // endpoint and its query string, shown to the one person who can do
+      // nothing with them, while the log two feet away had the same line
+      // plus the timing. Nothing constructs this variant except us.
+      return e.detail;
   }
 }
 
