@@ -14,7 +14,9 @@
 //!    as possible. Groups are then chained nearest-neighbour, so each
 //!    switch that does remain changes as little as possible.
 //! 4. **Expected results are reduced to the outcome** - no restating the
-//!    action, no rationale, no asides.
+//!    action, no rationale, no asides. A later sentence that still asserts
+//!    something - a negation, an ordering, a value the first sentence did
+//!    not name - is kept; only glosses go.
 //!
 //! Everything is a pure function over `Vec<TestCase>`: no I/O, no ADO, no
 //! writes. The AI passes a draft in and gets a draft back.

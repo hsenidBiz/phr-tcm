@@ -82,8 +82,14 @@ pub fn copy_into_cases(root: &Path, source: &Path) -> Result<(PathBuf, Option<Pa
         Ok(_) => Some(displace(&dir, &target)?),
         Err(_) => None,
     };
-    std::fs::write(&target, &bytes)
-        .map_err(|e| format!("could not write {}: {e}", target.display()))?;
+    std::fs::write(&target, &bytes).map_err(|e| match &displaced {
+        Some(d) => format!(
+            "could not write {}: {e}. The previous copy is at {}",
+            target.display(),
+            d.display()
+        ),
+        None => format!("could not write {}: {e}", target.display()),
+    })?;
     Ok((target, displaced))
 }
 

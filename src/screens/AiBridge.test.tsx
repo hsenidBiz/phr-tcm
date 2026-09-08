@@ -726,6 +726,7 @@ test("the tool list shows core tools without a switch and never the autorun tool
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
+    if (cmd === "db_server_defaults") return null;
     return [];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -745,6 +746,7 @@ test("the PHR-X card hides when switched off in Settings, except during the tour
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
+    if (cmd === "db_server_defaults") return null;
     return [];
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

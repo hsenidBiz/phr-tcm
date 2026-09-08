@@ -168,7 +168,7 @@ export default function AiBridge() {
   });
   useEffect(() => {
     const d = dbDefaults.data;
-    if (!d || !d.connection_string?.trim()) return; // no defaults shipped
+    if (!d || !d.connection_string.trim()) return; // no defaults shipped
     if (hasStoredDbConfig()) return;
     // Only replace a still-pristine form, in case typing raced the IPC.
     setDb((cur) => (JSON.stringify(cur) === JSON.stringify(loadDbConfig()) ? { ...d } : cur));

@@ -1,7 +1,8 @@
-//! Velopack auto-update. The app checks the v2 releases repo on launch and
-//! applies updates only when the user asks (restart-to-update), mirroring
-//! v1's non-intrusive update prompt. In dev (not Velopack-installed),
-//! UpdateManager::new fails and everything here quietly reports "no update".
+//! Velopack auto-update. The app checks the company repository's GitHub
+//! Releases on launch and applies updates only when the user asks
+//! (restart-to-update), mirroring v1's non-intrusive update prompt. In dev
+//! (not Velopack-installed), UpdateManager::new fails and everything here
+//! quietly reports "no update".
 
 use std::sync::Mutex;
 use velopack::{sources, UpdateCheck, UpdateInfo, UpdateManager};
@@ -47,8 +48,11 @@ pub fn sources() -> Vec<(&'static str, Box<dyn sources::UpdateSource>)> {
     vec![
         (
             "github api",
-            // No token: the releases repo is public, and this ships to
-            // machines we do not control - there is nothing safe to embed.
+            // No token: hsenidBiz/phr-tcm is public (checked 2026-09-08: gh
+            // repo view --json isPrivate -> false) and MUST stay so - both
+            // sources are this host, so a private repo takes every install
+            // to FEED_UNREACHABLE. This ships to machines we do not
+            // control; there is nothing safe to embed.
             Box::new(sources::GithubSource::new(REPO_URL, None, false)),
         ),
         ("latest/download", Box::new(sources::HttpSource::new(RELEASES_URL))),

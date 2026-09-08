@@ -397,6 +397,17 @@ fn a_quote_above_the_pointer_moves_beneath_it_in_quotation_marks() {
 }
 
 #[test]
+fn a_two_line_quote_above_the_pointer_is_joined_with_a_space() {
+    let notes = "Checks the report identifies the right person.\n\n> first half\n> second half\n\nSpec: R.md General Requirements";
+    let (out, outcome) = normalise_citation_notes(notes);
+    assert!(matches!(outcome, CitationOutcome::Normalised));
+    assert_eq!(
+        out,
+        "Checks the report identifies the right person.\n\nSpec: R.md General Requirements\n\n> \"first half second half\""
+    );
+}
+
+#[test]
 fn a_table_row_becomes_an_exemption_and_the_block_is_kept() {
     let notes = "Checks the four fields.\n\n> | Employee Details | Name, ID |\n\nSpec: R.md Report Design";
     let (out, outcome) = normalise_citation_notes(notes);
@@ -441,7 +452,7 @@ fn two_pointers_or_two_blocks_are_left_for_a_person() {
 }
 
 #[test]
-fn the_op_reports_per_case_and_respects_where() {
+fn the_op_reports_per_case() {
     let cases = vec![
         noted("Moves", "> q\nSpec: A.md 1"),
         noted("Table", "> | a |\nSpec: A.md 2"),
@@ -449,7 +460,7 @@ fn the_op_reports_per_case_and_respects_where() {
         noted("Skipped", "> q\nSpec: A.md 4"),
     ];
     let ops = parse_ops(&serde_json::json!([
-        { "op": "normalise_citations", "where": { "title_contains": "" } }
+        { "op": "normalise_citations" }
     ]))
     .unwrap();
     let (out, report) = apply(cases, &ops);

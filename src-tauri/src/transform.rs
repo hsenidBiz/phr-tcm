@@ -805,7 +805,6 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             | Op::ReplaceInPreconditions { .. }
                             | Op::RemoveStepMatching(_)
                             | Op::SplitStep { .. }
-                            | Op::NormaliseCitations
                     )
                     .then(|| c.clone());
                     match other {
@@ -1083,7 +1082,11 @@ fn describe(op: &Op) -> String {
         Op::ReplaceInPreconditions { find, replace } => {
             format!("Replaced '{find}' with '{replace}' in preconditions")
         }
-        Op::SetComment(v) => format!("Set comment to '{v}'"),
+        Op::SetComment(v) => if v.is_empty() {
+            "Cleared comment".to_string()
+        } else {
+            format!("Set comment ({} chars)", v.chars().count())
+        },
         Op::SortBy(k) => format!("Sorted by {k}"),
         Op::GroupBy(k) => format!("Grouped by {k}"),
         Op::Dedupe => "Deduped".to_string(),
