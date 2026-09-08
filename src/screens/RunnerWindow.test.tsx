@@ -430,7 +430,7 @@ test("a session case missing from the PBI fetch is backfilled by id", async () =
 
 /// A static suite has no PBI at all: its runner session says pbi id 0 and
 /// carries every case id. Bodies come from the by-ids fetch alone, and the
-/// header names the suite instead of a meaningless "#0".
+/// header names the case on screen - never a meaningless "#0".
 test("a suite-scoped session runs without any PBI", async () => {
   localStorage.setItem(
     "tcm-v2-runner-session",
@@ -456,8 +456,24 @@ test("a suite-scoped session runs without any PBI", async () => {
   });
   renderRunner();
   expect(await screen.findByText("Suite case one")).toBeInTheDocument();
-  expect(screen.getByText("Sprint 1 - Story suite")).toBeInTheDocument();
+  expect(screen.getByText("#301")).toBeInTheDocument();
   expect(screen.queryByText("#0")).not.toBeInTheDocument();
+});
+
+/// The number beside the title is the CASE on screen, not the PBI. The
+/// tester is looking at one work item - that is the number they quote in
+/// a bug or look up in Azure DevOps; the PBI is the main window's context.
+test("the header names the case on screen, not the PBI", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [fullCase, { ...fullCase, id: 202, title: "Invalid login" }];
+    if (cmd === "list_test_points") return [];
+  });
+  renderRunner();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("#201")).toBeInTheDocument();
+  expect(screen.queryByText("#42")).not.toBeInTheDocument();
 });
 
 test("session caseIds restrict the runner's case list", async () => {

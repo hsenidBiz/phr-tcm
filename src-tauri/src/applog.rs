@@ -78,6 +78,13 @@ pub fn stamp() -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
 }
 
+/// The same clock as `stamp`, in a form a file name can carry:
+/// "YYYYMMDD-HHMMSS".
+pub fn file_stamp() -> String {
+    let (y, mo, d, h, mi, s) = now_parts();
+    format!("{y:04}{mo:02}{d:02}-{h:02}{mi:02}{s:02}")
+}
+
 fn today_file() -> Option<PathBuf> {
     let dir = dir_cell().lock().ok()?.clone()?;
     let (y, mo, d, ..) = now_parts();

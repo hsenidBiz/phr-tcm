@@ -54,8 +54,6 @@ fn tools_list_names_every_tool() {
             "get_run_failures",
             "check_spec_coverage",
             "merge_case_files",
-            "get_autorun_guide",
-            "save_autorun_script",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -202,7 +200,7 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 15);
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 13, "hidden tools were never part of 'everything'");
 }
 
 /// The intake's questions and `begin_test_case_writing`'s inputSchema are
@@ -291,4 +289,29 @@ fn a_failed_tool_call_says_which_kind_of_failure_it_was() {
     assert!(text.contains("Could not reach Test Case Manager"), "{text}");
     assert!(text.contains("handshake file missing"), "{text}");
     assert_eq!(v["result"]["isError"], true);
+}
+
+/// Round 8 follow-up: the core tools cannot be switched off, and the two
+/// autorun tools are gone from the surface entirely.
+#[test]
+fn core_tools_survive_a_disabled_list_and_hidden_tools_never_appear() {
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":["begin_test_case_writing","transform_cases"]}"#.into()));
+        }
+        Ok((200, "{}".into()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"begin_test_case_writing") && names.contains(&"transform_cases"), "{names:?}");
+    assert!(!names.contains(&"get_autorun_guide") && !names.contains(&"save_autorun_script"), "{names:?}");
+
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"save_autorun_script","arguments":{"scripts":[]}}}"#;
+    let resp = handle_message(req, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["result"]["isError"], true);
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("not available"), "a hidden tool is not 'switched off' - there is no switch: {text}");
 }

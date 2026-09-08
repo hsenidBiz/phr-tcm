@@ -5,6 +5,7 @@
 //! screen.
 
 use v2_lib::ai_bridge::{route, BridgeContext};
+use v2_lib::speccov::{bare_citation_hint, has_blockquote};
 
 struct TempDir(std::path::PathBuf);
 
@@ -208,9 +209,10 @@ async fn merge_preserves_order_and_reports_per_file_counts() {
     .unwrap();
     std::fs::write(&slice_b, serde_json::json!([case_json("Case B1")]).to_string()).unwrap();
     let output_path = dir.path().join("merged.json");
+    let paths = vec![slice_a.to_string_lossy().to_string(), slice_b.to_string_lossy().to_string()];
 
     let body = serde_json::json!({
-        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "paths": paths,
         "output_path": output_path.to_string_lossy(),
     })
     .to_string();
@@ -234,6 +236,16 @@ async fn merge_preserves_order_and_reports_per_file_counts() {
         .map(|c| c["title"].as_str().unwrap())
         .collect();
     assert_eq!(titles, vec!["Case A1", "Case A2", "Case B1"], "{written}");
+
+    // Round 8 §11.4: the response names the slices it consumed as
+    // superseded, and confirms it deleted nothing - removal stays a human
+    // action.
+    let superseded = v["superseded"].as_array().expect("the consumed slices are named");
+    assert_eq!(superseded.len(), 2, "{body}");
+    assert!(v["note"].as_str().unwrap_or_default().contains("safe to remove"), "{body}");
+    for p in &paths {
+        assert!(std::path::Path::new(p).exists(), "the tool deletes nothing: {p}");
+    }
 }
 
 /// A slice that cannot be read fails the WHOLE merge, naming the path -
@@ -497,4 +509,14 @@ async fn an_output_path_outside_the_cases_folder_is_refused() {
     assert_eq!(status, 400, "{out}");
     assert!(out.contains(".test-cases"), "the error names the folder: {out}");
     assert!(!outside.exists(), "a refused merge writes nothing: {out}");
+}
+
+/// Round 8 §4: with a blockquote ABOVE the pointer the finding names
+/// the position; with none it keeps the plain advice.
+#[test]
+fn a_bare_citation_hint_depends_on_whether_a_quote_exists_anywhere() {
+    assert!(has_blockquote("x\n> | a | b |\nSpec: S.md 1"));
+    assert!(!has_blockquote("Spec: S.md 1\nplain prose"));
+    assert!(bare_citation_hint("> \"q\"\nSpec: S.md 1").contains("not where the checker reads it"));
+    assert!(bare_citation_hint("Spec: S.md 1").starts_with("quote the source sentence"));
 }

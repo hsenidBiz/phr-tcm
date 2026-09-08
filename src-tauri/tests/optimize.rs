@@ -1279,3 +1279,47 @@ fn the_preamble_is_skipped_when_step_one_already_opens_with_the_entry() {
         out[0].steps[0].action
     );
 }
+
+// ---- round 8 §8/§12: the second sentence is often the assertion ----------
+
+/// The eight before/after pairs the feedback measured, every one of which
+/// the old one-sentence rule gutted. The retained sentence must survive.
+#[test]
+fn a_trailing_sentence_that_asserts_something_is_kept() {
+    for (input, must_keep) in [
+        ("Exactly one row is returned, for {empCompleted}. No row is returned for {empIncomplete}.", "No row is returned"),
+        ("The procedure completes normally. No error, warning or message naming {empIncomplete} is raised.", "No error"),
+        ("A single 'Performance Management System' group is listed. It is not duplicated.", "not duplicated"),
+        ("Two rows are returned. Both carry PARM_ID '000001' and the caption 'Select Evaluation Cycle', and they differ only by REPORT_ID.", "PARM_ID"),
+        ("Each is separated by a space, a hyphen, a greater-than sign and a space. The top of the hierarchy is first and the objective nearest the goal is last.", "hierarchy is first"),
+        ("No rows are returned. A missing appraisee list does not fall back to every participant of the cycle.", "does not fall back"),
+        ("Every row reads either Aligned or Not Aligned. No row reads Partially Aligned.", "No row reads"),
+        ("They differ. Business Unit Level is business_unit_level to the procedure and @def_level to its child.", "business_unit_level"),
+    ] {
+        let out = clean_expected(input);
+        assert!(out.contains(must_keep), "lost the assertion:\n  in:  {input}\n  out: {out}");
+    }
+}
+
+/// And a gloss is still a gloss - the rule must not degrade into "keep
+/// everything".
+#[test]
+fn a_trailing_gloss_still_goes() {
+    assert_eq!(clean_expected("A confirmation appears. This proves the flow works."), "A confirmation appears.");
+    assert_eq!(
+        clean_expected("The order status changes to Shipped. A confirmation email is sent to the customer."),
+        "The order status changes to Shipped."
+    );
+    assert_eq!(
+        clean_expected("The appraiser is listed. That is because that appraiser sits in {unit_b}."),
+        "The appraiser is listed."
+    );
+}
+
+#[test]
+fn the_report_counts_kept_assertions() {
+    let draft = vec![case("Kept", "M", "", vec![step("Run", "One row is returned. No row is returned for {other}.")])];
+    let (_out, report) = optimize(draft, None);
+    assert_eq!(report.assertions_kept, 1);
+    assert_eq!(report.expected_trimmed, 0, "nothing was trimmed");
+}

@@ -237,6 +237,48 @@ async fn a_spec_cited_case_without_quote_or_exemption_is_an_advisory_not_a_warni
     );
 }
 
+/// Round 8 §1-§4: three of five writers, with a verbatim quote already in
+/// the note, went looking for a MISSING quote - because that is what the
+/// advisory said. When a blockquote exists but sits above the `Spec:`
+/// line, the message has to name the position, not the absence.
+#[tokio::test]
+async fn a_misordered_quote_is_told_where_the_checker_reads_it() {
+    let draft = serde_json::json!({
+        "test_cases": [
+            {
+                "title": "Quote above the pointer",
+                "reviewer_notes": "Checks the layout.\n\n> | Employee Details | Name, ID |\n\nSpec: S.md Report Design",
+                "automation_status": "Not Automated",
+                "steps": [{ "action": "Open the report.", "expected": "Four fields are shown." }]
+            },
+            {
+                "title": "No quote anywhere",
+                "reviewer_notes": "Checks the export button.\nSpec: S.md 7.7",
+                "automation_status": "Not Automated",
+                "steps": [{ "action": "Open the page.", "expected": "The button is shown." }]
+            }
+        ]
+    })
+    .to_string();
+
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.23.2").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let advisories: Vec<String> = v["advisories"]
+        .as_array()
+        .expect("both cases are advisories")
+        .iter()
+        .map(|a| a.as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(advisories.len(), 2, "{body}");
+    let above = advisories.iter().find(|a| a.contains("Quote above the pointer")).unwrap();
+    assert!(above.contains("not where the checker reads it"), "{above}");
+    assert!(above.contains("table or code block is not a quote"), "{above}");
+    let bare = advisories.iter().find(|a| a.contains("No quote anywhere")).unwrap();
+    assert!(!bare.contains("not where the checker reads it"), "a bare citation keeps the plain advice: {bare}");
+    assert!(bare.contains("no quotable text"), "{bare}");
+}
+
 #[tokio::test]
 async fn guide_carries_format_rules_and_live_modules() {
     let (server, client) = ado_stub().await;

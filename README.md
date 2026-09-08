@@ -179,9 +179,11 @@ in-flight item.
 
 ## Install & update
 
-Distributed as a **Velopack** installer that auto-updates from its releases
-feed — install once, new versions apply on launch. No toolchain needed for end
-users. Releases live in a dedicated public repo, separate from the source.
+Distributed as a **Velopack** installer that auto-updates from this
+repository's GitHub Releases — install once, new versions apply on launch.
+No toolchain needed for end users. Installs older than 1.24.0 read the
+previous public feed; 1.24.0 was published there too, so they cross over
+on their next update.
 
 ## Develop
 

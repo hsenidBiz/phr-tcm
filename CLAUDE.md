@@ -63,10 +63,12 @@ v1 and went with it. The suites above are the gate.
   exposed to the frontend through the generated bindings.
 - **Screens live in `src/screens/`**, shared UI in `src/components/`,
   module-scope stores (`useSyncExternalStore`) in `src/lib/`.
-- **Updates** come from the public GitHub releases repo, checked at launch
-  and hourly. `updater/mod.rs` tries the GitHub API first and the
-  `latest/download` mirror second - the comment there explains why that
-  order matters.
+- **Updates** come from this repository's GitHub Releases
+  (`hsenidBiz/phr-tcm`), checked at launch and hourly. `updater/mod.rs`
+  tries the GitHub API first and the `latest/download` mirror second - the
+  comment there explains why that order matters. 1.24.0 was also published
+  to the pre-1.24.0 feed (`release-v2.ps1 -AlsoLegacy`) so older installs
+  cross over; that old repo stays frozen there on purpose.
 
 ## Testing notes that have cost real time
 

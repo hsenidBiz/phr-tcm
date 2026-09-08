@@ -43,29 +43,43 @@ fn a_picked_file_is_copied_in_and_picking_it_again_reuses_the_copy() {
     std::fs::create_dir_all(src.parent().unwrap()).unwrap();
     std::fs::write(&src, r#"{"test_cases":[]}"#).unwrap();
 
-    let copied = copy_into_cases(&root, &src).unwrap();
+    let (copied, _) = copy_into_cases(&root, &src).unwrap();
     assert!(is_inside(&cases_dir(&root), &copied), "{}", copied.display());
     assert_eq!(std::fs::read(&copied).unwrap(), std::fs::read(&src).unwrap());
     assert!(src.exists(), "the original is copied, never moved");
 
-    let again = copy_into_cases(&root, &src).unwrap();
+    let (again, _) = copy_into_cases(&root, &src).unwrap();
     assert_eq!(again, copied, "same bytes already there - no second file");
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Round 8 §11. The old rule - never overwrite, newer bytes take `-2`,
+/// `-3` - left the OLDEST content under the canonical name, and on an
+/// id-carrying set importing the obvious file silently reverted fifteen
+/// corrected work items. The picked file is the one the user wants: it
+/// takes the canonical name, and what it displaces goes to `.history`.
 #[test]
-fn a_different_file_with_the_same_name_gets_a_suffix_not_an_overwrite() {
-    let root = temp_root("suffix");
+fn a_different_file_with_the_same_name_replaces_the_copy_and_keeps_the_old_one() {
+    let root = temp_root("displace");
     let dir = ensure_cases_dir(&root).unwrap();
     std::fs::write(dir.join("login.json"), "old").unwrap();
     let src = root.join("in").join("login.json");
     std::fs::create_dir_all(src.parent().unwrap()).unwrap();
     std::fs::write(&src, "new").unwrap();
 
-    let copied = copy_into_cases(&root, &src).unwrap();
-    assert_eq!(copied.file_name().unwrap().to_string_lossy(), "login-2.json");
-    assert_eq!(std::fs::read_to_string(dir.join("login.json")).unwrap(), "old");
+    let (copied, displaced) = copy_into_cases(&root, &src).unwrap();
+    assert_eq!(copied, dir.join("login.json"), "the obvious name is the newest");
     assert_eq!(std::fs::read_to_string(&copied).unwrap(), "new");
+    let displaced = displaced.expect("the old bytes were kept somewhere");
+    assert!(is_inside(&dir.join(".history"), &displaced), "{}", displaced.display());
+    assert!(displaced.file_name().unwrap().to_string_lossy().starts_with("login."));
+    assert_eq!(std::fs::read_to_string(&displaced).unwrap(), "old", "nothing is ever lost");
+    assert!(!dir.join("login-2.json").exists(), "no more numbered copies");
+
+    // Picking it again with the same bytes: no second displacement.
+    let (again, none) = copy_into_cases(&root, &src).unwrap();
+    assert_eq!(again, copied);
+    assert!(none.is_none());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -75,7 +89,7 @@ fn a_file_already_in_the_folder_is_not_copied() {
     let dir = ensure_cases_dir(&root).unwrap();
     let inside = dir.join("x.json");
     std::fs::write(&inside, "{}").unwrap();
-    assert_eq!(copy_into_cases(&root, &inside).unwrap(), inside);
+    assert_eq!(copy_into_cases(&root, &inside).unwrap().0, inside);
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no copy of a copy");
     let _ = std::fs::remove_dir_all(&root);
 }

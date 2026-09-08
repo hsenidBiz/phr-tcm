@@ -83,12 +83,12 @@ fn schema(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
 /// that then say "sign in first".
 fn disabled(call: BridgeCall) -> Vec<String> {
     let Ok((status, body)) = call("GET", "/tools", "") else {
-        return vec![];
+        return crate::ai_tools::effective_disabled(&[]);
     };
     if status != 200 {
-        return vec![];
+        return crate::ai_tools::effective_disabled(&[]);
     }
-    serde_json::from_str::<serde_json::Value>(&body)
+    let list: Vec<String> = serde_json::from_str::<serde_json::Value>(&body)
         .ok()
         .and_then(|v| v["disabled"].as_array().cloned())
         .map(|a| {
@@ -96,7 +96,8 @@ fn disabled(call: BridgeCall) -> Vec<String> {
                 .filter_map(|n| n.as_str().map(str::to_string))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    crate::ai_tools::effective_disabled(&list)
 }
 
 fn tools_list(disabled: Vec<String>) -> serde_json::Value {
@@ -160,7 +161,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "merge_case_files",
-            "description": "Merge slice files from a fan-out into one draft through the real importer - never merge by hand. Reads every path in `paths` with the same importer the app uses, concatenates the cases in that order, and writes the result to `output_path` (refused if that path already exists - pick a new one rather than overwriting). Returns the merged case count, a per-file breakdown, and the importer's warnings from every slice, each prefixed with the slice file it came from. A title appearing in more than one slice is warned about by name - fan-out writers cannot see each other's titles, and such a collision usually needs disambiguating, not deduping. Does not deduplicate - if slices may overlap, run optimize_cases or transform_cases' dedupe on the merged file afterward.",
+            "description": "Merge slice files from a fan-out into one draft through the real importer - never merge by hand. Reads every path in `paths` with the same importer the app uses, concatenates the cases in that order, and writes the result to `output_path` (refused if that path already exists - pick a new one rather than overwriting). Returns the merged case count, a per-file breakdown, and the importer's warnings from every slice, each prefixed with the slice file it came from. A title appearing in more than one slice is warned about by name - fan-out writers cannot see each other's titles, and such a collision usually needs disambiguating, not deduping. Does not deduplicate - if slices may overlap, run optimize_cases or transform_cases' dedupe on the merged file afterward. The response names the slice files it consumed as superseded; remove them from .test-cases yourself - this tool deletes nothing.",
             "inputSchema": schema(serde_json::json!({
                 "paths": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths to the slice files, in the order they should be concatenated" },
                 "output_path": { "type": "string", "description": "File name for the merged draft (e.g. login.json) - it goes in the working repository's .test-cases folder, and must not already exist; a path outside that folder is refused" },
@@ -184,7 +185,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "optimize_cases",
-            "description": "Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it. For large drafts pass `path` (a local file) instead of inlining the JSON, and `in_place: true` to write the result back to that file and get only the report - NEVER shard a draft to fit it inline: tester_order is one sequence across the whole set, and per-shard orderings cannot be stitched together.",
+            "description": "Run with dry_run: true FIRST and read expected_rewritten before committing - it lists every expected result this would shorten, before and after. Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it. For large drafts pass `path` (a local file) instead of inlining the JSON, and `in_place: true` to write the result back to that file and get only the report - NEVER shard a draft to fit it inline: tester_order is one sequence across the whole set, and per-shard orderings cannot be stitched together.",
             "inputSchema": schema(serde_json::json!({
                 "json": { "type": "string", "description": "The draft import JSON (array or wrapper object). Use `path` instead for large drafts - never both." },
                 "path": { "type": "string", "description": "Absolute path to the draft file - use this instead of `json` for large drafts." },
@@ -203,7 +204,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
                 "in_place": { "type": "boolean", "description": "With `path`: write the transformed draft back to the same file (atomic) and skip echoing the JSON." },
                 "operations": {
                     "type": "array",
-                    "description": "Ops applied in order. WHICH KEYS EACH OP READS: set_tags/add_tags/remove_tags/set_module/set_automation_status/set_preconditions/set_reviewer_notes/prefix_title/suffix_title/sort_by/group_by take {value}; replace_in_title/replace_in_steps/replace_in_notes take {find, replace} (replace_in_notes edits the local reviewer_notes - the bulk repair for check_spec_coverage findings); prepend_step/append_step take {action, expected}; remove_step_matching takes {value|find|action} (substring against step actions); split_step takes {find, into: [{action, expected}, ...]} and replaces each matching step with that sequence; remove_cases takes only a required `where`; insert_cases takes {cases, and optionally ONE of at_index (zero-based) | before | after (a title fragment)} - without one it appends; dedupe takes nothing (first copy wins, no merge). Every op accepts `where` with title_contains/has_tag/module_is/at_index - at_index (zero-based position in the current draft) is the selector of last resort when two cases share a title. sort_by/group_by values: title, module, tags, preconditions. A key an op does not read is reported in `ignored`, never silently dropped.",
+                    "description": "Ops applied in order. WHICH KEYS EACH OP READS: set_tags/add_tags/remove_tags/set_module/set_automation_status/set_preconditions/set_reviewer_notes/prefix_title/suffix_title/sort_by/group_by/set_comment take {value} (set_comment: empty value clears); replace_in_title/replace_in_steps/replace_in_notes/replace_in_preconditions take {find, replace} (replace_in_notes edits the local reviewer_notes - the bulk repair for check_spec_coverage findings); normalise_citations takes only where - it moves a Spec: line above its blockquote and quotes it, or writes the exemption form for a table/code block, and leaves anything with two pointers or two blocks for a person; prepend_step/append_step take {action, expected}; remove_step_matching takes {value|find|action} (substring against step actions); split_step takes {find, into: [{action, expected}, ...]} and replaces each matching step with that sequence; remove_cases takes only a required `where`; insert_cases takes {cases, and optionally ONE of at_index (zero-based) | before | after (a title fragment)} - without one it appends; dedupe takes nothing (first copy wins, no merge). Every op accepts `where` with title_contains/has_tag/module_is/at_index - at_index (zero-based position in the current draft) is the selector of last resort when two cases share a title. sort_by/group_by values: title, module, tags, preconditions. A key an op does not read is reported in `ignored`, never silently dropped. Replace ops are literal, case-sensitive and replace EVERY occurrence; the report gives the occurrence count and names cases left alone for differing capitalisation.",
                     "items": { "type": "object" },
                 },
             }), &["operations"]),
@@ -265,12 +266,18 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     if disabled(call).iter().any(|d| d == name) {
+        let text = if crate::ai_tools::HIDDEN_TOOLS.contains(&name) {
+            format!("The `{name}` tool is not available.")
+        } else {
+            format!(
+                "The `{name}` tool is switched off in Test Case Manager. \
+                 Turn it back on in the app's AI Bridge tab if you need it."
+            )
+        };
         return serde_json::json!({
             "content": [{
                 "type": "text",
-                "text": format!(
-                    "The `{name}` tool is switched off in Test Case Manager.                      Turn it back on in the app's AI Bridge tab if you need it."
-                ),
+                "text": text,
             }],
             "isError": true,
         });

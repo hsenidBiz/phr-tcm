@@ -219,6 +219,29 @@ fn split_file_and_section(rest: &str) -> (String, String) {
     }
 }
 
+/// Is there a markdown blockquote anywhere in the note? `parse_citations`
+/// only reads a quote that sits directly beneath a `Spec:` line; this
+/// answers the different question "did the writer quote SOMETHING" - which
+/// is what turns "no quote" into "quote in the wrong place" (round 8 §4).
+pub fn has_blockquote(notes: &str) -> bool {
+    notes.lines().any(|l| l.trim_start().starts_with('>'))
+}
+
+/// The sentence to add to a bare-citation finding. When a blockquote exists
+/// the problem is position, and saying "no quote" sends the writer hunting
+/// for one that is already there - three of five did exactly that.
+pub fn bare_citation_hint(notes: &str) -> &'static str {
+    if has_blockquote(notes) {
+        "a quote is present but not where the checker reads it - put the `Spec:` line \
+         first and the quote directly beneath it as `> \"...\"`; a table or code block is \
+         not a quote: use `Spec: <file> <section> - no quotable text (table/diagram | \
+         code-not-prose)`"
+    } else {
+        "quote the source sentence beneath the `Spec:` line as `> \"...\"`, or state the \
+         exemption in the fixed form `Spec: <file> <section> - no quotable text (<why>)`"
+    }
+}
+
 pub fn parse_citations(reviewer_notes: &str) -> Option<Citations> {
     // "Spec: Step10.md 7.7 (AC-3)" - the whole tail is captured and the
     // file/section split happens in `split_file_and_section`, extension-
@@ -762,8 +785,11 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
             // middle of its own job. The parse already knows; report it.
             if spec.quote.is_none() && spec.exemption.is_none() {
                 cited_without_quote.push(format!(
-                    "{} — Spec: {} {} has no quote and no exemption",
-                    case.title, spec.file, spec.section
+                    "{} — Spec: {} {} has no quote and no exemption - {}",
+                    case.title,
+                    spec.file,
+                    spec.section,
+                    bare_citation_hint(&case.reviewer_notes)
                 ));
             }
         }

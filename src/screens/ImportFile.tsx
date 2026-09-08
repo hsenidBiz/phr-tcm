@@ -453,10 +453,12 @@ export default function ImportFile({
       const root = loadWorkingDir();
       let path = picked;
       let copied = false;
+      let displaced: string | null = null;
       if (root && !isInsideCasesDir(root, picked)) {
         const c = await commands.copyIntoCases(root, picked);
         if (c.status === "error") throw new Error(c.error);
-        path = c.data;
+        path = c.data.path;
+        displaced = c.data.displaced;
         copied = path !== picked;
       }
       const r = await commands.parseImportFile(path);
@@ -465,6 +467,7 @@ export default function ImportFile({
         path,
         picked,
         copied,
+        displaced,
         stamp: await commands.fileStamp(path),
         data: r.data,
         // Whatever the file already says about the set as a whole - very
@@ -474,7 +477,7 @@ export default function ImportFile({
     },
     onSuccess: (res) => {
       if (!res) return;
-      const { path, picked, copied, stamp, data, comment } = res;
+      const { path, picked, copied, displaced, stamp, data, comment } = res;
       // The copy is the file from here on, so a watch left on the ORIGINAL
       // would keep feeding the queue from the download folder - two files
       // claiming the same cases, and the one the assistant edits is not the
@@ -496,7 +499,11 @@ export default function ImportFile({
       toast.success(
         `Imported ${data.cases.length} case${data.cases.length === 1 ? "" : "s"}` +
           (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : "") +
-          (copied ? ` - copied into ${CASES_DIR}` : ""),
+          (displaced
+            ? ` - replaced the copy in ${CASES_DIR}; the previous one is in .history`
+            : copied
+              ? ` - copied into ${CASES_DIR}`
+              : ""),
       );
     },
     // A recent whose file is gone (or unreadable) is not worth offering

@@ -5,16 +5,18 @@
 
 use v2_lib::updater::{bytes_at, REPO_URL, RELEASES_URL};
 
-/// Both urls point at the SAME repo. They drifted apart once already - the
-/// feed was read from one place and this is what stops the package being
-/// fetched from another.
+/// Both urls point at the SAME repo, and it is the company one. They
+/// drifted apart once already - the feed was read from one place and this
+/// is what stops the package being fetched from another.
 #[test]
-fn both_urls_name_the_v2_releases_repo() {
+fn both_urls_name_the_phr_tcm_repo() {
     assert!(RELEASES_URL.starts_with(REPO_URL), "{RELEASES_URL} is not under {REPO_URL}");
-    assert!(REPO_URL.ends_with("azure-devops-test-case-manager-v2-releases"));
-    // v1's repo is a different one, and pointing v2 at it would have the
-    // app offer its users the wrong application entirely.
-    assert!(!REPO_URL.contains("v2-releases/v"), "REPO_URL must be the repo root, not a release");
+    assert!(REPO_URL.ends_with("hsenidBiz/phr-tcm"), "{REPO_URL}");
+    // The repo root, not a release: `latest/download` is appended by the
+    // mirror constant, and pointing REPO_URL at a release would make the
+    // API source read one release's assets as the whole feed.
+    assert!(!REPO_URL.contains("/releases/"), "REPO_URL must be the repo root, not a release");
+    assert!(RELEASES_URL.ends_with("/releases/latest/download/"), "{RELEASES_URL}");
 }
 
 /// The download that failed for real, reproduced against the live repo.

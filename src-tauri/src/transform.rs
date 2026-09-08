@@ -49,6 +49,8 @@ pub enum Op {
     SuffixTitle(String),
     /// Literal find/replace across every step's action and expected.
     ReplaceInSteps { find: String, replace: String },
+    /// Literal find/replace across the preconditions field.
+    ReplaceInPreconditions { find: String, replace: String },
     /// Sort the whole draft: "title" | "module" | "tags" | "preconditions".
     SortBy(String),
     /// Stable grouping: cases sharing the field's value become contiguous,
@@ -75,6 +77,10 @@ pub enum Op {
     /// Replace each step whose action contains `find` with the `into`
     /// sequence, at the same index.
     SplitStep { find: String, into: Vec<crate::steps_xml::Step> },
+    /// Round 8 §7.2 - see normalise_citation_notes.
+    NormaliseCitations,
+    /// Set (or, with an empty value, clear) the local comment.
+    SetComment(String),
 }
 
 /// Where `insert_cases` puts its cases.
@@ -178,6 +184,19 @@ fn join_tags(tags: &[String]) -> String {
 
 fn str_of(v: &serde_json::Value, key: &str) -> String {
     v[key].as_str().unwrap_or_default().to_string()
+}
+
+/// Shared by every `replace_in_*` op: how many times `find` occurs in
+/// `field` (exact, case-sensitive), and whether `field` has NO exact hit
+/// but does have one once case is ignored - a capitalisation variant the
+/// replace will silently skip. Callers OR the bool across the fields (and,
+/// for steps, across a case's steps) and count `variants` at most once per
+/// case - see review of round 8 §10.
+fn count_hits(field: &str, find: &str) -> (usize, bool) {
+    let occurrences = field.matches(find).count();
+    let variant_only =
+        !field.contains(find) && field.to_lowercase().contains(&find.to_lowercase());
+    (occurrences, variant_only)
 }
 
 /// A string the caller MUST have written, distinguishing "absent" from
@@ -310,6 +329,11 @@ pub fn parse_ops_full(
                 find: str_of(v, "find"),
                 replace: str_of(v, "replace"),
             },
+            "replace_in_preconditions" => Op::ReplaceInPreconditions {
+                find: str_of(v, "find"),
+                replace: str_of(v, "replace"),
+            },
+            "set_comment" => Op::SetComment(value),
             "sort_by" | "group_by" => {
                 if !["title", "module", "tags", "preconditions"].contains(&value.as_str()) {
                     return Err(format!(
@@ -319,6 +343,7 @@ pub fn parse_ops_full(
                 if name == "sort_by" { Op::SortBy(value) } else { Op::GroupBy(value) }
             }
             "dedupe" => Op::Dedupe,
+            "normalise_citations" => Op::NormaliseCitations,
             "prepend_step" | "append_step" => {
                 let action = str_of(v, "action");
                 if action.trim().is_empty() {
@@ -490,9 +515,10 @@ pub fn parse_ops_full(
                     "{label}: unknown op \"{other}\". Supported: set_tags, add_tags, \
                      remove_tags, set_module, set_automation_status, set_preconditions, \
                      set_reviewer_notes, replace_in_title, prefix_title, suffix_title, \
-                     replace_in_steps, replace_in_notes, prepend_step, append_step, \
+                     replace_in_steps, replace_in_notes, replace_in_preconditions, \
+                     set_comment, prepend_step, append_step, \
                      remove_step_matching, split_step, sort_by, group_by, dedupe, \
-                     remove_cases, insert_cases."
+                     remove_cases, insert_cases, normalise_citations."
                 ))
             }
         };
@@ -500,7 +526,8 @@ pub fn parse_ops_full(
         // between every character - refuse rather than mangle the draft.
         if let Op::ReplaceInTitle { find, .. }
         | Op::ReplaceInSteps { find, .. }
-        | Op::ReplaceInNotes { find, .. } = &op
+        | Op::ReplaceInNotes { find, .. }
+        | Op::ReplaceInPreconditions { find, .. } = &op
         {
             if find.is_empty() {
                 return Err(format!("{label}: \"find\" must not be empty."));
@@ -512,6 +539,147 @@ pub fn parse_ops_full(
         });
     }
     Ok((out, ignored))
+}
+
+/// What `normalise_citations` did to one note.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CitationOutcome {
+    Normalised,
+    /// The block was a table or code: the pointer got the exemption form
+    /// and the block was KEPT beneath it for the writer to fold into prose.
+    Exempted(&'static str),
+    Unchanged,
+    /// More than one pointer or more than one block - refused, with why.
+    ByHand(String),
+}
+
+/// Put a note's citation into the one shape the checker reads: prose,
+/// `Spec:` line, `> "quote"`, remaining prose - in that order.
+///
+/// Round 8 §5: 66 notes needed exactly this, and the only route was
+/// retyping every one. This is deliberately narrow - one pointer, one
+/// blockquote run, or hands off - because a note with two of either has no
+/// single right answer, and a wrong guess here corrupts a citation silently.
+pub fn normalise_citation_notes(notes: &str) -> (String, CitationOutcome) {
+    let lines: Vec<&str> = notes.lines().collect();
+    let is_spec = |l: &str| l.trim_start().to_lowercase().starts_with("spec:");
+    let is_block = |l: &str| l.trim_start().starts_with('>');
+
+    let spec_lines: Vec<usize> = (0..lines.len()).filter(|&i| is_spec(lines[i])).collect();
+    // Runs of consecutive blockquote lines, as (start, end-exclusive).
+    let mut runs: Vec<(usize, usize)> = vec![];
+    let mut i = 0;
+    while i < lines.len() {
+        if is_block(lines[i]) {
+            let start = i;
+            while i < lines.len() && is_block(lines[i]) {
+                i += 1;
+            }
+            runs.push((start, i));
+        } else {
+            i += 1;
+        }
+    }
+
+    if spec_lines.len() > 1 || runs.len() > 1 {
+        return (
+            notes.to_string(),
+            CitationOutcome::ByHand(format!(
+                "{} Spec lines / {} blockquotes - normalise by hand",
+                spec_lines.len(),
+                runs.len()
+            )),
+        );
+    }
+    let (Some(&spec_at), Some(&(run_start, run_end))) = (spec_lines.first(), runs.first()) else {
+        return (notes.to_string(), CitationOutcome::Unchanged);
+    };
+
+    let spec_line = lines[spec_at].trim().to_string();
+    let block_lines: Vec<&str> = lines[run_start..run_end].to_vec();
+    let stripped: Vec<String> = block_lines
+        .iter()
+        .map(|l| l.trim_start().trim_start_matches('>').trim().to_string())
+        .collect();
+    let first = stripped.first().map(String::as_str).unwrap_or("");
+    let joined = stripped.join(" ");
+
+    let unquotable: Option<&'static str> = if first.starts_with('|') {
+        Some("table/diagram")
+    } else if looks_like_code(&joined) {
+        Some("code-not-prose")
+    } else {
+        None
+    };
+
+    // Already in the accepted shape? The run must be the first non-blank
+    // line after the pointer, and either the pointer carries an exemption
+    // (block kept as is) or the run is one `> "..."` line.
+    let next_nonblank = (spec_at + 1..lines.len()).find(|&j| !lines[j].trim().is_empty());
+    let run_follows = next_nonblank == Some(run_start);
+    let spec_exempt = spec_line.to_lowercase().contains("no quotable text");
+    let one_quoted_line = block_lines.len() == 1 && first.starts_with('"') && first.ends_with('"') && first.len() >= 2;
+    if run_follows && ((unquotable.is_some() && spec_exempt) || (unquotable.is_none() && one_quoted_line && !spec_exempt)) {
+        return (notes.to_string(), CitationOutcome::Unchanged);
+    }
+
+    let (new_spec, new_block, outcome) = match unquotable {
+        Some(why) => {
+            let spec = if spec_exempt { spec_line.clone() } else { format!("{spec_line} - no quotable text ({why})") };
+            (spec, block_lines.iter().map(|l| l.trim_end().to_string()).collect::<Vec<_>>(), CitationOutcome::Exempted(why))
+        }
+        None => {
+            let text = joined.trim_matches(|c| c == '"' || c == '\u{201c}' || c == '\u{201d}').trim().to_string();
+            (spec_line.clone(), vec![format!("> \"{text}\"")], CitationOutcome::Normalised)
+        }
+    };
+
+    // Everything that is neither the pointer nor the run, split at the
+    // earlier of the two: what came before stays before, the rest follows.
+    let cut = spec_at.min(run_start);
+    let mut before: Vec<&str> = vec![];
+    let mut after: Vec<&str> = vec![];
+    for (j, l) in lines.iter().enumerate() {
+        if j == spec_at || (run_start..run_end).contains(&j) {
+            continue;
+        }
+        if j < cut { before.push(l) } else { after.push(l) }
+    }
+    let trim_blank = |v: &[&str]| -> Vec<String> {
+        let s = v.iter().position(|l| !l.trim().is_empty()).unwrap_or(v.len());
+        let e = v.iter().rposition(|l| !l.trim().is_empty()).map(|p| p + 1).unwrap_or(s);
+        v[s..e].iter().map(|l| l.trim_end().to_string()).collect()
+    };
+    let before = trim_blank(&before);
+    let after = trim_blank(&after);
+
+    let mut out: Vec<String> = vec![];
+    if !before.is_empty() {
+        out.extend(before);
+        out.push(String::new());
+    }
+    out.push(new_spec);
+    out.push(String::new());
+    out.extend(new_block);
+    if !after.is_empty() {
+        out.push(String::new());
+        out.extend(after);
+    }
+    (out.join("\n"), outcome)
+}
+
+/// A blockquote that is code rather than a sentence: SQL, a comment
+/// marker, or a fence. A quote of code is not a quote of the requirement.
+fn looks_like_code(s: &str) -> bool {
+    let t = s.trim_start();
+    if t.starts_with("--") || t.contains("```") {
+        return true;
+    }
+    let first = t.split_whitespace().next().unwrap_or("").to_uppercase();
+    matches!(
+        first.as_str(),
+        "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "EXEC" | "DECLARE" | "WITH"
+    )
 }
 
 pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, TransformReport) {
@@ -621,6 +789,9 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                 // counts cases whose content actually changed, and that is
                 // the number the report gives for those ops.
                 let mut modified = 0usize;
+                let (mut normalised, mut exempted, mut unchanged, mut by_hand) =
+                    (0usize, 0usize, 0usize, 0usize);
+                let (mut occurrences, mut variants, mut in_quotes) = (0usize, 0usize, 0usize);
                 for (i, c) in cases.iter_mut().enumerate() {
                     if !operation.filter.matches_at(c, i) {
                         continue;
@@ -631,6 +802,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::ReplaceInTitle { .. }
                             | Op::ReplaceInSteps { .. }
                             | Op::ReplaceInNotes { .. }
+                            | Op::ReplaceInPreconditions { .. }
                             | Op::RemoveStepMatching(_)
                             | Op::SplitStep { .. }
                     )
@@ -659,19 +831,54 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::SetPreconditions(v) => c.preconditions = v.clone(),
                         Op::SetReviewerNotes(v) => c.reviewer_notes = v.clone(),
                         Op::ReplaceInTitle { find, replace } => {
+                            let (hits, variant) = count_hits(&c.title, find.as_str());
+                            occurrences += hits;
+                            if variant {
+                                variants += 1;
+                            }
                             c.title = c.title.replace(find.as_str(), replace);
                         }
                         Op::ReplaceInNotes { find, replace } => {
+                            let (hits, variant) = count_hits(&c.reviewer_notes, find.as_str());
+                            occurrences += hits;
+                            if variant {
+                                variants += 1;
+                            }
+                            in_quotes += c
+                                .reviewer_notes
+                                .lines()
+                                .filter(|l| l.trim_start().starts_with('>'))
+                                .map(|l| l.matches(find.as_str()).count())
+                                .sum::<usize>();
                             c.reviewer_notes = c.reviewer_notes.replace(find.as_str(), replace);
                         }
                         Op::PrefixTitle(v) => c.title = format!("{v}{}", c.title),
                         Op::SuffixTitle(v) => c.title = format!("{}{v}", c.title),
                         Op::ReplaceInSteps { find, replace } => {
+                            let mut case_variant = false;
                             for s in c.steps.iter_mut() {
+                                let (action_hits, action_variant) =
+                                    count_hits(&s.action, find.as_str());
+                                let (expected_hits, expected_variant) =
+                                    count_hits(&s.expected, find.as_str());
+                                occurrences += action_hits + expected_hits;
+                                case_variant |= action_variant || expected_variant;
                                 s.action = s.action.replace(find.as_str(), replace);
                                 s.expected = s.expected.replace(find.as_str(), replace);
                             }
+                            if case_variant {
+                                variants += 1;
+                            }
                         }
+                        Op::ReplaceInPreconditions { find, replace } => {
+                            let (hits, variant) = count_hits(&c.preconditions, find.as_str());
+                            occurrences += hits;
+                            if variant {
+                                variants += 1;
+                            }
+                            c.preconditions = c.preconditions.replace(find.as_str(), replace);
+                        }
+                        Op::SetComment(v) => c.comment = v.clone(),
                         Op::PrependStep { action, expected } => {
                             c.steps.insert(
                                 0,
@@ -723,6 +930,27 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             }
                             c.steps = rebuilt;
                         }
+                        Op::NormaliseCitations => {
+                            let (text, outcome) = normalise_citation_notes(&c.reviewer_notes);
+                            match &outcome {
+                                CitationOutcome::Normalised => normalised += 1,
+                                CitationOutcome::Exempted(why) => {
+                                    exempted += 1;
+                                    report.warnings.push(format!(
+                                        "'{}': the blockquote is a {why} - the pointer now carries the \
+                                         exemption and the block was kept beneath it; fold it into \
+                                         prose if you would rather.",
+                                        c.title
+                                    ));
+                                }
+                                CitationOutcome::Unchanged => unchanged += 1,
+                                CitationOutcome::ByHand(why) => {
+                                    by_hand += 1;
+                                    report.warnings.push(format!("'{}': {why}.", c.title));
+                                }
+                            }
+                            c.reviewer_notes = text;
+                        }
                         Op::SortBy(_)
                         | Op::GroupBy(_)
                         | Op::Dedupe
@@ -733,6 +961,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         if before.title != c.title
                             || before.steps != c.steps
                             || before.reviewer_notes != c.reviewer_notes
+                            || before.preconditions != c.preconditions
                         {
                             modified += 1;
                         }
@@ -743,13 +972,33 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                     Op::ReplaceInTitle { .. }
                         | Op::ReplaceInSteps { .. }
                         | Op::ReplaceInNotes { .. }
+                        | Op::ReplaceInPreconditions { .. }
                         | Op::RemoveStepMatching(_)
                         | Op::SplitStep { .. }
                 );
-                if find_driven {
-                    report
-                        .applied
-                        .push(format!("{} modified {modified} case(s).", describe(other)));
+                let occurrence_counted = matches!(
+                    other,
+                    Op::ReplaceInTitle { .. }
+                        | Op::ReplaceInNotes { .. }
+                        | Op::ReplaceInSteps { .. }
+                        | Op::ReplaceInPreconditions { .. }
+                );
+                if matches!(other, Op::NormaliseCitations) {
+                    report.applied.push(format!(
+                        "Normalised citations: {normalised} normalised, {exempted} exempted, \
+                         {unchanged} unchanged, {by_hand} left for hand."
+                    ));
+                } else if find_driven {
+                    if occurrence_counted {
+                        report.applied.push(format!(
+                            "{} modified {modified} case(s), {occurrences} occurrence(s).",
+                            describe(other)
+                        ));
+                    } else {
+                        report
+                            .applied
+                            .push(format!("{} modified {modified} case(s).", describe(other)));
+                    }
                     // The find hit nothing anywhere it looked. Same shape as
                     // the empty-filter line below, because it is the same
                     // failure: an operation that quietly did nothing. This
@@ -759,6 +1008,20 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         report
                             .applied
                             .push("  (the find matched no text - check it)".to_string());
+                    }
+                    if variants > 0 {
+                        if let Some(find) = find_of(other) {
+                            report.warnings.push(format!(
+                                "{variants} case(s) contain '{find}' in different capitalisation \
+                                 and were left alone - replace is case-sensitive."
+                            ));
+                        }
+                    }
+                    if in_quotes > 0 {
+                        report.warnings.push(format!(
+                            "{in_quotes} replacement(s) landed inside a verbatim quote - \
+                             check_spec_coverage may now report quote_not_in_document for those cases."
+                        ));
                     }
                 } else {
                     report
@@ -788,6 +1051,18 @@ fn field_key(c: &TestCase, key: &str) -> String {
     }
 }
 
+/// The `find` text of the four literal-replace ops - used for the
+/// capitalisation-variant warning, which names what was looked for.
+fn find_of(op: &Op) -> Option<&str> {
+    match op {
+        Op::ReplaceInTitle { find, .. }
+        | Op::ReplaceInNotes { find, .. }
+        | Op::ReplaceInSteps { find, .. }
+        | Op::ReplaceInPreconditions { find, .. } => Some(find.as_str()),
+        _ => None,
+    }
+}
+
 fn describe(op: &Op) -> String {
     match op {
         Op::SetTags(v) => format!("Set tags to '{v}'"),
@@ -804,6 +1079,14 @@ fn describe(op: &Op) -> String {
         Op::PrefixTitle(v) => format!("Prefixed titles with '{v}'"),
         Op::SuffixTitle(v) => format!("Suffixed titles with '{v}'"),
         Op::ReplaceInSteps { find, replace } => format!("Replaced '{find}' with '{replace}' in steps"),
+        Op::ReplaceInPreconditions { find, replace } => {
+            format!("Replaced '{find}' with '{replace}' in preconditions")
+        }
+        Op::SetComment(v) => if v.is_empty() {
+            "Cleared comment".to_string()
+        } else {
+            format!("Set comment ({} chars)", v.chars().count())
+        },
         Op::SortBy(k) => format!("Sorted by {k}"),
         Op::GroupBy(k) => format!("Grouped by {k}"),
         Op::Dedupe => "Deduped".to_string(),
@@ -815,6 +1098,7 @@ fn describe(op: &Op) -> String {
         }
         Op::RemoveCases => "Removed cases".to_string(),
         Op::InsertCases { cases, .. } => format!("Inserted {} case(s)", cases.len()),
+        Op::NormaliseCitations => "Normalised citations".to_string(),
     }
 }
 
@@ -825,14 +1109,14 @@ fn known_keys(op_name: &str) -> &'static [&'static str] {
     match op_name {
         "set_tags" | "add_tags" | "remove_tags" | "set_module" | "set_automation_status"
         | "set_preconditions" | "set_reviewer_notes" | "prefix_title" | "suffix_title"
-        | "sort_by" | "group_by" => &["op", "where", "value"],
-        "replace_in_title" | "replace_in_steps" | "replace_in_notes" => {
+        | "sort_by" | "group_by" | "set_comment" => &["op", "where", "value"],
+        "replace_in_title" | "replace_in_steps" | "replace_in_notes" | "replace_in_preconditions" => {
             &["op", "where", "find", "replace"]
         }
         "prepend_step" | "append_step" => &["op", "where", "action", "expected"],
         "remove_step_matching" => &["op", "where", "value", "find", "action"],
         "split_step" => &["op", "where", "value", "find", "into"],
-        "remove_cases" | "dedupe" => &["op", "where"],
+        "remove_cases" | "dedupe" | "normalise_citations" => &["op", "where"],
         "insert_cases" => &["op", "where", "cases", "at_index", "before", "after"],
         _ => &["op", "where"],
     }

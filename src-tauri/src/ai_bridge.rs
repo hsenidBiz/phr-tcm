@@ -795,10 +795,10 @@ async fn validate_json(
                     if citations.specs.iter().any(|s| s.quote.is_none() && s.exemption.is_none()) {
                         advisories.push(format!(
                             "Test case {} ('{}') cites a Spec: section with no verbatim quote and \
-                             no exemption. Quote the source sentence, or state the exemption in \
-                             the fixed form `Spec: <file> <section> - no quotable text (<why>)`.",
+                             no exemption - {}.",
                             i + 1,
-                            tc.title
+                            tc.title,
+                            crate::speccov::bare_citation_hint(&tc.reviewer_notes)
                         ));
                     }
                 }
@@ -1146,6 +1146,12 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
             "cases": merged.len(),
             "per_file": per_file,
             "warnings": warnings,
+            "superseded": req.paths,
+            "note": format!(
+                "The {} slice file(s) above are now superseded by {} and safe to remove from .test-cases - they are importable and id-less, and the importer will happily offer them.",
+                req.paths.len(),
+                req.output_path
+            ),
         })
         .to_string(),
     )
@@ -1385,10 +1391,13 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         2. **Where the requirement lives**: `Spec: Step10-ManagePerformanceCycle.md\n\
         7.7 (AC-3)`, `Code: IndexModel.CanCopyFromPreviousCycle`, or both.\n\n\
         Add `Out of scope: SSO` only when THIS case deliberately leaves\n\
-        something out. Alongside the `Spec:` pointer, quote the source\n\
-        sentence verbatim, or it must not be presented as a quote: write\n\
-        `> \"<the source sentence>\"` when you can quote it, or state the\n\
-        exemption in the fixed form\n\
+        something out. The `Spec:` pointer comes FIRST, with the quote\n\
+        directly beneath it as `> \"<the source sentence>\"` - the checker\n\
+        reads a quote only in that position, so a quote placed above the\n\
+        pointer is reported as missing. Quote the source sentence\n\
+        verbatim, or it must not be presented as a quote: when you cannot\n\
+        quote (a table, a diagram, code), state the exemption in the\n\
+        fixed form\n\
         `Spec: <file> <section> - no quotable text (<why>)`,\n\
         naming why as one of code-not-prose, absence,\n\
         table/diagram, or synthesis. Never rewrite inside quotation marks;\n\

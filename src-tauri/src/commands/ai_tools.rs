@@ -497,7 +497,7 @@ fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), S
     std::fs::create_dir_all(dir).map_err(|e| format!("failed to create {}: {e}", dir.display()))?;
 
     // A tool switched off loses its command; switched back on, it returns.
-    let wanted = command_files_in(dir, disabled);
+    let wanted = command_files_in(dir, &crate::ai_tools::effective_disabled(disabled));
     for (path, _) in command_files_in(dir, &[]) {
         let keep = wanted.iter().any(|(p, _)| *p == path);
         if !keep && matches!(std::fs::read_to_string(&path), Ok(t) if t.contains(COMMAND_MARKER)) {

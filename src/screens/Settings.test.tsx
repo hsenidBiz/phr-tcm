@@ -201,3 +201,17 @@ test("cancelling the import confirmation touches nothing", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(imported).toBe(false);
 });
+
+test("the PHR-X card switch persists its choice, on by default", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const sw = await screen.findByLabelText("Show the company database (PHR-X) section on the AI Bridge tab");
+  expect(sw).toBeChecked();
+  expect(localStorage.getItem("tcm-v2-ai-show-db")).toBeNull();
+  fireEvent.click(sw);
+  expect(localStorage.getItem("tcm-v2-ai-show-db")).toBe("off");
+  fireEvent.click(sw);
+  expect(localStorage.getItem("tcm-v2-ai-show-db")).toBeNull();
+  localStorage.clear();
+});

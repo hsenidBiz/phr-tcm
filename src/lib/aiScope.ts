@@ -66,3 +66,33 @@ export function globalAllowedSnapshot(): boolean {
 export function scopeSnapshot(): RegistrationScope {
   return loadScope();
 }
+
+const SHOW_DB_KEY = "tcm-v2-ai-show-db";
+
+/** Whether the AI Bridge tab shows the company database (PHR-X) card.
+ * On by default; only the OFF choice is stored, so a fresh profile and a
+ * cleared one both show it. */
+export function loadShowDb(): boolean {
+  try {
+    return localStorage.getItem(SHOW_DB_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function saveShowDb(on: boolean): void {
+  try {
+    if (on) localStorage.removeItem(SHOW_DB_KEY);
+    else localStorage.setItem(SHOW_DB_KEY, "off");
+  } catch {
+    // storage unavailable -> nothing is remembered
+  }
+  notify();
+}
+
+export function showDbSnapshot(): boolean {
+  return loadShowDb();
+}
+
+/** Same listener set as the scope values above - reuse it under its own name. */
+export const subscribeShowDb = subscribeAiScope;
