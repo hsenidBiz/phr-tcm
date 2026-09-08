@@ -116,6 +116,17 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     }
 }
 
+/// Round 8 §13: nothing in the skill mentioned model choice, so every slice
+/// inherited the parent's - Opus for a layout-table transcription.
+#[test]
+fn the_fanout_skill_asks_for_a_model_per_slice() {
+    let fanout = COMMANDS.iter().find(|c| c.stem == "fanout").unwrap();
+    let md = command_markdown(fanout);
+    assert!(md.contains("Choose a model per slice"), "{md}");
+    assert!(md.contains("Pass `model` on each `Agent` call"), "{md}");
+    assert!(md.contains("specification contradicts itself"), "{md}");
+}
+
 /// A tool switched off in the app must lose its command. The tool side
 /// already refuses a disabled tool twice - filtered from `tools/list`,
 /// refused again on call for clients working from a cached list - but the
