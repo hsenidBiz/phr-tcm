@@ -200,6 +200,58 @@ test("a fresh mount shows a submit already in flight", async () => {
   }
 });
 
+/// One control while an upload runs, not two. The count beside the bar
+/// already says "Processing 3/10", so a second button repeating the word
+/// while doing nothing was the duplicate - the button's job is the only
+/// thing still available to do.
+///
+/// Gated on the PROGRESS store rather than this mount's own mutation, for
+/// the same reason the bar is: the upload outlives the mount that started
+/// it, and a stop control that a fresh mount cannot show would be a stop
+/// control missing exactly when someone came back to use it.
+test("an upload in flight turns the main button into Stop, and there is no second one", async () => {
+  const { submitStarted, submitProgressed, submitFinished } = await import("../lib/submitRun");
+  let cancelled = 0;
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "cancel_submit") {
+      cancelled += 1;
+      return null;
+    }
+    return undefined;
+  });
+  submitStarted("acme", 42, 10);
+  submitProgressed(3, 10, "Login works");
+  try {
+    renderQueue([makeCase()]);
+    expect(await screen.findByText(/Processing 3\/10/)).toBeInTheDocument();
+
+    const stop = screen.getByRole("button", { name: "Stop" });
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+    // And it has taken the action row's place - Review is not on offer
+    // while the queue it would review is being written.
+    expect(screen.queryByRole("button", { name: /Review 1 test case/ })).not.toBeInTheDocument();
+
+    // Held at first. The click that starts an upload lands on Confirm; the
+    // second half of a habitual double-click lands here, and must not stop
+    // the upload it just started.
+    expect(stop).toBeDisabled();
+    fireEvent.click(stop);
+    expect(cancelled).toBe(0);
+
+    await waitFor(() => expect(stop).toBeEnabled(), { timeout: 3000 });
+    fireEvent.click(stop);
+    expect(cancelled).toBe(1);
+  } finally {
+    submitFinished();
+  }
+});
+
 /// And a submit for a DIFFERENT scope stays invisible - PBI 7's progress
 /// must never render over PBI 42's queue.
 test("another PBI's submit does not show here", async () => {
