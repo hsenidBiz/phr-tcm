@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.4",
+    date: "2026-09-09",
+    items: [
+      "Updates now come from the company's own release page rather than a personal one. There is nothing for you to do: this version already knows the new address, and the old one keeps serving updates until everyone has moved across, so no machine gets left behind on an old version without knowing it.",
+    ],
+  },
+  {
     version: "1.23.3",
     date: "2026-09-09",
     items: [
