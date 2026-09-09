@@ -94,19 +94,52 @@ function baseMocks() {
 test("opening review scrolls the action row into view, and arming does it again", async () => {
   baseMocks();
   const spy = vi.spyOn(Element.prototype, "scrollIntoView");
-  renderQueue([makeCase()]);
+  // Restored even when an assertion below throws: a spy left on
+  // Element.prototype leaks into the next test, which then counts this
+  // test's calls as well as its own.
+  try {
+    renderQueue([makeCase()]);
 
-  // Not on arrival: the row is wherever the user already is, and moving
-  // the page under someone who has not asked for anything is worse than
-  // the scroll this fixes.
-  expect(spy).not.toHaveBeenCalled();
+    // Not on arrival: the row is wherever the user already is, and moving
+    // the page under someone who has not asked for anything is worse than
+    // the scroll this fixes.
+    expect(spy).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
-  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    // Smoothly: a jump saves the scrolling and spends it again on working
+    // out where you were thrown to.
+    expect(spy).toHaveBeenLastCalledWith({ block: "end", behavior: "smooth" });
 
-  fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
-  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
-  spy.mockRestore();
+    fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+/// The app turns its animations off under prefers-reduced-motion in seven
+/// other places. A scroll that animated anyway would be the one that got
+/// away, and for someone who set that preference motion is not a nicety.
+test("the review scroll does not animate under prefers-reduced-motion", async () => {
+  const realMatchMedia = window.matchMedia;
+  window.matchMedia = ((q: string) => ({
+    matches: q.includes("prefers-reduced-motion"),
+    media: q,
+    addEventListener() {},
+    removeEventListener() {},
+  })) as unknown as typeof window.matchMedia;
+  const spy = vi.spyOn(Element.prototype, "scrollIntoView");
+  try {
+    baseMocks();
+    renderQueue([makeCase()]);
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    expect(spy).toHaveBeenLastCalledWith({ block: "end", behavior: "auto" });
+  } finally {
+    spy.mockRestore();
+    window.matchMedia = realMatchMedia;
+  }
 });
 
 test("Edit opens the inline editor and Save writes back into the queue", async () => {

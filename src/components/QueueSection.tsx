@@ -973,7 +973,16 @@ export default function QueueSection({
   // saves.
   useEffect(() => {
     if (!reviewing && !armed) return;
-    actionRowEl.current?.scrollIntoView({ block: "end" });
+    // Smoothly, so the page visibly travels and the reader keeps their
+    // place: a jump saves the scrolling and spends it again on working out
+    // where they were thrown to. Except under prefers-reduced-motion,
+    // which this app honours everywhere else and which is not a
+    // preference about taste.
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    actionRowEl.current?.scrollIntoView({
+      block: "end",
+      behavior: still ? "auto" : "smooth",
+    });
   }, [reviewing, armed]);
 
   // Diffing is word-level and runs per row - recomputing all of it on
