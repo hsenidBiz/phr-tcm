@@ -1,8 +1,8 @@
 # One-shot release for the Tauri V2 app. Pure ASCII on purpose (PS 5.1).
 #
 # Flow: gates (cargo test + vitest + production build) -> push source branch -> tauri build ->
-# vpk pack -> publish to the DEDICATED v2 releases repo (never v1's):
-#   https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases
+# vpk pack -> publish to BOTH release repos (never v1's). See the Publish
+# section for why there are two.
 # Token comes from gh auth token in-process and is never printed.
 param(
     [Parameter(Mandatory = $true)][string]$Version,
@@ -16,7 +16,13 @@ trap {
     }
 }
 $v2 = Split-Path -Parent $PSScriptRoot            # v2/
-$repoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
+# Where releases live from now on, and where the app's updater looks.
+$repoUrl = "https://github.com/hsenidBiz/phr-tcm"
+# The old home, kept as a MIRROR. Every install shipped up to 1.23.3 reads
+# this feed and no other, so dropping it now would strand those machines on
+# the version they have - they would never learn another exists. It can go
+# once the fleet is past the first build that points at phr-tcm.
+$mirrorUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }
 
@@ -107,11 +113,20 @@ Pop-Location
 & (Join-Path $PSScriptRoot "pack.ps1") -Version $Version
 
 # --- Publish ---------------------------------------------------------------
+# Two destinations, primary first. The mirror exists only so installs that
+# still point at the old feed keep receiving updates during the move; see
+# $mirrorUrl above. A mirror failure is still fatal: half-published is the
+# state that strands people, and the fix is to re-run the named upload
+# rather than the whole release.
 $token = (gh auth token | Out-String).Trim()
 if (-not $token) { throw "gh auth token returned nothing - run gh auth login" }
-vpk upload github --repoUrl $repoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
-if ($LASTEXITCODE -ne 0) { throw "vpk upload failed with exit code $LASTEXITCODE" }
-gh release view "v$Version" --repo AvinAlwis/azure-devops-test-case-manager-v2-releases
+foreach ($target in @($repoUrl, $mirrorUrl)) {
+    vpk upload github --repoUrl $target --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")
+    if ($LASTEXITCODE -ne 0) {
+        throw "vpk upload to $target failed with exit code $LASTEXITCODE - re-run just that upload, not the whole release"
+    }
+}
+gh release view "v$Version" --repo hsenidBiz/phr-tcm
 # The caller's shell keeps whatever we set here, so put it back - on the
 # error paths too, which is why this is a trap rather than a last line.
 $me.ProcessorAffinity = $affinityWas

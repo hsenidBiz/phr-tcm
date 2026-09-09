@@ -9,12 +9,15 @@ use v2_lib::updater::{bytes_at, REPO_URL, RELEASES_URL};
 /// feed was read from one place and this is what stops the package being
 /// fetched from another.
 #[test]
-fn both_urls_name_the_v2_releases_repo() {
+fn both_urls_name_the_company_releases_repo() {
     assert!(RELEASES_URL.starts_with(REPO_URL), "{RELEASES_URL} is not under {REPO_URL}");
-    assert!(REPO_URL.ends_with("azure-devops-test-case-manager-v2-releases"));
+    // Releases moved to the company org. The personal repo is still fed as
+    // a mirror by the release script, for installs that shipped pointing at
+    // it, but a NEW build must look at phr-tcm.
+    assert!(REPO_URL.ends_with("phr-tcm"), "{REPO_URL} is not the phr-tcm repo");
     // v1's repo is a different one, and pointing v2 at it would have the
     // app offer its users the wrong application entirely.
-    assert!(!REPO_URL.contains("v2-releases/v"), "REPO_URL must be the repo root, not a release");
+    assert!(!REPO_URL.contains("/releases/"), "REPO_URL must be the repo root, not a release");
 }
 
 /// The download that failed for real, reproduced against the live repo.
@@ -32,10 +35,12 @@ fn a_superseded_version_is_still_downloadable_from_its_own_release() {
         .build()
         .expect("client");
     let status = |url: String| client.head(&url).send().expect("request failed").status().as_u16();
-    let file = "AzureDevOpsTestCaseManager.V2-1.18.9-full.nupkg";
+    // Any superseded release in the CURRENT repo reproduces it; 1.18.9 was
+    // the original and lives only in the old one, so this follows the feed.
+    let file = "AzureDevOpsTestCaseManager.V2-1.23.2-full.nupkg";
     assert_eq!(status(format!("{RELEASES_URL}{file}")), 404, "latest/ should have moved on");
     assert_eq!(
-        status(format!("{REPO_URL}/releases/download/v1.18.9/{file}")),
+        status(format!("{REPO_URL}/releases/download/v1.23.2/{file}")),
         200,
         "the per-release url is the one that does not move"
     );

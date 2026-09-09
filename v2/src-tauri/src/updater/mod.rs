@@ -8,11 +8,17 @@ use velopack::{sources, UpdateCheck, UpdateInfo, UpdateManager};
 
 /// v2 has its own releases repo so v1's and v2's "latest release" (which is
 /// what Velopack's HttpSource reads) can never fight over the update feed.
-pub const REPO_URL: &str = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases";
+///
+/// Moved to the company org on 2026-09-09. The old personal repo is still
+/// published to by `release-v2.ps1` as a mirror, because every install up to
+/// 1.23.3 reads THAT feed and knows nothing about this one: they can only
+/// learn about the move by updating one more time from where they already
+/// look. The mirror can stop once the fleet is past the first build carrying
+/// this url.
+pub const REPO_URL: &str = "https://github.com/hsenidBiz/phr-tcm";
 
 /// The `latest/download/` mirror. Kept only as a fallback - see `sources`.
-pub const RELEASES_URL: &str =
-    "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases/releases/latest/download/";
+pub const RELEASES_URL: &str = "https://github.com/hsenidBiz/phr-tcm/releases/latest/download/";
 
 #[derive(Default)]
 pub struct UpdateState {

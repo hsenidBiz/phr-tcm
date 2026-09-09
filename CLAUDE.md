@@ -63,10 +63,13 @@ v1 and went with it. The suites above are the gate.
   exposed to the frontend through the generated bindings.
 - **Screens live in `v2/src/screens/`**, shared UI in `v2/src/components/`,
   module-scope stores (`useSyncExternalStore`) in `v2/src/lib/`.
-- **Updates** come from the public GitHub releases repo, checked at launch
-  and hourly. `updater/mod.rs` tries the GitHub API first and the
-  `latest/download` mirror second - the comment there explains why that
-  order matters.
+- **Updates** come from the public company releases repo
+  `hsenidBiz/phr-tcm`, checked at launch and hourly. `updater/mod.rs` tries
+  the GitHub API first and the `latest/download` mirror second - the comment
+  there explains why that order matters. Releases moved there on 2026-09-09;
+  the old personal repo is still published to as a mirror, because installs
+  up to 1.23.3 read only that feed and can learn about the move only by
+  updating once more from where they already look.
 
 ## Testing notes that have cost real time
 
@@ -107,8 +110,11 @@ v1 and went with it. The suites above are the gate.
   `git log -1`.
 - **Releases: run `v2/scripts/release-v2.ps1 -Version X.Y.Z`.** It gates
   (cargo test + vitest + a production build), pushes source **first**,
-  builds, packs with Velopack, and publishes to GitHub. Never publish
-  without the source pushed.
+  builds, packs with Velopack, and publishes to **both** release repos:
+  `hsenidBiz/phr-tcm` (the real one) and the old personal repo as a mirror.
+  Never publish without the source pushed. A failure on either upload is
+  fatal — half-published is what strands people — and the fix is to re-run
+  the one named upload, never the whole release.
 - **The version lives in three places** and the release script refuses if
   they disagree: `v2/src-tauri/tauri.conf.json`, `v2/src-tauri/Cargo.toml`,
   and a matching entry in `v2/src/lib/changelog.ts`.
