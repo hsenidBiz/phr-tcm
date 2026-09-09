@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.5",
+    date: "2026-09-09",
+    items: [
+      "The wiki tools now take what you actually have. Paste a wiki page's address straight from your browser and it opens; hand back a search result's path exactly as it came out and that works too. Both used to be refused, and the only way through was to rewrite the path by hand, spaces and hyphens and all.",
+      "A page whose title really does contain a hyphen still opens as itself. The app tries what you gave it first and only reads it a second way if no such page exists, so it can never quietly hand you a different page.",
+    ],
+  },
+  {
     version: "1.23.4",
     date: "2026-09-09",
     items: [
