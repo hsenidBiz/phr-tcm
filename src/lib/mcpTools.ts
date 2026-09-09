@@ -46,9 +46,70 @@ export function isCoreTool(name: string): boolean {
   return (CORE_TOOLS as readonly string[]).includes(name);
 }
 
-/** The rows the AI Bridge tab renders: everything but the hidden two. */
+/** Tools that are one CHOICE, so they get one switch.
+ *
+ * `get_wiki_page` reads a page `search_wiki` found - it takes the path from
+ * a search hit and has no way to name a page on its own. Offered as two
+ * switches, half the combinations were useless: a search whose results
+ * nothing can open, or a reader that can never be handed anything. The
+ * pair moves together, and the row shows both names so nothing is hidden.
+ */
+export const TOOL_PAIRS: readonly (readonly string[])[] = [["search_wiki", "get_wiki_page"]];
+
+function pairOf(name: string): readonly string[] | undefined {
+  return TOOL_PAIRS.find((p) => p.includes(name));
+}
+
+/** One line in the AI Bridge list: a single tool, or a pair sharing a switch. */
+export type McpToolRow = { key: string; label: string; summary: string; names: string[] };
+
+/** The rows the AI Bridge tab renders, with each pair collapsed into one.
+ *
+ * A pair takes the position of its FIRST member and carries a summary
+ * describing the pair rather than either half.
+ */
+export function visibleRows(): McpToolRow[] {
+  const rows: McpToolRow[] = [];
+  const done = new Set<string>();
+  for (const t of visibleTools()) {
+    if (done.has(t.name)) continue;
+    const pair = pairOf(t.name);
+    if (!pair) {
+      rows.push({ key: t.name, label: t.name, summary: t.summary, names: [t.name] });
+      continue;
+    }
+    for (const n of pair) done.add(n);
+    rows.push({
+      key: pair.join("+"),
+      label: pair.join(" + "),
+      summary: "Search the project wiki and read the pages it finds.",
+      names: [...pair],
+    });
+  }
+  return rows;
+}
+
+/** Switch a row: every name it carries moves together. Off when any of them
+ * is already off, so a half-off pair turns fully ON at the first click
+ * rather than needing two. */
+export function toggleRow(disabled: string[], names: string[]): string[] {
+  const anyOff = names.some((n) => disabled.includes(n));
+  if (anyOff) return disabled.filter((n) => !names.includes(n));
+  return [...disabled, ...names];
+}
+
+/** The rows the AI Bridge tab renders: the tools that can be switched.
+ *
+ * Neither the hidden two nor the always-on five appear. A row carrying no
+ * switch was a control that did nothing, and the five are enforced in
+ * `ai_tools.rs` whatever this list shows - listing them only invited the
+ * reader to look for a way to turn them off that does not exist. What is
+ * left is exactly the set of choices this screen can honour.
+ */
 export function visibleTools(): McpToolInfo[] {
-  return MCP_TOOLS.filter((t) => !(HIDDEN_TOOLS as readonly string[]).includes(t.name));
+  return MCP_TOOLS.filter(
+    (t) => !(HIDDEN_TOOLS as readonly string[]).includes(t.name) && !isCoreTool(t.name),
+  );
 }
 
 export function loadDisabledTools(): string[] {
@@ -56,9 +117,22 @@ export function loadDisabledTools(): string[] {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.filter((t) => typeof t === "string" && !isCoreTool(t) && !(HIDDEN_TOOLS as readonly string[]).includes(t))
-      : [];
+    if (!Array.isArray(parsed)) return [];
+    const kept: string[] = parsed.filter(
+      (t) =>
+        typeof t === "string" &&
+        !isCoreTool(t) &&
+        !(HIDDEN_TOOLS as readonly string[]).includes(t),
+    );
+    // A list saved before the pairing can name one half of a pair. Complete
+    // it toward OFF: the pair is one switch now, and the alternative would
+    // silently hand an assistant a tool this list says is off.
+    for (const pair of TOOL_PAIRS) {
+      if (pair.some((n) => kept.includes(n))) {
+        for (const n of pair) if (!kept.includes(n)) kept.push(n);
+      }
+    }
+    return kept;
   } catch {
     return [];
   }

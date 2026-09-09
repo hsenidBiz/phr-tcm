@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "vitest";
-import { CORE_TOOLS, HIDDEN_TOOLS, loadDisabledTools, MCP_TOOLS, toggleTool, visibleTools } from "./mcpTools";
+import { CORE_TOOLS, HIDDEN_TOOLS, loadDisabledTools, MCP_TOOLS, toggleRow, toggleTool, visibleRows, visibleTools } from "./mcpTools";
 
 /**
  * The toggle list is a hand-written mirror of `mcp.rs`. If the two drift, a
@@ -33,15 +33,28 @@ test("toggling is its own inverse", () => {
   expect(toggleTool(once, "search_wiki")).toEqual([]);
 });
 
-test("core tools cannot be toggled and hidden tools are not offered", () => {
+test("core tools cannot be toggled", () => {
   for (const name of CORE_TOOLS) expect(toggleTool([], name)).toEqual([]);
-  expect(visibleTools().map((t) => t.name)).not.toEqual(expect.arrayContaining([...HIDDEN_TOOLS]));
-  expect(visibleTools().map((t) => t.name)).toEqual(expect.arrayContaining([...CORE_TOOLS]));
+});
+
+/// The list is the tools you can DO something about. A row with no switch
+/// was a control that did nothing, and the five it named are enforced on
+/// the Rust side whatever this list shows - so they are not offered here
+/// at all, the same way the two Auto Run tools already were not.
+test("neither core nor hidden tools are listed", () => {
+  const listed = visibleTools().map((t) => t.name);
+  for (const name of [...CORE_TOOLS, ...HIDDEN_TOOLS]) {
+    expect(listed).not.toContain(name);
+  }
+  // The switchable ones are still all there - this must not empty the list.
+  expect(listed).toContain("search_wiki");
+  expect(listed).toContain("optimize_cases");
+  expect(listed.length).toBe(MCP_TOOLS.length - CORE_TOOLS.length - HIDDEN_TOOLS.length);
 });
 
 test("a saved list naming a core tool is ignored on load", () => {
-  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_test_cases", "search_wiki"]));
-  expect(loadDisabledTools()).toEqual(["search_wiki"]);
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_test_cases", "get_tags"]));
+  expect(loadDisabledTools()).toEqual(["get_tags"]);
   localStorage.clear();
 });
 
@@ -68,4 +81,33 @@ test("the core and hidden tool lists match the Rust side", () => {
 
   expect([...rsCore].sort()).toEqual([...CORE_TOOLS].sort());
   expect([...rsHidden].sort()).toEqual([...HIDDEN_TOOLS].sort());
+});
+
+/// `get_wiki_page` reads a page that `search_wiki` found - it has no way to
+/// name a page on its own. Offered as two switches, half the combinations
+/// were useless: search with nothing to read it, or a reader that can never
+/// be handed anything. They are one choice, so they are one row.
+test("the two wiki tools are one row that carries both names", () => {
+  const rows = visibleRows();
+  const wiki = rows.find((r) => r.names.includes("search_wiki"));
+  expect(wiki, "the wiki row exists").toBeTruthy();
+  expect(wiki!.names).toEqual(["search_wiki", "get_wiki_page"]);
+  // And neither appears again on its own.
+  expect(rows.filter((r) => r.names.includes("get_wiki_page")).length).toBe(1);
+  expect(rows.every((r) => r.key !== "get_wiki_page")).toBe(true);
+});
+
+test("switching the wiki row off disables both tools, and on clears both", () => {
+  const off = toggleRow([], ["search_wiki", "get_wiki_page"]);
+  expect([...off].sort()).toEqual(["get_wiki_page", "search_wiki"]);
+  expect(toggleRow(off, ["search_wiki", "get_wiki_page"])).toEqual([]);
+});
+
+/// A saved list from before the pairing can name one without the other.
+/// Completing it toward OFF is the safe direction: the alternative silently
+/// hands an assistant a tool the user had switched off.
+test("a half-disabled wiki pair is completed on load", () => {
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_wiki_page"]));
+  expect([...loadDisabledTools()].sort()).toEqual(["get_wiki_page", "search_wiki"]);
+  localStorage.clear();
 });

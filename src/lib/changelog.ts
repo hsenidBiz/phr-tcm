@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.9",
+    date: "2026-09-09",
+    items: [
+      "AI Bridge: the tool list now shows only the tools you can actually switch. The five that cannot be turned off were rows with no switch on them, which invited you to look for a control that was never there. They still work exactly as before.",
+      "AI Bridge: searching the wiki and reading a page from it are now one switch. Reading a page only works on one the search found, so a set-up with one on and the other off could never do anything useful. They turn on and off together.",
+    ],
+  },
+  {
     version: "1.23.8",
     date: "2026-09-09",
     items: [

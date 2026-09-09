@@ -735,10 +735,17 @@ test("the tool list shows core tools without a switch and never the autorun tool
   const toolSection = screen.getByText("Tools an assistant may use").closest("section")!;
   expect(screen.queryByText("get_autorun_guide")).not.toBeInTheDocument();
   expect(screen.queryByText("save_autorun_script")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("begin_test_case_writing")).not.toBeInTheDocument();
-  expect(within(toolSection).getByText("begin_test_case_writing")).toBeInTheDocument();
-  expect(screen.getAllByText("always on").length).toBe(5);
+  // The five always-on tools are not listed either. A row with no switch
+  // was a control that did nothing; what an assistant may actually be
+  // stopped from using is the whole point of this list.
+  expect(within(toolSection).queryByText("begin_test_case_writing")).not.toBeInTheDocument();
+  expect(within(toolSection).queryByText("transform_cases")).not.toBeInTheDocument();
+  expect(screen.queryByText("always on")).not.toBeInTheDocument();
+  // And the switchable ones are all still here. Seven rows for eight
+  // tools: the two wiki tools share one switch.
   expect(screen.getByLabelText("get_tags")).toBeInTheDocument();
+  expect(screen.getByLabelText("search_wiki + get_wiki_page")).toBeInTheDocument();
+  expect(within(toolSection).getByText("7 of 7 on")).toBeInTheDocument();
 });
 
 test("the PHR-X card hides when switched off in Settings, except during the tour", async () => {

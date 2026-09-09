@@ -20,7 +20,7 @@ import {
   loadDbConfig,
   saveDbConfig,
 } from "../lib/dbServer";
-import { isCoreTool, loadDisabledTools, saveDisabledTools, toggleTool, visibleTools } from "../lib/mcpTools";
+import { loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import {
   addRepository,
@@ -141,7 +141,7 @@ export default function AiBridge() {
 
   // Tools the user has switched off; App re-pushes these to the bridge.
   const [disabled, setDisabled] = useState<string[]>(loadDisabledTools);
-  const visible = visibleTools();
+  const visible = visibleRows();
   // The company's database MCP server. Settings persist locally so a
   // second editor can be registered without retyping the connection
   // string - see lib/dbServer.ts for why that is acceptable here.
@@ -552,41 +552,36 @@ export default function AiBridge() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-text">Tools an assistant may use</h2>
           <span className="text-xs text-faint">
-            {visible.length - disabled.length} of {visible.length} on
+            {/* Counted over ROWS, not names: the wiki row carries two
+                tools, so subtracting the disabled names would report one
+                switch off as two. */}
+            {visible.filter((r) => !r.names.some((n) => disabled.includes(n))).length} of{" "}
+            {visible.length} on
           </span>
         </div>
         <p className="text-xs text-muted">
-          Switch a tool off to keep it out of an assistant's reach. The five marked
-          always on cannot be switched off - they are what makes the assistant useful
-          at all.
+          Switch a tool off to keep it out of an assistant's reach.
         </p>
         <ul className="space-y-1.5">
-          {visible.map((t) => {
-            const core = isCoreTool(t.name);
-            const on = core || !disabled.includes(t.name);
+          {visible.map((row) => {
+            const on = !row.names.some((n) => disabled.includes(n));
             return (
-              <li key={t.name} className="flex items-start gap-2">
-                {core ? (
-                  <span className="mt-0.5 w-9 shrink-0 text-center text-[10px] uppercase tracking-wide text-faint">
-                    always on
-                  </span>
-                ) : (
-                  <Switch
-                    checked={on}
-                    ariaLabel={t.name}
-                    onCheckedChange={() => {
-                      const next = toggleTool(disabled, t.name);
-                      setDisabled(next);
-                      saveDisabledTools(next);
-                    }}
-                    className="mt-0.5"
-                  />
-                )}
+              <li key={row.key} className="flex items-start gap-2">
+                <Switch
+                  checked={on}
+                  ariaLabel={row.label}
+                  onCheckedChange={() => {
+                    const next = toggleRow(disabled, row.names);
+                    setDisabled(next);
+                    saveDisabledTools(next);
+                  }}
+                  className="mt-0.5"
+                />
                 <span className="min-w-0 flex-1">
                   <span className={cn("id-mono text-xs", on ? "text-text" : "text-faint")}>
-                    {t.name}
+                    {row.label}
                   </span>
-                  <span className="block text-[11px] text-muted">{t.summary}</span>
+                  <span className="block text-[11px] text-muted">{row.summary}</span>
                 </span>
               </li>
             );
