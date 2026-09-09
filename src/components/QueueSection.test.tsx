@@ -86,6 +86,29 @@ function baseMocks() {
   });
 }
 
+/// Both steps that change what the action row CONTAINS also make it
+/// taller, and on a long queue that pushed the button you need next below
+/// the fold. The floating copy covers the first step but deliberately
+/// stands down for the armed warning, which is the one that must be read -
+/// so the row itself comes to the reader instead.
+test("opening review scrolls the action row into view, and arming does it again", async () => {
+  baseMocks();
+  const spy = vi.spyOn(Element.prototype, "scrollIntoView");
+  renderQueue([makeCase()]);
+
+  // Not on arrival: the row is wherever the user already is, and moving
+  // the page under someone who has not asked for anything is worse than
+  // the scroll this fixes.
+  expect(spy).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  spy.mockRestore();
+});
+
 test("Edit opens the inline editor and Save writes back into the queue", async () => {
   baseMocks();
   renderQueue([makeCase()]);

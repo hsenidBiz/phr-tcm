@@ -922,6 +922,28 @@ export default function QueueSection({
   // exactly the flow the floating copy exists for.
   const [actionRow, actionOnScreen] = useOnScreen("0px 0px -24px 0px");
 
+  // The same row, held as a plain node so it can be scrolled to. The hook
+  // above keeps its node in state for the observer and does not hand it
+  // back, and reading it out of there would make this depend on when the
+  // observer happens to re-render.
+  const actionRowEl = useRef<HTMLDivElement | null>(null);
+
+  // Opening the review, and arming the confirmation, both grow this row -
+  // and on a long queue that put the next button below the fold. The
+  // floating copy covers the first case but stands down for the armed
+  // warning on purpose, since that one has to be read. So the row comes to
+  // the reader. `block: "end"` rather than "center": the tail of the
+  // review content stays visible above it instead of the button landing
+  // mid-screen with the content it belongs to pushed off the top.
+  //
+  // Not on mount - only when one of these turns on. Moving the page under
+  // someone who has not asked for anything is worse than the scroll it
+  // saves.
+  useEffect(() => {
+    if (!reviewing && !armed) return;
+    actionRowEl.current?.scrollIntoView({ block: "end" });
+  }, [reviewing, armed]);
+
   // Diffing is word-level and runs per row - recomputing all of it on
   // every keystroke/selection render made an 80-case review sluggish.
   // Recomputed only when the queue, the fetched originals, or the field
@@ -1224,7 +1246,13 @@ export default function QueueSection({
         </div>
       )}
 
-      <div ref={actionRow} className="flex items-center gap-3">
+      <div
+        ref={(el) => {
+          actionRowEl.current = el;
+          actionRow(el);
+        }}
+        className="flex items-center gap-3"
+      >
         {!reviewing ? (
           <Button disabled={queue.length === 0} onClick={() => setReviewing(true)}>
             <IconReview aria-hidden />
