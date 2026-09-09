@@ -121,23 +121,27 @@ test("the how-it-works card names every MCP tool", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
 
-  await screen.findByText("How it works");
-  for (const name of [
-    "begin_test_case_writing",
-    "get_writing_guide",
-    "get_test_cases",
-    "validate_cases",
-    "get_tags",
-    "optimize_cases",
-    "transform_cases",
-    "search_pbis",
-    "search_wiki",
-    "get_wiki_page",
-  ]) {
-    // Each tool appears twice now - once in the on/off list, once in the
-    // explanation below it.
-    expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+  const card = (await screen.findByText("How it works")).closest("section")!;
+  // The card explains what you can DECIDE. Every entry has a switch above
+  // it, and the tools with no switch are not described here - a paragraph
+  // about a control that does not exist is the thing this screen keeps
+  // getting rid of.
+  for (const label of ["Run failures", "Project tags", "Find a work item", "Project wiki"]) {
+    expect(within(card).getByText(label)).toBeInTheDocument();
   }
+  for (const label of [
+    "Start a writing job",
+    "Writing guide",
+    "Bulk edits",
+    "Build the run sheet",
+    "Check a draft",
+    "Merge slice files",
+    "Auto Run guide",
+  ]) {
+    expect(within(card).queryByText(label), label).not.toBeInTheDocument();
+  }
+  // And no identifiers anywhere in it.
+  expect(card.textContent).not.toMatch(/[a-z]+_[a-z]/);
 });
 
 test("the copy button writes the registration command to the clipboard", async () => {
@@ -531,7 +535,9 @@ test("without the Settings switch, the machine-wide choice is not offered", asyn
 });
 
 test("Register passes the working repository and the disabled tools along", async () => {
-  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["optimize_cases"]));
+  // A tool that can still be switched: optimize_cases is always on now,
+  // so a saved list naming it is ignored on load.
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_tags"]));
   let seen: unknown;
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -550,7 +556,7 @@ test("Register passes the working repository and the disabled tools along", asyn
     expect(seen).toMatchObject({
       id: "cursor",
       workingDir: "D:\\repo",
-      disabledTools: ["optimize_cases"],
+      disabledTools: ["get_tags"],
     }),
   );
 });
@@ -722,7 +728,7 @@ test("picking a preset re-registers the DB server where it is registered, then s
   expect(await screen.findByText(/coding session may need to be restarted/)).toBeInTheDocument();
 });
 
-test("the tool list shows core tools without a switch and never the autorun tools", async () => {
+test("the tool list offers only the switchable tools, by their human names", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
     if (cmd === "detect_ai_tools") return [];
@@ -733,19 +739,22 @@ test("the tool list shows core tools without a switch and never the autorun tool
   renderBridge(qc);
   await screen.findByText("Tools an assistant may use");
   const toolSection = screen.getByText("Tools an assistant may use").closest("section")!;
-  expect(screen.queryByText("get_autorun_guide")).not.toBeInTheDocument();
-  expect(screen.queryByText("save_autorun_script")).not.toBeInTheDocument();
-  // The five always-on tools are not listed either. A row with no switch
-  // was a control that did nothing; what an assistant may actually be
-  // stopped from using is the whole point of this list.
-  expect(within(toolSection).queryByText("begin_test_case_writing")).not.toBeInTheDocument();
-  expect(within(toolSection).queryByText("transform_cases")).not.toBeInTheDocument();
+  // Not one identifier anywhere in this card: the screen names tools the
+  // way a person would say them.
+  expect(toolSection.textContent).not.toMatch(/[a-z]+_[a-z]/);
+  // The always-on tools carry no switch, so they are not offered here. A
+  // row that cannot be changed was a control that did nothing.
+  expect(within(toolSection).queryByText("Start a writing job")).not.toBeInTheDocument();
+  expect(within(toolSection).queryByText("Bulk edits")).not.toBeInTheDocument();
+  expect(within(toolSection).queryByText("Build the run sheet")).not.toBeInTheDocument();
+  expect(within(toolSection).queryByText("Check a draft")).not.toBeInTheDocument();
+  expect(within(toolSection).queryByText("Merge slice files")).not.toBeInTheDocument();
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
-  // And the switchable ones are all still here. Seven rows for eight
-  // tools: the two wiki tools share one switch.
-  expect(screen.getByLabelText("get_tags")).toBeInTheDocument();
-  expect(screen.getByLabelText("search_wiki + get_wiki_page")).toBeInTheDocument();
-  expect(within(toolSection).getByText("7 of 7 on")).toBeInTheDocument();
+  // Four rows for five tools: searching the wiki and reading a page from
+  // it share one switch.
+  expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
+  expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
+  expect(within(toolSection).getByText("4 of 4 on")).toBeInTheDocument();
 });
 
 test("the PHR-X card hides when switched off in Settings, except during the tour", async () => {

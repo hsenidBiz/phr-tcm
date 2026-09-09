@@ -174,6 +174,13 @@ pub const CORE_TOOLS: &[&str] = &[
     "get_test_cases",
     "check_spec_coverage",
     "transform_cases",
+    // Finishing a draft is part of writing one. A set that cannot be
+    // checked, ordered into a run sheet, or merged back from its slices is
+    // a set nobody can ship - switching these off left an assistant able to
+    // write cases and unable to hand over anything usable.
+    "validate_cases",
+    "optimize_cases",
+    "merge_case_files",
 ];
 
 /// Tools that are never offered: not listed, not callable, no skill file,

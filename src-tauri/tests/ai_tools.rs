@@ -593,14 +593,33 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
 
 use v2_lib::ai_tools::{effective_disabled, CORE_TOOLS, HIDDEN_TOOLS};
 
-/// The policy: two tools are never offered (no way back on), five can
-/// never be switched off - whatever the frontend's list says.
+/// The policy: two tools are never offered (no way back on), and the core
+/// set can never be switched off - whatever the frontend's list says.
+///
+/// Validate, optimise and merge joined that set: finishing a draft is part
+/// of writing one, and an assistant that can write cases but cannot check,
+/// order or merge them hands over nothing anyone can ship.
 #[test]
 fn the_effective_disabled_set_hides_autorun_and_protects_the_core() {
     assert_eq!(HIDDEN_TOOLS, ["get_autorun_guide", "save_autorun_script"]);
     assert_eq!(
         CORE_TOOLS,
-        ["begin_test_case_writing", "get_writing_guide", "get_test_cases", "check_spec_coverage", "transform_cases"]
+        [
+            "begin_test_case_writing",
+            "get_writing_guide",
+            "get_test_cases",
+            "check_spec_coverage",
+            "transform_cases",
+            "validate_cases",
+            "optimize_cases",
+            "merge_case_files"
+        ]
+    );
+    // A core tool named in the frontend's list is dropped, not honoured.
+    assert_eq!(
+        effective_disabled(&["optimize_cases".into(), "merge_case_files".into()]),
+        vec!["get_autorun_guide", "save_autorun_script"],
+        "the three that finish a draft cannot be switched off"
     );
     let got = effective_disabled(&["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()]);
     assert_eq!(got, vec!["get_autorun_guide", "save_autorun_script", "search_wiki"], "hidden first, core dropped, no duplicates");

@@ -48,7 +48,7 @@ test("neither core nor hidden tools are listed", () => {
   }
   // The switchable ones are still all there - this must not empty the list.
   expect(listed).toContain("search_wiki");
-  expect(listed).toContain("optimize_cases");
+  expect(listed).toContain("get_tags");
   expect(listed.length).toBe(MCP_TOOLS.length - CORE_TOOLS.length - HIDDEN_TOOLS.length);
 });
 
@@ -110,4 +110,34 @@ test("a half-disabled wiki pair is completed on load", () => {
   localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_wiki_page"]));
   expect([...loadDisabledTools()].sort()).toEqual(["get_wiki_page", "search_wiki"]);
   localStorage.clear();
+});
+
+/// The three that finish a draft - validate, optimise, merge - are as much
+/// part of writing a set as the guide is, and a half-set with them switched
+/// off is a set nobody can ship. They joined the always-on group, which
+/// also takes them out of the switch list.
+test("validate, optimise and merge are always on and not listed", () => {
+  for (const name of ["validate_cases", "optimize_cases", "merge_case_files"]) {
+    expect(CORE_TOOLS as readonly string[]).toContain(name);
+    expect(visibleRows().flatMap((r) => r.names)).not.toContain(name);
+  }
+});
+
+/// Four rows is the whole of what this screen can still decide.
+test("only the switchable tools are left, as four rows", () => {
+  expect(visibleRows().map((r) => r.key)).toEqual([
+    "get_run_failures",
+    "get_tags",
+    "search_pbis",
+    "search_wiki+get_wiki_page",
+  ]);
+});
+
+/// The screen shows names people read, not identifiers. An underscore in a
+/// label is the identifier leaking back out.
+test("every row label is human, with no identifier in it", () => {
+  for (const row of visibleRows()) {
+    expect(row.label, `${row.key} label`).not.toMatch(/_/);
+    expect(row.label[0]).toMatch(/[A-Z]/);
+  }
 });

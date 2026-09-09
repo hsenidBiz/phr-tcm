@@ -6,7 +6,7 @@
 
 const KEY = "tcm-v2-mcp-disabled";
 
-export type McpToolInfo = { name: string; summary: string };
+export type McpToolInfo = { name: string; label: string; summary: string };
 
 /** Mirrors `mcp.rs`'s tools_list - kept here so the settings UI can show
  * what each tool does without a round trip. `tcm_mcp.rs` asserts the same
@@ -14,32 +14,39 @@ export type McpToolInfo = { name: string; summary: string };
 export const MCP_TOOLS: McpToolInfo[] = [
   {
     name: "begin_test_case_writing",
+    label: "Start a writing job",
     summary: "Asks you how the set should be written, before anything is.",
   },
-  { name: "get_writing_guide", summary: "Format rules and your org's allowed Module values." },
-  { name: "get_test_cases", summary: "The cases already on a PBI - style, and what is covered." },
-  { name: "get_run_failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },
-  { name: "check_spec_coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
-  { name: "merge_case_files", summary: "Merge fan-out slice files into one draft through the real importer." },
+  { name: "get_writing_guide", label: "Writing guide", summary: "Format rules and your org's allowed Module values." },
+  { name: "get_test_cases", label: "Cases already on a PBI", summary: "The cases already on a PBI - style, and what is covered." },
+  { name: "get_run_failures", label: "Run failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },
+  { name: "check_spec_coverage", label: "Specification coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
+  { name: "merge_case_files", label: "Merge slice files", summary: "Merge fan-out slice files into one draft through the real importer." },
   {
     name: "get_autorun_guide",
+    label: "Auto Run guide",
     summary: "How to write an Auto Run browser script, and where assertions may come from.",
   },
   {
     name: "save_autorun_script",
+    label: "Save Auto Run scripts",
     summary: "Save browser scripts for a PBI's cases - one call covers the whole set.",
   },
-  { name: "validate_cases", summary: "Check a draft with the app's real importer." },
-  { name: "get_tags", summary: "Tag names this project already uses." },
-  { name: "optimize_cases", summary: "Reorganise a draft into a tester-ready run sheet." },
-  { name: "transform_cases", summary: "Bulk edits: retag, retitle, set module, sort, dedupe." },
-  { name: "search_pbis", summary: "Find a work item id by title." },
-  { name: "search_wiki", summary: "Search the project wiki for documentation." },
-  { name: "get_wiki_page", summary: "Read a wiki page found by search_wiki." },
+  { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
+  { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
+  { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
+  { name: "transform_cases", label: "Bulk edits", summary: "Bulk edits: retag, retitle, set module, sort, dedupe." },
+  { name: "search_pbis", label: "Find a work item", summary: "Find a work item id by title." },
+  { name: "search_wiki", label: "Search the wiki", summary: "Search the project wiki for documentation." },
+  { name: "get_wiki_page", label: "Read a wiki page", summary: "Read a wiki page found by search_wiki." },
 ];
 
 /** Mirrors ai_tools.rs - the Rust side is the one that enforces both. */
-export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_test_cases", "check_spec_coverage", "transform_cases"] as const;
+export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_test_cases", "check_spec_coverage", "transform_cases",
+  // Finishing a draft is part of writing one: a set that cannot be
+  // checked, ordered into a run sheet, or merged back from its slices
+  // is a set nobody can ship.
+  "validate_cases", "optimize_cases", "merge_case_files"] as const;
 export const HIDDEN_TOOLS = ["get_autorun_guide", "save_autorun_script"] as const;
 
 export function isCoreTool(name: string): boolean {
@@ -52,7 +59,8 @@ export function isCoreTool(name: string): boolean {
  * a search hit and has no way to name a page on its own. Offered as two
  * switches, half the combinations were useless: a search whose results
  * nothing can open, or a reader that can never be handed anything. The
- * pair moves together, and the row shows both names so nothing is hidden.
+ * pair moves together under one human name; "How it works" on the same
+ * tab describes each half.
  */
 export const TOOL_PAIRS: readonly (readonly string[])[] = [["search_wiki", "get_wiki_page"]];
 
@@ -75,13 +83,13 @@ export function visibleRows(): McpToolRow[] {
     if (done.has(t.name)) continue;
     const pair = pairOf(t.name);
     if (!pair) {
-      rows.push({ key: t.name, label: t.name, summary: t.summary, names: [t.name] });
+      rows.push({ key: t.name, label: t.label, summary: t.summary, names: [t.name] });
       continue;
     }
     for (const n of pair) done.add(n);
     rows.push({
       key: pair.join("+"),
-      label: pair.join(" + "),
+      label: "Project wiki",
       summary: "Search the project wiki and read the pages it finds.",
       names: [...pair],
     });
@@ -100,8 +108,8 @@ export function toggleRow(disabled: string[], names: string[]): string[] {
 
 /** The rows the AI Bridge tab renders: the tools that can be switched.
  *
- * Neither the hidden two nor the always-on five appear. A row carrying no
- * switch was a control that did nothing, and the five are enforced in
+ * Neither the hidden tools nor the always-on ones appear. A row carrying no
+ * switch was a control that did nothing, and they are enforced in
  * `ai_tools.rs` whatever this list shows - listing them only invited the
  * reader to look for a way to turn them off that does not exist. What is
  * left is exactly the set of choices this screen can honour.

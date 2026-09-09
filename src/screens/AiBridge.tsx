@@ -883,85 +883,36 @@ export default function AiBridge() {
               below is the inventory. */}
           Connected AI tools can call the tools this app exposes. All of them
           read, reshape the AI's own draft, or save local files — none can
-          write to Azure DevOps:
+          write to Azure DevOps. These are the ones you can switch above:
         </p>
         <ul className="space-y-1.5 text-xs text-muted">
           <li>
-            <code className="id-mono text-text">begin_test_case_writing</code> — the
-            starting point. It hands the assistant a checklist to put to you in chat:
-            what the file is called (it goes in this repository's{" "}
-            <span className="id-mono">.test-cases</span> folder), which spec documents
-            are authoritative, whether to check a PBI for duplicates, tags and module,
-            what is out of scope. Your answers are checked against the real paths and
-            values, and written to a plan file for you to approve before a single case
-            exists.
+            <span className="font-medium text-text">Run failures</span> — what failed the last time this PBI&apos;s cases were run, with the tester&apos;s own
+            comments. The fastest way to turn a failed run into the cases that should
+            have caught it. Switch it off to keep run results away from an assistant.
           </li>
           <li>
-            <code className="id-mono text-text">get_writing_guide</code> — the live
-            guide for writing import JSON: format rules, your org's allowed Module
-            values, and the recommended workflow.
+            <span className="font-medium text-text">Project tags</span> — the tag names this project already uses, so an assistant reuses yours instead of
+            inventing near-duplicates. Served from this app&apos;s cache, at no request
+            cost. Off, it will still tag cases — it just has to guess.
           </li>
           <li>
-            <code className="id-mono text-text">get_test_cases</code> — the test cases
-            already linked to a PBI, in the exact import shape: to copy the house
-            style, to check what is already covered, or just to read them.
+            <span className="font-medium text-text">Find a work item</span> — searches PBI titles in the current project so a job can start from a name rather
+            than a number you looked up yourself. Off, you supply the work item id.
           </li>
           <li>
-            <code className="id-mono text-text">validate_cases</code> — runs a draft
-            through this app's real importer and returns the case count, warnings, and
-            errors. Large drafts can be validated from a file path.
-          </li>
-          <li>
-            <code className="id-mono text-text">get_tags</code> — the tag names this
-            project already uses, so the AI reuses yours instead of inventing
-            near-duplicates. Served from this app's cache, at no request cost.
-          </li>
-          <li>
-            <code className="id-mono text-text">optimize_cases</code> — reorganises a
-            finished draft into a run sheet: navigation spelled out as steps rather
-            than buried in preconditions, expected results cut down to the outcome,
-            and the cases reordered so the tester changes environment as few times as
-            possible.
-          </li>
-          <li>
-            <code className="id-mono text-text">transform_cases</code> — bulk edits
-            (retag, retitle, set module, find/replace in steps, sort, dedupe) so the
-            AI reshapes a draft through tested operations instead of writing its own
-            throwaway script.
-          </li>
-          <li>
-            <code className="id-mono text-text">check_spec_coverage</code> — reports
-            which parts of a specification have no test case yet, by joining the
-            draft's own citations against the spec documents. Gaps come back as
-            findings to account for — a partial draft is a normal state, not an
-            error.
-          </li>
-          <li>
-            <code className="id-mono text-text">merge_case_files</code> — merges the
-            slice files of a fanned-out draft into one file through the real
-            importer, with each slice's warnings labelled by the file they came
-            from.
-          </li>
-          <li>
-            <code className="id-mono text-text">search_pbis</code> — finds the right
-            work item id by searching PBI titles in the current project.
-          </li>
-          <li>
-            <code className="id-mono text-text">search_wiki</code> — searches the
-            project's Azure DevOps wiki and returns page paths with snippet
-            highlights, for finding documentation about the implementation.
-          </li>
-          <li>
-            <code className="id-mono text-text">get_wiki_page</code> — fetches a wiki
-            page's full markdown content, for reading what search_wiki found.
+            <span className="font-medium text-text">Project wiki</span> — searches your Azure DevOps wiki and reads the pages it finds, for the documentation
+            behind a requirement. A page opens from a search result, from its path, or
+            from the address in your browser. Searching and reading are one switch
+            because reading only works on a page the search found.
           </li>
         </ul>
         <p className="text-sm text-muted">
           Recommended flow: ask the AI to read the writing guide and some
-          example cases, have it draft cases for your PBI, run them through
-          optimize_cases, then import the result yourself via the Import File
-          tab. Keep the file watched and any problems appear here as it saves —
-          the AI never has to ask whether the draft is valid.
+          example cases, have it draft cases for your PBI, have it build the run
+          sheet, then import the result yourself via the Import File tab. Keep
+          the file watched and any problems appear here as it saves — the AI
+          never has to ask whether the draft is valid.
         </p>
         <p className="text-xs text-faint">
           Tool is unable to create, update or delete in Azure DevOps, only
