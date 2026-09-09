@@ -57,7 +57,7 @@
     "shadcn": "^4.13.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "allowScripts": {
     "esbuild@0.28.1": true
