@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import UiTour from "./UiTour";
 import { tourDone } from "./tourState";
+import { getThemeChoice } from "../lib/theme";
 import type { TourStep, TourWhere } from "./tourScript";
 
 afterEach(() => {
@@ -452,4 +453,67 @@ test("moving between stops that share an effective destination waits for nothing
   await screen.findByText("Undeclared too");
   // The app is on manual throughout, so nothing was ever awaited.
   for (const call of onAwait.mock.calls) expect(call[0]).toBeNull();
+});
+
+/// The tour named themes and then showed nobody where they were: it rang
+/// the Settings BUTTON and said colours live behind it. A stop can now
+/// carry the picker itself, so the one thing on the tour a person actually
+/// wants to change is changed on the spot rather than remembered for later.
+const THEME_STEPS: TourStep[] = [
+  {
+    anchor: "settings",
+    title: "Make it yours",
+    body: "Pick a look.",
+    picker: "theme",
+  },
+  // A stop after it, so the way on reads "Continue" rather than "Done".
+  { title: "That is the tour", body: "Close it." },
+];
+
+test("a stop carrying the theme picker offers the themes and applies the pick", () => {
+  addAnchor("settings");
+  render(
+    <UiTour
+      steps={THEME_STEPS}
+      at={MANUAL_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+
+  // The swatches are in the CARD, so no screen behind has to be unlocked
+  // and the stop works from wherever the tour happens to be.
+  const light = screen.getByRole("button", { name: "Theme Light" });
+  expect(light).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Theme System" })).toBeInTheDocument();
+
+  fireEvent.click(light);
+  // Applied for real - this is the user's own choice, not tour make-believe,
+  // and it is the one thing the tour deliberately leaves behind. Read back
+  // through the theme module's own accessor rather than a DOM attribute:
+  // the two base palettes apply by REMOVING data-theme, so the attribute
+  // would say nothing for exactly the theme picked here.
+  expect(getThemeChoice()).toBe("light");
+
+  // A second pick replaces the first rather than stacking.
+  fireEvent.click(screen.getByRole("button", { name: "Theme System" }));
+  expect(getThemeChoice()).toBe("system");
+
+  // And the way on says so.
+  expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+});
+
+test("a stop without a picker offers no themes", () => {
+  addAnchor("import-drop");
+  render(
+    <UiTour
+      steps={STEPS}
+      at={AT_IMPORT}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Theme Light" })).not.toBeInTheDocument();
 });

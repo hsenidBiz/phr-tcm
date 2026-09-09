@@ -50,6 +50,19 @@ export type TourStep = {
   anchor?: TourAnchor;
   title: string;
   body: string;
+  /** A control the CARD itself carries, so a stop can be acted on rather
+   * than only read.
+   *
+   * Only "theme" so far. This stop used to ring the Settings button and
+   * say colours lived behind it, which is a thing to go and do later, and
+   * later never comes. The swatches live in the card rather than on the
+   * real screen: nothing behind the overlay has to be unlocked, and the
+   * stop works from wherever the tour has got to.
+   *
+   * It is also the one thing the tour deliberately leaves behind. Every
+   * other part is made-up data that disappears on close; a theme is the
+   * user's own choice and is meant to outlast it. */
+  picker?: "theme";
 };
 
 const cases = (section: Section): TourWhere => ({ area: "cases", section });
@@ -145,8 +158,9 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     anchor: "settings",
-    title: "Settings",
-    body: "Colours, themes and updates live here - and you can play this tour again any time.",
+    title: "Make it yours",
+    body: "Pick a theme now and the rest of the app follows. These live in Settings, along with the accent colour, update checks, and this tour if you ever want it again.",
+    picker: "theme",
   },
   {
     title: "That is the tour",

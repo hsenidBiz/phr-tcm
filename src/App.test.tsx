@@ -469,7 +469,10 @@ async function startTour() {
   await screen.findByRole("dialog", { name: "Interface tour" });
 }
 
-const next = () => fireEvent.click(screen.getByRole("button", { name: "Next" }));
+/** The way on. A stop carrying a control of its own says "Continue" rather
+ * than "Next" - the reader has just been handed something to do. */
+const next = () =>
+  fireEvent.click(screen.getByRole("button", { name: /^(Next|Continue)$/ }));
 
 /** The tour never moves the app: a stop that lives somewhere else waits
  * for the user to click their way there. */
