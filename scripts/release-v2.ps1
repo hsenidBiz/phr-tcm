@@ -1,6 +1,6 @@
 # Ship a release: gates, push source, build, pack with Velopack, publish to
 # the company repository's GitHub Releases (https://github.com/hsenidBiz/phr-tcm).
-# -AlsoLegacy (1.24.0 only) also publishes to the pre-1.24.0 feed.
+# -AlsoLegacy also publishes to the feed every install read before 1.23.7.
 # Pure ASCII on purpose (PS 5.1).
 # Token comes from gh auth token in-process and is never printed.
 param(
@@ -17,7 +17,7 @@ trap {
 }
 $v2 = Split-Path -Parent $PSScriptRoot            # repo root (the app used to live in v2/)
 $repoUrl = "https://github.com/hsenidBiz/phr-tcm"
-# The feed every install read before 1.24.0. -AlsoLegacy publishes there
+# The feed every install read before 1.23.7. -AlsoLegacy publishes there
 # TOO - used exactly once, for the release that switches the updater to
 # $repoUrl, so that an older install still finds a newer version where it
 # looks. After that release the old repo is left frozen, on purpose.
@@ -25,12 +25,11 @@ $legacyRepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }
 
-# 1.24.0 is the release that switches the updater to $repoUrl. Every
-# install before it reads only the OLD feed, so 1.24.0 must be published
+# 1.23.7 is the release that switches the updater to $repoUrl. Every
+# install before it reads only the OLD feed, so 1.23.7 must be published
 # there too or those installs are told "up to date" forever - silently,
 # and with no remote fix. Refuse the combination that would do that.
-if ($Version -eq "1.24.0" -and -not $AlsoLegacy) { throw "1.24.0 is the crossover release - publish it with -AlsoLegacy or every pre-1.24.0 install freezes" }
-if ($AlsoLegacy -and $Version -ne "1.24.0") { throw "-AlsoLegacy is for 1.24.0 only; the old feed stays frozen there" }
+if ($Version -eq "1.23.7" -and -not $AlsoLegacy) { throw "1.23.7 is the crossover release - publish it with -AlsoLegacy or every pre-1.23.7 install freezes" }
 
 # -Version is only the Velopack tag. The version the APP reports - in the
 # title bar, in a bug report, on the bridge's /ping, and to the "What's new"

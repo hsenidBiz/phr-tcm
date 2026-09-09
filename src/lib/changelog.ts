@@ -13,8 +13,8 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: "1.24.0",
-    date: "2026-09-08",
+    version: "1.23.7",
+    date: "2026-09-09",
     items: [
       "Updates now come from the company repository (hsenidBiz/phr-tcm). This version was also published to the old feed so every install crosses over; nothing to do on your side.",
       "Importing a file you had picked before, with new content, now replaces the copy the app follows instead of writing it to a numbered file beside it. The obvious name used to keep the OLDEST content - on a set carrying work item ids, importing it would have silently undone corrections in Azure DevOps. The previous copy is kept under .test-cases/.history.",

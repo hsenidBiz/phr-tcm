@@ -8,10 +8,10 @@ use std::sync::Mutex;
 use velopack::{sources, UpdateCheck, UpdateInfo, UpdateManager};
 
 /// The company repository. Source and releases live together there; the
-/// updater reads only its GitHub Releases. Before 1.24.0 the feed was
-/// `AvinAlwis/azure-devops-test-case-manager-v2-releases`; 1.24.0 was
+/// updater reads only its GitHub Releases. Before 1.23.7 the feed was
+/// `AvinAlwis/azure-devops-test-case-manager-v2-releases`; 1.23.7 was
 /// published to both so that every older install crosses over, and that
-/// old repo is left frozen at 1.24.0 on purpose - a straggler that has
+/// old repo is left frozen at 1.23.7 on purpose - a straggler that has
 /// not launched for months still finds it there and moves here.
 pub const REPO_URL: &str = "https://github.com/hsenidBiz/phr-tcm";
 
