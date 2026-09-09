@@ -73,16 +73,15 @@ test("manual add, review gate, submit reports results", async () => {
   addCase("Login works");
   expect(await screen.findByText("Login works")).toBeInTheDocument();
 
+  // One click into the review, and the check-the-PBI warning is already
+  // up: the middle button used to say it would create and then did not.
   fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
-  // Two-stage confirm: arming shows the check-the-PBI warning, then the
-  // explicit Yes actually writes.
-  fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
   // The warning names the real cost of getting the PBI wrong. It used to
   // say created cases "cannot be deleted", which stopped being true the day
   // the recycle-bin delete shipped - and a test pinning a claim keeps it
   // alive long after the code stops backing it up.
   expect(screen.getByText(/needs delete permission/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Yes — create 1/ }));
   // The results panel leads with the headline, then names the case: a NEW
   // badge, the id, and the title as separate parts rather than one
   // run-together line.
@@ -96,13 +95,22 @@ test("manual add, review gate, submit reports results", async () => {
   expect(screen.queryByRole("button", { name: "Clear results" })).not.toBeInTheDocument();
 });
 
-test("duplicate titles warn in review but do not block", async () => {
+/// The per-row hint stays, and the fresh check now backs it: a title that
+/// already exists on the PBI holds the write until someone has looked at
+/// it. The hint alone was scrollable-past, which is how 43 duplicates once
+/// went up.
+test("a duplicate title warns in review and holds the write until accepted", async () => {
   baseMocks();
   renderScreen();
   addCase("Existing case");
   fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
   expect(await screen.findByText(/create a duplicate/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Confirm & create 1/ })).toBeEnabled();
+
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeDisabled());
+
+  fireEvent.click(screen.getByRole("button", { name: "Create duplicates anyway" }));
+  await waitFor(() => expect(go).toBeEnabled());
 });
 
 test("draft queue persists across remounts (shared with Import File)", async () => {

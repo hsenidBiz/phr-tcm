@@ -265,7 +265,19 @@ export default function QueueSection({
   // final click. Set = the submit is stopped until the user explicitly
   // chooses. The per-row hint was scrollable-past; 43 duplicates once
   // sailed through it.
-  const [dupGate, setDupGate] = useState<string[] | null>(null);
+  //
+  // Checked when REVIEW OPENS rather than at the final click. The review
+  // already showed a per-row duplicate hint, but computed off a cache the
+  // comment above admits can be minutes old - so it warned using data it
+  // did not trust and then re-asked properly at the worst moment, after a
+  // button that said it would create. Fetching once up front makes the
+  // hints true and puts the wait where someone is reading.
+  //
+  // Titles as the fetch last saw them; null until it has answered.
+  const [freshTitles, setFreshTitles] = useState<string[] | null>(null);
+  const [checkingDups, setCheckingDups] = useState(false);
+  // Titles the user has looked at and chosen to duplicate anyway.
+  const [acceptedDups, setAcceptedDups] = useState<string[]>([]);
   const arm = (on: boolean) => {
     setArmed(on);
     setPbiGlow(on);
@@ -274,11 +286,14 @@ export default function QueueSection({
   useEffect(() => () => setPbiGlow(false), []);
 
   // An emptied queue (Remove all, removing the last item) has nothing to
-  // review - leave review mode so the confirm controls disappear too. A
-  // changed queue also invalidates a duplicate check taken against it.
+  // review - leave review mode so the confirm controls disappear too.
+  //
+  // The duplicate answer needs no clearing here: `dupsPending` is derived
+  // from the current queue, so removing the offending row clears the
+  // warning by itself, and an acceptance stays attached to the title it
+  // was given for.
   useEffect(() => {
     if (queue.length === 0) setReviewing(false);
-    setDupGate(null);
   }, [queue.length]);
 
   const existing = useQuery({
@@ -563,13 +578,13 @@ export default function QueueSection({
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
   });
 
-  /** The final-click gate: re-check ADO for the titles of every case about
-   * to be CREATED, and stop the submit if any already exist - the user must
-   * explicitly choose duplicates. Runs against a FRESH fetch (the cached
-   * list can be minutes old, and both real incidents happened inside that
-   * window); an unreachable ADO falls back to the cache rather than
-   * blocking, since the submit itself would surface the outage anyway. */
-  const guardedSubmit = async () => {
+  /** Ask ADO what titles it already has, and remember them.
+   *
+   * An unreachable ADO falls back to the cache rather than blocking: the
+   * submit itself would surface the outage anyway, and refusing to open a
+   * review because a check could not run helps nobody. */
+  const refreshTitles = useCallback(async (): Promise<string[]> => {
+    setCheckingDups(true);
     let titles = existingCases.map((t) => t.title);
     try {
       const fresh = await existing.refetch();
@@ -577,14 +592,53 @@ export default function QueueSection({
     } catch {
       // keep the cached list
     }
-    const have = new Set(titles.map((t) => t.trim().toLowerCase()));
-    const dups = queue
-      .filter((tc) => tc.update_id == null && have.has(tc.title.trim().toLowerCase()))
+    setFreshTitles(titles);
+    setCheckingDups(false);
+    return titles;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingCases]);
+
+  /** Which creates clash with a title already on the PBI, minus the ones
+   * the user has looked at and accepted.
+   *
+   * Derived, not stored, so editing or removing a row during the review
+   * updates it without another round trip - remove the offending case and
+   * the warning clears itself. */
+  const dupsPending = useMemo(() => {
+    if (!freshTitles) return [];
+    const have = new Set(freshTitles.map((t) => t.trim().toLowerCase()));
+    const ok = new Set(acceptedDups.map((t) => t.trim().toLowerCase()));
+    return queue
+      .filter((tc) => {
+        const key = tc.title.trim().toLowerCase();
+        return tc.update_id == null && have.has(key) && !ok.has(key);
+      })
       .map((tc) => tc.title);
-    if (dups.length > 0) {
-      setDupGate(dups);
-      return;
-    }
+  }, [queue, freshTitles, acceptedDups]);
+
+  /** Open the review: arm the PBI check for a queue that creates anything,
+   * and find out about duplicates now rather than after the last click. */
+  const openReview = () => {
+    setReviewing(true);
+    if (!pureUpdates) arm(true);
+    void refreshTitles();
+  };
+
+  /** The write. Re-verifies first: moving the check to the review opened a
+   * window - the queue can be edited, and someone else can create the same
+   * case, while a hundred cases are being read. It stops only for a clash
+   * nobody has been shown, so the common path never asks twice. */
+  const guardedSubmit = async () => {
+    const titles = await refreshTitles();
+    const have = new Set(titles.map((t) => t.trim().toLowerCase()));
+    const ok = new Set(acceptedDups.map((t) => t.trim().toLowerCase()));
+    const surprises = queue.filter((tc) => {
+      const key = tc.title.trim().toLowerCase();
+      return tc.update_id == null && have.has(key) && !ok.has(key);
+    });
+    // The panel and the disabled button both read `dupsPending`, which the
+    // refresh above has just updated - there is nothing else to set.
+    if (surprises.length > 0) return;
     submit.mutate();
   };
 
@@ -1290,102 +1344,99 @@ export default function QueueSection({
             Stop
           </Button>
         ) : !reviewing ? (
-          <Button disabled={queue.length === 0} onClick={() => setReviewing(true)}>
+          <Button disabled={queue.length === 0} onClick={openReview}>
             <IconReview aria-hidden />
             Review {queue.length} test case{queue.length === 1 ? "" : "s"}
           </Button>
         ) : (
-          (() => {
-            if (dupGate) {
-              return (
-                <div className="w-full space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
-                  <p className="text-sm font-semibold text-text">
-                    Stopped: {dupGate.length} case{dupGate.length === 1 ? "" : "s"} with the same
-                    title already exist{dupGate.length === 1 ? "s" : ""} on PBI #{pbiId}.
-                  </p>
-                  <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-muted">
-                    {dupGate.map((t) => (
-                      <li key={t}>• {t}</li>
-                    ))}
-                  </ul>
-                  <p className="text-xs text-muted">
-                    If you meant to update the existing cases, import a file that includes their
-                    ids (View Test Cases → Export JSON has them). Creating anyway makes
-                    duplicates - and cleaning those up needs delete permission.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" onClick={() => setDupGate(null)}>
-                      <IconBack aria-hidden />
-                      Stop — take me back
-                    </Button>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      disabled={submit.isPending || !online}
-                      onClick={() => {
-                        setDupGate(null);
-                        submit.mutate();
-                      }}
-                    >
-                      Create duplicates anyway
-                    </Button>
-                  </div>
-                </div>
-              );
-            }
-            if (!armed) {
-              return (
-                <>
-                  <Button
-                    disabled={queue.length === 0 || hasBlockers || submit.isPending || !online}
-                    title={online ? undefined : OFFLINE_HINT}
-                    // Pure updates go straight to the (still dup-guarded)
-                    // submit - see the pureUpdates note above.
-                    onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
-                  >
-                    <IconConfirm aria-hidden />
-                    {submit.isPending ? "Processing" : `Confirm & ${actionLabel || "create 0"}`}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setReviewing(false)}>
+          <div className="w-full space-y-2">
+            {/* The duplicate warning sits ABOVE the way on rather than
+                replacing it, and the button below is disabled while it
+                stands - the per-row hint it replaced was scrollable-past,
+                and 43 duplicates once sailed through that. */}
+            {dupsPending.length > 0 && (
+              <div className="space-y-2 rounded-md border border-danger/50 bg-danger/10 p-3">
+                <p className="text-sm font-semibold text-text">
+                  Stopped: {dupsPending.length} case{dupsPending.length === 1 ? "" : "s"} with the
+                  same title already exist{dupsPending.length === 1 ? "s" : ""} on PBI #{pbiId}.
+                </p>
+                <ul className="max-h-32 space-y-0.5 overflow-y-auto text-xs text-muted">
+                  {dupsPending.map((t) => (
+                    <li key={t}>• {t}</li>
+                  ))}
+                </ul>
+                <p className="text-xs text-muted">
+                  If you meant to update the existing cases, import a file that includes their
+                  ids (View Test Cases → Export JSON has them). Creating anyway makes
+                  duplicates - and cleaning those up needs delete permission.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => setReviewing(false)}>
                     <IconBack aria-hidden />
-                    Back
+                    Stop — take me back
                   </Button>
-                  {hasBlockers && (
-                    <span className="text-xs text-danger">Fix the flagged items first.</span>
-                  )}
-                </>
-              );
-            }
-            return (
-              <div className="w-full space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3">
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    disabled={submit.isPending || !online}
+                    // Accepting does NOT write. It records the choice and
+                    // frees the button, so the last click is still the one
+                    // that creates and still says so.
+                    onClick={() => setAcceptedDups((prev) => [...prev, ...dupsPending])}
+                  >
+                    Create duplicates anyway
+                  </Button>
+                </div>
+              </div>
+            )}
+            {armed && (
+              <div className="rounded-md border border-warning/50 bg-warning/10 p-3">
                 <p className="text-sm text-text">
                   Check the highlighted PBI above — everything here will be written to{" "}
                   <span className="font-semibold">PBI #{pbiId}</span>. Removing them afterwards{" "}
                   <span className="font-semibold">needs delete permission</span> in Azure DevOps,
                   and deleting a test case in Azure DevOps is permanent.
                 </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    disabled={submit.isPending || !online}
-                    title={online ? undefined : OFFLINE_HINT}
-                    onClick={() => {
-                      arm(false);
-                      // Not straight to the submit: the duplicate-title gate
-                      // re-checks ADO first and may stop to ask.
-                      void guardedSubmit();
-                    }}
-                  >
-                    <IconConfirm aria-hidden />
-                    {submit.isPending ? "Processing" : `Yes — ${actionLabel}`}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => arm(false)}>
-                    <IconBack aria-hidden />
-                    Back
-                  </Button>
-                </div>
               </div>
-            );
-          })()
+            )}
+            <div className="flex items-center gap-2">
+              <Button
+                disabled={
+                  queue.length === 0 ||
+                  hasBlockers ||
+                  submit.isPending ||
+                  !online ||
+                  // While the check is in flight, and while a duplicate is
+                  // waiting to be looked at.
+                  checkingDups ||
+                  dupsPending.length > 0
+                }
+                title={online ? undefined : OFFLINE_HINT}
+                onClick={() => void guardedSubmit()}
+              >
+                <IconConfirm aria-hidden />
+                {submit.isPending
+                  ? "Processing"
+                  : armed
+                    ? `Yes — ${actionLabel}`
+                    : `Confirm & ${actionLabel || "create 0"}`}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  arm(false);
+                  setReviewing(false);
+                }}
+              >
+                <IconBack aria-hidden />
+                Back
+              </Button>
+              {hasBlockers && (
+                <span className="text-xs text-danger">Fix the flagged items first.</span>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
@@ -1484,7 +1535,7 @@ export default function QueueSection({
           be read before a write that cannot be undone. */}
       {queue.length > 0 &&
         !armed &&
-        !dupGate &&
+        dupsPending.length === 0 &&
         createPortal(
           <div
             aria-hidden

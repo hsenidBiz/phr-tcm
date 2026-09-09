@@ -91,7 +91,7 @@ function baseMocks() {
 /// the fold. The floating copy covers the first step but deliberately
 /// stands down for the armed warning, which is the one that must be read -
 /// so the row itself comes to the reader instead.
-test("opening review scrolls the action row into view, and arming does it again", async () => {
+test("opening review scrolls the action row into view", async () => {
   baseMocks();
   const spy = vi.spyOn(Element.prototype, "scrollIntoView");
   // Restored even when an assertion below throws: a spy left on
@@ -111,8 +111,10 @@ test("opening review scrolls the action row into view, and arming does it again"
     // out where you were thrown to.
     expect(spy).toHaveBeenLastCalledWith({ block: "end", behavior: "smooth" });
 
-    fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
-    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    // Once, not twice. The review and the PBI warning now arrive together,
+    // so there is no second growth of the row to chase.
+    await screen.findByRole("button", { name: /Yes — create 1/ });
+    expect(spy).toHaveBeenCalledTimes(1);
   } finally {
     spy.mockRestore();
   }
@@ -546,35 +548,85 @@ test("single Edit save writes the change through to the owning file", async () =
 /// The last safeguard: the final Yes re-checks ADO and STOPS when a case
 /// about to be created already exists by title - 43 duplicates once went
 /// through because the per-row hint was scrollable-past.
-test("duplicate-title creates stop the submit until explicitly allowed", async () => {
+test("the duplicate check runs when review opens, not after the final yes", async () => {
   let submits = 0;
+  let fetches = 0;
   mockIPC((cmd) => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "list_project_tags") return [];
     if (cmd === "test_case_field_values") return [];
-    if (cmd === "pbi_test_cases")
+    if (cmd === "pbi_test_cases") {
+      fetches += 1;
       return [{ id: 201, title: "Login works", tags: "", automation_status: "Planned" }];
+    }
     if (cmd === "submit_queue") {
       submits += 1;
       return [{ index: 0, title: "Login works", action: "created", id: 900, error: null }];
     }
     return undefined;
   });
-  renderQueue([makeCase()]); // a CREATE row titled "Login works"
+  renderQueue([makeCase()]); // a CREATE row whose title already exists
 
+  // ONE click into the review, and the check has already run and stopped
+  // it. It used to take three, and the third was a button that said it
+  // would create.
   fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 1/ }));
-  fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
-
-  // The gate trips instead of submitting.
   expect(await screen.findByText(/Stopped: 1 case/)).toBeInTheDocument();
+  expect(fetches).toBeGreaterThan(0);
   expect(submits).toBe(0);
 
-  // Only the explicit choice goes through.
+  // The way on is disabled while the warning stands, so it cannot be
+  // scrolled past on a long queue.
+  expect(await screen.findByRole("button", { name: /Yes — create 1/ })).toBeDisabled();
+
+  // Accepting clears the warning and frees the button - and still has not
+  // written anything.
   fireEvent.click(screen.getByRole("button", { name: "Create duplicates anyway" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /Yes — create 1/ })).toBeEnabled(),
+  );
+  expect(submits).toBe(0);
+
+  // And now the final click writes, without stopping to ask again.
+  fireEvent.click(screen.getByRole("button", { name: /Yes — create 1/ }));
   await waitFor(() => expect(submits).toBe(1));
+});
+
+/// The check that used to guard the last click still does. Moving it
+/// earlier opened a window - the queue can be edited while someone reads a
+/// hundred cases - so the write re-verifies, and stops only for a
+/// duplicate nobody has been shown yet.
+test("a duplicate that appears after review still stops the write", async () => {
+  let submits = 0;
+  let existing = [{ id: 201, title: "Something else", tags: "", automation_status: "Planned" }];
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return existing;
+    if (cmd === "submit_queue") {
+      submits += 1;
+      return [{ index: 0, title: "Login works", action: "created", id: 900, error: null }];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase()]);
+
+  // Review opens clean: nothing on the PBI clashes yet.
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+
+  // Someone else creates that case in the meantime.
+  existing = [{ id: 202, title: "Login works", tags: "", automation_status: "Planned" }];
+
+  fireEvent.click(go);
+  expect(await screen.findByText(/Stopped: 1 case/)).toBeInTheDocument();
+  expect(submits).toBe(0);
 });
 
 /// Unfolding steps (or diffs, or the editor) earns a sticky Collapse all
@@ -746,12 +798,14 @@ test("a mixed queue still gets the check-the-PBI stage", async () => {
   });
   renderQueue([makeCase({ update_id: 777 }), makeCase({ title: "Brand new" })]);
 
+  // One click. The stage now arrives WITH the review rather than after a
+  // button that claimed it would create.
   fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /Confirm &/ }));
 
   // Armed, not submitted: the warning is up and nothing was written.
   expect(await screen.findByText(/Check the highlighted PBI/)).toBeInTheDocument();
   expect(submits).toBe(0);
+  expect(await screen.findByRole("button", { name: /Yes —/ })).toBeInTheDocument();
 });
 
 test("a floating copy of the main button appears once the real one scrolls away", async () => {

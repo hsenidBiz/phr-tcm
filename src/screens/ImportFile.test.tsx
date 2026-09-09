@@ -161,8 +161,7 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   expect(screen.getByText("Row 9: something odd")).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /Confirm & create 2/ }));
-  fireEvent.click(screen.getByRole("button", { name: /Yes — create 2/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Yes — create 2/ }));
   // The results panel reports a failure as a badge, the title and the
   // reason rather than one run-together sentence, and the headline counts
   // only what actually reached Azure DevOps.
@@ -817,9 +816,13 @@ test("the app's own id write-back after a submit does not re-import the file", a
   renderScreen();
   await screen.findByText("Already there");
   fireEvent.click(screen.getByRole("button", { name: /Review 2 test case/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /Confirm & / }));
-  const dupGate = screen.queryByRole("button", { name: /Yes — create/ });
-  if (dupGate) fireEvent.click(dupGate);
+  // The duplicate check runs with the review now, so anything it finds is
+  // already on screen and has to be accepted before the write.
+  const accept = await screen.findByRole("button", { name: "Create duplicates anyway" }).catch(() => null);
+  if (accept) fireEvent.click(accept);
+  const go = await screen.findByRole("button", { name: /Yes — create|Confirm & / });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
   await screen.findByText(/uploaded/);
 
   // Both cases were written, so the prune empties the queue and it stays
