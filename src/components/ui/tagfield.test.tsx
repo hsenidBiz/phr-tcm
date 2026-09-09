@@ -42,6 +42,44 @@ test("Enter adds a brand-new tag not in the suggestions", () => {
   expect(screen.getByTestId("val").textContent).toBe("smoke; custom-tag");
 });
 
+/// Locked tags are the project's defaults, set in their own dialog. They
+/// ride along on every new case and must not be removable from the field
+/// that writes one - otherwise "default" means "default until someone
+/// presses x", and the set the dialog promises is not the set that ships.
+function LockedHarness({ locked, initial }: { locked: string[]; initial: string }) {
+  const [v, setV] = useState(initial);
+  return (
+    <>
+      <TagField
+        value={v}
+        onChange={setV}
+        suggestions={["smoke", "regression"]}
+        locked={locked}
+      />
+      <output data-testid="val">{v}</output>
+    </>
+  );
+}
+
+test("a locked tag has no remove button while ordinary tags keep theirs", () => {
+  render(<LockedHarness locked={["smoke"]} initial="smoke; extra" />);
+  expect(screen.queryByLabelText("Remove smoke")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Remove extra")).toBeInTheDocument();
+});
+
+test("Backspace takes the last unlocked tag and never a locked one", () => {
+  render(<LockedHarness locked={["smoke"]} initial="smoke; extra" />);
+  const input = screen.getByLabelText("Tags");
+
+  fireEvent.keyDown(input, { key: "Backspace" });
+  expect(screen.getByTestId("val").textContent).toBe("smoke");
+
+  // Nothing unlocked is left, so the key is inert rather than eating the
+  // default - the one deletion the chip itself refuses.
+  fireEvent.keyDown(input, { key: "Backspace" });
+  expect(screen.getByTestId("val").textContent).toBe("smoke");
+});
+
 /// The "searchable" contract: clicking the field is browsing - the whole
 /// unselected suggestion list opens without typing a letter, and typing
 /// narrows it. This is what makes org tags discoverable instead of

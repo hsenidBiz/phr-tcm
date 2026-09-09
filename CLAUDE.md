@@ -66,9 +66,12 @@ v1 and went with it. The suites above are the gate.
 - **Updates** come from this repository's GitHub Releases
   (`hsenidBiz/phr-tcm`), checked at launch and hourly. `updater/mod.rs`
   tries the GitHub API first and the `latest/download` mirror second - the
-  comment there explains why that order matters. 1.23.7 was also published
-  to the pre-1.23.7 feed (`release-v2.ps1 -AlsoLegacy`) so older installs
-  cross over; that old repo stays frozen there on purpose.
+  comment there explains why that order matters. The old personal feed was
+  mirrored through 1.23.6 so every install crossed over; from 1.23.7 only
+  phr-tcm is published (`release-v2.ps1 -AlsoLegacy` still exists for a
+  straggler). Source is pushed to BOTH repositories - `origin` (phr-tcm)
+  and `personal` (AvinAlwis/azure-devops-test-case-creator) hold the same
+  `main`.
 
 ## Testing notes that have cost real time
 
@@ -121,8 +124,11 @@ v1 and went with it. The suites above are the gate.
   `git log -1`.
 - **Releases: run `scripts/release-v2.ps1 -Version X.Y.Z`.** It gates
   (cargo test + vitest + a production build), pushes source **first**,
-  builds, packs with Velopack, and publishes to GitHub. Never publish
-  without the source pushed.
+  builds, packs with Velopack, and publishes to **both** release repos:
+  `hsenidBiz/phr-tcm` (the real one) and the old personal repo as a mirror.
+  Never publish without the source pushed. A failure on either upload is
+  fatal — half-published is what strands people — and the fix is to re-run
+  the one named upload, never the whole release.
 - **The version lives in three places** and the release script refuses if
   they disagree: `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
   and a matching entry in `src/lib/changelog.ts`.

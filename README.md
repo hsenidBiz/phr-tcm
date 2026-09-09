@@ -181,9 +181,9 @@ in-flight item.
 
 Distributed as a **Velopack** installer that auto-updates from this
 repository's GitHub Releases — install once, new versions apply on launch.
-No toolchain needed for end users. Installs older than 1.23.7 read the
-previous public feed; 1.23.7 was published there too, so they cross over
-on their next update.
+No toolchain needed for end users. Installs from before the move read a
+previous public feed; 1.23.3 to 1.23.6 were published there too, so every
+install has crossed over to this repository.
 
 ## Develop
 

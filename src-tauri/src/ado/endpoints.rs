@@ -165,8 +165,18 @@ impl AdoClient {
             .collect())
     }
 
-    /// Full content of one wiki page (read-only GET), fetched after
-    /// `search_wiki` narrows down a `wiki_id` + `path`.
+    /// Full content of one wiki page (read-only GET).
+    ///
+    /// `path` takes the three forms a caller actually has, because the two
+    /// they are most likely to paste both used to fail:
+    ///
+    ///  - the URL from the browser's address bar. It names the wiki and the
+    ///    page id, and the id route is exact - there is no path namespace
+    ///    left to spell wrong - so `wiki_id` is redundant and may be blank.
+    ///  - a `search_wiki` hit's path, in ADO's FILE namespace. Tried
+    ///    verbatim first, then re-read as a file name if that page does not
+    ///    exist. See `unfile_wiki_path` for why that is safe now.
+    ///  - a real page path, which behaves exactly as it always did.
     pub async fn get_wiki_page(
         &self,
         organization: &str,
@@ -174,12 +184,53 @@ impl AdoClient {
         wiki_id: &str,
         path: &str,
     ) -> Result<WikiPage, AdoError> {
+        match parse_wiki_url(path) {
+            Some(WikiUrlTarget::Id { wiki, id }) => {
+                let url = format!(
+                    "{}/{}/{}/_apis/wiki/wikis/{}/pages/{}?includeContent=true&api-version=7.1",
+                    self.base_url,
+                    percent_encode_segment(organization),
+                    percent_encode_segment(project),
+                    percent_encode_segment(&wiki),
+                    percent_encode_segment(&id),
+                );
+                let body = self.get_json(url).await?;
+                Ok(WikiPage {
+                    path: body["path"].as_str().unwrap_or(path).to_string(),
+                    content: body["content"].as_str().unwrap_or_default().to_string(),
+                })
+            }
+            Some(WikiUrlTarget::Path { wiki, path: page }) => {
+                self.wiki_page_at(organization, project, &wiki, &page).await
+            }
+            // Verbatim FIRST. Only a page that does not exist is worth
+            // asking about a second way - a path that resolves is the page
+            // the caller asked for, and must never be reinterpreted.
+            None => match self.wiki_page_at(organization, project, wiki_id, path).await {
+                Err(AdoError::NotFound) => match unfile_wiki_path(path) {
+                    Some(retry) => self.wiki_page_at(organization, project, wiki_id, &retry).await,
+                    None => Err(AdoError::NotFound),
+                },
+                other => other,
+            },
+        }
+    }
+
+    /// One page fetch by path. Split out so the retry above is the same
+    /// request with a different spelling, not a second code path.
+    async fn wiki_page_at(
+        &self,
+        organization: &str,
+        project: &str,
+        wiki: &str,
+        path: &str,
+    ) -> Result<WikiPage, AdoError> {
         let url = format!(
             "{}/{}/{}/_apis/wiki/wikis/{}/pages?path={}&includeContent=true&api-version=7.1",
             self.base_url,
             percent_encode_segment(organization),
             percent_encode_segment(project),
-            wiki_id,
+            wiki,
             percent_encode_path(&wiki_page_path(path))
         );
         let body = self.get_json(url).await?;
@@ -1137,12 +1188,12 @@ impl AdoClient {
 ///  - add the leading `/` this parameter's own samples always carry.
 ///
 /// What this deliberately does NOT do is turn hyphens back into spaces.
-/// ADO writes spaces as hyphens in the file name, so "Auth-Flow.md" could
-/// be the page "Auth Flow" OR one genuinely named "Auth-Flow" - the
-/// mapping is not reversible, and guessing would break every page whose
-/// title really contains a hyphen. That residue fails the way it does
-/// today (a 404 the caller can act on), never by silently fetching a
-/// different page.
+/// ADO writes spaces as hyphens in the file name, so "Auth-Flow.md" read
+/// as a page name could be "Auth Flow" OR one genuinely named "Auth-Flow",
+/// and guessing here would break every page whose title really contains a
+/// hyphen. `unfile_wiki_path` does that reading, and `get_wiki_page` only
+/// reaches for it after this spelling has 404ed - so a path that resolves
+/// is never silently swapped for a different page.
 fn wiki_page_path(raw: &str) -> String {
     let trimmed = raw.trim();
     let without_ext = trimmed.strip_suffix(".md").unwrap_or(trimmed);
@@ -1154,6 +1205,113 @@ fn wiki_page_path(raw: &str) -> String {
     } else {
         format!("/{without_ext}")
     }
+}
+
+/// Where a pasted wiki URL points.
+enum WikiUrlTarget {
+    /// `/_wiki/wikis/{wiki}/{id}/{slug}` - the id route, which is exact.
+    Id { wiki: String, id: String },
+    /// `/_wiki/wikis/{wiki}?pagePath=...` - no id, an explicit page path.
+    Path { wiki: String, path: String },
+}
+
+/// Recognise the URL a person copies out of the browser, and nothing else.
+///
+/// Returns None for anything that is not an http(s) wiki URL, so an
+/// ordinary page path falls through to the path handling untouched. A URL
+/// naming a wiki but no page is also None: there is no page to fetch, and
+/// inventing one would be worse than the caller's own error.
+fn parse_wiki_url(raw: &str) -> Option<WikiUrlTarget> {
+    let raw = raw.trim();
+    if !raw.starts_with("http://") && !raw.starts_with("https://") {
+        return None;
+    }
+    let (before_query, query) = match raw.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (raw, None),
+    };
+    let mut segments = before_query
+        .split("/_wiki/wikis/")
+        .nth(1)?
+        .split('/')
+        .filter(|s| !s.is_empty());
+    let wiki = percent_decode(segments.next()?);
+
+    // `pagePath` wins when present: it is an explicit page path, so there
+    // is no id to prefer over it.
+    if let Some(page) = query.and_then(|q| query_value(q, "pagePath")) {
+        if !page.trim().is_empty() {
+            return Some(WikiUrlTarget::Path { wiki, path: page });
+        }
+    }
+
+    // The segment after the wiki is the page id. Digits only: the slug that
+    // follows it is a title, and treating that as an id would ask the API
+    // for a page that cannot exist.
+    let id = segments.next()?;
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(WikiUrlTarget::Id { wiki, id: id.to_string() })
+}
+
+/// Read a FILE-namespace path back as a PAGE path.
+///
+/// ADO spells a page path as a file name by writing each space as `-` and
+/// each real hyphen as `%2D`. That mapping IS reversible while the escapes
+/// survive, which is the form `search_wiki` returns - the ambiguity only
+/// appears once `%2D` has been decoded to a bare hyphen. So this is applied
+/// to the caller's untouched input, and only as a second attempt.
+///
+/// None when nothing would change: a retry identical to the first request
+/// would just ask the same question twice.
+fn unfile_wiki_path(raw: &str) -> Option<String> {
+    let base = wiki_page_path(raw);
+    let bytes = base.as_bytes();
+    let mut out = String::with_capacity(base.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 3 <= bytes.len() && base[i + 1..i + 3].eq_ignore_ascii_case("2d") {
+            out.push('-');
+            i += 3;
+        } else if bytes[i] == b'-' {
+            out.push(' ');
+            i += 1;
+        } else {
+            // Multi-byte UTF-8 passes through whole.
+            let ch = base[i..].chars().next()?;
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    (out != base).then_some(out)
+}
+
+/// Percent-decoding for URL pieces. `+` is left alone: it is literal in a
+/// path, and a page title may legitimately contain one.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 3 <= bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn query_value(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        k.eq_ignore_ascii_case(key).then(|| percent_decode(v))
+    })
 }
 
 fn percent_encode_segment(s: &str) -> String {

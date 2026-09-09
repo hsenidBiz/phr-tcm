@@ -420,8 +420,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         stem: "page",
         tool: "get_wiki_page",
-        desc: "Read a wiki page in full, by path",
-        hint: "[wiki page path]",
+        desc: "Read a wiki page in full, by path or URL",
+        hint: "[wiki page path or URL]",
         body: &[
             "Call `get_wiki_page` for: $ARGUMENTS",
             "",

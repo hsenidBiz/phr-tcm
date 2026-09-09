@@ -240,11 +240,11 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "get_wiki_page",
-            "description": "Fetch a wiki page's full markdown content - use after search_wiki.",
+            "description": "Fetch a wiki page's full markdown content. `path` takes any of three forms: the page URL from the browser (which names its own wiki, so wiki_id can be omitted), a search_wiki hit's path exactly as returned, or a real page path.",
             "inputSchema": schema(serde_json::json!({
-                "wiki_id": { "type": "string" },
-                "path": { "type": "string" },
-            }), &["wiki_id", "path"]),
+                "wiki_id": { "type": "string", "description": "From search_wiki. Not needed when path is a URL." },
+                "path": { "type": "string", "description": "A wiki page URL, a search_wiki hit's path, or a page path." },
+            }), &["path"]),
         },
     ]});
     let tools: Vec<serde_json::Value> = all["tools"]

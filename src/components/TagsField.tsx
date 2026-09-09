@@ -14,6 +14,8 @@ export default function TagsField({
   placeholder,
   ariaLabel,
   className,
+  locked,
+  lockedTitle,
 }: {
   org: string;
   project: string;
@@ -23,6 +25,9 @@ export default function TagsField({
   /** Override the default "Tags" name when two instances share a screen. */
   ariaLabel?: string;
   className?: string;
+  /** Tags the caller fixes in place - see TagField. */
+  locked?: string[];
+  lockedTitle?: string;
 }) {
   const tags = useQuery({
     queryKey: ["project-tags", org, project],
@@ -39,6 +44,8 @@ export default function TagsField({
       placeholder={placeholder}
       ariaLabel={ariaLabel}
       className={className}
+      locked={locked}
+      lockedTitle={lockedTitle}
     />
   );
 }

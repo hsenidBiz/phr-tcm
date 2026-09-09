@@ -16,7 +16,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: "1.23.7",
     date: "2026-09-09",
     items: [
-      "Updates now come from the company repository (hsenidBiz/phr-tcm). This version was also published to the old feed so every install crosses over; nothing to do on your side.",
+      "Updates now come only from the company repository (hsenidBiz/phr-tcm); the old personal feed was mirrored through 1.23.6 so every install had crossed over. Nothing to do on your side.",
       "Importing a file you had picked before, with new content, now replaces the copy the app follows instead of writing it to a numbered file beside it. The obvious name used to keep the OLDEST content - on a set carrying work item ids, importing it would have silently undone corrections in Azure DevOps. The previous copy is kept under .test-cases/.history.",
       "AI Bridge: begin_test_case_writing, get_writing_guide, get_test_cases, check_spec_coverage and transform_cases are always on - they no longer have switches. The two Auto Run script tools are no longer offered to assistants; the Auto Run screen itself is unchanged.",
       "Settings has a switch to hide the company database (PHR-X) section on the AI Bridge tab.",
@@ -24,6 +24,39 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Switching to or away from a queue of a hundred cases no longer stalls the window. Each queued row is rendered once and left alone until something about it changes; before, every row was rebuilt on each of the several renders a tab switch triggers.",
       "Network problems are reported as what to try - check your connection, restart the app, look in Settings > Logs - instead of the address that failed. The address is in the log, where it always was.",
       "For assistants: optimize_cases no longer trims away a second sentence that carries the assertion; transform_cases gains normalise_citations, replace_in_preconditions and set_comment, and its replace reports now count occurrences; the citation advisories say where a misplaced quote should go; merge_case_files names the slice files it superseded.",
+    ],
+  },
+  {
+    version: "1.23.6",
+    date: "2026-09-09",
+    items: [
+      "Default tags moved to Manual Entry, where you actually use them. A Default tags button sits beside the tags box and holds the set for the project you are in, instead of the setting living two screens away where you had to already know it existed.",
+      "Those tags now hold. They appear on every new case and cannot be taken off the form, so a case can no longer go up quietly missing the tag the project expects. You can still add as many tags as you like to any single case, and they clear when the case joins the queue while the defaults stay.",
+      "The trade is worth knowing: dropping a default for one case means changing the set in the dialog. That dialog is the only place the set changes, which is what makes the rest of it dependable.",
+    ],
+  },
+  {
+    version: "1.23.5",
+    date: "2026-09-09",
+    items: [
+      "The wiki tools now take what you actually have. Paste a wiki page's address straight from your browser and it opens; hand back a search result's path exactly as it came out and that works too. Both used to be refused, and the only way through was to rewrite the path by hand, spaces and hyphens and all.",
+      "A page whose title really does contain a hyphen still opens as itself. The app tries what you gave it first and only reads it a second way if no such page exists, so it can never quietly hand you a different page.",
+    ],
+  },
+  {
+    version: "1.23.4",
+    date: "2026-09-09",
+    items: [
+      "Updates now come from the company's own release page rather than a personal one. There is nothing for you to do: this version already knows the new address, and the old one keeps serving updates until everyone has moved across, so no machine gets left behind on an old version without knowing it.",
+    ],
+  },
+  {
+    version: "1.23.3",
+    date: "2026-09-09",
+    items: [
+      "Pull requests: a long description no longer stops mid-sentence. Azure DevOps only hands over the opening few hundred characters when it lists pull requests, so a long one was cut off mid-word with nothing to say so. The end of a clipped description now fades, a View more button sits under it, and the whole body opens in a window.",
+      "Pull requests: on a wide window, the related work items now sit in their own panel on the right, the way Azure DevOps arranges them, instead of queueing up underneath everything else. On a narrow window they stack below as before.",
+      "Fixed: deleting test cases said they had been \"moved to the recycle bin\", moments after the same dialog warned that deletion cannot be undone. There is no recycle bin and the warning was the true half. The message now says the cases were permanently deleted.",
     ],
   },
   {

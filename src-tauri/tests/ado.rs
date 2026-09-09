@@ -1,5 +1,5 @@
 use v2_lib::ado::{AdoClient, AdoError, BlankPolicy};
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
@@ -1179,4 +1179,113 @@ async fn a_wiki_search_hit_is_normalised_before_the_page_is_fetched() {
         .collect();
     assert_eq!(sent[0], "/Auth-Flow", "the .md extension must be dropped");
     assert_eq!(sent[1], "/Home", "a bare name is rooted");
+}
+
+/// What a person actually has is the URL in their address bar. It carries
+/// the wiki name and the page id, and the id route is exact - there is no
+/// path namespace left to guess at - so `wiki_id` becomes redundant and a
+/// blank one must not stop the call.
+#[tokio::test]
+async fn a_wiki_url_is_fetched_by_its_page_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/PeoplesHR/HRM/_apis/wiki/wikis/HRM.wiki/pages/9486"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Issue Meal", "content": "# Issue Meal"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+
+    let page = client
+        .get_wiki_page(
+            "PeoplesHR",
+            "HRM",
+            "",
+            "https://dev.azure.com/PeoplesHR/HRM/_wiki/wikis/HRM.wiki/9486/Issue-Meal",
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.path, "/Issue Meal");
+}
+
+/// The other URL shape ADO hands out: no id, a `pagePath` query instead.
+#[tokio::test]
+async fn a_wiki_url_carrying_a_pagepath_uses_that_path() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wiki/wikis/HRM.wiki/pages"))
+        .and(query_param("path", "/Issue Meal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Issue Meal", "content": "# Issue Meal"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+
+    let page = client
+        .get_wiki_page(
+            "o",
+            "p",
+            "",
+            "https://dev.azure.com/o/p/_wiki/wikis/HRM.wiki?pagePath=%2FIssue%20Meal",
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.content, "# Issue Meal");
+}
+
+/// A search hit pasted back verbatim. ADO's file namespace writes a space
+/// as `-` and a real hyphen as `%2D`, so the reversal IS unambiguous - the
+/// ambiguity the old code refused to guess at only exists once the `%2D`
+/// has been decoded away. Verbatim is still tried first; the reversal is
+/// what happens after that 404s.
+#[tokio::test]
+async fn a_search_path_is_reinterpreted_only_after_the_verbatim_one_404s() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(query_param("path", "/HRMWiki/DAB-%2D-Data-API-Builder/High-Level-Design"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(query_param("path", "/HRMWiki/DAB - Data API Builder/High Level Design"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/HRMWiki/DAB - Data API Builder/High Level Design",
+            "content": "# High Level Design"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+
+    let page = client
+        .get_wiki_page("o", "p", "w1", "/HRMWiki/DAB-%2D-Data-API-Builder/High-Level-Design.md")
+        .await
+        .unwrap();
+    assert_eq!(page.content, "# High Level Design");
+}
+
+/// The guard on the whole idea: a page whose title really contains a hyphen
+/// resolves on the first request, and the reversal must never run. Without
+/// this, "Auth-Flow" quietly becomes "Auth Flow" - the exact silent swap the
+/// old code avoided by converting nothing at all.
+#[tokio::test]
+async fn a_path_that_resolves_verbatim_is_never_reinterpreted() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(query_param("path", "/Auth-Flow"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Auth-Flow", "content": "# Auth"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+
+    let page = client.get_wiki_page("o", "p", "w1", "/Auth-Flow.md").await.unwrap();
+    assert_eq!(page.path, "/Auth-Flow");
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        1,
+        "resolving verbatim must not trigger a second, reinterpreted fetch"
+    );
 }

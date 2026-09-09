@@ -34,10 +34,12 @@ fn a_superseded_version_is_still_downloadable_from_its_own_release() {
         .build()
         .expect("client");
     let status = |url: String| client.head(&url).send().expect("request failed").status().as_u16();
-    let file = "AzureDevOpsTestCaseManager.V2-1.18.9-full.nupkg";
+    // Any superseded release in the CURRENT repo reproduces it; 1.18.9 was
+    // the original and lives only in the old one, so this follows the feed.
+    let file = "AzureDevOpsTestCaseManager.V2-1.23.2-full.nupkg";
     assert_eq!(status(format!("{RELEASES_URL}{file}")), 404, "latest/ should have moved on");
     assert_eq!(
-        status(format!("{REPO_URL}/releases/download/v1.18.9/{file}")),
+        status(format!("{REPO_URL}/releases/download/v1.23.2/{file}")),
         200,
         "the per-release url is the one that does not move"
     );

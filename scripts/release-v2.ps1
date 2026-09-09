@@ -1,6 +1,7 @@
 # Ship a release: gates, push source, build, pack with Velopack, publish to
 # the company repository's GitHub Releases (https://github.com/hsenidBiz/phr-tcm).
-# -AlsoLegacy also publishes to the feed every install read before 1.23.7.
+# -AlsoLegacy also publishes to the old personal feed (mirrored through
+# 1.23.6; not needed since, kept for a straggler).
 # Pure ASCII on purpose (PS 5.1).
 # Token comes from gh auth token in-process and is never printed.
 param(
@@ -17,19 +18,13 @@ trap {
 }
 $v2 = Split-Path -Parent $PSScriptRoot            # repo root (the app used to live in v2/)
 $repoUrl = "https://github.com/hsenidBiz/phr-tcm"
-# The feed every install read before 1.23.7. -AlsoLegacy publishes there
-# TOO - used exactly once, for the release that switches the updater to
-# $repoUrl, so that an older install still finds a newer version where it
-# looks. After that release the old repo is left frozen, on purpose.
+# The old feed. 1.23.3 - 1.23.6 were mirrored there so every install
+# crossed over to $repoUrl; -AlsoLegacy publishes there again if a
+# straggler ever needs it.
 $legacyRepoUrl = "https://github.com/AvinAlwis/azure-devops-test-case-manager-v2-releases"
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z, got '$Version'" }
 
-# 1.23.7 is the release that switches the updater to $repoUrl. Every
-# install before it reads only the OLD feed, so 1.23.7 must be published
-# there too or those installs are told "up to date" forever - silently,
-# and with no remote fix. Refuse the combination that would do that.
-if ($Version -eq "1.23.7" -and -not $AlsoLegacy) { throw "1.23.7 is the crossover release - publish it with -AlsoLegacy or every pre-1.23.7 install freezes" }
 
 # -Version is only the Velopack tag. The version the APP reports - in the
 # title bar, in a bug report, on the bridge's /ping, and to the "What's new"
@@ -107,8 +102,12 @@ if (-not $SkipChecks) {
 
 # --- Source first, then build -----------------------------------------
 Push-Location $v2
-git push origin HEAD
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git push failed - source must be pushed before publishing" }
+# Both repositories carry the same source: the company one (origin) and
+# the personal one. A release is never published from source only one has.
+foreach ($remote in @("origin", "personal")) {
+    git push $remote HEAD
+    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "git push $remote failed - source must be pushed to both repositories before publishing" }
+}
 
 npm run tauri build
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "tauri build failed" }
@@ -118,6 +117,9 @@ Pop-Location
 & (Join-Path $PSScriptRoot "pack.ps1") -Version $Version
 
 # --- Publish ---------------------------------------------------------------
+# phr-tcm is the feed. The old personal feed is published only on
+# -AlsoLegacy (see $legacyRepoUrl above); that failure is fatal too, since
+# half-published is the state that strands people.
 $token = (gh auth token | Out-String).Trim()
 if (-not $token) { throw "gh auth token returned nothing - run gh auth login" }
 vpk upload github --repoUrl $repoUrl --publish --releaseName "v$Version" --tag "v$Version" --token $token --outputDir (Join-Path $v2 "Releases")

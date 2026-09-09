@@ -103,23 +103,16 @@ test("the right column switches from the changelog to the app log", async () => 
   expect(screen.getByRole("button", { name: "Copy log" })).toBeInTheDocument();
 });
 
-test("editing default tags saves them for this project as you type", async () => {
+// Default tags are no longer set here - they moved to Manual Entry, where
+// they are used, and their tests went with them (ManualEntry.test.tsx).
+test("default tags are not offered in Settings any more", () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mockIPC((cmd) => {
     if (cmd === "plugin:event|listen") return 1;
-    if (cmd === "list_project_tags") return ["smoke", "regression"];
     return undefined;
   });
   renderSettings(qc);
-
-  const field = screen.getByLabelText("Default tags");
-  fireEvent.change(field, { target: { value: "smoke" } });
-  fireEvent.keyDown(field, { key: "Enter" });
-
-  await waitFor(() =>
-    expect(localStorage.getItem("tcm-v2-default-tags:acme/Web")).toBe("smoke"),
-  );
-  localStorage.clear();
+  expect(screen.queryByLabelText("Default tags")).not.toBeInTheDocument();
 });
 
 test("export sends only the app's own localStorage keys to the backend", async () => {

@@ -1742,19 +1742,26 @@ async fn search_wiki(
     }
 }
 
-/// Full markdown content of one wiki page - call after `search_wiki` finds
-/// the right `wiki_id` + `path`.
+/// Full markdown content of one wiki page. `path` is a page path, a
+/// `search_wiki` hit's path, or the URL from the browser - see
+/// `AdoClient::get_wiki_page`. `wiki` is required for all but the URL.
 async fn wiki_page(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
     target: &str,
 ) -> (u16, String) {
-    let Some(wiki_id) = q(target, "wiki").filter(|s| !s.trim().is_empty()) else {
-        return (400, "pass ?wiki=<wiki id>&path=<page path>".into());
-    };
     let Some(path) = q(target, "path").filter(|s| !s.trim().is_empty()) else {
-        return (400, "pass ?wiki=<wiki id>&path=<page path>".into());
+        return (400, "pass ?path=<page path, search path, or wiki url>".into());
     };
+    // A wiki URL names its own wiki, so asking for `wiki` as well would
+    // refuse the one thing a person has to hand. Every other form still
+    // needs it.
+    let trimmed = path.trim();
+    let is_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+    let wiki_id = q(target, "wiki").filter(|s| !s.trim().is_empty()).unwrap_or_default();
+    if wiki_id.is_empty() && !is_url {
+        return (400, "pass ?wiki=<wiki id>&path=<page path>, or ?path=<wiki url>".into());
+    }
     match client.get_wiki_page(&ctx.org, &ctx.project, &wiki_id, &path).await {
         Ok(page) => (
             200,
