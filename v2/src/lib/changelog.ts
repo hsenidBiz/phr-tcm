@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.3",
+    date: "2026-09-09",
+    items: [
+      "Pull requests: a long description no longer stops mid-sentence. Azure DevOps only hands over the opening few hundred characters when it lists pull requests, so a long one was cut off mid-word with nothing to say so. The end of a clipped description now fades, a View more button sits under it, and the whole body opens in a window.",
+      "Pull requests: on a wide window, the related work items now sit in their own panel on the right, the way Azure DevOps arranges them, instead of queueing up underneath everything else. On a narrow window they stack below as before.",
+      "Fixed: deleting test cases said they had been \"moved to the recycle bin\", moments after the same dialog warned that deletion cannot be undone. There is no recycle bin and the warning was the true half. The message now says the cases were permanently deleted.",
+    ],
+  },
+  {
     version: "1.23.2",
     date: "2026-09-07",
     items: [
