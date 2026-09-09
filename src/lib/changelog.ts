@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.10",
+    date: "2026-09-09",
+    items: [
+      "Uploading takes one click fewer. The middle button said \"Confirm & create\" and then created nothing - it armed the check-the-PBI step. That step now arrives with the review itself, so it is Review, then the one button that really does write.",
+      "Duplicate titles are found when the review opens instead of after you have already confirmed. If a case shares a title with one already on the PBI you are told there and then, and the upload is held until you have looked at it and either removed the case or chosen to create the duplicate anyway. The per-row hints were worked out from a list that could be minutes out of date; they are now checked against Azure DevOps as the review opens.",
+      "The upload still refuses to start if a clashing title appears in the meantime - somebody else creating the same case while you read does not slip through.",
+      "The review scrolls its buttons into view smoothly rather than jumping there. If your system is set to reduce motion, it moves instantly as before.",
+      "AI Bridge: the tool that searches by title is now called Find a PBI. It only ever matched Product Backlog Items, never bugs or tasks, so calling it a work item promised more than it did.",
+    ],
+  },
+  {
     version: "1.23.9",
     date: "2026-09-09",
     items: [
