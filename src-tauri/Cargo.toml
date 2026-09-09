@@ -97,3 +97,17 @@ tempfile = "3"
 # deliberately left alone.
 [profile.test]
 debug = 0
+
+# Release binaries ship without symbols or debug info: they are the one
+# thing that makes a decompiled build readable, and nothing at runtime uses
+# them - panic locations (`file:line` in the app log) come from panic
+# metadata compiled into the binary, not from the stripped tables.
+#
+# Deliberately NOT `panic = "abort"`. This crate is written around
+# unwinding: a panic inside a spawn_blocking task is caught as a JoinError
+# and turned into a message ("The update check did not run"), SubmitGuard's
+# Drop releases the upload claim "however the loop ends - returned, errored,
+# or unwound", and the panic hook has time to log. With abort every one of
+# those becomes the app closing instantly, mid-upload included.
+[profile.release]
+strip = true
