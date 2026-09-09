@@ -897,8 +897,10 @@ export default function AiBridge() {
             cost. Off, it will still tag cases — it just has to guess.
           </li>
           <li>
-            <span className="font-medium text-text">Find a work item</span> — searches PBI titles in the current project so a job can start from a name rather
-            than a number you looked up yourself. Off, you supply the work item id.
+            <span className="font-medium text-text">Find a PBI</span> — searches this project&apos;s Product Backlog Items by title, so a job can start
+            from a name rather than an id you looked up yourself. Typing a number finds
+            that item directly. It matches Product Backlog Items only, never bugs or
+            tasks. Off, you supply the id.
           </li>
           <li>
             <span className="font-medium text-text">Project wiki</span> — searches your Azure DevOps wiki and reads the pages it finds, for the documentation

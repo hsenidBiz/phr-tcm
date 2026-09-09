@@ -36,7 +36,11 @@ export const MCP_TOOLS: McpToolInfo[] = [
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
   { name: "transform_cases", label: "Bulk edits", summary: "Bulk edits: retag, retitle, set module, sort, dedupe." },
-  { name: "search_pbis", label: "Find a work item", summary: "Find a work item id by title." },
+  { name: "search_pbis", label: "Find a PBI",
+    // "Work item" is the umbrella - a bug and a task are work items too.
+    // This query filters on type = Product Backlog Item, so it returns
+    // nothing else, and saying "work item" promised more than it does.
+    summary: "Find a Product Backlog Item by title, or by its id." },
   { name: "search_wiki", label: "Search the wiki", summary: "Search the project wiki for documentation." },
   { name: "get_wiki_page", label: "Read a wiki page", summary: "Read a wiki page found by search_wiki." },
 ];

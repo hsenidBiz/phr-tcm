@@ -126,7 +126,9 @@ test("the how-it-works card names every MCP tool", async () => {
   // it, and the tools with no switch are not described here - a paragraph
   // about a control that does not exist is the thing this screen keeps
   // getting rid of.
-  for (const label of ["Run failures", "Project tags", "Find a work item", "Project wiki"]) {
+  // "Find a PBI", not "Find a work item": the query filters on work item
+  // type = Product Backlog Item, so it never returns a bug or a task.
+  for (const label of ["Run failures", "Project tags", "Find a PBI", "Project wiki"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
