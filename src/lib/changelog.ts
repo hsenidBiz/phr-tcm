@@ -22,6 +22,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       "Settings has a switch to hide the company database (PHR-X) section on the AI Bridge tab.",
       "The runner's header now shows the number of the test case on screen instead of the PBI.",
       "Switching to or away from a queue of a hundred cases no longer stalls the window. Each queued row is rendered once and left alone until something about it changes; before, every row was rebuilt on each of the several renders a tab switch triggers.",
+      "Pressing Review, and then Confirm, brings the next button to you. Both steps grow the row of controls under a long queue, which used to push the button you needed next below the fold and leave you scrolling for it - the final Yes especially, since its warning is meant to be read and so never had a floating copy.",
+      "While an upload runs, the button that started it becomes Stop, and the separate Cancel beside the progress bar is gone. It holds still for a moment first, so a habitual second click on Confirm does not stop the upload it just started. Stopping still finishes the current case and keeps everything unreached in the queue, so pressing submit again carries on from there.",
       "Network problems are reported as what to try - check your connection, restart the app, look in Settings > Logs - instead of the address that failed. The address is in the log, where it always was.",
       "For assistants: optimize_cases no longer trims away a second sentence that carries the assertion; transform_cases gains normalise_citations, replace_in_preconditions and set_comment, and its replace reports now count occurrences; the citation advisories say where a misplaced quote should go; merge_case_files names the slice files it superseded.",
     ],
