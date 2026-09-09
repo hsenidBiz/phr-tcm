@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, MessageSquare, X } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
 import { commands, events, type SubmitItemResult, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { useOnScreen } from "../hooks/useOnScreen";
-import { diffCase, diffSummary } from "../lib/caseDiff";
+import { diffCase } from "../lib/caseDiff";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
 import { caseKey, fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
@@ -32,12 +32,9 @@ import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
 import { unwrap } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
-import InlineDiff from "./InlineDiff";
 import { pagePalette } from "../lib/reportTheme";
-import CaseStepsTable from "./CaseStepsTable";
 import QueueBulkEditDialog from "./QueueBulkEditDialog";
-import QueueCaseEditor from "./QueueCaseEditor";
-import StepDiffLines from "./StepDiffLines";
+import QueueRow from "./QueueRow";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -262,7 +259,10 @@ export default function QueueSection({
     // bypass this and always hit the network.
     staleTime: 60_000,
   });
-  const existingCases = (existing.data ?? []).map((t) => ({ id: t.id, title: t.title }));
+  const existingCases = useMemo(
+    () => (existing.data ?? []).map((t) => ({ id: t.id, title: t.title })),
+    [existing.data],
+  );
 
   // Diff-preview (spec EDT-B): once the review gate opens, fetch the
   // current server values for every queued UPDATE in one batch so rows
@@ -280,13 +280,16 @@ export default function QueueSection({
     retry: false,
   });
   const [expandedDiffs, setExpandedDiffs] = useState<Set<number>>(new Set());
-  const toggleDiff = (i: number) =>
-    setExpandedDiffs((s) => {
-      const next = new Set(s);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
+  const toggleDiff = useCallback(
+    (i: number) =>
+      setExpandedDiffs((s) => {
+        const next = new Set(s);
+        if (next.has(i)) next.delete(i);
+        else next.add(i);
+        return next;
+      }),
+    [],
+  );
   // One row at a time is editable in place; queue-length changes (remove,
   // import, submit) shift indices, so any of them closes the editor.
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -300,13 +303,16 @@ export default function QueueSection({
   // Per-row steps preview (collapsed by default): check what will actually
   // be written before submitting, for creates and updates alike.
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
-  const toggleSteps = (i: number) =>
-    setExpandedSteps((s) => {
-      const next = new Set(s);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
+  const toggleSteps = useCallback(
+    (i: number) =>
+      setExpandedSteps((s) => {
+        const next = new Set(s);
+        if (next.has(i)) next.delete(i);
+        else next.add(i);
+        return next;
+      }),
+    [],
+  );
 
 
   // Share-for-review: the draft travels through ADO as a PBI attachment
@@ -715,7 +721,7 @@ export default function QueueSection({
 
   // Same occurrence-aware keys the file sync reports changes under, so a
   // second case sharing a title still lights up its own row.
-  const rowKeys = keysFor(queue);
+  const rowKeys = useMemo(() => keysFor(queue), [queue]);
   const [renameOpen, setRenameOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
@@ -726,17 +732,21 @@ export default function QueueSection({
   // at different cases, and a stale selection silently bulk-edits the
   // wrong rows.
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [selAnchor, setSelAnchor] = useState<number | null>(null);
+  // The shift-click anchor is only ever read inside toggleSelect, so it
+  // lives in a ref: that keeps the callback's identity stable, which is
+  // what lets the rows below stay memoised.
+  const selAnchor = useRef<number | null>(null);
   useEffect(() => {
     setSelected(new Set());
-    setSelAnchor(null);
+    selAnchor.current = null;
   }, [queue.length]);
 
-  const toggleSelect = (i: number, shift: boolean) => {
+  const toggleSelect = useCallback((i: number, shift: boolean) => {
+    const anchor = selAnchor.current;
     setSelected((s) => {
       const next = new Set(s);
-      if (shift && selAnchor != null) {
-        const [lo, hi] = selAnchor < i ? [selAnchor, i] : [i, selAnchor];
+      if (shift && anchor != null) {
+        const [lo, hi] = anchor < i ? [anchor, i] : [i, anchor];
         for (let k = lo; k <= hi; k++) next.add(k);
       } else if (next.has(i)) {
         next.delete(i);
@@ -745,8 +755,8 @@ export default function QueueSection({
       }
       return next;
     });
-    setSelAnchor(i);
-  };
+    selAnchor.current = i;
+  }, []);
 
   /** Write bulk changes back into the files the cases came from, so the
    * file says what the queue says - otherwise the next external save of
@@ -858,8 +868,41 @@ export default function QueueSection({
     },
   };
 
-  const problems = queue.map((tc) => validateCase(tc));
-  const duplicates = queue.map((tc) => duplicateWarning(tc, existingCases));
+  const problems = useMemo(() => queue.map((tc) => validateCase(tc)), [queue]);
+  const duplicates = useMemo(
+    () => queue.map((tc) => duplicateWarning(tc, existingCases)),
+    [queue, existingCases],
+  );
+
+  // Row callbacks. All stable: a row is memoised on its props, and a
+  // callback that changed identity every render would re-render every
+  // row on every render - which is exactly what made a 100-case queue
+  // slow to switch to. The two that need the current queue and file
+  // list read them through a ref instead of closing over them.
+  const latest = useRef({ queue, writeBackOwned });
+  latest.current = { queue, writeBackOwned };
+  const toggleEdit = useCallback((i: number) => setEditingIdx((cur) => (cur === i ? null : i)), []);
+  const cancelEdit = useCallback(() => setEditingIdx(null), []);
+  const removeRow = useCallback((i: number) => setQueue((q) => q.filter((_, j) => j !== i)), [setQueue]);
+  const saveRow = useCallback(
+    (i: number, next: TestCase) => {
+      const { queue: prev, writeBackOwned: writeBack } = latest.current;
+      setQueue((q) => q.map((t, j) => (j === i ? next : t)));
+      setEditingIdx(null);
+      // The owning FILE follows the edit, through the same machinery as
+      // bulk edits. This closes a real duplicate trap: ownership is
+      // matched by title, so a rename that only the queue knew about
+      // orphaned the row at stamp time - its created id was never written
+      // back, and the next import of the file created the case again.
+      void writeBack(
+        prev,
+        prev.map((t, j) => (j === i ? next : t)),
+        new Set([i]),
+      );
+      toast.success("Queued case updated.");
+    },
+    [setQueue],
+  );
   const hasBlockers = problems.some(Boolean);
 
   // What the primary action is about to do, in words. Lifted out of the
@@ -1122,183 +1165,33 @@ export default function QueueSection({
         <ul className="space-y-1">
           {queue.map((tc, i) => {
             const { diff, diffFailed } = reviewRows[i];
-            const touched = flash?.[rowKeys[i]];
-            // Ranked above the file-sync colours on purpose: a row that
-            // failed to upload needs a decision now, and that outranks
-            // where its text last came from.
-            const failedHere = failedRows.has(rowKeys[i]);
             return (
-              <li
+              <QueueRow
                 key={i}
-                className={cn(
-                  // The open editor hosts a non-portaled Combobox dropdown that must
-                  // paint past the row's box - content-visibility's paint containment
-                  // would clip it, so drop cv-row while this row is being edited.
-                  editingIdx !== i && "cv-row",
-                  "rounded-md border text-sm transition-colors",
-                  failedHere
-                    ? "border-danger/60 bg-danger/5"
-                    : touched === "added"
-                    ? "border-success/50 bg-success/5"
-                    : touched === "changed"
-                      ? "border-warning/50 bg-warning/5"
-                      : "border-border",
-                )}
-              >
-                <div className="flex items-center justify-between px-3 py-1.5">
-                  <span className="text-text">
-                    {/* Capture-phase wrapper: the checkbox's own click never
-                        fires, so shift-ranges can be read off the event. */}
-                    <span
-                      className="mr-2 inline-block align-middle"
-                      onClickCapture={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        toggleSelect(i, e.shiftKey);
-                      }}
-                    >
-                      <Checkbox
-                        ariaLabel={`Select ${tc.title}`}
-                        checked={selected.has(i)}
-                        onCheckedChange={() => {}}
-                      />
-                    </span>
-                    <button
-                      aria-label={
-                        expandedSteps.has(i) ? `Collapse steps of ${tc.title}` : `Expand steps of ${tc.title}`
-                      }
-                      title={expandedSteps.has(i) ? "Hide steps" : "Check the steps before submitting"}
-                      className="mr-2 align-middle text-muted hover:text-accent"
-                      onClick={() => toggleSteps(i)}
-                    >
-                      {expandedSteps.has(i) ? (
-                        <ChevronDown size={14} />
-                      ) : (
-                        <ChevronRight size={14} />
-                      )}
-                    </button>
-                    {tc.update_id != null ? (
-                      <Badge className="mr-2 bg-warning/20 text-warning">
-                        UPDATE #{tc.update_id}
-                      </Badge>
-                    ) : (
-                      <Badge className="mr-2 bg-success/20 text-success">NEW</Badge>
-                    )}
-                    {tc.title}
-                    <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
-                    {diff?.noop && (
-                      <Badge className="ml-2 bg-warning/20 text-warning">
-                        no-op — nothing will change
-                      </Badge>
-                    )}
-                    {diff && !diff.noop && (
-                      <button
-                        className="ml-2 text-xs text-accent hover:underline"
-                        onClick={() => toggleDiff(i)}
-                      >
-                        {diffSummary(diff)} {expandedDiffs.has(i) ? "▾" : "▸"}
-                      </button>
-                    )}
-                    {diffFailed && (
-                      <span className="ml-2 text-xs text-faint">diff unavailable</span>
-                    )}
-                    {reviewing && problems[i] && (
-                      <span className="ml-2 text-xs text-danger">{problems[i]}</span>
-                    )}
-                    {reviewing && !problems[i] && duplicates[i] && (
-                      <span className="ml-2 text-xs text-warning">{duplicates[i]}</span>
-                    )}
-                  </span>
-                  <span className="flex items-center gap-3">
-                    <button
-                      className="text-xs text-faint hover:text-accent disabled:opacity-50"
-                      disabled={submit.isPending}
-                      onClick={() => setEditingIdx((cur) => (cur === i ? null : i))}
-                    >
-                      {editingIdx === i ? "Close" : "Edit"}
-                    </button>
-                    <button
-                      className="text-xs text-faint hover:text-danger disabled:opacity-50"
-                      disabled={submit.isPending}
-                      onClick={() => setQueue((q) => q.filter((_, j) => j !== i))}
-                    >
-                      Remove
-                    </button>
-                  </span>
-                </div>
-                {/* In-app note from the JSON file - never sent to ADO. */}
-                {(tc.comment ?? "").trim() !== "" && (
-                  <p className="flex items-start gap-1.5 border-t border-border/60 px-3 py-1 text-xs text-muted">
-                    <MessageSquare size={12} className="mt-0.5 shrink-0" />
-                    <span className="min-w-0 flex-1 whitespace-pre-wrap">{tc.comment}</span>
-                  </p>
-                )}
-                {editingIdx === i && (
-                  <QueueCaseEditor
-                    original={tc}
-                    org={org}
-                    project={project}
-                    onSave={(next) => {
-                      const prev = queue;
-                      setQueue((q) => q.map((t, j) => (j === i ? next : t)));
-                      setEditingIdx(null);
-                      // The owning FILE follows the edit, through the same
-                      // machinery as bulk edits. This closes a real duplicate
-                      // trap: ownership is matched by title, so a rename that
-                      // only the queue knew about orphaned the row at stamp
-                      // time - its created id was never written back, and the
-                      // next import of the file created the case again.
-                      void writeBackOwned(
-                        prev,
-                        prev.map((t, j) => (j === i ? next : t)),
-                        new Set([i]),
-                      );
-                      toast.success("Queued case updated.");
-                    }}
-                    onCancel={() => setEditingIdx(null)}
-                  />
-                )}
-                {expandedSteps.has(i) && (
-                  <div className="border-t border-border">
-                    {/* Shared with the watched-file change report, which
-                        needed the same "read the case start to finish"
-                        view - see CaseStepsTable. */}
-                    <CaseStepsTable
-                      steps={tc.steps}
-                      preconditions={tc.preconditions}
-                      reviewerNotes={tc.reviewer_notes}
-                    />
-                  </div>
-                )}
-                {diff && !diff.noop && expandedDiffs.has(i) && (
-                  <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
-                    {/* Word-level, like the step lines below: editing one
-                        word of a title must not read as the whole title
-                        being replaced. */}
-                    {diff.fields.map((f) => (
-                      <div key={f.name}>
-                        <span className="font-medium text-muted">{f.name}:</span>{" "}
-                        <InlineDiff old={f.old} next={f.new} />
-                      </div>
-                    ))}
-                    {diff.steps.detail.length > 0 && (
-                      <div className="space-y-1">
-                        <span className="font-medium text-muted">Steps:</span>
-                        {/* git word-diff style: -/+ lines with only the
-                            actually-changed words highlighted. */}
-                        {diff.steps.detail.map((d) => (
-                          <StepDiffLines key={d.index} d={d} />
-                        ))}
-                      </div>
-                    )}
-                    {diff.blankSkipped.length > 0 && (
-                      <div className="text-faint">
-                        Left untouched (blank in import): {diff.blankSkipped.join(", ")}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </li>
+                tc={tc}
+                index={i}
+                org={org}
+                project={project}
+                isSelected={selected.has(i)}
+                stepsOpen={expandedSteps.has(i)}
+                diffOpen={expandedDiffs.has(i)}
+                editing={editingIdx === i}
+                failed={failedRows.has(rowKeys[i])}
+                touched={flash?.[rowKeys[i]]}
+                reviewing={reviewing}
+                problem={problems[i]}
+                duplicate={duplicates[i]}
+                diff={diff}
+                diffFailed={diffFailed}
+                busy={submit.isPending}
+                onToggleSelect={toggleSelect}
+                onToggleSteps={toggleSteps}
+                onToggleDiff={toggleDiff}
+                onToggleEdit={toggleEdit}
+                onRemove={removeRow}
+                onSave={saveRow}
+                onCancelEdit={cancelEdit}
+              />
             );
           })}
         </ul>

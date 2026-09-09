@@ -21,6 +21,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       "AI Bridge: begin_test_case_writing, get_writing_guide, get_test_cases, check_spec_coverage and transform_cases are always on - they no longer have switches. The two Auto Run script tools are no longer offered to assistants; the Auto Run screen itself is unchanged.",
       "Settings has a switch to hide the company database (PHR-X) section on the AI Bridge tab.",
       "The runner's header now shows the number of the test case on screen instead of the PBI.",
+      "Switching to or away from a queue of a hundred cases no longer stalls the window. Each queued row is rendered once and left alone until something about it changes; before, every row was rebuilt on each of the several renders a tab switch triggers.",
       "Network problems are reported as what to try - check your connection, restart the app, look in Settings > Logs - instead of the address that failed. The address is in the log, where it always was.",
       "For assistants: optimize_cases no longer trims away a second sentence that carries the assertion; transform_cases gains normalise_citations, replace_in_preconditions and set_comment, and its replace reports now count occurrences; the citation advisories say where a misplaced quote should go; merge_case_files names the slice files it superseded.",
     ],
