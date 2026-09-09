@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.6",
+    date: "2026-09-09",
+    items: [
+      "Default tags moved to Manual Entry, where you actually use them. A Default tags button sits beside the tags box and holds the set for the project you are in, instead of the setting living two screens away where you had to already know it existed.",
+      "Those tags now hold. They appear on every new case and cannot be taken off the form, so a case can no longer go up quietly missing the tag the project expects. You can still add as many tags as you like to any single case, and they clear when the case joins the queue while the defaults stay.",
+      "The trade is worth knowing: dropping a default for one case means changing the set in the dialog. That dialog is the only place the set changes, which is what makes the rest of it dependable.",
+    ],
+  },
+  {
     version: "1.23.5",
     date: "2026-09-09",
     items: [
