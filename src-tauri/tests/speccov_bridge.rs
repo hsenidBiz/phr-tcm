@@ -520,3 +520,46 @@ fn a_bare_citation_hint_depends_on_whether_a_quote_exists_anywhere() {
     assert!(bare_citation_hint("> \"q\"\nSpec: S.md 1").contains("not where the checker reads it"));
     assert!(bare_citation_hint("Spec: S.md 1").starts_with("quote the source sentence"));
 }
+
+/// Round 8 §15: a writer who cites precisely names the parent section AND
+/// the sub-heading beneath it, separated by " - ". The checker credited the
+/// parent and then listed the sub-heading as a gap - so the more exactly a
+/// slice cited its source, the more holes its coverage report grew. The
+/// incentive ran backwards.
+#[test]
+fn a_sub_heading_named_in_the_pointer_is_credited_not_reported_as_a_gap() {
+    use v2_lib::model::TestCase;
+    use v2_lib::speccov::{check_coverage, parse_inventory, CoverageInput};
+
+    let doc = "## 5.6a Absent Evaluator Weight Redistribution\n\
+               #### Mode: ratio_based\n\
+               #### Multiple absent roles\n";
+    let cases = vec![TestCase {
+        title: "Ratio based redistribution".into(),
+        reviewer_notes:
+            "Spec: S.md 5.6a Absent Evaluator Weight Redistribution - Mode: ratio_based\n\n\
+             > \"the remaining evaluators absorb the weight in proportion\""
+                .into(),
+        automation_status: "Not Automated".into(),
+        ..Default::default()
+    }];
+
+    let v = check_coverage(CoverageInput {
+        inventories: vec![("S.md".into(), parse_inventory(doc))],
+        cases: &cases,
+        sections_scope: "",
+        out_of_scope: "",
+    });
+
+    let uncovered: Vec<String> = serde_json::from_value(v["uncovered"].clone()).unwrap();
+    assert!(
+        !uncovered.iter().any(|u| u.contains("ratio_based")),
+        "the cited sub-heading must not be a gap: {uncovered:?}"
+    );
+    // The one nobody cited still is - crediting the named sub-heading must
+    // not quietly credit its siblings too.
+    assert!(
+        uncovered.iter().any(|u| u.contains("Multiple absent roles")),
+        "an uncited sibling is still a gap: {uncovered:?}"
+    );
+}

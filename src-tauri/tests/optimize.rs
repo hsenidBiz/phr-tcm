@@ -1323,3 +1323,119 @@ fn the_report_counts_kept_assertions() {
     assert_eq!(report.assertions_kept, 1);
     assert_eq!(report.expected_trimmed, 0, "nothing was trimmed");
 }
+
+/// The optimizer prepends navigation steps, so the step under test is the
+/// last one - not `steps[0]`.
+fn last_expected(c: &TestCase) -> &str {
+    &c.steps.last().expect("a step").expected
+}
+
+/// Round 8 §14: on an arithmetic set there is nothing to regroup - every
+/// case is its own bespoke configuration - so the reordering half of this
+/// tool achieves nothing and the trimming half rewrites every expected
+/// result. Welded together, that makes the whole tool unusable there.
+/// `trim_expected: false` unwelds them: navigation and ordering still run,
+/// the assertions are left exactly as written.
+#[test]
+fn trim_expected_false_leaves_every_expected_result_alone() {
+    // A trailing GLOSS, which the default is right to cut. That is what
+    // makes this a test of the flag rather than of the assertion rule -
+    // an arithmetic sentence would have survived either way.
+    let long = "One row exists. This confirms the procedure ran to completion.";
+    // The title names what survives the trim, so the §12.2 guard is not
+    // what is being measured here - only the flag is.
+    let cases = vec![case(
+        "Exactly one row exists for the completed employee",
+        "Calc",
+        "",
+        vec![step("Run the procedure", long)],
+    )];
+
+    let (trimmed, _) = v2_lib::optimize::optimize_full(cases.clone(), None, true, true);
+    assert_ne!(last_expected(&trimmed[0]), long, "the default still trims");
+
+    let (kept, report) = v2_lib::optimize::optimize_full(cases, None, true, false);
+    assert_eq!(last_expected(&kept[0]), long, "trim_expected: false must not touch it");
+    assert_eq!(report.expected_trimmed, 0);
+    assert!(report.expected_rewritten.is_empty());
+}
+
+/// Round 8 §14: `expected_trimmed: 59` reads as tidy-up. When the
+/// reordering saved nothing, the run is pure cost, and the report has to
+/// say so BEFORE the diff - that is the difference between a 59-item
+/// review and a one-line decision.
+#[test]
+fn a_run_that_saves_no_switches_says_so_first() {
+    // One module, one precondition: nothing to regroup, so switches cannot
+    // fall - and an expected result long enough to be trimmed.
+    // Trailing glosses, so they really are trimmed, and titles that name
+    // what survives, so the §12.2 guard is not what refuses them.
+    let cases = vec![
+        case(
+            "One row exists for the first employee",
+            "Calc",
+            "Signed in",
+            vec![step("Run it", "One row exists. This confirms the procedure ran.")],
+        ),
+        case(
+            "One row exists for the second employee",
+            "Calc",
+            "Signed in",
+            vec![step("Run it", "One row exists. This confirms it ran again.")],
+        ),
+    ];
+    let (_, report) = v2_lib::optimize::optimize_full(cases, None, true, true);
+
+    assert_eq!(report.switches_after, report.switches_before, "nothing to regroup here");
+    assert!(report.expected_trimmed > 0, "and something was rewritten");
+    let first = report.notes.first().expect("a note about the trade");
+    assert!(
+        first.contains("0 environment switches") && first.contains("expected result"),
+        "the trade must be the FIRST thing in the report: {first}"
+    );
+}
+
+/// Round 8 §12.2: "They differ." retains nothing a tester could fail. When
+/// the trimmed text shares no word with the title, the trim has removed the
+/// subject along with the assertion, and the original is the safer answer.
+#[test]
+fn a_trim_that_leaves_nothing_of_the_title_is_refused() {
+    // The trailing sentence is a gloss, so the assertion rule does not save
+    // it. "They differ." is all that would be left, and it names nothing
+    // the title names - which is the whole complaint.
+    let before = "They differ. The ordering is applied by the view.";
+    let cases = vec![case(
+        "Parameter values reach the procedure and the child lists under separate names",
+        "Reports",
+        "",
+        vec![step("Compare the two", before)],
+    )];
+    let (out, _) = v2_lib::optimize::optimize_full(cases, None, true, true);
+    assert_eq!(
+        last_expected(&out[0]), before,
+        "nothing of the title survives in \"They differ.\" - keep the original"
+    );
+}
+
+/// Round 8 §14: the flag has to survive the route, not just exist on the
+/// function. A wiring gap here would look exactly like the tool ignoring
+/// the argument, which is the failure the flag exists to prevent.
+#[tokio::test]
+async fn trim_expected_false_travels_the_bridge_route() {
+    let ctx = BridgeContext::default();
+    let draft = r#"[{"title":"One row exists for the employee",
+        "steps":[{"action":"Run it","expected":"One row exists. This confirms it ran."}]}]"#;
+
+    let (status, body) =
+        route(&ctx, None, "POST", "/optimize?trim_expected=false", draft, "test").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let steps = v["test_cases"][0]["steps"].as_array().unwrap().clone();
+    let last = steps.last().unwrap();
+    assert_eq!(
+        last["expected"].as_str().unwrap(),
+        "One row exists. This confirms it ran.",
+        "the route must pass the flag through: {steps:?}"
+    );
+    assert_eq!(v["report"]["expected_trimmed"], serde_json::json!(0));
+}

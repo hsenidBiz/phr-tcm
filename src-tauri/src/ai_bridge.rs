@@ -327,8 +327,14 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
     // for. `reorder=false` is what a spec-ordered set passes, so it still
     // gets the navigation and expected-result work without being shuffled.
     let reorder = !matches!(q(target, "reorder").as_deref(), Some("false") | Some("0"));
+    // Default true as well. Round 8 §14: an arithmetic set wants the
+    // navigation and ordering work WITHOUT its expected results rewritten,
+    // and welding the two together made the whole tool unusable there - the
+    // reported workaround was to skip it entirely and lose both halves.
+    let trim_expected =
+        !matches!(q(target, "trim_expected").as_deref(), Some("false") | Some("0"));
     let (optimized, report) =
-        crate::optimize::optimize_with(cases, entry.as_deref(), reorder);
+        crate::optimize::optimize_full(cases, entry.as_deref(), reorder, trim_expected);
     if dry_run {
         // Report only: the caller inspects what WOULD change before
         // committing to the transformed JSON.

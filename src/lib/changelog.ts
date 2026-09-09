@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.8",
+    date: "2026-09-09",
+    items: [
+      "For assistants: optimize_cases takes trim_expected: false, which keeps the navigation, ordering and dedupe work and leaves every expected result exactly as written. On a set whose value is in what each result asserts - arithmetic, formulas, quoted messages - the trimming was the only part that did anything, and the only way to avoid it was to skip the tool and lose the rest with it.",
+      "For assistants: when a run rewrites expected results and the reordering saves no environment switches at all, the report now says so as its first line, naming the trade and the flag. A count of rewrites on its own read as tidy-up.",
+      "For assistants: an expected result is no longer shortened to something the case title does not mention. Cutting a trailing sentence sometimes took the subject with it and left \"They differ.\", which reads like a passing test and checks nothing.",
+      "For assistants: check_spec_coverage credits a sub-heading that a citation names after its parent section, instead of counting it as a gap. Citing precisely used to make the coverage report look worse, which was exactly backwards.",
+    ],
+  },
+  {
     version: "1.23.7",
     date: "2026-09-09",
     items: [

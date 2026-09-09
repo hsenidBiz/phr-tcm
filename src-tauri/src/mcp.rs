@@ -193,6 +193,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
                 "entry": { "type": "string", "description": "First step of every preamble, e.g. \"Launch the HRM portal.\" (default: \"Launch the application.\"). A non-launch entry (e.g. opening a module) is placed AFTER the sign-in step." },
                 "dry_run": { "type": "boolean", "description": "Return only the report of what would change - inspect it before committing to the transformed JSON" },
                 "reorder": { "type": "boolean", "description": "Default true: regroup the cases so the tester changes environment as little as possible. Pass false for a set that is meant to be read against the specification in document order - navigation and expected results are still cleaned up, the order is left alone." },
+                "trim_expected": { "type": "boolean", "description": "Default true: shorten expected results to the outcome. Pass false to leave every expected result exactly as written and still get the navigation, ordering and dedupe work. Use it when the value of the set is in what each expected result ASSERTS - arithmetic, formulas, quoted messages - or when a dry run reports that reordering saved 0 environment switches." },
             }), &[]),
         },
         {
@@ -362,6 +363,9 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // reordering, and an absent flag has to mean the same thing.
             if args["reorder"].as_bool() == Some(false) {
                 params.push("reorder=false".to_string());
+            }
+            if args["trim_expected"].as_bool() == Some(false) {
+                params.push("trim_expected=false".to_string());
             }
             // Round 7 §1: a large draft travels as a file path, like every
             // other tool in the family. Forwarded only when present, so

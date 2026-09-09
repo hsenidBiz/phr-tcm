@@ -405,6 +405,18 @@ fn file_basename_lower(path: &str) -> String {
     path.rsplit(['/', '\\']).next().unwrap_or(path).to_lowercase()
 }
 
+/// The sub-heading a precise citation names after its parent section.
+///
+/// `"5.6a Redistribution - Mode: ratio_based" -> Some("Mode: ratio_based")`.
+/// The separator is the plain " - " the writing guide already uses for the
+/// exemption form, and the exemption is stripped before this sees it - so
+/// what is left after the last one is a heading name or nothing.
+fn sub_heading_of(section: &str) -> Option<&str> {
+    let (_, tail) = section.rsplit_once(" - ")?;
+    let tail = tail.trim();
+    (!tail.is_empty()).then_some(tail)
+}
+
 /// `"7.7 (AC-3)" -> Some("7.7")`; sections with no AC suffix have no parent.
 fn parent_section_id(section_id: &str) -> Option<String> {
     let re = Regex::new(r"(?i)^(.+?)\s*\(AC-\d+\)\s*$").unwrap();
@@ -741,10 +753,31 @@ pub fn check_coverage(input: CoverageInput) -> serde_json::Value {
                 });
 
             match resolved {
-                Some(sec) => covered
-                    .entry(qualify(doc_display, &sec.id))
-                    .or_default()
-                    .push(case.title.clone()),
+                Some(sec) => {
+                    covered
+                        .entry(qualify(doc_display, &sec.id))
+                        .or_default()
+                        .push(case.title.clone());
+                    // Round 8 §15: a precise citation names the parent
+                    // section AND the sub-heading beneath it. Crediting only
+                    // the parent listed that sub-heading as a gap, so the
+                    // more exactly a writer cited, the more holes their
+                    // coverage report grew - the incentive ran backwards.
+                    // Only the sub-heading actually NAMED is credited; its
+                    // siblings stay uncovered, because they are.
+                    if let Some(sub) = sub_heading_of(&spec.section) {
+                        if let Some(child) = doc
+                            .sections
+                            .iter()
+                            .find(|s| s.id != sec.id && s.id.eq_ignore_ascii_case(sub))
+                        {
+                            covered
+                                .entry(qualify(doc_display, &child.id))
+                                .or_default()
+                                .push(case.title.clone());
+                        }
+                    }
+                }
                 None => {
                     // Name the near-miss: "nearly right" and "plain wrong"
                     // read identically otherwise, and telling them apart

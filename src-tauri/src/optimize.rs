@@ -475,6 +475,38 @@ pub fn clean_expected_keeping(raw: &str) -> (String, bool) {
     (out, kept_assertion)
 }
 
+/// Does the trimmed text still name something the title names?
+///
+/// Round 8 §12.2: "They differ." and "No rows are returned." retain nothing
+/// a tester could fail. The trimmer keeps the first sentence, and when that
+/// sentence is a pronoun and a verb the case is left asserting nothing at
+/// all - the subject went with the sentence that was cut.
+///
+/// Deliberately generous: any shared word of four characters or more that
+/// is not a common connective. The question is whether the trim left a
+/// stub, not whether the two read alike, and keeping an untidy sentence
+/// costs far less than shipping a case that tests nothing.
+fn shares_a_subject(kept: &str, title: &str) -> bool {
+    const NOISE: &[&str] = &[
+        "that", "this", "with", "from", "when", "then", "than", "they", "them", "their", "there",
+        "which", "while", "shown", "reads", "each", "into", "over", "only", "also", "same", "been",
+        "does", "will", "must", "have", "has", "and", "the", "for", "are", "not",
+    ];
+    let words = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric() && c != '_')
+            .map(|w| w.trim().to_ascii_lowercase())
+            .filter(|w| w.chars().count() >= 4 && !NOISE.contains(&w.as_str()))
+            .collect()
+    };
+    let title_words = words(title);
+    // A title with no substantial word of its own cannot judge anything -
+    // say yes rather than refuse every trim on the set.
+    if title_words.is_empty() {
+        return true;
+    }
+    words(kept).iter().any(|w| title_words.contains(w))
+}
+
 /// Does a later sentence still TEST something, or only explain?
 ///
 /// Round 8 §8/§12: on two independent drafts, nine trims in ten removed the
@@ -787,6 +819,25 @@ pub fn optimize_with(
     entry: Option<&str>,
     reorder: bool,
 ) -> (Vec<TestCase>, OptimizeReport) {
+    optimize_full(cases, entry, reorder, true)
+}
+
+/// As `optimize_with`, but `trim_expected` decides whether expected results
+/// are shortened at all.
+///
+/// Round 8 §14: on a set whose value is arithmetic - one bespoke
+/// configuration per case - there is nothing to regroup, so the reordering
+/// half saves zero environment switches while the trimming half rewrites
+/// every expected result. Welded together those two made the whole tool
+/// unusable there, and the reported answer was to skip it entirely and lose
+/// the navigation and ordering work as well. Pass false to keep those and
+/// leave the assertions exactly as written.
+pub fn optimize_full(
+    cases: Vec<TestCase>,
+    entry: Option<&str>,
+    reorder: bool,
+    trim_expected: bool,
+) -> (Vec<TestCase>, OptimizeReport) {
     let entry = entry.map(str::trim).filter(|e| !e.is_empty()).unwrap_or(DEFAULT_ENTRY);
     let mut report = OptimizeReport {
         switches_before: count_switches(&cases),
@@ -848,7 +899,28 @@ pub fn optimize_with(
         for (i, s) in c.steps.iter_mut().enumerate() {
             s.action = squash(&s.action);
             let original = squash(&s.expected);
-            let (cleaned_expected, kept) = clean_expected_keeping(&s.expected);
+            // Round 8 §14: with trimming off the expected result is left
+            // exactly as written - only the whitespace is normalised, which
+            // every other field gets too.
+            if !trim_expected {
+                s.expected = original;
+                continue;
+            }
+            let (mut cleaned_expected, kept) = clean_expected_keeping(&s.expected);
+            // Round 8 §12.2: a trim that leaves nothing the title names has
+            // removed the subject along with the gloss. "They differ." is
+            // not something a tester can fail. The assertion rule above
+            // saves the sentences that name a value; this catches the ones
+            // that leave a contentless stub behind.
+            // Only when a SENTENCE actually went. Stripping a "Verify that"
+            // lead-in rewords one sentence and loses no assertion, and
+            // judging that by the title would refuse tidying on any case
+            // whose title happens to share no word with its own steps.
+            if sentences(&cleaned_expected).len() < sentences(&original).len()
+                && !shares_a_subject(&cleaned_expected, &c.title)
+            {
+                cleaned_expected = original.clone();
+            }
             if kept {
                 report.assertions_kept += 1;
             }
@@ -967,6 +1039,7 @@ pub fn optimize_with(
 
     if !reorder {
         report.switches_after = count_switches(&cleaned);
+        note_the_trade(&mut report);
         return (cleaned, report);
     }
     report.groups = groups;
@@ -974,7 +1047,33 @@ pub fn optimize_with(
     let ordered: Vec<TestCase> = sequence.iter().map(|&i| slots[i].take().expect("sequence is a permutation")).collect();
 
     report.switches_after = count_switches(&ordered);
+    note_the_trade(&mut report);
     (ordered, report)
+}
+
+/// Say what the run cost when it bought nothing.
+///
+/// Round 8 §14: on a set with one bespoke configuration per case there is
+/// nothing to group, so reordering saves zero switches and the only effect
+/// left is N rewritten expected results. `expected_trimmed: 59` reads as
+/// tidy-up; the same number next to "saved 0 environment switches" is a
+/// one-line decision instead of a 59-item diff review. It goes FIRST
+/// because a note at the bottom of a long report is a note nobody read.
+fn note_the_trade(report: &mut OptimizeReport) {
+    if report.expected_trimmed == 0 || report.switches_after < report.switches_before {
+        return;
+    }
+    report.notes.insert(
+        0,
+        format!(
+            "This run rewrote {} expected result(s) and saved 0 environment switches - \
+             reordering found nothing to group. If the set's value is in what each \
+             expected result asserts rather than in which screen it happens on, run it \
+             again with trim_expected: false to keep the navigation and ordering work \
+             and leave the assertions alone.",
+            report.expected_trimmed
+        ),
+    );
 }
 
 /// The tester's sequence over `cases`, as indices: grouped by setup, groups
