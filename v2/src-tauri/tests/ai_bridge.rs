@@ -506,6 +506,45 @@ async fn wiki_page_returns_content_via_wiremock() {
     assert!(v["content"].as_str().unwrap().contains("full text"));
 }
 
+/// A pasted URL names its own wiki, so demanding `wiki` as well turned the
+/// one thing a person has to hand into a 400 they could not act on.
+#[tokio::test]
+async fn wiki_page_accepts_a_url_without_a_wiki_id() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wiki/wikis/HRM.wiki/pages/9486"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Issue Meal",
+            "content": "# Issue Meal"
+        })))
+        .mount(&server)
+        .await;
+    let (status, body) = route(
+        &ctx(),
+        Some(&client),
+        "GET",
+        "/wiki-page?path=https%3A%2F%2Fdev.azure.com%2FPeoplesHR%2FHRM%2F_wiki%2Fwikis%2FHRM.wiki%2F9486%2FIssue-Meal",
+        "",
+        "1.10.3",
+    )
+    .await;
+    assert_eq!(status, 200, "body: {body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["path"], "/Issue Meal");
+}
+
+/// A bare path still needs its wiki, and the refusal has to say so - the
+/// url case is the exception, not the new rule.
+#[tokio::test]
+async fn wiki_page_still_demands_a_wiki_id_for_a_bare_path() {
+    let (server, client) = ado_stub().await;
+    drop(server);
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/wiki-page?path=/Docs/Auth", "", "1.10.3").await;
+    assert_eq!(status, 400);
+    assert!(body.contains("wiki"), "the refusal must name what is missing: {body}");
+}
+
 #[tokio::test]
 async fn test_cases_without_pbi_400_with_guidance() {
     let (_server, client) = ado_stub().await;
