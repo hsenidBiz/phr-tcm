@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import ManualEntry from "./ManualEntry";
 
@@ -116,18 +116,72 @@ test("draft queue persists across remounts (shared with Import File)", async () 
   expect(await screen.findByText("Persistent case")).toBeInTheDocument();
 });
 
-test("the project's default tags prefill each new case and return after adding", async () => {
+test("the project's default tags ride on every case and cannot be removed here", async () => {
   localStorage.setItem("tcm-v2-default-tags:acme/Web", "smoke");
   baseMocks();
   renderScreen();
 
-  // Prefilled: the default renders as a removable chip before any typing.
-  expect(screen.getByLabelText("Remove smoke")).toBeInTheDocument();
+  // Present before any typing, and FIXED: no x, so a case cannot quietly
+  // ship without the tag the project promised. Changing it is the
+  // dialog's job, which is the one place that changes it for every case.
+  expect(screen.getAllByText("smoke").length).toBeGreaterThan(0);
+  expect(screen.queryByLabelText("Remove smoke")).not.toBeInTheDocument();
 
   addCase("Case carrying defaults");
   expect(await screen.findByText("Case carrying defaults")).toBeInTheDocument();
 
   // The reset goes back to the defaults, not to empty - the next case
-  // wants them too.
-  expect(screen.getByLabelText("Remove smoke")).toBeInTheDocument();
+  // wants them too, and still cannot drop them.
+  expect(screen.queryByLabelText("Remove smoke")).not.toBeInTheDocument();
+});
+
+test("Default tags opens a dialog and saves the set for this project", async () => {
+  baseMocks();
+  renderScreen();
+
+  fireEvent.click(screen.getByRole("button", { name: "Default tags" }));
+  const field = await screen.findByLabelText("Default tags");
+  fireEvent.change(field, { target: { value: "regression" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(localStorage.getItem("tcm-v2-default-tags:acme/Web")).toBe("regression"),
+  );
+  // And it takes effect where it is used, without a reload.
+  expect(screen.queryByLabelText("Remove regression")).not.toBeInTheDocument();
+  expect(screen.getAllByText("regression").length).toBeGreaterThan(0);
+});
+
+test("tags added for one case clear when it is queued; the defaults do not", async () => {
+  localStorage.setItem("tcm-v2-default-tags:acme/Web", "smoke");
+  baseMocks();
+  renderScreen();
+
+  // An extra rides on top of the default and IS removable - the lock is
+  // on the project's set, not on the field.
+  const field = screen.getByLabelText("Tags");
+  fireEvent.change(field, { target: { value: "one-off" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(screen.getByLabelText("Remove one-off")).toBeInTheDocument();
+
+  addCase("Case with an extra");
+  expect(await screen.findByText("Case with an extra")).toBeInTheDocument();
+
+  expect(screen.queryByLabelText("Remove one-off")).not.toBeInTheDocument();
+  expect(screen.getAllByText("smoke").length).toBeGreaterThan(0);
+});
+
+test("cancelling the dialog changes nothing", async () => {
+  localStorage.setItem("tcm-v2-default-tags:acme/Web", "smoke");
+  baseMocks();
+  renderScreen();
+
+  fireEvent.click(screen.getByRole("button", { name: "Default tags" }));
+  const field = await screen.findByLabelText("Default tags");
+  fireEvent.change(field, { target: { value: "regression" } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(localStorage.getItem("tcm-v2-default-tags:acme/Web")).toBe("smoke");
 });

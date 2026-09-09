@@ -25,6 +25,8 @@ export default function TagField({
   placeholder = "Add tags…",
   ariaLabel = "Tags",
   className,
+  locked = [],
+  lockedTitle = "Set in Default tags",
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -32,6 +34,13 @@ export default function TagField({
   placeholder?: string;
   ariaLabel?: string;
   className?: string;
+  /** Tags that ride along on every case and cannot be removed HERE - the
+   * screen that owns them provides the one place to change them. Without
+   * this, "default" would mean "default until someone presses x". */
+  locked?: string[];
+  /** Says where a locked tag came from, so a chip with no x is never a
+   * mystery. Shown as its tooltip. */
+  lockedTitle?: string;
 }) {
   const tags = splitTags(value);
   const [query, setQuery] = useState("");
@@ -61,6 +70,8 @@ export default function TagField({
   );
   const showCreate = query.trim() && !suggestions.some((s) => s.toLowerCase() === q) && !has(query.trim());
 
+  const isLocked = (t: string) => locked.some((l) => l.toLowerCase() === t.toLowerCase());
+
   const addTag = (t: string) => {
     const clean = t.trim();
     if (!clean || has(clean)) return;
@@ -68,7 +79,10 @@ export default function TagField({
     setQuery("");
     setActive(0);
   };
-  const removeTag = (t: string) => onChange(joinTags(tags.filter((x) => x !== t)));
+  const removeTag = (t: string) => {
+    if (isLocked(t)) return;
+    onChange(joinTags(tags.filter((x) => x !== t)));
+  };
 
   return (
     <div ref={ref} className={cn("relative", className)}>
@@ -79,24 +93,36 @@ export default function TagField({
           inputRef.current?.focus();
         }}
       >
-        {tags.map((t) => (
-          <span
-            key={t}
-            className="flex items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
-          >
-            {t}
-            <button
-              aria-label={`Remove ${t}`}
-              className="hover:text-danger"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeTag(t);
-              }}
+        {tags.map((t) => {
+          const fixed = isLocked(t);
+          return (
+            <span
+              key={t}
+              // The tooltip is the whole explanation for a chip with no x
+              // on it, so it names where the tag comes from rather than
+              // just saying it cannot be removed.
+              title={fixed ? lockedTitle : undefined}
+              className={cn(
+                "flex items-center gap-1 rounded px-1.5 py-0.5 text-xs",
+                fixed ? "bg-surface-2 text-muted" : "bg-accent-soft text-accent",
+              )}
             >
-              <X size={11} />
-            </button>
-          </span>
-        ))}
+              {t}
+              {!fixed && (
+                <button
+                  aria-label={`Remove ${t}`}
+                  className="hover:text-danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeTag(t);
+                  }}
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </span>
+          );
+        })}
         <input
           ref={inputRef}
           aria-label={ariaLabel}
@@ -127,7 +153,11 @@ export default function TagField({
               if (active < options.length) addTag(options[active]);
               else if (showCreate) addTag(query.trim());
             } else if (e.key === "Backspace" && !query && tags.length) {
-              removeTag(tags[tags.length - 1]);
+              // The last tag this field is allowed to take. Backspace is
+              // the same deletion the chip's x performs, so it has to obey
+              // the same lock - otherwise the key becomes a way round it.
+              const last = [...tags].reverse().find((t) => !isLocked(t));
+              if (last) removeTag(last);
             } else if (e.key === "Escape" && open) {
               // Ours to swallow only while the list is showing: an Escape
               // on a closed field belongs to whatever dialog contains it.

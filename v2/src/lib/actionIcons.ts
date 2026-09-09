@@ -36,6 +36,9 @@ export {
   Layers as IconBulkEdit,
   CaseSensitive as IconRename,
   Send as IconPost,
+  // Setting what EVERY new item starts with, not editing this one. A pin
+  // because the thing it opens fixes a value in place across cases.
+  Pin as IconSetDefault,
 
   // Undoing and stopping
   Undo2 as IconUndo,
