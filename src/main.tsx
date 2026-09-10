@@ -8,6 +8,7 @@ import { initTheme } from "./lib/theme";
 import { initUiClickLog } from "./lib/uiLog";
 import { initExternalLinks } from "./lib/externalLinks";
 import "./index.css";
+import ErrorBoundary, { installGlobalErrorLog } from "./components/ErrorBoundary";
 
 // refetchOnWindowFocus off: a desktop app loses/regains focus constantly
 // (alt-tab to the browser and back), and the default would refire every
@@ -48,10 +49,18 @@ if (import.meta.env.DEV && import.meta.env.MODE !== "test") {
 // same bundle, routed by hash (see RunTests -> openRunnerWindow).
 const Root = window.location.hash === "#runner" ? RunnerWindow : App;
 
+// Errors outside render (handlers, promises) never reach a boundary; the
+// hooks write them to the app log so a bug report carries them.
+installGlobalErrorLog();
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <Root />
+      {/* A render that throws shows a fallback with a Reload instead of
+          taking the whole window white, and logs what threw. */}
+      <ErrorBoundary>
+        <Root />
+      </ErrorBoundary>
       {/* One per window: turns every `title` in the tree into the app's
           own tooltip. See components/ui/tooltip.tsx. */}
       <TooltipLayer />
