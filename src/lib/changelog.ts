@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.11",
+    date: "2026-09-10",
+    items: [
+      "A queued update now shows what it will change before you open Review. The \"Click to view N fields changing\" link on an update's row - and the \"nothing will change\" badge on one that would do nothing - used to appear only once Review was open. They now show as soon as the update is in the queue, so you can see what an edit will do while you are still editing, and Review opens without the wait it used to have.",
+    ],
+  },
+  {
     version: "1.23.10",
     date: "2026-09-09",
     items: [
