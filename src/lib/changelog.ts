@@ -13,6 +13,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.12",
+    date: "2026-09-10",
+    items: [
+      "If a test suite cannot be created for the PBI you are uploading to, the app now says so - which plan refused, and that the cases are linked to the PBI but will not appear in Run Tests until a suite exists. Before this it was a line in the log only: an upload of 197 cases landed with no suite and nothing on screen. It also picks a better plan for the area - the newest one on the sprint rather than the oldest - and tries the next plan when one refuses.",
+      "If something goes wrong drawing the screen, the app shows what happened and a Reload button instead of going white, and writes the details to the app log (Settings - Logs) so a bug report carries them.",
+      "Uploads are faster: the fixed half-second pause between test cases is gone. The gap is now only what your request-rate setting asks for, and the app still slows down whenever Azure DevOps asks it to.",
+      "Test cases are uploaded in tester order when every case in the queue carries one, so the suite - and the runner walking it - read like the run sheet, whatever order the queue shows.",
+      "Comments sync both ways between a file and View Test Cases. A case imported for update that has no comment now takes the note kept for its id, on the queue card and in the file it came from. The file's own comment still wins where it has one, and a note typed in View is never overwritten by an import.",
+      "Work item comments can be edited, the way Azure DevOps allows: Edit appears on your own comments, opens the same markdown editor the description uses, and Update saves it. Comments render as rich text and say when they were edited, and new comments support markdown too.",
+      "A notification bell beside the Work Manager pill collects what happened while you were not looking - work items assigned to you, your PRs that gained merge conflicts or comments to resolve, and PRs waiting for your review. Opening it marks everything read; X dismisses one; Clear all empties it; each item opens in Azure DevOps. The count that used to sit on the Work Manager pill lives on the bell now.",
+      "In the PR panel, a work item chip wraps its title instead of cutting it off after a few words.",
+      "In the runner, the \"Pasted screenshot\" notice gets out of the way as soon as your pointer reaches it, so it no longer blocks the outcome buttons.",
+    ],
+  },
+  {
     version: "1.23.11",
     date: "2026-09-10",
     items: [
