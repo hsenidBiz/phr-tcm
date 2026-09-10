@@ -1,0 +1,134 @@
+import { afterEach, beforeEach, expect, test } from "vitest";
+import type { PullRequest } from "../bindings";
+import {
+  LIST_CAP,
+  clearAll,
+  dismiss,
+  markAllRead,
+  noteAssigned,
+  notePrOverview,
+  raise,
+  resetForTests,
+  unreadCount,
+} from "./notifications";
+
+// The store caches per org in memory; every test starts from nothing.
+beforeEach(() => {
+  localStorage.clear();
+  resetForTests();
+});
+afterEach(() => {
+  localStorage.clear();
+  resetForTests();
+});
+
+const ORG = "acme";
+
+function read() {
+  return JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
+    id: string;
+    read: boolean;
+  }>;
+}
+
+test("raise adds unread items newest first and persists them", () => {
+  raise(ORG, [{ id: "a", kind: "assigned", title: "A", body: "" }]);
+  raise(ORG, [{ id: "b", kind: "assigned", title: "B", body: "" }]);
+  const list = read();
+  expect(list.map((n) => n.id)).toEqual(["b", "a"]);
+  expect(list.every((n) => n.read === false)).toBe(true);
+});
+
+/// The dedupe is what turns "the current state" into "an event": a
+/// source may report the same conflict on every poll, and a dismissed
+/// one must stay dismissed.
+test("an id already raised - listed or dismissed - is never raised again", () => {
+  expect(raise(ORG, [{ id: "a", kind: "assigned", title: "A", body: "" }])).toHaveLength(1);
+  expect(raise(ORG, [{ id: "a", kind: "assigned", title: "A", body: "" }])).toHaveLength(0);
+  dismiss(ORG, "a");
+  expect(read()).toHaveLength(0);
+  expect(raise(ORG, [{ id: "a", kind: "assigned", title: "A", body: "" }])).toHaveLength(0);
+  expect(read()).toHaveLength(0);
+});
+
+test("markAllRead clears the badge and keeps the items; clearAll empties", () => {
+  raise(ORG, [
+    { id: "a", kind: "assigned", title: "A", body: "" },
+    { id: "b", kind: "pr-review", title: "B", body: "" },
+  ]);
+  expect(unreadCount(read().map((n) => ({ ...n, kind: "assigned", title: "", body: "", at: "" })))).toBe(2);
+  markAllRead(ORG);
+  expect(read().every((n) => n.read)).toBe(true);
+  expect(read()).toHaveLength(2);
+  clearAll(ORG);
+  expect(read()).toHaveLength(0);
+});
+
+test("the list keeps only the newest LIST_CAP", () => {
+  for (let i = 0; i < LIST_CAP + 5; i++) {
+    raise(ORG, [{ id: `n${i}`, kind: "assigned", title: "", body: "" }]);
+  }
+  const list = read();
+  expect(list).toHaveLength(LIST_CAP);
+  expect(list[0].id).toBe(`n${LIST_CAP + 4}`);
+});
+
+const pr = (over: Partial<PullRequest>): PullRequest =>
+  ({
+    id: 1,
+    title: "Fix login",
+    repo: "Web",
+    repo_id: "r",
+    author: "Bob",
+    source_branch: "f",
+    target_branch: "main",
+    created: "",
+    description: "",
+    is_draft: false,
+    has_conflicts: false,
+    status: "active",
+    closed: "",
+    merge_commit: "",
+    my_vote: 0,
+    reviewers: [],
+    ...over,
+  }) as PullRequest;
+
+/// The overview is re-reported on every refresh; only a NEW conflict on
+/// one of your PRs, or a PR newly awaiting you, becomes a notification -
+/// and each exactly once.
+test("notePrOverview raises conflicts on your PRs and PRs awaiting you, once each", () => {
+  const overview = {
+    mine: [pr({ id: 10, has_conflicts: true }), pr({ id: 11, has_conflicts: false })],
+    awaiting: [pr({ id: 20, title: "Add report", author: "Cy" })],
+  };
+  notePrOverview(ORG, "Web", overview);
+  notePrOverview(ORG, "Web", overview); // the next poll, same state
+  const list = read();
+  expect(list.map((n) => n.id).sort()).toEqual(["pr-conflict:Web:10", "pr-review:Web:20"]);
+  const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
+    id: string;
+    title: string;
+    href: string;
+  }>;
+  const conflict = full.find((n) => n.id === "pr-conflict:Web:10")!;
+  expect(conflict.title).toBe("PR #10 has merge conflicts");
+  expect(conflict.href).toBe("https://dev.azure.com/acme/Web/_git/Web/pullrequest/10");
+  const review = full.find((n) => n.id === "pr-review:Web:20")!;
+  expect(review.title).toBe("PR #20 is waiting for your review");
+});
+
+test("noteAssigned raises one item per work item, linked to it", () => {
+  noteAssigned(ORG, "Web", [{ id: 501, title: "Wire the login flow", work_item_type: "Task", state: "New" }]);
+  const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
+    id: string;
+    title: string;
+    body: string;
+    href: string;
+  }>;
+  expect(full).toHaveLength(1);
+  expect(full[0].id).toBe("assigned:501");
+  expect(full[0].title).toBe("Task #501 assigned to you");
+  expect(full[0].body).toBe("Wire the login flow");
+  expect(full[0].href).toBe("https://dev.azure.com/acme/Web/_workitems/edit/501");
+});

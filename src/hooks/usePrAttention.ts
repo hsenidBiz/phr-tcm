@@ -9,9 +9,11 @@
  * are active by definition - closed PRs have nothing left to resolve.
  */
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { commands, type PullRequest } from "../bindings";
 import { isResolved } from "../components/PrThreads";
 import { unwrap } from "../lib/ipc";
+import { notePrOverview } from "../lib/notifications";
 
 /** Background refresh - a badge that only updates on tab focus goes stale
  * exactly when the user is heads-down elsewhere in the app. */
@@ -25,6 +27,13 @@ export function usePrAttention(org: string, project: string): number {
     refetchInterval: POLL_MS,
     retry: false,
   });
+
+  // The bell learns from the same fetch: your PRs that have grown
+  // conflicts, PRs newly waiting on you. The store dedupes, so reporting
+  // the whole overview on every poll raises each only once.
+  useEffect(() => {
+    if (overview.data) notePrOverview(org, project, overview.data);
+  }, [overview.data, org, project]);
 
   // A PR can be in both slices (own PR, also a listed reviewer) - count it once.
   const prs: PullRequest[] = [];

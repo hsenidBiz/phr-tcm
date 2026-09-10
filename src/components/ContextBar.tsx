@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
 import { usePrAttention } from "../hooks/usePrAttention";
+import NotificationBell from "./NotificationBell";
 import { unwrap } from "../lib/ipc";
 import { cached } from "../lib/localCache";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
@@ -140,6 +141,7 @@ export default function ContextBar({
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        <NotificationBell org={org} />
         <Button
           data-tour="work"
           variant="pill"

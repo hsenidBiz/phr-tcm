@@ -29,6 +29,7 @@ import {
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
+import { noteAssigned } from "./lib/notifications";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import {
@@ -640,6 +641,8 @@ export default function App() {
       // A toast is gone in seconds - the Board badge is what remains
       // until the user actually looks at the board.
       addWorkAlerts(items.length);
+      // And into the bell, where it stays until dismissed.
+      noteAssigned(org, project, items);
       const { title, body } = summarize(items);
       if (appIsInView()) {
         toast.info(title, { description: body, duration: 10_000 });
@@ -656,7 +659,7 @@ export default function App() {
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, []);
+  }, [org, project]);
 
   const dismissChangelog = () => {
     getVersion()
