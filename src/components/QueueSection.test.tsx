@@ -885,3 +885,55 @@ test("queued updates show their diff before Review is opened", async () => {
   expect(screen.getByRole("button", { name: /Review/ })).toBeInTheDocument();
   expect(fetched).toEqual([[201, 202]]);
 });
+
+/// Comments sync both ways on the work item id. Notes -> file: a case
+/// imported for update with no comment takes the note kept in View Test
+/// Cases - onto its card, and into the file it came from, with the watch
+/// told the new stamp so the write is not reported back as an edit.
+test("a queued update with no comment takes the note kept for its id, and the file learns it", async () => {
+  localStorage.setItem("tcm-v2-case-notes:acme", JSON.stringify({ "201": "Re-check with QA" }));
+  const saved: Array<Record<string, unknown>> = [];
+  const patched: Array<{ path: string; stamp?: string; snapshot?: TestCase[] }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") return [];
+    if (cmd === "save_draft_comment") {
+      saved.push(args as Record<string, unknown>);
+      return "stamp-2";
+    }
+    return undefined;
+  });
+  const a = makeCase({ update_id: 201, title: "Login works" });
+  renderQueue([a], {
+    watches: [{ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [a] }],
+    onWatchPatched: (path, fields) =>
+      patched.push({ path, stamp: fields.stamp, snapshot: fields.snapshot }),
+  });
+
+  expect(await screen.findByText("Re-check with QA")).toBeInTheDocument();
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toMatchObject({
+    path: "C:/drafts/a.json",
+    id: 201,
+    title: "Login works",
+    text: "Re-check with QA",
+  });
+  await waitFor(() => expect(patched).toHaveLength(1));
+  expect(patched[0].stamp).toBe("stamp-2");
+  expect(patched[0].snapshot?.[0].comment).toBe("Re-check with QA");
+});
+
+/// The file keeps its own comment where it has one: the note fills only
+/// an empty slot and never overwrites.
+test("a queued update that already has a comment keeps it over the stored note", async () => {
+  localStorage.setItem("tcm-v2-case-notes:acme", JSON.stringify({ "201": "Re-check with QA" }));
+  baseMocks();
+  renderQueue([makeCase({ update_id: 201, comment: "From the file" })]);
+  expect(await screen.findByText("From the file")).toBeInTheDocument();
+  expect(screen.queryByText("Re-check with QA")).not.toBeInTheDocument();
+});

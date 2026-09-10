@@ -235,18 +235,55 @@ export default function QueueSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org, pbiId],
   );
-  // A case imported WITH its work item id and a comment is a comment
+  // Comments sync both ways between a file and the View Test Cases notes,
+  // joined on the work item id - a case imported for update IS the case
+  // the note is about.
+  //
+  // File -> notes: a case imported WITH its id and a comment is a comment
   // about a case that already lives in Azure DevOps - surface it in View
   // Test Cases too. Fill only EMPTY slots: a note typed in View is never
   // overwritten by a file import.
+  //
+  // Notes -> file: a case imported for update WITHOUT a comment, whose id
+  // has a note, takes the note - onto the queue card, and into the file
+  // the case came from, so it travels with the file from now on. Only
+  // empty slots again: the file's own comment wins where it has one.
   useEffect(() => {
     const notes = loadNotes(org);
-    for (const tc of queue) {
-      const comment = tc.comment ?? "";
-      if (tc.update_id != null && comment.trim() && !notes[String(tc.update_id)]) {
-        saveNote(org, tc.update_id, comment);
+    const fills = new Map<number, string>(); // queue index -> note
+    queue.forEach((tc, i) => {
+      if (tc.update_id == null) return;
+      const comment = (tc.comment ?? "").trim();
+      const note = notes[String(tc.update_id)];
+      if (comment && !note) saveNote(org, tc.update_id, comment);
+      else if (!comment && note) fills.set(i, note);
+    });
+    if (fills.size === 0) return;
+
+    const keys = keysFor(queue);
+    setQueue((q) =>
+      q.map((c, i) => (fills.has(i) && caseKey(c) === keys[i] ? { ...c, comment: fills.get(i)! } : c)),
+    );
+    // The file learns it too, one targeted comment patch per case (never
+    // a whole-file rewrite for this), and the watch is told the stamp so
+    // the app's own write is not reported back as an outside edit.
+    const known = watches ?? [];
+    if (known.length === 0) return;
+    const owners = ownerPaths(queue, known);
+    void (async () => {
+      for (const [i, text] of fills) {
+        const path = owners[i];
+        if (!path) continue;
+        const tc = queue[i];
+        const r = await commands.saveDraftComment(path, tc.update_id, tc.title, text);
+        if (r.status !== "ok" || !onWatchPatched) continue;
+        const w = known.find((x) => x.path === path);
+        onWatchPatched(path, {
+          stamp: r.data,
+          snapshot: (w?.snapshot ?? []).map((c) => (caseKey(c) === keys[i] ? { ...c, comment: text } : c)),
+        });
       }
-    }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue, org]);
 
