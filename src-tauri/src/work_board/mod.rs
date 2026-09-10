@@ -153,10 +153,27 @@ pub struct TeamRef {
 #[derive(Debug, Clone, Serialize, specta::Type)]
 pub struct WorkComment {
     pub id: i32,
+    /// Flattened to plain text - the list's fallback rendering.
     pub text: String,
+    /// The HTML as ADO stores it: the editor turns it into markdown and
+    /// the list renders it (sanitised) as rich text.
+    pub text_html: String,
     pub created_by: String,
+    /// The author's identity id - Edit is offered only on the caller's
+    /// own comments, matched against `connected_user`.
+    pub created_by_id: String,
     pub created_date: String,
+    /// ADO sets this on creation too; "edited" means it differs from
+    /// `created_date`.
+    pub modified_date: String,
     pub avatar_url: String,
+}
+
+/// Who the current token belongs to, by the id ADO stamps on `createdBy`.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ConnectedUser {
+    pub id: String,
+    pub display_name: String,
 }
 
 /// One field's before/after inside a revision.

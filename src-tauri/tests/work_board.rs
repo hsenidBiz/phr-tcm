@@ -59,6 +59,70 @@ async fn comments_parse_with_avatar_fallback_chain() {
     assert_eq!(comments[2].avatar_url, ""); // initials disc in the UI
 }
 
+/// The editor needs the stored HTML, ownership needs the author's id, and
+/// "edited" needs the modified stamp - none of which the flattened text
+/// carries.
+#[tokio::test]
+async fn comments_carry_html_author_id_and_edit_stamp() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/wit/workItems/11/comments"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "comments": [{
+                "id": 7, "text": "<div>Looks <b>good</b></div>",
+                "createdBy": {"displayName": "Ada", "id": "u-ada"},
+                "createdDate": "2026-07-12T01:00:00Z",
+                "modifiedDate": "2026-07-12T02:00:00Z"
+            }]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let c = &client.get_work_item_comments("org", "proj", 11).await.unwrap()[0];
+    assert_eq!(c.text_html, "<div>Looks <b>good</b></div>");
+    assert_eq!(c.created_by_id, "u-ada");
+    assert_eq!(c.modified_date, "2026-07-12T02:00:00Z");
+}
+
+/// Editing is a plain-JSON PATCH on the comment itself - the same call
+/// ADO's own Update button makes - and never anything else.
+#[tokio::test]
+async fn updating_a_comment_patches_its_text_as_plain_json() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/wit/workItems/11/comments/7"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 7})))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client
+        .update_work_item_comment("org", "proj", 11, 7, "<div>Looks <b>great</b></div>")
+        .await
+        .unwrap();
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    let sent: serde_json::Value = serde_json::from_slice(&reqs[0].body).unwrap();
+    assert_eq!(sent, serde_json::json!({"text": "<div>Looks <b>great</b></div>"}));
+    let ct = reqs[0].headers.get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.starts_with("application/json"), "{ct}");
+}
+
+#[tokio::test]
+async fn connected_user_is_the_token_owner_by_identity_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/_apis/connectionData"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "authenticatedUser": {"id": "u-ada", "providerDisplayName": "Ada Lovelace"}
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let me = client.connected_user("org").await.unwrap();
+    assert_eq!(me.id, "u-ada");
+    assert_eq!(me.display_name, "Ada Lovelace");
+}
+
 #[tokio::test]
 async fn team_members_dedupe_and_sort() {
     let server = MockServer::start().await;

@@ -102,11 +102,15 @@ impl AdoClient {
                     .or_else(|| cb["imageUrl"].as_str())
                     .unwrap_or_default()
                     .to_string();
+                let html = c["text"].as_str().unwrap_or_default();
                 WorkComment {
                     id: c["id"].as_i64().unwrap_or_default() as i32,
-                    text: crate::steps_xml::html_to_text(c["text"].as_str().unwrap_or_default()),
+                    text: crate::steps_xml::html_to_text(html),
+                    text_html: html.to_string(),
                     created_by: cb["displayName"].as_str().unwrap_or_default().to_string(),
+                    created_by_id: cb["id"].as_str().unwrap_or_default().to_string(),
                     created_date: c["createdDate"].as_str().unwrap_or_default().to_string(),
+                    modified_date: c["modifiedDate"].as_str().unwrap_or_default().to_string(),
                     avatar_url: avatar,
                 }
             })
@@ -127,6 +131,42 @@ impl AdoClient {
         );
         self.post_json(url, &serde_json::json!({"text": text})).await?;
         Ok(())
+    }
+
+    /// Rewrite one comment's text - a PATCH on the comment resource, the
+    /// same edit ADO's own "Update" button makes. The caller sends HTML,
+    /// which is how ADO stores comments. No DELETE.
+    pub async fn update_work_item_comment(
+        &self,
+        org: &str,
+        project: &str,
+        wi_id: i32,
+        comment_id: i32,
+        text: &str,
+    ) -> Result<(), AdoError> {
+        let url = format!(
+            "{}/{}/{}/_apis/wit/workItems/{}/comments/{}?api-version=7.1-preview.4",
+            self.base_url, org, project, wi_id, comment_id
+        );
+        self.patch_plain_json(url, &serde_json::json!({"text": text})).await?;
+        Ok(())
+    }
+
+    /// The token's owner, from connectionData: the identity id ADO stamps
+    /// on a comment's `createdBy`, so the UI can offer Edit on exactly the
+    /// caller's own comments. Read only.
+    pub async fn connected_user(&self, org: &str) -> Result<super::ConnectedUser, AdoError> {
+        let url = format!("{}/{}/_apis/connectionData?api-version=7.1-preview.1", self.base_url, org);
+        let data = self.get_json(url).await?;
+        let u = &data["authenticatedUser"];
+        Ok(super::ConnectedUser {
+            id: u["id"].as_str().unwrap_or_default().to_string(),
+            display_name: u["providerDisplayName"]
+                .as_str()
+                .or_else(|| u["customDisplayName"].as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
     }
 
     /// Download the attachment images referenced by rich-text HTML (a plain

@@ -182,6 +182,9 @@ export const commands = {
 	activityValues: (organization: string, project: string, wiType: string) => typedError<string[], AdoError>(__TAURI_INVOKE("activity_values", { organization, project, wiType })),
 	workItemComments: (organization: string, project: string, id: number) => typedError<WorkComment[], AdoError>(__TAURI_INVOKE("work_item_comments", { organization, project, id })),
 	addComment: (organization: string, project: string, id: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("add_comment", { organization, project, id, text })),
+	updateComment: (organization: string, project: string, id: number, commentId: number, text: string) => typedError<null, AdoError>(__TAURI_INVOKE("update_comment", { organization, project, id, commentId, text })),
+	/**  Who is signed in, by identity id - so Edit shows only on one's own comments. */
+	connectedUser: (organization: string) => typedError<ConnectedUser, AdoError>(__TAURI_INVOKE("connected_user", { organization })),
 	/**  Best-effort avatar fetch (None -> initials disc in the UI). */
 	avatarB64: (url: string) => __TAURI_INVOKE<string | null>("avatar_b64", { url }),
 	/**  Full-form work item creation (the New Work Item screen). POST only. */
@@ -660,6 +663,12 @@ export type CaseScript = {
 	case_id: number,
 	title: string,
 	steps: StepScript[],
+};
+
+/**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
+export type ConnectedUser = {
+	id: string,
+	display_name: string,
 };
 
 /**  Where a picked file landed, and where the copy it replaced went. */
@@ -1645,9 +1654,25 @@ export type WorkAssigned = {
 
 export type WorkComment = {
 	id: number,
+	/**  Flattened to plain text - the list's fallback rendering. */
 	text: string,
+	/**
+	 *  The HTML as ADO stores it: the editor turns it into markdown and
+	 *  the list renders it (sanitised) as rich text.
+	 */
+	text_html: string,
 	created_by: string,
+	/**
+	 *  The author's identity id - Edit is offered only on the caller's
+	 *  own comments, matched against `connected_user`.
+	 */
+	created_by_id: string,
 	created_date: string,
+	/**
+	 *  ADO sets this on creation too; "edited" means it differs from
+	 *  `created_date`.
+	 */
+	modified_date: string,
 	avatar_url: string,
 };
 

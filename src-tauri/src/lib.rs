@@ -123,6 +123,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             board::activity_values,
             board::work_item_comments,
             board::add_comment,
+            board::update_comment,
+            board::connected_user,
             board::avatar_b64,
             board::create_work_item,
             discovery::classification_paths,

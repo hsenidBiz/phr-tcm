@@ -173,7 +173,7 @@ const boardItems: BoardData["items"] = [
 ];
 
 const comments = new Map<number, WorkComment[]>([
-  [2003, [{ id: 1, text: "Repro'd on the demo build.", created_by: "Demo User", created_date: "2026-07-13T06:30:00Z", avatar_url: "" }]],
+  [2003, [{ id: 1, text: "Repro'd on the demo build.", text_html: "<div>Repro'd on the demo build.</div>", created_by: "Demo User", created_by_id: "demo", created_date: "2026-07-13T06:30:00Z", modified_date: "2026-07-13T06:30:00Z", avatar_url: "" }]],
 ]);
 
 const detailFor = (b: BoardData["items"][number]): WorkItemDetail => ({
@@ -741,12 +741,26 @@ function applyPatches() {
         ]),
       ]);
     },
+    // Comments arrive as the HTML the panel renders from markdown, the
+    // way ADO stores them; the flattened `text` is the pre-HTML fallback.
     addComment: (_o: string, _p: string, id: number, text: string) => {
       const list = comments.get(id) ?? [];
-      list.unshift({ id: Date.now(), text, created_by: "Demo User", created_date: new Date().toISOString(), avatar_url: "" });
+      const now = new Date().toISOString();
+      list.unshift({ id: Date.now(), text: text.replace(/<[^>]+>/g, ""), text_html: text, created_by: "Demo User", created_by_id: "demo", created_date: now, modified_date: now, avatar_url: "" });
       comments.set(id, list);
       return ok(null);
     },
+    updateComment: (_o: string, _p: string, id: number, commentId: number, text: string) => {
+      const c = (comments.get(id) ?? []).find((x) => x.id === commentId);
+      if (c) {
+        c.text_html = text;
+        c.text = text.replace(/<[^>]+>/g, "");
+        c.modified_date = new Date().toISOString();
+      }
+      return ok(null);
+    },
+    // The demo user owns every demo comment, so Edit shows on all of them.
+    connectedUser: () => ok({ id: "demo", display_name: "Demo User" }),
     listTeamMembers: () => ok([{ display_name: "Demo User", unique_name: "demo@local" }]),
     listTeams: () => ok(["Demo Team"]),
     createWorkItem: (_o: string, _p: string, item: NewWorkItem) => {

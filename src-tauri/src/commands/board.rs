@@ -223,6 +223,33 @@ pub async fn add_comment(
         .await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn update_comment(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    id: i32,
+    comment_id: i32,
+    text: String,
+) -> Result<(), ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token)
+        .update_work_item_comment(&organization, &project, id, comment_id, &text)
+        .await
+}
+
+/// Who is signed in, by identity id - so Edit shows only on one's own comments.
+#[tauri::command]
+#[specta::specta]
+pub async fn connected_user(
+    app: tauri::AppHandle,
+    organization: String,
+) -> Result<work_board::ConnectedUser, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    ado::AdoClient::new(token).connected_user(&organization).await
+}
+
 /// Best-effort avatar fetch (None -> initials disc in the UI).
 #[tauri::command]
 #[specta::specta]
