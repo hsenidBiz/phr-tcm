@@ -311,10 +311,13 @@ export default function QueueSection({
     [existing.data],
   );
 
-  // Diff-preview (spec EDT-B): once the review gate opens, fetch the
-  // current server values for every queued UPDATE in one batch so rows
-  // can show what will actually change. Failure degrades to "diff
-  // unavailable" - it never blocks submitting.
+  // Diff-preview (spec EDT-B): as soon as the queue holds an UPDATE,
+  // fetch the current server values for every queued update in one batch
+  // so rows show what will actually change - while the person is still
+  // editing, not only once the review gate opens. One request per
+  // distinct id set, cached a minute, so an in-place edit re-diffs
+  // against the copy already here. Failure degrades to "diff unavailable"
+  // - it never blocks submitting.
   const updateIds = queue
     .map((tc) => tc.update_id)
     .filter((x): x is number => x != null);
@@ -322,7 +325,7 @@ export default function QueueSection({
     queryKey: ["diff-cases", org, [...updateIds].sort(), prefs.moduleRef, prefs.preconditionsRef],
     queryFn: () =>
       unwrap(commands.testCasesByIds(org, updateIds, prefs.moduleRef, prefs.preconditionsRef)),
-    enabled: reviewing && updateIds.length > 0,
+    enabled: updateIds.length > 0,
     staleTime: 60_000,
     retry: false,
   });
@@ -1052,14 +1055,13 @@ export default function QueueSection({
     const byId = new Map((currentCases.data ?? []).map((c) => [c.id, c]));
     return queue.map((tc) => {
       const cur = tc.update_id != null ? byId.get(tc.update_id) : undefined;
-      const diff =
-        reviewing && cur
-          ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
-          : null;
-      const diffFailed = reviewing && tc.update_id != null && !cur && currentCases.isError;
+      const diff = cur
+        ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
+        : null;
+      const diffFailed = tc.update_id != null && !cur && currentCases.isError;
       return { diff, diffFailed };
     });
-  }, [queue, currentCases.data, reviewing, prefs.moduleRef, prefs.preconditionsRef, currentCases.isError]);
+  }, [queue, currentCases.data, prefs.moduleRef, prefs.preconditionsRef, currentCases.isError]);
 
   // An empty queue is not a queue - the whole section stays out of the
   // way until a case exists. The "Queue for PBI" header, its five action

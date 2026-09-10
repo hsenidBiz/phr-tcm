@@ -846,3 +846,42 @@ test("the floating copy stands down when the real button is in view", async () =
   expect(floating.className).toContain("opacity-0");
   expect(floating.className).toContain("pointer-events-none");
 });
+
+/// The "Click to view ... changing" affordance used to appear only once
+/// Review opened - the current server values were fetched behind the
+/// review gate. It now shows as soon as an update sits in the queue, so
+/// the person sees what an edit will do while they are still editing; a
+/// row that would change nothing says so just as early.
+test("queued updates show their diff before Review is opened", async () => {
+  const fetched: number[][] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return ["smoke"];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") {
+      fetched.push((args as { ids: number[] }).ids);
+      const base = {
+        automation_status: "Not Automated",
+        steps: [{ action: "Open page", expected: "Page shown" }],
+        step_ids: ["2"],
+        module_value: "",
+        preconditions: "",
+      };
+      return [
+        { id: 201, title: "Login works", tags: "", ...base }, // queued copy adds a tag
+        { id: 202, title: "Login works", tags: "smoke", ...base }, // identical
+      ];
+    }
+    return undefined;
+  });
+  renderQueue([makeCase({ update_id: 201 }), makeCase({ update_id: 202 })]);
+
+  // No Review click anywhere in this test.
+  expect(await screen.findByRole("button", { name: /Click to view 1 field changing/ })).toBeInTheDocument();
+  expect(screen.getByText(/nothing will change/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Review/ })).toBeInTheDocument();
+  expect(fetched).toEqual([[201, 202]]);
+});
