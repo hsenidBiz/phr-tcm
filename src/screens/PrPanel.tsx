@@ -62,21 +62,26 @@ const wiTypeColor: Record<string, string> = {
 function WorkItemChip({ wi }: { wi: PrWorkItem }) {
   const color = wiTypeColor[wi.work_item_type] ?? "#9ca3af";
   return (
+    // items-start, not center: the title wraps to as many lines as it
+    // needs (the side column is 16rem, and "Participants - ..." told the
+    // reader nothing), while the icon, id and state pin to the first line
+    // like a DevOps chip. mt-px keeps the small marks on the text's
+    // baseline once the row is taller than one line.
     <button
-      className="flex w-full items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong hover:bg-surface-2"
+      className="flex w-full items-start gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left transition-colors hover:border-border-strong hover:bg-surface-2"
       title={`Open ${wi.work_item_type} ${wi.id} in Azure DevOps`}
       onClick={() => openUrl(wi.url).catch(() => toast.error("Could not open the browser."))}
     >
       {wi.work_item_type === "Bug" ? (
-        <Bug size={13} className="shrink-0" style={{ color }} />
+        <Bug size={13} className="mt-px shrink-0" style={{ color }} />
       ) : (
         <span
-          className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+          className="mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
           style={{ backgroundColor: color }}
         />
       )}
       <span className="id-mono shrink-0 text-faint">{wi.id}</span>
-      <span className="truncate text-text">{wi.title}</span>
+      <span className="min-w-0 flex-1 break-words text-text">{wi.title}</span>
       <span className="ml-auto flex shrink-0 items-center gap-1 text-muted">
         <span
           className="inline-block h-2 w-2 rounded-full"
