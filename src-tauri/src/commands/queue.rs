@@ -907,6 +907,7 @@ fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemR
     }
 }
 
+/// Stop the running upload once the batch in flight has finished.
 #[tauri::command]
 #[specta::specta]
 pub fn cancel_submit(state: tauri::State<'_, SubmitCancel>) {

@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.13",
+    date: "2026-09-10",
+    items: [
+      "Uploading is now fast. Test cases go to Azure DevOps in batches of 25 - one call per batch, carried out on the server in order - and each new case is linked to its PBI in the same step rather than a second one. Two hundred cases used to take a couple of minutes; expect seconds. A case that Azure DevOps rejects is reported on its own, in Azure DevOps' words, and stays in the queue to retry; nothing is created twice.",
+      "Stop still works during a batch upload: it finishes the batch in flight, then stops. The progress bar moves a batch at a time.",
+    ],
+  },
+  {
     version: "1.23.12",
     date: "2026-09-10",
     items: [
