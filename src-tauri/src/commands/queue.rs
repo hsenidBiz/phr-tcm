@@ -689,17 +689,23 @@ pub async fn submit_queue(
             break; // unprocessed items stay in the client's queue
         }
         if i > 0 {
-            // Per-item spacing on top of the global pacer: bulk creation is
-            // the app's heaviest burst, so it stays the most deferential
-            // thing it does. Never below 500 ms (v1's proven spacing), and
-            // wider when the user has asked for a gentler rate.
-            let gap = std::cmp::max(500, crate::ado::throttle::current_interval_ms());
-            tokio::time::sleep(std::time::Duration::from_millis(gap)).await;
-            // Check again on the far side of the pause. The loop spends
-            // most of its life here - half a second per item, more when
-            // throttled - so this is where a Cancel usually lands, and
-            // checking only at the top of the iteration would create one
-            // more case after the click. These cases cannot be deleted.
+            // Per-item spacing is the request-rate setting and nothing
+            // more: 0 at "full", where the user asked to go flat out, wider
+            // at "balanced" / "gentle". Every request inside the item also
+            // passes the global pacer, and when Azure DevOps itself asks
+            // for room (Retry-After, on a 200 as much as a 429) the
+            // transport holds for exactly as long as it asked. A fixed
+            // 500 ms floor used to sit on top of all that - a guess carried
+            // over from v1 that overrode the setting and cost a 100-case
+            // upload most of a minute for nothing.
+            let gap = crate::ado::throttle::current_interval_ms();
+            if gap > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(gap)).await;
+            }
+            // Check again on the far side of the pause: when there is one,
+            // this is where a Cancel usually lands, and checking only at the
+            // top of the iteration would create one more case after the
+            // click. These cases cannot be deleted.
             if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
             }
