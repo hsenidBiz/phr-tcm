@@ -24,12 +24,14 @@ const KIND_LABEL: Record<AppNotification["kind"], string> = {
   assigned: "Assigned",
   "pr-conflict": "Conflicts",
   "pr-review": "Review",
+  "pr-comments": "Comments",
 };
 
 const KIND_CLASS: Record<AppNotification["kind"], string> = {
   assigned: "bg-accent/15 text-accent",
   "pr-conflict": "bg-warning/15 text-warning",
   "pr-review": "bg-success/15 text-success",
+  "pr-comments": "bg-warning/15 text-warning",
 };
 
 function ago(iso: string): string {

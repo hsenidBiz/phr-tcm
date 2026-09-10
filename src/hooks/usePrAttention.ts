@@ -13,7 +13,7 @@ import { useEffect } from "react";
 import { commands, type PullRequest } from "../bindings";
 import { isResolved } from "../components/PrThreads";
 import { unwrap } from "../lib/ipc";
-import { notePrOverview } from "../lib/notifications";
+import { notePrComments, notePrOverview } from "../lib/notifications";
 
 /** Background refresh - a badge that only updates on tab focus goes stale
  * exactly when the user is heads-down elsewhere in the app. */
@@ -55,8 +55,17 @@ export function usePrAttention(org: string, project: string): number {
     })),
   });
 
-  return prs.filter((pr, i) => {
-    const unresolved = (threads[i]?.data ?? []).filter((t) => !isResolved(t.status)).length;
-    return pr.has_conflicts || unresolved > 0;
-  }).length;
+  const unresolvedFor = (i: number) =>
+    (threads[i]?.data ?? []).filter((t) => !isResolved(t.status)).length;
+
+  // Comments to resolve go to the bell as well - the number that used to
+  // ride on the Work Manager pill. Keyed on the count in the store, so
+  // this can run on every thread refresh and only a changed count raises.
+  const signature = prs.map((pr, i) => `${pr.repo}:${pr.id}:${unresolvedFor(i)}`).join("|");
+  useEffect(() => {
+    prs.forEach((pr, i) => notePrComments(org, project, pr, unresolvedFor(i)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature, org, project]);
+
+  return prs.filter((pr, i) => pr.has_conflicts || unresolvedFor(i) > 0).length;
 }

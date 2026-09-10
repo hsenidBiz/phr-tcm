@@ -168,20 +168,10 @@ export default function ContextBar({
           <span className="hidden lg:inline">
             {workMode ? "Test Case Manager" : "Work Manager"}
           </span>
-          {/* PRs that need a human: conflicts or comments to resolve.
-              Only while the pill points TO Work Manager - the count is
-              the reason to go there. Once switched, the pill reads "Test
-              Case Manager", and a badge riding on it looked like TCM had
-              notifications; inside Work Manager the PR panel itself shows
-              what needs attention. */}
-          {!workMode && prAttention > 0 && (
-            <span
-              aria-label={`${prAttention} pull requests need attention`}
-              className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-on-accent"
-            >
-              {prAttention > 99 ? "99+" : prAttention}
-            </span>
-          )}
+          {/* No count on the pill: the bell beside it is the one place
+              numbers live, and it carries this one too ("comments to
+              resolve"). The tooltip still says why Work Manager is worth
+              opening. */}
         </Button>
         {account && <span className="hidden text-sm text-muted xl:inline">{account}</span>}
         <button

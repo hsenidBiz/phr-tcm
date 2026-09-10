@@ -15,7 +15,7 @@
 import { useSyncExternalStore } from "react";
 import type { AssignedItem, PullRequest } from "../bindings";
 
-export type NotificationKind = "assigned" | "pr-conflict" | "pr-review";
+export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments";
 
 export type AppNotification = {
   /** Stable per event, e.g. `pr-conflict:Web:412` - the dedupe key. */
@@ -190,6 +190,22 @@ export function notePrOverview(
     }
   }
   raise(org, items);
+}
+
+/** A listed PR with review comments still to resolve. Keyed on the
+ * COUNT as well as the PR, so a dismissed "2 comments" stays dismissed
+ * while a third comment arriving raises "3 comments" fresh. */
+export function notePrComments(org: string, project: string, pr: PullRequest, unresolved: number): void {
+  if (unresolved <= 0 || pr.status !== "active") return;
+  raise(org, [
+    {
+      id: `pr-comments:${pr.repo}:${pr.id}:${unresolved}`,
+      kind: "pr-comments",
+      title: `PR #${pr.id} has ${unresolved} comment${unresolved === 1 ? "" : "s"} to resolve`,
+      body: `${pr.title} (${pr.repo})`,
+      href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`,
+    },
+  ]);
 }
 
 /** Test seam: forget the in-memory copies (storage is cleared by the test). */

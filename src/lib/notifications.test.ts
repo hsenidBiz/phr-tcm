@@ -6,6 +6,7 @@ import {
   dismiss,
   markAllRead,
   noteAssigned,
+  notePrComments,
   notePrOverview,
   raise,
   resetForTests,
@@ -116,6 +117,22 @@ test("notePrOverview raises conflicts on your PRs and PRs awaiting you, once eac
   expect(conflict.href).toBe("https://dev.azure.com/acme/Web/_git/Web/pullrequest/10");
   const review = full.find((n) => n.id === "pr-review:Web:20")!;
   expect(review.title).toBe("PR #20 is waiting for your review");
+});
+
+/// "Comments to resolve" used to be a number on the Work Manager pill; it
+/// now lives in the bell. Keyed on the count, so the same two comments
+/// never raise twice, and a third arriving is news again.
+test("notePrComments raises once per PR-and-count, and again when the count grows", () => {
+  const p = pr({ id: 30, title: "Timeline" });
+  notePrComments(ORG, "Web", p, 2);
+  notePrComments(ORG, "Web", p, 2); // next poll, same two threads
+  expect(read().map((n) => n.id)).toEqual(["pr-comments:Web:30:2"]);
+  notePrComments(ORG, "Web", p, 3);
+  expect(read().map((n) => n.id)).toEqual(["pr-comments:Web:30:3", "pr-comments:Web:30:2"]);
+  notePrComments(ORG, "Web", p, 0); // nothing to resolve raises nothing
+  expect(read()).toHaveLength(2);
+  const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{ title: string }>;
+  expect(full[0].title).toBe("PR #30 has 3 comments to resolve");
 });
 
 test("noteAssigned raises one item per work item, linked to it", () => {
