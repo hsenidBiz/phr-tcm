@@ -76,6 +76,17 @@ pub struct TestPlan {
     pub name: String,
     pub area_path: String,
     pub root_suite_id: Option<i32>,
+    /// The plan's iteration path and state, read for RANKING candidate
+    /// plans when a requirement suite has to be created (see
+    /// `ensure_requirement_suite_cb`). Kept off the IPC boundary: no
+    /// screen shows them, and every frontend literal of a plan would
+    /// otherwise have to grow two fields it never reads.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub iteration: String,
+    #[serde(skip)]
+    #[specta(skip)]
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]

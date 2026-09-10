@@ -508,6 +508,7 @@ export const events = {
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
+	suiteNotCreated: makeEvent<SuiteNotCreated>("suite-not-created"),
 	suiteScanProgress: makeEvent<SuiteScanProgress>("suite-scan-progress"),
 	updateProgress: makeEvent<UpdateProgress>("update-progress"),
 	watchedFileChanged: makeEvent<WatchedFileChanged>("watched-file-changed"),
@@ -1366,6 +1367,17 @@ export type SubmitProgress = {
 	title: string,
 	/**  "created" | "updated" | "failed" */
 	action: string,
+};
+
+/**
+ *  Emitted by submit_queue when the PBI had no requirement suite and one
+ *  could not be created - typically no permission on the plan(s) for its
+ *  area. The cases still upload and link to the PBI; the frontend says
+ *  so, loudly, because a warning in the log was how 197 cases once landed
+ *  with no suite and nobody knew.
+ */
+export type SuiteNotCreated = {
+	reason: string,
 };
 
 export type SuiteRef = {

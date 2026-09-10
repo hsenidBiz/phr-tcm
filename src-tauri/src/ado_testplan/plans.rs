@@ -27,6 +27,8 @@ impl AdoClient {
                     name: p["name"].as_str().unwrap_or_default().to_string(),
                     area_path: p["areaPath"].as_str().unwrap_or_default().to_string(),
                     root_suite_id: p["rootSuite"]["id"].as_i64().map(|i| i as i32),
+                    iteration: p["iteration"].as_str().unwrap_or_default().to_string(),
+                    state: p["state"].as_str().unwrap_or_default().to_string(),
                 });
             }
             pages += 1;
@@ -53,6 +55,8 @@ impl AdoClient {
             name: data["name"].as_str().unwrap_or_default().to_string(),
             area_path: data["areaPath"].as_str().unwrap_or_default().to_string(),
             root_suite_id: data["rootSuite"]["id"].as_i64().map(|i| i as i32),
+                    iteration: data["iteration"].as_str().unwrap_or_default().to_string(),
+                    state: data["state"].as_str().unwrap_or_default().to_string(),
         })
     }
 
@@ -258,6 +262,8 @@ impl AdoClient {
             name: data["name"].as_str().unwrap_or(name).to_string(),
             area_path: data["areaPath"].as_str().unwrap_or(area_path).to_string(),
             root_suite_id: data["rootSuite"]["id"].as_i64().map(|i| i as i32),
+                    iteration: data["iteration"].as_str().unwrap_or_default().to_string(),
+                    state: data["state"].as_str().unwrap_or_default().to_string(),
         })
     }
 
@@ -382,39 +388,87 @@ impl AdoClient {
             return Ok(found);
         }
 
-        // No suite anywhere: find the most specific area-matched plan, or
-        // create one, then create the requirement suite under its root.
-        let mut best: Option<&TestPlan> = None;
-        for p in &plans {
-            if area_matches(&p.area_path, area_path) {
-                let better = match best {
-                    None => true,
-                    Some(b) => p.area_path.len() > b.area_path.len(),
-                };
-                if better {
-                    best = Some(p);
+        // No suite anywhere. Every area-matched plan is a candidate, ranked
+        // so the first is the one a person would pick: the most specific
+        // area, then the plan whose iteration is the PBI's, then active
+        // plans, then the newest. The old rule took the first plan the API
+        // listed among equally specific ones - the OLDEST - which in one
+        // project was a years-old plan the user could not create suites in:
+        // the 403 was a warning in the log, 197 cases were created and
+        // linked, and no suite appeared anywhere.
+        let mut candidates: Vec<&TestPlan> = plans
+            .iter()
+            .filter(|p| area_matches(&p.area_path, area_path))
+            .collect();
+        candidates.sort_by(|a, b| {
+            b.area_path
+                .len()
+                .cmp(&a.area_path.len())
+                .then_with(|| {
+                    iteration_matches(&b.iteration, iteration)
+                        .cmp(&iteration_matches(&a.iteration, iteration))
+                })
+                .then_with(|| is_active(&b.state).cmp(&is_active(&a.state)))
+                .then_with(|| b.id.cmp(&a.id))
+        });
+        if candidates.is_empty() {
+            let plan = self
+                .create_test_plan(org, project, &default_plan_name(area_path), area_path, iteration)
+                .await?;
+            return self.suite_under(org, project, &plan, pbi_id, true).await;
+        }
+        // Try each candidate in turn. A 403 on one plan says nothing about
+        // the next - plans have owners and their own permissions - so it
+        // moves on; anything else propagates unchanged, so the caller keeps
+        // telling 401 and 429 apart from the rest.
+        let mut forbidden: Vec<String> = vec![];
+        for p in candidates {
+            let plan = if p.root_suite_id.is_some() {
+                p.clone()
+            } else {
+                self.get_test_plan(org, project, p.id).await?
+            };
+            match self.suite_under(org, project, &plan, pbi_id, false).await {
+                Ok(ensured) => return Ok(ensured),
+                Err(AdoError::Forbidden) => {
+                    crate::applog::warn(format!(
+                        "no permission to create a suite in test plan '{}' (id {}) - trying the next plan for this area",
+                        plan.name, plan.id
+                    ));
+                    forbidden.push(format!("'{}' (id {})", plan.name, plan.id));
                 }
+                Err(e) => return Err(e),
             }
         }
-        let created_plan = best.is_none();
-        let plan = match best {
-            Some(p) => {
-                if p.root_suite_id.is_some() {
-                    p.clone()
-                } else {
-                    self.get_test_plan(org, project, p.id).await?
-                }
-            }
-            None => {
-                self.create_test_plan(org, project, &default_plan_name(area_path), area_path, iteration)
-                    .await?
-            }
-        };
-        // Everything from here on happens AFTER a plan may have been
-        // created, and this tool cannot delete a test PLAN - so a failure
-        // now leaves an empty test plan in the project that nothing can
-        // tidy up. Name it, in the log and in the error, rather than let a
-        // plan appear out of nowhere with no explanation.
+        // The one case a 403 is the whole answer: name the plans, so the
+        // person knows whose door to knock on. Http rather than Forbidden
+        // so the sentence reaches the screen - `describeAdoError` prints a
+        // Forbidden as a bare "no permission" with nothing to act on.
+        Err(AdoError::Http {
+            status: 403,
+            body: format!(
+                "You don't have permission to create a test suite in {} - the test plan{} for this area. \
+                 The test cases are linked to #{pbi_id}, but they will not appear in Run Tests until a \
+                 requirement suite exists: ask the plan owner for access, or create the suite in Azure DevOps.",
+                forbidden.join(", "),
+                if forbidden.len() == 1 { "" } else { "s" }
+            ),
+        })
+    }
+
+    /// The requirement suite for `pbi_id` under `plan`'s root suite.
+    /// `created_plan` is whether this call created the plan too - a
+    /// failure past that point leaves an empty test plan behind that this
+    /// tool cannot delete, so it is named in the log and the error rather
+    /// than left to appear out of nowhere.
+    async fn suite_under(
+        &self,
+        org: &str,
+        project: &str,
+        plan: &TestPlan,
+        pbi_id: i32,
+        created_plan: bool,
+    ) -> Result<EnsuredSuite, AdoError> {
         let orphan = |what: &str| {
             if created_plan {
                 crate::applog::error(format!(
@@ -438,14 +492,8 @@ impl AdoClient {
                 });
             }
         };
-        let suite_id = match self
-            .create_requirement_suite(org, project, plan.id, root, pbi_id)
-            .await
-        {
+        let suite_id = match self.create_requirement_suite(org, project, plan.id, root, pbi_id).await {
             Ok(id) => id,
-            // Propagated unchanged: the caller tells 401 and 429 apart from
-            // the rest, and flattening them here would cost it the re-auth
-            // and back-off it does on those.
             Err(e) => {
                 orphan(&format!("creating the suite failed: {e}"));
                 return Err(e);
@@ -453,9 +501,29 @@ impl AdoClient {
         };
         Ok(EnsuredSuite {
             plan_id: plan.id,
-            plan_name: plan.name,
+            plan_name: plan.name.clone(),
             suite_id,
             created_plan,
         })
     }
 }
+
+/// Does the plan's iteration cover the PBI's? Either may be the other's
+/// ancestor: a plan on "Proj\\2026" covers a PBI in "Proj\\2026\\S3",
+/// and a plan pinned to the sprint covers the PBI on it. Case-insensitive,
+/// like every path Azure DevOps hands back.
+fn iteration_matches(plan_iteration: &str, pbi_iteration: &str) -> bool {
+    let a = plan_iteration.trim().to_lowercase();
+    let b = pbi_iteration.trim().to_lowercase();
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    a == b || b.starts_with(&format!("{a}\\")) || a.starts_with(&format!("{b}\\"))
+}
+
+/// Unknown counts as active - the list API has always sent the state, but
+/// a plan without one should not lose a tie to one that has it.
+fn is_active(state: &str) -> bool {
+    state.is_empty() || state.eq_ignore_ascii_case("active")
+}
+

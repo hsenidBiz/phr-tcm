@@ -661,12 +661,27 @@ pub async fn submit_queue(
                 // when the PBI had no test plan at all, the plan gets
                 // created FIRST and the user is told before the upload
                 // proceeds.
-                if let Ok(ensured) = client
+                match client
                     .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
                     .await
                 {
-                    if ensured.created_plan {
-                        let _ = PlanCreated { plan_name: ensured.plan_name }.emit(&app);
+                    Ok(ensured) => {
+                        if ensured.created_plan {
+                            let _ = PlanCreated { plan_name: ensured.plan_name }.emit(&app);
+                        }
+                    }
+                    // Still never blocks the upload - the cases are linked to
+                    // the PBI either way - but it is no longer a line in the
+                    // log only. Named 403s carry their own sentence; the
+                    // rest get the error as it is.
+                    Err(e) => {
+                        let reason = match &e {
+                            ado::AdoError::Http { status: 403, body } => body.clone(),
+                            ado::AdoError::Forbidden => "you don't have permission to create test suites in this project's plans".to_string(),
+                            other => format!("{other}"),
+                        };
+                        crate::applog::warn(format!("no requirement suite for #{pbi_id}: {reason}"));
+                        let _ = crate::events::SuiteNotCreated { reason }.emit(&app);
                     }
                 }
                 pbi_area = area;

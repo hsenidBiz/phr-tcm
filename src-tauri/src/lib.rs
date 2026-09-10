@@ -64,6 +64,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             audio::AudioSpectrum,
             events::CaseNoteSaved,
             events::PlanCreated,
+            events::SuiteNotCreated,
             events::WatchedFileChanged,
             events::DraftCommentSaved,
             events::DraftGeneralCommentSaved,

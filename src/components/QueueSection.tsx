@@ -584,6 +584,17 @@ export default function QueueSection({
           `This PBI had no test plan - created "${e.payload.plan_name}" first, now uploading the test cases.`,
         );
       });
+      // The PBI had no requirement suite and one could not be created -
+      // typically no permission on the plans for its area. The cases still
+      // upload and link to the PBI, but Run Tests will not see them until a
+      // suite exists, so this stays up long enough to be read. It used to be
+      // a warning in the log only, which is how 197 cases once landed with
+      // no suite and nobody knew.
+      const unSuite = await events.suiteNotCreated.listen((e) => {
+        toast.warning(`Uploaded, but no test suite could be created for this PBI. ${e.payload.reason}`, {
+          duration: 30000,
+        });
+      });
       try {
         const r = await commands.submitQueue(
           org,
@@ -611,6 +622,7 @@ export default function QueueSection({
         // Inside the promise for the same reason: onSettled may never run.
         detach(unProgress);
         detach(unPlan);
+        detach(unSuite);
         submitFinished();
       }
     },

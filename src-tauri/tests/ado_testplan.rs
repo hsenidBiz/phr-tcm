@@ -1,4 +1,4 @@
-use v2_lib::ado::AdoClient;
+use v2_lib::ado::{AdoClient, AdoError};
 use v2_lib::ado_testplan::{
     area_matches, build_iteration_details, default_plan_name, OutcomeUpdate,
 };
@@ -534,4 +534,135 @@ async fn continuation_tokens_are_encoded_and_a_repeat_stops_the_loop() {
         .1
         .to_string();
     assert_eq!(decoded, "a&b+c%d");
+}
+
+/// Two plans cover the same area. The old rule took the first one listed
+/// - the oldest - which in the field was a plan the user could not create
+/// suites in. The newest plan whose iteration is the PBI's wins now.
+#[tokio::test]
+async fn ensure_picks_the_newest_iteration_matching_plan_among_equal_areas() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 100, "name": "Old plan", "areaPath": "Proj\\Auth", "iteration": "Proj\\2024",
+             "state": "Inactive", "rootSuite": {"id": 1000}},
+            {"id": 200, "name": "New plan", "areaPath": "Proj\\Auth", "iteration": "Proj\\2026\\S3",
+             "state": "Active", "rootSuite": {"id": 2000}}
+        ]})))
+        .mount(&server)
+        .await;
+    for id in [100, 200] {
+        Mock::given(method("GET"))
+            .and(path(format!("/org/proj/_apis/testplan/Plans/{id}/suites")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/200/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 2001})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/100/suites"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let ensured = client
+        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "Proj\\2026\\S3")
+        .await
+        .unwrap();
+    assert_eq!(ensured.plan_id, 200, "the newest, iteration-matching, active plan");
+    assert_eq!(ensured.suite_id, 2001);
+    assert!(!ensured.created_plan);
+}
+
+/// A 403 on one plan says nothing about the next: plans have owners. The
+/// suite lands in the next candidate instead of nowhere.
+#[tokio::test]
+async fn ensure_falls_back_to_the_next_plan_when_the_first_forbids_suites() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 100, "name": "Old plan", "areaPath": "Proj\\Auth", "iteration": "Proj\\2024",
+             "state": "Active", "rootSuite": {"id": 1000}},
+            {"id": 200, "name": "New plan", "areaPath": "Proj\\Auth", "iteration": "Proj\\2026\\S3",
+             "state": "Active", "rootSuite": {"id": 2000}}
+        ]})))
+        .mount(&server)
+        .await;
+    for id in [100, 200] {
+        Mock::given(method("GET"))
+            .and(path(format!("/org/proj/_apis/testplan/Plans/{id}/suites")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/200/suites"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/100/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 1001})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let ensured = client
+        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "Proj\\2026\\S3")
+        .await
+        .unwrap();
+    assert_eq!(ensured.plan_id, 100, "the plan that allowed it");
+    assert_eq!(ensured.suite_id, 1001);
+}
+
+/// When every candidate forbids it, the error names the plans - whose
+/// door to knock on - instead of a bare "no permission".
+#[tokio::test]
+async fn ensure_names_the_plans_when_every_candidate_forbids_suites() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 100, "name": "Old plan", "areaPath": "Proj\\Auth", "iteration": "",
+             "state": "Active", "rootSuite": {"id": 1000}},
+            {"id": 200, "name": "New plan", "areaPath": "Proj\\Auth", "iteration": "",
+             "state": "Active", "rootSuite": {"id": 2000}}
+        ]})))
+        .mount(&server)
+        .await;
+    for id in [100, 200] {
+        Mock::given(method("GET"))
+            .and(path(format!("/org/proj/_apis/testplan/Plans/{id}/suites")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("/org/proj/_apis/testplan/Plans/{id}/suites")))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+    }
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let err = client
+        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "")
+        .await
+        .unwrap_err();
+    match err {
+        AdoError::Http { status, body } => {
+            assert_eq!(status, 403);
+            assert!(body.contains("New plan"), "{body}");
+            assert!(body.contains("Old plan"), "{body}");
+            assert!(body.contains("permission"), "{body}");
+            assert!(body.contains("#42"), "{body}");
+        }
+        other => panic!("expected a named 403, got {other:?}"),
+    }
 }

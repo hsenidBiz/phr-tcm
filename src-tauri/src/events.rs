@@ -20,6 +20,16 @@ pub struct PlanCreated {
     pub plan_name: String,
 }
 
+/// Emitted by submit_queue when the PBI had no requirement suite and one
+/// could not be created - typically no permission on the plan(s) for its
+/// area. The cases still upload and link to the PBI; the frontend says
+/// so, loudly, because a warning in the log was how 197 cases once landed
+/// with no suite and nobody knew.
+#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct SuiteNotCreated {
+    pub reason: String,
+}
+
 /// Emitted while test plans are being scanned for suites, so Run Tests and
 /// the Suites browser can show "Scanning plans X of Y" instead of a bare
 /// skeleton.
