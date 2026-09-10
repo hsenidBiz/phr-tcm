@@ -937,3 +937,34 @@ test("a queued update that already has a comment keeps it over the stored note",
   expect(await screen.findByText("From the file")).toBeInTheDocument();
   expect(screen.queryByText("Re-check with QA")).not.toBeInTheDocument();
 });
+
+/// Upload order is suite order. A queue whose cases all carry a
+/// tester_order goes out in that order whatever the screen shows, so the
+/// suite - and the runner walking it - read like the run sheet.
+test("an optimized queue is uploaded in tester order, not screen order", async () => {
+  let sentTitles: string[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      const q = (args as { queue: TestCase[] }).queue;
+      sentTitles = q.map((c) => c.title);
+      return q.map((c, i) => ({ index: i, title: c.title, action: "created", id: 900 + i, error: null }));
+    }
+    return undefined;
+  });
+  renderQueue([
+    makeCase({ title: "Third on the sheet", tester_order: 3 }),
+    makeCase({ title: "First on the sheet", tester_order: 1 }),
+    makeCase({ title: "Second on the sheet", tester_order: 2 }),
+  ]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 3 test cases/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Yes — create 3/ }));
+  await waitFor(() => expect(sentTitles).toHaveLength(3));
+  expect(sentTitles).toEqual(["First on the sheet", "Second on the sheet", "Third on the sheet"]);
+});

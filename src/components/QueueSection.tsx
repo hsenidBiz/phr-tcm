@@ -25,6 +25,7 @@ import {
   subscribeSubmit,
 } from "../lib/submitRun";
 import { noteSyncPairs, stampFileSlices, unstampedCreated } from "../lib/queueStamp";
+import { orderForUpload } from "../lib/uploadOrder";
 import { OFFLINE_HINT, onlineSnapshot, subscribeOnline } from "../lib/network";
 import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib/sidebarState";
 import { loadNotes, saveNote } from "../lib/caseNotes";
@@ -561,7 +562,12 @@ export default function QueueSection({
       // Everything that actually has something to write. The skipped rows
       // are still in the queue and still on screen - they are just not
       // sent, and they are pruned alongside the written ones afterwards.
-      const toSend = queue.filter((tc) => !noopNow(tc));
+      // In tester order when every sent case carries one: the upload order
+      // is the suite order, so the run sheet an optimized draft describes
+      // is what the suite (and the runner) will show. The screen keeps its
+      // own order; `sent` below is THIS list, and every result index and
+      // the file stamping key off it.
+      const toSend = orderForUpload(queue.filter((tc) => !noopNow(tc)));
       const skippedRows = queue.filter((tc) => noopNow(tc));
       const skipped = skippedRows.length;
       if (toSend.length === 0) {
