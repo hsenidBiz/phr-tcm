@@ -1289,3 +1289,37 @@ async fn a_path_that_resolves_verbatim_is_never_reinterpreted() {
         "resolving verbatim must not trigger a second, reinterpreted fetch"
     );
 }
+
+/// The create document carries the PBI link when asked, so a create in a
+/// batch is one request; without it, the document is the plain create the
+/// POST path has always sent.
+#[tokio::test]
+async fn the_create_document_folds_the_pbi_link_in_when_asked() {
+    let server = MockServer::start().await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let tc = v2_lib::model::TestCase {
+        title: "Valid login".into(),
+        steps: vec![],
+        tags: String::new(),
+        automation_status: "Not Automated".into(),
+        module_value: String::new(),
+        preconditions: String::new(),
+        update_id: None,
+        comment: String::new(),
+        reviewer_notes: String::new(),
+        spec_order: None,
+        tester_order: None,
+    };
+    let linked = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, Some(100));
+    let rel = linked
+        .iter()
+        .find(|op| op["path"] == "/relations/-")
+        .expect("a relation op");
+    assert_eq!(rel["value"]["rel"], "Microsoft.VSTS.Common.TestedBy-Reverse");
+    let url = rel["value"]["url"].as_str().unwrap();
+    assert!(url.ends_with("/my%20org/Web/_apis/wit/workitems/100"), "{url}");
+
+    let plain = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, None);
+    assert!(plain.iter().all(|op| op["path"] != "/relations/-"));
+    assert_eq!(plain.len() + 1, linked.len());
+}

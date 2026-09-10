@@ -366,10 +366,13 @@ impl AdoClient {
         Ok(cases)
     }
 
-    /// POST a new Test Case work item, ported from v1 create_test_case.
-    /// Only creates work items of type 'Test Case'. Returns the new id.
+    /// The JSON-patch document that creates a Test Case: every field the
+    /// model carries, and - when `link_pbi` is given - the TestedBy-Reverse
+    /// relation to that PBI in the SAME document, so a create is one
+    /// request instead of a POST followed by a PATCH. Pure, so the batch
+    /// upload can carry it as easily as `create_test_case` can POST it.
     #[allow(clippy::too_many_arguments)]
-    pub async fn create_test_case(
+    pub fn create_test_case_doc(
         &self,
         organization: &str,
         project: &str,
@@ -378,7 +381,8 @@ impl AdoClient {
         area_path: &str,
         iteration_path: &str,
         preconditions_ref: Option<&str>,
-    ) -> Result<i32, AdoError> {
+        link_pbi: Option<i32>,
+    ) -> Vec<serde_json::Value> {
         let mut patch = vec![
             serde_json::json!({"op": "add", "path": "/fields/System.Title", "value": tc.title}),
             serde_json::json!({"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps",
@@ -410,6 +414,47 @@ impl AdoClient {
                     "value": format!("<div>{}</div>", escape_html(tc.preconditions.trim()))}));
             }
         }
+        if let Some(pbi_id) = link_pbi {
+            patch.push(serde_json::json!({
+                "op": "add",
+                "path": "/relations/-",
+                "value": {
+                    "rel": "Microsoft.VSTS.Common.TestedBy-Reverse",
+                    "url": self.work_item_url(organization, project, pbi_id),
+                    "attributes": {"comment": "Linked by DevOps Test Case Manager"},
+                },
+            }));
+        }
+        patch
+    }
+
+    /// The canonical URL of a work item - what a relation points at.
+    pub(crate) fn work_item_url(&self, organization: &str, project: &str, id: i32) -> String {
+        format!(
+            "{}/{}/{}/_apis/wit/workitems/{}",
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project),
+            id
+        )
+    }
+
+    /// POST a new Test Case work item, ported from v1 create_test_case.
+    /// Only creates work items of type 'Test Case'. Returns the new id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_test_case(
+        &self,
+        organization: &str,
+        project: &str,
+        tc: &crate::model::TestCase,
+        module_ref: Option<&str>,
+        area_path: &str,
+        iteration_path: &str,
+        preconditions_ref: Option<&str>,
+    ) -> Result<i32, AdoError> {
+        let patch = self.create_test_case_doc(
+            organization, project, tc, module_ref, area_path, iteration_path, preconditions_ref, None,
+        );
         let url = format!(
             "{}/{}/{}/_apis/wit/workitems/$Test%20Case?api-version=7.1",
             self.base_url,
@@ -538,6 +583,23 @@ impl AdoClient {
         original_tags: Option<&str>,
         blanks: BlankPolicy,
     ) -> Result<(), AdoError> {
+        let ops = self.update_test_case_doc(
+            tc, module_ref, preconditions_ref, original_steps_xml, original_tags, blanks,
+        );
+        self.patch_work_item_ops(organization, project, tc_id, ops).await
+    }
+
+    /// The JSON-patch ops an update sends - the same document whether it
+    /// goes out alone or inside a batch. Pure.
+    pub fn update_test_case_doc(
+        &self,
+        tc: &crate::model::TestCase,
+        module_ref: Option<&str>,
+        preconditions_ref: Option<&str>,
+        original_steps_xml: Option<&str>,
+        original_tags: Option<&str>,
+        blanks: BlankPolicy,
+    ) -> Vec<serde_json::Value> {
         let mut fields = vec![
             ("System.Title".to_string(), tc.title.clone()),
             (
@@ -585,7 +647,7 @@ impl AdoClient {
             .map(|(r, v)| serde_json::json!({"op": "add", "path": format!("/fields/{r}"), "value": v}))
             .collect();
         ops.extend(tag_ops);
-        self.patch_work_item_ops(organization, project, tc_id, ops).await
+        ops
     }
 
     /// PATCH the Test Case to add a TestedBy-Reverse relation to the PBI -
@@ -598,12 +660,7 @@ impl AdoClient {
         test_case_id: i32,
         pbi_id: i32,
     ) -> Result<(), AdoError> {
-        let pbi_url = format!(
-            "{}/{}/{}/_apis/wit/workitems/{}",
-            self.base_url,
-            percent_encode_segment(organization),
-            percent_encode_segment(project), pbi_id
-        );
+        let pbi_url = self.work_item_url(organization, project, pbi_id);
         let patch = serde_json::json!([{
             "op": "add",
             "path": "/relations/-",
@@ -1314,7 +1371,7 @@ fn query_value(query: &str, key: &str) -> Option<String> {
     })
 }
 
-fn percent_encode_segment(s: &str) -> String {
+pub(crate) fn percent_encode_segment(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {

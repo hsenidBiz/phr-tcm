@@ -41,6 +41,10 @@ pub struct SubmitItemResult {
     pub error: Option<String>,
 }
 
+/// Cases per `$batch` call. See the loop in `submit_queue` for why it is
+/// not the API's maximum of 200.
+const BATCH_SIZE: usize = 25;
+
 #[tauri::command]
 #[specta::specta]
 pub fn parse_import_file(path: String) -> Result<ImportResult, String> {
@@ -696,65 +700,126 @@ pub async fn submit_queue(
 
     let total = queue.len() as u32;
     crate::applog::info(format!(
-        "Submitting {total} test case(s) to {organization}/{project} PBI #{pbi_id}"
+        "Submitting {total} test case(s) to {organization}/{project} PBI #{pbi_id} in batches of {BATCH_SIZE}"
     ));
-    let mut results: Vec<SubmitItemResult> = vec![];
-    for (i, tc) in queue.iter().enumerate() {
+    // Chunks of BATCH_SIZE, each one HTTP call executed on the server in
+    // order. Not ADO's maximum of 200: the size bounds two things - how
+    // far a Stop can overshoot (a chunk in flight completes, and created
+    // cases cannot be deleted) and how coarse the progress bar moves.
+    let mut results: Vec<SubmitItemResult> = Vec::with_capacity(queue.len());
+    let mut chunk_start = 0usize;
+    while chunk_start < queue.len() {
         if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
             break; // unprocessed items stay in the client's queue
         }
-        if i > 0 {
-            // Per-item spacing is the request-rate setting and nothing
-            // more: 0 at "full", where the user asked to go flat out, wider
-            // at "balanced" / "gentle". Every request inside the item also
-            // passes the global pacer, and when Azure DevOps itself asks
-            // for room (Retry-After, on a 200 as much as a 429) the
-            // transport holds for exactly as long as it asked. A fixed
-            // 500 ms floor used to sit on top of all that - a guess carried
-            // over from v1 that overrode the setting and cost a 100-case
-            // upload most of a minute for nothing.
+        let end = (chunk_start + BATCH_SIZE).min(queue.len());
+        if chunk_start > 0 {
+            // Between chunks only: the request-rate setting, and nothing
+            // more. Every request also passes the global pacer and holds
+            // for whatever Retry-After Azure DevOps sends.
             let gap = crate::ado::throttle::current_interval_ms();
             if gap > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(gap)).await;
             }
-            // Check again on the far side of the pause: when there is one,
-            // this is where a Cancel usually lands, and checking only at the
-            // top of the iteration would create one more case after the
-            // click. These cases cannot be deleted.
             if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
             }
         }
-        let item = process_queue_item(
-            &app,
-            &organization,
-            &project,
-            pbi_id,
-            i as u32,
-            tc,
-            module_ref.as_deref(),
-            preconditions_ref.as_deref(),
-            &effective_area,
-            &effective_iteration,
-            tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
-            tc.update_id.and_then(|id| tags_before.get(&id)).map(String::as_str),
-        )
-        .await;
-        let _ = SubmitProgress {
-            index: item.index,
-            total,
-            title: item.title.clone(),
-            action: item.action.clone(),
+        let mut chunk: Vec<Option<SubmitItemResult>> = (chunk_start..end).map(|_| None).collect();
+        match get_fresh_token(&app).await {
+            Err(e) => {
+                for i in chunk_start..end {
+                    chunk[i - chunk_start] = Some(failed_item(i, &queue[i], e.to_string()));
+                }
+            }
+            Ok(token) => {
+                let client = ado::AdoClient::new(token);
+                // A case that fails validation is reported without being
+                // sent; the rest of the chunk still goes.
+                let mut sent_idx: Vec<usize> = vec![];
+                let mut reqs: Vec<crate::ado::wit_batch::BatchRequest> = vec![];
+                for i in chunk_start..end {
+                    let tc = &queue[i];
+                    match queue_item_request(
+                        &client,
+                        &organization,
+                        &project,
+                        pbi_id,
+                        tc,
+                        module_ref.as_deref(),
+                        preconditions_ref.as_deref(),
+                        &effective_area,
+                        &effective_iteration,
+                        tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
+                        tc.update_id.and_then(|id| tags_before.get(&id)).map(String::as_str),
+                    ) {
+                        Ok(req) => {
+                            reqs.push(req);
+                            sent_idx.push(i);
+                        }
+                        Err(msg) => chunk[i - chunk_start] = Some(failed_item(i, tc, msg)),
+                    }
+                }
+                if !reqs.is_empty() {
+                    match client.wit_batch(&organization, &reqs).await {
+                        Ok(items) => {
+                            for (k, item) in items.iter().enumerate() {
+                                let i = sent_idx[k];
+                                let tc = &queue[i];
+                                let r = if !item.ok() {
+                                    failed_item(i, tc, item.message())
+                                } else if let Some(id) = item.id() {
+                                    SubmitItemResult {
+                                        index: i as u32,
+                                        title: tc.title.clone(),
+                                        action: if tc.update_id.is_some() { "updated" } else { "created" }.into(),
+                                        id: Some(id),
+                                        error: None,
+                                    }
+                                } else {
+                                    // A create with no id is not a create (see
+                                    // create_test_case): report it, never call it success.
+                                    failed_item(
+                                        i,
+                                        tc,
+                                        "Azure DevOps accepted the test case but its answer carried no work item id".into(),
+                                    )
+                                };
+                                chunk[i - chunk_start] = Some(r);
+                            }
+                        }
+                        // The whole call failed (network, 401, 429 past its
+                        // back-off): every case in it failed, with the reason.
+                        Err(e) => {
+                            let msg = e.to_string();
+                            for &i in &sent_idx {
+                                chunk[i - chunk_start] = Some(failed_item(i, &queue[i], msg.clone()));
+                            }
+                        }
+                    }
+                }
+            }
         }
-        .emit(&app);
-        if item.action == "failed" {
-            crate::applog::error(format!(
-                "Submit failed for '{}': {}",
-                item.title,
-                item.error.as_deref().unwrap_or("unknown error")
-            ));
+        for (k, r) in chunk.into_iter().enumerate() {
+            let i = chunk_start + k;
+            let item = r.unwrap_or_else(|| failed_item(i, &queue[i], "not processed".into()));
+            let _ = SubmitProgress {
+                index: item.index,
+                total,
+                title: item.title.clone(),
+                action: item.action.clone(),
+            }
+            .emit(&app);
+            if item.action == "failed" {
+                crate::applog::error(format!(
+                    "Submit failed for '{}': {}",
+                    item.title,
+                    item.error.as_deref().unwrap_or("unknown error")
+                ));
+            }
+            results.push(item);
         }
-        results.push(item);
+        chunk_start = end;
     }
     let failed = results.iter().filter(|r| r.action == "failed").count();
     crate::applog::info(format!(
@@ -781,12 +846,15 @@ pub async fn submit_queue(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_queue_item(
-    app: &tauri::AppHandle,
+/// One case's place in a batch: the create document (with the PBI link
+/// folded in, so a create is one request) or the update document, ready
+/// to send. A case that fails validation never becomes a request.
+#[allow(clippy::too_many_arguments)]
+fn queue_item_request(
+    client: &ado::AdoClient,
     organization: &str,
     project: &str,
     pbi_id: i32,
-    index: u32,
     tc: &model::TestCase,
     m_ref: Option<&str>,
     p_ref: Option<&str>,
@@ -794,82 +862,51 @@ async fn process_queue_item(
     iteration_path: &str,
     original_steps_xml: Option<&str>,
     original_tags: Option<&str>,
-) -> SubmitItemResult {
-    let failed = |error: String| SubmitItemResult {
-        index,
-        title: tc.title.clone(),
-        action: "failed".into(),
-        id: None,
-        error: Some(error),
-    };
-    if let Err(msg) = tc.is_valid() {
-        return failed(msg);
-    }
-    let token = match get_fresh_token(app).await {
-        Ok(t) => t,
-        Err(e) => return failed(e.to_string()),
-    };
-    let client = ado::AdoClient::new(token);
-    let outcome = match tc.update_id {
-        Some(existing_id) => client
-            .update_test_case_from_model(
-                organization,
-                project,
-                existing_id,
+) -> Result<crate::ado::wit_batch::BatchRequest, String> {
+    use crate::ado::wit_batch::{create_uri, update_uri, BatchRequest};
+    tc.is_valid()?;
+    Ok(match tc.update_id {
+        Some(existing_id) => BatchRequest {
+            method: "PATCH",
+            uri: update_uri(project, existing_id),
+            body: serde_json::Value::Array(client.update_test_case_doc(
                 tc,
                 m_ref,
                 p_ref,
                 original_steps_xml,
                 original_tags,
-                // An import: a blank column is the absence of an opinion,
-                // never an instruction to erase.
                 ado::BlankPolicy::Skip,
-            )
-            .await
-            .map(|_| (existing_id, "updated")),
-        None => match client
-            .create_test_case(organization, project, tc, m_ref, area_path, iteration_path, p_ref)
-            .await
-        {
-            // The case EXISTS from here on. A failed link must not be
-            // reported as a failed create: the row stays in the queue, the
-            // user submits again, and Azure DevOps ends up with two copies
-            // of a case that cannot be deleted. Report it created, and say
-            // the link is what needs attention.
-            Ok(new_id) => match client.link_to_pbi(organization, project, new_id, pbi_id).await {
-                Ok(()) => Ok((new_id, "created")),
-                Err(e) => {
-                    crate::applog::warn(format!(
-                        "Created #{new_id} '{}' but linking it to PBI #{pbi_id} failed: {e}",
-                        tc.title
-                    ));
-                    return SubmitItemResult {
-                        index,
-                        title: tc.title.clone(),
-                        action: "created".into(),
-                        id: Some(new_id),
-                        error: Some(format!(
-                            "Created, but linking to PBI #{pbi_id} failed: {e}.                              The case exists - link it in Azure DevOps rather than                              submitting again, which would create a second copy."
-                        )),
-                    };
-                }
-            },
-            Err(e) => Err(e),
+            )),
         },
-    };
-    match outcome {
-        Ok((id, action)) => SubmitItemResult {
-            index,
-            title: tc.title.clone(),
-            action: action.into(),
-            id: Some(id),
-            error: None,
+        // The batch API creates with PATCH against the type's URL, as its
+        // own reference does - a POST there is refused.
+        None => BatchRequest {
+            method: "PATCH",
+            uri: create_uri(project),
+            body: serde_json::Value::Array(client.create_test_case_doc(
+                organization,
+                project,
+                tc,
+                m_ref,
+                area_path,
+                iteration_path,
+                p_ref,
+                Some(pbi_id),
+            )),
         },
-        Err(e) => failed(e.to_string()),
+    })
+}
+
+fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemResult {
+    SubmitItemResult {
+        index: index as u32,
+        title: tc.title.clone(),
+        action: "failed".into(),
+        id: None,
+        error: Some(error),
     }
 }
 
-/// Stop the running submit loop after the in-flight item finishes.
 #[tauri::command]
 #[specta::specta]
 pub fn cancel_submit(state: tauri::State<'_, SubmitCancel>) {
