@@ -5,7 +5,7 @@
 //!   local cache db, pins, watch paths) - collected by the frontend and
 //!   handed in, since only the webview can read it;
 //! - the disk stores under `app_data_dir` (the tag reference cache, Auto
-//!   Run scripts and local runs, materialized shared drafts).
+//!   Run scripts and local runs, materialized shared drafts, AI findings).
 //!
 //! What deliberately never travels: credentials. Sign-in tokens live only
 //! in memory, the AI-bridge token is re-minted per launch in the OS temp
@@ -20,7 +20,7 @@ use std::path::{Component, Path, PathBuf};
 /// allowlist, applied on BOTH sides: export never wanders into logs or
 /// strangers' files, and import refuses to write anywhere else - a crafted
 /// backup must not be able to drop files outside these folders.
-const ROOTS: [&str; 3] = ["reference-cache.json", "autorun", "shared-drafts"];
+const ROOTS: [&str; 4] = ["reference-cache.json", "autorun", "shared-drafts", "findings.json"];
 
 /// A single file per entry is capped so one enormous stray artifact cannot
 /// balloon the backup into something no one can email or copy around.

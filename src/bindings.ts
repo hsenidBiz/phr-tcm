@@ -511,6 +511,7 @@ export const events = {
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
+	findingRecorded: makeEvent<FindingRecorded>("finding-recorded"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
@@ -881,6 +882,18 @@ export type FiledBug = {
 	 */
 	screenshots_failed: number,
 	screenshots_total: number,
+};
+
+/**
+ *  Emitted when an AI assistant has recorded a finding through the bridge.
+ *  The AI Bridge tab refreshes its list and the bell raises a notification.
+ */
+export type FindingRecorded = {
+	id: string,
+	org: string,
+	project: string,
+	kind: string,
+	title: string,
 };
 
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;

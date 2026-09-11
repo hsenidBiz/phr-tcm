@@ -22,6 +22,7 @@ pub mod capture;
 pub mod commands;
 pub mod events;
 pub mod filewatch;
+pub mod findings;
 pub mod import_parser;
 pub mod intake;
 pub mod markdown;
@@ -67,6 +68,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::SuiteNotCreated,
             events::WatchedFileChanged,
             events::DraftCommentSaved,
+            events::FindingRecorded,
             events::DraftGeneralCommentSaved,
             events::WorkAssigned,
             events::IntakeOutputPath,
@@ -298,6 +300,10 @@ pub fn run() {
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
                 autorun::store::set_root(dir.join("autorun"));
+                // AI Findings: the notes an assistant records. Same
+                // arrangement as Auto Run - the bridge has no handle.
+                findings::set_root(dir.clone());
+                findings::set_app_handle(app.handle().clone());
             }
             applog::info(format!(
                 "Test Case Manager {} started",
