@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.18",
+    date: "2026-09-11",
+    items: [
+      "AI findings now live in the test case file. When an assistant finds a problem in a case, its spec or the code while writing, it records it on that case in the .json, and the browser view of the cases shows it in a block under the case. The separate findings card, the bell entries and the two findings tools from 1.23.17 are gone; nothing is kept outside the file.",
+      "Uploads run to the end once confirmed. The Stop button is gone: the case being written could never be taken back, so stopping only ever left a half-done set. Cases go to Azure DevOps in batches of 200, and the same glowing bar the test-suite scan uses shows that the upload is being prepared and then sent.",
+      "Uploads no longer re-scan the test plans for a PBI whose suite is already known. The resolved suite is shared between Run Tests, uploads and the AI tools, and remembered across restarts. When a suite does have to be created, only the plans for the PBI's area are searched, which on a large project turns a minute into a few seconds.",
+      "The Auto Run slash commands are gone while the feature is in development.",
+    ],
+  },
+  {
     version: "1.23.17",
     date: "2026-09-11",
     items: [
