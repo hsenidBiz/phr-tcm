@@ -285,6 +285,44 @@ pub fn export_queue_to_html(
             ));
         }
 
+        // Findings: what the assistant found wrong while writing this case.
+        // Its own block, not part of the notes (provenance) or the comment
+        // box (the developer's). Open by default for the same reason the
+        // notes are: a problem behind a closed disclosure is a problem
+        // nobody reads. Markdown through crate::markdown, which drops raw
+        // HTML, so an assistant cannot put script on this page.
+        if !tc.findings.is_empty() {
+            parts.push(format!(
+                "<details class='findings' open><summary>Findings ({})</summary>",
+                tc.findings.len()
+            ));
+            for f in &tc.findings {
+                let kind = match f.kind.as_str() {
+                    "test_case" => "Test case",
+                    "spec" => "Spec",
+                    "code" => "Code",
+                    other => other,
+                };
+                let subject = if f.subject.is_empty() {
+                    String::new()
+                } else {
+                    format!("<span class='subject'>{}</span>", esc(&f.subject))
+                };
+                let detail = if f.detail.is_empty() {
+                    String::new()
+                } else {
+                    format!("<div class='fdetail'>{}</div>", crate::markdown::to_html(&f.detail))
+                };
+                parts.push(format!(
+                    "<article class='finding'><div class='meta'><span class='kind'>{}</span>{subject}</div>\
+                     <p class='ftitle'>{}</p>{detail}</article>",
+                    esc(kind),
+                    esc(&f.title)
+                ));
+            }
+            parts.push("</details>".into());
+        }
+
         if !tc.steps.is_empty() {
             parts.push("<table><tr><th>#</th><th>Action</th><th>Expected result</th></tr>".into());
             for (i, step) in tc.steps.iter().enumerate() {

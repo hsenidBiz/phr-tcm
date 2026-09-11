@@ -809,3 +809,36 @@ fn a_step_that_spans_lines_is_folded_and_the_author_is_told() {
     assert_eq!(folded.len(), 1, "got {warnings:?}");
     assert!(folded[0].contains("Multi-line draft"));
 }
+
+/// Findings render under their case in a block of their own, kind first,
+/// detail as markdown with raw HTML dropped; a case without any shows
+/// nothing extra.
+#[test]
+fn a_cases_findings_render_in_their_own_block() {
+    let mut with = TestCase {
+        title: "Cut-off closes the order".into(),
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        automation_status: "Not Automated".into(),
+        ..Default::default()
+    };
+    with.findings = vec![
+        v2_lib::model::CaseFinding { kind: "spec".into(), subject: "Orders.md 7.7".into(), title: "AC-3 contradicts the table".into(), detail: "Table says **closed**. <img src=x onerror=alert(1)>".into() },
+        v2_lib::model::CaseFinding { kind: "test_case".into(), subject: String::new(), title: "Step 3 expects a toast".into(), detail: String::new() },
+    ];
+    let without = TestCase {
+        title: "Plain".into(),
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        automation_status: "Not Automated".into(),
+        ..Default::default()
+    };
+    let path = tmp_path("findings-page.html");
+    export_queue_to_html(&[with, without], &path, "", None, &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(html.matches("<details class='findings'").count(), 1, "one block, on the one case that has findings");
+    let block = html.split("<details class='findings'").nth(1).unwrap().split("</details>").next().unwrap();
+    assert!(block.contains("Findings (2)"), "{block}");
+    assert!(block.contains("Spec") && block.contains("Orders.md 7.7") && block.contains("AC-3 contradicts the table"), "{block}");
+    assert!(block.contains("<strong>closed</strong>"), "detail is markdown: {block}");
+    assert!(!block.contains("<img") && !block.contains("onerror"), "raw HTML never reaches the page: {block}");
+    assert!(block.contains("Test case") && block.contains("Step 3 expects a toast"), "{block}");
+}

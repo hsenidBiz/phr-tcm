@@ -148,6 +148,16 @@ body:not(.notes-off) .rev-wrap:not(.rev-closed) { transition-delay: 0s; }
    not look clickable. */
 .rev-body .md-badlink { color: var(--muted); text-decoration: line-through; }
 .rev-body .md-noimg { color: var(--muted); font-style: italic; }
+/* Findings block: what the assistant found wrong while writing the case.
+   Sits under the reviewer notes, above the steps. */
+.findings{margin:8px 0;padding:8px 12px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;background:var(--surface)}
+.findings summary{cursor:pointer;font-weight:600;font-size:13px}
+.finding{padding:8px 0;border-top:1px solid var(--border)}
+.finding:first-of-type{border-top:0}
+.finding .meta{display:flex;gap:10px;font-size:11px;opacity:.75;align-items:center}
+.finding .kind{font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.finding .ftitle{margin:4px 0 2px;font-weight:600}
+.finding .fdetail{font-size:13px}
 .note { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
 .note label { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px;
               font-weight: 600; color: var(--muted); margin-bottom: 4px; }
