@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.15",
+    date: "2026-09-11",
+    items: [
+      "Uploading works again. In 1.23.13 and 1.23.14 the batch upload was refused by Azure DevOps: every update failed with 404, and of every 25 new cases only the first was created. Both are fixed. If you uploaded new cases on those versions, the first case of each batch of 25 was created each time you tried, so check the PBI for duplicate titles.",
+      "When Azure DevOps refuses a case, the app log now records the server's full answer, not only the status code.",
+      "Fixed the white window after Remove all. Removing every queued case while rows were selected left the screen blank until a reload.",
+    ],
+  },
+  {
     version: "1.23.14",
     date: "2026-09-11",
     items: [
