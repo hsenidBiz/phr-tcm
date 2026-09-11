@@ -840,8 +840,8 @@ async fn validate_json(
                 if tc.update_id.is_none() && !tc.comment.trim().is_empty() {
                     advisories.push(format!(
                         "Test case {} ('{}') carries a `comment`. That field is the developer's and \
-                         an assistant never writes it. If this is a problem you found, remove it here \
-                         and call record_finding.",
+                         an assistant never writes it. If this is a problem you found, move it to the \
+                         case's `findings` list.",
                         i + 1,
                         tc.title
                     ));
@@ -850,7 +850,8 @@ async fn validate_json(
                     advisories.push(format!(
                         "Test case {} ('{}'): its reviewer_notes read like a problem report ({why}). \
                          reviewer_notes say only what the case checks and where the requirement \
-                         lives; a problem is a finding - call record_finding and take it out of the note.",
+                         lives; a problem is a finding - move it to the case's `findings` list and \
+                         take it out of the note.",
                         i + 1,
                         tc.title
                     ));
@@ -1478,17 +1479,19 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         ## Findings\n\
         When something you read is WRONG - a case that contradicts its spec,\n\
         a spec that contradicts itself, code that does what neither says -\n\
-        call `record_finding` with `kind` (test_case, spec or code), the\n\
-        `subject` (the work item id, the spec file and section, or the file\n\
-        and member), a one-line `title` and the `detail` in markdown. The\n\
-        developer reads findings on the AI Bridge tab and in the browser\n\
-        report, and resolves them there. Call `list_findings` first so you do\n\
-        not record what is already known. Do this on your own when it applies;\n\
-        nobody will ask you to. And never write `comment` for this or for anything\n\
-        else, and never put it in reviewer_notes: the first is the developer's\n\
-        field, the second says where a case came from and nothing more. Do not\n\
-        write a case around a defect as if the defect were the requirement -\n\
-        record the finding and say so in the conversation.\n\n\
+        put it in that case's `findings` list in the file: `{{\"kind\":\n\
+        \"test_case\"|\"spec\"|\"code\", \"subject\": \"<spec section or code\n\
+        symbol>\", \"title\": \"<one line>\", \"detail\": \"<markdown>\"}}`.\n\
+        `kind` is one of test_case, spec or code. A\n\
+        finding about the spec or the code goes on the case it affects; if\n\
+        several, on the first. The developer reads findings in the browser\n\
+        page under each case. Do this on your own when it applies; nobody\n\
+        will ask you to. And never write `comment` for this or for anything\n\
+        else, and never put it in reviewer_notes: the first is the\n\
+        developer's field, the second says where a case came from and\n\
+        nothing more. Do not write a case around a defect as if the defect\n\
+        were the requirement - record the finding and say so in the\n\
+        conversation.\n\n\
         ## reviewer_notes\n\
         Optional, never sent to Azure DevOps, and the most useful thing you\n\
         can add. Two parts, in this order, and nothing else:\n\n\
@@ -1520,8 +1523,8 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         about ONE case.\n\
         - A walk through the steps. They are directly above the note.\n\
         - Anything WRONG that you noticed - a contradiction, a gap, a bug.\n\
-        That is a finding: call `record_finding` and keep the note to what\n\
-        the case checks and where its requirement lives.\n\
+        That is a finding: put it in the case's `findings` list and keep\n\
+        the note to what the case checks and where its requirement lives.\n\
         - Your reasoning, or a decision argued at length. If a case really\n\
         needs an argument made, that belongs in the conversation, not here - and never in `comment`.\n\n\
         Cite; never paraphrase from memory. Rendered as MARKDOWN, so a wiki\n\

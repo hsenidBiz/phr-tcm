@@ -155,6 +155,36 @@ async fn validate_warns_about_markup_and_merged_branches() {
     );
 }
 
+/// A `comment` on a new case, or `reviewer_notes` that reads like a problem
+/// report, both point the assistant at the case's own `findings` list -
+/// the removed `record_finding` tool's replacement. A `comment` on a case
+/// with an id is the developer's own, round-tripped through the file, and
+/// draws no advisory.
+#[tokio::test]
+async fn validate_advises_when_the_human_fields_carry_the_assistants_words() {
+    let draft = serde_json::json!({
+        "test_cases": [
+            { "title": "New case with a comment", "automation_status": "Not Automated",
+              "comment": "Spec and code disagree here",
+              "steps": [{ "action": "Open the page.", "expected": "It opens." }] },
+            { "id": 155170, "title": "Existing case with the developer's comment", "automation_status": "Not Automated",
+              "comment": "Blocked until the API lands",
+              "steps": [{ "action": "Open the page.", "expected": "It opens." }] },
+            { "title": "Note that reports a problem", "automation_status": "Not Automated",
+              "reviewer_notes": "Checks the cut-off. Spec: S.md 7.7\n> \"closed at cut-off\"\nNote: the code contradicts the spec here.",
+              "steps": [{ "action": "Open the page.", "expected": "It opens." }] }
+        ]
+    })
+    .to_string();
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.10.3").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let adv: Vec<String> = v["advisories"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect();
+    assert!(adv.iter().any(|a| a.contains("Test case 1") && a.contains("comment") && a.contains("`findings`")), "{adv:?}");
+    assert!(!adv.iter().any(|a| a.contains("Test case 2") && a.contains("comment")), "{adv:?}");
+    assert!(adv.iter().any(|a| a.contains("Test case 3") && a.contains("reviewer_notes") && a.contains("`findings`")), "{adv:?}");
+}
+
 /// A clean draft gets no advisories KEY at all - an empty list would read
 /// as "the check ran and might have said something", and the shape of a
 /// clean response should not change because a new check exists.
@@ -349,6 +379,23 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(
         notes.contains("SET's scope"),
         "a note is about one case, not the whole set: {notes}"
+    );
+
+    // Findings live in the case's own `findings` list now - the
+    // record_finding tool is gone, and a problem noticed in a
+    // reviewer_notes review is redirected there too.
+    let findings = body
+        .split("## Findings")
+        .nth(1)
+        .and_then(|rest| rest.split("## reviewer_notes").next())
+        .expect("the guide has a findings section");
+    assert!(findings.contains("`findings`"), "{findings}");
+    assert!(findings.contains("test_case, spec or code"), "{findings}");
+    assert!(findings.contains("never write `comment`"), "{findings}");
+    assert!(!findings.contains("record_finding"), "the tool is gone: {findings}");
+    assert!(
+        notes.contains("`findings`"),
+        "a problem in a note is redirected to the case's findings: {notes}"
     );
 
     // Reaching for a hand-rolled generator when a tool falls short is not
