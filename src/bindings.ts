@@ -198,8 +198,6 @@ export const commands = {
 	createWorkItem: (organization: string, project: string, item: NewWorkItem) => typedError<CreatedItem, AdoError>(__TAURI_INVOKE("create_work_item", { organization, project, item })),
 	/**  The project's Area or Iteration paths for the create pickers. */
 	classificationPaths: (organization: string, project: string, structure: string) => typedError<string[], AdoError>(__TAURI_INVOKE("classification_paths", { organization, project, structure })),
-	/**  Stop the running upload once the batch in flight has finished. */
-	cancelSubmit: () => __TAURI_INVOKE<void>("cancel_submit"),
 	/**
 	 *  Uploads the draft queue as an ADO attachment on the PBI and returns a
 	 *  pasteable share link. Review-before-upload sharing: the cases do NOT

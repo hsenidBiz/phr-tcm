@@ -229,7 +229,9 @@ test("a fresh mount shows a submit already in flight", async () => {
   submitProgressed(3, 10, "Login works");
   try {
     renderQueue([makeCase()]);
-    expect(await screen.findByText(/Processing 3\/10/)).toBeInTheDocument();
+    const bar = await screen.findByRole("progressbar", { name: "Uploading" });
+    expect(bar).toHaveAttribute("aria-valuenow", "3");
+    expect(screen.getByText("3 / 10")).toBeInTheDocument();
   } finally {
     submitFinished();
   }
@@ -244,44 +246,26 @@ test("a fresh mount shows a submit already in flight", async () => {
 /// the same reason the bar is: the upload outlives the mount that started
 /// it, and a stop control that a fresh mount cannot show would be a stop
 /// control missing exactly when someone came back to use it.
-test("an upload in flight turns the main button into Stop, and there is no second one", async () => {
+test("an upload in flight shows the sweeping bar first, then the count, and no Stop", async () => {
   const { submitStarted, submitProgressed, submitFinished } = await import("../lib/submitRun");
-  let cancelled = 0;
-  mockIPC((cmd) => {
-    if (cmd === "plugin:event|listen") return 1;
-    if (cmd === "plugin:event|unlisten") return null;
-    if (cmd === "list_test_case_fields") return [];
-    if (cmd === "list_project_tags") return [];
-    if (cmd === "test_case_field_values") return [];
-    if (cmd === "pbi_test_cases") return [];
-    if (cmd === "cancel_submit") {
-      cancelled += 1;
-      return null;
-    }
-    return undefined;
-  });
+  baseMocks();
   submitStarted("acme", 42, 10);
-  submitProgressed(3, 10, "Login works");
   try {
     renderQueue([makeCase()]);
-    expect(await screen.findByText(/Processing 3\/10/)).toBeInTheDocument();
-
-    const stop = screen.getByRole("button", { name: "Stop" });
-    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
-    // And it has taken the action row's place - Review is not on offer
-    // while the queue it would review is being written.
+    // Before the first batch answers: the suite is being resolved and the
+    // batch is in flight, so the bar sweeps with no count.
+    const bar = await screen.findByRole("progressbar", { name: "Processing the upload" });
+    expect(bar).not.toHaveAttribute("aria-valuenow");
+    // No way to stop, and Review is not on offer while the queue it would
+    // review is being written: the action spot says what is happening.
+    expect(screen.queryByRole("button", { name: /Stop|Cancel/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Review 1 test case/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Processing" })[0]).toBeDisabled();
 
-    // Held at first. The click that starts an upload lands on Confirm; the
-    // second half of a habitual double-click lands here, and must not stop
-    // the upload it just started.
-    expect(stop).toBeDisabled();
-    fireEvent.click(stop);
-    expect(cancelled).toBe(0);
-
-    await waitFor(() => expect(stop).toBeEnabled(), { timeout: 3000 });
-    fireEvent.click(stop);
-    expect(cancelled).toBe(1);
+    submitProgressed(3, 10, "Login works");
+    const filled = await screen.findByRole("progressbar", { name: "Uploading" });
+    expect(filled).toHaveAttribute("aria-valuenow", "3");
+    expect(filled).toHaveAttribute("aria-valuemax", "10");
   } finally {
     submitFinished();
   }

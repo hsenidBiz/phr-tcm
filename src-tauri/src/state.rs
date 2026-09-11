@@ -8,27 +8,21 @@ use tauri::Manager;
 
 use crate::{ado, auth};
 
-/// Cooperative cancel for the submit loop: checked between items, so the
-/// in-flight item always completes (never a half-created case).
-///
-/// `running` makes the loop single-flight. Both matter and for the same
-/// reason: submit_queue clears `cancel` on entry, so a second call while
-/// one was running wiped a Cancel the user had already clicked AND put a
-/// second loop over the same queue - and every case that pair creates twice
-/// is a duplicate that only someone with delete permission can remove, if
-/// anyone can. Not making them is still far better than tidying them up.
+/// Single-flight guard for the submit loop. A second call while one is
+/// running would put a second loop over the same queue, and every case
+/// that pair creates twice is a duplicate that only someone with delete
+/// permission can remove, if anyone can. Not making them is still far
+/// better than tidying them up. (This once also carried a cooperative
+/// cancel flag; an upload now runs to the end, so only the guard remains.)
 #[derive(Default)]
-pub struct SubmitCancel(
-    pub(crate) std::sync::atomic::AtomicBool,
-    pub(crate) std::sync::atomic::AtomicBool,
-);
+pub struct SubmitCancel(pub(crate) std::sync::atomic::AtomicBool);
 
 impl SubmitCancel {
     /// Claim the loop, or None if one is already running. `compare_exchange`
     /// rather than load-then-store: two clicks land on the same millisecond.
     pub(crate) fn claim(&self) -> Option<SubmitGuard<'_>> {
         use std::sync::atomic::Ordering::SeqCst;
-        self.1
+        self.0
             .compare_exchange(false, true, SeqCst, SeqCst)
             .ok()
             .map(|_| SubmitGuard(self))
@@ -42,7 +36,7 @@ pub(crate) struct SubmitGuard<'a>(&'a SubmitCancel);
 
 impl Drop for SubmitGuard<'_> {
     fn drop(&mut self) {
-        self.0 .1.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.0 .0.store(false, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

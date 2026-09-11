@@ -130,7 +130,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             board::avatar_b64,
             board::create_work_item,
             discovery::classification_paths,
-            queue::cancel_submit,
             queue::share_queue,
             queue::fetch_shared_queue,
             queue::materialize_shared_draft,

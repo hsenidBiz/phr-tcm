@@ -38,6 +38,7 @@ import QueueBulkEditDialog from "./QueueBulkEditDialog";
 import QueueRow from "./QueueRow";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import ScanProgress from "./ScanProgress";
 import { Checkbox } from "./ui/checkbox";
 import {
   IconCollapseAll,
@@ -49,7 +50,6 @@ import {
   IconRemove,
   IconReview,
   IconShare,
-  IconStop,
   IconRename,
 } from "../lib/actionIcons";
 
@@ -180,37 +180,11 @@ export default function QueueSection({
   const phase = useSyncExternalStore(subscribeSubmit, submitPhaseSnapshot);
   const progress = phase && phase.org === org && phase.pbiId === pbiId ? phase : null;
 
-  // While an upload runs, the main action button becomes the way to STOP
-  // it - the count beside the bar already says "Processing 3/10", so a
-  // second control repeating the word while doing nothing was the
-  // duplicate. Gated on the progress store rather than this mount's own
-  // mutation, for the same reason the bar is: the upload outlives the
-  // mount that started it.
-  const stopSubmit = () => {
-    commands.cancelSubmit();
-    toast.info("Stopping after the current item");
-  };
-
-  // It holds still for a beat first. The click that STARTS an upload lands
-  // on Confirm, and this button takes that spot - without the hold, the
-  // second half of a habitual double-click would stop the upload it just
-  // started. Long enough to clear the usual double-click window, short
-  // enough that a long upload never feels unstoppable.
-  const STOP_HOLD_MS = 600;
-  const [stopArmed, setStopArmed] = useState(false);
-  // Depends on WHETHER an upload is running, never on the progress object:
-  // that changes identity on every item, which would re-arm the hold on
-  // each tick and leave the button dead for the whole upload.
-  const uploading = progress != null;
-  useEffect(() => {
-    if (!uploading) {
-      setStopArmed(false);
-      return;
-    }
-    setStopArmed(false);
-    const t = setTimeout(() => setStopArmed(true), STOP_HOLD_MS);
-    return () => clearTimeout(t);
-  }, [uploading]);
+  // An upload runs to the end once started - there is no Stop. The case
+  // in flight could never be taken back (created cases cannot be deleted),
+  // so stopping only ever left a half-done set. While it runs the action
+  // button reads "Processing" and does nothing; the bar above it is what
+  // shows that something is happening.
   // Writes PAUSE while offline instead of failing: attempting a submit on
   // a dead connection is known-doomed, and a paused button with a reason
   // beats an error toast. Reads pause on their own (React Query's
@@ -1385,21 +1359,16 @@ export default function QueueSection({
         </ul>
       )}
 
+      {/* The same glowing bar the test-suite scan uses. Before the first
+          batch answers there is no count to show - the suite is being
+          resolved and the batch is in flight - so it sweeps; once a batch
+          lands it fills to the count. */}
       {progress && (
-        <div className="space-y-1">
-          <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-            <div
-              className="h-full rounded-full bg-accent transition-all"
-              style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }}
-            />
-          </div>
-          {/* The count only. Stopping lives on the main action button
-              below, so there is one control rather than two saying
-              "Processing" at each other. */}
-          <p className="text-xs text-muted">
-            Processing {progress.done}/{progress.total}
-          </p>
-        </div>
+        <ScanProgress
+          label={progress.done === 0 ? "Processing the upload" : "Uploading"}
+          done={progress.done > 0 ? progress.done : undefined}
+          total={progress.done > 0 ? progress.total : undefined}
+        />
       )}
 
       <div
@@ -1410,9 +1379,9 @@ export default function QueueSection({
         className="flex items-center gap-3"
       >
         {progress ? (
-          <Button variant="danger" disabled={!stopArmed} onClick={stopSubmit}>
-            <IconStop aria-hidden />
-            Stop
+          <Button disabled>
+            <IconConfirm aria-hidden />
+            Processing
           </Button>
         ) : !reviewing ? (
           <Button disabled={queue.length === 0} onClick={openReview}>
@@ -1621,14 +1590,9 @@ export default function QueueSection({
             )}
           >
             {progress ? (
-              <Button
-                tabIndex={-1}
-                variant="danger"
-                disabled={!stopArmed}
-                onClick={stopSubmit}
-              >
-                <IconStop aria-hidden />
-                Stop
+              <Button tabIndex={-1} disabled>
+                <IconConfirm aria-hidden />
+                Processing
               </Button>
             ) : !reviewing ? (
               <Button tabIndex={-1} onClick={() => setReviewing(true)}>

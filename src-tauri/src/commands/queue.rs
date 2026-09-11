@@ -1,5 +1,5 @@
 //! The test-case queue: import, export, HTML views, and the serial
-//! create/update submit loop with its cooperative cancel.
+//! create/update submit loop (single-flight; it runs to the end once started).
 
 use tauri::Manager;
 use tauri_specta::Event;
@@ -43,7 +43,10 @@ pub struct SubmitItemResult {
 
 /// Cases per `$batch` call. See the loop in `submit_queue` for why it is
 /// not the API's maximum of 200.
-const BATCH_SIZE: usize = 25;
+/// Azure DevOps' own ceiling per `$batch` call. One call per 200 cases:
+/// there is no Stop any more, so nothing is gained by chunking smaller,
+/// and the progress bar sweeps while a call is in flight.
+const BATCH_SIZE: usize = crate::ado::wit_batch::MAX_PER_BATCH;
 
 #[tauri::command]
 #[specta::specta]
@@ -594,22 +597,16 @@ pub async fn submit_queue(
     area_path: Option<String>,
     iteration_path: Option<String>,
 ) -> Result<Vec<SubmitItemResult>, String> {
-    // One submit at a time. A second call used to clear the cancel flag
-    // below - wiping a Cancel already clicked - and then run a second loop
-    // over the same queue. Two loops create every case twice, and this tool
-    // only deletes Test Cases, and only for someone Azure DevOps says may,
-    // so those duplicates may well be permanent. The guard releases
-    // on every exit path, including a panic.
-    let cancel = app.state::<SubmitCancel>();
-    let Some(_running) = cancel.claim() else {
+    // One submit at a time. A second call would run a second loop over the
+    // same queue, and two loops create every case twice; this tool only
+    // deletes Test Cases, and only for someone Azure DevOps says may, so
+    // those duplicates may well be permanent. The guard releases on every
+    // exit path, including a panic.
+    let single = app.state::<SubmitCancel>();
+    let Some(_running) = single.claim() else {
         crate::applog::warn("refused a second submit while one was already running");
-        return Err("A submit is already running. Wait for it to finish, or cancel it.".into());
+        return Err("A submit is already running. Wait for it to finish.".into());
     };
-
-    // Arm the cancel flag BEFORE any awaits: the suite-resolution phase
-    // below can take seconds, and a Cancel clicked during it must stick
-    // (resetting later would silently swallow it and run the whole queue).
-    cancel.0.store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Best-effort board visibility (ported from v1 CreationWorker._ensure_suite):
     // make sure the PBI's requirement-based suite exists before creating, so
@@ -703,15 +700,12 @@ pub async fn submit_queue(
         "Submitting {total} test case(s) to {organization}/{project} PBI #{pbi_id} in batches of {BATCH_SIZE}"
     ));
     // Chunks of BATCH_SIZE, each one HTTP call executed on the server in
-    // order. Not ADO's maximum of 200: the size bounds two things - how
-    // far a Stop can overshoot (a chunk in flight completes, and created
-    // cases cannot be deleted) and how coarse the progress bar moves.
+    // order. An upload runs to the end once started: the case in flight
+    // could never be taken back (created cases cannot be deleted), so a
+    // Stop only ever left a half-done set, and it is gone.
     let mut results: Vec<SubmitItemResult> = Vec::with_capacity(queue.len());
     let mut chunk_start = 0usize;
     while chunk_start < queue.len() {
-        if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
-            break; // unprocessed items stay in the client's queue
-        }
         let end = (chunk_start + BATCH_SIZE).min(queue.len());
         if chunk_start > 0 {
             // Between chunks only: the request-rate setting, and nothing
@@ -720,9 +714,6 @@ pub async fn submit_queue(
             let gap = crate::ado::throttle::current_interval_ms();
             if gap > 0 {
                 tokio::time::sleep(std::time::Duration::from_millis(gap)).await;
-            }
-            if cancel.0.load(std::sync::atomic::Ordering::SeqCst) {
-                break;
             }
         }
         let mut chunk: Vec<Option<SubmitItemResult>> = (chunk_start..end).map(|_| None).collect();
@@ -912,11 +903,4 @@ fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemR
         id: None,
         error: Some(error),
     }
-}
-
-/// Stop the running upload once the batch in flight has finished.
-#[tauri::command]
-#[specta::specta]
-pub fn cancel_submit(state: tauri::State<'_, SubmitCancel>) {
-    state.0.store(true, std::sync::atomic::Ordering::SeqCst);
 }
