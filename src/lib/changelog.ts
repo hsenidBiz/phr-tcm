@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.14",
+    date: "2026-09-11",
+    items: [
+      "Settings: Open log folder works again. It was refused every time and only showed an error toast.",
+      "Settings: Report a bug sits beside the Changelog, one click from the gear, instead of behind the Logs panel.",
+      "Settings: the log panel shows every line, requests included. The Every request switch is gone.",
+      "AI Bridge: whether the bridge is running is a green or red badge beside the tab title, with the port on hover, in place of the Status card. The tool names in the list use the app's normal type.",
+      "AI assistants writing test cases follow a plain writing style: short active sentences, exact values, no em dashes, no filler words. The style applies to the test cases only, not to what the assistant says to you.",
+    ],
+  },
+  {
     version: "1.23.13",
     date: "2026-09-10",
     items: [
