@@ -50,6 +50,14 @@ pub struct NewFinding {
 static ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
+/// Serializes every load-mutate-save cycle across the whole process. The
+/// bridge serves connections concurrently and the Tauri commands run on
+/// other threads, so without this two writers can interleave: both load
+/// the same snapshot, both write, and the loser's `save_all` clobbers the
+/// winner's. Held across load *and* save in `record`, `set_status` and
+/// `remove` - never just around the save.
+static STORE_LOCK: Mutex<()> = Mutex::new(());
+
 /// Called once during app setup.
 pub fn set_root(root: PathBuf) {
     if let Ok(mut slot) = ROOT.lock() {
@@ -83,10 +91,17 @@ fn load_all(root: &Path) -> Vec<Finding> {
 }
 
 /// Temp file then rename, so a crash mid-write leaves the old file whole.
+/// The temp name is unique per write (pid plus a process-wide counter),
+/// not just per process: the lock already serializes the load-mutate-save
+/// cycle, but a shared name would still let a leftover temp file from a
+/// prior crash collide with a fresh write.
 fn save_all(root: &Path, all: &[Finding]) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
     let target = file(root);
-    let tmp = root.join(format!("{FILE}.{}.tmp", std::process::id()));
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = root.join(format!("{FILE}.{}.{n}.tmp", std::process::id()));
     let text = serde_json::to_string_pretty(all).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &target).map_err(|e| e.to_string())
@@ -163,10 +178,13 @@ pub fn record(root: &Path, new: NewFinding) -> Result<Finding, String> {
         created_at: now_rfc3339(),
         status: "open".into(),
     };
-    let mut all = load_all(root);
-    all.insert(0, finding.clone());
-    all.truncate(CAP);
-    save_all(root, &all)?;
+    {
+        let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut all = load_all(root);
+        all.insert(0, finding.clone());
+        all.truncate(CAP);
+        save_all(root, &all)?;
+    }
     if let Some(app) = APP_HANDLE.get() {
         let _ = crate::events::FindingRecorded {
             id: finding.id.clone(),
@@ -184,6 +202,7 @@ pub fn set_status(root: &Path, id: &str, status: &str) -> Result<Finding, String
     if !STATUSES.contains(&status) {
         return Err(format!("status must be open or resolved, not \"{status}\""));
     }
+    let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load_all(root);
     let Some(f) = all.iter_mut().find(|f| f.id == id) else {
         return Err(format!("no finding with id {id}"));
@@ -195,6 +214,7 @@ pub fn set_status(root: &Path, id: &str, status: &str) -> Result<Finding, String
 }
 
 pub fn remove(root: &Path, id: &str) -> Result<(), String> {
+    let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut all = load_all(root);
     let before = all.len();
     all.retain(|f| f.id != id);

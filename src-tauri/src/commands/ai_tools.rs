@@ -483,7 +483,7 @@ pub fn sync_commands(disabled: &[String], working_dir: Option<&str>) {
 /// paths are predictable and shared with whatever else the user keeps
 /// there. One failure does not abandon the rest, but the first reason is
 /// reported.
-fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), String> {
+pub fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), String> {
     // An earlier version wrote one top-level GLOBAL file. Leaving it would
     // put `/tcm-testcases` in the picker beside the namespaced set. Only
     // ours, and only when writing the global set.
@@ -498,10 +498,24 @@ fn write_commands_in(dir: &std::path::Path, disabled: &[String]) -> Result<(), S
 
     // A tool switched off loses its command; switched back on, it returns.
     let wanted = command_files_in(dir, &crate::ai_tools::effective_disabled(disabled));
-    for (path, _) in command_files_in(dir, &[]) {
-        let keep = wanted.iter().any(|(p, _)| *p == path);
-        if !keep && matches!(std::fs::read_to_string(&path), Ok(t) if t.contains(COMMAND_MARKER)) {
-            let _ = std::fs::remove_file(&path);
+
+    // Sweep the directory itself, not just the paths `COMMANDS` names
+    // today: a command that was renamed or dropped from that const (this
+    // branch trimmed 17 down to 7) still has its old `.md` file sitting in
+    // every existing install, and a loop bounded by the current `COMMANDS`
+    // can never see - let alone remove - a file no longer named by it.
+    // Ours only: a file without the marker is somebody else's and is never
+    // touched.
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let keep = wanted.iter().any(|(p, _)| *p == path);
+            if !keep && matches!(std::fs::read_to_string(&path), Ok(t) if t.contains(COMMAND_MARKER)) {
+                let _ = std::fs::remove_file(&path);
+            }
         }
     }
 

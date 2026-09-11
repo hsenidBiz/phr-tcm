@@ -28,8 +28,20 @@ fn finding(kind: &str, title: &str, status: &str) -> Finding {
     }
 }
 
+/// A name unique per call, not just per process: two tests whose finding
+/// slices happen to share a length (`no_open_findings_means_no_section`
+/// and the raw-HTML test both pass a slice of one) raced on the same path
+/// under parallel test execution otherwise, and the loser's read landed on
+/// whichever write happened to land first.
 fn render(findings: &[Finding]) -> String {
-    let path = std::env::temp_dir().join(format!("tcm-findings-report-{}-{}.html", std::process::id(), findings.len()));
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "tcm-findings-report-{}-{}-{}.html",
+        std::process::id(),
+        findings.len(),
+        N.fetch_add(1, Ordering::SeqCst)
+    ));
     export_queue_to_html(&[case("A")], path.to_str().unwrap(), "Sub", None, &Default::default(), findings).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     let _ = std::fs::remove_file(&path);
@@ -57,4 +69,18 @@ fn no_open_findings_means_no_section() {
     assert!(!html.contains("<section class='findings'"));
     let html = render(&[]);
     assert!(!html.contains("AI Findings"));
+}
+
+/// A finding's `detail` is assistant-written markdown, rendered through
+/// `crate::markdown::to_html` into a page opened in a real browser. Raw
+/// HTML in that text must never survive into the report.
+#[test]
+fn raw_html_in_a_finding_detail_cannot_reach_the_report() {
+    let html = render(&[Finding {
+        detail: "<img src=x onerror=alert(1)>".into(),
+        ..finding("code", "XSS attempt", "open")
+    }]);
+    let section = html.split("<section class='findings'").nth(1).expect("a findings section");
+    assert!(!section.contains("<img"), "{section}");
+    assert!(!section.contains("onerror"), "{section}");
 }

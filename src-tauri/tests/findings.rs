@@ -110,6 +110,35 @@ fn a_corrupt_file_reads_as_empty_and_is_replaced_on_the_next_write() {
     assert_eq!(list(dir.path(), "acme", "Web").len(), 1);
 }
 
+/// The bridge serves connections concurrently and the Tauri commands run
+/// on other threads, so `record` has to be safe against interleaved
+/// writers: without a lock held across load-and-save, two threads can
+/// both read the same snapshot, both write, and the loser's write wipes
+/// out everything the winner just added.
+#[test]
+fn concurrent_recorders_never_lose_a_write() {
+    let dir = TempDir::new();
+    let root = dir.path().to_path_buf();
+    let handles: Vec<_> = (0..8)
+        .map(|t| {
+            let root = root.clone();
+            std::thread::spawn(move || {
+                for i in 0..25 {
+                    record(&root, new_finding("code", &format!("T{t}-{i}"))).unwrap();
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    let all = list(dir.path(), "acme", "Web");
+    assert_eq!(all.len(), 200, "no write was lost to an interleaved save");
+    let raw = std::fs::read_to_string(dir.path().join("findings.json")).unwrap();
+    let parsed: Vec<Finding> = serde_json::from_str(&raw).expect("the file always parses");
+    assert_eq!(parsed.len(), 200);
+}
+
 /// The commands are thin over the store, but the root they use is the one
 /// setup published - the same one the bridge writes through.
 #[test]

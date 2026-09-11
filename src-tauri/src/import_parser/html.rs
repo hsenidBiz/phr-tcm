@@ -209,7 +209,7 @@ pub fn export_queue_to_html(
                  <p class='ftitle'>{}</p><div class='fdetail'>{}</div></article>",
                 esc(kind),
                 esc(&f.subject),
-                esc(&f.created_at[..f.created_at.len().min(10)]),
+                esc(&f.created_at.chars().take(10).collect::<String>()),
                 esc(&f.title),
                 crate::markdown::to_html(&f.detail)
             ));

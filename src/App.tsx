@@ -667,7 +667,7 @@ export default function App() {
   useEffect(() => {
     if (!org) return;
     const un = events.findingRecorded.listen((e) => {
-      if (e.payload.org !== org) return;
+      if (e.payload.org !== org || e.payload.project !== project) return;
       noteFinding(org, e.payload);
       qc.invalidateQueries({ queryKey: ["findings", org, project] });
     });
