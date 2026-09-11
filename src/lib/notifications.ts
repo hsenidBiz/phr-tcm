@@ -15,7 +15,7 @@
 import { useSyncExternalStore } from "react";
 import type { AssignedItem, PullRequest } from "../bindings";
 
-export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments";
+export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments" | "ai-finding";
 
 export type AppNotification = {
   /** Stable per event, e.g. `pr-conflict:Web:412` - the dedupe key. */
@@ -154,6 +154,12 @@ export function noteAssigned(org: string, project: string, items: AssignedItem[]
       href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_workitems/edit/${i.id}`,
     })),
   );
+}
+
+/** A finding recorded through the AI bridge. One per finding id. */
+export function noteFinding(org: string, f: { id: string; kind: string; title: string }): void {
+  const kind = f.kind === "test_case" ? "test case" : f.kind;
+  raise(org, [{ id: `ai-finding:${f.id}`, kind: "ai-finding", title: `AI finding: ${kind}`, body: f.title }]);
 }
 
 /** The PR overview as it stands: your PRs that have grown conflicts, and

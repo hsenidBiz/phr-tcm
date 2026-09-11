@@ -25,6 +25,7 @@ const KIND_LABEL: Record<AppNotification["kind"], string> = {
   "pr-conflict": "Conflicts",
   "pr-review": "Review",
   "pr-comments": "Comments",
+  "ai-finding": "Finding",
 };
 
 const KIND_CLASS: Record<AppNotification["kind"], string> = {
@@ -32,6 +33,7 @@ const KIND_CLASS: Record<AppNotification["kind"], string> = {
   "pr-conflict": "bg-warning/15 text-warning",
   "pr-review": "bg-success/15 text-success",
   "pr-comments": "bg-warning/15 text-warning",
+  "ai-finding": "bg-accent/15 text-accent",
 };
 
 function ago(iso: string): string {

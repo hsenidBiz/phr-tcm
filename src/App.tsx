@@ -29,7 +29,7 @@ import {
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
-import { noteAssigned } from "./lib/notifications";
+import { noteAssigned, noteFinding } from "./lib/notifications";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import {
@@ -661,6 +661,20 @@ export default function App() {
       un.then((f) => f()).catch(() => {});
     };
   }, [org, project]);
+
+  // A finding recorded through the bridge: the bell says so, and the AI
+  // Bridge tab's list refreshes even when it is not the open tab.
+  useEffect(() => {
+    if (!org) return;
+    const un = events.findingRecorded.listen((e) => {
+      if (e.payload.org !== org) return;
+      noteFinding(org, e.payload);
+      qc.invalidateQueries({ queryKey: ["findings", org, project] });
+    });
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [org, project, qc]);
 
   const dismissChangelog = () => {
     getVersion()

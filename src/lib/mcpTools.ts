@@ -22,6 +22,8 @@ export const MCP_TOOLS: McpToolInfo[] = [
   { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in this project, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
   { name: "get_run_failures", label: "Run failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },
+  { name: "record_finding", label: "Record a finding", summary: "A problem an assistant found in a case, a spec or the code." },
+  { name: "list_findings", label: "List findings", summary: "The findings recorded for this project." },
   { name: "check_spec_coverage", label: "Specification coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
   { name: "merge_case_files", label: "Merge slice files", summary: "Merge fan-out slice files into one draft through the real importer." },
   {
@@ -52,7 +54,10 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
   // Finishing a draft is part of writing one: a set that cannot be
   // checked, ordered into a run sheet, or merged back from its slices
   // is a set nobody can ship.
-  "validate_cases", "optimize_cases", "merge_case_files"] as const;
+  "validate_cases", "optimize_cases", "merge_case_files",
+  // The guide decides when a finding is recorded; a switch would only
+  // reopen the habit of writing problems into the developer's comment field.
+  "record_finding", "list_findings"] as const;
 export const HIDDEN_TOOLS = ["get_autorun_guide", "save_autorun_script"] as const;
 
 export function isCoreTool(name: string): boolean {
