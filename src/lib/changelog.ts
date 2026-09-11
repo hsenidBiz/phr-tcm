@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.16",
+    date: "2026-09-11",
+    items: [
+      "AI assistants can read test suites. Two new tools under one Test Suites switch on the AI Bridge tab: one finds a suite by plan name, suite name or PBI id, the other reads the cases in it in the suite's own order, with an option to include every suite beneath a folder. Reading only, the same view as the Test Suites tab. Comes with /tcm:suites and /tcm:suite-cases commands.",
+    ],
+  },
+  {
     version: "1.23.15",
     date: "2026-09-11",
     items: [
