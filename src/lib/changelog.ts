@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.17",
+    date: "2026-09-11",
+    items: [
+      "AI Findings. When an assistant finds a problem while reading a test case, a spec or the code, it records a finding instead of writing it into the case. Findings appear in a card on the AI Bridge tab, in their own section of the browser report, and on the notification bell. Resolve or dismiss them on the AI Bridge tab. They stay in this app and never go to Azure DevOps.",
+      "The comment on a test case is yours. Assistants have no tool that writes it any more, the writing guide says so, and the validator points out a draft that carries one on a new case. Reviewer notes are for where a case came from; a problem reported in one is pointed at the findings instead.",
+      "Bulk edits by an assistant now reach every operation the app supports. The tool's description used to list fewer than the app accepted.",
+      "Fewer slash commands. /tcm:write is now /tcm:begin-test-case-writing and /tcm:wiki is now /tcm:get-wiki-info. The commands for the guide, examples, suites, tags, PBI search, coverage, validate, transform and Auto Run are gone: the assistant calls those tools on its own when they are needed. Old command files are cleaned up the next time a tool is registered.",
+    ],
+  },
+  {
     version: "1.23.16",
     date: "2026-09-11",
     items: [
