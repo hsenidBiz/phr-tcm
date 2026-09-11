@@ -1482,7 +1482,8 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         put it in that case's `findings` list in the file: `{{\"kind\":\n\
         \"test_case\"|\"spec\"|\"code\", \"subject\": \"<spec section or code\n\
         symbol>\", \"title\": \"<one line>\", \"detail\": \"<markdown>\"}}`.\n\
-        `kind` is one of test_case, spec or code. A\n\
+        `kind` is one of test_case, spec or code. Write it into the file\n\
+        directly, or with `transform_cases` and its `set_findings` op. A\n\
         finding about the spec or the code goes on the case it affects; if\n\
         several, on the first. The developer reads findings in the browser\n\
         page under each case. Do this on your own when it applies; nobody\n\

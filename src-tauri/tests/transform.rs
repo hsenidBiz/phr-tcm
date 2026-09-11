@@ -556,7 +556,7 @@ fn no_op_can_write_the_comment_field() {
 #[test]
 fn supported_ops_is_the_parsers_whole_vocabulary() {
     use v2_lib::transform::SUPPORTED_OPS;
-    assert_eq!(SUPPORTED_OPS.len(), 23);
+    assert_eq!(SUPPORTED_OPS.len(), 24);
     assert!(!SUPPORTED_OPS.contains(&"set_comment"));
     for name in SUPPORTED_OPS {
         let extra = match name {
@@ -568,6 +568,7 @@ fn supported_ops_is_the_parsers_whole_vocabulary() {
             "remove_cases" => r#","where":{"title_contains":"x"}"#,
             "insert_cases" => r#","cases":[{"title":"T","steps":[{"action":"a","expected":"b"}]}]"#,
             "sort_by" | "group_by" => r#","value":"title""#,
+            "set_findings" => r#","value":[{"kind":"spec","title":"AC-3 contradicts the table"}]"#,
             "set_automation_status" => r#","value":"Planned""#,
             _ => r#","value":"x""#,
         };
@@ -615,4 +616,39 @@ fn transforms_carry_findings_through_unchanged() {
     assert_eq!(out[0].title, "X A");
     assert_eq!(out[0].findings.len(), 1);
     assert_eq!(out[0].findings[0].title, "Null check");
+}
+
+/// `set_findings` is the one op that writes the assistant's own field: it
+/// REPLACES the matched case's findings with the list given, in the
+/// file's shape (objects, or bare strings for the case itself). A bad kind
+/// or an entry without a title refuses the whole op rather than writing a
+/// partial list, and the scope filter applies like any other op.
+#[test]
+fn set_findings_replaces_the_list_and_validates_it() {
+    let mut a = noted("A", "n");
+    a.findings = vec![v2_lib::model::CaseFinding { kind: "code".into(), subject: String::new(), title: "old".into(), detail: String::new() }];
+    let b = noted("B", "n");
+    let ops = parse_ops(&serde_json::json!([{
+        "op": "set_findings",
+        "where": { "title_contains": "A" },
+        "value": [
+            { "kind": "spec", "subject": "Orders.md 7.7", "title": "AC-3 contradicts the table", "detail": "Table says **closed**." },
+            "Step 3 expects a toast the spec never mentions"
+        ]
+    }]))
+    .unwrap();
+    let (out, report) = apply(vec![a, b], &ops);
+    assert_eq!(out[0].findings.len(), 2, "replaced, not appended");
+    assert_eq!(out[0].findings[0].kind, "spec");
+    assert_eq!(out[0].findings[0].subject, "Orders.md 7.7");
+    assert_eq!(out[0].findings[1].kind, "test_case", "a bare string is about the case itself");
+    assert!(out[1].findings.is_empty(), "the unmatched case is untouched");
+    assert!(report.applied.iter().any(|l| l.contains("finding")), "{:?}", report.applied);
+
+    let err = parse_ops(&serde_json::json!([{ "op": "set_findings", "value": [{ "kind": "vibes", "title": "x" }] }])).unwrap_err();
+    assert!(err.contains("test_case, spec or code"), "{err}");
+    let err = parse_ops(&serde_json::json!([{ "op": "set_findings", "value": [{ "kind": "spec" }] }])).unwrap_err();
+    assert!(err.contains("no title"), "{err}");
+    let err = parse_ops(&serde_json::json!([{ "op": "set_findings", "value": "not a list" }])).unwrap_err();
+    assert!(err.contains("list"), "{err}");
 }

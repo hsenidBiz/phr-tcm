@@ -38,6 +38,10 @@ pub enum Op {
     SetPreconditions(String),
     /// Overwrite the local reviewer notes (never sent to Azure DevOps).
     SetReviewerNotes(String),
+    /// Replace the case's findings - the problems an assistant found in the
+    /// case, its spec or the code. File-only, like the notes; the one
+    /// field of this kind an assistant is meant to write.
+    SetFindings(Vec<crate::model::CaseFinding>),
     /// Literal find/replace across the title.
     ReplaceInTitle { find: String, replace: String },
     /// Literal find/replace across the local reviewer notes - the bulk
@@ -85,9 +89,9 @@ pub enum Op {
 /// lists them. One list, two readers: the unknown-op refusal and the MCP
 /// tool description (mcp.rs) are both built from it, so an op can no
 /// longer be reachable and undocumented at the same time.
-pub const SUPPORTED_OPS: [&str; 23] = [
+pub const SUPPORTED_OPS: [&str; 24] = [
     "set_tags", "add_tags", "remove_tags", "set_module", "set_automation_status",
-    "set_preconditions", "set_reviewer_notes", "prefix_title", "suffix_title",
+    "set_preconditions", "set_reviewer_notes", "set_findings", "prefix_title", "suffix_title",
     "replace_in_title", "replace_in_steps", "replace_in_notes", "replace_in_preconditions",
     "normalise_citations", "prepend_step", "append_step", "remove_step_matching", "split_step",
     "sort_by", "group_by", "dedupe", "remove_cases", "insert_cases",
@@ -194,6 +198,43 @@ fn join_tags(tags: &[String]) -> String {
 
 fn str_of(v: &serde_json::Value, key: &str) -> String {
     v[key].as_str().unwrap_or_default().to_string()
+}
+
+/// `set_findings` takes a list in the file's own shape: objects with
+/// `kind` (test_case, spec or code), `subject`, `title`, `detail`, or a
+/// bare string for a finding about the case itself. The whole op is
+/// refused on a bad entry rather than writing a partial list - the report
+/// would otherwise say "set" about a list missing what was asked for.
+fn findings_of(v: &serde_json::Value, label: &str) -> Result<Vec<crate::model::CaseFinding>, String> {
+    let Some(list) = v["value"].as_array() else {
+        return Err(format!(
+            "{label}: set_findings needs \"value\" as a list of {{kind, subject, title, detail}} objects (or strings)."
+        ));
+    };
+    let mut out = Vec::with_capacity(list.len());
+    for (k, rf) in list.iter().enumerate() {
+        let (kind, subject, title, detail) = match rf {
+            serde_json::Value::String(s) => ("test_case".to_string(), String::new(), s.trim().to_string(), String::new()),
+            serde_json::Value::Object(_) => (
+                rf["kind"].as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("test_case").to_string(),
+                str_of(rf, "subject").trim().to_string(),
+                str_of(rf, "title").trim().to_string(),
+                str_of(rf, "detail").trim().to_string(),
+            ),
+            _ => return Err(format!("{label}: findings entry {} must be an object or a string.", k + 1)),
+        };
+        if !crate::model::FINDING_KINDS.contains(&kind.as_str()) {
+            return Err(format!(
+                "{label}: findings entry {}: kind \"{kind}\" is not test_case, spec or code.",
+                k + 1
+            ));
+        }
+        if title.is_empty() {
+            return Err(format!("{label}: findings entry {} has no title.", k + 1));
+        }
+        out.push(crate::model::CaseFinding { kind, subject, title, detail });
+    }
+    Ok(out)
 }
 
 /// Shared by every `replace_in_*` op: how many times `find` occurs in
@@ -325,6 +366,7 @@ pub fn parse_ops_full(
             }
             "set_preconditions" => Op::SetPreconditions(required_str(v, "value", &label)?),
             "set_reviewer_notes" => Op::SetReviewerNotes(required_str(v, "value", &label)?),
+            "set_findings" => Op::SetFindings(findings_of(v, &label)?),
             "replace_in_title" => Op::ReplaceInTitle {
                 find: str_of(v, "find"),
                 replace: str_of(v, "replace"),
@@ -844,6 +886,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::SetAutomationStatus(v) => c.automation_status = v.clone(),
                         Op::SetPreconditions(v) => c.preconditions = v.clone(),
                         Op::SetReviewerNotes(v) => c.reviewer_notes = v.clone(),
+                        Op::SetFindings(v) => c.findings = v.clone(),
                         Op::ReplaceInTitle { find, replace } => {
                             let (hits, variant) = count_hits(&c.title, find.as_str());
                             occurrences += hits;
@@ -1085,6 +1128,7 @@ fn describe(op: &Op) -> String {
         Op::SetAutomationStatus(v) => format!("Set automation status to '{v}'"),
         Op::SetPreconditions(v) => format!("Set preconditions to '{v}'"),
         Op::SetReviewerNotes(v) => format!("Set reviewer notes to '{v}'"),
+        Op::SetFindings(v) => format!("Set {} finding(s)", v.len()),
         Op::ReplaceInTitle { find, replace } => format!("Replaced '{find}' with '{replace}' in titles"),
         Op::ReplaceInNotes { find, replace } => {
             format!("Replaced '{find}' with '{replace}' in reviewer notes")
@@ -1116,7 +1160,7 @@ fn describe(op: &Op) -> String {
 fn known_keys(op_name: &str) -> &'static [&'static str] {
     match op_name {
         "set_tags" | "add_tags" | "remove_tags" | "set_module" | "set_automation_status"
-        | "set_preconditions" | "set_reviewer_notes" | "prefix_title" | "suffix_title"
+        | "set_preconditions" | "set_reviewer_notes" | "set_findings" | "prefix_title" | "suffix_title"
         | "sort_by" | "group_by" => &["op", "where", "value"],
         "replace_in_title" | "replace_in_steps" | "replace_in_notes" | "replace_in_preconditions" => {
             &["op", "where", "find", "replace"]

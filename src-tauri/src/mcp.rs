@@ -106,6 +106,9 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         "Ops applied in order. Every op the server accepts: {ops}. WHICH KEYS EACH OP READS: \
          set_tags/add_tags/remove_tags/set_module/set_automation_status/set_preconditions/\
          set_reviewer_notes/prefix_title/suffix_title/sort_by/group_by take {{value}}; \
+         set_findings takes {{value: [...]}}, a list of {{kind, subject, title, detail}} objects \
+         (kind is test_case, spec or code) that REPLACES the matched cases' findings - the \
+         problems you found in the case, its spec or the code; \
          replace_in_title/replace_in_steps/replace_in_notes/replace_in_preconditions take \
          {{find, replace}} (replace_in_notes edits the local reviewer_notes - the bulk repair for \
          check_spec_coverage findings); normalise_citations takes only where - it moves a Spec: \
