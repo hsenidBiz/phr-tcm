@@ -876,6 +876,15 @@ export default function QueueSection({
   // at different cases, and a stale selection silently bulk-edits the
   // wrong rows.
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Positions are only meaningful while the rows exist. When the queue
+  // shrinks beneath a selection (Remove all, an import that replaces the
+  // queue, a single removal) the indices past its end are dropped.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (![...prev].some((i) => i >= queue.length)) return prev;
+      return new Set([...prev].filter((i) => i < queue.length));
+    });
+  }, [queue.length]);
   // The shift-click anchor is only ever read inside toggleSelect, so it
   // lives in a ref: that keeps the callback's identity stable, which is
   // what lets the rows below stay memoised.
@@ -976,8 +985,13 @@ export default function QueueSection({
    *  not an identity that survives the very operation being applied. With
    *  a selection active, the dialog covers just the selected rows - the
    *  scope list maps the dialog's row indices back to queue positions. */
+  // Only positions that still exist: the selection is a set of indices,
+  // and "Remove all" with rows selected emptied the queue under it - the
+  // white window of 1.23.11 was `queue[qi].update_id` on the next render.
   const renameScope =
-    selected.size > 0 ? [...selected].sort((a, b) => a - b) : queue.map((_, i) => i);
+    selected.size > 0
+      ? [...selected].filter((i) => i < queue.length).sort((a, b) => a - b)
+      : queue.map((_, i) => i);
   const renameTarget: RenameTarget = {
     label:
       selected.size > 0

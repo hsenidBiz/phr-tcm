@@ -441,6 +441,24 @@ test("power rename scoped to the selection writes the file back", async () => {
   expect(dialog).toBeInTheDocument();
 });
 
+/// The white window, caught by the app log on 2026-09-11: "Cannot read
+/// properties of undefined (reading 'update_id')" right after Remove all.
+/// The selection is a set of positions; Remove all emptied the queue under
+/// it and the next render indexed the empty queue with a stale position.
+test("Remove all with every row selected does not crash the screen", async () => {
+  baseMocks();
+  renderQueue([makeCase({ title: "One" }), makeCase({ title: "Two" })]);
+  const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all queued cases" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
+  } finally {
+    quiet.mockRestore();
+  }
+  expect(screen.queryByText("One")).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 /// An optimized file carries both readings; the queue can be laid out in
 /// either. The sort is real - the queue's order is the creation order.
 test("the queue flips between tester order and spec order", async () => {

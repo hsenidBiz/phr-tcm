@@ -752,6 +752,7 @@ pub async fn submit_queue(
                         &effective_iteration,
                         tc.update_id.and_then(|id| steps_before.get(&id)).map(String::as_str),
                         tc.update_id.and_then(|id| tags_before.get(&id)).map(String::as_str),
+                        i - chunk_start + 1,
                     ) {
                         Ok(req) => {
                             reqs.push(req);
@@ -862,13 +863,14 @@ fn queue_item_request(
     iteration_path: &str,
     original_steps_xml: Option<&str>,
     original_tags: Option<&str>,
+    temp_id: usize,
 ) -> Result<crate::ado::wit_batch::BatchRequest, String> {
-    use crate::ado::wit_batch::{create_uri, update_uri, BatchRequest};
+    use crate::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchRequest};
     tc.is_valid()?;
     Ok(match tc.update_id {
         Some(existing_id) => BatchRequest {
             method: "PATCH",
-            uri: update_uri(project, existing_id),
+            uri: update_uri(existing_id),
             body: serde_json::Value::Array(client.update_test_case_doc(
                 tc,
                 m_ref,
@@ -879,11 +881,11 @@ fn queue_item_request(
             )),
         },
         // The batch API creates with PATCH against the type's URL, as its
-        // own reference does - a POST there is refused.
-        None => BatchRequest {
-            method: "PATCH",
-            uri: create_uri(project),
-            body: serde_json::Value::Array(client.create_test_case_doc(
+        // own reference does - a POST there is refused. The document
+        // starts with the batch-local temporary id (see `temp_id_op`).
+        None => {
+            let mut doc = vec![temp_id_op(temp_id)];
+            doc.extend(client.create_test_case_doc(
                 organization,
                 project,
                 tc,
@@ -892,8 +894,13 @@ fn queue_item_request(
                 iteration_path,
                 p_ref,
                 Some(pbi_id),
-            )),
-        },
+            ));
+            BatchRequest {
+                method: "PATCH",
+                uri: create_uri(project),
+                body: serde_json::Value::Array(doc),
+            }
+        }
     })
 }
 

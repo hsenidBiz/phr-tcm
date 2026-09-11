@@ -70,9 +70,21 @@ pub fn create_uri(project: &str) -> String {
     )
 }
 
-/// The batch URI that updates work item `id` in `project`.
-pub fn update_uri(project: &str, id: i32) -> String {
-    format!("/{}/_apis/wit/workitems/{}?api-version=7.1", percent_encode_segment(project), id)
+/// The batch URI that updates work item `id`. Organization-level, no
+/// project segment: that is the shape the batch reference documents, and
+/// the project-prefixed form answered 404 for every one of 96 updates on
+/// the first real run (2026-09-11) while the same ids updated fine
+/// through the single-item endpoint.
+pub fn update_uri(id: i32) -> String {
+    format!("/_apis/wit/workitems/{id}?api-version=7.1")
+}
+
+/// The operation a create inside a batch must START with: a temporary id,
+/// negative and unique within the batch, so the server can tell the
+/// creates apart. Without it only the first create in a batch succeeded
+/// and the other 24 came back 400 (2026-09-11). `n` is 1-based.
+pub fn temp_id_op(n: usize) -> serde_json::Value {
+    serde_json::json!({"op": "add", "path": "/id", "value": -(n as i64)})
 }
 
 impl AdoClient {
@@ -110,7 +122,8 @@ impl AdoClient {
         }
         Ok(items
             .iter()
-            .map(|it| {
+            .enumerate()
+            .map(|(k, it)| {
                 let code = it["code"].as_u64().unwrap_or(0) as u16;
                 let body = match &it["body"] {
                     serde_json::Value::String(s) => {
@@ -118,7 +131,24 @@ impl AdoClient {
                     }
                     other => other.clone(),
                 };
-                BatchItem { code, body }
+                let item = BatchItem { code, body };
+                // A refused item goes to the log with what the server sent,
+                // because the message shown to the user is only as good as
+                // the `message` field, and "HTTP 400" on its own explained
+                // nothing about 92 failures.
+                if !item.ok() {
+                    let raw = it["body"].as_str().map(str::to_string).unwrap_or_else(|| it["body"].to_string());
+                    let raw: String = raw.chars().take(600).collect();
+                    crate::applog::warn(format!(
+                        "batch item {} ({} {}) -> {}: {}",
+                        k + 1,
+                        reqs[k].method,
+                        reqs[k].uri,
+                        code,
+                        raw
+                    ));
+                }
+                item
             })
             .collect())
     }
