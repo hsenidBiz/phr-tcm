@@ -482,6 +482,8 @@ pub fn parse_ops_full(
                         // either reading yet; the next optimize stamps both.
                         spec_order: None,
                         tester_order: None,
+                        // An inserted case starts with no findings.
+                        findings: vec![],
                     });
                 }
                 if cases.is_empty() {

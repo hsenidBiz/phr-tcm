@@ -23,7 +23,11 @@ lives (the spec section or the code symbol). Add an 'Out of scope:' line \
 only if this case deliberately leaves something out. Leave out where the \
 cases came from as a body of work and the scope of the whole set - both \
 were agreed once and repeating them per case is noise on every case. 'reviewer_notes' is rendered as MARKDOWN \
-when the cases are opened in a browser, so a link to the spec works.";
+when the cases are opened in a browser, so a link to the spec works. A third file-only field, 'findings', \
+is a list of problems found while writing THIS case: each entry has 'kind' (test_case, spec or code), an \
+optional 'subject' (the spec section or code symbol), a one-line 'title' and an optional markdown 'detail'. \
+Put a contradiction between the spec and the code here, never in 'comment' (the developer's field) and \
+never in 'reviewer_notes'.";
 
 pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
     let records: Vec<serde_json::Value> = queue
@@ -66,6 +70,9 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
             }
             if let Some(n) = tc.tester_order {
                 rec["tester_order"] = serde_json::json!(n);
+            }
+            if !tc.findings.is_empty() {
+                rec["findings"] = serde_json::json!(tc.findings);
             }
             rec
         })

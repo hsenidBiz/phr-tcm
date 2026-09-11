@@ -8,6 +8,21 @@ pub const MAX_TITLE_LEN: usize = 255;
 
 pub const VALID_STATUSES: [&str; 2] = ["Not Automated", "Planned"];
 
+pub const FINDING_KINDS: [&str; 3] = ["test_case", "spec", "code"];
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct CaseFinding {
+    /// One of FINDING_KINDS.
+    pub kind: String,
+    /// What it is about: the spec file and section, the code symbol, or empty for the case itself.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub subject: String,
+    pub title: String,
+    /// Markdown.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct TestCase {
     pub title: String,
@@ -59,6 +74,12 @@ pub struct TestCase {
     /// last saved in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tester_order: Option<u32>,
+    /// Problems an assistant found while writing this case: in the spec,
+    /// the code, or the case itself. Lives in the draft file, shown only
+    /// in the browser page, never sent to Azure DevOps, never written by
+    /// a transform. `comment` stays the developer's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<CaseFinding>,
 }
 
 impl TestCase {

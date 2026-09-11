@@ -294,6 +294,7 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             reviewer_notes: String::new(),
             spec_order: None,
             tester_order: None,
+            findings: vec![],
         });
     }
 
@@ -457,6 +458,43 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
         let spec_order = read_order(&["spec_order", "specOrder"]);
         let tester_order = read_order(&["tester_order", "testerOrder"]);
 
+        // Findings: what the assistant found wrong while writing this case.
+        // Objects carry kind/subject/title/detail; a bare string is a
+        // finding about the case itself. A kind outside the three is a
+        // typo, not a new category - warn and drop that entry.
+        let mut findings = vec![];
+        if let Some(list) = obj.get("findings").and_then(|v| v.as_array()) {
+            for (k, rf) in list.iter().enumerate() {
+                let (kind, subject, ftitle, detail) = match rf {
+                    serde_json::Value::String(s) => ("test_case".to_string(), String::new(), s.trim().to_string(), String::new()),
+                    serde_json::Value::Object(_) => (
+                        json_value(rf, &["kind"]).map(value_to_string).unwrap_or_else(|| "test_case".into()).trim().to_string(),
+                        json_value(rf, &["subject"]).map(value_to_string).unwrap_or_default().trim().to_string(),
+                        json_value(rf, &["title"]).map(value_to_string).unwrap_or_default().trim().to_string(),
+                        json_value(rf, &["detail"]).map(value_to_string).unwrap_or_default().trim().to_string(),
+                    ),
+                    _ => {
+                        warnings.push(format!("{label} ('{title}') findings entry {}: expected an object or string - skipped.", k + 1));
+                        continue;
+                    }
+                };
+                if !crate::model::FINDING_KINDS.contains(&kind.as_str()) {
+                    warnings.push(format!(
+                        "{label} ('{title}') findings entry {}: kind '{kind}' is not test_case, spec or code - skipped.",
+                        k + 1
+                    ));
+                    continue;
+                }
+                if ftitle.is_empty() {
+                    warnings.push(format!("{label} ('{title}') findings entry {}: has no title - skipped.", k + 1));
+                    continue;
+                }
+                findings.push(crate::model::CaseFinding { kind, subject, title: ftitle, detail });
+            }
+        } else if obj.get("findings").is_some_and(|v| !v.is_null()) {
+            warnings.push(format!("{label} ('{title}'): 'findings' must be a list - ignored."));
+        }
+
         let raw_steps = match obj.get("steps") {
             None | Some(serde_json::Value::Null) => vec![],
             Some(serde_json::Value::Array(list)) => list.clone(),
@@ -532,6 +570,7 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             reviewer_notes,
             spec_order,
             tester_order,
+            findings,
         });
     }
 

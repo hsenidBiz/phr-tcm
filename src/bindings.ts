@@ -634,6 +634,28 @@ export type BuildStage = {
 	jobs: BuildJob[],
 };
 
+export type CaseFinding = CaseFinding_Serialize | CaseFinding_Deserialize;
+
+export type CaseFinding_Deserialize = {
+	/**  One of FINDING_KINDS. */
+	kind: string,
+	/**  What it is about: the spec file and section, the code symbol, or empty for the case itself. */
+	subject?: string,
+	title: string,
+	/**  Markdown. */
+	detail?: string,
+};
+
+export type CaseFinding_Serialize = {
+	/**  One of FINDING_KINDS. */
+	kind: string,
+	/**  What it is about: the spec file and section, the code symbol, or empty for the case itself. */
+	subject?: string,
+	title: string,
+	/**  Markdown. */
+	detail?: string,
+};
+
 /**  One test case's recent outcomes (newest first, capped at 5). */
 export type CaseHistory = {
 	test_case_id: number,
@@ -1507,6 +1529,13 @@ export type TestCase_Deserialize = {
 	 *  last saved in.
 	 */
 	tester_order?: number | null,
+	/**
+	 *  Problems an assistant found while writing this case: in the spec,
+	 *  the code, or the case itself. Lives in the draft file, shown only
+	 *  in the browser page, never sent to Azure DevOps, never written by
+	 *  a transform. `comment` stays the developer's.
+	 */
+	findings?: CaseFinding_Deserialize[],
 };
 
 export type TestCase_Serialize = {
@@ -1563,6 +1592,13 @@ export type TestCase_Serialize = {
 	 *  last saved in.
 	 */
 	tester_order?: number | null,
+	/**
+	 *  Problems an assistant found while writing this case: in the spec,
+	 *  the code, or the case itself. Lives in the draft file, shown only
+	 *  in the browser page, never sent to Azure DevOps, never written by
+	 *  a transform. `comment` stays the developer's.
+	 */
+	findings?: CaseFinding_Serialize[],
 };
 
 export type TestPlan = {

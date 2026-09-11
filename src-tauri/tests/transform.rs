@@ -598,3 +598,21 @@ fn a_replacement_inside_a_verbatim_quote_is_reported() {
         report.warnings
     );
 }
+
+/// Findings ride along: an op that rewrites a case leaves its findings as
+/// they were, and none can write them.
+#[test]
+fn transforms_carry_findings_through_unchanged() {
+    let mut c = noted("A", "n");
+    c.findings = vec![v2_lib::model::CaseFinding {
+        kind: "code".into(),
+        subject: "Index.cs".into(),
+        title: "Null check".into(),
+        detail: String::new(),
+    }];
+    let ops = parse_ops(&serde_json::json!([{ "op": "prefix_title", "value": "X " }])).unwrap();
+    let (out, _) = apply(vec![c], &ops);
+    assert_eq!(out[0].title, "X A");
+    assert_eq!(out[0].findings.len(), 1);
+    assert_eq!(out[0].findings[0].title, "Null check");
+}

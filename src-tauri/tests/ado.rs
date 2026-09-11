@@ -260,6 +260,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         reviewer_notes: String::new(),
         spec_order: None,
         tester_order: None,
+        findings: vec![],
     }
 }
 
@@ -647,6 +648,7 @@ fn app_only_fields_never_reach_a_request_body() {
         !src.contains("reviewer_notes"),
         "reviewer_notes must not appear in request-building code"
     );
+    assert!(!src.contains("findings"), "findings must not appear in request-building code");
 }
 
 /// The one sanctioned exception, and it is held to a TIGHTER rule than the
@@ -1309,6 +1311,7 @@ async fn the_create_document_folds_the_pbi_link_in_when_asked() {
         reviewer_notes: String::new(),
         spec_order: None,
         tester_order: None,
+        findings: vec![],
     };
     let linked = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, Some(100));
     let rel = linked

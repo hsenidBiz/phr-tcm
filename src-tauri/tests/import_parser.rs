@@ -150,6 +150,7 @@ fn json_export_round_trips_through_the_importer() {
             reviewer_notes: "## Source\n\nSpec **3.2**, AC-4. Out of scope: SSO.".into(),
             spec_order: None,
             tester_order: None,
+            findings: vec![],
         },
         TestCase {
             title: "New one".into(),
@@ -201,6 +202,52 @@ fn json_export_round_trips_through_the_importer() {
     // A case that HAS an id still carries it - that is the whole update
     // contract.
     assert_eq!(doc["test_cases"][0]["id"], serde_json::json!(77));
+}
+
+/// A problem an assistant found travels with its case: read from the
+/// file, written back on export, kind validated, bare strings allowed.
+#[test]
+fn findings_round_trip_with_the_case_and_bad_kinds_warn() {
+    let json = serde_json::json!({
+        "test_cases": [{
+            "title": "Cut-off closes the order",
+            "automation_status": "Not Automated",
+            "steps": [{ "action": "Open the page.", "expected": "Closed." }],
+            "findings": [
+                { "kind": "spec", "subject": "Orders.md 7.7", "title": "AC-3 contradicts the table", "detail": "Table says **closed**." },
+                "Step 3 expects a toast the spec never mentions",
+                { "kind": "vibes", "title": "Not a kind" }
+            ]
+        }]
+    })
+    .to_string();
+    let path = tmp_path("findings.json");
+    std::fs::write(&path, &json).unwrap();
+    let (cases, warnings) = parse_file(&path).unwrap();
+    std::fs::remove_file(&path).ok();
+    assert_eq!(cases.len(), 1);
+    let f = &cases[0].findings;
+    assert_eq!(f.len(), 2, "the bad kind is dropped: {f:?}");
+    assert_eq!(f[0].kind, "spec");
+    assert_eq!(f[0].subject, "Orders.md 7.7");
+    assert_eq!(f[0].detail, "Table says **closed**.");
+    assert_eq!(f[1].kind, "test_case", "a bare string is a finding about the case itself");
+    assert_eq!(f[1].title, "Step 3 expects a toast the spec never mentions");
+    assert!(warnings.iter().any(|w| w.contains("findings") && w.contains("vibes")), "{warnings:?}");
+
+    let out = v2_lib::import_parser::queue_to_json_string(&cases).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let back = &v["test_cases"][0]["findings"];
+    assert_eq!(back.as_array().unwrap().len(), 2);
+    assert_eq!(back[0]["subject"], "Orders.md 7.7");
+    assert!(back[1].get("subject").is_none(), "empty subject is not written");
+
+    // A case with no findings writes no key (the AI_INSTRUCTIONS text
+    // itself mentions the word, so check the record, not the whole doc).
+    let plain = TestCase { title: "P".into(), steps: cases[0].steps.clone(), automation_status: "Planned".into(), ..Default::default() };
+    let out = v2_lib::import_parser::queue_to_json_string(&[plain]).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v["test_cases"][0].get("findings").is_none(), "{out}");
 }
 
 /// The two sort orders ride the JSON like the notes do: written when
@@ -494,6 +541,7 @@ fn html_export_carries_cases_and_search() {
         reviewer_notes: String::new(),
         spec_order: None,
         tester_order: None,
+        findings: vec![],
     }];
     let path = tmp_path("report.html");
     v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None, &Default::default())
@@ -526,6 +574,7 @@ fn the_test_case_page_is_themed_and_can_be_flipped() {
         reviewer_notes: String::new(),
         spec_order: None,
         tester_order: None,
+        findings: vec![],
     }];
     // Spelled out rather than `..Default::default()`: that default is the
     // LIGHT palette, so a partial dark fixture inherits #1f2530 text onto
