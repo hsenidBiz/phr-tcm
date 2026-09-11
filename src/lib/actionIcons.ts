@@ -71,6 +71,7 @@ export {
   Compass as IconTour,
   Bug as IconBug,
   KanbanSquare as IconBoard,
+  Lightbulb as IconFinding,
   // The app's own mark, for the way BACK to the test case side - the
   // mode switch names its destination, so its icon has to as well.
   FlaskConical as IconTestCases,

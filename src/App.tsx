@@ -1093,7 +1093,7 @@ export default function App() {
                 {AUTO_RUN_ENABLED && section === "autorun" && (
                   <AutoRun org={org} project={project} pbi={pbi} />
                 )}
-                {section === "ai" && <AiBridge />}
+                {section === "ai" && <AiBridge org={org} project={project} />}
                 {section === "settings" && <Settings org={org} project={project} />}
               </AnimatedContent>
             )}

@@ -51,6 +51,18 @@ test("lists installed AI tools with their registered state", async () => {
   expect(screen.getByRole("button", { name: "Register" })).toBeInTheDocument();
 });
 
+test("the findings card is on the tab", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    if (cmd === "list_findings") return [];
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+  expect(await screen.findByRole("heading", { name: "AI Findings" })).toBeInTheDocument();
+});
+
 test("Register invokes register_ai_tool with the tool's id", async () => {
   let registeredId: string | undefined;
   mockIPC((cmd, args) => {
