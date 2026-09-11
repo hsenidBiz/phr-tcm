@@ -13,7 +13,22 @@ impl AdoClient {
         suite_id: i32,
         test_case_ids: &[i32],
     ) -> Result<Vec<TestPoint>, AdoError> {
-        let tc_filter = if test_case_ids.is_empty() {
+        self.get_test_points_in(org, project, plan_id, suite_id, test_case_ids, false).await
+    }
+
+    /// Same, with `recursive` mapping to the endpoint's documented
+    /// `isRecursive` flag: the points of every child suite come too, so a
+    /// folder suite reads in one call.
+    pub async fn get_test_points_in(
+        &self,
+        org: &str,
+        project: &str,
+        plan_id: i32,
+        suite_id: i32,
+        test_case_ids: &[i32],
+        recursive: bool,
+    ) -> Result<Vec<TestPoint>, AdoError> {
+        let mut tc_filter = if test_case_ids.is_empty() {
             String::new()
         } else {
             format!(
@@ -25,6 +40,9 @@ impl AdoClient {
                     .join(",")
             )
         };
+        if recursive {
+            tc_filter.push_str("&isRecursive=true");
+        }
         let mut points = vec![];
         let mut continuation: Option<String> = None;
         let mut pages = 0usize;

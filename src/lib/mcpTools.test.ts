@@ -103,6 +103,17 @@ test("switching the wiki row off disables both tools, and on clears both", () =>
   expect(toggleRow(off, ["search_wiki", "get_wiki_page"])).toEqual([]);
 });
 
+/// The suite pair is one switch too: off disables the search and the case
+/// reader together, and a saved list naming one half completes toward OFF.
+test("the Test Suites row switches both suite tools together", () => {
+  const off = toggleRow([], ["search_test_suites", "get_suite_test_cases"]);
+  expect([...off].sort()).toEqual(["get_suite_test_cases", "search_test_suites"]);
+  expect(toggleRow(off, ["search_test_suites", "get_suite_test_cases"])).toEqual([]);
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["get_suite_test_cases"]));
+  expect([...loadDisabledTools()].sort()).toEqual(["get_suite_test_cases", "search_test_suites"]);
+  localStorage.clear();
+});
+
 /// A saved list from before the pairing can name one without the other.
 /// Completing it toward OFF is the safe direction: the alternative silently
 /// hands an assistant a tool the user had switched off.
@@ -123,14 +134,19 @@ test("validate, optimise and merge are always on and not listed", () => {
   }
 });
 
-/// Four rows is the whole of what this screen can still decide.
-test("only the switchable tools are left, as four rows", () => {
+/// Five rows is the whole of what this screen can still decide. The suite
+/// pair takes one switch, like the wiki pair: a reader that can never be
+/// handed a suite id is no choice at all.
+test("only the switchable tools are left, as five rows", () => {
   expect(visibleRows().map((r) => r.key)).toEqual([
+    "search_test_suites+get_suite_test_cases",
     "get_run_failures",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
   ]);
+  const suites = visibleRows().find((r) => r.key.startsWith("search_test_suites"));
+  expect(suites?.label).toBe("Test Suites");
 });
 
 /// The screen shows names people read, not identifiers. An underscore in a

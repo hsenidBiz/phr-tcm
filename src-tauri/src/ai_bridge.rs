@@ -151,6 +151,14 @@ pub async fn route(
             Some(c) => test_cases(ctx, c, target).await,
             None => (503, "sign in to Test Case Manager first".into()),
         },
+        ("GET", "/suites") => match client {
+            Some(c) => suites(ctx, c, target).await,
+            None => (503, "sign in to Test Case Manager first".into()),
+        },
+        ("GET", "/suite-cases") => match client {
+            Some(c) => suite_cases(ctx, c, target).await,
+            None => (503, "sign in to Test Case Manager first".into()),
+        },
         ("GET", "/tags") => tags(ctx, client, target).await,
         // Both autorun routes deliberately ignore `client`: one documents
         // a format, the other writes local files. Neither reaches Azure
@@ -1525,14 +1533,7 @@ async fn test_cases(
     let Some(pbi) = q(target, "pbi").and_then(|v| v.parse::<i32>().ok()) else {
         return (400, "pass ?pbi=<work item id> (find one with search_pbis)".into());
     };
-    let limit = q(target, "limit")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(5)
-        .min(20);
-    let offset = q(target, "offset").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-    // Titles-only mode exists for duplicate checking: comparing titles
-    // against a PBI with 60 cases must not cost 60 cases of step text.
-    let titles_only = matches!(q(target, "titles_only").as_deref(), Some("true") | Some("1"));
+    let (limit, offset, titles_only) = paging(target);
     match client
         .get_pbi_test_cases_full(
             &ctx.org,
@@ -1542,53 +1543,211 @@ async fn test_cases(
         )
         .await
     {
-        Ok(cases) => {
-            let total = cases.len();
-            // Titles are cheap: a fixed 200, not the caller's limit, so one
-            // call can cover a whole PBI when all it needs is duplicate
-            // checking. (Was written `limit.max(200).min(200)`, which is
-            // the same 200 by a longer route - and a deny-level clippy lint,
-            // because that shape is usually a mistake rather than a
-            // deliberate constant.)
-            let page = if titles_only { 200 } else { limit };
-            let records: Vec<serde_json::Value> = cases
-                .iter()
-                .skip(offset)
-                .take(page)
-                .map(|c| {
-                    if titles_only {
-                        serde_json::json!({ "id": c.id, "title": c.title })
-                    } else {
-                        serde_json::json!({
-                            "id": c.id,
-                            "title": c.title,
-                            "tags": c.tags,
-                            "automation_status": c.automation_status,
-                            "module": c.module_value,
-                            "preconditions": c.preconditions,
-                            "steps": c.steps.iter().map(|s| serde_json::json!({
-                                "action": s.action, "expected": s.expected
-                            })).collect::<Vec<_>>(),
-                        })
-                    }
+        Ok(cases) => (200, case_page(&cases, limit, offset, titles_only).to_string()),
+        Err(e) => (502, format!("Azure DevOps error: {e:?}")),
+    }
+}
+
+/// The paging arguments every case-listing route reads the same way:
+/// `limit` (default 5, cap 20), `offset`, and `titles_only`.
+fn paging(target: &str) -> (usize, usize, bool) {
+    let limit = q(target, "limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(5)
+        .min(20);
+    let offset = q(target, "offset").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    // Titles-only mode exists for duplicate checking: comparing titles
+    // against a set of 60 cases must not cost 60 cases of step text.
+    let titles_only = matches!(q(target, "titles_only").as_deref(), Some("true") | Some("1"));
+    (limit, offset, titles_only)
+}
+
+/// One page of cases in the import JSON record shape, with the total and
+/// a note when the page did not reach the end. Shared by the PBI and the
+/// suite listings so the two never drift apart in shape.
+fn case_page(
+    cases: &[crate::ado::TestCaseFull],
+    limit: usize,
+    offset: usize,
+    titles_only: bool,
+) -> serde_json::Value {
+    let total = cases.len();
+    // Titles are cheap: a fixed 200, not the caller's limit, so one call
+    // can cover a whole set when all it needs is duplicate checking.
+    let page = if titles_only { 200 } else { limit };
+    let records: Vec<serde_json::Value> = cases
+        .iter()
+        .skip(offset)
+        .take(page)
+        .map(|c| {
+            if titles_only {
+                serde_json::json!({ "id": c.id, "title": c.title })
+            } else {
+                serde_json::json!({
+                    "id": c.id,
+                    "title": c.title,
+                    "tags": c.tags,
+                    "automation_status": c.automation_status,
+                    "module": c.module_value,
+                    "preconditions": c.preconditions,
+                    "steps": c.steps.iter().map(|s| serde_json::json!({
+                        "action": s.action, "expected": s.expected
+                    })).collect::<Vec<_>>(),
                 })
-                .collect();
-            let returned = records.len();
-            let mut out = serde_json::json!({
-                "test_cases": records,
-                "total": total,
-                "offset": offset,
-            });
-            if offset + returned < total {
-                // Say so explicitly: a silently incomplete page is how a
-                // duplicate check quietly misses cases.
-                out["note"] = serde_json::json!(format!(
-                    "{} of {} cases returned - pass offset={} for the next page.",
-                    returned,
-                    total,
-                    offset + returned
-                ));
             }
+        })
+        .collect();
+    let returned = records.len();
+    let mut out = serde_json::json!({
+        "test_cases": records,
+        "total": total,
+        "offset": offset,
+    });
+    if offset + returned < total {
+        // Say so explicitly: a silently incomplete page is how a
+        // duplicate check quietly misses cases.
+        out["note"] = serde_json::json!(format!(
+            "{} of {} cases returned - pass offset={} for the next page.",
+            returned,
+            total,
+            offset + returned
+        ));
+    }
+    out
+}
+
+/// How long a scanned plan tree is reused before it is read again. A
+/// project can hold hundreds of plans, and the scan is one request per
+/// plan; an assistant that lists suites and then reads three of them must
+/// not pay for the scan three times.
+const SUITE_TREE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+type SuiteTree = Vec<crate::ado_testplan::PlanWithSuites>;
+
+fn suite_tree_cache() -> &'static std::sync::Mutex<
+    std::collections::HashMap<(String, String, String), (std::time::Instant, SuiteTree)>,
+> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<(String, String, String), (std::time::Instant, SuiteTree)>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+/// The plans and suites the Test Suites tab shows, cached per org and
+/// project for `SUITE_TREE_TTL`; `refresh=true` reads them again.
+async fn suite_tree(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    refresh: bool,
+) -> Result<SuiteTree, crate::ado::AdoError> {
+    let key = (client.base_url.clone(), ctx.org.clone(), ctx.project.clone());
+    if !refresh {
+        if let Some((at, tree)) = suite_tree_cache().lock().unwrap().get(&key) {
+            if at.elapsed() < SUITE_TREE_TTL {
+                return Ok(tree.clone());
+            }
+        }
+    }
+    let tree = client.list_plans_with_suites(&ctx.org, &ctx.project).await?;
+    suite_tree_cache()
+        .lock()
+        .unwrap()
+        .insert(key, (std::time::Instant::now(), tree.clone()));
+    Ok(tree)
+}
+
+/// Every suite in the project, one row each with its plan, filtered by
+/// `q` against the plan name, the suite name, or a requirement id. The
+/// plan id and suite id in a row are what `get_suite_test_cases` takes.
+async fn suites(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    target: &str,
+) -> (u16, String) {
+    const CAP: usize = 200;
+    let query = q(target, "q").map(|s| s.trim().to_lowercase()).unwrap_or_default();
+    let refresh = matches!(q(target, "refresh").as_deref(), Some("true") | Some("1"));
+    let tree = match suite_tree(ctx, client, refresh).await {
+        Ok(t) => t,
+        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+    };
+    let mut rows: Vec<serde_json::Value> = vec![];
+    for p in &tree {
+        let plan_hit = query.is_empty() || p.plan.name.to_lowercase().contains(&query);
+        for s in &p.suites {
+            let hit = plan_hit
+                || s.name.to_lowercase().contains(&query)
+                || s.requirement_id.map(|r| r.to_string() == query).unwrap_or(false);
+            if !hit {
+                continue;
+            }
+            rows.push(serde_json::json!({
+                "plan_id": p.plan.id,
+                "plan_name": p.plan.name,
+                "suite_id": s.id,
+                "suite_name": s.name,
+                "suite_type": s.suite_type,
+                "requirement_id": s.requirement_id,
+                "parent_suite_id": s.parent_id,
+            }));
+        }
+    }
+    let total = rows.len();
+    rows.truncate(CAP);
+    let mut out = serde_json::json!({ "suites": rows, "total": total });
+    if total > CAP {
+        out["note"] = serde_json::json!(format!(
+            "{CAP} of {total} suites returned - pass q=<plan or suite name> to narrow the list."
+        ));
+    }
+    (200, out.to_string())
+}
+
+/// The cases in one suite, in the import JSON record shape, by way of the
+/// suite's test points - the same read the Run Tests tab makes. With
+/// `children=true` the endpoint's own `isRecursive` flag brings in every
+/// child suite's cases, so a folder reads in one call.
+async fn suite_cases(
+    ctx: &BridgeContext,
+    client: &crate::ado::AdoClient,
+    target: &str,
+) -> (u16, String) {
+    let (Some(plan), Some(suite)) = (
+        q(target, "plan").and_then(|v| v.parse::<i32>().ok()),
+        q(target, "suite").and_then(|v| v.parse::<i32>().ok()),
+    ) else {
+        return (400, "pass ?plan=<plan id>&suite=<suite id> (find them with search_test_suites)".into());
+    };
+    let (limit, offset, titles_only) = paging(target);
+    let children = matches!(q(target, "children").as_deref(), Some("true") | Some("1"));
+    let points = match client
+        .get_test_points_in(&ctx.org, &ctx.project, plan, suite, &[], children)
+        .await
+    {
+        Ok(p) => p,
+        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+    };
+    // One point per case per configuration: a suite run on two browsers
+    // lists every case twice. Keep the suite's order, each case once.
+    let mut ids: Vec<i32> = vec![];
+    for p in &points {
+        if let Some(id) = p.test_case_id {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    match client
+        .get_test_cases_by_ids(&ctx.org, &ids, ctx.module_ref.as_deref(), ctx.preconditions_ref.as_deref())
+        .await
+    {
+        Ok(mut cases) => {
+            // The work item read answers in id order; put the suite's own
+            // order back so the page reads like the suite does.
+            cases.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));
+            let mut out = case_page(&cases, limit, offset, titles_only);
+            out["plan_id"] = serde_json::json!(plan);
+            out["suite_id"] = serde_json::json!(suite);
             (200, out.to_string())
         }
         Err(e) => (502, format!("Azure DevOps error: {e:?}")),

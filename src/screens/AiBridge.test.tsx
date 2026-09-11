@@ -128,7 +128,7 @@ test("the how-it-works card names every MCP tool", async () => {
   // getting rid of.
   // "Find a PBI", not "Find a work item": the query filters on work item
   // type = Product Backlog Item, so it never returns a bug or a task.
-  for (const label of ["Run failures", "Project tags", "Find a PBI", "Project wiki"]) {
+  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
@@ -755,11 +755,12 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(within(toolSection).queryByText("Check a draft")).not.toBeInTheDocument();
   expect(within(toolSection).queryByText("Merge slice files")).not.toBeInTheDocument();
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
-  // Four rows for five tools: searching the wiki and reading a page from
-  // it share one switch.
+  // Five rows for seven tools: the wiki search and its page reader share
+  // one switch, and so do the suite search and its case reader.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
-  expect(within(toolSection).getByText("4 of 4 on")).toBeInTheDocument();
+  expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
+  expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
 });
 
 test("the PHR-X card hides when switched off in Settings, except during the tour", async () => {

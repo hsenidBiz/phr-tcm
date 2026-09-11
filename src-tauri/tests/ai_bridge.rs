@@ -494,6 +494,126 @@ async fn test_cases_return_real_cases_in_import_shape() {
     assert_eq!(cases[0]["steps"][0]["action"], "Open page");
 }
 
+/// The suite tree an assistant reads is the one the Test Suites tab shows:
+/// every plan's suites minus the structural root, one row each with the
+/// ids `get_suite_test_cases` takes. The filter reaches plan names, suite
+/// names and a requirement suite's PBI id.
+#[tokio::test]
+async fn suites_list_the_plan_tree_and_filter_by_name_or_pbi() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [{ "id": 9, "name": "Web - Auth Plan", "areaPath": "Web", "rootSuite": { "id": 90 } }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": 90, "name": "Web - Auth Plan", "suiteType": "staticTestSuite" },
+                { "id": 91, "name": "Login", "suiteType": "staticTestSuite", "parentSuite": { "id": 90 } },
+                { "id": 92, "name": "42 : Checkout", "suiteType": "requirementTestSuite", "requirementId": 42, "parentSuite": { "id": 91 } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/suites", "", "1.10.3").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let rows = v["suites"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "the root suite is structure, not a row: {body}");
+    assert_eq!(rows[0]["plan_id"], 9);
+    assert_eq!(rows[0]["plan_name"], "Web - Auth Plan");
+    assert_eq!(rows[0]["suite_id"], 91);
+    assert_eq!(rows[0]["suite_type"], "staticTestSuite");
+    assert!(rows[0]["parent_suite_id"].is_null(), "a child of the root is top-level: {body}");
+    assert_eq!(rows[1]["requirement_id"], 42);
+    assert_eq!(rows[1]["parent_suite_id"], 91);
+
+    // By suite name, and by the PBI a requirement suite is bound to.
+    let (_, body) = route(&ctx(), Some(&client), "GET", "/suites?q=login", "", "1.10.3").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["suites"].as_array().unwrap().len(), 1);
+    assert_eq!(v["suites"][0]["suite_name"], "Login");
+    let (_, body) = route(&ctx(), Some(&client), "GET", "/suites?q=42", "", "1.10.3").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["suites"][0]["suite_id"], 92, "{body}");
+
+    // Three listings, one scan: the tree is cached.
+    let scans = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().ends_with("/testplan/plans"))
+        .count();
+    assert_eq!(scans, 1);
+}
+
+/// A suite's cases come by way of its test points, as on Run Tests: each
+/// case once even when two configurations give it two points, in the
+/// suite's order, in the same record shape `get_test_cases` returns.
+/// `children=true` is the endpoint's own `isRecursive`.
+#[tokio::test]
+async fn suite_cases_follow_the_points_in_suite_order() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": 1, "testCaseReference": { "id": 202, "name": "Second" }, "configuration": { "name": "Chrome" } },
+                { "id": 2, "testCaseReference": { "id": 201, "name": "First" }, "configuration": { "name": "Chrome" } },
+                { "id": 3, "testCaseReference": { "id": 202, "name": "Second" }, "configuration": { "name": "Edge" } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                { "id": 201, "fields": { "System.Title": "First", "Microsoft.VSTS.TCM.AutomationStatus": "Planned" } },
+                { "id": 202, "fields": { "System.Title": "Second", "Custom.Module": "Login",
+                    "Microsoft.VSTS.TCM.Steps": "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Open page</parameterizedString><parameterizedString isformatted=\"true\">Shown</parameterizedString><description/></step></steps>" } }
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/suite-cases?plan=9&suite=91&limit=5", "", "1.10.3").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let cases = v["test_cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 2, "one row per case, not per point: {body}");
+    assert_eq!(cases[0]["id"], 202, "the suite's order, not id order: {body}");
+    assert_eq!(cases[0]["module"], "Login");
+    assert_eq!(cases[0]["steps"][0]["action"], "Open page");
+    assert_eq!(cases[1]["id"], 201);
+    assert_eq!(v["total"], 2);
+    assert_eq!(v["suite_id"], 91);
+
+    let (status, _) =
+        route(&ctx(), Some(&client), "GET", "/suite-cases?plan=9&suite=91&children=true", "", "1.10.3").await;
+    assert_eq!(status, 200);
+    let recursive = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().ends_with("/TestPoint"))
+        .filter(|r| r.url.query().unwrap_or("").contains("isRecursive=true"))
+        .count();
+    assert_eq!(recursive, 1, "children=true asks the endpoint for the child suites' points too");
+
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/suite-cases?plan=9", "", "1.10.3").await;
+    assert_eq!(status, 400);
+    assert!(body.contains("search_test_suites"), "{body}");
+}
+
 #[tokio::test]
 async fn search_wiki_503_without_a_client() {
     let (status, body) = route(&ctx(), None, "GET", "/search-wiki?q=auth", "", "1.10.3").await;

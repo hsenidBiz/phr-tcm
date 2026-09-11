@@ -293,6 +293,31 @@ pub const COMMANDS: &[CommandSpec] = &[
         ],
     },
     CommandSpec {
+        stem: "suites",
+        tool: "search_test_suites",
+        desc: "Find a test suite by plan name, suite name or PBI id",
+        hint: "[plan or suite name, or a PBI id]",
+        body: &[
+            "Call `search_test_suites` with: $ARGUMENTS",
+            "",
+            "One row per suite, with the plan id and suite id that `get_suite_test_cases`",
+            "takes. Always pass a query - a project can hold hundreds of plans.",
+        ],
+    },
+    CommandSpec {
+        stem: "suite-cases",
+        tool: "get_suite_test_cases",
+        desc: "Show the test cases in a test suite, in import JSON shape",
+        hint: "[plan id and suite id, or the suite name to find first]",
+        body: &[
+            "Call `get_suite_test_cases` for: $ARGUMENTS",
+            "",
+            "Find the plan id and suite id with `search_test_suites` first if you only have",
+            "a name. Pass `include_children` to read a folder suite and everything beneath it.",
+            "`titles_only` is the cheap way to check a large suite for duplicates.",
+        ],
+    },
+    CommandSpec {
         stem: "failures",
         tool: "get_run_failures",
         desc: "Show what failed in a PBI's latest runs, with the tester's comments",

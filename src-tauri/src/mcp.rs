@@ -138,6 +138,26 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["pbi_id"]),
         },
         {
+            "name": "search_test_suites",
+            "description": "The test plans and suites in the current project, one row per suite with its plan id, suite id, type (staticTestSuite, requirementTestSuite, dynamicTestSuite), the PBI a requirement suite is bound to, and its parent suite. Filter with `query` against the plan name, the suite name, or a PBI id - a project can hold hundreds of plans, so filter rather than reading all of them. Use it to find a suite before calling get_suite_test_cases, or to read how a feature's cases are organised across plans. Served from a ten-minute cache; pass `refresh` after suites were created or moved.",
+            "inputSchema": schema(serde_json::json!({
+                "query": { "type": "string", "description": "Case-insensitive text matched against plan names and suite names, or a PBI id to find its requirement suite" },
+                "refresh": { "type": "boolean", "description": "Read the plans again instead of the cached tree" },
+            }), &[]),
+        },
+        {
+            "name": "get_suite_test_cases",
+            "description": "The test cases in one test suite, in the exact import JSON shape, in the suite's own order. Takes the plan id and suite id that search_test_suites returns. A folder suite lists its own cases only unless `include_children` is set, which reads every suite beneath it in one call. Use it to copy the house style of a suite, to check what a suite already covers, or to read a static suite that has no PBI for get_test_cases to take.",
+            "inputSchema": schema(serde_json::json!({
+                "plan_id": { "type": "integer", "description": "Test plan id, from search_test_suites" },
+                "suite_id": { "type": "integer", "description": "Test suite id, from search_test_suites" },
+                "include_children": { "type": "boolean", "description": "Also read the cases of every suite beneath this one - for a folder suite" },
+                "limit": { "type": "integer", "description": "Max cases (default 5, cap 20)" },
+                "offset": { "type": "integer", "description": "Skip this many cases - page through a suite with more than the cap" },
+                "titles_only": { "type": "boolean", "description": "Return only ids and titles (cap 200) - use for duplicate checking instead of pulling full step text" },
+            }), &["plan_id", "suite_id"]),
+        },
+        {
             "name": "get_run_failures",
             "description": "The failed cases from a PBI's latest test runs, each with the tester's failure comment and any bugs they linked. Use this to write regression cases for what actually broke: read the failure, read the failed case itself with get_test_cases, then extend the coverage rather than restating it.",
             "inputSchema": schema(serde_json::json!({
@@ -318,6 +338,35 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             let mut target = format!("/test-cases?pbi={pbi}&limit={limit}&offset={offset}");
             if args["titles_only"].as_bool().unwrap_or(false) {
                 target.push_str("&titles_only=true");
+            }
+            call("GET", &target, "")
+        }
+        "search_test_suites" => {
+            let mut params: Vec<String> = vec![];
+            if let Some(f) = args["query"].as_str().filter(|f| !f.trim().is_empty()) {
+                params.push(format!("q={}", percent_encode(f)));
+            }
+            if args["refresh"].as_bool().unwrap_or(false) {
+                params.push("refresh=true".to_string());
+            }
+            let target = if params.is_empty() {
+                "/suites".to_string()
+            } else {
+                format!("/suites?{}", params.join("&"))
+            };
+            call("GET", &target, "")
+        }
+        "get_suite_test_cases" => {
+            let plan = args["plan_id"].as_i64().unwrap_or(0);
+            let suite = args["suite_id"].as_i64().unwrap_or(0);
+            let limit = args["limit"].as_i64().unwrap_or(5);
+            let offset = args["offset"].as_i64().unwrap_or(0);
+            let mut target = format!("/suite-cases?plan={plan}&suite={suite}&limit={limit}&offset={offset}");
+            if args["titles_only"].as_bool().unwrap_or(false) {
+                target.push_str("&titles_only=true");
+            }
+            if args["include_children"].as_bool().unwrap_or(false) {
+                target.push_str("&children=true");
             }
             call("GET", &target, "")
         }

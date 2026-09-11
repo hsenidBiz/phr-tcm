@@ -876,6 +876,14 @@ export default function AiBridge() {
         </p>
         <ul className="space-y-1.5 text-xs text-muted">
           <li>
+            <span className="font-medium text-text">Test Suites</span> — two tools under one switch: one finds a test suite by plan name, suite name or
+            PBI id, the other reads the cases in it, in the suite&apos;s own order, with an option to
+            include every suite beneath a folder. This is how an assistant reads a static or
+            query-based suite that has no PBI for &quot;Cases already on a PBI&quot; to take. Reading
+            only — the same view as the Test Suites tab. Off, an assistant reaches cases through
+            a PBI alone.
+          </li>
+          <li>
             <span className="font-medium text-text">Run failures</span> — what failed the last time this PBI&apos;s cases were run, with the tester&apos;s own
             comments. The fastest way to turn a failed run into the cases that should
             have caught it. Switch it off to keep run results away from an assistant.

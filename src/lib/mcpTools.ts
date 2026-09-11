@@ -19,6 +19,8 @@ export const MCP_TOOLS: McpToolInfo[] = [
   },
   { name: "get_writing_guide", label: "Writing guide", summary: "Format rules and your org's allowed Module values." },
   { name: "get_test_cases", label: "Cases already on a PBI", summary: "The cases already on a PBI - style, and what is covered." },
+  { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in this project, by plan name, suite name or PBI id." },
+  { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
   { name: "get_run_failures", label: "Run failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },
   { name: "check_spec_coverage", label: "Specification coverage", summary: "Which spec sections have no case yet - findings to account for, not errors." },
   { name: "merge_case_files", label: "Merge slice files", summary: "Merge fan-out slice files into one draft through the real importer." },
@@ -66,7 +68,21 @@ export function isCoreTool(name: string): boolean {
  * pair moves together under one human name; "How it works" on the same
  * tab describes each half.
  */
-export const TOOL_PAIRS: readonly (readonly string[])[] = [["search_wiki", "get_wiki_page"]];
+export const TOOL_PAIRS: readonly (readonly string[])[] = [
+  ["search_wiki", "get_wiki_page"],
+  // The same shape: the reader takes the plan id and suite id the search
+  // returns, and has no other way to name a suite.
+  ["search_test_suites", "get_suite_test_cases"],
+];
+
+/** The one human name and summary a pair shows, keyed by its first member. */
+const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
+  search_wiki: { label: "Project wiki", summary: "Search the project wiki and read the pages it finds." },
+  search_test_suites: {
+    label: "Test Suites",
+    summary: "Find a test suite by plan, name or PBI, and read the cases in it.",
+  },
+};
 
 function pairOf(name: string): readonly string[] | undefined {
   return TOOL_PAIRS.find((p) => p.includes(name));
@@ -91,10 +107,11 @@ export function visibleRows(): McpToolRow[] {
       continue;
     }
     for (const n of pair) done.add(n);
+    const row = PAIR_ROWS[pair[0]] ?? { label: t.label, summary: t.summary };
     rows.push({
       key: pair.join("+"),
-      label: "Project wiki",
-      summary: "Search the project wiki and read the pages it finds.",
+      label: row.label,
+      summary: row.summary,
       names: [...pair],
     });
   }
