@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.23.19",
+    date: "2026-09-11",
+    items: [
+      "The run-sheet optimiser no longer strips arithmetic written in brackets. An expected result such as 0.8800 = (4 / 5 x 0.60) + (5 / 5 x 0.40) used to come back as 0.8800 = +, still readable and no longer testable. Brackets holding numbers and operators are kept, and a bracket inside another bracket no longer leaves a stray one behind.",
+      "Assistants can write a case's findings with the bulk-edit tool's new set_findings operation, so an existing set can be moved onto the findings field without restating every case.",
+    ],
+  },
+  {
     version: "1.23.18",
     date: "2026-09-11",
     items: [
