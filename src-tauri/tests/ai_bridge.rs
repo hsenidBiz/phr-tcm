@@ -312,6 +312,22 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(style.contains("AVOID em dashes"), "{style}");
     assert!(style.contains("active voice"), "{style}");
 
+    // Problems go to the findings store; the two human fields stay human.
+    let findings = body
+        .split("## Findings")
+        .nth(1)
+        .and_then(|rest| rest.split("## reviewer_notes").next())
+        .expect("the guide has a findings section");
+    assert!(findings.contains("record_finding"), "{findings}");
+    assert!(findings.contains("test_case"), "{findings}");
+    assert!(findings.contains("never write `comment`"), "the comment field is the developer's: {findings}");
+    let notes = body
+        .split("## reviewer_notes")
+        .nth(1)
+        .and_then(|rest| rest.split("## One branch per case").next())
+        .unwrap();
+    assert!(notes.contains("record_finding"), "a problem in a note is redirected to a finding: {notes}");
+
     // Reviewer notes are two things and no more: what this case checks,
     // in words anyone can read, and where the requirement lives. Both
     // halves are pinned because the field has drifted twice - first into

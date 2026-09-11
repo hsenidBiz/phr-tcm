@@ -165,6 +165,10 @@ pub async fn route(
         // DevOps, so neither should demand a sign-in first.
         ("GET", "/autorun-guide") => (200, crate::autorun::guide::autorun_guide()),
         ("POST", "/autorun-script") => save_autorun_scripts(body),
+        // Findings are local app data: no client needed, like the autorun
+        // routes - a problem noticed while signed out is still a problem.
+        ("POST", "/findings") => record_finding(ctx, body),
+        ("GET", "/findings") => list_findings(ctx, target),
         // The proxy asks for this before listing tools, so a toggle in the
         // app takes effect on the assistant's next tools/list.
         ("GET", "/tools") => (
@@ -274,6 +278,63 @@ fn save_autorun_scripts(body: &str) -> (u16, String) {
             (500, format!("could not save the bundle: {e}"))
         }
     }
+}
+
+/// The store root as app setup published it; `None` outside the app.
+fn findings_root() -> Result<std::path::PathBuf, (u16, String)> {
+    crate::findings::configured_root().ok_or((
+        503,
+        "Test Case Manager has not finished starting - the findings store has no location yet".into(),
+    ))
+}
+
+/// `record_finding`: one note about one thing, for the open org and project.
+fn record_finding(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let root = match findings_root() {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                400,
+                format!("that is not a finding: {e}. Expected {{ kind: test_case|spec|code, subject, title, detail }}."),
+            )
+        }
+    };
+    let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
+    match crate::findings::record(
+        &root,
+        crate::findings::NewFinding {
+            org: ctx.org.clone(),
+            project: ctx.project.clone(),
+            kind: s("kind"),
+            subject: s("subject"),
+            title: s("title"),
+            detail: s("detail"),
+        },
+    ) {
+        Ok(f) => {
+            crate::applog::info(format!("AI recorded a {} finding: {}", f.kind, f.title));
+            let open = crate::findings::list_open(&root, &ctx.org, &ctx.project).len();
+            (200, serde_json::json!({ "id": f.id, "open": open }).to_string())
+        }
+        Err(e) => (400, e),
+    }
+}
+
+/// `list_findings`: open by default; `status=resolved` or `status=all`.
+fn list_findings(ctx: &BridgeContext, target: &str) -> (u16, String) {
+    let root = match findings_root() {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    let want = q(target, "status").unwrap_or_else(|| "open".into());
+    let all = crate::findings::list(&root, &ctx.org, &ctx.project);
+    let rows: Vec<&crate::findings::Finding> =
+        all.iter().filter(|f| want == "all" || f.status == want).collect();
+    (200, serde_json::json!({ "findings": rows, "total": rows.len() }).to_string())
 }
 
 /// Reorganise a draft into a run sheet: navigation spelled out as steps,
@@ -1379,9 +1440,10 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
         `{{\"action\", \"expected\"}}`), `tags` (semicolon-separated, never commas),\n\
         `automation_status` (exactly {statuses}), `module` (ONLY from the list\n\
-        below), `preconditions` (state, not steps), and optionally `comment` -\n\
-        an in-app note that round-trips through the file but is never sent\n\
-        to Azure DevOps. Include `id` ONLY to update that exact work item;\n\
+        below), `preconditions` (state, not steps), and `comment` - the developer's own note, which round-trips\n\
+        through the file and is never sent to Azure DevOps. You never write\n\
+        `comment`: leave it exactly as you found it, and never add one.\n\
+        Include `id` ONLY to update that exact work item;\n\
         omit it to create.\n\n\
         Reuse preconditions VERBATIM wherever the environment genuinely is\n\
         the same - do not reword the same setup per case. The run-sheet\n\
@@ -1435,6 +1497,20 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         boost, skyrocketing, opened up, powerful, inquiries, ever-evolving.\n\n\
         IMPORTANT: review every case before handing it back and make sure\n\
         there are no em dashes.\n\n\
+        ## Findings\n\
+        When something you read is WRONG - a case that contradicts its spec,\n\
+        a spec that contradicts itself, code that does what neither says -\n\
+        call `record_finding` with `kind` (test_case, spec or code), the\n\
+        `subject` (the work item id, the spec file and section, or the file\n\
+        and member), a one-line `title` and the `detail` in markdown. The\n\
+        developer reads findings on the AI Bridge tab and in the browser\n\
+        report, and resolves them there. Call `list_findings` first so you do\n\
+        not record what is already known. Do this on your own when it applies;\n\
+        nobody will ask you to. And never write `comment` for this or for anything\n\
+        else, and never put it in reviewer_notes: the first is the developer's\n\
+        field, the second says where a case came from and nothing more. Do not\n\
+        write a case around a defect as if the defect were the requirement -\n\
+        record the finding and say so in the conversation.\n\n\
         ## reviewer_notes\n\
         Optional, never sent to Azure DevOps, and the most useful thing you\n\
         can add. Two parts, in this order, and nothing else:\n\n\
@@ -1465,8 +1541,11 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         - The SET's scope. That was agreed once, in the plan. A note is\n\
         about ONE case.\n\
         - A walk through the steps. They are directly above the note.\n\
+        - Anything WRONG that you noticed - a contradiction, a gap, a bug.\n\
+        That is a finding: call `record_finding` and keep the note to what\n\
+        the case checks and where its requirement lives.\n\
         - Your reasoning, or a decision argued at length. If a case really\n\
-        needs an argument made, that is a `comment`, not this.\n\n\
+        needs an argument made, that belongs in the conversation, not here - and never in `comment`.\n\n\
         Cite; never paraphrase from memory. Rendered as MARKDOWN, so a wiki\n\
         link works - but two sentences and a citation need no formatting.\n\n\
         ## One branch per case\n\
