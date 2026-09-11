@@ -54,6 +54,8 @@ fn tools_list_names_every_tool() {
             "search_test_suites",
             "get_suite_test_cases",
             "get_run_failures",
+            "record_finding",
+            "list_findings",
             "check_spec_coverage",
             "merge_case_files",
             "optimize_cases",
@@ -202,7 +204,73 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 15, "hidden tools were never part of 'everything'");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 17, "hidden tools were never part of 'everything'");
+}
+
+/// The description is the only thing an assistant reads. It used to name
+/// 21 ops while the server accepted 24; the gap hid replace_in_preconditions
+/// and normalise_citations, and set_comment was reachable when it should
+/// never have been. Now one list feeds both.
+#[test]
+fn the_transform_description_names_every_supported_op_and_nothing_else() {
+    let resp = handle_message(
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        "1.10.3",
+        &stub(200, ""),
+    )
+    .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let tool = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "transform_cases")
+        .unwrap()
+        .clone();
+    let desc = format!(
+        "{} {}",
+        tool["description"].as_str().unwrap(),
+        tool["inputSchema"]["properties"]["operations"]["description"].as_str().unwrap()
+    );
+    for name in v2_lib::transform::SUPPORTED_OPS {
+        assert!(desc.contains(name), "description omits {name}");
+    }
+    assert!(!desc.contains("set_comment"), "a removed op must not be advertised");
+}
+
+#[test]
+fn record_finding_posts_the_body_and_list_findings_passes_status() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |m: &str, path: &str, body: &str| -> Result<(u16, String), String> {
+        calls.borrow_mut().push((m.to_string(), path.to_string(), body.to_string()));
+        Ok((200, r#"{"id":"1-0","open":1}"#.into()))
+    };
+    let req = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"record_finding","arguments":{"kind":"spec","subject":"S 7.7","title":"T","detail":"D"}}}"#;
+    handle_message(req, "1.0.0", &call).unwrap();
+    let req = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"list_findings","arguments":{"status":"all"}}}"#;
+    handle_message(req, "1.0.0", &call).unwrap();
+    let c = calls.borrow();
+    let post = c.iter().find(|(m, p, _)| m == "POST" && p == "/findings").expect("record posts");
+    let body: serde_json::Value = serde_json::from_str(&post.2).unwrap();
+    assert_eq!(body["kind"], "spec");
+    assert_eq!(body["title"], "T");
+    assert!(c.iter().any(|(m, p, _)| m == "GET" && p == "/findings?status=all"), "{c:?}");
+}
+
+/// Always on: a disabled list naming them is ignored, like the other
+/// core tools - the guide decides when they are used, not a switch.
+#[test]
+fn the_finding_tools_are_core() {
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":["record_finding","list_findings"]}"#.into()));
+        }
+        Ok((200, "{}".into()))
+    };
+    let resp = handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"record_finding") && names.contains(&"list_findings"), "{names:?}");
 }
 
 /// The intake's questions and `begin_test_case_writing`'s inputSchema are

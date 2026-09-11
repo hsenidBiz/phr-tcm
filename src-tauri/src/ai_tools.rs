@@ -181,6 +181,11 @@ pub const CORE_TOOLS: &[&str] = &[
     "validate_cases",
     "optimize_cases",
     "merge_case_files",
+    // A problem an assistant finds must have somewhere to go that is not
+    // the developer's comment field or the provenance notes. A switch that
+    // could close that door would reopen the old habit.
+    "record_finding",
+    "list_findings",
 ];
 
 /// Tools that are never offered: not listed, not callable, no skill file,

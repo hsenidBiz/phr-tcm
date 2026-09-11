@@ -528,23 +528,57 @@ fn replace_in_steps_counts_a_case_with_several_variant_steps_once() {
     assert!(variant_warnings[0].contains("1 case"), "{:?}", variant_warnings);
 }
 
+/// `comment` is the developer's field. No op writes it, and the op that
+/// once did is gone - an assistant asking for it is told so, by name.
 #[test]
-fn replace_in_preconditions_and_set_comment_exist() {
+fn no_op_can_write_the_comment_field() {
     let mut c = noted("A", "n");
     c.preconditions = "Signed in as Appraisee".into();
     c.comment = "Blocked on a decision".into();
     let ops = parse_ops(&serde_json::json!([
         { "op": "replace_in_preconditions", "find": "Appraisee", "replace": "Employee" },
-        { "op": "set_comment", "value": "" },
     ]))
     .unwrap();
-    let (out, _) = apply(vec![c], &ops);
+    let (out, _) = apply(vec![c.clone()], &ops);
     assert_eq!(out[0].preconditions, "Signed in as Employee");
-    assert_eq!(out[0].comment, "", "an empty value clears the comment");
-    let (out, _) = apply(out, &parse_ops(&serde_json::json!([{ "op": "set_comment", "value": "Reviewed" }])).unwrap());
-    assert_eq!(out[0].comment, "Reviewed");
+    assert_eq!(out[0].comment, "Blocked on a decision", "the comment is untouched");
+    let err = parse_ops(&serde_json::json!([{ "op": "set_comment", "value": "Reviewed" }])).unwrap_err();
+    assert!(err.contains("unknown op"), "{err}");
+    assert!(err.contains("developer's"), "says why, not just that: {err}");
     let err = parse_ops(&serde_json::json!([{ "op": "replace_in_preconditions", "find": "", "replace": "x" }])).unwrap_err();
     assert!(err.contains("find"), "{err}");
+}
+
+/// The op table is one list, used by the server's refusal AND (through
+/// mcp.rs) by the tool's description. Three ops were reachable but
+/// unlisted in the description; this pins that every name the parser
+/// accepts is in the list, and every name in the list is accepted.
+#[test]
+fn supported_ops_is_the_parsers_whole_vocabulary() {
+    use v2_lib::transform::SUPPORTED_OPS;
+    assert_eq!(SUPPORTED_OPS.len(), 23);
+    assert!(!SUPPORTED_OPS.contains(&"set_comment"));
+    for name in SUPPORTED_OPS {
+        let extra = match name {
+            "replace_in_title" | "replace_in_steps" | "replace_in_notes" | "replace_in_preconditions" => {
+                r#","find":"a","replace":"b""#
+            }
+            "prepend_step" | "append_step" => r#","action":"Do it","expected":"Done""#,
+            "split_step" => r#","find":"a","into":[{"action":"x","expected":"y"}]"#,
+            "remove_cases" => r#","where":{"title_contains":"x"}"#,
+            "insert_cases" => r#","cases":[{"title":"T","steps":[{"action":"a","expected":"b"}]}]"#,
+            "sort_by" | "group_by" => r#","value":"title""#,
+            _ => r#","value":"x""#,
+        };
+        let json = format!(r#"[{{"op":"{name}"{extra}}}]"#);
+        let ops: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let res = parse_ops(&ops);
+        assert!(!matches!(&res, Err(e) if e.contains("unknown op")), "{name}: {res:?}");
+    }
+    let err = parse_ops(&serde_json::json!([{ "op": "nope" }])).unwrap_err();
+    for name in SUPPORTED_OPS {
+        assert!(err.contains(name), "the refusal lists {name}: {err}");
+    }
 }
 
 /// A blanket replace that lands inside a verbatim quote silently breaks the

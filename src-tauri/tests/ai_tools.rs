@@ -612,7 +612,9 @@ fn the_effective_disabled_set_hides_autorun_and_protects_the_core() {
             "transform_cases",
             "validate_cases",
             "optimize_cases",
-            "merge_case_files"
+            "merge_case_files",
+            "record_finding",
+            "list_findings"
         ]
     );
     // A core tool named in the frontend's list is dropped, not honoured.
@@ -624,4 +626,12 @@ fn the_effective_disabled_set_hides_autorun_and_protects_the_core() {
     let got = effective_disabled(&["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()]);
     assert_eq!(got, vec!["get_autorun_guide", "save_autorun_script", "search_wiki"], "hidden first, core dropped, no duplicates");
     assert_eq!(effective_disabled(&[]), vec!["get_autorun_guide", "save_autorun_script"]);
+}
+
+#[test]
+fn the_finding_tools_are_always_on() {
+    use v2_lib::ai_tools::{effective_disabled, CORE_TOOLS};
+    assert!(CORE_TOOLS.contains(&"record_finding") && CORE_TOOLS.contains(&"list_findings"));
+    let off = effective_disabled(&["record_finding".to_string(), "list_findings".to_string()]);
+    assert!(!off.iter().any(|n| n == "record_finding" || n == "list_findings"), "{off:?}");
 }

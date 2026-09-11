@@ -79,9 +79,19 @@ pub enum Op {
     SplitStep { find: String, into: Vec<crate::steps_xml::Step> },
     /// Round 8 §7.2 - see normalise_citation_notes.
     NormaliseCitations,
-    /// Set (or, with an empty value, clear) the local comment.
-    SetComment(String),
 }
+
+/// Every operation `parse_ops` accepts, in the order the tool description
+/// lists them. One list, two readers: the unknown-op refusal and the MCP
+/// tool description (mcp.rs) are both built from it, so an op can no
+/// longer be reachable and undocumented at the same time.
+pub const SUPPORTED_OPS: [&str; 23] = [
+    "set_tags", "add_tags", "remove_tags", "set_module", "set_automation_status",
+    "set_preconditions", "set_reviewer_notes", "prefix_title", "suffix_title",
+    "replace_in_title", "replace_in_steps", "replace_in_notes", "replace_in_preconditions",
+    "normalise_citations", "prepend_step", "append_step", "remove_step_matching", "split_step",
+    "sort_by", "group_by", "dedupe", "remove_cases", "insert_cases",
+];
 
 /// Where `insert_cases` puts its cases.
 #[derive(Debug, Clone, PartialEq)]
@@ -333,7 +343,6 @@ pub fn parse_ops_full(
                 find: str_of(v, "find"),
                 replace: str_of(v, "replace"),
             },
-            "set_comment" => Op::SetComment(value),
             "sort_by" | "group_by" => {
                 if !["title", "module", "tags", "preconditions"].contains(&value.as_str()) {
                     return Err(format!(
@@ -510,15 +519,18 @@ pub fn parse_ops_full(
                     position: positions.pop().unwrap_or(InsertPos::End),
                 }
             }
+            "set_comment" => {
+                return Err(format!(
+                    "{label}: unknown op \"set_comment\". `comment` is the developer's field and \
+                     is never written by an assistant; a problem you found is a finding - call \
+                     record_finding. Supported: {}.",
+                    SUPPORTED_OPS.join(", ")
+                ))
+            }
             other => {
                 return Err(format!(
-                    "{label}: unknown op \"{other}\". Supported: set_tags, add_tags, \
-                     remove_tags, set_module, set_automation_status, set_preconditions, \
-                     set_reviewer_notes, replace_in_title, prefix_title, suffix_title, \
-                     replace_in_steps, replace_in_notes, replace_in_preconditions, \
-                     set_comment, prepend_step, append_step, \
-                     remove_step_matching, split_step, sort_by, group_by, dedupe, \
-                     remove_cases, insert_cases, normalise_citations."
+                    "{label}: unknown op \"{other}\". Supported: {}.",
+                    SUPPORTED_OPS.join(", ")
                 ))
             }
         };
@@ -878,7 +890,6 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             }
                             c.preconditions = c.preconditions.replace(find.as_str(), replace);
                         }
-                        Op::SetComment(v) => c.comment = v.clone(),
                         Op::PrependStep { action, expected } => {
                             c.steps.insert(
                                 0,
@@ -1082,11 +1093,6 @@ fn describe(op: &Op) -> String {
         Op::ReplaceInPreconditions { find, replace } => {
             format!("Replaced '{find}' with '{replace}' in preconditions")
         }
-        Op::SetComment(v) => if v.is_empty() {
-            "Cleared comment".to_string()
-        } else {
-            format!("Set comment ({} chars)", v.chars().count())
-        },
         Op::SortBy(k) => format!("Sorted by {k}"),
         Op::GroupBy(k) => format!("Grouped by {k}"),
         Op::Dedupe => "Deduped".to_string(),
@@ -1109,7 +1115,7 @@ fn known_keys(op_name: &str) -> &'static [&'static str] {
     match op_name {
         "set_tags" | "add_tags" | "remove_tags" | "set_module" | "set_automation_status"
         | "set_preconditions" | "set_reviewer_notes" | "prefix_title" | "suffix_title"
-        | "sort_by" | "group_by" | "set_comment" => &["op", "where", "value"],
+        | "sort_by" | "group_by" => &["op", "where", "value"],
         "replace_in_title" | "replace_in_steps" | "replace_in_notes" | "replace_in_preconditions" => {
             &["op", "where", "find", "replace"]
         }
