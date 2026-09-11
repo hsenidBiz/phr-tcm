@@ -1826,25 +1826,10 @@ const RUN_FAILURE_DETAIL_CAP: usize = 10;
 /// scan, never the find-or-create one. A PBI with no suite is an answer
 /// ("this PBI has never had a run"), not a reason to create anything -
 /// this is the bridge, and the bridge does not write to Azure DevOps.
-/// pbi -> resolved suite, held for the app's lifetime. Resolving a suite
-/// scans EVERY test plan in the project - throttle-paced, that took ~60s
-/// against a large org, and the MCP proxy used to give up at 30s and
-/// blame the connection. The ids are stable once found (same reason the
-/// Run Tests tab seeds them from disk); a suite deleted in Azure DevOps
-/// is caught by the 404 on its points and re-resolved once. The client's
-/// base_url is in the key so parallel tests on different mock servers
-/// cannot poison each other.
-fn suite_cache() -> &'static std::sync::Mutex<
-    std::collections::HashMap<(String, String, String, i32), crate::ado_testplan::EnsuredSuite>,
-> {
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<
-            std::collections::HashMap<(String, String, String, i32), crate::ado_testplan::EnsuredSuite>,
-        >,
-    > = std::sync::OnceLock::new();
-    CACHE.get_or_init(Default::default)
-}
-
+/// The resolved suite comes from the cache shared with the upload and Run
+/// Tests (`ado_testplan::cached_suite`): resolving scans every plan and
+/// took about a minute on a large org, which is what made the MCP proxy
+/// give up at 30s and blame the connection.
 async fn run_failures(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
@@ -1853,15 +1838,9 @@ async fn run_failures(
     let Some(pbi) = q(target, "pbi").and_then(|v| v.parse::<i32>().ok()) else {
         return (400, "pass ?pbi=<work item id> (find one with search_pbis)".into());
     };
-    let key = (
-        client.base_url.clone(),
-        ctx.org.clone(),
-        ctx.project.clone(),
-        pbi,
-    );
     let mut retried = false;
     let (suite, points) = loop {
-        let cached = suite_cache().lock().unwrap().get(&key).cloned();
+        let cached = crate::ado_testplan::cached_suite(&client.base_url, &ctx.org, &ctx.project, pbi);
         let (suite, from_cache) = match cached {
             Some(s) => (s, true),
             None => {
@@ -1873,7 +1852,7 @@ async fn run_failures(
                     .await
                 {
                     Ok(Some(s)) => {
-                        suite_cache().lock().unwrap().insert(key.clone(), s.clone());
+                        crate::ado_testplan::remember_suite(&client.base_url, &ctx.org, &ctx.project, pbi, &s);
                         (s, false)
                     }
                     Ok(None) => {
@@ -1899,7 +1878,7 @@ async fn run_failures(
             // A cached suite that 404s was deleted in Azure DevOps since
             // it was resolved: forget it and scan once from scratch.
             Err(crate::ado::AdoError::NotFound) if from_cache && !retried => {
-                suite_cache().lock().unwrap().remove(&key);
+                crate::ado_testplan::forget_suite(&client.base_url, &ctx.org, &ctx.project, pbi);
                 retried = true;
             }
             Err(e) => return (502, format!("Azure DevOps error: {e:?}")),

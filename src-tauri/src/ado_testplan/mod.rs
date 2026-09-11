@@ -167,7 +167,7 @@ pub struct PlanWithSuites {
     pub suites: Vec<SuiteRef>,
 }
 
-#[derive(Debug, Clone, Serialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 pub struct EnsuredSuite {
     pub plan_id: i32,
     pub plan_name: String,
@@ -244,6 +244,41 @@ pub fn area_matches(plan_area: &str, pbi_area: &str) -> bool {
     let pa = plan_area.trim().to_lowercase().replace('/', "\\");
     let ba = pbi_area.trim().to_lowercase().replace('/', "\\");
     ba == pa || ba.starts_with(&format!("{pa}\\"))
+}
+
+/// PBI -> resolved requirement suite, held for the app's lifetime and
+/// shared by everything that resolves one: the upload, Run Tests and the
+/// AI bridge. Resolving scans EVERY test plan in the project, one request
+/// per plan and throttle-paced (about a minute on a large org), and the
+/// ids are stable once found. A suite deleted in Azure DevOps since is
+/// caught by the 404 on its points; the caller forgets it and scans once.
+/// The client's base_url is in the key so parallel tests on different
+/// mock servers cannot poison each other.
+fn suite_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(String, String, String, i32), EnsuredSuite>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<(String, String, String, i32), EnsuredSuite>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn suite_key(base_url: &str, org: &str, project: &str, pbi_id: i32) -> (String, String, String, i32) {
+    (base_url.to_string(), org.to_string(), project.to_string(), pbi_id)
+}
+
+pub fn cached_suite(base_url: &str, org: &str, project: &str, pbi_id: i32) -> Option<EnsuredSuite> {
+    suite_cache().lock().ok()?.get(&suite_key(base_url, org, project, pbi_id)).cloned()
+}
+
+pub fn remember_suite(base_url: &str, org: &str, project: &str, pbi_id: i32, suite: &EnsuredSuite) {
+    if let Ok(mut c) = suite_cache().lock() {
+        c.insert(suite_key(base_url, org, project, pbi_id), suite.clone());
+    }
+}
+
+pub fn forget_suite(base_url: &str, org: &str, project: &str, pbi_id: i32) {
+    if let Ok(mut c) = suite_cache().lock() {
+        c.remove(&suite_key(base_url, org, project, pbi_id));
+    }
 }
 
 pub fn default_plan_name(area_path: &str) -> String {

@@ -37,11 +37,16 @@ pub async fn ensure_pbi_suite(
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;
     let emitter = app.clone();
-    client
+    let ensured = client
         .ensure_requirement_suite_cb(&organization, &project, pbi_id, &area, &iteration, move |done, total| {
             let _ = SuiteScanProgress { done, total }.emit(&emitter);
         })
-        .await
+        .await?;
+    // Shared with the upload and the AI bridge, so a PBI Run Tests has
+    // resolved is never scanned for again in this session. A Shift-click
+    // re-detect lands here too and overwrites the entry.
+    ado_testplan::remember_suite(&client.base_url, &organization, &project, pbi_id, &ensured);
+    Ok(ensured)
 }
 
 /// Read-only suite lookup for background prefetch: finds the PBI's
@@ -60,7 +65,11 @@ pub async fn find_pbi_suite(
     let (area, _iteration) = client
         .get_work_item_paths(&organization, &project, pbi_id)
         .await?;
-    client
+    let found = client
         .find_pbi_requirement_suite(&organization, &project, pbi_id, &area)
-        .await
+        .await?;
+    if let Some(s) = &found {
+        ado_testplan::remember_suite(&client.base_url, &organization, &project, pbi_id, s);
+    }
+    Ok(found)
 }

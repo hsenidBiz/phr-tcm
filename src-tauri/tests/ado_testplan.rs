@@ -666,3 +666,20 @@ async fn ensure_names_the_plans_when_every_candidate_forbids_suites() {
         other => panic!("expected a named 403, got {other:?}"),
     }
 }
+
+/// The resolved-suite cache is one map shared by the upload, Run Tests and
+/// the AI bridge: whoever resolves a PBI's suite first spares the others
+/// the plan scan. Keyed by base_url too, so mock servers never collide.
+#[test]
+fn the_suite_cache_is_shared_keyed_and_forgettable() {
+    use v2_lib::ado_testplan::{cached_suite, forget_suite, remember_suite, EnsuredSuite};
+    let base = format!("http://cache-test-{}", std::process::id());
+    assert!(cached_suite(&base, "acme", "Web", 4242).is_none());
+    let s = EnsuredSuite { plan_id: 9, plan_name: "Web - Auth Plan".into(), suite_id: 91, created_plan: false };
+    remember_suite(&base, "acme", "Web", 4242, &s);
+    assert_eq!(cached_suite(&base, "acme", "Web", 4242), Some(s.clone()));
+    assert!(cached_suite(&base, "acme", "Mobile", 4242).is_none(), "another project is another key");
+    assert!(cached_suite("http://elsewhere", "acme", "Web", 4242).is_none(), "another base_url is another key");
+    forget_suite(&base, "acme", "Web", 4242);
+    assert!(cached_suite(&base, "acme", "Web", 4242).is_none());
+}

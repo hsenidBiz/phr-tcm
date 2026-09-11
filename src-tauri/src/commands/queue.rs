@@ -658,15 +658,34 @@ pub async fn submit_queue(
                 .get_work_item_paths(&organization, &project, pbi_id)
                 .await
             {
+                // Resolving the suite scans every test plan in the project,
+                // about a minute on a large org. Once found the ids are
+                // stable, so a suite Run Tests, the AI bridge or an earlier
+                // upload already resolved is taken as read. A suite deleted
+                // in Azure DevOps since costs nothing here - the cases still
+                // link to the PBI - and Run Tests re-detects it on its 404.
+                let cached = crate::ado_testplan::cached_suite(&client.base_url, &organization, &project, pbi_id);
+                if let Some(s) = &cached {
+                    crate::applog::info(format!(
+                        "requirement suite for #{pbi_id} already resolved (plan {} '{}', suite {}) - not scanning again",
+                        s.plan_id, s.plan_name, s.suite_id
+                    ));
+                }
                 // Still best-effort (a failure never blocks creation), but
                 // when the PBI had no test plan at all, the plan gets
                 // created FIRST and the user is told before the upload
                 // proceeds.
-                match client
-                    .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
-                    .await
-                {
+                let ensured = match cached {
+                    Some(s) => Ok(s),
+                    None => {
+                        client
+                            .ensure_requirement_suite(&organization, &project, pbi_id, &area, &iteration)
+                            .await
+                    }
+                };
+                match ensured {
                     Ok(ensured) => {
+                        crate::ado_testplan::remember_suite(&client.base_url, &organization, &project, pbi_id, &ensured);
                         if ensured.created_plan {
                             let _ = PlanCreated { plan_name: ensured.plan_name }.emit(&app);
                         }
