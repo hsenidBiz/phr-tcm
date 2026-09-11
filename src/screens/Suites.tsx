@@ -404,7 +404,15 @@ export default function Suites({
           <SuitePoints org={org} project={project} planId={planId} suite={s} />
         )}
         {isFolder && !isCollapsed && (
-          <ul>{node.children.map((c) => renderNode(c, planId, depth + 1))}</ul>
+          // Guide lines hang off the parent's chevron: --tree-x is that
+          // chevron's centre (8px pad + 18px per level + half of 14px), and
+          // the CSS draws the trunk and each child's elbow from there.
+          <ul
+            className="suite-tree"
+            style={{ "--tree-x": `${8 + depth * 18 + 7}px` } as CSSProperties}
+          >
+            {node.children.map((c) => renderNode(c, planId, depth + 1))}
+          </ul>
         )}
       </li>
     );

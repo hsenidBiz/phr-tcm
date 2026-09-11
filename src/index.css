@@ -582,6 +582,50 @@ table {
     scan-sweep 1.2s ease-in-out infinite;
 }
 
+/* Test Suites tree: guide lines in the accent, drawn by the children list
+   from its parent's chevron (--tree-x, set inline per list). Each child
+   row gets an elbow - down from the parent, then across to its own
+   chevron - and every child but the last carries the trunk on down to
+   the next. The elbow is drawn on the row's button at half ITS height,
+   so it meets the centre of a tall row (a PBI badge, a wrapped name) as
+   well as a plain one. */
+.suite-tree {
+  --tree-line: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.suite-tree > li {
+  position: relative;
+}
+.suite-tree > li > button {
+  position: relative;
+}
+/* The trunk: the full height of the child (subtree included), for every
+   child that has a sibling after it. It overlaps the elbow's upright. */
+.suite-tree > li::before {
+  content: "";
+  position: absolute;
+  left: var(--tree-x);
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  border-left: 1px solid var(--tree-line);
+}
+.suite-tree > li:last-child::before {
+  display: none;
+}
+/* The elbow: down to the row's centre, then across to the chevron. */
+.suite-tree > li > button::after {
+  content: "";
+  position: absolute;
+  left: var(--tree-x);
+  top: 0;
+  height: 50%;
+  width: 9px;
+  pointer-events: none;
+  border-left: 1px solid var(--tree-line);
+  border-bottom: 1px solid var(--tree-line);
+  border-bottom-left-radius: 6px;
+}
+
 /* A status dot that glows in its own text colour (success or danger), so
    one rule serves both states and every theme preset. */
 .status-glow {

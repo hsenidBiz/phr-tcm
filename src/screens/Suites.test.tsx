@@ -98,6 +98,11 @@ test("folders build a collapsible tree from parent links", async () => {
   expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
   fireEvent.click(screen.getByText("Regression"));
   expect(screen.getByText("PBI 50 suite")).toBeInTheDocument();
+  // The children list carries the guide lines, hung off the parent's
+  // chevron centre: 8px pad + 0 levels + half a 14px chevron.
+  const children = screen.getByText("PBI 50 suite").closest("ul")!;
+  expect(children).toHaveClass("suite-tree");
+  expect(children.style.getPropertyValue("--tree-x")).toBe("15px");
   fireEvent.click(screen.getByText("Regression"));
   expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
 });
