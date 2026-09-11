@@ -66,10 +66,10 @@ fn the_claude_cli_is_looked_for_where_the_installers_put_it() {
     assert!(shown[0].ends_with("Sam/.local/bin/claude.exe"), "{shown:?}");
 }
 
-/// One command per tool is the point - the set is only reachable without
-/// naming things if all of it is in the picker - so every tool the MCP
-/// server exposes needs an entry, and each needs a description worth
-/// showing.
+/// One command per thing a person reaches for by name; every other tool
+/// is called by the assistant when the guide says so. This test checks
+/// that each command that exists describes itself, not that every tool
+/// gets one.
 #[test]
 fn every_tool_gets_a_command_and_each_describes_itself() {
     // Only what a person reaches for by name. Everything else the
@@ -169,7 +169,7 @@ fn each_command_names_a_real_tool() {
     }
 }
 
-/// Namespaced, so ten entries group as `tcm:*` rather than scattering
+/// Namespaced, so the entries group as `tcm:*` rather than scattering
 /// through a picker that already has other things in it.
 #[test]
 fn the_commands_land_in_their_own_namespace() {

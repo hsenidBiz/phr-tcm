@@ -152,9 +152,11 @@ pub const MANAGED_SERVERS: &[&str] = &[TCM_SERVER, DB_SERVER];
 /// # Why commands at all
 ///
 /// Without them the tools are only reachable by name: somebody has to know
-/// `begin_test_case_writing` exists and type it out. One command per tool
-/// puts the whole set in the picker, under a `tcm:` prefix so they group
-/// together the way `sc:` does rather than scattering through it.
+/// `begin_test_case_writing` exists and type it out. One command per thing
+/// a person reaches for by name puts that set in the picker, under a
+/// `tcm:` prefix so they group together the way `sc:` does rather than
+/// scattering through it. Every other tool is called by the assistant
+/// when the guide says so.
 ///
 /// # Why they are this thin
 ///
@@ -487,7 +489,7 @@ pub struct CommandSpec {
 }
 
 /// `~/.claude/commands/tcm/` - a directory, so the set groups as `tcm:*` in
-/// the picker instead of scattering ten entries through it.
+/// the picker instead of scattering the entries through it.
 pub fn command_dir(home: &str) -> PathBuf {
     PathBuf::from(home).join(".claude").join("commands").join("tcm")
 }
