@@ -20,7 +20,7 @@ use std::path::{Component, Path, PathBuf};
 /// allowlist, applied on BOTH sides: export never wanders into logs or
 /// strangers' files, and import refuses to write anywhere else - a crafted
 /// backup must not be able to drop files outside these folders.
-const ROOTS: [&str; 3] = ["reference-cache.json", "autorun", "shared-drafts"];
+const ROOTS: [&str; 4] = ["reference-cache.json", "suite-cache.json", "autorun", "shared-drafts"];
 
 /// A single file per entry is capped so one enormous stray artifact cannot
 /// balloon the backup into something no one can email or copy around.

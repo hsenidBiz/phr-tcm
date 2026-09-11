@@ -302,10 +302,23 @@ impl AdoClient {
         pbi_id: i32,
         area_path: &str,
         plans: &[TestPlan],
+        exhaustive: bool,
         progress: &mut impl FnMut(u32, u32),
     ) -> Result<Option<EnsuredSuite>, AdoError> {
         let mut ordered: Vec<&TestPlan> = plans.iter().collect();
         ordered.sort_by_key(|p| if area_matches(&p.area_path, area_path) { 0 } else { 1 });
+        // A caller about to CREATE a suite would only ever create it under
+        // an area-matched plan, so once those are checked the rest of the
+        // scan can only find a suite it would not have used anyway. On a
+        // project with hundreds of plans that is the difference between a
+        // few requests and a minute. The read-only lookup stays exhaustive:
+        // Run Tests must find a suite wherever someone put it.
+        if !exhaustive {
+            let matched = ordered.iter().filter(|p| area_matches(&p.area_path, area_path)).count();
+            if matched > 0 {
+                ordered.truncate(matched);
+            }
+        }
         let total = ordered.len() as u32;
         let mut done = 0u32;
         for batch in ordered.chunks(SUITE_SCAN_CONCURRENCY) {
@@ -350,7 +363,7 @@ impl AdoClient {
         area_path: &str,
     ) -> Result<Option<EnsuredSuite>, AdoError> {
         let plans = self.get_test_plans(org, project).await?;
-        self.scan_plans_for_suite(org, project, pbi_id, area_path, &plans, &mut |_, _| {})
+        self.scan_plans_for_suite(org, project, pbi_id, area_path, &plans, true, &mut |_, _| {})
             .await
     }
 
@@ -381,8 +394,11 @@ impl AdoClient {
         mut progress: impl FnMut(u32, u32),
     ) -> Result<EnsuredSuite, AdoError> {
         let plans = self.get_test_plans(org, project).await?;
+        // Not exhaustive: a suite found under a plan for another area is
+        // not one this would create under, so the area-matched plans are
+        // the whole search when there are any.
         if let Some(found) = self
-            .scan_plans_for_suite(org, project, pbi_id, area_path, &plans, &mut progress)
+            .scan_plans_for_suite(org, project, pbi_id, area_path, &plans, false, &mut progress)
             .await?
         {
             return Ok(found);

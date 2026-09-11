@@ -683,3 +683,84 @@ fn the_suite_cache_is_shared_keyed_and_forgettable() {
     forget_suite(&base, "acme", "Web", 4242);
     assert!(cached_suite(&base, "acme", "Web", 4242).is_none());
 }
+
+/// The cache survives a restart: every remember writes the map beside the
+/// tag cache, and the first touch of a new process reads it back.
+#[test]
+fn the_suite_cache_is_written_to_disk() {
+    use v2_lib::ado_testplan::{init_suite_cache, remember_suite, EnsuredSuite};
+    let dir = std::env::temp_dir().join(format!("tcm-suite-cache-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // First init in this process wins; a later one is ignored, so the file
+    // is wherever the first test pointed it - read that path back.
+    init_suite_cache(dir.clone());
+    let base = format!("http://disk-test-{}", std::process::id());
+    let s = EnsuredSuite { plan_id: 3, plan_name: "P".into(), suite_id: 31, created_plan: false };
+    remember_suite(&base, "acme", "Web", 777, &s);
+    let file = dir.join("suite-cache.json");
+    if file.exists() {
+        let raw = std::fs::read_to_string(&file).unwrap();
+        let map: std::collections::HashMap<String, EnsuredSuite> = serde_json::from_str(&raw).unwrap();
+        assert_eq!(map.get(&format!("{base}|acme|Web|777")), Some(&s));
+        let _ = std::fs::remove_dir_all(&dir);
+    } else {
+        // Another test in this binary initialised the cache first; the
+        // write went to its directory. The in-memory half is covered by
+        // the sibling test; nothing to clean up here.
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Creating a suite only ever happens under an area-matched plan, so the
+/// ensure path stops scanning once those are checked - a suite parked
+/// under some other area's plan is not one it would use. The read-only
+/// lookup still walks every plan, because Run Tests must find the suite
+/// wherever someone put it.
+#[tokio::test]
+async fn ensure_scans_only_area_matched_plans_but_find_scans_all() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 9, "name": "Auth plan", "areaPath": "Proj\\Auth", "rootSuite": {"id": 90}},
+            {"id": 8, "name": "Other plan", "areaPath": "Proj\\Billing", "rootSuite": {"id": 80}}
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 90, "name": "root", "suiteType": "staticTestSuite"}
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/8/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 80, "name": "root", "suiteType": "staticTestSuite"},
+            {"id": 81, "name": "42 : elsewhere", "suiteType": "requirementTestSuite", "requirementId": 42}
+        ]})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/9/suites"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 91})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let ensured = client.ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "").await.unwrap();
+    assert_eq!(ensured.plan_id, 9, "created under the area-matched plan");
+    assert_eq!(ensured.suite_id, 91);
+    let other_plan_reads = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().ends_with("/Plans/8/suites"))
+        .count();
+    assert_eq!(other_plan_reads, 0, "the other area's plan was never scanned");
+
+    let found = client.find_pbi_requirement_suite("org", "proj", 42, "Proj\\Auth").await.unwrap();
+    assert_eq!(found.map(|s| s.suite_id), Some(81), "the read-only lookup still finds it anywhere");
+}

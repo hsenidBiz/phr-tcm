@@ -292,6 +292,9 @@ pub fn run() {
             // UI and the AI bridge - see refcache.rs.
             if let Ok(dir) = app.path().app_data_dir() {
                 refcache::init(dir.clone());
+                // Resolved requirement suites, shared by the upload, Run
+                // Tests and the AI bridge, and kept across restarts.
+                ado_testplan::init_suite_cache(dir.clone());
                 // Auto Run scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands
