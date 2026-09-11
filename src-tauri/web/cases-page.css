@@ -8,6 +8,19 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .case { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
         padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(20,30,50,.05);
         page-break-inside: avoid; }
+/* Findings section: a block of its own above the cases - see html.rs. Same
+   card language as .case, kept visually distinct with a tighter layout
+   since each entry is short. */
+.findings{margin:0 0 20px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.findings h2{margin:0 0 4px;font-size:15px}
+.findings .count{font-weight:normal;opacity:.7;font-size:12px;margin-left:6px}
+.findings .lead{margin:0 0 10px;font-size:12px;opacity:.75}
+.finding{padding:10px 0;border-top:1px solid var(--border)}
+.finding .meta{display:flex;gap:10px;font-size:11px;opacity:.75;align-items:center}
+.finding .kind{font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.finding .when{margin-left:auto}
+.finding .ftitle{margin:4px 0 2px;font-weight:600}
+.finding .fdetail{font-size:13px}
 .case h2 { font-size: 16px; margin: 0 0 8px; }
 .case .wid { color: var(--accent); font-weight: 600; margin-right: 6px; }
 /* Position in the set, so a reviewer can say "case 7" out loud. Tabular

@@ -279,7 +279,7 @@ fn the_draft_page_badges_each_case_new_or_update() {
         },
     ];
     let path = tmp_path("op-badges.html");
-    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default())
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default(), &[])
         .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("op-new"), "a case without an id creates: {html}");
@@ -301,6 +301,7 @@ fn the_draft_page_badges_each_case_new_or_update() {
         "",
         Some(v2_lib::import_parser::CommentCtx::Ado(&note_ctx)),
         &Default::default(),
+        &[],
     )
     .unwrap();
     let ado = std::fs::read_to_string(&path2).unwrap();
@@ -384,7 +385,7 @@ fn the_report_can_hide_its_reviewer_notes() {
         ..Default::default()
     }];
     let path = tmp_path("notes-toggle.html");
-    export_queue_to_html(&with_notes, &path, "", None, &Default::default()).unwrap();
+    export_queue_to_html(&with_notes, &path, "", None, &Default::default(), &[]).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
 
     // The button is in the sticky bar, not beside a case.
@@ -418,7 +419,7 @@ fn the_report_can_hide_its_reviewer_notes() {
         ..Default::default()
     }];
     let path2 = tmp_path("notes-toggle-none.html");
-    export_queue_to_html(&without, &path2, "", None, &Default::default()).unwrap();
+    export_queue_to_html(&without, &path2, "", None, &Default::default(), &[]).unwrap();
     let plain = std::fs::read_to_string(&path2).unwrap();
     assert!(!plain.contains("id='tc-notes'"), "nothing to hide, so no button");
 }
@@ -441,7 +442,7 @@ fn reviewer_notes_render_as_markdown_in_the_review_page() {
         ..Default::default()
     }];
     let path = tmp_path("reviewer-notes.html");
-    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default())
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "", None, &Default::default(), &[])
         .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
 
@@ -473,7 +474,7 @@ fn reviewer_notes_render_as_markdown_in_the_review_page() {
         ..Default::default()
     }];
     let path2 = tmp_path("reviewer-notes-none.html");
-    v2_lib::import_parser::export_queue_to_html(&bare, &path2, "", None, &Default::default())
+    v2_lib::import_parser::export_queue_to_html(&bare, &path2, "", None, &Default::default(), &[])
         .unwrap();
     // Checked against the MARKUP, not the words: "Reviewer notes" also
     // appears in the stylesheet's own comment, which every page carries.
@@ -496,7 +497,7 @@ fn html_export_carries_cases_and_search() {
         tester_order: None,
     }];
     let path = tmp_path("report.html");
-    v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None, &Default::default())
+    v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None, &Default::default(), &[])
         .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("Login &lt;works&gt;")); // escaped
@@ -555,6 +556,7 @@ fn the_test_case_page_is_themed_and_can_be_flipped() {
             dark: oled,
             dark_first: true,
         },
+        &[],
     )
     .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
@@ -615,6 +617,7 @@ fn html_export_with_note_ctx_adds_autosaving_comment_boxes() {
         "",
         Some(v2_lib::import_parser::CommentCtx::Ado(&ctx)),
         &Default::default(),
+        &[],
     )
     .unwrap();
     let html = std::fs::read_to_string(&path).unwrap();

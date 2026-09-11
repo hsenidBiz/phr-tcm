@@ -770,6 +770,21 @@ async fn begin_writing(
 /// the request body, so a 166 KB file needs no splitting. An empty body
 /// with no path is an explicit error, never a silent pass - a caller must
 /// not be able to mistake "nothing arrived" for "nothing wrong".
+/// A reviewer note that reports a problem rather than a provenance. The
+/// phrases are the ones assistants actually used when they wrote defects
+/// into notes; a hit is an advisory, never a block.
+fn finding_like_note(notes: &str) -> Option<String> {
+    const PHRASES: [&str; 10] = [
+        "contradict", "does not match", "doesn't match", "mismatch", "discrepan",
+        "inconsisten", "bug:", "defect", "the code does not", "spec says",
+    ];
+    let lower = notes.to_lowercase();
+    PHRASES
+        .iter()
+        .find(|p| lower.contains(*p))
+        .map(|p| format!("it says \"{p}\""))
+}
+
 async fn validate_json(
     body: &str,
     target: &str,
@@ -876,6 +891,30 @@ async fn validate_json(
                             crate::speccov::bare_citation_hint(&tc.reviewer_notes)
                         ));
                     }
+                }
+
+                // The two human fields. A comment on a case with NO id was
+                // written by the assistant - a case with an id may carry the
+                // developer's own, round-tripped through the file - and a
+                // note that reports a problem is a finding in the wrong
+                // place. Both judgement calls: said, not blocked.
+                if tc.update_id.is_none() && !tc.comment.trim().is_empty() {
+                    advisories.push(format!(
+                        "Test case {} ('{}') carries a `comment`. That field is the developer's and \
+                         an assistant never writes it. If this is a problem you found, remove it here \
+                         and call record_finding.",
+                        i + 1,
+                        tc.title
+                    ));
+                }
+                if let Some(why) = finding_like_note(&tc.reviewer_notes) {
+                    advisories.push(format!(
+                        "Test case {} ('{}'): its reviewer_notes read like a problem report ({why}). \
+                         reviewer_notes say only what the case checks and where the requirement \
+                         lives; a problem is a finding - call record_finding and take it out of the note.",
+                        i + 1,
+                        tc.title
+                    ));
                 }
             }
             if let Some(c) = client {

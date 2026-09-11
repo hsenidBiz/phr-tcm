@@ -103,7 +103,16 @@ pub fn export_queue_html(path: String, queue: Vec<model::TestCase>, subtitle: St
     // neutral light styling rather than in whatever theme the sender
     // happened to be using. The page's own switch still gets the reader to
     // dark in one click.
-    import_parser::export_queue_to_html(&queue, &path, &subtitle, None, &Default::default())
+    import_parser::export_queue_to_html(&queue, &path, &subtitle, None, &Default::default(), &[])
+}
+
+/// The open findings for the page's org and project, or none outside the
+/// app (no root published yet).
+fn open_findings(organization: &str, project: &str) -> Vec<crate::findings::Finding> {
+    match crate::findings::configured_root() {
+        Some(root) if !organization.is_empty() => crate::findings::list_open(&root, organization, project),
+        _ => vec![],
+    }
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -436,10 +445,11 @@ pub fn view_queue_html(
     queue: Vec<model::TestCase>,
     subtitle: String,
     organization: String,
+    project: String,
     notes: std::collections::HashMap<String, String>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    let path_str = render_queue_html(&app, queue, subtitle, organization, notes, palette)?;
+    let path_str = render_queue_html(&app, queue, subtitle, organization, project, notes, palette)?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -458,10 +468,11 @@ pub fn refresh_queue_html(
     queue: Vec<model::TestCase>,
     subtitle: String,
     organization: String,
+    project: String,
     notes: std::collections::HashMap<String, String>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    render_queue_html(&app, queue, subtitle, organization, notes, palette).map(|_| ())
+    render_queue_html(&app, queue, subtitle, organization, project, notes, palette).map(|_| ())
 }
 
 fn render_queue_html(
@@ -469,6 +480,7 @@ fn render_queue_html(
     queue: Vec<model::TestCase>,
     subtitle: String,
     organization: String,
+    project: String,
     notes: std::collections::HashMap<String, String>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<String, String> {
@@ -478,6 +490,7 @@ fn render_queue_html(
     // however hard the page looked for it.
     let path = std::env::temp_dir().join(format!("test-cases-{}.html", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
+    let findings = open_findings(&organization, &project);
     let note_ctx = (!organization.is_empty())
         .then(|| ensure_note_server(app))
         .flatten()
@@ -493,6 +506,7 @@ fn render_queue_html(
         &subtitle,
         note_ctx.as_ref().map(import_parser::CommentCtx::Ado),
         &palette,
+        &findings,
     )?;
     // And tell a page already open on these cases that it is behind - and
     // where to pull the fresh content from.
@@ -514,11 +528,14 @@ pub fn view_draft_html(
     app: tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
+    organization: String,
+    project: String,
     owners: Vec<String>,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    let path_str = render_draft_html(&app, queue, subtitle, owners, files, palette)?;
+    let path_str =
+        render_draft_html(&app, queue, subtitle, organization, project, owners, files, palette)?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -534,17 +551,22 @@ pub fn refresh_draft_html(
     app: tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
+    organization: String,
+    project: String,
     owners: Vec<String>,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    render_draft_html(&app, queue, subtitle, owners, files, palette).map(|_| ())
+    render_draft_html(&app, queue, subtitle, organization, project, owners, files, palette)
+        .map(|_| ())
 }
 
 fn render_draft_html(
     app: &tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
+    organization: String,
+    project: String,
     owners: Vec<String>,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
@@ -557,6 +579,7 @@ fn render_draft_html(
     let path = std::env::temp_dir()
         .join(format!("test-cases-draft-{}.html", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
+    let findings = open_findings(&organization, &project);
     let ctx = ensure_note_server(app).map(|port| import_parser::DraftNoteCtx {
         port,
         token: note_token().to_string(),
@@ -569,6 +592,7 @@ fn render_draft_html(
         &subtitle,
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
         &palette,
+        &findings,
     )?;
     // Where an open page can pull the fresh content from, and the signal
     // that it should: the poll sees the revision move, fetches /report,

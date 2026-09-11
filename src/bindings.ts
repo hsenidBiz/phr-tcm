@@ -292,7 +292,7 @@ export const commands = {
 	 *  work item id get a comment box that autosaves back into the app via
 	 *  the loopback note listener.
 	 */
-	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes, palette })),
+	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, project, notes, palette })),
 	/**
 	 *  The same page for a DRAFT queue. Every case gets a comment box - drafts
 	 *  have no work item id to key an app-side note by, and the comment belongs
@@ -302,7 +302,7 @@ export const commands = {
 	 *  `owners` is the file each queued case came from, aligned with `queue`;
 	 *  an empty entry means the case was typed by hand and has no file.
 	 */
-	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, owners, files, palette })),
+	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, organization, project, owners, files, palette })),
 	/**
 	 *  The whole-set comment held in a JSON file, for prefilling the panel.
 	 *  A file that has none - or can't be read - simply has no comment.
@@ -336,7 +336,7 @@ export const commands = {
 	 *  A page already open learns about the rewrite from its revision poll and
 	 *  pulls the new content itself; nothing here should touch the browser.
 	 */
-	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, owners, files, palette })),
+	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, organization, project, owners, files, palette })),
 	/**
 	 *  Re-render the queue page WITHOUT opening a browser - the queue report's
 	 *  twin of `refresh_draft_html`, for the same reason: the keep-in-step
@@ -347,7 +347,7 @@ export const commands = {
 	 *  rewrite from its revision poll and pulls the new content itself;
 	 *  nothing here should touch the browser.
 	 */
-	refreshQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_queue_html", { queue, subtitle, organization, notes, palette })),
+	refreshQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_queue_html", { queue, subtitle, organization, project, notes, palette })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
