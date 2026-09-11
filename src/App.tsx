@@ -662,7 +662,6 @@ export default function App() {
     };
   }, [org, project]);
 
-
   const dismissChangelog = () => {
     getVersion()
       .then(markChangelogSeen)

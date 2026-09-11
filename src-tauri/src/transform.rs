@@ -524,8 +524,8 @@ pub fn parse_ops_full(
             "set_comment" => {
                 return Err(format!(
                     "{label}: unknown op \"set_comment\". `comment` is the developer's field and \
-                     is never written by an assistant; a problem you found is a finding - call \
-                     record_finding. Supported: {}.",
+                     is never written by an assistant; a problem you found is a finding - put \
+                     it in the case's `findings` list. Supported: {}.",
                     SUPPORTED_OPS.join(", ")
                 ))
             }

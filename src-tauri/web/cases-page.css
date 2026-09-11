@@ -151,7 +151,10 @@ body:not(.notes-off) .rev-wrap:not(.rev-closed) { transition-delay: 0s; }
 /* Findings block: what the assistant found wrong while writing the case.
    Sits under the reviewer notes, above the steps. */
 .findings{margin:8px 0;padding:8px 12px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;background:var(--surface)}
-.findings summary{cursor:pointer;font-weight:600;font-size:13px}
+.findings > summary{cursor:pointer;list-style:none;font-weight:600;font-size:13px}
+.findings > summary::-webkit-details-marker{display:none}
+.findings > summary::after{content:' \25be'}
+.findings:not([open]) > summary::after{content:' \25b8'}
 .finding{padding:8px 0;border-top:1px solid var(--border)}
 .finding:first-of-type{border-top:0}
 .finding .meta{display:flex;gap:10px;font-size:11px;opacity:.75;align-items:center}
