@@ -1440,3 +1440,39 @@ async fn trim_expected_false_travels_the_bridge_route() {
     );
     assert_eq!(v["report"]["expected_trimmed"], serde_json::json!(0));
 }
+
+/// A parenthetical that is arithmetic is the assertion, not an aside. The
+/// guide asks for worked sums in symbols, and the trimmer was turning
+/// "0.8800 = (4 / 5 x 0.60) + (5 / 5 x 0.40)" into "0.8800 = +" - the
+/// file still looked right and the case was unrunnable (round 9 §1, 22 of
+/// 38 cases in one set). Digits beside an operator stay.
+#[test]
+fn a_parenthetical_that_is_arithmetic_is_kept() {
+    for raw in [
+        "Goal_rate is 0.8800 = (4 / 5 x 0.60) + (5 / 5 x 0.40) = 0.4800 + 0.4000",
+        "The total is 0.8600 = (5 / 5 x 0.50) + (4 / 5 x 0.30) + (3 / 5 x 0.20)",
+        "CA1 scores (4/5 x 1.00) = 0.8000",
+        "The rate is 0.8628 = (0.8880 x 70 / 100) + (0.8040 x 30 / 100)",
+    ] {
+        let out = clean_expected(raw);
+        let digits_in = raw.chars().filter(|c| c.is_ascii_digit()).count();
+        let digits_out = out.chars().filter(|c| c.is_ascii_digit()).count();
+        assert_eq!(digits_in, digits_out, "numerals lost: {raw} -> {out}");
+        assert!(out.contains('('), "the formula's brackets stay: {out}");
+    }
+    // A prose aside with a number but no operator is still an aside.
+    assert_eq!(clean_expected("A count is shown (roughly 5 employees appear)"), "A count is shown.");
+}
+
+/// Nested brackets pair with their own close. The old first-close pairing
+/// left "= + ) x 1.00" behind; a nested formula now survives whole, and a
+/// nested prose aside goes without a stray bracket.
+#[test]
+fn nested_parentheticals_pair_correctly() {
+    let raw = "competency_rate is 0.7000 = ((4/5 x 0.50) + (3/5 x 0.50)) x 1.00";
+    let out = clean_expected(raw);
+    assert!(out.contains("((4/5 x 0.50) + (3/5 x 0.50)) x 1.00"), "{out}");
+    let out = clean_expected("The row is shown (see the table (above) for the full list)");
+    assert_eq!(out, "The row is shown.");
+    assert!(!out.contains(')'), "no stray bracket: {out}");
+}

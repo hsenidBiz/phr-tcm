@@ -302,6 +302,35 @@ pub fn clean_expected(raw: &str) -> String {
     clean_expected_keeping(raw).0
 }
 
+/// Arithmetic, not commentary: a digit somewhere and an operator somewhere.
+/// "(4 / 5 x 0.60)", "(0.8000 x 0.30)", "(4/5 x 1.00)" are formulas;
+/// "(e.g. \"5 employees\")" has a digit and no operator, and is still an
+/// aside. `x` counts only as a standalone token, so "(fix the box)" is not
+/// mistaken for multiplication.
+fn looks_like_formula(inner: &str) -> bool {
+    let has_digit = inner.chars().any(|c| c.is_ascii_digit());
+    let has_operator = inner.chars().any(|c| matches!(c, '+' | '-' | '/' | '=' | '*' | '×' | '÷'))
+        || inner.split_whitespace().any(|w| w == "x" || w == "X");
+    has_digit && has_operator
+}
+
+/// The index of the `close` that pairs with the `open` at `a`, honouring
+/// nesting; None when it never closes.
+fn matching_close(s: &str, a: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in s[a..].char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(a + i);
+            }
+        }
+    }
+    None
+}
+
 /// As `clean_expected`, but also says whether a trailing sentence survived
 /// because it carried an assertion the first sentence did not. Bails out
 /// and keeps the original whenever trimming would leave nothing useful -
@@ -326,15 +355,24 @@ pub fn clean_expected_keeping(raw: &str) -> (String, bool) {
     // few words; dropping a UI string costs the assertion. So the rule errs
     // toward keeping: three words or more is an aside, one or two is a
     // label. `(e.g. "5 employees")` is three and still goes.
+    //
+    // And a parenthetical that is arithmetic is the assertion itself, not
+    // an aside. The guide asks for worked sums in symbols, so an expected
+    // result reads "0.8800 = (4 / 5 x 0.60) + (5 / 5 x 0.40)"; trimming
+    // the brackets left "0.8800 = +", grammatical and wrong (round 9 §1,
+    // 22 of 38 cases). Digits beside an operator mean a formula: kept.
     for (open, close) in [('(', ')'), ('[', ']')] {
         let mut from = 0;
         while let Some(a) = s[from..].find(open).map(|i| i + from) {
-            let Some(b) = s[a..].find(close).map(|i| i + a) else { break };
+            // The MATCHING close, not the first one: "((a) + (b)) x 1.00"
+            // used to pair the outer open with the first inner close and
+            // leave a stray ")" behind.
+            let Some(b) = matching_close(&s, a, open, close) else { break };
             let inner = &s[a + open.len_utf8()..b];
             // A parenthetical inside a quotation is message text whatever
             // its length - "(including any attachments you have added)"
             // in a quoted alert is part of what the tester reads.
-            if inner.split_whitespace().count() >= 3 && !inside_quotes(&s, a) {
+            if inner.split_whitespace().count() >= 3 && !inside_quotes(&s, a) && !looks_like_formula(inner) {
                 s = format!("{}{}", &s[..a], &s[b + close.len_utf8()..]);
                 s = squash(&s);
                 from = 0; // indices moved
