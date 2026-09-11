@@ -72,11 +72,11 @@ fn the_claude_cli_is_looked_for_where_the_installers_put_it() {
 /// showing.
 #[test]
 fn every_tool_gets_a_command_and_each_describes_itself() {
-    // Kept in step with mcp.rs by hand; a tool added there without one
-    // here is a tool nobody can reach from the picker.
-    const TOOLS: [&str; 17] = [
-        "write", "fanout", "guide", "examples", "suites", "suite-cases", "failures", "autorun",
-        "script", "validate", "coverage", "optimize", "transform", "tags", "pbis", "wiki", "page",
+    // Only what a person reaches for by name. Everything else the
+    // assistant calls on its own when the guide says so; a command per
+    // tool made the picker a list of things nobody should have to know.
+    const TOOLS: [&str; 7] = [
+        "begin-test-case-writing", "failures", "autorun", "script", "optimize", "get-wiki-info", "page",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
@@ -116,15 +116,19 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     }
 }
 
-/// Round 8 §13: nothing in the skill mentioned model choice, so every slice
-/// inherited the parent's - Opus for a layout-table transcription.
+/// The rename: the one command everyone uses says what it does. Spaces
+/// are not usable in a slash-command name, so the words are hyphenated.
 #[test]
-fn the_fanout_skill_asks_for_a_model_per_slice() {
-    let fanout = COMMANDS.iter().find(|c| c.stem == "fanout").unwrap();
-    let md = command_markdown(fanout);
-    assert!(md.contains("Choose a model per slice"), "{md}");
-    assert!(md.contains("Pass `model` on each `Agent` call"), "{md}");
-    assert!(md.contains("specification contradicts itself"), "{md}");
+fn the_writing_command_is_named_for_what_it_does() {
+    let c = COMMANDS.iter().find(|c| c.stem == "begin-test-case-writing").unwrap();
+    assert_eq!(c.tool, "begin_test_case_writing");
+    assert!(COMMANDS.iter().all(|c| c.stem != "write"));
+    let w = COMMANDS.iter().find(|c| c.stem == "get-wiki-info").unwrap();
+    assert_eq!(w.tool, "search_wiki");
+    assert!(COMMANDS.iter().all(|c| c.stem != "wiki"));
+    for gone in ["fanout", "guide", "examples", "suites", "suite-cases", "coverage", "validate", "transform", "tags", "pbis"] {
+        assert!(COMMANDS.iter().all(|c| c.stem != gone), "{gone} is no longer a command");
+    }
 }
 
 /// A tool switched off in the app must lose its command. The tool side
@@ -134,14 +138,14 @@ fn the_fanout_skill_asks_for_a_model_per_slice() {
 #[test]
 fn a_disabled_tool_loses_its_command() {
     let all = command_files("C:/Users/Sam");
-    let some = command_files_for("C:/Users/Sam", &["validate_cases".to_string()]);
+    let some = command_files_for("C:/Users/Sam", &["optimize_cases".to_string()]);
     assert_eq!(some.len(), all.len() - 1);
     assert!(
-        !some.iter().any(|(p, _)| p.ends_with("validate.md")),
+        !some.iter().any(|(p, _)| p.ends_with("optimize.md")),
         "the command for a switched-off tool must not be written"
     );
     // And everything else stays - disabling one must not clear the set.
-    assert!(some.iter().any(|(p, _)| p.ends_with("write.md")));
+    assert!(some.iter().any(|(p, _)| p.ends_with("begin-test-case-writing.md")));
 
     // Nothing disabled is the whole set, so the plain call is unchanged.
     assert_eq!(command_files_for("C:/Users/Sam", &[]).len(), all.len());
@@ -175,7 +179,7 @@ fn the_commands_land_in_their_own_namespace() {
     let files = command_files("C:/Users/Sam");
     assert_eq!(files.len(), COMMANDS.len());
     let first = files[0].0.display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
-    assert_eq!(first, "C:/Users/Sam/.claude/commands/tcm/write.md");
+    assert_eq!(first, "C:/Users/Sam/.claude/commands/tcm/begin-test-case-writing.md");
 }
 #[test]
 fn merge_entry_creates_key_and_entry_on_empty_object() {
@@ -587,7 +591,7 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
     let files = command_files_in(&project_command_dir("D:/repo"), &[]);
     assert_eq!(files.len(), COMMANDS.len());
     let first = files[0].0.display().to_string().replace(std::path::MAIN_SEPARATOR, "/");
-    assert_eq!(first, "D:/repo/.claude/commands/tcm/write.md");
+    assert_eq!(first, "D:/repo/.claude/commands/tcm/begin-test-case-writing.md");
     assert!(files[0].1.contains(COMMAND_MARKER), "still ours to remove later");
 }
 
