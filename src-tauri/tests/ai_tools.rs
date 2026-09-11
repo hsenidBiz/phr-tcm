@@ -75,8 +75,10 @@ fn every_tool_gets_a_command_and_each_describes_itself() {
     // Only what a person reaches for by name. Everything else the
     // assistant calls on its own when the guide says so; a command per
     // tool made the picker a list of things nobody should have to know.
-    const TOOLS: [&str; 7] = [
-        "begin-test-case-writing", "failures", "autorun", "script", "optimize", "get-wiki-info", "page",
+    // Auto Run is still in development: its tools are hidden and its
+    // commands are gone with them, so nothing in the picker points at it.
+    const TOOLS: [&str; 5] = [
+        "begin-test-case-writing", "failures", "optimize", "get-wiki-info", "page",
     ];
     let stems: Vec<&str> = COMMANDS.iter().map(|c| c.stem).collect();
     assert_eq!(stems, TOOLS, "one command per tool, in call order");
