@@ -503,6 +503,9 @@ export const commands = {
 	 *  `.test-cases/.history`, never deleted.
 	 */
 	copyIntoCases: (root: string, source: string) => typedError<CopiedIn, string>(__TAURI_INVOKE("copy_into_cases", { root, source })),
+	listFindings: (organization: string, project: string) => __TAURI_INVOKE<Finding[]>("list_findings", { organization, project }),
+	setFindingStatus: (id: string, status: string) => typedError<Finding, string>(__TAURI_INVOKE("set_finding_status", { id, status })),
+	removeFinding: (id: string) => typedError<null, string>(__TAURI_INVOKE("remove_finding", { id })),
 };
 
 /** Events */
@@ -882,6 +885,23 @@ export type FiledBug = {
 	 */
 	screenshots_failed: number,
 	screenshots_total: number,
+};
+
+export type Finding = {
+	id: string,
+	org: string,
+	project: string,
+	/**  One of `KINDS`. */
+	kind: string,
+	/**  What it is about: a work item id, a spec path and section, a file path. */
+	subject: string,
+	title: string,
+	/**  Markdown, rendered in the app and in the browser report. */
+	detail: string,
+	/**  RFC 3339, UTC. */
+	created_at: string,
+	/**  One of `STATUSES`. */
+	status: string,
 };
 
 /**

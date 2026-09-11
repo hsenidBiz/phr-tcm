@@ -10,6 +10,7 @@ pub mod board;
 pub mod bugs;
 pub mod cases;
 pub mod discovery;
+pub mod findings;
 pub mod misc;
 pub mod prs;
 pub mod queue;

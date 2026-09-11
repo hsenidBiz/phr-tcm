@@ -109,3 +109,16 @@ fn a_corrupt_file_reads_as_empty_and_is_replaced_on_the_next_write() {
     record(dir.path(), new_finding("spec", "After corruption")).unwrap();
     assert_eq!(list(dir.path(), "acme", "Web").len(), 1);
 }
+
+/// The commands are thin over the store, but the root they use is the one
+/// setup published - the same one the bridge writes through.
+#[test]
+fn the_commands_use_the_configured_root() {
+    use v2_lib::findings::{configured_root, set_root};
+    let dir = TempDir::new();
+    set_root(dir.path().to_path_buf());
+    assert_eq!(configured_root().as_deref(), Some(dir.path()));
+    record(dir.path(), new_finding("code", "Via the store")).unwrap();
+    let listed = v2_lib::commands::findings::list_findings_at(dir.path(), "acme", "Web");
+    assert_eq!(listed.len(), 1);
+}
