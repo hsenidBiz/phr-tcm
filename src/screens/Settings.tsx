@@ -4,7 +4,6 @@ import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
 import { useState } from "react";
 import { toast } from "sonner";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
@@ -64,10 +63,6 @@ export default function Settings({ org, project }: { org: string; project: strin
   // app's own log for when something needs reporting.
   const [rightPanel, setRightPanel] = useState<"changelog" | "logs">("changelog");
 
-  // The request trail is most of the log by volume, so the viewer
-  // hides it until it is asked for - someone opening this panel wants
-  // "what happened", not every 200 OK.
-  const [showRequests, setShowRequests] = useState(false);
   // Machine-wide AI tool registration is opt-in; the AI Bridge tab reads
   // the same store and offers the choice only while this is on.
   const [globalAllowed, setGlobalAllowed] = useState(loadGlobalAllowed);
@@ -92,9 +87,10 @@ export default function Settings({ org, project }: { org: string; project: strin
     enabled: rightPanel === "logs",
     staleTime: Infinity,
   });
-  // Filtered here rather than in the query, so flipping the switch is
-  // instant and does not re-fetch. The file on disk always has everything.
-  const shownLogs = (logs.data ?? []).filter((l) => showRequests || l.level !== "debug");
+  // Everything, requests included: the viewer used to hide the request
+  // trail behind a switch, and the log people read was not the log they
+  // sent with a bug report.
+  const shownLogs = logs.data ?? [];
 
 
   const version = useQuery({
@@ -418,7 +414,13 @@ export default function Settings({ org, project }: { org: string; project: strin
           <h2 className="text-sm font-semibold text-text">
             {rightPanel === "changelog" ? "Changelog" : "App log"}
           </h2>
-          <div className="ml-auto flex rounded-md border border-border p-0.5">
+          {/* One click from the gear: reporting a bug must not need a trip
+              through the Logs panel first. The report reads the log itself. */}
+          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setReporting(true)}>
+            <IconBug aria-hidden />
+            Report a bug
+          </Button>
+          <div className="flex rounded-md border border-border p-0.5">
             {(["changelog", "logs"] as const).map((p) => (
               <button
                 key={p}
@@ -462,34 +464,23 @@ export default function Settings({ org, project }: { org: string; project: strin
                 variant="outline"
                 disabled={!logDir.data}
                 onClick={() => {
-                  const dir = logDir.data;
-                  if (!dir) return;
-                  openPath(dir).catch(() => toast.error("Could not open the log folder."));
+                  // Rust opens it: the webview's opener permission stops
+                  // at URLs, so a direct plugin call here was refused.
+                  commands
+                    .openAppLogDir()
+                    .then((r) => {
+                      if (r.status === "error") toast.error(r.error);
+                    })
+                    .catch(() => toast.error("Could not open the log folder."));
                 }}
               >
                 <IconBrowse aria-hidden />
                 Open log folder
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setReporting(true)}>
-                <IconBug aria-hidden />
-                Report a bug
-              </Button>
-              <label className="ml-auto flex items-center gap-2 text-xs text-muted">
-                <Switch
-                  checked={showRequests}
-                  onCheckedChange={setShowRequests}
-                  ariaLabel="Show every request"
-                />
-                Every request
-              </label>
             </div>
             <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[70vh]">
               {shownLogs.length === 0 ? (
-                <p className="text-xs text-faint">
-                  {(logs.data?.length ?? 0) === 0
-                    ? "Nothing logged yet this session."
-                    : "Nothing but requests so far - turn on \u201cEvery request\u201d to see them."}
-                </p>
+                <p className="text-xs text-faint">Nothing logged yet this session.</p>
               ) : (
                 shownLogs.map((l, i) => (
                   <p key={i} className="id-mono flex gap-2 text-[11px] leading-relaxed">
@@ -596,7 +587,7 @@ export default function Settings({ org, project }: { org: string; project: strin
                       // The log is a separate file because GitHub cannot take
                       // an attachment from a URL - opening its folder makes the
                       // drag the reporter has to do a short one.
-                      if (logDir.data) void openPath(logDir.data);
+                      void commands.openAppLogDir();
                       toast.info("Drag the tcm-bug-report log onto the issue before submitting.");
                     })
                     .catch(() => toast.error("Could not prepare the report."));

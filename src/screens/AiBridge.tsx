@@ -384,20 +384,9 @@ export default function AiBridge() {
     <div className="grid max-w-lg gap-6 lg:max-w-6xl lg:grid-cols-2 lg:items-start 2xl:max-w-none 2xl:grid-cols-3">
       <div className="space-y-6">
       {repoCard}
-      <section className="space-y-3 rounded-md border border-border bg-surface p-4">
-        <h2 className="text-sm font-semibold text-text">Status</h2>
-        {bridge.data ? (
-          <p className="text-xs text-success">
-            Bridge running on port {bridge.data.port}
-          </p>
-        ) : (
-          <p className="text-xs text-faint">Bridge not running.</p>
-        )}
-        <p className="text-xs text-muted">
-          The bridge only runs while this app is open and signed in - AI
-          tools can't reach it otherwise.
-        </p>
-      </section>
+      {/* Whether the bridge is up is the glowing badge beside the tab title
+          (BridgeStatusBadge, in App) - the card that said it in a sentence
+          has gone. */}
 
       <section data-tour="ai-tools" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center justify-between gap-2">
@@ -578,7 +567,7 @@ export default function AiBridge() {
                   className="mt-0.5"
                 />
                 <span className="min-w-0 flex-1">
-                  <span className={cn("id-mono text-xs", on ? "text-text" : "text-faint")}>
+                  <span className={cn("text-sm font-medium", on ? "text-text" : "text-faint")}>
                     {row.label}
                   </span>
                   <span className="block text-[11px] text-muted">{row.summary}</span>

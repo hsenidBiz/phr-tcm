@@ -105,6 +105,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             misc::app_logs,
             misc::log_ui,
             misc::app_log_dir,
+            misc::open_app_log_dir,
             misc::apply_update,
             misc::watch_assigned_work,
             misc::export_app_backup,

@@ -582,6 +582,12 @@ table {
     scan-sweep 1.2s ease-in-out infinite;
 }
 
+/* A status dot that glows in its own text colour (success or danger), so
+   one rule serves both states and every theme preset. */
+.status-glow {
+  box-shadow: 0 0 6px 1px currentColor;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Keep the bar and its position; drop the motion and the pulsing. */
   .scan-glow,

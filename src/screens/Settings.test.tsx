@@ -14,6 +14,17 @@ function renderSettings(qc: QueryClient) {
   );
 }
 
+/// Reporting a bug is one click from the gear: the button sits in the
+/// Changelog header, not behind the Logs panel.
+test("Report a bug opens its dialog straight from the Changelog view", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  expect(screen.getByRole("button", { name: "Changelog", pressed: true })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Report a bug" }));
+  expect(await screen.findByText("Report a bug in this app")).toBeInTheDocument();
+});
+
 test("manual update check seeds the [\"update\"] query the App banner reads", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mockIPC((cmd) => {
@@ -101,6 +112,30 @@ test("the right column switches from the changelog to the app log", async () => 
     screen.queryByText(/the same notes the post-update popup shows/),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copy log" })).toBeInTheDocument();
+});
+
+/// The folder opens from Rust. The frontend used to call the opener plugin
+/// itself, and the webview's `opener:default` permission does not include
+/// open_path - so the plugin refused and the button only ever showed the
+/// error toast.
+test("Open log folder asks Rust to open it", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(String(cmd));
+    if (cmd === "app_logs") return [];
+    if (cmd === "app_log_dir") return "C:\\logs";
+    if (cmd === "open_app_log_dir") return { status: "ok", data: null };
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+
+  fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+  const open = await screen.findByRole("button", { name: "Open log folder" });
+  await waitFor(() => expect(open).toBeEnabled());
+  fireEvent.click(open);
+  await waitFor(() => expect(calls).toContain("open_app_log_dir"));
+  expect(calls.some((c) => c.startsWith("plugin:opener|"))).toBe(false);
 });
 
 // Default tags are no longer set here - they moved to Manual Entry, where

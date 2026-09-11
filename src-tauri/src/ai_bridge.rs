@@ -1388,6 +1388,45 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         can fail independently in a way the tester must record separately.\n\
         A padded case count is not coverage; every extra case is another\n\
         row someone has to execute and maintain.\n\n\
+        ## Writing style - sound like a tester, not a model\n\
+        This applies to the TEST CASES THEMSELVES: every title, step,\n\
+        expected result, precondition and reviewer note. What you say to the\n\
+        developer in the conversation is not bound by it. Inside the cases,\n\
+        FOLLOW THIS WRITING STYLE:\n\n\
+        - SHOULD use clear, simple language.\n\
+        - SHOULD be spartan and informative.\n\
+        - SHOULD use short, impactful sentences.\n\
+        - SHOULD use active voice; avoid passive voice.\n\
+        - SHOULD focus on practical, actionable checks.\n\
+        - SHOULD use data and examples to support claims when possible: the\n\
+        exact value entered, the exact text expected.\n\
+        - SHOULD use \"you\" and \"your\" to directly address the tester.\n\
+        - AVOID em dashes (—) anywhere. Use only commas, periods, or other\n\
+        standard punctuation. To connect ideas, use a period; never an em dash.\n\
+        - AVOID constructions like \"...not just this, but also this\".\n\
+        - AVOID metaphors and clichés.\n\
+        - AVOID generalizations.\n\
+        - AVOID setup language in any sentence: in conclusion, in closing, etc.\n\
+        - AVOID warnings or notes to the reader inside a case; write the\n\
+        content requested and nothing around it.\n\
+        - AVOID unnecessary adjectives and adverbs.\n\
+        - AVOID hashtags.\n\
+        - AVOID semicolons.\n\
+        - AVOID markdown and asterisks in titles, steps, expected results and\n\
+        preconditions (reviewer_notes is the one field rendered as markdown,\n\
+        and it needs none).\n\
+        - AVOID these words: can, may, just, that, very, really, literally,\n\
+        actually, certainly, probably, basically, could, maybe, delve, embark,\n\
+        enlightening, esteemed, shed light, craft, crafting, imagine, realm,\n\
+        game-changer, unlock, discover, skyrocket, abyss, not alone, in a world\n\
+        where, revolutionize, disruptive, utilize, utilizing, dive deep,\n\
+        tapestry, illuminate, unveil, pivotal, intricate, elucidate, hence,\n\
+        furthermore, however, harness, exciting, groundbreaking, cutting-edge,\n\
+        remarkable, it, remains to be seen, glimpse into, navigating,\n\
+        landscape, stark, testament, in summary, in conclusion, moreover,\n\
+        boost, skyrocketing, opened up, powerful, inquiries, ever-evolving.\n\n\
+        IMPORTANT: review every case before handing it back and make sure\n\
+        there are no em dashes.\n\n\
         ## reviewer_notes\n\
         Optional, never sent to Azure DevOps, and the most useful thing you\n\
         can add. Two parts, in this order, and nothing else:\n\n\

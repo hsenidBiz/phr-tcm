@@ -300,6 +300,18 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(body.contains("Login") && body.contains("Payroll"), "live modules");
     assert!(body.contains("optimize_cases"), "the guide points at the optimizer");
 
+    // The style rules are scoped to the case text - an assistant that read
+    // them as a rule for its own replies would stop explaining itself.
+    let style = body
+        .split("## Writing style")
+        .nth(1)
+        .and_then(|rest| rest.split("## reviewer_notes").next())
+        .expect("the guide has a writing style section");
+    assert!(style.contains("TEST CASES THEMSELVES"), "{style}");
+    assert!(style.contains("not bound by it"), "{style}");
+    assert!(style.contains("AVOID em dashes"), "{style}");
+    assert!(style.contains("active voice"), "{style}");
+
     // Reviewer notes are two things and no more: what this case checks,
     // in words anyone can read, and where the requirement lives. Both
     // halves are pinned because the field has drifted twice - first into

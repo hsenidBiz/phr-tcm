@@ -39,6 +39,23 @@ pub fn app_log_dir() -> String {
     crate::applog::directory()
 }
 
+/// Open the log folder in the file explorer. From Rust, like every other
+/// path the app opens: the webview's opener permission is `opener:default`,
+/// which covers URLs and "reveal", not `open_path` - so the frontend
+/// calling the plugin directly was refused, and the button did nothing.
+#[tauri::command]
+#[specta::specta]
+pub fn open_app_log_dir() -> Result<(), String> {
+    let dir = crate::applog::directory();
+    if dir.is_empty() {
+        return Err("The log folder is not set up yet.".into());
+    }
+    tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| {
+        crate::applog::warn(format!("open log folder failed: {e}"));
+        "Could not open the log folder.".to_string()
+    })
+}
+
 /// Non-blocking update check; Some(version) when a newer build is published.
 #[tauri::command]
 #[specta::specta]

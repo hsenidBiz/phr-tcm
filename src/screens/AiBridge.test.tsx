@@ -180,7 +180,9 @@ test("the copy button writes the registration command to the clipboard", async (
   );
 });
 
-test("shows bridge not running when the status query fails", async () => {
+// The bridge's state itself is the badge beside the tab title
+// (BridgeStatusBadge.test.tsx); the tab only has to stay usable without it.
+test("the tab still renders when the status query fails", async () => {
   mockIPC((cmd) => {
     if (cmd === "bridge_status") throw "bridge failed to start";
     if (cmd === "detect_ai_tools") return [];
@@ -188,7 +190,8 @@ test("shows bridge not running when the status query fails", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderBridge(qc);
 
-  expect(await screen.findByText("Bridge not running.")).toBeInTheDocument();
+  expect(await screen.findByText("Connect your AI tools")).toBeInTheDocument();
+  expect(screen.queryByText("Status")).not.toBeInTheDocument();
 });
 
 // ------------------------------------------------- company database server

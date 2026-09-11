@@ -121,6 +121,13 @@ export const commands = {
 	/**  Folder holding the daily log files, for "Open log folder". */
 	appLogDir: () => __TAURI_INVOKE<string>("app_log_dir"),
 	/**
+	 *  Open the log folder in the file explorer. From Rust, like every other
+	 *  path the app opens: the webview's opener permission is `opener:default`,
+	 *  which covers URLs and "reveal", not `open_path` - so the frontend
+	 *  calling the plugin directly was refused, and the button did nothing.
+	 */
+	openAppLogDir: () => typedError<null, string>(__TAURI_INVOKE("open_app_log_dir")),
+	/**
 	 *  Download the pending update and restart into it, streaming
 	 *  `UpdateProgress` so the banner can show how much is left.
 	 */

@@ -54,6 +54,7 @@ import {
 import AnimatedContent from "./components/AnimatedContent";
 import ChangelogModal from "./components/ChangelogModal";
 import SessionExpiredModal from "./components/SessionExpiredModal";
+import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
 import Sidebar, { AUTO_RUN_ENABLED, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
@@ -866,15 +867,13 @@ export default function App() {
               items={WORK_ITEMS}
               badges={{ board: workAlerts }}
               locked={tourOpen}
-              liveItem={tourControlNow?.kind === "work" ? tourControlNow.workSection : null}
-            />
+              liveItem={tourControlNow?.kind === "work" ? tourControlNow.workSection : null}            />
           ) : (
             <Sidebar
               section={section}
               onSelect={goToSection}
               locked={tourOpen}
-              liveItem={tourControlNow?.kind === "case" ? tourControlNow.section : null}
-            />
+              liveItem={tourControlNow?.kind === "case" ? tourControlNow.section : null}            />
           ))}
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -1033,6 +1032,7 @@ export default function App() {
               <AnimatedContent key={section} distance={8} duration={0.12} threshold={0}>
                 <div className="mb-4 flex items-center gap-2">
                   <h1 className="text-lg font-semibold">{TITLES[section]}</h1>
+                  {section === "ai" && <BridgeStatusBadge />}
                   {TITLE_NOTES[section] && (
                     <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">
                       {TITLE_NOTES[section]}
