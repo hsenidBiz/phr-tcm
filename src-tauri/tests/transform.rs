@@ -568,12 +568,13 @@ fn supported_ops_is_the_parsers_whole_vocabulary() {
             "remove_cases" => r#","where":{"title_contains":"x"}"#,
             "insert_cases" => r#","cases":[{"title":"T","steps":[{"action":"a","expected":"b"}]}]"#,
             "sort_by" | "group_by" => r#","value":"title""#,
+            "set_automation_status" => r#","value":"Planned""#,
             _ => r#","value":"x""#,
         };
         let json = format!(r#"[{{"op":"{name}"{extra}}}]"#);
         let ops: serde_json::Value = serde_json::from_str(&json).unwrap();
         let res = parse_ops(&ops);
-        assert!(!matches!(&res, Err(e) if e.contains("unknown op")), "{name}: {res:?}");
+        assert!(res.is_ok(), "{name}: {res:?}");
     }
     let err = parse_ops(&serde_json::json!([{ "op": "nope" }])).unwrap_err();
     for name in SUPPORTED_OPS {
