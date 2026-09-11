@@ -132,7 +132,6 @@ pub fn export_queue_to_html(
     subtitle: &str,
     ctx: Option<CommentCtx>,
     palette: &crate::webtheme::PagePalette,
-    findings: &[crate::findings::Finding],
 ) -> Result<(), String> {
     // The side column only exists for a draft that came from files. Without
     // it the page keeps its original single centred column.
@@ -186,36 +185,6 @@ pub fn export_queue_to_html(
         "<span id='tc-count'></span></div>".into(),
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),
     ];
-    // AI Findings: what an assistant found wrong, in a block of its own
-    // above the cases - never inside a case's notes (provenance) or its
-    // comment box (the developer's). Open ones only; resolved is done.
-    let open: Vec<&crate::findings::Finding> = findings.iter().filter(|f| f.status == "open").collect();
-    if !open.is_empty() {
-        parts.push(format!(
-            "<section class='findings'><h2>AI Findings <span class='count'>{}</span></h2>\
-             <p class='lead'>Problems an assistant found while reading. Resolve or dismiss them on the AI Bridge tab.</p>",
-            open.len()
-        ));
-        for f in open {
-            let kind = match f.kind.as_str() {
-                "test_case" => "Test case",
-                "spec" => "Spec",
-                "code" => "Code",
-                other => other,
-            };
-            parts.push(format!(
-                "<article class='finding'><div class='meta'><span class='kind'>{}</span>\
-                 <span class='subject'>{}</span><span class='when'>{}</span></div>\
-                 <p class='ftitle'>{}</p><div class='fdetail'>{}</div></article>",
-                esc(kind),
-                esc(&f.subject),
-                esc(&f.created_at.chars().take(10).collect::<String>()),
-                esc(&f.title),
-                crate::markdown::to_html(&f.detail)
-            ));
-        }
-        parts.push("</section>".into());
-    }
     for (idx, tc) in queue.iter().enumerate() {
         parts.push("<div class='case'>".into());
         let wid = tc

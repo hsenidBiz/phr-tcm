@@ -3,7 +3,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { Database, FolderOpen } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import Combobox from "../components/ui/combobox";
-import FindingsCard from "../components/FindingsCard";
 import { toast } from "sonner";
 import { commands, type DbServerConfig } from "../bindings";
 import { copyText } from "../lib/clipboard";
@@ -60,7 +59,7 @@ function copy(text: string, label: string) {
     .catch(() => toast.error("Could not copy to clipboard."));
 }
 
-export default function AiBridge({ org = "", project = "" }: { org?: string; project?: string }) {
+export default function AiBridge() {
   const qc = useQueryClient();
 
   // The repository everything on this tab is scoped to: the CURRENT one of
@@ -537,8 +536,6 @@ export default function AiBridge({ org = "", project = "" }: { org?: string; pro
           </div>
         </details>
       </section>
-
-      <FindingsCard org={org} project={project} />
 
       <section data-tour="ai-toolset" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

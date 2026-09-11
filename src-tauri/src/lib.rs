@@ -22,7 +22,6 @@ pub mod capture;
 pub mod commands;
 pub mod events;
 pub mod filewatch;
-pub mod findings;
 pub mod import_parser;
 pub mod intake;
 pub mod markdown;
@@ -55,7 +54,7 @@ pub use state::SubmitCancel;
 
 pub fn specta_builder() -> Builder<tauri::Wry> {
     use commands::{
-        ai_bridge, ai_tools, auth, autorun, board, bugs, cases, discovery, findings, misc, prs, queue, runs,
+        ai_bridge, ai_tools, auth, autorun, board, bugs, cases, discovery, misc, prs, queue, runs,
         testplan, workspace,
     };
     Builder::<tauri::Wry>::new()
@@ -68,7 +67,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             events::SuiteNotCreated,
             events::WatchedFileChanged,
             events::DraftCommentSaved,
-            events::FindingRecorded,
             events::DraftGeneralCommentSaved,
             events::WorkAssigned,
             events::IntakeOutputPath,
@@ -190,10 +188,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             ai_tools::register_db_server,
             ai_tools::unregister_db_server,
             workspace::ensure_cases_dir,
-            workspace::copy_into_cases,
-            findings::list_findings,
-            findings::set_finding_status,
-            findings::remove_finding
+            workspace::copy_into_cases
         ])
 }
 
@@ -303,10 +298,6 @@ pub fn run() {
                 // reads it from here, so a script an assistant saves lands
                 // where the Auto Run screen actually looks.
                 autorun::store::set_root(dir.join("autorun"));
-                // AI Findings: the notes an assistant records. Same
-                // arrangement as Auto Run - the bridge has no handle.
-                findings::set_root(dir.clone());
-                findings::set_app_handle(app.handle().clone());
             }
             applog::info(format!(
                 "Test Case Manager {} started",

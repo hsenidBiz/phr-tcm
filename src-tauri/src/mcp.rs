@@ -189,23 +189,6 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["pbi_id"]),
         },
         {
-            "name": "record_finding",
-            "description": "Record a problem you found while reading, for the developer to see on the AI Bridge tab and in the browser report: a test case that contradicts its spec, a spec that contradicts itself, code that does what neither says. Use it on your own whenever it applies. Local to this app - nothing is sent to Azure DevOps. Never put a problem in a case's `comment` (the developer's field) or in reviewer_notes (provenance only). Call list_findings first so you do not record what is already known.",
-            "inputSchema": schema(serde_json::json!({
-                "kind": { "type": "string", "description": "\"test_case\", \"spec\" or \"code\"" },
-                "subject": { "type": "string", "description": "What it is about: the work item id, the spec file and section, or the file and member" },
-                "title": { "type": "string", "description": "One line" },
-                "detail": { "type": "string", "description": "Markdown: what you read, what you expected, where" },
-            }), &["kind", "title"]),
-        },
-        {
-            "name": "list_findings",
-            "description": "The findings recorded for the open organization and project, newest first. Open ones by default; pass status \"resolved\" or \"all\".",
-            "inputSchema": schema(serde_json::json!({
-                "status": { "type": "string", "description": "\"open\" (default), \"resolved\" or \"all\"" },
-            }), &[]),
-        },
-        {
             "name": "check_spec_coverage",
             "description": "Reports coverage as findings to read and account for, not as pass/fail - a partial draft is a normal state, not an error. Joins a draft's `Spec:` citations against one or more spec documents and returns which sections have no case yet (`uncovered`), which cases could not be attributed to any section, which citations point at a section or file that does not exist, which quoted text was not found in the document, which citations carry no quote and no exemption (`cited_without_quote` - fix these here, do not wait for validate_cases), and which sections are excluded by the plan's own scope. A citation may stop short of a heading's trailing parenthetical, and `;` may join a second document's pointer onto the same Spec: line - both resolve. AC-level sections (e.g. \"8.2 (AC-2)\") are reported individually - a covered parent section does not silence its acceptance criteria. Run before optimize_cases so gaps are found while the draft is still easy to extend.",
             "inputSchema": schema(serde_json::json!({
@@ -414,14 +397,6 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         "get_run_failures" => {
             let pbi = args["pbi_id"].as_i64().unwrap_or(0);
             call("GET", &format!("/run-failures?pbi={pbi}"), "")
-        }
-        "record_finding" => call("POST", "/findings", &args.to_string()),
-        "list_findings" => {
-            let target = match args["status"].as_str().filter(|s| !s.trim().is_empty()) {
-                Some(s) => format!("/findings?status={}", percent_encode(s)),
-                None => "/findings".to_string(),
-            };
-            call("GET", &target, "")
         }
         "check_spec_coverage" => call("POST", "/check-coverage", &args.to_string()),
         // The bridge takes one body, so forwarding the raw arguments object

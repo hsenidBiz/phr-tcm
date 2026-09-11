@@ -214,7 +214,7 @@ export default function Suites({
         preconditions: c.preconditions,
         update_id: c.id,
       }));
-      await unwrapStr(commands.viewQueueHtml(queue, label, org, project, loadNotes(org), pagePalette()));
+      await unwrapStr(commands.viewQueueHtml(queue, label, org, loadNotes(org), pagePalette()));
     },
     onError: (e) => toast.error(e.message),
   });

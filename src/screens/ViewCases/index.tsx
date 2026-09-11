@@ -183,7 +183,6 @@ export default function ViewCases({
           chosen.map(toTestCase),
           pbiId != null ? `PBI #${pbiId}` : "",
           org,
-          project,
           notes,
           // Read at click time so the page opens in the theme in front of
           // the user; it carries both schemes and its own switch.
@@ -238,7 +237,6 @@ export default function ViewCases({
           chosen.map(toTestCase),
           pbiId != null ? `PBI #${pbiId}` : "",
           org,
-          project,
           notes,
           pagePalette(),
         )

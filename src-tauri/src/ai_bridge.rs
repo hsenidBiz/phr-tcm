@@ -165,10 +165,6 @@ pub async fn route(
         // DevOps, so neither should demand a sign-in first.
         ("GET", "/autorun-guide") => (200, crate::autorun::guide::autorun_guide()),
         ("POST", "/autorun-script") => save_autorun_scripts(body),
-        // Findings are local app data: no client needed, like the autorun
-        // routes - a problem noticed while signed out is still a problem.
-        ("POST", "/findings") => record_finding(ctx, body),
-        ("GET", "/findings") => list_findings(ctx, target),
         // The proxy asks for this before listing tools, so a toggle in the
         // app takes effect on the assistant's next tools/list.
         ("GET", "/tools") => (
@@ -278,63 +274,6 @@ fn save_autorun_scripts(body: &str) -> (u16, String) {
             (500, format!("could not save the bundle: {e}"))
         }
     }
-}
-
-/// The store root as app setup published it; `None` outside the app.
-fn findings_root() -> Result<std::path::PathBuf, (u16, String)> {
-    crate::findings::configured_root().ok_or((
-        503,
-        "Test Case Manager has not finished starting - the findings store has no location yet".into(),
-    ))
-}
-
-/// `record_finding`: one note about one thing, for the open org and project.
-fn record_finding(ctx: &BridgeContext, body: &str) -> (u16, String) {
-    let root = match findings_root() {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let v: serde_json::Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                400,
-                format!("that is not a finding: {e}. Expected {{ kind: test_case|spec|code, subject, title, detail }}."),
-            )
-        }
-    };
-    let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
-    match crate::findings::record(
-        &root,
-        crate::findings::NewFinding {
-            org: ctx.org.clone(),
-            project: ctx.project.clone(),
-            kind: s("kind"),
-            subject: s("subject"),
-            title: s("title"),
-            detail: s("detail"),
-        },
-    ) {
-        Ok(f) => {
-            crate::applog::info(format!("AI recorded a {} finding: {}", f.kind, f.title));
-            let open = crate::findings::list_open(&root, &ctx.org, &ctx.project).len();
-            (200, serde_json::json!({ "id": f.id, "open": open }).to_string())
-        }
-        Err(e) => (400, e),
-    }
-}
-
-/// `list_findings`: open by default; `status=resolved` or `status=all`.
-fn list_findings(ctx: &BridgeContext, target: &str) -> (u16, String) {
-    let root = match findings_root() {
-        Ok(r) => r,
-        Err(e) => return e,
-    };
-    let want = q(target, "status").unwrap_or_else(|| "open".into());
-    let all = crate::findings::list(&root, &ctx.org, &ctx.project);
-    let rows: Vec<&crate::findings::Finding> =
-        all.iter().filter(|f| want == "all" || f.status == want).collect();
-    (200, serde_json::json!({ "findings": rows, "total": rows.len() }).to_string())
 }
 
 /// Reorganise a draft into a run sheet: navigation spelled out as steps,

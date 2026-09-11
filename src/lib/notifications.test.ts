@@ -6,7 +6,6 @@ import {
   dismiss,
   markAllRead,
   noteAssigned,
-  noteFinding,
   notePrComments,
   notePrOverview,
   raise,
@@ -149,20 +148,4 @@ test("noteAssigned raises one item per work item, linked to it", () => {
   expect(full[0].title).toBe("Task #501 assigned to you");
   expect(full[0].body).toBe("Wire the login flow");
   expect(full[0].href).toBe("https://dev.azure.com/acme/Web/_workitems/edit/501");
-});
-
-/// A finding an assistant records is something that happened while you
-/// were not looking, so it goes on the bell like an assignment does.
-test("a recorded finding raises one notification, keyed by its id", () => {
-  noteFinding("acme", { id: "1-0", kind: "spec", title: "AC-3 contradicts the table" });
-  noteFinding("acme", { id: "1-0", kind: "spec", title: "AC-3 contradicts the table" });
-  expect(read()).toHaveLength(1);
-  const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
-    kind: string;
-    title: string;
-    body: string;
-  }>;
-  expect(full[0].kind).toBe("ai-finding");
-  expect(full[0].title).toBe("AI finding: spec");
-  expect(full[0].body).toBe("AC-3 contradicts the table");
 });

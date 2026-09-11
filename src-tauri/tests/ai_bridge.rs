@@ -312,22 +312,6 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(style.contains("AVOID em dashes"), "{style}");
     assert!(style.contains("active voice"), "{style}");
 
-    // Problems go to the findings store; the two human fields stay human.
-    let findings = body
-        .split("## Findings")
-        .nth(1)
-        .and_then(|rest| rest.split("## reviewer_notes").next())
-        .expect("the guide has a findings section");
-    assert!(findings.contains("record_finding"), "{findings}");
-    assert!(findings.contains("test_case"), "{findings}");
-    assert!(findings.contains("never write `comment`"), "the comment field is the developer's: {findings}");
-    let notes = body
-        .split("## reviewer_notes")
-        .nth(1)
-        .and_then(|rest| rest.split("## One branch per case").next())
-        .unwrap();
-    assert!(notes.contains("record_finding"), "a problem in a note is redirected to a finding: {notes}");
-
     // Reviewer notes are two things and no more: what this case checks,
     // in words anyone can read, and where the requirement lives. Both
     // halves are pinned because the field has drifted twice - first into
@@ -1349,44 +1333,4 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
     assert_eq!(v["count"], 1, "{out}");
     assert_eq!(v["tags"][0], "tag-349", "{out}");
     assert!(!v["note"].as_str().unwrap().contains("Showing"), "{out}");
-}
-
-
-/// The two human fields. A `comment` on a case with no id was written by
-/// the assistant (a case with an id may carry the developer's own,
-/// round-tripped), and a note that reports a problem is a finding in the
-/// wrong place. Both are advisories - judgement calls, said out loud.
-#[tokio::test]
-async fn validate_advises_when_the_human_fields_carry_the_assistants_words() {
-    let draft = serde_json::json!({
-        "test_cases": [
-            {
-                "title": "New case with a comment",
-                "automation_status": "Not Automated",
-                "comment": "Spec and code disagree here",
-                "steps": [{ "action": "Open the page.", "expected": "It opens." }]
-            },
-            {
-                "id": 155170,
-                "title": "Existing case with the developer's comment",
-                "automation_status": "Not Automated",
-                "comment": "Blocked until the API lands",
-                "steps": [{ "action": "Open the page.", "expected": "It opens." }]
-            },
-            {
-                "title": "Note that reports a problem",
-                "automation_status": "Not Automated",
-                "reviewer_notes": "Checks the cut-off. Spec: S.md 7.7\n> \"closed at cut-off\"\nNote: the code contradicts the spec here, the status stays open.",
-                "steps": [{ "action": "Open the page.", "expected": "It opens." }]
-            }
-        ]
-    })
-    .to_string();
-    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.10.3").await;
-    assert_eq!(status, 200);
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-    let adv: Vec<String> = v["advisories"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect();
-    assert!(adv.iter().any(|a| a.contains("Test case 1") && a.contains("comment") && a.contains("record_finding")), "{adv:?}");
-    assert!(!adv.iter().any(|a| a.contains("Test case 2") && a.contains("comment")), "the developer's own comment on an existing case is not questioned: {adv:?}");
-    assert!(adv.iter().any(|a| a.contains("Test case 3") && a.contains("reviewer_notes") && a.contains("record_finding")), "{adv:?}");
 }

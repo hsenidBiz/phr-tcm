@@ -447,8 +447,6 @@ export default function QueueSection({
       const r = await commands.viewDraftHtml(
         queue,
         `PBI #${pbiId}`,
-        org,
-        project,
         ownerPaths(queue, watches),
         watches.map((w) => ({
           path: w.path,
@@ -488,8 +486,6 @@ export default function QueueSection({
         .refreshDraftHtml(
           queue,
           `PBI #${pbiId}`,
-          org,
-          project,
           ownerPaths(queue, watches),
           watches.map((w) => ({
             path: w.path,

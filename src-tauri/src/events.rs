@@ -133,13 +133,3 @@ pub struct SlowdownRequested {
     pub secs: u32,
 }
 
-/// Emitted when an AI assistant has recorded a finding through the bridge.
-/// The AI Bridge tab refreshes its list and the bell raises a notification.
-#[derive(Clone, serde::Serialize, specta::Type, tauri_specta::Event)]
-pub struct FindingRecorded {
-    pub id: String,
-    pub org: String,
-    pub project: String,
-    pub kind: String,
-    pub title: String,
-}

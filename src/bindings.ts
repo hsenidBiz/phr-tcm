@@ -292,7 +292,7 @@ export const commands = {
 	 *  work item id get a comment box that autosaves back into the app via
 	 *  the loopback note listener.
 	 */
-	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, project, notes, palette })),
+	viewQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_queue_html", { queue, subtitle, organization, notes, palette })),
 	/**
 	 *  The same page for a DRAFT queue. Every case gets a comment box - drafts
 	 *  have no work item id to key an app-side note by, and the comment belongs
@@ -302,7 +302,7 @@ export const commands = {
 	 *  `owners` is the file each queued case came from, aligned with `queue`;
 	 *  an empty entry means the case was typed by hand and has no file.
 	 */
-	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, organization, project, owners, files, palette })),
+	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, owners, files, palette })),
 	/**
 	 *  The whole-set comment held in a JSON file, for prefilling the panel.
 	 *  A file that has none - or can't be read - simply has no comment.
@@ -336,7 +336,7 @@ export const commands = {
 	 *  A page already open learns about the rewrite from its revision poll and
 	 *  pulls the new content itself; nothing here should touch the browser.
 	 */
-	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, organization, project, owners, files, palette })),
+	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, owners, files, palette })),
 	/**
 	 *  Re-render the queue page WITHOUT opening a browser - the queue report's
 	 *  twin of `refresh_draft_html`, for the same reason: the keep-in-step
@@ -347,7 +347,7 @@ export const commands = {
 	 *  rewrite from its revision poll and pulls the new content itself;
 	 *  nothing here should touch the browser.
 	 */
-	refreshQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, project: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_queue_html", { queue, subtitle, organization, project, notes, palette })),
+	refreshQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_queue_html", { queue, subtitle, organization, notes, palette })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
@@ -503,9 +503,6 @@ export const commands = {
 	 *  `.test-cases/.history`, never deleted.
 	 */
 	copyIntoCases: (root: string, source: string) => typedError<CopiedIn, string>(__TAURI_INVOKE("copy_into_cases", { root, source })),
-	listFindings: (organization: string, project: string) => __TAURI_INVOKE<Finding[]>("list_findings", { organization, project }),
-	setFindingStatus: (id: string, status: string) => typedError<Finding, string>(__TAURI_INVOKE("set_finding_status", { id, status })),
-	removeFinding: (id: string) => typedError<null, string>(__TAURI_INVOKE("remove_finding", { id })),
 };
 
 /** Events */
@@ -514,7 +511,6 @@ export const events = {
 	caseNoteSaved: makeEvent<CaseNoteSaved>("case-note-saved"),
 	draftCommentSaved: makeEvent<DraftCommentSaved>("draft-comment-saved"),
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
-	findingRecorded: makeEvent<FindingRecorded>("finding-recorded"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
 	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
@@ -885,35 +881,6 @@ export type FiledBug = {
 	 */
 	screenshots_failed: number,
 	screenshots_total: number,
-};
-
-export type Finding = {
-	id: string,
-	org: string,
-	project: string,
-	/**  One of `KINDS`. */
-	kind: string,
-	/**  What it is about: a work item id, a spec path and section, a file path. */
-	subject: string,
-	title: string,
-	/**  Markdown, rendered in the app and in the browser report. */
-	detail: string,
-	/**  RFC 3339, UTC. */
-	created_at: string,
-	/**  One of `STATUSES`. */
-	status: string,
-};
-
-/**
- *  Emitted when an AI assistant has recorded a finding through the bridge.
- *  The AI Bridge tab refreshes its list and the bell raises a notification.
- */
-export type FindingRecorded = {
-	id: string,
-	org: string,
-	project: string,
-	kind: string,
-	title: string,
 };
 
 export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;

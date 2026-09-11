@@ -157,14 +157,3 @@ test("every row label is human, with no identifier in it", () => {
     expect(row.label[0]).toMatch(/[A-Z]/);
   }
 });
-
-/// Always on, like validate and optimize: the guide decides when a
-/// finding is recorded, and a switch would only reopen the habit of
-/// writing problems into the developer's comment field.
-test("the finding tools are core and not listed as switches", () => {
-  for (const name of ["record_finding", "list_findings"]) {
-    expect(MCP_TOOLS.map((t) => t.name)).toContain(name);
-    expect(CORE_TOOLS as readonly string[]).toContain(name);
-    expect(visibleRows().flatMap((r) => r.names)).not.toContain(name);
-  }
-});
