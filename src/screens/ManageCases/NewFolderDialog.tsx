@@ -40,17 +40,33 @@ export default function NewFolderDialog({
   const n = caseIds.length;
 
   const create = useMutation({
+    // The suite and the copy are two separate ADO calls: once the suite
+    // exists, it's real and listed whether or not the copy that follows
+    // succeeds. So a failed copy is not a failed creation - it's reported
+    // with its own toast, but still closes the dialog and refreshes the
+    // tree so the (now empty) folder shows up.
     mutationFn: async () => {
       const suite = await unwrap(commands.createStaticSuite(org, project, planId, Number(parentId), trimmed));
-      const added = n > 0 ? await unwrap(commands.addCasesToSuite(org, project, planId, suite.id, caseIds)) : [];
-      return { suite, added };
+      if (n === 0) return { suite, added: null as number[] | null, addError: null as string | null };
+      try {
+        const added = await unwrap(commands.addCasesToSuite(org, project, planId, suite.id, caseIds));
+        return { suite, added, addError: null as string | null };
+      } catch (e) {
+        return { suite, added: null as number[] | null, addError: e instanceof Error ? e.message : String(e) };
+      }
     },
-    onSuccess: ({ suite, added }) => {
-      if (n === 0) toast.success(`Created folder "${suite.name}".`);
-      else
+    onSuccess: ({ suite, added, addError }) => {
+      if (addError) {
+        toast.warning(`Created folder "${suite.name}", but the test cases could not be added: ${addError}`, {
+          duration: 20000,
+        });
+      } else if (n === 0) {
+        toast.success(`Created folder "${suite.name}".`);
+      } else {
         toast.success(
-          `Created folder "${suite.name}" and added ${added.length} test case${added.length === 1 ? "" : "s"}. They stay in ${sourceName} too.`,
+          `Created folder "${suite.name}" and added ${added!.length} test case${added!.length === 1 ? "" : "s"}. They stay in ${sourceName} too.`,
         );
+      }
       onCreated();
       onClose();
     },

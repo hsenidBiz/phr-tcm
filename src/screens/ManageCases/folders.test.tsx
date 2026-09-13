@@ -11,6 +11,7 @@ vi.mock("sonner", () => ({
 afterEach(() => {
   clearMocks();
   vi.clearAllMocks();
+  localStorage.clear();
 });
 
 test("New folder offers the plan root and static suites as parents, creates, and refreshes the tree", async () => {
@@ -97,4 +98,29 @@ test("Add to folder copies the selection into the chosen static suite", async ()
     expect(add?.args).toEqual({ organization: "acme", project: "Web", planId: 9, suiteId: 91, caseIds: [202] });
   });
   expect(toast.success).toHaveBeenCalledWith("Added 1 test case to Regression. It stays in PBI 42 suite too.");
+});
+
+test("New folder: the suite is created but the copy fails - the folder still shows up", async () => {
+  const { calls } = mountWithSuite((cmd) => {
+    if (cmd === "create_static_suite")
+      return { id: 94, name: "Smoke", suite_type: "staticTestSuite", requirement_id: null, parent_id: 91 };
+    if (cmd === "add_cases_to_suite") throw new Error("boom");
+  });
+  const l = await pickSuite(91);
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(screen.getByRole("button", { name: "New folder" }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByLabelText("Create inside"), { target: { value: "91" } });
+  fireEvent.change(within(dialog).getByLabelText("Folder name"), { target: { value: "Smoke" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create folder and add 1 test case" }));
+
+  await waitFor(() => {
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Created folder "Smoke", but the test cases could not be added: boom',
+      { duration: 20000 },
+    );
+  });
+  // The folder exists in ADO even though the copy failed: refresh the tree and close.
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "list_plans_with_suites").length).toBeGreaterThan(1));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
