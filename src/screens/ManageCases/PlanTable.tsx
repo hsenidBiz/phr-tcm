@@ -34,7 +34,9 @@ export default function PlanTable({
   project: string;
   plan: PlanWithSuites["plan"];
   suites: SuiteRef[];
-  /** Suite ids to open on first render (a picked PBI's own suite). */
+  /** Suite ids to open (a picked PBI's own suite): opened at first render
+   * and again whenever this array's identity changes, e.g. a newly picked
+   * PBI whose suite sits in this same plan. */
   initiallyExpanded: number[];
   selection: Selection | null;
   onToggle: (planId: number, cases: SuiteCase[], on: boolean) => void;
@@ -42,6 +44,25 @@ export default function PlanTable({
 }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set(initiallyExpanded));
+  // A newly picked PBI can point at a different suite of this SAME plan
+  // (the component stays mounted - React keys `PlanTable` by plan id), so
+  // opening only has to happen once at construction is not enough. Union
+  // the ids in rather than replace: whatever the user opened by hand stays
+  // open too.
+  useEffect(() => {
+    if (initiallyExpanded.length === 0) return;
+    setExpanded((s) => {
+      const next = new Set(s);
+      let changed = false;
+      for (const id of initiallyExpanded) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : s;
+    });
+  }, [initiallyExpanded]);
   const [target, setTarget] = useState("");
   const [newOpen, setNewOpen] = useState(false);
 

@@ -19,7 +19,12 @@ test("with no PBI every plan is a table of its suites, collapsed, in tree order"
   expect(screen.getByRole("region", { name: "Billing - Test Plan" })).toBeInTheDocument();
   const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
   const rows = within(auth).getAllByRole("button", { name: /^Expand / });
-  expect(rows.map((r) => r.getAttribute("aria-label"))).toEqual(["Expand Regression", "Expand Smoke", "Expand PBI 42 suite"]);
+  expect(rows.map((r) => r.getAttribute("aria-label"))).toEqual([
+    "Expand Regression",
+    "Expand Smoke",
+    "Expand PBI 42 suite",
+    "Expand PBI 55 suite",
+  ]);
   // Smoke sits under Regression: one level deeper.
   expect(rows[1].style.paddingLeft).not.toBe(rows[0].style.paddingLeft);
   expect(within(auth).getByText("PBI 42")).toBeInTheDocument();
@@ -47,6 +52,14 @@ test("a picked PBI shows only its plan with its suite open; Show all plans widen
   expect(screen.getByRole("region", { name: "Billing - Test Plan" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Show only this PBI's plan" }));
   expect(screen.queryByRole("region", { name: "Billing - Test Plan" })).not.toBeInTheDocument();
+});
+
+test("a new PBI in the same plan opens its own suite without closing the old one", async () => {
+  const { rerender } = mountScreen(undefined, { id: 42, title: "Login", work_item_type: "Product Backlog Item" });
+  expect(await screen.findByRole("list", { name: "Test cases in PBI 42 suite" })).toBeInTheDocument();
+  rerender({ id: 55, title: "Reset password", work_item_type: "Product Backlog Item" });
+  expect(await screen.findByRole("list", { name: "Test cases in PBI 55 suite" })).toBeInTheDocument();
+  expect(screen.getByRole("list", { name: "Test cases in PBI 42 suite" })).toBeInTheDocument();
 });
 
 test("a picked PBI with no suite in any plan falls back to every plan and says so", async () => {

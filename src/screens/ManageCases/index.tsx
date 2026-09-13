@@ -9,6 +9,12 @@ import type { SuiteCase } from "../../lib/suiteOrder";
 import PlanTable from "./PlanTable";
 import { toggleSelection, type Selection } from "./selection";
 
+/** A stable empty array: passed as `initiallyExpanded` to every plan that
+ * isn't the PBI's own, so `PlanTable`'s effect only re-runs (and its
+ * `useMemo`/dependency checks stay cheap) when the set of ids to open
+ * actually changes, not on every render of this screen. */
+const NONE_EXPANDED: number[] = [];
+
 /** Bulk work on test cases, plan by plan: every suite of a plan with its
  * cases underneath. Cases are selected across a plan's suites and copied
  * into another suite or a new one; each suite's order can be changed and
@@ -43,6 +49,11 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
   }, [pbi, plans.data]);
 
   const visible = pbiPlan && !showAll ? [pbiPlan.plan] : (plans.data ?? []);
+
+  // A new reference only when the suite id itself changes, so a picked
+  // PBI whose suite sits in the SAME plan as before still produces a
+  // fresh array `PlanTable` can react to (its effect keys off identity).
+  const pbiExpanded = useMemo(() => (pbiPlan ? [pbiPlan.suiteId] : NONE_EXPANDED), [pbiPlan?.suiteId]);
 
   const onToggle = (planId: number, cases: SuiteCase[], on: boolean) =>
     setSelection((s) => toggleSelection(s, planId, cases, on));
@@ -83,7 +94,7 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
           project={project}
           plan={plan}
           suites={suites}
-          initiallyExpanded={pbiPlan && pbiPlan.plan.plan.id === plan.id ? [pbiPlan.suiteId] : []}
+          initiallyExpanded={pbiPlan && pbiPlan.plan.plan.id === plan.id ? pbiExpanded : NONE_EXPANDED}
           selection={selection}
           onToggle={onToggle}
           onClearSelection={() => setSelection(null)}

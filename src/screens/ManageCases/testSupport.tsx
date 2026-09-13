@@ -11,6 +11,7 @@ export const PLANS = [
       { id: 91, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
       { id: 92, name: "Smoke", suite_type: "staticTestSuite", requirement_id: null, parent_id: 91 },
       { id: 93, name: "PBI 42 suite", suite_type: "requirementTestSuite", requirement_id: 42, parent_id: null },
+      { id: 96, name: "PBI 55 suite", suite_type: "requirementTestSuite", requirement_id: 55, parent_id: null },
     ],
   },
   {
@@ -60,12 +61,19 @@ export function mountScreen(
     return undefined;
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const { rerender: rtlRerender } = render(
     <QueryClientProvider client={qc}>
       <ManageCases org="acme" project="Web" pbi={pbi} />
     </QueryClientProvider>,
   );
-  return { calls };
+  /** Re-render the same tree with a newly picked PBI (or none). */
+  const rerender = (nextPbi: PbiHit | null) =>
+    rtlRerender(
+      <QueryClientProvider client={qc}>
+        <ManageCases org="acme" project="Web" pbi={nextPbi} />
+      </QueryClientProvider>,
+    );
+  return { calls, rerender };
 }
 
 /** Expand a suite block by name and resolve to its case list. */
