@@ -398,6 +398,28 @@ export const commands = {
 	 */
 	created_plan: boolean,
 } | null, AdoError>(__TAURI_INVOKE("find_pbi_suite", { organization, project, pbiId })),
+	/**
+	 *  The order of a suite's entries (child suites first, then test cases),
+	 *  for the Manage Test Cases list. Read only.
+	 */
+	listSuiteEntries: (organization: string, project: string, suiteId: number) => typedError<SuiteEntry[], AdoError>(__TAURI_INVOKE("list_suite_entries", { organization, project, suiteId })),
+	/**
+	 *  Put a suite's test cases in the given order. Cases not named keep
+	 *  their place after the named ones; child suites are not touched.
+	 *  Returns the order the server reports back.
+	 */
+	reorderSuiteCases: (organization: string, project: string, suiteId: number, caseIds: number[]) => typedError<number[], AdoError>(__TAURI_INVOKE("reorder_suite_cases", { organization, project, suiteId, caseIds })),
+	/**
+	 *  A static child suite (a "folder") under a static parent or the plan
+	 *  root. The name is trimmed; an empty one is refused here rather than
+	 *  sent, so the message names the real problem.
+	 */
+	createStaticSuite: (organization: string, project: string, planId: number, parentSuiteId: number, name: string) => typedError<SuiteRef, AdoError>(__TAURI_INVOKE("create_static_suite", { organization, project, planId, parentSuiteId, name })),
+	/**
+	 *  Copy existing test cases into a suite: they stay wherever they already
+	 *  were. Returns the ids the server reports as now in the suite.
+	 */
+	addCasesToSuite: (organization: string, project: string, planId: number, suiteId: number, caseIds: number[]) => typedError<number[], AdoError>(__TAURI_INVOKE("add_cases_to_suite", { organization, project, planId, suiteId, caseIds })),
 	/**  Recent outcome history per test case for a plan (last 5, newest first). */
 	runHistory: (organization: string, project: string, planId: number) => typedError<CaseHistory[], AdoError>(__TAURI_INVOKE("run_history", { organization, project, planId })),
 	/**
@@ -1394,6 +1416,17 @@ export type SubmitProgress = {
 	title: string,
 	/**  "created" | "updated" | "failed" */
 	action: string,
+};
+
+/**
+ *  One row of a suite's ordering: a test case or a child suite and the
+ *  position Azure DevOps shows it at.
+ */
+export type SuiteEntry = {
+	id: number,
+	sequence_number: number,
+	/**  "testCase" or "suite", exactly as Azure DevOps names them. */
+	entry_type: string,
 };
 
 /**
