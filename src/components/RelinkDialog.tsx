@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { commands, type PbiHit, type RelinkOutcome, type TestCaseFull } from "../bindings";
+import { commands, type PbiHit, type RelinkOutcome } from "../bindings";
 import { describeAdoError, unwrap } from "../lib/ipc";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -26,7 +26,8 @@ export default function RelinkDialog({
   project: string;
   /** The PBI the cases are being moved OUT of - the one on screen. */
   fromPbi: number;
-  cases: TestCaseFull[];
+  /** The cases to move: id and title are all the confirmation shows. */
+  cases: Array<{ id: number; title: string }>;
   onClose: () => void;
   /** Called when at least one case moved, so the list refreshes. */
   onMoved: () => void;

@@ -60,11 +60,21 @@ export function mountWithSuite(extra: (cmd: string, args: unknown) => unknown = 
   return { calls };
 }
 
-/** Pick plan 9 and the given suite; resolves to the case list element. */
+/** Pick plan 9 and the given suite; resolves to the case list element.
+ *
+ * The list itself can appear a render before React flushes the passive
+ * effects that follow it - including the screen's own `order`-from-
+ * `cases.data` effect and each `useMutation`'s internal option sync,
+ * which only runs in a `useEffect`. A `fireEvent` right after this
+ * `await` would then fire a mutation whose `mutationFn` still closes
+ * over the suite's *previous* (often empty) `order`. Yielding one more
+ * macrotask here lets that catch up before a caller acts on the result. */
 export async function pickSuite(suiteId: number) {
   const plan = await screen.findByLabelText("Test plan");
   await screen.findByText("Auth - Test Plan");
   fireEvent.change(plan, { target: { value: "9" } });
   fireEvent.change(screen.getByLabelText("Test suite"), { target: { value: String(suiteId) } });
-  return screen.findByRole("list", { name: "Test cases in order" });
+  const list = await screen.findByRole("list", { name: "Test cases in order" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return list;
 }

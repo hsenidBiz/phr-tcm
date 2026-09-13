@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
+import RelinkDialog from "../../components/RelinkDialog";
 import { Button } from "../../components/ui/button";
-import { IconConfirm, IconUndo } from "../../lib/actionIcons";
-import { unwrap } from "../../lib/ipc";
-import { sameOrder, type SuiteCase } from "../../lib/suiteOrder";
+import { IconConfirm, IconImport, IconMoveToPbi, IconUndo } from "../../lib/actionIcons";
+import { unwrap, unwrapStr } from "../../lib/ipc";
+import { orderFromFile, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
 import SuitePicker, { type PickedSuite } from "./SuitePicker";
 
@@ -72,6 +74,34 @@ export default function ManageCases({ org, project }: { org: string; project: st
     onError: (e) => toast.error(`Could not save the order: ${e.message}`),
   });
 
+  const [relinkOpen, setRelinkOpen] = useState(false);
+
+  /** A draft .json carries each uploaded case's id and, after the
+   * optimizer's grouping pass, its tester_order. The file only proposes:
+   * the list re-orders on screen and Apply order is what saves it. */
+  const fromFile = useMutation({
+    mutationFn: async () => {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Test case files", extensions: ["json"] }],
+      });
+      if (typeof path !== "string") return null;
+      const parsed = await unwrapStr(commands.parseImportFile(path));
+      return orderFromFile(order, parsed.cases);
+    },
+    onSuccess: (result) => {
+      if (!result) return;
+      if (result.matched === 0) {
+        toast.warning("No test case in that file is in this suite. The file needs ids from an upload.");
+        return;
+      }
+      setOrder(result.order);
+      toast.info(`Placed ${result.matched} of ${order.length} test cases from the file. Apply order to save.`);
+    },
+    onError: (e) => toast.error(`Could not read the file: ${e.message ?? e}`),
+  });
+
   if (!org || !project) {
     return (
       <p className="text-sm text-muted">
@@ -80,7 +110,10 @@ export default function ManageCases({ org, project }: { org: string; project: st
     );
   }
 
-  const busy = apply.isPending;
+  const busy = apply.isPending || fromFile.isPending;
+  const pbiId =
+    picked?.suite.suite_type === "requirementTestSuite" ? (picked.suite.requirement_id ?? null) : null;
+  const selectedCases = order.filter((c) => selected.has(c.id));
 
   return (
     <div className="space-y-4">
@@ -106,6 +139,23 @@ export default function ManageCases({ org, project }: { org: string; project: st
               <IconUndo aria-hidden />
               Reset
             </Button>
+            <Button size="sm" variant="ghost" disabled={busy || order.length === 0} onClick={() => fromFile.mutate()}>
+              <IconImport aria-hidden />
+              {fromFile.isPending ? "Reading file" : "Apply tester order from file"}
+            </Button>
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || pbiId == null || selectedCases.length === 0}
+              onClick={() => setRelinkOpen(true)}
+            >
+              <IconMoveToPbi aria-hidden />
+              Move to PBI
+            </Button>
+            {pbiId == null && (
+              <span className="text-xs text-faint">Move to PBI works on a PBI suite.</span>
+            )}
           </div>
           {cases.isLoading && <ScanProgress label="Loading test cases" />}
           {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
@@ -119,6 +169,20 @@ export default function ManageCases({ org, project }: { org: string; project: st
               onChange={setOrder}
               onSelect={setSelected}
               disabled={busy}
+            />
+          )}
+          {relinkOpen && pbiId != null && (
+            <RelinkDialog
+              org={org}
+              project={project}
+              fromPbi={pbiId}
+              cases={selectedCases}
+              onClose={() => setRelinkOpen(false)}
+              onMoved={() => {
+                // The moved cases have left this suite: read it again.
+                setSelected(new Set());
+                qc.invalidateQueries({ queryKey: ["suite-cases", org, project, planId, suiteId] });
+              }}
             />
           )}
         </>
