@@ -9,13 +9,7 @@ import { IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { orderFromFile, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
-// Explicit extension: this name differs from the component's own
-// filename only by the case of its first letter ("suiteCases.ts" vs
-// "SuiteCases.tsx"), and NTFS resolves filenames case-insensitively. An
-// extensionless import here would be just as ambiguous as the
-// component's own extensionless import from outside - see the
-// `resolve.extensions` comment in vitest.config.ts and vite.config.ts.
-import { loadSuiteCases, suiteCasesKey } from "./suiteCases.ts";
+import { loadSuiteCases, suiteCasesKey } from "./suiteCasesQuery";
 
 /** One expanded suite: its cases in Azure DevOps' order, re-orderable and
  * selectable. Order lives here (Apply saves it, Reset drops it); which

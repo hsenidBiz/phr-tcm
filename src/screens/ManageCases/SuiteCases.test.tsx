@@ -5,12 +5,7 @@ import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "sonner";
 import type { SuiteCase } from "../../lib/suiteOrder";
-// Explicit extension: "SuiteCases" differs from the sibling
-// "suiteCases.ts" (query/loading helpers) only in the case of its first
-// letter, and both this filesystem's and TypeScript's own module
-// resolution fold case, so an extensionless import here is genuinely
-// ambiguous - see the `resolve.extensions` comment in vitest.config.ts.
-import SuiteCases from "./SuiteCases.tsx";
+import SuiteCases from "./SuiteCases";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
