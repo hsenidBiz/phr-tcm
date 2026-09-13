@@ -2,6 +2,17 @@ import type { SuiteRef } from "../bindings";
 
 export type SuiteNode = { suite: SuiteRef; children: SuiteNode[] };
 
+/** One level of indent for a suite shown at depth in a flat dropdown.
+ * Non-breaking spaces: an ordinary space collapses in an `<option>` (and
+ * most other HTML text), so plain spaces would render flush regardless of
+ * depth. */
+export const INDENT = "    ";
+
+/** `name` indented for `depth`, the way `flattenTree` rows are shown. */
+export function indented(name: string, depth: number): string {
+  return INDENT.repeat(depth) + name;
+}
+
 /** Rebuild the multi-level suite tree from parent links. The plan's root
  * suite is already stripped in Rust, so a null (or unknown) parent means
  * top level. Shared by the Test Suites browser and the Manage Test Cases

@@ -73,9 +73,10 @@ test("Move to PBI needs a PBI suite and a selection, then hands the picked cases
   expect(screen.getByRole("button", { name: "Move to PBI" })).toBeDisabled();
   expect(screen.getByText("Move to PBI works on a PBI suite.")).toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText("Test suite"), { target: { value: "93" } });
+  fireEvent.click(screen.getByRole("combobox", { name: "Test suite" }));
+  fireEvent.click(screen.getByRole("option", { name: "PBI 42: PBI 42 suite" }));
   await waitFor(() =>
-    expect(screen.getByText("PBI 42 suite", { selector: "option", exact: false })).toBeInTheDocument(),
+    expect(screen.getByRole("combobox", { name: "Test suite" })).toHaveTextContent("PBI 42 suite"),
   );
   const l2 = await screen.findByRole("list", { name: "Test cases in order" });
   // A PBI suite, nothing picked yet.

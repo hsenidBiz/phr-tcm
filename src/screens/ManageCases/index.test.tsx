@@ -54,6 +54,10 @@ test("dragging a row onto another moves it; Apply order sends the ids and reload
     const call = calls.find((c) => c.cmd === "reorder_suite_cases");
     expect(call?.args).toEqual({ organization: "acme", project: "Web", suiteId: 91, caseIds: [203, 201, 202] });
   });
+  // Apply order goes disabled as soon as the mutation resolves - the saved
+  // order is written into the cache directly, so this does not wait on the
+  // invalidated query's refetch to land.
+  await waitFor(() => expect(apply).toBeDisabled());
   // The list re-reads from the server after a save.
   await waitFor(() => expect(calls.filter((c) => c.cmd === "list_suite_entries").length).toBeGreaterThan(1));
 });
@@ -87,9 +91,13 @@ test("an empty suite says so", async () => {
       <ManageCases org="acme" project="Web" />
     </QueryClientProvider>,
   );
-  const plan = await screen.findByLabelText("Test plan");
-  await screen.findByText("Auth - Test Plan");
-  fireEvent.change(plan, { target: { value: "9" } });
-  fireEvent.change(screen.getByLabelText("Test suite"), { target: { value: "91" } });
+  const plan = await screen.findByRole("combobox", { name: "Test plan" });
+  await waitFor(() => expect(plan).toBeEnabled());
+  fireEvent.click(plan);
+  fireEvent.click(await screen.findByRole("option", { name: "Auth - Test Plan" }));
+  const suite = screen.getByRole("combobox", { name: "Test suite" });
+  await waitFor(() => expect(suite).toBeEnabled());
+  fireEvent.click(suite);
+  fireEvent.click(screen.getByRole("option", { name: "Regression" }));
   expect(await screen.findByText("No test cases in this suite.")).toBeInTheDocument();
 });

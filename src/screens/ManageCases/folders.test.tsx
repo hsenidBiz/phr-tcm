@@ -23,11 +23,13 @@ test("New folder offers the plan root and static suites as parents, creates, and
   fireEvent.click(screen.getByRole("button", { name: "New folder" }));
   const dialog = await screen.findByRole("dialog");
 
-  const parent = within(dialog).getByLabelText("Create inside");
-  const labels = Array.from(parent.querySelectorAll("option")).map((o) => o.textContent);
+  const parent = within(dialog).getByRole("combobox", { name: "Create inside" });
+  expect(parent).toHaveTextContent("Plan root (Auth - Test Plan)");
+  fireEvent.click(parent);
+  const labels = within(dialog).getAllByRole("option").map((o) => o.textContent);
   // The root first, then static suites only: the PBI suite (93) is not offered.
   expect(labels).toEqual(["Plan root (Auth - Test Plan)", "Regression"]);
-  expect(parent).toHaveValue("90");
+  fireEvent.click(within(dialog).getByRole("option", { name: "Plan root (Auth - Test Plan)" }));
 
   fireEvent.change(within(dialog).getByLabelText("Folder name"), { target: { value: "  Smoke  " } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create folder" }));
@@ -53,7 +55,8 @@ test("with cases selected, New folder creates and then copies them in", async ()
   fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
   fireEvent.click(screen.getByRole("button", { name: "New folder" }));
   const dialog = await screen.findByRole("dialog");
-  fireEvent.change(within(dialog).getByLabelText("Create inside"), { target: { value: "91" } });
+  fireEvent.click(within(dialog).getByRole("combobox", { name: "Create inside" }));
+  fireEvent.click(within(dialog).getByRole("option", { name: "Regression" }));
   fireEvent.change(within(dialog).getByLabelText("Folder name"), { target: { value: "Smoke" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create folder and add 2 test cases" }));
 
@@ -80,17 +83,20 @@ test("Add to folder copies the selection into the chosen static suite", async ()
     if (cmd === "add_cases_to_suite") return [202];
   });
   const l = await pickSuite(93);
-  const target = screen.getByLabelText("Folder");
+  const target = screen.getByRole("combobox", { name: "Folder" });
+  fireEvent.click(target);
   // Static suites of the plan, not the one on screen, not PBI suites.
-  expect(Array.from(target.querySelectorAll("option")).map((o) => o.textContent)).toEqual([
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
     "Pick a folder",
     "Regression",
   ]);
+  fireEvent.click(screen.getByRole("option", { name: "Pick a folder" }));
   expect(screen.getByRole("button", { name: "Add to folder" })).toBeDisabled();
 
   fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
   expect(screen.getByRole("button", { name: "Add to folder" })).toBeDisabled();
-  fireEvent.change(target, { target: { value: "91" } });
+  fireEvent.click(target);
+  fireEvent.click(screen.getByRole("option", { name: "Regression" }));
   fireEvent.click(screen.getByRole("button", { name: "Add to folder" }));
 
   await waitFor(() => {
@@ -110,7 +116,8 @@ test("New folder: the suite is created but the copy fails - the folder still sho
   fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
   fireEvent.click(screen.getByRole("button", { name: "New folder" }));
   const dialog = await screen.findByRole("dialog");
-  fireEvent.change(within(dialog).getByLabelText("Create inside"), { target: { value: "91" } });
+  fireEvent.click(within(dialog).getByRole("combobox", { name: "Create inside" }));
+  fireEvent.click(within(dialog).getByRole("option", { name: "Regression" }));
   fireEvent.change(within(dialog).getByLabelText("Folder name"), { target: { value: "Smoke" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create folder and add 1 test case" }));
 

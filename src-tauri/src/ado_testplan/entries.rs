@@ -64,6 +64,9 @@ impl AdoClient {
         project: &str,
         suite_id: i32,
     ) -> Result<Vec<SuiteEntry>, AdoError> {
+        // The endpoint returns the whole suite in one response - no
+        // continuation token is documented for `suiteentry` - so a single
+        // `get_json` here is deliberate, not a missed pagination case.
         let url = format!(
             "{}/testplan/suiteentry/{}?api-version=7.1",
             self.tp_base(org, project),
@@ -74,10 +77,13 @@ impl AdoClient {
     }
 
     /// Put the suite's test cases in `case_ids` order. Child suites keep
-    /// their places at the top (Azure DevOps lists them first and this
-    /// never names them); cases the caller did not name follow the named
-    /// ones in the order they already had. Returns the case order as the
-    /// server reports it back. A suite with no cases sends nothing.
+    /// their own sequence numbers untouched (this never names them); cases
+    /// the caller did not name follow the named ones in the order they
+    /// already had. The slots reused are the sequence numbers the suite's
+    /// test-case entries already occupy, sorted ascending and zipped with
+    /// the ordered ids - not `suites + i`, which wrongly assumes suites are
+    /// numbered from 0 and sit in the first slots. Returns the case order
+    /// as the server reports it back. A suite with no cases sends nothing.
     pub async fn reorder_suite_cases(
         &self,
         org: &str,
@@ -90,14 +96,19 @@ impl AdoClient {
         if ordered.is_empty() {
             return Ok(vec![]);
         }
-        let suites = current.iter().filter(|e| e.entry_type == "suite").count() as i32;
+        let mut slots: Vec<i32> = current
+            .iter()
+            .filter(|e| e.entry_type == "testCase")
+            .map(|e| e.sequence_number)
+            .collect();
+        slots.sort_unstable();
         let body: Vec<serde_json::Value> = ordered
             .iter()
-            .enumerate()
-            .map(|(i, id)| {
+            .zip(slots.iter())
+            .map(|(id, seq)| {
                 serde_json::json!({
                     "id": id,
-                    "sequenceNumber": suites + i as i32,
+                    "sequenceNumber": seq,
                     "suiteEntryType": "testCase",
                 })
             })

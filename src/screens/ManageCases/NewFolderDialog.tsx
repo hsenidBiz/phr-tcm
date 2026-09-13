@@ -5,6 +5,7 @@ import { commands } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
+import { Select } from "../../components/ui/select";
 import { IconCancel, IconNewFolder } from "../../lib/actionIcons";
 import { unwrap } from "../../lib/ipc";
 
@@ -73,9 +74,6 @@ export default function NewFolderDialog({
     onError: (e) => toast.error(`Could not create the folder: ${e.message}`),
   });
 
-  const selectClass =
-    "mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-accent focus:outline-none";
-
   return (
     <Modal onClose={onClose} className="w-full max-w-md space-y-3 p-5">
       <h2 className="text-sm font-semibold text-text">New folder</h2>
@@ -95,18 +93,13 @@ export default function NewFolderDialog({
       </label>
       <label className="block text-xs text-muted">
         Create inside
-        <select
-          aria-label="Create inside"
-          className={selectClass}
-          value={parentId}
-          onChange={(e) => setParentId(e.target.value)}
-        >
+        <Select aria-label="Create inside" triggerClassName="mt-1" value={parentId} onChange={(e) => setParentId(e.target.value)}>
           {parents.map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" disabled={create.isPending} onClick={onClose}>

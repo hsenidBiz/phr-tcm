@@ -1,6 +1,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { expect } from "vitest";
 import ManageCases from "./index";
 
 export const PLANS = [
@@ -69,11 +70,27 @@ export function mountWithSuite(extra: (cmd: string, args: unknown) => unknown = 
  * `await` would then fire a mutation whose `mutationFn` still closes
  * over the suite's *previous* (often empty) `order`. Yielding one more
  * macrotask here lets that catch up before a caller acts on the result. */
+const suiteOptionName = (s: (typeof PLANS)[number]["suites"][number]) =>
+  s.suite_type === "requirementTestSuite" && s.requirement_id != null
+    ? `PBI ${s.requirement_id}: ${s.name}`
+    : s.name;
+
 export async function pickSuite(suiteId: number) {
-  const plan = await screen.findByLabelText("Test plan");
-  await screen.findByText("Auth - Test Plan");
-  fireEvent.change(plan, { target: { value: "9" } });
-  fireEvent.change(screen.getByLabelText("Test suite"), { target: { value: String(suiteId) } });
+  const suiteById = new Map(PLANS.flatMap((p) => p.suites).map((s) => [s.id, s]));
+  const plan = await screen.findByRole("combobox", { name: "Test plan" });
+  // The Select's options only exist in the DOM while it is open, and only
+  // once the plan list has loaded - unlike a native <select>, which always
+  // renders its (possibly still-empty) <option>s. Wait for the trigger to
+  // come off "disabled" (set while `plans.data` is undefined) before
+  // opening it, or the listbox opens over the stale "Loading plans" row.
+  await waitFor(() => expect(plan).toBeEnabled());
+  fireEvent.click(plan);
+  fireEvent.click(await screen.findByRole("option", { name: "Auth - Test Plan" }));
+
+  const suite = screen.getByRole("combobox", { name: "Test suite" });
+  await waitFor(() => expect(suite).toBeEnabled());
+  fireEvent.click(suite);
+  fireEvent.click(screen.getByRole("option", { name: suiteOptionName(suiteById.get(suiteId)!) }));
   const list = await screen.findByRole("list", { name: "Test cases in order" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   return list;

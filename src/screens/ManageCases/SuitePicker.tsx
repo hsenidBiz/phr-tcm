@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { commands, type SuiteRef } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
+import { Select } from "../../components/ui/select";
 import { CACHE, persistentQuery } from "../../lib/persistentQuery";
-import { buildTree, flattenTree } from "../../lib/suiteTree";
+import { buildTree, flattenTree, indented } from "../../lib/suiteTree";
 import { unwrap } from "../../lib/ipc";
 
 /** What the rest of the screen needs to know about the suite in hand. */
@@ -16,13 +17,8 @@ export type PickedSuite = {
   siblings: SuiteRef[];
 };
 
-const INDENT = "    ";
-
 /** Two dropdowns over the same cached plan tree the Test Suites tab
- * paints: plan, then suite (indented by depth so it reads as the tree).
- * Kept as native selects: the list can run to hundreds of suites, and a
- * native control scrolls, types-to-find and reads to a screen reader
- * without any help. */
+ * paints: plan, then suite (indented by depth so it reads as the tree). */
 export default function SuitePicker({
   org,
   project,
@@ -34,6 +30,9 @@ export default function SuitePicker({
   picked: PickedSuite | null;
   onPick: (p: PickedSuite | null) => void;
 }) {
+  // Seeded from `picked` on mount only; the one caller (ManageCases) never
+  // clears `picked` from outside this picker, so it never needs to sync
+  // back to a `picked` that changed for some other reason.
   const [planId, setPlanId] = useState<string>(picked ? String(picked.planId) : "");
   const plans = useQuery({
     queryKey: ["plans-suites", org, project],
@@ -71,16 +70,13 @@ export default function SuitePicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plans.data, picked?.planId, picked?.suite.id]);
 
-  const selectClass =
-    "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50";
-
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <label className="block text-xs text-muted">
         Test plan
-        <select
+        <Select
           aria-label="Test plan"
-          className={`mt-1 ${selectClass}`}
+          triggerClassName="mt-1"
           value={planId}
           disabled={!plans.data}
           onChange={(e) => {
@@ -94,13 +90,13 @@ export default function SuitePicker({
               {plan.name}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       <label className="block text-xs text-muted">
         Test suite
-        <select
+        <Select
           aria-label="Test suite"
-          className={`mt-1 ${selectClass}`}
+          triggerClassName="mt-1"
           value={picked ? String(picked.suite.id) : ""}
           disabled={!current}
           onChange={(e) => {
@@ -121,14 +117,15 @@ export default function SuitePicker({
           <option value="">Pick a suite</option>
           {rows.map(({ suite, depth }) => (
             <option key={suite.id} value={suite.id}>
-              {INDENT.repeat(depth)}
-              {suite.suite_type === "requirementTestSuite" && suite.requirement_id != null
-                ? `PBI ${suite.requirement_id}: `
-                : ""}
-              {suite.name}
+              {indented(
+                suite.suite_type === "requirementTestSuite" && suite.requirement_id != null
+                  ? `PBI ${suite.requirement_id}: ${suite.name}`
+                  : suite.name,
+                depth,
+              )}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
       {plans.isFetching && !plans.data && (
         <div className="md:col-span-2">

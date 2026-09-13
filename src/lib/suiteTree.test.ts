@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { SuiteRef } from "../bindings";
-import { buildTree, flattenTree } from "./suiteTree";
+import { buildTree, flattenTree, indented } from "./suiteTree";
 
 const s = (id: number, parent_id: number | null, name = `S${id}`): SuiteRef => ({
   id,
@@ -28,5 +28,13 @@ describe("flattenTree", () => {
       [3, 2],
       [4, 0],
     ]);
+  });
+});
+
+describe("indented", () => {
+  test("repeats non-breaking spaces, not ordinary ones", () => {
+    const result = indented("Smoke", 2);
+    expect(result).toBe("        Smoke");
+    expect(result.codePointAt(0)).toBe(0xa0);
   });
 });

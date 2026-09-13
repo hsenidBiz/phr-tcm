@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import type { SuiteRef } from "../../bindings";
@@ -62,17 +62,26 @@ test("picking a plan lists its suites indented by depth; picking a suite reports
   const picks: Array<PickedSuite | null> = [];
   renderPicker((p) => picks.push(p));
 
-  const plan = await screen.findByLabelText("Test plan");
-  expect(plan).toHaveValue("");
-  await screen.findByText("Auth - Test Plan");
-  fireEvent.change(plan, { target: { value: "9" } });
+  const plan = await screen.findByRole("combobox", { name: "Test plan" });
+  expect(plan).toHaveTextContent("Loading plans");
+  // The Select's own options only exist once open, and only once the plan
+  // list has loaded (the trigger is disabled until then) - unlike a native
+  // <select>, which always renders its <option>s up front.
+  await waitFor(() => expect(plan).toBeEnabled());
+  fireEvent.click(plan);
+  fireEvent.click(await screen.findByRole("option", { name: "Auth - Test Plan" }));
 
-  const suite = screen.getByLabelText("Test suite");
-  const labels = Array.from(suite.querySelectorAll("option")).map((o) => o.textContent);
+  const suite = screen.getByRole("combobox", { name: "Test suite" });
+  await waitFor(() => expect(suite).toBeEnabled());
+  fireEvent.click(suite);
+  const labels = screen.getAllByRole("option").map((o) => o.textContent);
   // Depth-first, the child indented under its parent, PBI suites tagged.
   expect(labels).toEqual(["Pick a suite", "Regression", "    Smoke", "PBI 42: PBI 42 suite"]);
 
-  fireEvent.change(suite, { target: { value: "92" } });
+  // The accessible-name algorithm collapses the leading non-breaking
+  // spaces the way it collapses ordinary whitespace; textContent (checked
+  // above) does not.
+  fireEvent.click(screen.getByRole("option", { name: "Smoke" }));
   const lastPick = picks[picks.length - 1];
   expect(lastPick).toMatchObject({
     planId: 9,
@@ -86,12 +95,17 @@ test("picking a plan lists its suites indented by depth; picking a suite reports
 test("changing the plan clears the picked suite", async () => {
   const picks: Array<PickedSuite | null> = [];
   renderPicker((p) => picks.push(p));
-  const plan = await screen.findByLabelText("Test plan");
-  await screen.findByText("Auth - Test Plan");
-  fireEvent.change(plan, { target: { value: "9" } });
-  fireEvent.change(screen.getByLabelText("Test suite"), { target: { value: "91" } });
+  const plan = await screen.findByRole("combobox", { name: "Test plan" });
+  await waitFor(() => expect(plan).toBeEnabled());
+  fireEvent.click(plan);
+  fireEvent.click(await screen.findByRole("option", { name: "Auth - Test Plan" }));
+  const suite = screen.getByRole("combobox", { name: "Test suite" });
+  await waitFor(() => expect(suite).toBeEnabled());
+  fireEvent.click(suite);
+  fireEvent.click(screen.getByRole("option", { name: "Regression" }));
   expect(picks[picks.length - 1]).toMatchObject({ planId: 9, suite: { id: 91 } });
-  fireEvent.change(plan, { target: { value: "10" } });
+  fireEvent.click(plan);
+  fireEvent.click(screen.getByRole("option", { name: "Billing - Test Plan" }));
   expect(picks[picks.length - 1]).toBeNull();
-  expect(screen.getByLabelText("Test suite")).toHaveValue("");
+  expect(screen.getByRole("combobox", { name: "Test suite" })).toHaveTextContent("Pick a suite");
 });

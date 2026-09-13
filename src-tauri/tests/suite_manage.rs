@@ -97,6 +97,48 @@ async fn reorder_sends_cases_after_the_child_suites_as_plain_json() {
 }
 
 #[tokio::test]
+async fn reorder_reuses_the_cases_own_non_contiguous_slots() {
+    let server = MockServer::start().await;
+    // Suite entry at 0, child suites at 2 and 4, cases at 1, 3, 5.
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/suiteentry/5"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"suiteId": 5, "sequenceNumber": 0, "id": 30, "suiteEntryType": "suite"},
+                {"suiteId": 5, "sequenceNumber": 1, "id": 8, "suiteEntryType": "testCase"},
+                {"suiteId": 5, "sequenceNumber": 2, "id": 31, "suiteEntryType": "suite"},
+                {"suiteId": 5, "sequenceNumber": 3, "id": 9, "suiteEntryType": "testCase"},
+                {"suiteId": 5, "sequenceNumber": 4, "id": 32, "suiteEntryType": "suite"},
+                {"suiteId": 5, "sequenceNumber": 5, "id": 10, "suiteEntryType": "testCase"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/org/proj/_apis/testplan/suiteentry/5"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client.reorder_suite_cases("org", "proj", 5, &[10, 8, 9]).await.unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    let patch = reqs.iter().find(|r| r.method.as_str() == "PATCH").expect("one PATCH");
+    let body: serde_json::Value = serde_json::from_slice(&patch.body).unwrap();
+    // The cases' own slots (1, 3, 5) are reused in the new order; the
+    // child suites' slots (2, 4) are never mentioned.
+    assert_eq!(
+        body,
+        serde_json::json!([
+            {"id": 10, "sequenceNumber": 1, "suiteEntryType": "testCase"},
+            {"id": 8, "sequenceNumber": 3, "suiteEntryType": "testCase"},
+            {"id": 9, "sequenceNumber": 5, "suiteEntryType": "testCase"}
+        ])
+    );
+}
+
+#[tokio::test]
 async fn reorder_with_no_cases_in_the_suite_sends_nothing() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

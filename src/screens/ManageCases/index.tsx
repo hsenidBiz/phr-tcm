@@ -6,9 +6,10 @@ import { commands } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import RelinkDialog from "../../components/RelinkDialog";
 import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
 import { IconAddToFolder, IconConfirm, IconImport, IconMoveToPbi, IconNewFolder, IconUndo } from "../../lib/actionIcons";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { buildTree, flattenTree } from "../../lib/suiteTree";
+import { buildTree, flattenTree, indented } from "../../lib/suiteTree";
 import { orderFromFile, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
 import NewFolderDialog from "./NewFolderDialog";
@@ -69,8 +70,17 @@ export default function ManageCases({ org, project }: { org: string; project: st
 
   const apply = useMutation({
     mutationFn: () => unwrap(commands.reorderSuiteCases(org, project, suiteId, order.map((c) => c.id))),
-    onSuccess: () => {
+    onSuccess: (serverIds) => {
       toast.success("Order saved.");
+      // `cases.data` (and so `dirty`) stays stale until the invalidated
+      // query refetches. Write the server's own order into the cache
+      // first so `dirty` reads false immediately, instead of flipping
+      // Apply order back on for the beat before the refetch lands. Ids
+      // the server did not return are dropped; titles come from `order`,
+      // the only place this screen keeps them.
+      const byId = new Map(order.map((c) => [c.id, c]));
+      const next = serverIds.map((id) => byId.get(id)).filter((c): c is SuiteCase => c != null);
+      qc.setQueryData(["suite-cases", org, project, planId, suiteId], next);
       qc.invalidateQueries({ queryKey: ["suite-cases", org, project, planId, suiteId] });
     },
     onError: (e) => toast.error(`Could not save the order: ${e.message}`),
@@ -112,7 +122,6 @@ export default function ManageCases({ org, project }: { org: string; project: st
   const [targetFolder, setTargetFolder] = useState("");
   useEffect(() => setTargetFolder(""), [suiteId]);
 
-  const INDENT = "    ";
   /** Static suites of the plan, tree order, indented: the only places a
    * folder can be created in or cases copied to. */
   const staticSuites = useMemo(
@@ -120,7 +129,7 @@ export default function ManageCases({ org, project }: { org: string; project: st
       picked
         ? flattenTree(buildTree(picked.siblings))
             .filter(({ suite }) => suite.suite_type === "staticTestSuite")
-            .map(({ suite, depth }) => ({ id: suite.id, label: `${INDENT.repeat(depth)}${suite.name}`, name: suite.name }))
+            .map(({ suite, depth }) => ({ id: suite.id, label: indented(suite.name, depth), name: suite.name }))
         : [],
     [picked],
   );
@@ -135,6 +144,15 @@ export default function ManageCases({ org, project }: { org: string; project: st
     [picked, staticSuites],
   );
   const folderTargets = staticSuites.filter((s) => s.id !== suiteId);
+
+  // The plan tree can refresh out from under a picked target (e.g. the
+  // folder was renamed away or removed); once it is no longer offered,
+  // drop back to nothing picked rather than silently keep a stale id.
+  useEffect(() => {
+    if (targetFolder && !folderTargets.some((f) => String(f.id) === targetFolder)) {
+      setTargetFolder("");
+    }
+  }, [targetFolder, folderTargets]);
 
   const addToFolder = useMutation({
     mutationFn: () => unwrap(commands.addCasesToSuite(org, project, planId, Number(targetFolder), selectedCases.map((c) => c.id))),
@@ -207,9 +225,9 @@ export default function ManageCases({ org, project }: { org: string; project: st
             </Button>
             <label className="flex items-center gap-2 text-xs text-muted">
               Folder
-              <select
+              <Select
                 aria-label="Folder"
-                className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50"
+                triggerClassName="py-1.5"
                 value={targetFolder}
                 disabled={busy || folderTargets.length === 0}
                 onChange={(e) => setTargetFolder(e.target.value)}
@@ -220,7 +238,7 @@ export default function ManageCases({ org, project }: { org: string; project: st
                     {f.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <Button
               size="sm"
