@@ -57,6 +57,28 @@ test("Auto Run is offered in dev builds and hidden in release builds", async () 
   vi.resetModules();
 });
 
+/// Manage Test Cases is on the same development-only gate as Auto Run.
+test("Manage Test Cases is offered in dev builds and hidden in release builds", async () => {
+  const { vi } = await import("vitest");
+
+  vi.stubEnv("DEV", true);
+  vi.resetModules();
+  const dev = await import("./Sidebar");
+  const { unmount } = render(<dev.default section="manual" onSelect={() => {}} />);
+  expect(screen.getByRole("button", { name: /Manage Test Cases/ })).toBeInTheDocument();
+  unmount();
+
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const release = await import("./Sidebar");
+  render(<release.default section="manual" onSelect={() => {}} />);
+  expect(screen.queryByRole("button", { name: /Manage Test Cases/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "AI Bridge" })).toBeInTheDocument();
+
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
 test("zero and absent counts render no bubble", () => {
   render(
     <Sidebar<WorkSection>

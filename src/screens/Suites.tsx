@@ -14,6 +14,7 @@ import { pagePalette } from "../lib/reportTheme";
 import { CACHE, persistentQuery } from "../lib/persistentQuery";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
+import { buildTree, type SuiteNode } from "../lib/suiteTree";
 import { outcomeLabel } from "./RunPanel";
 
 const outcomeColor: Record<string, string> = {
@@ -22,23 +23,6 @@ const outcomeColor: Record<string, string> = {
   blocked: "text-warning",
   notapplicable: "text-faint",
 };
-
-type SuiteNode = { suite: SuiteRef; children: SuiteNode[] };
-
-/** v1 folder-structure parity: rebuild the multi-level tree from parent
- * links (the root suite is already stripped in Rust, so parent_id null =
- * top level). */
-function buildTree(suites: SuiteRef[]): SuiteNode[] {
-  const nodes = new Map<number, SuiteNode>();
-  for (const s of suites) nodes.set(s.id, { suite: s, children: [] });
-  const roots: SuiteNode[] = [];
-  for (const n of nodes.values()) {
-    const pid = n.suite.parent_id;
-    if (pid != null && nodes.has(pid)) nodes.get(pid)!.children.push(n);
-    else roots.push(n);
-  }
-  return roots;
-}
 
 function descendantIds(n: SuiteNode): number[] {
   return [n.suite.id, ...n.children.flatMap(descendantIds)];

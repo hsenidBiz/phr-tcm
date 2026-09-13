@@ -57,7 +57,7 @@ import SessionExpiredModal from "./components/SessionExpiredModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
-import Sidebar, { AUTO_RUN_ENABLED, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
+import Sidebar, { AUTO_RUN_ENABLED, MANAGE_CASES_ENABLED, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
@@ -99,6 +99,7 @@ import AiBridge from "./screens/AiBridge";
 import AutoRun from "./screens/AutoRun";
 import Settings from "./screens/Settings";
 import Suites from "./screens/Suites";
+import ManageCases from "./screens/ManageCases";
 import WorkBoard from "./screens/WorkBoard";
 import { IconRefresh } from "./lib/actionIcons";
 
@@ -146,6 +147,7 @@ const TITLES: Record<Section, string> = {
   run: "Run Tests",
   autorun: "Auto Run",
   suites: "Test Suites",
+  manage: "Manage Test Cases",
   ai: "AI Bridge",
   settings: "Settings",
 };
@@ -153,6 +155,7 @@ const TITLES: Record<Section, string> = {
 /** Status pill beside the heading - features shipped before they are done. */
 const TITLE_NOTES: Partial<Record<Section, string>> = {
   autorun: "In Development",
+  manage: "In Development",
 };
 
 export default function App() {
@@ -292,14 +295,15 @@ export default function App() {
   // Push the saved ADO pacing into the Rust limiter before anything fetches.
   useEffect(() => applyRateLevel(), []);
 
-  // Keyboard shortcuts: Ctrl+1..8 = tabs, Ctrl+Shift+M = Work Manager
+  // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
-    // Mirrors the sidebar's rows: without Auto Run (release builds) the
-    // numbers close up, so Ctrl+6 is Test Suites there and Auto Run here.
+    // Mirrors the sidebar's rows: without the dev-only rows (release
+    // builds) the numbers close up, so Ctrl+6 is Test Suites there and
+    // Auto Run here.
     const order: Section[] = (
-      ["manual", "import", "edit", "view", "run", "autorun", "suites", "ai"] as Section[]
-    ).filter((s) => s !== "autorun" || AUTO_RUN_ENABLED);
+      ["manual", "import", "edit", "view", "run", "autorun", "suites", "manage", "ai"] as Section[]
+    ).filter((s) => (s !== "autorun" || AUTO_RUN_ENABLED) && (s !== "manage" || MANAGE_CASES_ENABLED));
     const onKey = (e: KeyboardEvent) => {
       if (tourRunningSnapshot()) return; // the tour drives, not the keyboard
       if (!e.ctrlKey && !e.metaKey) return;
@@ -1078,6 +1082,9 @@ export default function App() {
                 )}
                 {AUTO_RUN_ENABLED && section === "autorun" && (
                   <AutoRun org={org} project={project} pbi={pbi} />
+                )}
+                {MANAGE_CASES_ENABLED && section === "manage" && (
+                  <ManageCases org={org} project={project} />
                 )}
                 {section === "ai" && <AiBridge />}
                 {section === "settings" && <Settings org={org} project={project} />}

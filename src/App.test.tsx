@@ -166,10 +166,10 @@ test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () 
 });
 
 // The sidebar's CASE_ITEMS order is manual, import, edit, view, run,
-// autorun, suites, ai (8 rows) - the Ctrl+N shortcut order must match it
-// row for row, or a number opens the wrong screen and the last row loses
-// its shortcut entirely.
-test("Ctrl+6 jumps to Auto Run and Ctrl+8 jumps to AI Bridge", async () => {
+// autorun, suites, manage, ai (9 rows) - the Ctrl+N shortcut order must
+// match it row for row, or a number opens the wrong screen and the last
+// row loses its shortcut entirely.
+test("Ctrl+6 jumps to Auto Run, Ctrl+8 to Manage Test Cases and Ctrl+9 to AI Bridge", async () => {
   signedInMocks();
   renderApp();
   await screen.findByText("a@b.com");
@@ -181,10 +181,14 @@ test("Ctrl+6 jumps to Auto Run and Ctrl+8 jumps to AI Bridge", async () => {
 
   fireEvent.keyDown(window, { key: "7", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "Test Suites" })).toBeInTheDocument();
-  // The pill belongs to Auto Run alone.
+  // The pill belongs to the dev-only tabs alone.
   expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "8", ctrlKey: true });
+  expect(screen.getByRole("heading", { name: "Manage Test Cases" })).toBeInTheDocument();
+  expect(screen.getByText("In Development")).toBeInTheDocument();
+
+  fireEvent.keyDown(window, { key: "9", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();
 });
 
