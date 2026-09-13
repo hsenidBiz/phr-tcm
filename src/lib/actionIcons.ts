@@ -44,7 +44,8 @@ export {
   ArrowUp as IconMoveUp,
   ArrowDown as IconMoveDown,
   FolderPlus as IconNewFolder,
-  FolderInput as IconAddToFolder,
+  // Copying selected cases into another suite: a folder with an arrow in.
+  FolderInput as IconCopyToSuite,
 
   // Undoing and stopping
   Undo2 as IconUndo,

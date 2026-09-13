@@ -20,6 +20,7 @@ export default function SuiteCases({
   project,
   planId,
   suiteId,
+  suiteName,
   selected,
   onToggle,
 }: {
@@ -27,6 +28,8 @@ export default function SuiteCases({
   project: string;
   planId: number;
   suiteId: number;
+  /** For the case list's accessible name: several lists can be open at once. */
+  suiteName: string;
   /** Ids of this suite's cases the screen holds selected. */
   selected: Set<number>;
   /** Cases the user just checked (on) or unchecked (off). */
@@ -115,6 +118,7 @@ export default function SuiteCases({
       <CaseOrderList
         cases={order}
         selected={selected}
+        ariaLabel={`Test cases in ${suiteName}`}
         onChange={setOrder}
         onSelect={(next) => {
           const added = order.filter((c) => next.has(c.id) && !selected.has(c.id));

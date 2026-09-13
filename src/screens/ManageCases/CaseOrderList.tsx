@@ -15,12 +15,14 @@ export default function CaseOrderList({
   selected,
   onChange,
   onSelect,
+  ariaLabel,
   disabled = false,
 }: {
   cases: SuiteCase[];
   selected: Set<number>;
   onChange: (next: SuiteCase[]) => void;
   onSelect: (next: Set<number>) => void;
+  ariaLabel: string;
   disabled?: boolean;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
@@ -53,7 +55,7 @@ export default function CaseOrderList({
           {selected.size > 0 ? `${selected.size} of ${cases.length} selected` : `${cases.length} test cases`}
         </span>
       </div>
-      <ol aria-label="Test cases in order" className="divide-y divide-border">
+      <ol aria-label={ariaLabel} className="divide-y divide-border">
         {cases.map((c, i) => (
           <li
             key={c.id}

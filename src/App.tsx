@@ -1084,7 +1084,7 @@ export default function App() {
                   <AutoRun org={org} project={project} pbi={pbi} />
                 )}
                 {MANAGE_CASES_ENABLED && section === "manage" && (
-                  <ManageCases org={org} project={project} />
+                  <ManageCases org={org} project={project} pbi={pbi} />
                 )}
                 {section === "ai" && <AiBridge />}
                 {section === "settings" && <Settings org={org} project={project} />}

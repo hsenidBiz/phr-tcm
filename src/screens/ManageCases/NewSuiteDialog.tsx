@@ -9,18 +9,18 @@ import { Select } from "../../components/ui/select";
 import { IconCancel, IconNewFolder } from "../../lib/actionIcons";
 import { unwrap } from "../../lib/ipc";
 
-/** A folder is a static test suite. Azure DevOps lets one be created
- * under a static suite or the plan root only, so `parents` is that list.
- * With cases selected the same click copies them in afterwards: they
- * stay where they were, a case can live in many suites. */
-export default function NewFolderDialog({
+/** A static test suite, created under a static suite or the plan root (the
+ * only parents Azure DevOps allows). With cases selected the same click
+ * copies them in afterwards: they stay where they were, a case can live
+ * in many suites. */
+export default function NewSuiteDialog({
   org,
   project,
   planId,
   parents,
   defaultParentId,
   caseIds,
-  sourceName,
+  sourceLabel,
   onClose,
   onCreated,
 }: {
@@ -30,8 +30,8 @@ export default function NewFolderDialog({
   parents: Array<{ id: number; label: string }>;
   defaultParentId: number;
   caseIds: number[];
-  /** The suite the selected cases are in, for the "they stay in X" line. */
-  sourceName: string;
+  /** A sentence fragment for the "they stay in X too" line, e.g. "their suites". */
+  sourceLabel: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -45,7 +45,7 @@ export default function NewFolderDialog({
     // exists, it's real and listed whether or not the copy that follows
     // succeeds. So a failed copy is not a failed creation - it's reported
     // with its own toast, but still closes the dialog and refreshes the
-    // tree so the (now empty) folder shows up.
+    // tree so the (now empty) suite shows up.
     mutationFn: async () => {
       const suite = await unwrap(commands.createStaticSuite(org, project, planId, Number(parentId), trimmed));
       if (n === 0) return { suite, added: null as number[] | null, addError: null as string | null };
@@ -58,32 +58,32 @@ export default function NewFolderDialog({
     },
     onSuccess: ({ suite, added, addError }) => {
       if (addError) {
-        toast.warning(`Created folder "${suite.name}", but the test cases could not be added: ${addError}`, {
+        toast.warning(`Created suite "${suite.name}", but the test cases could not be added: ${addError}`, {
           duration: 20000,
         });
       } else if (n === 0) {
-        toast.success(`Created folder "${suite.name}".`);
+        toast.success(`Created suite "${suite.name}".`);
       } else {
         toast.success(
-          `Created folder "${suite.name}" and added ${added!.length} test case${added!.length === 1 ? "" : "s"}. They stay in ${sourceName} too.`,
+          `Created suite "${suite.name}" and added ${added!.length} test case${added!.length === 1 ? "" : "s"}. They stay in ${sourceLabel} too.`,
         );
       }
       onCreated();
       onClose();
     },
-    onError: (e) => toast.error(`Could not create the folder: ${e.message}`),
+    onError: (e) => toast.error(`Could not create the suite: ${e.message}`),
   });
 
   return (
     <Modal onClose={onClose} className="w-full max-w-md space-y-3 p-5">
-      <h2 className="text-sm font-semibold text-text">New folder</h2>
+      <h2 className="text-sm font-semibold text-text">New test suite</h2>
       <p className="text-xs text-muted">
-        A folder is a static test suite. It can sit under the plan root or under another folder.
+        A static test suite. It can sit under the plan root or under another static suite.
       </p>
       <label className="block text-xs text-muted">
-        Folder name
+        Suite name
         <Input
-          aria-label="Folder name"
+          aria-label="Suite name"
           autoFocus
           className="mt-1"
           value={name}
@@ -111,8 +111,8 @@ export default function NewFolderDialog({
           {create.isPending
             ? "Creating"
             : n > 0
-              ? `Create folder and add ${n} test case${n === 1 ? "" : "s"}`
-              : "Create folder"}
+              ? `Create suite and add ${n} test case${n === 1 ? "" : "s"}`
+              : "Create suite"}
         </Button>
       </div>
     </Modal>

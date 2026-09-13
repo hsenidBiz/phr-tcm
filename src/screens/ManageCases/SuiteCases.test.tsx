@@ -37,6 +37,7 @@ function Harness({ onToggle }: { onToggle?: (cases: SuiteCase[], on: boolean) =>
       project="Web"
       planId={9}
       suiteId={91}
+      suiteName="Regression"
       selected={selected}
       onToggle={(cases, on) => {
         onToggle?.(cases, on);
@@ -69,7 +70,7 @@ function mount(extra: (cmd: string, args: unknown) => unknown = () => undefined,
 }
 
 async function list() {
-  const l = await screen.findByRole("list", { name: "Test cases in order" });
+  const l = await screen.findByRole("list", { name: "Test cases in Regression" });
   // Let the passive effects that follow the first paint (order mirror,
   // mutation option sync) settle before a caller fires an action.
   await new Promise((r) => setTimeout(r, 0));

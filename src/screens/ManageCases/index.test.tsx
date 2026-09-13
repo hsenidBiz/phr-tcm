@@ -1,9 +1,7 @@
-import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { clearMocks } from "@tauri-apps/api/mocks";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import ManageCases from "./index";
-import { PLANS, mountWithSuite, pickSuite } from "./testSupport";
+import { expandSuite, mountScreen } from "./testSupport";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -15,89 +13,49 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-test("the list shows the suite's cases once each, in entry order, with positions", async () => {
-  mountWithSuite();
-  const l = await pickSuite(91);
-  const rows = within(l).getAllByRole("listitem");
-  expect(rows).toHaveLength(3);
-  expect(rows[0]).toHaveTextContent("1");
-  expect(rows[0]).toHaveTextContent("#201");
-  expect(rows[0]).toHaveTextContent("Valid login");
-  expect(rows[1]).toHaveTextContent("#202");
-  expect(rows[2]).toHaveTextContent("#203");
-  // The child suite entry (95) is not a case and does not appear.
-  expect(within(l).queryByText(/#95/)).not.toBeInTheDocument();
-  // Nothing has moved: nothing to apply.
-  expect(screen.getByRole("button", { name: "Apply order" })).toBeDisabled();
+test("with no PBI every plan is a table of its suites, collapsed, in tree order", async () => {
+  const { calls } = mountScreen();
+  expect(await screen.findByRole("region", { name: "Auth - Test Plan" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Billing - Test Plan" })).toBeInTheDocument();
+  const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
+  const rows = within(auth).getAllByRole("button", { name: /^Expand / });
+  expect(rows.map((r) => r.getAttribute("aria-label"))).toEqual(["Expand Regression", "Expand Smoke", "Expand PBI 42 suite"]);
+  // Smoke sits under Regression: one level deeper.
+  expect(rows[1].style.paddingLeft).not.toBe(rows[0].style.paddingLeft);
+  expect(within(auth).getByText("PBI 42")).toBeInTheDocument();
+  // Nothing is expanded, so no suite has been read yet.
+  expect(calls.some((c) => c.cmd === "list_suite_entries")).toBe(false);
+  expect(screen.queryByRole("button", { name: "Show all plans" })).not.toBeInTheDocument();
 });
 
-test("dragging a row onto another moves it; Apply order sends the ids and reloads", async () => {
-  const { calls } = mountWithSuite((cmd) => {
-    if (cmd === "reorder_suite_cases") return [203, 201, 202];
-  });
-  const l = await pickSuite(91);
-  const rows = within(l).getAllByRole("listitem");
-
-  fireEvent.dragStart(rows[2]);
-  fireEvent.dragOver(rows[0]);
-  fireEvent.drop(rows[0]);
-
-  const after = within(l).getAllByRole("listitem");
-  expect(after[0]).toHaveTextContent("#203");
-  expect(after[1]).toHaveTextContent("#201");
-  expect(after[2]).toHaveTextContent("#202");
-  const apply = screen.getByRole("button", { name: "Apply order" });
-  expect(apply).toBeEnabled();
-  fireEvent.click(apply);
-
-  await waitFor(() => {
-    const call = calls.find((c) => c.cmd === "reorder_suite_cases");
-    expect(call?.args).toEqual({ organization: "acme", project: "Web", suiteId: 91, caseIds: [203, 201, 202] });
-  });
-  // Apply order goes disabled as soon as the mutation resolves - the saved
-  // order is written into the cache directly, so this does not wait on the
-  // invalidated query's refetch to land.
-  await waitFor(() => expect(apply).toBeDisabled());
-  // The list re-reads from the server after a save.
-  await waitFor(() => expect(calls.filter((c) => c.cmd === "list_suite_entries").length).toBeGreaterThan(1));
+test("expanding a suite loads its cases; collapsing hides them", async () => {
+  const { calls } = mountScreen();
+  const l = await expandSuite("Regression");
+  expect(within(l).getAllByRole("listitem")).toHaveLength(3);
+  expect(calls.filter((c) => c.cmd === "list_suite_entries").map((c) => (c.args as { suiteId: number }).suiteId)).toEqual([91]);
+  fireEvent.click(screen.getByRole("button", { name: "Collapse Regression" }));
+  expect(screen.queryByRole("list", { name: "Test cases in Regression" })).not.toBeInTheDocument();
 });
 
-test("Move up and Move down step a row one place; Reset returns to the server order", async () => {
-  mountWithSuite();
-  const l = await pickSuite(91);
-  fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
-  expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#202");
-  fireEvent.click(within(l).getByRole("button", { name: "Move #202 down" }));
-  expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#201");
-  fireEvent.click(within(l).getByRole("button", { name: "Move #201 down" }));
-  expect(screen.getByRole("button", { name: "Apply order" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-  expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#201");
-  expect(screen.getByRole("button", { name: "Apply order" })).toBeDisabled();
+test("a picked PBI shows only its plan with its suite open; Show all plans widens it", async () => {
+  mountScreen(undefined, { id: 42, title: "Login", work_item_type: "Product Backlog Item" });
+  expect(await screen.findByRole("region", { name: "Auth - Test Plan" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Billing - Test Plan" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("list", { name: "Test cases in PBI 42 suite" })).toBeInTheDocument();
+  expect(screen.getByText("Showing the plan that holds PBI #42.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show all plans" }));
+  expect(screen.getByRole("region", { name: "Billing - Test Plan" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show only this PBI's plan" }));
+  expect(screen.queryByRole("region", { name: "Billing - Test Plan" })).not.toBeInTheDocument();
 });
 
-test("an empty suite says so", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "plugin:event|listen") return 1;
-    if (cmd === "plugin:event|unlisten") return null;
-    if (cmd === "list_plans_with_suites") return PLANS;
-    if (cmd === "list_suite_entries") return [];
-    if (cmd === "list_test_points") return [];
-    return undefined;
-  });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <QueryClientProvider client={qc}>
-      <ManageCases org="acme" project="Web" />
-    </QueryClientProvider>,
-  );
-  const plan = await screen.findByRole("combobox", { name: "Test plan" });
-  await waitFor(() => expect(plan).toBeEnabled());
-  fireEvent.click(plan);
-  fireEvent.click(await screen.findByRole("option", { name: "Auth - Test Plan" }));
-  const suite = screen.getByRole("combobox", { name: "Test suite" });
-  await waitFor(() => expect(suite).toBeEnabled());
-  fireEvent.click(suite);
-  fireEvent.click(screen.getByRole("option", { name: "Regression" }));
-  expect(await screen.findByText("No test cases in this suite.")).toBeInTheDocument();
+test("a picked PBI with no suite in any plan falls back to every plan and says so", async () => {
+  mountScreen(undefined, { id: 77, title: "Orphan", work_item_type: "Product Backlog Item" });
+  expect(await screen.findByRole("region", { name: "Billing - Test Plan" })).toBeInTheDocument();
+  expect(screen.getByText("PBI #77 has no test suite yet. Showing every plan.")).toBeInTheDocument();
+});
+
+test("no plans yet", async () => {
+  mountScreen((cmd) => (cmd === "list_plans_with_suites" ? [] : undefined));
+  expect(await screen.findByText("No test plans with test suites in this project yet.")).toBeInTheDocument();
 });
