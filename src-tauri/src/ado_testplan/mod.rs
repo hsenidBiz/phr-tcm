@@ -10,9 +10,12 @@
 //! points, runs, results and attachments; `history` owns the recent-runs
 //! outcome sweep.
 
+mod entries;
 mod history;
 mod plans;
 mod runs;
+
+pub use entries::{ordered_case_ids, SuiteEntry};
 
 use crate::ado::AdoClient;
 use serde::Serialize;

@@ -235,6 +235,23 @@ impl AdoClient {
         Self::handle_json(resp).await
     }
 
+    /// PATCH with a plain JSON body. Not a json-patch document: the Test
+    /// Plan suiteentry reorder takes an array of entries, and the only
+    /// other PATCH helper (`send_json_patch`) sets a content type that
+    /// endpoint refuses.
+    pub(crate) async fn patch_json(
+        &self,
+        url: String,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, AdoError> {
+        let resp = self
+            .send(reqwest::Method::PATCH, &url, |r| {
+                r.header("Accept", "application/json").json(body)
+            })
+            .await?;
+        Self::handle_json(resp).await
+    }
+
     /// POST used for WIQL queries only — query-only, creates and modifies
     /// nothing. Still no DELETE through this funnel.
     pub(crate) async fn post_json_query(
