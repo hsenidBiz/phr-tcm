@@ -12,6 +12,14 @@ export default defineConfig(async () => ({
 
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+    // `src/screens/ManageCases/suiteCases.ts` (query/loading helpers) and
+    // `SuiteCases.tsx` (the component) differ only in the case of their
+    // first letter. NTFS resolves filenames case-insensitively, so an
+    // extensionless "./SuiteCases" import tries ".ts" before ".tsx" by
+    // default and silently lands on the wrong file on Windows. Trying
+    // ".tsx" first fixes that pair without touching any other resolution
+    // (it is the only same-name .ts/.tsx pair in the project).
+    extensions: [".tsx", ".ts", ".mjs", ".js", ".mts", ".jsx", ".json"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
