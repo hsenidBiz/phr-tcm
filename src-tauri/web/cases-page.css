@@ -150,8 +150,11 @@ body:not(.notes-off) .rev-wrap:not(.rev-closed) { transition-delay: 0s; }
 .rev-body .md-noimg { color: var(--muted); font-style: italic; }
 /* Findings block: what the assistant found wrong while writing the case.
    Sits under the reviewer notes, above the steps. */
-.findings{margin:8px 0;padding:8px 12px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;background:var(--surface)}
-.findings > summary{cursor:pointer;list-style:none;font-weight:600;font-size:13px}
+/* Orange, like the UPDATE chip: a finding is a warning about the case,
+   and the block should read that way before a word of it is read. */
+.findings{margin:8px 0;padding:8px 12px;border:1px solid color-mix(in srgb, var(--warning) 35%, transparent);border-left:3px solid var(--warning);border-radius:8px;background:color-mix(in srgb, var(--warning) 12%, var(--surface))}
+.finding{border-top-color:color-mix(in srgb, var(--warning) 25%, transparent)}
+.findings > summary{cursor:pointer;list-style:none;font-size:11.5px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--warning)}
 .findings > summary::-webkit-details-marker{display:none}
 .findings > summary::after{content:' \25be'}
 .findings:not([open]) > summary::after{content:' \25b8'}
