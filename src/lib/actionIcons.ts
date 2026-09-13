@@ -43,6 +43,8 @@ export {
   // same move a drag makes.
   ArrowUp as IconMoveUp,
   ArrowDown as IconMoveDown,
+  FolderPlus as IconNewFolder,
+  FolderInput as IconAddToFolder,
 
   // Undoing and stopping
   Undo2 as IconUndo,

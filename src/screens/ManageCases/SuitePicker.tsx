@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { commands, type SuiteRef } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { CACHE, persistentQuery } from "../../lib/persistentQuery";
@@ -52,6 +52,24 @@ export default function SuitePicker({
     [plans.data, planId],
   );
   const rows = useMemo(() => (current ? flattenTree(buildTree(current.suites)) : []), [current]);
+
+  // `picked.siblings` is a snapshot from when it was picked. When the plan
+  // tree refreshes (e.g. a folder was just created), re-pick the same
+  // suite id with the fresh siblings so the rest of the screen sees it.
+  useEffect(() => {
+    if (!picked || !plans.data) return;
+    const p = plans.data.find((x) => x.plan.id === picked.planId);
+    const suite = p?.suites.find((s) => s.id === picked.suite.id);
+    if (!p || !suite) {
+      onPick(null);
+      return;
+    }
+    if (suite !== picked.suite || p.suites !== picked.siblings) {
+      onPick({ planId: p.plan.id, planName: p.plan.name, rootSuiteId: p.plan.root_suite_id, suite, siblings: p.suites });
+    }
+    // onPick is a state setter in the one caller; re-running on its identity would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plans.data, picked?.planId, picked?.suite.id]);
 
   const selectClass =
     "w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50";

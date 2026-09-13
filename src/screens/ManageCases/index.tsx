@@ -1,15 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import RelinkDialog from "../../components/RelinkDialog";
 import { Button } from "../../components/ui/button";
-import { IconConfirm, IconImport, IconMoveToPbi, IconUndo } from "../../lib/actionIcons";
+import { IconAddToFolder, IconConfirm, IconImport, IconMoveToPbi, IconNewFolder, IconUndo } from "../../lib/actionIcons";
 import { unwrap, unwrapStr } from "../../lib/ipc";
+import { buildTree, flattenTree } from "../../lib/suiteTree";
 import { orderFromFile, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
+import NewFolderDialog from "./NewFolderDialog";
 import SuitePicker, { type PickedSuite } from "./SuitePicker";
 
 /** The suite's cases in Azure DevOps' own order. The entries carry the
@@ -102,6 +104,50 @@ export default function ManageCases({ org, project }: { org: string; project: st
     onError: (e) => toast.error(`Could not read the file: ${e.message ?? e}`),
   });
 
+  const pbiId =
+    picked?.suite.suite_type === "requirementTestSuite" ? (picked.suite.requirement_id ?? null) : null;
+  const selectedCases = order.filter((c) => selected.has(c.id));
+
+  const [folderOpen, setFolderOpen] = useState(false);
+  const [targetFolder, setTargetFolder] = useState("");
+  useEffect(() => setTargetFolder(""), [suiteId]);
+
+  const INDENT = "    ";
+  /** Static suites of the plan, tree order, indented: the only places a
+   * folder can be created in or cases copied to. */
+  const staticSuites = useMemo(
+    () =>
+      picked
+        ? flattenTree(buildTree(picked.siblings))
+            .filter(({ suite }) => suite.suite_type === "staticTestSuite")
+            .map(({ suite, depth }) => ({ id: suite.id, label: `${INDENT.repeat(depth)}${suite.name}`, name: suite.name }))
+        : [],
+    [picked],
+  );
+  const parents = useMemo(
+    () =>
+      picked
+        ? [
+            ...(picked.rootSuiteId != null ? [{ id: picked.rootSuiteId, label: `Plan root (${picked.planName})` }] : []),
+            ...staticSuites.map(({ id, label }) => ({ id, label })),
+          ]
+        : [],
+    [picked, staticSuites],
+  );
+  const folderTargets = staticSuites.filter((s) => s.id !== suiteId);
+
+  const addToFolder = useMutation({
+    mutationFn: () => unwrap(commands.addCasesToSuite(org, project, planId, Number(targetFolder), selectedCases.map((c) => c.id))),
+    onSuccess: (added) => {
+      const folder = folderTargets.find((f) => String(f.id) === targetFolder)?.name ?? "the folder";
+      toast.success(
+        `Added ${added.length} test case${added.length === 1 ? "" : "s"} to ${folder}. ${added.length === 1 ? "It stays" : "They stay"} in ${picked!.suite.name} too.`,
+      );
+      setSelected(new Set());
+    },
+    onError: (e) => toast.error(`Could not add to the folder: ${e.message}`),
+  });
+
   if (!org || !project) {
     return (
       <p className="text-sm text-muted">
@@ -110,10 +156,7 @@ export default function ManageCases({ org, project }: { org: string; project: st
     );
   }
 
-  const busy = apply.isPending || fromFile.isPending;
-  const pbiId =
-    picked?.suite.suite_type === "requirementTestSuite" ? (picked.suite.requirement_id ?? null) : null;
-  const selectedCases = order.filter((c) => selected.has(c.id));
+  const busy = apply.isPending || fromFile.isPending || addToFolder.isPending;
 
   return (
     <div className="space-y-4">
@@ -157,6 +200,39 @@ export default function ManageCases({ org, project }: { org: string; project: st
               <span className="text-xs text-faint">Move to PBI works on a PBI suite.</span>
             )}
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="ghost" disabled={busy || parents.length === 0} onClick={() => setFolderOpen(true)}>
+              <IconNewFolder aria-hidden />
+              New folder
+            </Button>
+            <label className="flex items-center gap-2 text-xs text-muted">
+              Folder
+              <select
+                aria-label="Folder"
+                className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-50"
+                value={targetFolder}
+                disabled={busy || folderTargets.length === 0}
+                onChange={(e) => setTargetFolder(e.target.value)}
+              >
+                <option value="">Pick a folder</option>
+                {folderTargets.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || !targetFolder || selectedCases.length === 0}
+              onClick={() => addToFolder.mutate()}
+            >
+              <IconAddToFolder aria-hidden />
+              {addToFolder.isPending ? "Adding" : "Add to folder"}
+            </Button>
+            <span className="text-xs text-faint">Adding copies the selected cases; they stay in this suite.</span>
+          </div>
           {cases.isLoading && <ScanProgress label="Loading test cases" />}
           {cases.isError && <p className="text-sm text-danger">{cases.error.message}</p>}
           {cases.data && cases.data.length === 0 && (
@@ -182,6 +258,24 @@ export default function ManageCases({ org, project }: { org: string; project: st
                 // The moved cases have left this suite: read it again.
                 setSelected(new Set());
                 qc.invalidateQueries({ queryKey: ["suite-cases", org, project, planId, suiteId] });
+              }}
+            />
+          )}
+          {folderOpen && picked && parents.length > 0 && (
+            <NewFolderDialog
+              org={org}
+              project={project}
+              planId={planId}
+              parents={parents}
+              defaultParentId={parents[0].id}
+              caseIds={selectedCases.map((c) => c.id)}
+              sourceName={picked.suite.name}
+              onClose={() => setFolderOpen(false)}
+              onCreated={() => {
+                // The tree has a new suite: the picker and the folder
+                // list both read from this query.
+                qc.invalidateQueries({ queryKey: ["plans-suites", org, project] });
+                setSelected(new Set());
               }}
             />
           )}
