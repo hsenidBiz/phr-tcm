@@ -66,6 +66,24 @@ export const CASE_ITEMS: Item<Section>[] = [
   { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
 ];
 
+/** The rows the rail actually shows: CASE_ITEMS minus Auto Run outside
+ * development. Ctrl+1..N and the palette's "mod+N" hints are both read
+ * off this list, so a number can never open one screen and be labelled
+ * as another. */
+export const VISIBLE_CASE_ITEMS: Item<Section>[] = CASE_ITEMS.filter(
+  (i) => i.id !== "autorun" || AUTO_RUN_ENABLED,
+);
+
+/** Section ids in Ctrl+N order: 1-based index = the shortcut digit. */
+export const SHORTCUT_ORDER: Section[] = VISIBLE_CASE_ITEMS.map((i) => i.id);
+
+/** The Astryx Kbd string for a section's shortcut ("mod+3"), or undefined
+ * for sections that have no number (Settings, or a hidden tab). */
+export function sectionShortcut(section: Section): string | undefined {
+  const n = SHORTCUT_ORDER.indexOf(section);
+  return n === -1 ? undefined : `mod+${n + 1}`;
+}
+
 export const WORK_ITEMS: Item<WorkSection>[] = [
   // The rail is where this glyph earns its place - it tells the section
   // apart from the others. Inside the panel every row is a pull request,
@@ -97,9 +115,7 @@ export default function Sidebar<T extends string = Section>({
   locked?: boolean;
   liveItem?: T | null;
 }) {
-  const list =
-    items ??
-    (CASE_ITEMS.filter((i) => i.id !== "autorun" || AUTO_RUN_ENABLED) as unknown as Item<T>[]);
+  const list = items ?? (VISIBLE_CASE_ITEMS as unknown as Item<T>[]);
   // Reads back through the shared store rather than its own state, so a
   // tour override (or any other future writer) can move it - the toggle
   // below still writes storage and publishes exactly as before.

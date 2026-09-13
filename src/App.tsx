@@ -56,7 +56,7 @@ import SessionExpiredModal from "./components/SessionExpiredModal";
 import BridgeStatusBadge from "./components/BridgeStatusBadge";
 import CommandPalette from "./components/CommandPalette";
 import ContextBar from "./components/ContextBar";
-import Sidebar, { AUTO_RUN_ENABLED, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
+import Sidebar, { AUTO_RUN_ENABLED, SHORTCUT_ORDER, WORK_ITEMS, type Section, type WorkSection } from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
 import UiTour from "./tour/UiTour";
 import { installTourBackend, restoreTourBackend } from "./tour/tourBackend";
@@ -303,12 +303,11 @@ export default function App() {
   // Keyboard shortcuts: Ctrl+1..9 = tabs, Ctrl+Shift+M = Work Manager
   // (v1's binding). Ctrl+K (palette) is registered in CommandPalette.
   useEffect(() => {
-    // Mirrors the sidebar's rows: without the dev-only Auto Run row
+    // The sidebar's rows, in order: without the dev-only Auto Run row
     // (release builds) the numbers close up, so release builds have
     // Ctrl+6 Search Suites, Ctrl+7 Suite Management, Ctrl+8 AI Bridge.
-    const order: Section[] = (
-      ["manual", "import", "edit", "view", "run", "autorun", "suites", "manage", "ai"] as Section[]
-    ).filter((s) => s !== "autorun" || AUTO_RUN_ENABLED);
+    // The palette's hints read the same list, so they cannot drift.
+    const order = SHORTCUT_ORDER;
     const onKey = (e: KeyboardEvent) => {
       if (tourRunningSnapshot()) return; // the tour drives, not the keyboard
       if (!e.ctrlKey && !e.metaKey) return;

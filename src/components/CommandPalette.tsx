@@ -9,7 +9,7 @@ import { unwrap } from "../lib/ipc";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { getTheme, setTheme } from "../lib/theme";
 import { tourRunningSnapshot } from "../tour/tourState";
-import type { Section } from "./Sidebar";
+import { VISIBLE_CASE_ITEMS, sectionShortcut, type Section } from "./Sidebar";
 
 export default function CommandPalette({
   onNavigate,
@@ -74,11 +74,13 @@ export default function CommandPalette({
         </Command.Empty>
 
         <Command.Group heading="Go to" className="px-1 text-[10px] uppercase tracking-wide text-faint">
-          <Item keys="mod+1" onSelect={() => run(() => onNavigate("manual"))}>Manual Entry</Item>
-          <Item keys="mod+2" onSelect={() => run(() => onNavigate("import"))}>Import File</Item>
-          <Item keys="mod+3" onSelect={() => run(() => onNavigate("edit"))}>Update Test Cases</Item>
-          <Item keys="mod+4" onSelect={() => run(() => onNavigate("run"))}>Run Tests</Item>
-          <Item keys="mod+5" onSelect={() => run(() => onNavigate("suites"))}>Search Suites</Item>
+          {/* One row per sidebar tab, hint digit = its Ctrl+N slot, both
+              read off the same list App's shortcut handler uses. */}
+          {VISIBLE_CASE_ITEMS.map((i) => (
+            <Item key={i.id} keys={sectionShortcut(i.id)} onSelect={() => run(() => onNavigate(i.id))}>
+              {i.label}
+            </Item>
+          ))}
           <Item onSelect={() => run(() => onNavigate("settings"))}>Settings</Item>
         </Command.Group>
 

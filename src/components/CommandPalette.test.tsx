@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import CommandPalette from "./CommandPalette";
+import { SHORTCUT_ORDER, VISIBLE_CASE_ITEMS, sectionShortcut } from "./Sidebar";
 
 afterEach(() => {
   clearMocks();
@@ -49,4 +50,27 @@ test("switch-project entries come from the current org", async () => {
   fireEvent.keyDown(window, { key: "k", ctrlKey: true });
   fireEvent.click(await screen.findByText("Web"));
   expect(onSwitchProject).toHaveBeenCalledWith("Web");
+});
+
+// The hints were once literals and drifted the moment a tab was added:
+// "mod+4" said Run Tests while Ctrl+4 opened View Test Cases. Each row's
+// digit must be its 1-based slot in the same order App's Ctrl+N uses.
+test("every Go-to hint is the section's 1-based slot in the shortcut order", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_projects") return [];
+  });
+  renderPalette();
+  fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  await screen.findByPlaceholderText(/Type a command/);
+
+  expect(VISIBLE_CASE_ITEMS.length).toBeGreaterThan(0);
+  for (const item of VISIBLE_CASE_ITEMS) {
+    const slot = SHORTCUT_ORDER.indexOf(item.id) + 1;
+    expect(sectionShortcut(item.id)).toBe(`mod+${slot}`);
+    // The Kbd badge sits beside the label inside the same row, and the
+    // digit is the last thing in it.
+    const row = screen.getByText(item.label).closest("[cmdk-item]");
+    expect(row?.textContent?.trim().endsWith(String(slot))).toBe(true);
+  }
+  expect(sectionShortcut("settings")).toBeUndefined();
 });
