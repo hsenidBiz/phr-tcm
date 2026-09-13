@@ -39,6 +39,10 @@ export {
   // Setting what EVERY new item starts with, not editing this one. A pin
   // because the thing it opens fixes a value in place across cases.
   Pin as IconSetDefault,
+  // One step up or down in an ordered list: the keyboard's route to the
+  // same move a drag makes.
+  ArrowUp as IconMoveUp,
+  ArrowDown as IconMoveDown,
 
   // Undoing and stopping
   Undo2 as IconUndo,
