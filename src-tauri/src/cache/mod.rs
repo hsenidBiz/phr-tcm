@@ -1,6 +1,7 @@
 //! The Rust side's one cache. Anything that needs to remember data
 //! between calls - or between launches - uses this instead of a map of
-//! its own (tests/cache.rs fails on a private cache static).
+//! its own (tests/cache.rs catches the common form: a map held in a
+//! static).
 //!
 //! It lives below both consumers on purpose: the UI's commands and the AI
 //! bridge read the SAME entries, so whoever asks first is the only one
@@ -87,6 +88,20 @@ impl Store {
         let Some(dir) = dir else { return store };
         if let Some(disk) = read_json::<Disk>(&dir.join(FILE)) {
             store.lock().disk = disk;
+            // A restored backup can drop the legacy files beside an
+            // already-existing cache.json (restoring onto a machine that
+            // has since migrated). Fold anything not already present in so
+            // it is not silently left on disk, unread, forever - but never
+            // overwrite a current entry with a stale one.
+            if let Some(legacy_disk) = legacy::read(dir) {
+                let mut inner = store.lock();
+                for (key, entry) in legacy_disk.entries {
+                    inner.disk.entries.entry(key).or_insert(entry);
+                }
+                if store.persist(&inner.disk) {
+                    legacy::remove(dir);
+                }
+            }
         } else if let Some(disk) = legacy::read(dir) {
             let mut inner = store.lock();
             inner.disk = disk;
@@ -103,15 +118,22 @@ impl Store {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Write to a `.tmp` sibling then rename it over `cache.json`. One file
+    /// now holds both tags and suites, so a crash mid-write must not lose
+    /// both halves to a half-written `cache.json` - the rename is atomic,
+    /// a plain write to the real path is not.
     fn persist(&self, disk: &Disk) -> bool {
         let Some(path) = &self.file else { return false };
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        match serde_json::to_string(disk) {
-            Ok(s) => std::fs::write(path, s).is_ok(),
-            Err(_) => false,
+        let Ok(s) = serde_json::to_string(disk) else { return false };
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, s).is_err() || std::fs::rename(&tmp, path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return false;
         }
+        true
     }
 
     /// Whatever is cached, however old.
@@ -142,6 +164,10 @@ impl Store {
     /// anything. Leaves the entry's age alone - new local knowledge is not
     /// a refresh - and no-ops on a cold key, so a partial value is never
     /// mistaken for a fetched one.
+    ///
+    /// `f` runs while the cache's lock is held: it must not call back into
+    /// this cache (directly or through the free functions below), or it
+    /// will deadlock on itself.
     pub fn update<T: Serialize + DeserializeOwned>(&self, key: &str, f: impl FnOnce(&mut T) -> bool) {
         let mut inner = self.lock();
         let Some(entry) = inner.disk.entries.get_mut(key) else { return };
@@ -294,6 +320,8 @@ pub fn put<T: Serialize>(key: &str, value: &T) {
     global().put(key, value)
 }
 
+/// See `Store::update`: `f` runs with the cache locked and must not call
+/// back into the cache.
 pub fn update<T: Serialize + DeserializeOwned>(key: &str, f: impl FnOnce(&mut T) -> bool) {
     global().update(key, f)
 }

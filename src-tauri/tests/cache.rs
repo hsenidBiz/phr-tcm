@@ -190,6 +190,38 @@ fn the_old_tag_and_suite_files_are_carried_over_once() {
     assert!(!dir.join("suite-cache.json").exists());
 }
 
+/// Restoring an old backup onto a machine that already has a `cache.json`
+/// must not let the legacy files sit there unread - but it also must never
+/// clobber an entry the current cache already has.
+#[test]
+fn lingering_legacy_files_fold_into_an_existing_cache_without_overwriting() {
+    let dir = temp_dir("fold");
+    std::fs::write(
+        dir.join("cache.json"),
+        r#"{"owner":null,"entries":{"tags:acme/Web":{"value":["current"],"at_ms":1}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("reference-cache.json"),
+        r#"{"acme/Web/tags":{"values":["old"],"at_ms":1},
+            "acme/Mobile/tags":{"values":["mobile"],"at_ms":1}}"#,
+    )
+    .unwrap();
+
+    let store = Store::open(Some(&dir));
+
+    assert_eq!(
+        store.get::<Vec<String>>(&keys::tags("acme", "Web")),
+        Some(vec!["current".to_string()]),
+        "an existing entry must never be overwritten by a legacy one"
+    );
+    assert_eq!(
+        store.get::<Vec<String>>(&keys::tags("acme", "Mobile")),
+        Some(vec!["mobile".to_string()])
+    );
+    assert!(!dir.join("reference-cache.json").exists());
+}
+
 /// The cache is an optimisation: a corrupt file or no directory at all
 /// degrades to an empty, memory-only cache - never a panic.
 #[test]
@@ -255,7 +287,7 @@ fn no_module_keeps_a_private_cache_map() {
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
-                if path.file_name().is_some_and(|n| n == "cache") {
+                if path == src.join("cache") {
                     continue;
                 }
                 stack.push(path);
@@ -274,7 +306,8 @@ fn no_module_keeps_a_private_cache_map() {
                 // A static's type can wrap onto following lines: read on
                 // to the terminating `;`.
                 let decl = lines[i..lines.len().min(i + 6)].join(" ");
-                if decl.split(';').next().unwrap_or("").contains("HashMap") {
+                let decl_type = decl.split(';').next().unwrap_or("");
+                if decl_type.contains("HashMap") || decl_type.contains("BTreeMap") {
                     offenders.push(format!("{}:{}", path.strip_prefix(&src).unwrap().display(), i + 1));
                 }
             }
