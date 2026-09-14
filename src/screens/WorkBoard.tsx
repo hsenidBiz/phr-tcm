@@ -15,7 +15,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
-import { persistentQuery } from "../lib/persistentQuery";
+import { persistentQuery } from "../lib/cache";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
 

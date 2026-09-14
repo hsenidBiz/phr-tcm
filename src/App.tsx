@@ -38,10 +38,9 @@ import {
   subscribeWorkingDir,
   workingDirSnapshot,
 } from "./lib/workingDir";
-import { cacheEntry, claimCacheFor, suspendCache } from "./lib/localCache";
+import { CACHE, cacheEntry, claimCacheFor, persistentQuery, suspendCache } from "./lib/cache";
 import { clearTourExpanded, setTourExpanded } from "./lib/sidebarState";
 import { readSuiteSeed, type SuiteSeed, writeSuiteSeed } from "./lib/suiteSeed";
-import { CACHE, persistentQuery } from "./lib/persistentQuery";
 import { saveNote } from "./lib/caseNotes";
 import { useFieldRefs } from "./hooks/useFieldRefs";
 import {

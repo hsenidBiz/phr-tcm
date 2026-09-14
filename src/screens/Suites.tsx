@@ -11,7 +11,7 @@ import { Input } from "../components/ui/input";
 import { loadNotes } from "../lib/caseNotes";
 import { openRunnerWindow } from "../lib/openRunner";
 import { pagePalette } from "../lib/reportTheme";
-import { CACHE, persistentQuery } from "../lib/persistentQuery";
+import { CACHE, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";

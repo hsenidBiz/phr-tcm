@@ -6,7 +6,7 @@ import { commands, type WorkComment } from "../bindings";
 import { IconPost } from "../lib/actionIcons";
 import { unwrap } from "../lib/ipc";
 import { renderMarkdown } from "../lib/markdown";
-import { CACHE, persistentQuery } from "../lib/persistentQuery";
+import { CACHE, persistentQuery } from "../lib/cache";
 import { htmlToMd } from "../lib/richText";
 import MarkdownField from "./MarkdownField";
 import { Button } from "./ui/button";

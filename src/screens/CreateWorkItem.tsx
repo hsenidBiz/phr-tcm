@@ -16,7 +16,7 @@ import Combobox from "../components/ui/combobox";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { unwrap } from "../lib/ipc";
-import { cached } from "../lib/localCache";
+import { cached } from "../lib/cache";
 import { iterationDetails } from "../lib/iterations";
 import { IconAdd, IconCopy, IconOpenInBrowser } from "../lib/actionIcons";
 import { copyText } from "../lib/clipboard";

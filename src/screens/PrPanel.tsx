@@ -31,7 +31,7 @@ import { Modal } from "../components/ui/modal";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
-import { cacheRead, cacheWrite } from "../lib/localCache";
+import { cacheRead, cacheWrite } from "../lib/cache";
 import AstryxIsland from "../components/AstryxIsland";
 import { Markdown } from "@astryxdesign/core/Markdown";
 

@@ -7,7 +7,7 @@ import ElectricBorder from "./ElectricBorder";
 import { usePrAttention } from "../hooks/usePrAttention";
 import NotificationBell from "./NotificationBell";
 import { unwrap } from "../lib/ipc";
-import { cached } from "../lib/localCache";
+import { cached } from "../lib/cache";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
 import { Button } from "./ui/button";

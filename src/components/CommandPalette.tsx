@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { commands } from "../bindings";
 import AstryxIsland from "./AstryxIsland";
 import { unwrap } from "../lib/ipc";
-import { cached } from "../lib/localCache";
+import { cached } from "../lib/cache";
 import { getTheme, setTheme } from "../lib/theme";
 import { tourRunningSnapshot } from "../tour/tourState";
 import type { Section } from "./Sidebar";

@@ -4,7 +4,7 @@ import { commands, type PbiHit } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
 import { IconClear } from "../../lib/actionIcons";
-import { CACHE, persistentQuery } from "../../lib/persistentQuery";
+import { CACHE, persistentQuery } from "../../lib/cache";
 import { unwrap } from "../../lib/ipc";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import PlanTable from "./PlanTable";

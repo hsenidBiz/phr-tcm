@@ -13,7 +13,7 @@ import HistoryDots from "../../components/HistoryDots";
 import ScanProgress from "../../components/ScanProgress";
 import { cn } from "../../lib/cn";
 import { pagePalette } from "../../lib/reportTheme";
-import { CACHE, persistentQuery } from "../../lib/persistentQuery";
+import { CACHE, persistentQuery } from "../../lib/cache";
 import { clearSuiteSeed, readSuiteSeed, writeSuiteSeed } from "../../lib/suiteSeed";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import {

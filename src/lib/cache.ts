@@ -1,10 +1,25 @@
 /**
- * Small persistent cache over localStorage - the app's "cache db".
+ * The webview's one cache: persistent storage over localStorage, plus the
+ * React Query options that seed a query from it.
  *
- * Azure DevOps rate-limits per user, so every request the app can answer
- * from disk is budget handed back to the person's browser. This holds the
- * slow-moving reads (org/project lists, team members) across restarts and
- * the immutable ones (pipeline runs of finished PRs) indefinitely.
+ * Azure DevOps rate-limits per user, so every read the app can answer from
+ * disk is budget handed back. React Query's own cache is memory-only - every
+ * launch (and every dev reload) starts empty - so this holds the slow-moving
+ * reads (org/project lists, team members, plan trees) and the immutable ones
+ * (pipeline runs of finished PRs) across restarts.
+ *
+ * How to use it:
+ * - A query whose data should survive a restart: spread
+ *   `persistentQuery({ key: cacheKeys.x(...), fetcher, ...CACHE.preset })`
+ *   into `useQuery`. That is the whole integration.
+ * - Merge logic a plain query can't express (PrPanel's finished pipelines):
+ *   `cacheRead` / `cacheWrite`, still with a `cacheKeys` key and a `CACHE`
+ *   shelf life.
+ * - A new key goes in `cacheKeys`, a new shelf life in `CACHE`. cache.test.ts
+ *   fails on a hand-written key, a raw TTL, or a second implementation.
+ *
+ * The Rust backend has its own cache (src-tauri/src/cache) for data the AI
+ * bridge reads too; the two are separate processes and share nothing.
  *
  * Disabled entirely in demo mode: demo data must never be served to a real
  * session, and vice versa. Bounded to MAX_ENTRIES; oldest entries fall out
@@ -16,7 +31,43 @@ const PREFIX = "tcm-v2-cache:";
 const OWNER_KEY = "tcm-v2-cache-owner";
 const MAX_ENTRIES = 150;
 
+const HOUR = 60 * 60_000;
+const DAY = 24 * HOUR;
+
 type Entry<T> = { at: number; data: T };
+
+/** Common shelf lives, named so call sites read as intent. Pick `staleMs`
+ * by how much the data actually moves. */
+export const CACHE = {
+  /** Plans/suites structure: refetch at most every 6h, keep for a week. */
+  structure: { ttlMs: 7 * DAY, staleMs: 6 * HOUR },
+  /** Run outcomes, comments, item details: seed instantly, always revalidate. */
+  outcomes: { ttlMs: 7 * DAY, staleMs: 0 },
+  /** Org/project lists, team members: a day from disk with no request, so
+   * most app starts cost nothing here. */
+  reference: { ttlMs: DAY, staleMs: DAY },
+  /** Pipelines of a finished PR: they never change again. */
+  finished: { ttlMs: 30 * DAY, staleMs: Infinity },
+} as const;
+
+/** Every key the webview caches under. The strings are what earlier
+ * versions stored - changing one throws that data away for every user. */
+export const cacheKeys = {
+  orgs: () => "orgs",
+  projects: (org: string) => `projects:${org}`,
+  members: (org: string, project: string) => `members:${org}/${project}`,
+  workItemDetail: (org: string, project: string, id: number) => `wi-detail:${org}/${project}/${id}`,
+  workItemComments: (org: string, project: string, id: number) =>
+    `wi-comments:${org}/${project}/${id}`,
+  plansSuites: (org: string, project: string) => `plans-suites:${org}/${project}`,
+  runHistory: (org: string, project: string, planId: number | undefined) =>
+    `run-history:${org}/${project}/${planId}`,
+  points: (org: string, project: string, planId: number | undefined, suiteId: number | undefined) =>
+    `points:${org}/${project}/${planId}/${suiteId}`,
+  boardPrs: (org: string, project: string) => `board-prs:${org}/${project}`,
+  prPipeline: (org: string, project: string, prId: number, mergeCommit: string) =>
+    `pipe:${org}/${project}:${prId}:${mergeCommit}`,
+};
 
 /** Non-reversible tag for an account, so the identity check never needs the
  * address itself written to disk. Collisions only cost a needless wipe. */
@@ -123,6 +174,41 @@ export async function cached<T>(
   const data = await fetcher();
   cacheWrite(key, data);
   return data;
+}
+
+/**
+ * React Query options backed by the cache, so a query survives an app
+ * restart instead of re-hitting Azure DevOps.
+ *
+ * Seeding `initialData` from disk - WITH its real age via
+ * `initialDataUpdatedAt` - lets React Query paint instantly and then decide
+ * for itself whether the seed is stale enough to revalidate in the
+ * background.
+ */
+export function persistentQuery<T>(opts: {
+  /** From `cacheKeys` - must encode every scope the data depends on. */
+  key: string;
+  fetcher: () => Promise<T>;
+  /** How long a seed may be served at all. */
+  ttlMs: number;
+  /** How long a seed is considered fresh (no background refetch). */
+  staleMs: number;
+  /** Whether a fetched result may be written; it is returned either way. */
+  store?: (data: T) => boolean;
+}) {
+  const { key, fetcher, ttlMs, staleMs, store } = opts;
+  return {
+    queryFn: async () => {
+      const data = await fetcher();
+      if (!store || store(data)) cacheWrite(key, data);
+      return data;
+    },
+    initialData: () => cacheEntry<T>(key, ttlMs)?.data,
+    // Without the real timestamp React Query would treat the seed as
+    // fetched "now" and never refresh it.
+    initialDataUpdatedAt: () => cacheEntry<T>(key, ttlMs)?.at,
+    staleTime: staleMs,
+  };
 }
 
 function prune(): void {

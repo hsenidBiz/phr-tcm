@@ -9,7 +9,7 @@ import { commands, type WorkItemDetail } from "../bindings";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
 import { copyText } from "../lib/clipboard";
-import { cacheEntry, cacheWrite, cached } from "../lib/localCache";
+import { cacheEntry, cacheWrite, cached } from "../lib/cache";
 import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
