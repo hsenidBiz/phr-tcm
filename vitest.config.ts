@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
@@ -6,5 +6,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
+    // `.claude/worktrees/` holds whole checkouts of this repository, each
+    // with its own node_modules. Without this exclude vitest collected
+    // their test files as part of THIS suite, and every one that mounts
+    // React failed with "Cannot read properties of null (reading
+    // 'useState')" - two copies of React in one run. A worktree's tests
+    // belong to that worktree's own run, never to the release gate here.
+    exclude: [...configDefaults.exclude, ".claude/**"],
   },
 });

@@ -181,13 +181,15 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Suite Lookup, Ctrl+8 to Suite Manageme
 
   fireEvent.keyDown(window, { key: "7", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "Suite Lookup" })).toBeInTheDocument();
-  // The pill belongs to the dev-only Auto Run tab alone.
+  // Suite Lookup is finished, so it carries no pill.
   expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "8", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "Suite Management" })).toBeInTheDocument();
-  // Suite Management ships in release builds now - no "In Development" pill.
-  expect(screen.queryByText("In Development")).not.toBeInTheDocument();
+  // Suite Management ships in release builds but is not finished, and the
+  // tab says so beside its heading. The sidebar row is deliberately left
+  // without a note: it is offered to everyone, unlike Auto Run.
+  expect(screen.getByText("In Development")).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "9", ctrlKey: true });
   expect(screen.getByRole("heading", { name: "AI Bridge" })).toBeInTheDocument();

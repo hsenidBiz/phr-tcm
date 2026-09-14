@@ -155,6 +155,9 @@ const TITLES: Record<Section, string> = {
 /** Status pill beside the heading - features shipped before they are done. */
 const TITLE_NOTES: Partial<Record<Section, string>> = {
   autorun: "In Development",
+  // Offered in release builds, unlike Auto Run, but not finished - so the
+  // pill sits on the tab's heading and the sidebar row carries no note.
+  manage: "In Development",
 };
 
 export default function App() {
