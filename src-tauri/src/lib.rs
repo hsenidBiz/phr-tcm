@@ -18,6 +18,7 @@ pub mod db_defaults;
 pub mod audio;
 pub mod auth;
 pub mod backup;
+pub mod cache;
 pub mod capture;
 pub mod commands;
 pub mod events;
