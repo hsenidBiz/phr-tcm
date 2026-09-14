@@ -1,10 +1,12 @@
-import { afterEach, expect, test, vi } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   CACHE,
   cacheKeys,
   cacheRead,
   cacheWrite,
-  cached,
   claimCacheFor,
   persistentQuery,
   suspendCache,
@@ -23,17 +25,6 @@ test("round-trips within the TTL and expires after it", () => {
   raw.at = Date.now() - 120_000;
   localStorage.setItem("tcm-v2-cache:k", JSON.stringify(raw));
   expect(cacheRead("k", 60_000)).toBeNull();
-});
-
-test("cached() fetches once, then serves from storage", async () => {
-  let calls = 0;
-  const fetcher = async () => {
-    calls += 1;
-    return ["x"];
-  };
-  expect(await cached("list", 60_000, fetcher)).toEqual(["x"]);
-  expect(await cached("list", 60_000, fetcher)).toEqual(["x"]);
-  expect(calls).toBe(1);
 });
 
 test("demo mode never reads or writes the cache", () => {
@@ -194,4 +185,52 @@ test("demo mode neither seeds nor stores", async () => {
   await opts.queryFn();
   expect(opts.initialData()).toBeUndefined();
   expect(localStorage.getItem("tcm-v2-cache:k")).toBeNull();
+});
+
+/**
+ * One cache means one. A screen that needs cached data uses lib/cache.ts;
+ * it does not reach into localStorage, seed a query by hand, invent a key
+ * string, or pick a shelf life of its own. Fix a failure by using
+ * persistentQuery / cacheKeys / CACHE - add the key or preset there if it
+ * is new.
+ */
+describe("one cache", () => {
+  // import.meta.url, not __dirname: this file is ESM under vitest.
+  const SRC = dirname(dirname(fileURLToPath(import.meta.url)));
+  const files: { file: string; text: string }[] = [];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(p);
+        continue;
+      }
+      if (!/\.(tsx|ts)$/.test(e.name) || /\.test\.(tsx|ts)$/.test(e.name)) continue;
+      if (e.name === "bindings.ts") continue; // generated
+      const file = relative(SRC, p).replace(/\\/g, "/");
+      if (file === "lib/cache.ts") continue;
+      files.push({ file, text: readFileSync(p, "utf8") });
+    }
+  };
+  walk(SRC);
+
+  const offenders = (pattern: RegExp) => files.filter((f) => pattern.test(f.text)).map((f) => f.file);
+
+  test("only lib/cache.ts touches the cache's storage or seeds a query from disk", () => {
+    expect(offenders(/tcm-v2-cache|initialDataUpdatedAt/)).toEqual([]);
+  });
+
+  test("cache keys come from cacheKeys, never a hand-written string", () => {
+    // A literal passed straight in, or any string opening with one of the
+    // prefixes cacheKeys owns (React Query keys are arrays - no colon).
+    expect(
+      offenders(
+        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe):/,
+      ),
+    ).toEqual([]);
+  });
+
+  test("shelf lives come from CACHE, never a number at the call site", () => {
+    expect(offenders(/ttlMs:\s*\d/)).toEqual([]);
+  });
 });

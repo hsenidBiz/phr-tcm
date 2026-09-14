@@ -15,7 +15,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { requiredFieldsFromError } from "../lib/adoFieldErrors";
 import { unwrap } from "../lib/ipc";
-import { persistentQuery } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 
 const COLUMNS = ["To Do", "In Progress", "Done"] as const;
 
@@ -293,9 +293,10 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
   const prLinks = useQuery({
     queryKey: ["board-prs", org, project],
     ...persistentQuery({
-      key: `board-prs:${org}/${project}`,
+      key: cacheKeys.boardPrs(org, project),
       fetcher: () => unwrap(commands.boardPrLinks(org, project)),
-      ttlMs: 7 * 24 * 60 * 60_000,
+      // A week on disk like any structure, but PR links move within minutes.
+      ...CACHE.structure,
       staleMs: 5 * 60_000,
     }),
     enabled: Boolean(org && project),

@@ -4,7 +4,7 @@ import { commands, type PbiHit } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
 import { IconClear } from "../../lib/actionIcons";
-import { CACHE, persistentQuery } from "../../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap } from "../../lib/ipc";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import PlanTable from "./PlanTable";
@@ -26,7 +26,7 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
   const plans = useQuery({
     queryKey: plansSuitesKey(org, project),
     ...persistentQuery({
-      key: `plans-suites:${org}/${project}`,
+      key: cacheKeys.plansSuites(org, project),
       fetcher: () => unwrap(commands.listPlansWithSuites(org, project)),
       ...CACHE.structure,
     }),

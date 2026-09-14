@@ -6,7 +6,7 @@ import { commands, type WorkComment } from "../bindings";
 import { IconPost } from "../lib/actionIcons";
 import { unwrap } from "../lib/ipc";
 import { renderMarkdown } from "../lib/markdown";
-import { CACHE, persistentQuery } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { htmlToMd } from "../lib/richText";
 import MarkdownField from "./MarkdownField";
 import { Button } from "./ui/button";
@@ -103,7 +103,7 @@ export default function CommentsPanel({
   const comments = useQuery({
     queryKey: ["wi-comments", org, project, itemId],
     ...persistentQuery({
-      key: `wi-comments:${org}/${project}/${itemId}`,
+      key: cacheKeys.workItemComments(org, project, itemId),
       fetcher: () => unwrap(commands.workItemComments(org, project, itemId)),
       ...CACHE.outcomes,
     }),

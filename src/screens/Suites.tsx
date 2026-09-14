@@ -11,7 +11,7 @@ import { Input } from "../components/ui/input";
 import { loadNotes } from "../lib/caseNotes";
 import { openRunnerWindow } from "../lib/openRunner";
 import { pagePalette } from "../lib/reportTheme";
-import { CACHE, persistentQuery } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { cn } from "../lib/cn";
 import { unwrap, unwrapStr } from "../lib/ipc";
 import { buildTree, type SuiteNode } from "../lib/suiteTree";
@@ -56,7 +56,7 @@ function SuitePoints({
   const points = useQuery({
     queryKey: ["points", org, project, planId, suite.id],
     ...persistentQuery({
-      key: `points:${org}/${project}/${planId}/${suite.id}`,
+      key: cacheKeys.points(org, project, planId, suite.id),
       fetcher: () => unwrap(commands.listTestPoints(org, project, planId, suite.id)),
       ...CACHE.outcomes,
     }),
@@ -137,7 +137,7 @@ export default function Suites({
   const plans = useQuery({
     queryKey: ["plans-suites", org, project],
     ...persistentQuery({
-      key: `plans-suites:${org}/${project}`,
+      key: cacheKeys.plansSuites(org, project),
       fetcher: () => unwrap(commands.listPlansWithSuites(org, project)),
       ...CACHE.structure,
     }),

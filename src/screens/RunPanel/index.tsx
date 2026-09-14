@@ -13,7 +13,7 @@ import HistoryDots from "../../components/HistoryDots";
 import ScanProgress from "../../components/ScanProgress";
 import { cn } from "../../lib/cn";
 import { pagePalette } from "../../lib/reportTheme";
-import { CACHE, persistentQuery } from "../../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { clearSuiteSeed, readSuiteSeed, writeSuiteSeed } from "../../lib/suiteSeed";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import {
@@ -147,7 +147,7 @@ export default function RunPanel({
   const history = useQuery({
     queryKey: ["run-history", org, project, suite.data?.plan_id],
     ...persistentQuery({
-      key: `run-history:${org}/${project}/${suite.data?.plan_id}`,
+      key: cacheKeys.runHistory(org, project, suite.data?.plan_id),
       fetcher: () => unwrap(commands.runHistory(org, project, suite.data!.plan_id)),
       ...CACHE.outcomes,
     }),
@@ -166,7 +166,7 @@ export default function RunPanel({
   const points = useQuery({
     queryKey: ["points", org, project, suite.data?.plan_id, suite.data?.suite_id],
     ...persistentQuery({
-      key: `points:${org}/${project}/${suite.data?.plan_id}/${suite.data?.suite_id}`,
+      key: cacheKeys.points(org, project, suite.data?.plan_id, suite.data?.suite_id),
       fetcher: async () => {
         const r = await commands.listTestPoints(
           org,

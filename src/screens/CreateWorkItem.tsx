@@ -16,7 +16,7 @@ import Combobox from "../components/ui/combobox";
 import { Input, Textarea } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { unwrap } from "../lib/ipc";
-import { cached } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { iterationDetails } from "../lib/iterations";
 import { IconAdd, IconCopy, IconOpenInBrowser } from "../lib/actionIcons";
 import { copyText } from "../lib/clipboard";
@@ -80,12 +80,12 @@ export default function CreateWorkItem({ org, project }: { org: string; project:
   const members = useQuery({
     // Same key + cache as the drawer: one members fetch serves both.
     queryKey: ["members", org, project],
-    queryFn: () =>
-      cached(`members:${org}/${project}`, 24 * 60 * 60_000, () =>
-        unwrap(commands.listTeamMembers(org, project)),
-      ),
+    ...persistentQuery({
+      key: cacheKeys.members(org, project),
+      fetcher: () => unwrap(commands.listTeamMembers(org, project)),
+      ...CACHE.reference,
+    }),
     enabled: Boolean(org && project),
-    staleTime: 24 * 60 * 60_000,
     retry: false,
   });
   const areas = useQuery({

@@ -38,7 +38,7 @@ import {
   subscribeWorkingDir,
   workingDirSnapshot,
 } from "./lib/workingDir";
-import { CACHE, cacheEntry, claimCacheFor, persistentQuery, suspendCache } from "./lib/cache";
+import { CACHE, cacheEntry, cacheKeys, claimCacheFor, persistentQuery, suspendCache } from "./lib/cache";
 import { clearTourExpanded, setTourExpanded } from "./lib/sidebarState";
 import { readSuiteSeed, type SuiteSeed, writeSuiteSeed } from "./lib/suiteSeed";
 import { saveNote } from "./lib/caseNotes";
@@ -714,7 +714,7 @@ export default function App() {
   useEffect(() => {
     if (tourOpen) return;
     if (!signedIn || !org || !project) return;
-    const key = `plans-suites:${org}/${project}`;
+    const key = cacheKeys.plansSuites(org, project);
     // A fresh disk seed means the screen already has its data - warming
     // over the network would spend an expensive scan for nothing.
     const seed = cacheEntry<PlanWithSuites[]>(key, CACHE.structure.ttlMs);
@@ -794,10 +794,7 @@ export default function App() {
         // already on disk per PROJECT and carries every requirement
         // suite's PBI id - switching PBIs must not re-list every plan's
         // suites when one cached inventory answers for all of them.
-        const tree = cacheEntry<PlanWithSuites[]>(
-          `plans-suites:${org}/${project}`,
-          CACHE.structure.ttlMs,
-        );
+        const tree = cacheEntry<PlanWithSuites[]>(cacheKeys.plansSuites(org, project), CACHE.structure.ttlMs);
         for (const { plan, suites } of tree?.data ?? []) {
           const hit = suites.find(
             (s) => s.requirement_id === pbiId && s.suite_type === "requirementTestSuite",

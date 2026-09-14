@@ -31,7 +31,7 @@ import { Modal } from "../components/ui/modal";
 import { Skeleton } from "../components/ui/skeleton";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
-import { cacheRead, cacheWrite } from "../lib/cache";
+import { CACHE, cacheKeys, cacheRead, cacheWrite } from "../lib/cache";
 import AstryxIsland from "../components/AstryxIsland";
 import { Markdown } from "@astryxdesign/core/Markdown";
 
@@ -426,9 +426,9 @@ function PrRow({
   const pipeline = useQuery({
     queryKey: ["pr-pipeline", org, project, pr.repo_id, pr.id, pr.merge_commit],
     queryFn: async () => {
-      const key = `pipe:${org}/${project}:${pr.id}:${pr.merge_commit}`;
+      const key = cacheKeys.prPipeline(org, project, pr.id, pr.merge_commit);
       if (finalized) {
-        const hit = cacheRead<PrBuild[]>(key, 30 * 24 * 60 * 60_000);
+        const hit = cacheRead<PrBuild[]>(key, CACHE.finished.ttlMs);
         if (hit) {
           // Validation builds never deploy - only CI builds need re-asking.
           const ids = hit.filter((b) => !b.is_validation).map((b) => b.id);

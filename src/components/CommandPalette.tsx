@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { commands } from "../bindings";
 import AstryxIsland from "./AstryxIsland";
 import { unwrap } from "../lib/ipc";
-import { cached } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { getTheme, setTheme } from "../lib/theme";
 import { tourRunningSnapshot } from "../tour/tourState";
 import type { Section } from "./Sidebar";
@@ -41,10 +41,12 @@ export default function CommandPalette({
   // the bar already has.
   const projects = useQuery({
     queryKey: ["projects", org],
-    queryFn: () =>
-      cached(`projects:${org}`, 24 * 60 * 60_000, () => unwrap(commands.listProjects(org))),
+    ...persistentQuery({
+      key: cacheKeys.projects(org),
+      fetcher: () => unwrap(commands.listProjects(org)),
+      ...CACHE.reference,
+    }),
     enabled: open && Boolean(org),
-    staleTime: 60 * 60_000,
   });
 
   const run = (fn: () => void) => {

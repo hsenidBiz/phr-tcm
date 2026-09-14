@@ -7,7 +7,7 @@ import ElectricBorder from "./ElectricBorder";
 import { usePrAttention } from "../hooks/usePrAttention";
 import NotificationBell from "./NotificationBell";
 import { unwrap } from "../lib/ipc";
-import { cached } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
 import { Button } from "./ui/button";
@@ -62,16 +62,21 @@ export default function ContextBar({
   // day, so most app starts cost zero ADO requests here.
   const orgs = useQuery({
     queryKey: ["orgs"],
-    queryFn: () => cached("orgs", 24 * 60 * 60_000, () => unwrap(commands.listOrgs())),
-    staleTime: 60 * 60_000,
+    ...persistentQuery({
+      key: cacheKeys.orgs(),
+      fetcher: () => unwrap(commands.listOrgs()),
+      ...CACHE.reference,
+    }),
   });
 
   const projects = useQuery({
     queryKey: ["projects", org],
-    queryFn: () =>
-      cached(`projects:${org}`, 24 * 60 * 60_000, () => unwrap(commands.listProjects(org))),
+    ...persistentQuery({
+      key: cacheKeys.projects(org),
+      fetcher: () => unwrap(commands.listProjects(org)),
+      ...CACHE.reference,
+    }),
     enabled: Boolean(org),
-    staleTime: 60 * 60_000,
   });
 
   // PRs with conflicts or comments still to resolve - the number on the

@@ -9,7 +9,7 @@ import { commands, type WorkItemDetail } from "../bindings";
 import { cn } from "../lib/cn";
 import { unwrap } from "../lib/ipc";
 import { copyText } from "../lib/clipboard";
-import { cacheEntry, cacheWrite, cached } from "../lib/cache";
+import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { renderMarkdown } from "../lib/markdown";
 import { htmlToMd } from "../lib/richText";
 import { Button } from "./ui/button";
@@ -99,23 +99,19 @@ export default function WorkItemDrawer({
       return a.includes(b) || b.includes(a);
     });
   // Seeded from disk so a reopened item paints instantly, then
-  // revalidates. Hand-rolled rather than persistentQuery because the
-  // write is SIZE-CAPPED: details carry inline images as data: URIs, and
-  // one multi-megabyte write would trip localStorage's quota handler,
-  // which clears the whole cache to recover - a bad trade for one Bug's
-  // screenshots. Oversized items just skip the seed and load as before.
-  const detailCacheKey = `wi-detail:${org}/${project}/${itemId}`;
+  // revalidates. The write is SIZE-CAPPED: details carry inline images as
+  // data: URIs, and one multi-megabyte write would trip localStorage's
+  // quota handler, which clears the whole cache to recover - a bad trade
+  // for one Bug's screenshots. Oversized items just skip the seed and
+  // load as before.
   const detail = useQuery({
     queryKey: ["wi-detail", org, project, itemId],
-    queryFn: async () => {
-      const d = await unwrap(commands.workItemDetail(org, project, itemId));
-      if (JSON.stringify(d).length <= 400_000) cacheWrite(detailCacheKey, d);
-      return d;
-    },
-    initialData: () => cacheEntry<WorkItemDetail>(detailCacheKey, 7 * 24 * 60 * 60_000)?.data,
-    initialDataUpdatedAt: () =>
-      cacheEntry<WorkItemDetail>(detailCacheKey, 7 * 24 * 60 * 60_000)?.at,
-    staleTime: 0,
+    ...persistentQuery({
+      key: cacheKeys.workItemDetail(org, project, itemId),
+      fetcher: () => unwrap(commands.workItemDetail(org, project, itemId)),
+      ...CACHE.outcomes,
+      store: (d) => JSON.stringify(d).length <= 400_000,
+    }),
     retry: false,
   });
 
@@ -123,11 +119,11 @@ export default function WorkItemDrawer({
     queryKey: ["members", org, project],
     // v1 cached members for 24h; the local cache carries that across
     // restarts too (big orgs, slow endpoint).
-    queryFn: () =>
-      cached(`members:${org}/${project}`, 24 * 60 * 60_000, () =>
-        unwrap(commands.listTeamMembers(org, project)),
-      ),
-    staleTime: 24 * 60 * 60_000,
+    ...persistentQuery({
+      key: cacheKeys.members(org, project),
+      fetcher: () => unwrap(commands.listTeamMembers(org, project)),
+      ...CACHE.reference,
+    }),
   });
 
   const activities = useQuery({

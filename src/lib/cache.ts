@@ -163,19 +163,6 @@ export function cacheWrite<T>(key: string, data: T): void {
   }
 }
 
-/** Serve from cache when fresh enough, else fetch and remember. */
-export async function cached<T>(
-  key: string,
-  maxAgeMs: number,
-  fetcher: () => Promise<T>,
-): Promise<T> {
-  const hit = cacheRead<T>(key, maxAgeMs);
-  if (hit !== null) return hit;
-  const data = await fetcher();
-  cacheWrite(key, data);
-  return data;
-}
-
 /**
  * React Query options backed by the cache, so a query survives an app
  * restart instead of re-hitting Azure DevOps.
