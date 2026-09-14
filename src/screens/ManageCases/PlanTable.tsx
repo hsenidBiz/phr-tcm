@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FolderTree } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
@@ -108,6 +108,23 @@ export default function PlanTable({
 
   const busy = copy.isPending;
 
+  // Creating a suite needs "Manage test suites" on the plan's area. Asked
+  // per plan, because area permissions are per node. Hidden ONLY on a
+  // clear no: a check that could not be made must not take away a button
+  // the user is entitled to, and the create itself refuses with a message.
+  //
+  // Memory-only on purpose (react-query's default cache, no persistence):
+  // caching a stale "no" across restarts would hide the button after an
+  // admin fixed the user's access.
+  const mayCreate = useQuery({
+    queryKey: ["can-create-suites", org, project, plan.area_path],
+    queryFn: () => unwrap(commands.canCreateTestSuites(org, project, plan.area_path)),
+    enabled: Boolean(org && project),
+    staleTime: 60 * 60_000,
+    retry: false,
+  });
+  const hideNewSuite = mayCreate.data === false;
+
   return (
     <section aria-label={plan.name} className="rounded-md border border-border bg-surface">
       <header className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-sm">
@@ -144,10 +161,12 @@ export default function PlanTable({
           <IconCopyToSuite aria-hidden />
           {copy.isPending ? "Copying" : "Copy to suite"}
         </Button>
-        <Button size="sm" variant="ghost" disabled={busy || staticTargets.length === 0} onClick={() => setNewOpen(true)}>
-          <IconNewSuite aria-hidden />
-          New test suite
-        </Button>
+        {!hideNewSuite && (
+          <Button size="sm" variant="ghost" disabled={busy || staticTargets.length === 0} onClick={() => setNewOpen(true)}>
+            <IconNewSuite aria-hidden />
+            New test suite
+          </Button>
+        )}
       </header>
       <ul className="p-1">
         {rows.map(({ suite, depth }) => {

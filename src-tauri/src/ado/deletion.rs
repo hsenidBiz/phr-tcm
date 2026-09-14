@@ -33,57 +33,22 @@
 //!    Anything other than an explicit yes - a failed request, a missing
 //!    evaluation, an unexpected shape - is treated as no.
 
+use super::permissions::{
+    evaluate, CSS_NAMESPACE_ID, MANAGE_TEST_PLANS, MANAGE_TEST_SUITES, PROJECT_NAMESPACE_ID,
+    WORK_ITEM_DELETE,
+};
 use super::{AdoClient, AdoError};
 
-/// Azure DevOps' PROJECT security namespace, which is where work-item
-/// delete lives.
-///
-/// The first version of this used the Classification-node (area path)
-/// namespace and its bit 8. Those are real and internally consistent, so
-/// Azure DevOps resolved them and answered confidently - about a different
-/// question: "may this user delete this AREA PATH NODE". A default
-/// Contributor holds project-level "Delete and restore work items" but not
-/// "Delete this node", so they got a clean `false` and never saw the
-/// button.
-///
-/// NOT VERIFIED against a live organization - this machine cannot reach
-/// one. And note what that first version got wrong in its REASONING, not
-/// just its constants: it claimed a wrong constant could only ever cost a
-/// missing button. That holds for a constant Azure DevOps cannot resolve.
-/// A wrong-but-valid one gets a confident yes or no about the wrong thing,
-/// and `evaluate_delete_permission` cannot tell the difference. So the
-/// permission check is a courtesy that hides a button nobody could use -
-/// the real backstop is the 403 handling on the delete itself, which needs
-/// no constant to be right.
-const PROJECT_NAMESPACE_ID: &str = "52d39943-cb85-4d7f-8fa8-c6baac873819";
-
-/// WORK_ITEM_DELETE in the PROJECT namespace. Pinned by a test that reads
-/// the request body, so changing it is a deliberate act rather than a typo.
-const WORK_ITEM_DELETE: u32 = 8192;
-
-/// The CSS (area path) namespace, where Azure DevOps keeps the
-/// test-artifact permissions.
-///
-/// Round two of the wrong-question lesson above, caught in the field this
-/// time: WORK_ITEM_DELETE alone is the permission for ORDINARY work items,
-/// and a default Contributor holds it. Test Cases are test artifacts, and
-/// Microsoft's docs gate deleting those on the area-level "Manage test
-/// plans" / "Manage test suites" permissions instead - so the old check
-/// answered yes for users Azure DevOps would refuse, and they met the
-/// refusal only after clicking a button that looked like a promise. The
-/// gate now requires BOTH: the work-item delete right and a manage-test
-/// right on the project's root area.
-///
-/// Root area, not the case's own: cases under one PBI can span areas, and
-/// a root-level check that fails closed is the posture this module
-/// documents - a missing button for an edge-case user beats a button that
-/// lies.
-const CSS_NAMESPACE_ID: &str = "83e28ad4-2d72-4ceb-97b0-c7726d5502c3";
-
-/// MANAGE_TEST_PLANS / MANAGE_TEST_SUITES in the CSS namespace. Either
-/// suffices - the docs name them as alternatives.
-const MANAGE_TEST_PLANS: u32 = 64;
-const MANAGE_TEST_SUITES: u32 = 128;
+// The permission constants and the batch-evaluation call now live in
+// `permissions.rs`, shared with the create-suite gate - see that module's
+// header for what the two namespaces mean, the field failures that pinned
+// PROJECT_NAMESPACE_ID / WORK_ITEM_DELETE / CSS_NAMESPACE_ID /
+// MANAGE_TEST_PLANS / MANAGE_TEST_SUITES, and why this gate and that one
+// lean opposite ways on an uncertain answer.
+//
+// Root area, not the case's own: cases under one PBI can span areas, and a
+// root-level check that fails closed is the posture this module documents
+// - a missing button for an edge-case user beats a button that lies.
 
 /// One work item's fate after a delete attempt.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -159,85 +124,41 @@ impl AdoClient {
         };
 
         // The GUID of the area node the question is about - the given
-        // area, or the root when none is. An area path arrives shaped
-        // "Project\Team\Component"; the classificationnodes URL wants the
-        // segments AFTER the project, '/'-joined and encoded one by one.
-        // No identifier is an uncertain path, and uncertain reads as no.
-        let node_url = match area_path {
-            Some(path) if !path.trim().is_empty() => {
-                let tail: Vec<String> = path
-                    .split('\\')
-                    .skip(1)
-                    .map(|seg| urlencoding::encode(seg).into_owned())
-                    .collect();
-                if tail.is_empty() {
-                    format!(
-                        "{}/{}/{}/_apis/wit/classificationnodes/areas?api-version=7.1",
-                        self.base_url, org, project
-                    )
-                } else {
-                    format!(
-                        "{}/{}/{}/_apis/wit/classificationnodes/areas/{}?api-version=7.1",
-                        self.base_url,
-                        org,
-                        project,
-                        tail.join("/")
-                    )
-                }
-            }
-            _ => format!(
-                "{}/{}/{}/_apis/wit/classificationnodes/areas?api-version=7.1",
-                self.base_url, org, project
-            ),
-        };
-        let areas = self.get_json(node_url).await?;
-        let Some(area_id) = areas["identifier"].as_str() else {
-            return Err(AdoError::Http {
-                status: 0,
-                body: "the root area node carried no identifier to build a security token from"
-                    .into(),
-            });
-        };
+        // area, or the root when none is. No identifier is an uncertain
+        // path, and uncertain reads as no.
+        let area_token = self.area_node_token(org, project, area_path).await?;
 
-        let area_token = format!("vstfs:///Classification/Node/{area_id}");
-        let body = serde_json::json!({
-            "evaluations": [{
-                "securityNamespaceId": PROJECT_NAMESPACE_ID,
-                "token": format!("$PROJECT:vstfs:///Classification/TeamProject/{project_id}"),
-                "permissions": WORK_ITEM_DELETE,
-            }, {
-                "securityNamespaceId": CSS_NAMESPACE_ID,
-                "token": area_token,
-                "permissions": MANAGE_TEST_PLANS,
-            }, {
-                "securityNamespaceId": CSS_NAMESPACE_ID,
-                "token": area_token,
-                "permissions": MANAGE_TEST_SUITES,
-            }],
-            // FALSE on purpose: this asks Azure DevOps for the literal ACL
-            // answer. `true` tells it to pass anyone in an Administrators
-            // group whatever their ACL says - which is the one input in
-            // this request that can bias it toward yes, in a check whose
-            // whole stated posture is to fail closed. Getting this wrong in
-            // the `false` direction costs a missing button; getting it
-            // wrong in the `true` direction offers a delete that cannot
-            // work. Those are not symmetrical.
-            "alwaysAllowAdministrators": false,
-        });
-        let answer = self
-            .post_json(
-                format!(
-                    "{}/{}/_apis/security/permissionevaluationbatch?api-version=7.1",
-                    self.base_url, org
-                ),
-                &body,
-            )
-            .await?;
+        // Getting this wrong in the `false` (fail-closed) direction costs a
+        // missing button; getting it wrong in the `true` direction offers a
+        // delete that cannot work. Those are not symmetrical - see
+        // `evaluate`'s own comment on `alwaysAllowAdministrators`.
+        let values = evaluate(
+            self,
+            org,
+            vec![
+                serde_json::json!({
+                    "securityNamespaceId": PROJECT_NAMESPACE_ID,
+                    "token": format!("$PROJECT:vstfs:///Classification/TeamProject/{project_id}"),
+                    "permissions": WORK_ITEM_DELETE,
+                }),
+                serde_json::json!({
+                    "securityNamespaceId": CSS_NAMESPACE_ID,
+                    "token": area_token,
+                    "permissions": MANAGE_TEST_PLANS,
+                }),
+                serde_json::json!({
+                    "securityNamespaceId": CSS_NAMESPACE_ID,
+                    "token": area_token,
+                    "permissions": MANAGE_TEST_SUITES,
+                }),
+            ],
+        )
+        .await?;
 
         // Explicitly true, or nothing. A missing or oddly-shaped evaluation
         // is not a yes. Deleting a Test Case needs the work-item right AND
         // a manage-test right (either of the two) - see CSS_NAMESPACE_ID.
-        let ev = |i: usize| answer["evaluations"][i]["value"].as_bool() == Some(true);
+        let ev = |i: usize| values.get(i).copied().flatten() == Some(true);
         Ok(ev(0) && (ev(1) || ev(2)))
     }
 

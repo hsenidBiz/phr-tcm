@@ -164,6 +164,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             testplan::list_suite_entries,
             testplan::reorder_suite_cases,
             testplan::create_static_suite,
+            testplan::can_create_test_suites,
             testplan::add_cases_to_suite,
             runs::run_history,
             runs::view_execution_report,

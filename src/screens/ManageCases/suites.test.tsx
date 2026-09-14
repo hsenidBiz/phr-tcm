@@ -151,6 +151,22 @@ test("Clear selection in a plan's header drops the selection and unchecks its ro
   expect(within(l).getByRole("checkbox", { name: "Select #201" })).not.toBeChecked();
 });
 
+test("New test suite is hidden only when Azure DevOps says no", async () => {
+  // A clear no: the control goes away.
+  mountScreen((cmd) => (cmd === "can_create_test_suites" ? false : undefined));
+  const auth = await screen.findByRole("region", { name: "Auth - Test Plan" });
+  await waitFor(() =>
+    expect(within(auth).queryByRole("button", { name: /New test suite/i })).not.toBeInTheDocument(),
+  );
+});
+
+test("an unanswerable permission check leaves New test suite in place", async () => {
+  // null = could not ask. The button stays; the create itself refuses.
+  mountScreen((cmd) => (cmd === "can_create_test_suites" ? null : undefined));
+  const auth = await screen.findByRole("region", { name: "Auth - Test Plan" });
+  expect(within(auth).getByRole("button", { name: /New test suite/i })).toBeInTheDocument();
+});
+
 test("a suite's header count is its own, not the whole plan's selection", async () => {
   mountScreen();
   const regression = await expandSuite("Regression");

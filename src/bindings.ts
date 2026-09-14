@@ -416,6 +416,12 @@ export const commands = {
 	 */
 	createStaticSuite: (organization: string, project: string, planId: number, parentSuiteId: number, name: string) => typedError<SuiteRef, AdoError>(__TAURI_INVOKE("create_static_suite", { organization, project, planId, parentSuiteId, name })),
 	/**
+	 *  Whether the New test suite control should be offered. `None` = could not
+	 *  ask; the frontend keeps the button, and the create itself refuses with a
+	 *  message if Azure DevOps says no.
+	 */
+	canCreateTestSuites: (organization: string, project: string, areaPath: string | null) => typedError<boolean | null, AdoError>(__TAURI_INVOKE("can_create_test_suites", { organization, project, areaPath })),
+	/**
 	 *  Copy existing test cases into a suite: they stay wherever they already
 	 *  were. Returns the ids the server reports as now in the suite.
 	 */
