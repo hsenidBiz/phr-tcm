@@ -33,10 +33,13 @@ test("selecting cases in a plan enables Copy to suite for that plan only; copyin
   fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
   expect(within(auth).getByText("2 selected")).toBeInTheDocument();
   expect(within(billing).queryByText(/selected/)).not.toBeInTheDocument();
-  // A target is needed: static suites of this plan (root included), never the PBI suite.
+  // A target is needed: static suites of this plan (root included), never
+  // the PBI suite. The list is searchable - a project's suites run long.
   await openSelect(auth, "Copy to");
-  const labels = screen.getAllByRole("option").map((o) => o.textContent);
-  expect(labels).toEqual(["Pick a suite", "Plan root", "Regression", "    Smoke"]);
+  const labels = screen.getAllByRole("option").map((o) => o.textContent?.trim());
+  expect(labels).toEqual(["Plan root", "Regression", "Smoke"]);
+  fireEvent.change(screen.getByPlaceholderText("Search…"), { target: { value: "regr" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent?.trim())).toEqual(["Regression"]);
   fireEvent.click(screen.getByRole("option", { name: "Regression" }));
   fireEvent.click(within(auth).getByRole("button", { name: "Copy to suite" }));
 

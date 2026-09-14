@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { commands, type PlanWithSuites, type SuiteRef } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Select } from "../../components/ui/select";
+import Combobox from "../../components/ui/combobox";
 import { IconClear, IconCopyToSuite, IconNewSuite } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrap } from "../../lib/ipc";
@@ -124,20 +124,17 @@ export default function PlanTable({
             </Button>
           </>
         )}
-        <Select
-          aria-label="Copy to"
-          triggerClassName="py-1.5"
-          value={target}
-          disabled={busy || staticTargets.length === 0}
-          onChange={(e) => setTarget(e.target.value)}
-        >
-          <option value="">Pick a suite</option>
-          {staticTargets.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label}
-            </option>
-          ))}
-        </Select>
+        {staticTargets.length > 0 && (
+          <Combobox
+            ariaLabel="Copy to"
+            className="min-w-56"
+            triggerClassName="py-1"
+            placeholder="Pick a suite"
+            value={target}
+            onChange={setTarget}
+            items={staticTargets.map((t) => ({ value: String(t.id), label: t.label }))}
+          />
+        )}
         <Button
           size="sm"
           variant="ghost"
