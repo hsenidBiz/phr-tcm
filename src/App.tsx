@@ -145,7 +145,7 @@ const TITLES: Record<Section, string> = {
   view: "View Test Cases",
   run: "Run Tests",
   autorun: "Auto Run",
-  suites: "Suite Lookup",
+  suites: "Search Suites",
   manage: "Suite Management",
   ai: "AI Bridge",
   settings: "Settings",
@@ -173,6 +173,10 @@ export default function App() {
   const [caseSelection, setCaseSelection] = useState<{ label: string; caseIds: number[] } | null>(
     null,
   );
+  // A suite handed over from Search Suites' Manage chip. Cleared once
+  // Suite Management has it, so going back to the tab later shows the
+  // ordinary PBI-driven view rather than reopening an old click.
+  const [manageFocus, setManageFocus] = useState<{ planId: number; suiteId: number } | null>(null);
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings asks for it. While it is up the app runs on sample
@@ -301,7 +305,7 @@ export default function App() {
   useEffect(() => {
     // Mirrors the sidebar's rows: without the dev-only Auto Run row
     // (release builds) the numbers close up, so release builds have
-    // Ctrl+6 Suite Lookup, Ctrl+7 Suite Management, Ctrl+8 AI Bridge.
+    // Ctrl+6 Search Suites, Ctrl+7 Suite Management, Ctrl+8 AI Bridge.
     const order: Section[] = (
       ["manual", "import", "edit", "view", "run", "autorun", "suites", "manage", "ai"] as Section[]
     ).filter((s) => s !== "autorun" || AUTO_RUN_ENABLED);
@@ -370,7 +374,7 @@ export default function App() {
   }, [org, project, section, pbi, workMode, tourOpen]);
 
   // Changing scope drops the case selection too. It is a list of work item
-  // ids handed over from Suite Lookup, and ids mean nothing in a different
+  // ids handed over from Search Suites, and ids mean nothing in a different
   // project - Update Test Cases would go on showing project A's cases while
   // every permission and every write was aimed at project B. goToSection
   // already clears it, but neither the scope pickers nor Ctrl+K go through
@@ -709,7 +713,7 @@ export default function App() {
     if (tourOpen && !signedIn) endTour();
   }, [tourOpen, signedIn, endTour]);
 
-  // Warm the Suite Lookup data in the background so the screen is ready
+  // Warm the Search Suites data in the background so the screen is ready
   // when the user navigates there (same key/staleTime as the screen).
   useEffect(() => {
     if (tourOpen) return;
@@ -1076,13 +1080,23 @@ export default function App() {
                       setSection("edit");
                       setWorkMode(false);
                     }}
+                    onManageSuite={(planId, suiteId) => {
+                      setManageFocus({ planId, suiteId });
+                      goToSection("manage");
+                    }}
                   />
                 )}
                 {AUTO_RUN_ENABLED && section === "autorun" && (
                   <AutoRun org={org} project={project} pbi={pbi} />
                 )}
                 {section === "manage" && (
-                  <ManageCases org={org} project={project} pbi={pbi} />
+                  <ManageCases
+                    org={org}
+                    project={project}
+                    pbi={pbi}
+                    focus={manageFocus}
+                    onFocusHandled={() => setManageFocus(null)}
+                  />
                 )}
                 {section === "ai" && <AiBridge />}
                 {section === "settings" && <Settings org={org} project={project} />}

@@ -880,7 +880,7 @@ export default function AiBridge() {
             PBI id, the other reads the cases in it, in the suite&apos;s own order, with an option to
             include every suite beneath a folder. This is how an assistant reads a static or
             query-based suite as a whole, without knowing its PBI or every case id. Reading
-            only — the same view as the Suite Lookup tab. Off, an assistant reaches cases through
+            only — the same view as the Search Suites tab. Off, an assistant reaches cases through
             a PBI or their own ids alone.
           </li>
           <li>

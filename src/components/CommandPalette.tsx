@@ -78,7 +78,7 @@ export default function CommandPalette({
           <Item keys="mod+2" onSelect={() => run(() => onNavigate("import"))}>Import File</Item>
           <Item keys="mod+3" onSelect={() => run(() => onNavigate("edit"))}>Update Test Cases</Item>
           <Item keys="mod+4" onSelect={() => run(() => onNavigate("run"))}>Run Tests</Item>
-          <Item keys="mod+5" onSelect={() => run(() => onNavigate("suites"))}>Suite Lookup</Item>
+          <Item keys="mod+5" onSelect={() => run(() => onNavigate("suites"))}>Search Suites</Item>
           <Item onSelect={() => run(() => onNavigate("settings"))}>Settings</Item>
         </Command.Group>
 

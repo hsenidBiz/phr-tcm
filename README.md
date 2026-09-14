@@ -89,7 +89,7 @@ the board's test count.
   paste a screenshot or attach a file. File a Bug from a failure. Submit
   as a new test run under the existing plan.
 
-### Suite Lookup
+### Search Suites
 - The plan's suite folder tree with a search box which prunes and expands
   matches.
 - View any suite or folder as an HTML report, generate an execution

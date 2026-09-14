@@ -51,7 +51,7 @@ test("Auto Run is offered in dev builds and hidden in release builds", async () 
   const release = await import("./Sidebar");
   render(<release.default section="manual" onSelect={() => {}} />);
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Suite Lookup" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Search Suites" })).toBeInTheDocument();
 
   vi.unstubAllEnvs();
   vi.resetModules();

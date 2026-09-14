@@ -22,7 +22,7 @@ export default function EditCases({
     return (
       <div className="space-y-2">
         <div className="flex items-center gap-2 text-xs text-muted">
-          <span>Showing cases handed over from Suite Lookup.</span>
+          <span>Showing cases handed over from Search Suites.</span>
           <button className="text-accent hover:underline" onClick={onClearSelection}>
             Back to PBI cases
           </button>

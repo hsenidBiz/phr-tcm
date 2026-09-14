@@ -14,10 +14,11 @@ function renderSuites(
   // Accepts a caller-supplied QueryClient so a test can pre-seed the cache
   // (qc.setQueryData) before the component ever mounts.
   qc: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  onManageSuite?: (planId: number, suiteId: number) => void,
 ) {
   return render(
     <QueryClientProvider client={qc}>
-      <Suites org="acme" project="Web" onEditCases={onEditCases} />
+      <Suites org="acme" project="Web" onEditCases={onEditCases} onManageSuite={onManageSuite} />
     </QueryClientProvider>,
   );
 }
@@ -70,6 +71,32 @@ test("plans render with suites; a suite click shows its points", async () => {
   fireEvent.click(screen.getByText("PBI 42 suite"));
   expect(await screen.findByText("Valid login")).toBeInTheDocument();
   expect(screen.getByText("Passed")).toBeInTheDocument(); // capitalized display
+});
+
+test("Manage hands the suite to Suite Management", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            {
+              id: 91,
+              name: "PBI 42 suite",
+              suite_type: "requirementTestSuite",
+              requirement_id: 42,
+              parent_id: null,
+            },
+          ],
+        },
+      ];
+  });
+  const managed: Array<[number, number]> = [];
+  renderSuites(undefined, undefined, (planId, suiteId) => managed.push([planId, suiteId]));
+
+  await screen.findByText("PBI 42 suite");
+  fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+  expect(managed).toEqual([[9, 91]]);
 });
 
 test("folders build a collapsible tree from parent links", async () => {

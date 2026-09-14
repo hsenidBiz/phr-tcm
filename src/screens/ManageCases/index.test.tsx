@@ -68,6 +68,20 @@ test("a picked PBI with no suite in any plan falls back to every plan and says s
   expect(screen.getByText("PBI #77 has no test suite yet. Showing every plan.")).toBeInTheDocument();
 });
 
+test("a suite handed over from Search Suites opens, whatever PBI is in the bar", async () => {
+  // The PBI in the bar belongs to the Auth plan; the focus points at the
+  // Billing plan's own suite. The focus is what the user just clicked, so
+  // it wins.
+  mountScreen(
+    undefined,
+    { id: 42, title: "Login work", work_item_type: "Product Backlog Item" },
+    { planId: 10, suiteId: 101 },
+  );
+  const billing = await screen.findByRole("region", { name: "Billing - Test Plan" });
+  expect(await within(billing).findByRole("list", { name: "Test cases in Invoices" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Auth - Test Plan" })).not.toBeInTheDocument();
+});
+
 test("no plans yet", async () => {
   mountScreen((cmd) => (cmd === "list_plans_with_suites" ? [] : undefined));
   expect(await screen.findByText("No test plans with test suites in this project yet.")).toBeInTheDocument();
