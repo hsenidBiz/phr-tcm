@@ -89,6 +89,41 @@ fn tools_call_proxies_to_the_bridge_and_wraps_text() {
     assert_eq!(last.1, "/test-cases?pbi=42&limit=3&offset=0");
 }
 
+/// get_test_cases reads cases by their own ids too, with or without a PBI:
+/// an assistant holding "#151331" must not need to know which PBI it is on.
+#[test]
+fn get_test_cases_passes_case_ids_with_or_without_a_pbi() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, r#"{"test_cases":[]}"#.to_string()))
+    };
+    let by_id = r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_test_cases","arguments":{"case_ids":[151331,7]}}}"#;
+    handle_message(by_id, "1.10.3", &call).unwrap();
+    assert_eq!(calls.borrow().last().unwrap().1, "/test-cases?ids=151331,7&limit=5&offset=0");
+
+    let both = r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_test_cases","arguments":{"pbi_id":42,"case_ids":[201]}}}"#;
+    handle_message(both, "1.10.3", &call).unwrap();
+    assert_eq!(calls.borrow().last().unwrap().1, "/test-cases?pbi=42&ids=201&limit=5&offset=0");
+}
+
+#[test]
+fn get_test_cases_requires_neither_a_pbi_nor_ids_in_its_schema() {
+    let req = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
+    let call = |_: &str, _: &str, _: &str| Ok((200, "[]".to_string()));
+    let v: serde_json::Value = serde_json::from_str(&handle_message(req, "1.10.3", &call).unwrap()).unwrap();
+    let tool = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "get_test_cases")
+        .unwrap();
+    // Either argument alone is a valid call; the bridge says what is
+    // missing when neither is given.
+    assert_eq!(tool["inputSchema"]["required"], serde_json::json!([]));
+    assert_eq!(tool["inputSchema"]["properties"]["case_ids"]["type"], "array");
+}
+
 #[test]
 fn bridge_errors_surface_as_tool_errors_not_crashes() {
     let req = r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_writing_guide","arguments":{}}}"#;

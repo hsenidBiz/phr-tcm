@@ -18,7 +18,7 @@ export const MCP_TOOLS: McpToolInfo[] = [
     summary: "Asks you how the set should be written, before anything is.",
   },
   { name: "get_writing_guide", label: "Writing guide", summary: "Format rules and your org's allowed Module values." },
-  { name: "get_test_cases", label: "Cases already on a PBI", summary: "The cases already on a PBI - style, and what is covered." },
+  { name: "get_test_cases", label: "Cases by PBI or id", summary: "The cases on a PBI, or specific cases by their ids - style, and what is covered." },
   { name: "search_test_suites", label: "Find a test suite", summary: "The plans and suites in this project, by plan name, suite name or PBI id." },
   { name: "get_suite_test_cases", label: "Cases in a test suite", summary: "The cases in one suite, in the suite's own order." },
   { name: "get_run_failures", label: "Run failures", summary: "What failed in a PBI's latest runs, with the tester's comments." },

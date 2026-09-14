@@ -156,13 +156,14 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "get_test_cases",
-            "description": "The test cases already linked to a PBI, in the exact import JSON shape. Use them to copy the house style, to check what is already covered before writing more, or just to read what a PBI is currently tested by.",
+            "description": "Test cases in the exact import JSON shape. Pass `pbi_id` for the cases a PBI is tested by, `case_ids` to read specific cases by their own ids without knowing their PBI, or both to narrow a PBI's cases to those ids (any id the PBI is not tested by is listed in `not_on_pbi`). Use them to copy the house style, to check what is already covered before writing more, or to read a case someone named by its id.",
             "inputSchema": schema(serde_json::json!({
-                "pbi_id": { "type": "integer", "description": "Work item id of the PBI" },
+                "pbi_id": { "type": "integer", "description": "Work item id of the PBI - optional when case_ids is given" },
+                "case_ids": { "type": "array", "items": { "type": "integer" }, "description": "Test case work item ids to read (up to 200) - optional when pbi_id is given" },
                 "limit": { "type": "integer", "description": "Max cases (default 5, cap 20)" },
                 "offset": { "type": "integer", "description": "Skip this many cases - page through a PBI with more than the cap" },
                 "titles_only": { "type": "boolean", "description": "Return only ids and titles (cap 200) - use for duplicate checking instead of pulling full step text" },
-            }), &["pbi_id"]),
+            }), &[]),
         },
         {
             "name": "search_test_suites",
@@ -359,10 +360,28 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
         }
         "get_writing_guide" => call("GET", "/guide", ""),
         "get_test_cases" => {
-            let pbi = args["pbi_id"].as_i64().unwrap_or(0);
             let limit = args["limit"].as_i64().unwrap_or(5);
             let offset = args["offset"].as_i64().unwrap_or(0);
-            let mut target = format!("/test-cases?pbi={pbi}&limit={limit}&offset={offset}");
+            let mut params: Vec<String> = vec![];
+            if let Some(pbi) = args["pbi_id"].as_i64() {
+                params.push(format!("pbi={pbi}"));
+            }
+            // A bare number is taken as a one-id list. Strings pass through
+            // as written, so a malformed id reaches the bridge and is refused
+            // by name instead of vanishing here.
+            let ids: Vec<String> = match &args["case_ids"] {
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .map(|i| i.as_i64().map(|n| n.to_string()).unwrap_or_else(|| i.as_str().unwrap_or_default().trim().to_string()))
+                    .collect(),
+                serde_json::Value::Number(n) => vec![n.to_string()],
+                _ => vec![],
+            };
+            if !ids.is_empty() {
+                params.push(format!("ids={}", ids.iter().map(|i| percent_encode(i)).collect::<Vec<_>>().join(",")));
+            }
+            params.push(format!("limit={limit}&offset={offset}"));
+            let mut target = format!("/test-cases?{}", params.join("&"));
             if args["titles_only"].as_bool().unwrap_or(false) {
                 target.push_str("&titles_only=true");
             }

@@ -1584,29 +1584,108 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
     )
 }
 
-/// Real cases for a PBI, serialized in the import JSON record shape so
-/// they double as format demonstrations.
+/// How many case ids one call may name. The batch read chunks at 200, but a
+/// list longer than this is a whole suite - get_suite_test_cases reads that.
+const MAX_CASE_IDS: usize = 200;
+
+/// Real cases in the import JSON record shape, so they double as format
+/// demonstrations. Three ways in:
+/// - `pbi` alone: every case the PBI is tested by;
+/// - `ids` alone: those cases, in the order asked - no PBI needed;
+/// - both: the PBI's cases narrowed to those ids, with `not_on_pbi` naming
+///   any id the PBI is not tested by.
 async fn test_cases(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
     target: &str,
 ) -> (u16, String) {
-    let Some(pbi) = q(target, "pbi").and_then(|v| v.parse::<i32>().ok()) else {
-        return (400, "pass ?pbi=<work item id> (find one with search_pbis)".into());
+    let pbi = match q(target, "pbi") {
+        None => None,
+        Some(v) => match v.parse::<i32>() {
+            Ok(id) => Some(id),
+            Err(_) => return (400, format!("pbi must be a work item id, got {v:?}")),
+        },
+    };
+    let ids = match q(target, "ids") {
+        None => None,
+        Some(v) => match parse_case_ids(&v) {
+            Ok(ids) => Some(ids),
+            Err(msg) => return (400, msg),
+        },
     };
     let (limit, offset, titles_only) = paging(target);
-    match client
-        .get_pbi_test_cases_full(
-            &ctx.org,
-            pbi,
-            ctx.module_ref.as_deref(),
-            ctx.preconditions_ref.as_deref(),
-        )
-        .await
-    {
-        Ok(cases) => (200, case_page(&cases, limit, offset, titles_only).to_string()),
-        Err(e) => (502, format!("Azure DevOps error: {e:?}")),
+    let (module_ref, preconditions_ref) = (ctx.module_ref.as_deref(), ctx.preconditions_ref.as_deref());
+
+    match (pbi, ids) {
+        (None, None) => (
+            400,
+            "pass ?pbi=<PBI work item id> for the cases a PBI is tested by (find one with search_pbis), \
+             or ?ids=<test case ids, comma-separated> to read cases by their own ids"
+                .into(),
+        ),
+        (Some(pbi), ids) => {
+            let cases = match client.get_pbi_test_cases_full(&ctx.org, pbi, module_ref, preconditions_ref).await {
+                Ok(c) => c,
+                Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+            };
+            let Some(ids) = ids else {
+                return (200, case_page(&cases, limit, offset, titles_only).to_string());
+            };
+            let mut picked: Vec<_> = cases.into_iter().filter(|c| ids.contains(&c.id)).collect();
+            picked.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));
+            let not_on_pbi: Vec<i32> =
+                ids.iter().copied().filter(|i| !picked.iter().any(|c| c.id == *i)).collect();
+            let mut out = case_page(&picked, limit, offset, titles_only);
+            if !not_on_pbi.is_empty() {
+                out["not_on_pbi"] = serde_json::json!(not_on_pbi);
+                out["note_not_on_pbi"] = serde_json::json!(format!(
+                    "PBI #{pbi} is not tested by these ids; call get_test_cases with case_ids alone (no pbi_id) to read them wherever they are."
+                ));
+            }
+            (200, out.to_string())
+        }
+        (None, Some(ids)) => match client.get_test_cases_by_ids(&ctx.org, &ids, module_ref, preconditions_ref).await {
+            Ok(mut cases) => {
+                // The batch read answers in id order; give back the order asked.
+                cases.sort_by_key(|c| ids.iter().position(|&i| i == c.id).unwrap_or(usize::MAX));
+                (200, case_page(&cases, limit, offset, titles_only).to_string())
+            }
+            // ADO refuses the whole batch when any id is not a work item.
+            Err(crate::ado::AdoError::NotFound) => (
+                404,
+                format!(
+                    "Azure DevOps has no work item for at least one of {} - check the ids, or find the case through its PBI or suite",
+                    ids.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(", ")
+                ),
+            ),
+            Err(e) => (502, format!("Azure DevOps error: {e:?}")),
+        },
     }
+}
+
+/// `ids=12,34` as a de-duplicated list in the order given. A token that is
+/// not a whole number is refused rather than dropped, so a typo cannot
+/// quietly return fewer cases than were asked for.
+fn parse_case_ids(raw: &str) -> Result<Vec<i32>, String> {
+    let mut ids: Vec<i32> = vec![];
+    for token in raw.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+        let id = token
+            .trim_start_matches('#')
+            .parse::<i32>()
+            .map_err(|_| format!("ids must be test case work item ids, got {token:?}"))?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.is_empty() {
+        return Err("ids is empty - pass one or more test case ids, comma-separated".into());
+    }
+    if ids.len() > MAX_CASE_IDS {
+        return Err(format!(
+            "at most {MAX_CASE_IDS} ids per call - for a whole suite use get_suite_test_cases"
+        ));
+    }
+    Ok(ids)
 }
 
 /// The paging arguments every case-listing route reads the same way:

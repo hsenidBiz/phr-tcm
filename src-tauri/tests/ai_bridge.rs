@@ -771,7 +771,92 @@ async fn test_cases_without_pbi_400_with_guidance() {
     let (_server, client) = ado_stub().await;
     let (status, body) = route(&ctx(), Some(&client), "GET", "/test-cases", "", "1.10.3").await;
     assert_eq!(status, 400);
-    assert!(body.contains("pbi"));
+    assert!(body.contains("pbi") && body.contains("ids"), "names both ways in: {body}");
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/test-cases?ids=12,abc", "", "1.10.3").await;
+    assert_eq!(status, 400, "a malformed id is refused, not silently dropped: {body}");
+}
+
+/// The work-item batch answers for one test case the way the PBI and suite
+/// listings already parse it.
+fn case_json(id: i32, title: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "fields": {
+            "System.Title": title,
+            "Microsoft.VSTS.TCM.Steps": "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Open page</parameterizedString><parameterizedString isformatted=\"true\">Shown</parameterizedString><description/></step></steps>"
+        }
+    })
+}
+
+/// A case read by its own id needs no PBI, and comes back in the order the
+/// ids were asked for - ADO's batch answers in id order.
+#[tokio::test]
+async fn test_cases_by_id_alone_return_those_cases_in_the_order_asked() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [case_json(201, "Login - first"), case_json(202, "Login - second")]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/test-cases?ids=202,201,202", "", "1.10.3").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let ids: Vec<i64> = v["test_cases"].as_array().unwrap().iter().map(|c| c["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, vec![202, 201], "requested order, each case once");
+    assert_eq!(v["test_cases"][0]["steps"][0]["action"], "Open page");
+}
+
+/// An id that is not a work item at all makes ADO refuse the whole batch;
+/// the assistant is told which lookup failed instead of a raw 502.
+#[tokio::test]
+async fn test_cases_by_an_unknown_id_404_with_guidance() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/test-cases?ids=999999", "", "1.10.3").await;
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("999999"), "names the ids it looked for: {body}");
+}
+
+/// With a PBI and ids together, the answer is that PBI's cases narrowed to
+/// those ids - and an id the PBI is not tested by is named, not ignored.
+#[tokio::test]
+async fn test_cases_for_a_pbi_narrowed_to_ids_name_the_ones_not_on_it() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems/42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 42,
+            "relations": [
+                {"rel": "Microsoft.VSTS.Common.TestedBy-Forward", "url": format!("{}/acme/Web/_apis/wit/workitems/201", server.uri())},
+                {"rel": "Microsoft.VSTS.Common.TestedBy-Forward", "url": format!("{}/acme/Web/_apis/wit/workitems/203", server.uri())}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [case_json(201, "Login - first"), case_json(203, "Login - third")]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) =
+        route(&ctx(), Some(&client), "GET", "/test-cases?pbi=42&ids=203,555", "", "1.10.3").await;
+    assert_eq!(status, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let cases = v["test_cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 1);
+    assert_eq!(cases[0]["id"], 203);
+    assert_eq!(v["not_on_pbi"], serde_json::json!([555]));
 }
 
 use std::sync::Arc;
