@@ -720,7 +720,7 @@ test("the tour shows sample data, then hands the app back untouched", async () =
   // Run Tests resolves and caches a plan/suite for the PBI on screen -
   // RunPanel writes that seed directly, not through anything App gates,
   // so this is the assertion that would have caught it.
-  expect(localStorage.getItem("tcm-v2-suite:Northwind/4821")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-cache:suite-seed:Northwind/4821")).toBeNull();
 });
 
 // The walk above starts from Manual Entry, which stop 2 navigates to

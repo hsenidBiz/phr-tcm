@@ -2,6 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { writeSuiteSeed } from "../lib/suiteSeed";
 import RunPanel from "./RunPanel";
 
 afterEach(() => {
@@ -407,10 +408,7 @@ test("suite is resolved once, then every later mount reuses the seed", async () 
 });
 
 test("suite resolution is cached in localStorage and reused", async () => {
-  localStorage.setItem(
-    "tcm-v2-suite:acme/42",
-    JSON.stringify({ plan_id: 9, plan_name: "Cached Plan", suite_id: 91 }),
-  );
+  writeSuiteSeed("acme", 42, { plan_id: 9, plan_name: "Cached Plan", suite_id: 91 });
   let ensured = 0;
   mockIPC((cmd) => {
     if (cmd === "plugin:event|listen") return 1;

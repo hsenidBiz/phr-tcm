@@ -4,7 +4,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import CommandPalette from "./CommandPalette";
 
-afterEach(() => clearMocks());
+afterEach(() => {
+  clearMocks();
+  localStorage.clear();
+});
 
 function renderPalette(onNavigate = vi.fn(), onSwitchProject = vi.fn(), onToggleWork = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

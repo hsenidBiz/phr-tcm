@@ -108,7 +108,8 @@ v1 and went with it. The suites above are the gate.
   that survives a restart, `session_fresh/session_put` for memory-only
   values; every key and TTL in `cache/keys.rs`. Both wipe themselves when a
   different account signs in. `src/lib/cache.test.ts` and
-  `tests/cache.rs` fail on a private cache.
+  `tests/cache.rs` catch the common ways of adding a private cache - they
+  are a tripwire, not proof.
 - **Icons** come from the shared vocabulary in `src/lib/actionIcons.ts`,
   named for what the button DOES, not what it looks like.
 - **User-facing errors name no URL.** `reqwest`'s `Display` is `error

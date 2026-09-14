@@ -16,7 +16,8 @@
  *   `cacheRead` / `cacheWrite`, still with a `cacheKeys` key and a `CACHE`
  *   shelf life.
  * - A new key goes in `cacheKeys`, a new shelf life in `CACHE`. cache.test.ts
- *   fails on a hand-written key, a raw TTL, or a second implementation.
+ *   catches the common forms of a hand-written key, a raw TTL, or a second
+ *   implementation.
  *
  * The Rust backend has its own cache (src-tauri/src/cache) for data the AI
  * bridge reads too; the two are separate processes and share nothing.
@@ -67,6 +68,7 @@ export const cacheKeys = {
   boardPrs: (org: string, project: string) => `board-prs:${org}/${project}`,
   prPipeline: (org: string, project: string, prId: number, mergeCommit: string) =>
     `pipe:${org}/${project}:${prId}:${mergeCommit}`,
+  suiteSeed: (org: string, pbiId: number) => `suite-seed:${org}/${pbiId}`,
 };
 
 /** Non-reversible tag for an account, so the identity check never needs the
@@ -143,6 +145,16 @@ export function cacheEntry<T>(key: string, maxAgeMs: number): { data: T; at: num
 
 export function cacheRead<T>(key: string, maxAgeMs: number): T | null {
   return cacheEntry<T>(key, maxAgeMs)?.data ?? null;
+}
+
+/** Remove one entry. Not gated by `off()`: removing is always safe, tour
+ * or demo mode or not. */
+export function cacheRemove(key: string): void {
+  try {
+    localStorage.removeItem(PREFIX + key);
+  } catch {
+    // storage unavailable - nothing to remove
+  }
 }
 
 export function cacheWrite<T>(key: string, data: T): void {

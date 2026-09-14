@@ -7,6 +7,7 @@ import { START_TOUR_EVENT } from "../tour/tourState";
 import { Button } from "../components/ui/button";
 import { SHOW_CHANGELOG_EVENT } from "../lib/changelog";
 import { setPbiGlow } from "../lib/pbiGlow";
+import { clearSuiteSeed } from "../lib/suiteSeed";
 import { isDemoMode, toggleDemoMode } from "./demo";
 import {
   armFault,
@@ -284,9 +285,20 @@ export default function DevPanel({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => clearKeys((k) => k.startsWith("tcm-v2-suite:"), "suite cache")}
+                onClick={() => {
+                  // The suite seed now lives in the app cache (keyed by
+                  // org/pbi, not a raw prefix any button here can scan) -
+                  // clear it for the PBI on screen, the same one every
+                  // other button in this row targets.
+                  if (!pbi) {
+                    toast.info("[dev] no PBI selected");
+                    return;
+                  }
+                  clearSuiteSeed(org, pbi.id);
+                  toast.info("[dev] cleared suite cache for this PBI - reload to take effect");
+                }}
               >
-                Suite caches
+                Suite cache
               </Button>
               <Button
                 size="sm"

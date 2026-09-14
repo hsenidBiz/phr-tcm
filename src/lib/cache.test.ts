@@ -6,6 +6,7 @@ import {
   CACHE,
   cacheKeys,
   cacheRead,
+  cacheRemove,
   cacheWrite,
   claimCacheFor,
   persistentQuery,
@@ -176,6 +177,17 @@ test("cache keys are the strings earlier versions stored", () => {
   expect(cacheKeys.points("acme", "Web", 7, 71)).toBe("points:acme/Web/7/71");
   expect(cacheKeys.boardPrs("acme", "Web")).toBe("board-prs:acme/Web");
   expect(cacheKeys.prPipeline("acme", "Web", 42, "abc")).toBe("pipe:acme/Web:42:abc");
+  // NEW key, not one an earlier version stored: the old `tcm-v2-suite:`
+  // seeds are deliberately abandoned, since App rebuilds a seed from
+  // `plans-suites` without a request of its own.
+  expect(cacheKeys.suiteSeed("acme", 42)).toBe("suite-seed:acme/42");
+});
+
+test("cacheRemove deletes an entry that was written", () => {
+  cacheWrite("k", { a: 1 });
+  expect(cacheRead("k", 60_000)).toEqual({ a: 1 });
+  cacheRemove("k");
+  expect(cacheRead("k", 60_000)).toBeNull();
 });
 
 test("demo mode neither seeds nor stores", async () => {
@@ -217,7 +229,7 @@ describe("one cache", () => {
   const offenders = (pattern: RegExp) => files.filter((f) => pattern.test(f.text)).map((f) => f.file);
 
   test("only lib/cache.ts touches the cache's storage or seeds a query from disk", () => {
-    expect(offenders(/tcm-v2-cache|initialDataUpdatedAt/)).toEqual([]);
+    expect(offenders(/tcm-v2-cache|tcm-v2-suite:|initialDataUpdatedAt/)).toEqual([]);
   });
 
   test("cache keys come from cacheKeys, never a hand-written string", () => {

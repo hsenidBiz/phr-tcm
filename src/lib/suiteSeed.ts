@@ -1,4 +1,5 @@
 import type { EnsuredSuite } from "../bindings";
+import { CACHE, cacheKeys, cacheRead, cacheRemove, cacheWrite } from "./cache";
 import { tourRunningSnapshot } from "../tour/tourState";
 
 /**
@@ -6,8 +7,10 @@ import { tourRunningSnapshot } from "../tour/tourState";
  * App's own warm-up prefetch) do not re-scan every plan in the project on
  * each visit. Two different writers feed this key - see `SuiteSeed` below
  * for why its shape is looser than `EnsuredSuite`.
+ *
+ * Lives in the app cache (`lib/cache.ts`) now, so it is wiped along with
+ * it when a different account signs in.
  */
-const key = (org: string, pbiId: number) => `tcm-v2-suite:${org}/${pbiId}`;
 
 /**
  * `EnsuredSuite`'s `created_plan` flag only means something coming out of
@@ -22,12 +25,7 @@ export type SuiteSeed = Pick<EnsuredSuite, "plan_id" | "plan_name" | "suite_id">
   Partial<Pick<EnsuredSuite, "created_plan">>;
 
 export function readSuiteSeed(org: string, pbiId: number): SuiteSeed | undefined {
-  try {
-    const raw = localStorage.getItem(key(org, pbiId));
-    return raw ? (JSON.parse(raw) as SuiteSeed) : undefined;
-  } catch {
-    return undefined;
-  }
+  return cacheRead<SuiteSeed>(cacheKeys.suiteSeed(org, pbiId), CACHE.structure.ttlMs) ?? undefined;
 }
 
 export function writeSuiteSeed(org: string, pbiId: number, seed: SuiteSeed): void {
@@ -35,17 +33,9 @@ export function writeSuiteSeed(org: string, pbiId: number, seed: SuiteSeed): voi
   // for it must not sit on disk once the tour is gone. Every writer of
   // this key routes through here, so this one check covers all of them.
   if (tourRunningSnapshot()) return;
-  try {
-    localStorage.setItem(key(org, pbiId), JSON.stringify(seed));
-  } catch {
-    // cache is best-effort
-  }
+  cacheWrite(cacheKeys.suiteSeed(org, pbiId), seed);
 }
 
 export function clearSuiteSeed(org: string, pbiId: number): void {
-  try {
-    localStorage.removeItem(key(org, pbiId));
-  } catch {
-    // cache is best-effort
-  }
+  cacheRemove(cacheKeys.suiteSeed(org, pbiId));
 }
