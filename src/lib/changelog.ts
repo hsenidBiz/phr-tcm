@@ -13,6 +13,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.24.0",
+    date: "2026-09-14",
+    items: [
+      "New Suite Management tab, marked In Development while it is finished off. It shows each test plan as a table of its suites and the cases inside them, so you can see a whole plan's layout at once instead of opening suites one by one.",
+      "Suite Management: drag cases into the order you want and press Apply to save it. You can also apply the tester order from a file you imported, instead of arranging a long suite by hand.",
+      "Suite Management: move cases onto a different PBI, and they land in that PBI's suite in the same plan. Create folders inside a suite and copy selected cases into them.",
+      "The Test Suites tab is now called Suite Lookup, to sit clearly apart from Suite Management.",
+      "In the cases page that opens in your browser, findings now stand out as a warning, with an amber tint and edge, rather than reading like the rest of the case.",
+    ],
+  },
+  {
     version: "1.23.19",
     date: "2026-09-11",
     items: [
