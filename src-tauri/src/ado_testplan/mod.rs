@@ -292,6 +292,16 @@ fn id_i32(v: &serde_json::Value) -> Option<i32> {
         .or_else(|| v.as_i64().map(|i| i as i32))
 }
 
+/// An outcome that carries no verdict. ADO spells it two ways: "Unspecified"
+/// for a point that never ran, and "None" for one reset to Active or a
+/// result nobody marked. Both are the never-run bucket everywhere in the
+/// app - a "None" shown as an outcome also slipped past the Never run filter.
+fn is_no_verdict(outcome: &str) -> bool {
+    outcome.is_empty()
+        || outcome.eq_ignore_ascii_case("unspecified")
+        || outcome.eq_ignore_ascii_case("none")
+}
+
 /// Result comments are capped at 1000 chars, matching v1.
 fn cap_comment(c: &str) -> String {
     c.chars().take(1000).collect()

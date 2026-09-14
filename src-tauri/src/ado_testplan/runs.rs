@@ -1,6 +1,8 @@
 //! Test points, manual runs, results and result attachments.
 
-use super::{cap_comment, id_i32, OutcomeUpdate, ResultDetail, RunCreated, RunResultRef, TestPoint};
+use super::{
+    cap_comment, id_i32, is_no_verdict, OutcomeUpdate, ResultDetail, RunCreated, RunResultRef, TestPoint,
+};
 use crate::ado::{AdoClient, AdoError};
 
 impl AdoClient {
@@ -65,11 +67,11 @@ impl AdoClient {
                     test_case_name: p["testCaseReference"]["name"].as_str().unwrap_or_default().to_string(),
                     config_name: p["configuration"]["name"].as_str().unwrap_or_default().to_string(),
                     tester: p["tester"]["displayName"].as_str().unwrap_or_default().to_string(),
-                    // ADO reports never-run points as "unspecified" - that
-                    // reads as a real outcome in the UI, so strip it here.
+                    // A point with no verdict ("unspecified" or "None") reads
+                    // as a real outcome in the UI, so strip it here.
                     last_outcome: {
                         let o = p["results"]["outcome"].as_str().unwrap_or_default();
-                        if o.eq_ignore_ascii_case("unspecified") { String::new() } else { o.to_string() }
+                        if is_no_verdict(o) { String::new() } else { o.to_string() }
                     },
                     last_run_id: p["results"]["lastTestRunId"].as_i64().map(|i| i as i32),
                     last_result_id: p["results"]["lastResultId"].as_i64().map(|i| i as i32),

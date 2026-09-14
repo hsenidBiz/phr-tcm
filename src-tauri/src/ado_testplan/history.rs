@@ -2,7 +2,7 @@
 
 use futures::stream::{self, StreamExt};
 
-use super::{id_i32, CaseHistory, RunOutcome, SUITE_SCAN_CONCURRENCY};
+use super::{id_i32, is_no_verdict, CaseHistory, RunOutcome, SUITE_SCAN_CONCURRENCY};
 use crate::ado::{AdoClient, AdoError};
 
 impl AdoClient {
@@ -83,7 +83,7 @@ impl AdoClient {
             };
             for r in data["value"].as_array().cloned().unwrap_or_default() {
                 let outcome = r["outcome"].as_str().unwrap_or_default();
-                if outcome.is_empty() || outcome.eq_ignore_ascii_case("unspecified") {
+                if is_no_verdict(outcome) {
                     continue;
                 }
                 // testCase.id arrives as a string in run results.

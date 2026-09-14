@@ -265,6 +265,33 @@ async fn points_parse_reference_and_results() {
     assert_eq!(pts[0].last_run_id, Some(3));
 }
 
+/// ADO has two spellings of "no verdict" on a point: "unspecified" for one
+/// that never ran, and "None" for one reset to Active (or whose result was
+/// never marked). Both must read as never-run: a "None" that leaked through
+/// showed as an outcome, and the Never run filter hid those cases.
+#[tokio::test]
+async fn points_without_a_verdict_read_as_never_run() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/Plans/9/Suites/91/TestPoint"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "value": [
+                {"id": 1, "testCaseReference": {"id": 301, "name": "a"}, "results": {"outcome": "unspecified"}},
+                {"id": 2, "testCaseReference": {"id": 302, "name": "b"}, "results": {"outcome": "None", "lastTestRunId": 4, "lastResultId": 40}},
+                {"id": 3, "testCaseReference": {"id": 303, "name": "c"}, "results": {"outcome": "none"}},
+                {"id": 4, "testCaseReference": {"id": 304, "name": "d"}, "results": {"outcome": "passed"}}
+            ]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let pts = client.get_test_points("org", "proj", 9, 91, &[]).await.unwrap();
+    let outcomes: Vec<&str> = pts.iter().map(|p| p.last_outcome.as_str()).collect();
+    assert_eq!(outcomes, vec!["", "", "", "passed"]);
+    // A reset keeps the run/result reference - only the verdict is gone.
+    assert_eq!(pts[1].last_run_id, Some(4));
+}
+
 #[tokio::test]
 async fn run_lifecycle_create_update_complete() {
     let server = MockServer::start().await;
@@ -342,14 +369,16 @@ async fn run_history_aggregates_newest_first_and_caps_at_five() {
         })))
         .mount(&server)
         .await;
-    // Run 3 (newest): case 201 failed + an unspecified result to skip.
+    // Run 3 (newest): case 201 failed, plus an "Unspecified" and a "None"
+    // result (no verdict yet) that must both be skipped.
     Mock::given(method("GET"))
         .and(path("/o/p/_apis/test/Runs/3/results"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "value": [
                 {"id": 9001, "outcome": "Failed", "completedDate": "2026-07-12T10:05:00Z", "testCase": {"id": "201"}},
                 {"outcome": "Unspecified", "testCase": {"id": "201"}},
-                {"outcome": "Passed", "completedDate": "2026-07-12T10:06:00Z", "testCase": {"id": "202"}}
+                {"outcome": "Passed", "completedDate": "2026-07-12T10:06:00Z", "testCase": {"id": "202"}},
+                {"outcome": "None", "testCase": {"id": "202"}}
             ]
         })))
         .mount(&server)
