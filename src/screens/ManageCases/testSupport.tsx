@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { PbiHit } from "../../bindings";
 import ManageCases from "./index";
 
-export const PLANS = [
+const PLANS = [
   {
     plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj\\Auth", root_suite_id: 90 },
     suites: [
@@ -22,14 +22,20 @@ export const PLANS = [
   },
 ];
 
-export const ENTRIES = [
+const ENTRIES = [
   { id: 95, sequence_number: 0, entry_type: "suite" },
   { id: 201, sequence_number: 1, entry_type: "testCase" },
   { id: 202, sequence_number: 2, entry_type: "testCase" },
   { id: 203, sequence_number: 3, entry_type: "testCase" },
 ];
 
-export const point = (id: number, name: string, config = "Windows 10") => ({
+const SMOKE_ENTRIES = [
+  { id: 96, sequence_number: 0, entry_type: "suite" },
+  { id: 301, sequence_number: 1, entry_type: "testCase" },
+  { id: 302, sequence_number: 2, entry_type: "testCase" },
+];
+
+const point = (id: number, name: string, config = "Windows 10") => ({
   point_id: id * 10,
   test_case_id: id,
   test_case_name: name,
@@ -55,9 +61,16 @@ export function mountScreen(
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
     if (cmd === "list_plans_with_suites") return PLANS;
-    if (cmd === "list_suite_entries") return ENTRIES;
-    if (cmd === "list_test_points")
-      return [point(201, "Valid login"), point(201, "Valid login", "Windows 11"), point(202, "Bad password"), point(203, "Locked out")];
+    if (cmd === "list_suite_entries") {
+      const suiteId = (args as { suiteId: number }).suiteId;
+      return suiteId === 92 ? SMOKE_ENTRIES : ENTRIES;
+    }
+    if (cmd === "list_test_points") {
+      const suiteId = (args as { suiteId: number }).suiteId;
+      return suiteId === 92
+        ? [point(301, "Smoke A"), point(302, "Smoke B")]
+        : [point(201, "Valid login"), point(201, "Valid login", "Windows 11"), point(202, "Bad password"), point(203, "Locked out")];
+    }
     return undefined;
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

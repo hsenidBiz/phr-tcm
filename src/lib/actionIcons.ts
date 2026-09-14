@@ -43,7 +43,7 @@ export {
   // same move a drag makes.
   ArrowUp as IconMoveUp,
   ArrowDown as IconMoveDown,
-  FolderPlus as IconNewFolder,
+  FolderPlus as IconNewSuite,
   // Copying selected cases into another suite: a folder with an arrow in.
   FolderInput as IconCopyToSuite,
 

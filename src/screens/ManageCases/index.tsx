@@ -3,11 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
+import { IconClear } from "../../lib/actionIcons";
 import { CACHE, persistentQuery } from "../../lib/persistentQuery";
 import { unwrap } from "../../lib/ipc";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import PlanTable from "./PlanTable";
 import { toggleSelection, type Selection } from "./selection";
+import { plansSuitesKey } from "./suiteCasesQuery";
 
 /** A stable empty array: passed as `initiallyExpanded` to every plan that
  * isn't the PBI's own, so `PlanTable`'s effect only re-runs (and its
@@ -22,7 +24,7 @@ const NONE_EXPANDED: number[] = [];
  * its suite, with that suite already open. */
 export default function ManageCases({ org, project, pbi }: { org: string; project: string; pbi: PbiHit | null }) {
   const plans = useQuery({
-    queryKey: ["plans-suites", org, project],
+    queryKey: plansSuitesKey(org, project),
     ...persistentQuery({
       key: `plans-suites:${org}/${project}`,
       fetcher: () => unwrap(commands.listPlansWithSuites(org, project)),
@@ -49,6 +51,17 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
   }, [pbi, plans.data]);
 
   const visible = pbiPlan && !showAll ? [pbiPlan.plan] : (plans.data ?? []);
+
+  /** When the selection's plan has been narrowed out of view (the user
+   * picked a PBI whose plan differs from the one holding the selection),
+   * name that plan and its case count so the notice can point at it. */
+  const hiddenSelection = useMemo(() => {
+    if (!selection) return null;
+    if (visible.some(({ plan }) => plan.id === selection.planId)) return null;
+    const owner = (plans.data ?? []).find(({ plan }) => plan.id === selection.planId);
+    if (!owner) return null;
+    return { planName: owner.plan.name, count: selection.cases.size };
+  }, [selection, visible, plans.data]);
 
   // A new reference only when the suite id itself changes, so a picked
   // PBI whose suite sits in the SAME plan as before still produces a
@@ -80,6 +93,19 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
               {showAll ? "Show only this PBI's plan" : "Show all plans"}
             </Button>
           )}
+        </div>
+      )}
+      {hiddenSelection && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+          <span>
+            {hiddenSelection.count === 1
+              ? `1 test case selected in ${hiddenSelection.planName} is out of view.`
+              : `${hiddenSelection.count} test cases selected in ${hiddenSelection.planName} are out of view.`}
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => setSelection(null)}>
+            <IconClear aria-hidden />
+            Clear selection
+          </Button>
         </div>
       )}
       {plans.isFetching && !plans.data && <ScanProgress label="Loading test plans" />}

@@ -72,3 +72,16 @@ test("no plans yet", async () => {
   mountScreen((cmd) => (cmd === "list_plans_with_suites" ? [] : undefined));
   expect(await screen.findByText("No test plans with test suites in this project yet.")).toBeInTheDocument();
 });
+
+test("narrowing back to the PBI's plan while another plan holds a selection shows a notice; Clear selection there drops it", async () => {
+  mountScreen(undefined, { id: 42, title: "Login", work_item_type: "Product Backlog Item" });
+  fireEvent.click(await screen.findByRole("button", { name: "Show all plans" }));
+  const l = await expandSuite("Invoices");
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(screen.getByRole("button", { name: "Show only this PBI's plan" }));
+  expect(
+    screen.getByText("1 test case selected in Billing - Test Plan is out of view."),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  expect(screen.queryByText(/out of view/)).not.toBeInTheDocument();
+});

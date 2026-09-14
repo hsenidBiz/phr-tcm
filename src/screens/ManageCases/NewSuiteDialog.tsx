@@ -6,7 +6,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { Select } from "../../components/ui/select";
-import { IconCancel, IconNewFolder } from "../../lib/actionIcons";
+import { IconCancel, IconNewSuite } from "../../lib/actionIcons";
 import { unwrap } from "../../lib/ipc";
 
 /** A static test suite, created under a static suite or the plan root (the
@@ -107,7 +107,7 @@ export default function NewSuiteDialog({
           Cancel
         </Button>
         <Button size="sm" disabled={!trimmed || create.isPending} onClick={() => create.mutate()}>
-          <IconNewFolder aria-hidden />
+          <IconNewSuite aria-hidden />
           {create.isPending
             ? "Creating"
             : n > 0

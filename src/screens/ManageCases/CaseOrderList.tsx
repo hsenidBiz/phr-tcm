@@ -41,6 +41,7 @@ export default function CaseOrderList({
   };
   const allOn = cases.length > 0 && cases.every((c) => selected.has(c.id));
   const someOn = cases.some((c) => selected.has(c.id));
+  const here = cases.filter((c) => selected.has(c.id)).length;
 
   return (
     <div className="rounded-md border border-border bg-surface">
@@ -52,7 +53,7 @@ export default function CaseOrderList({
           ariaLabel="Select all test cases"
         />
         <span>
-          {selected.size > 0 ? `${selected.size} of ${cases.length} selected` : `${cases.length} test cases`}
+          {here > 0 ? `${here} of ${cases.length} selected` : `${cases.length} test cases`}
         </span>
       </div>
       <ol aria-label={ariaLabel} className="divide-y divide-border">

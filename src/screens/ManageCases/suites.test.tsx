@@ -136,3 +136,24 @@ test("the suite is created but the copy fails: the suite still shows up and the 
   await waitFor(() => expect(calls.filter((c) => c.cmd === "list_plans_with_suites").length).toBeGreaterThan(1));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+test("Clear selection in a plan's header drops the selection and unchecks its rows", async () => {
+  mountScreen();
+  const l = await expandSuite("Regression");
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
+  expect(within(auth).getByText("1 selected")).toBeInTheDocument();
+  fireEvent.click(within(auth).getByRole("button", { name: "Clear selection" }));
+  expect(within(auth).queryByText(/selected/)).not.toBeInTheDocument();
+  expect(within(l).getByRole("checkbox", { name: "Select #201" })).not.toBeChecked();
+});
+
+test("a suite's header count is its own, not the whole plan's selection", async () => {
+  mountScreen();
+  const regression = await expandSuite("Regression");
+  fireEvent.click(within(regression).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(within(regression).getByRole("checkbox", { name: "Select #202" }));
+  await expandSuite("Smoke");
+  expect(screen.getByText("2 test cases")).toBeInTheDocument();
+  expect(screen.getByText("2 of 3 selected")).toBeInTheDocument();
+});

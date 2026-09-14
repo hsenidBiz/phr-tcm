@@ -5,6 +5,8 @@ import type { SuiteCase } from "../../lib/suiteOrder";
 export const suiteCasesKey = (org: string, project: string, planId: number, suiteId: number) =>
   ["suite-cases", org, project, planId, suiteId] as const;
 
+export const plansSuitesKey = (org: string, project: string) => ["plans-suites", org, project] as const;
+
 /** The suite's cases in Azure DevOps' own order. The entries carry the
  * order and the points carry the names; a case with several
  * configurations has several points and one row. */

@@ -6,7 +6,7 @@ import { commands, type PlanWithSuites, type SuiteRef } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
-import { IconCopyToSuite, IconNewFolder } from "../../lib/actionIcons";
+import { IconClear, IconCopyToSuite, IconNewSuite } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrap } from "../../lib/ipc";
 import type { SuiteCase } from "../../lib/suiteOrder";
@@ -14,7 +14,7 @@ import { buildTree, flattenTree, indented } from "../../lib/suiteTree";
 import NewSuiteDialog from "./NewSuiteDialog";
 import { selectedIdsIn, type Selection } from "./selection";
 import SuiteCases from "./SuiteCases";
-import { suiteCasesKey } from "./suiteCasesQuery";
+import { plansSuitesKey, suiteCasesKey } from "./suiteCasesQuery";
 
 /** One test plan as a table: its suites in tree order, each a block that
  * opens to show its cases. The header carries the plan's bulk actions,
@@ -116,7 +116,13 @@ export default function PlanTable({
         <span className="text-xs text-faint">{plan.area_path}</span>
         <span className="flex-1" />
         {selectedCases.length > 0 && (
-          <span className="text-xs text-muted">{selectedCases.length} selected</span>
+          <>
+            <span className="text-xs text-muted">{selectedCases.length} selected</span>
+            <Button size="sm" variant="ghost" onClick={onClearSelection}>
+              <IconClear aria-hidden />
+              Clear selection
+            </Button>
+          </>
         )}
         <Select
           aria-label="Copy to"
@@ -142,7 +148,7 @@ export default function PlanTable({
           {copy.isPending ? "Copying" : "Copy to suite"}
         </Button>
         <Button size="sm" variant="ghost" disabled={busy || staticTargets.length === 0} onClick={() => setNewOpen(true)}>
-          <IconNewFolder aria-hidden />
+          <IconNewSuite aria-hidden />
           New test suite
         </Button>
       </header>
@@ -196,7 +202,7 @@ export default function PlanTable({
           sourceLabel="their suites"
           onClose={() => setNewOpen(false)}
           onCreated={() => {
-            qc.invalidateQueries({ queryKey: ["plans-suites", org, project] });
+            qc.invalidateQueries({ queryKey: plansSuitesKey(org, project) });
             onClearSelection();
           }}
         />
