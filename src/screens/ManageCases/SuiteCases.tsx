@@ -10,6 +10,7 @@ import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { orderFromFile, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
+import { markSuiteDirty, useDirtyRank } from "./dirtySuites";
 import { loadSuiteCases, suiteCasesKey } from "./suiteCasesQuery";
 
 /** One expanded suite: its cases in Azure DevOps' order, re-orderable and
@@ -62,6 +63,11 @@ export default function SuiteCases({
     if (cases.data) setOrder(cases.data);
   }, [cases.data]);
   const dirty = cases.data ? !sameOrder(order, cases.data) : false;
+  const rank = useDirtyRank(suiteId);
+  useEffect(() => {
+    markSuiteDirty(suiteId, dirty);
+  }, [suiteId, dirty]);
+  useEffect(() => () => markSuiteDirty(suiteId, false), [suiteId]);
 
   const apply = useMutation({
     mutationFn: () => unwrap(commands.reorderSuiteCases(org, project, suiteId, order.map((c) => c.id))),
@@ -140,6 +146,27 @@ export default function SuiteCases({
         }}
         disabled={busy}
       />
+      {rank != null && (
+        // Same sticky treatment as Run Tests' Close all: a long suite puts
+        // Apply order a screen and a half above the row being dragged.
+        // Stacked by rank, because several suites can be open and unsaved.
+        <div
+          role="region"
+          aria-label={`Unsaved order in ${suiteName}`}
+          className="fixed right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl"
+          style={{ bottom: `${1.5 + rank * 3.5}rem` }}
+        >
+          <span className="max-w-48 truncate pl-1 text-xs text-muted">{suiteName}</span>
+          <Button size="sm" disabled={busy} onClick={() => apply.mutate()}>
+            <IconConfirm aria-hidden />
+            {apply.isPending ? "Saving" : "Apply order"}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => cases.data && setOrder(cases.data)}>
+            <IconUndo aria-hidden />
+            Reset
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

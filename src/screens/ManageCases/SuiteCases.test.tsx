@@ -100,7 +100,9 @@ test("drag re-orders; Apply order sends the ids, disables at once, and reloads",
   fireEvent.dragOver(rows[0]);
   fireEvent.drop(rows[0]);
   expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#203");
-  const apply = screen.getByRole("button", { name: "Apply order" });
+  // Dirty now, so the sticky bar has joined the inline row's own Apply
+  // order button - take the inline one (it renders first).
+  const apply = screen.getAllByRole("button", { name: "Apply order" })[0];
   expect(apply).toBeEnabled();
   fireEvent.click(apply);
   await waitFor(() => {
@@ -120,10 +122,29 @@ test("Move up and down step a row; Reset restores the server order", async () =>
   fireEvent.click(within(l).getByRole("button", { name: "Move #202 down" }));
   expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#201");
   fireEvent.click(within(l).getByRole("button", { name: "Move #201 down" }));
-  expect(screen.getByRole("button", { name: "Apply order" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+  // Dirty now, so the sticky bar has joined the inline row's own buttons -
+  // take the inline ones (they render first).
+  expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeEnabled();
+  fireEvent.click(screen.getAllByRole("button", { name: "Reset" })[0]);
   expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#201");
   expect(screen.getByRole("button", { name: "Apply order" })).toBeDisabled();
+});
+
+test("the sticky bar appears only while the order is unsaved, and names its suite", async () => {
+  mount();
+  const l = await list();
+  // Clean: the inline row is there, the sticky bar is not.
+  expect(screen.queryByRole("region", { name: /unsaved order/i })).not.toBeInTheDocument();
+
+  fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
+
+  const bar = await screen.findByRole("region", { name: /unsaved order/i });
+  expect(within(bar).getByRole("button", { name: "Apply order" })).toBeEnabled();
+  expect(within(bar).getByRole("button", { name: "Reset" })).toBeEnabled();
+  expect(bar).toHaveTextContent("Regression");
+
+  fireEvent.click(within(bar).getByRole("button", { name: "Reset" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: /unsaved order/i })).not.toBeInTheDocument());
 });
 
 test("Apply tester order from file re-orders from the file's tester_order", async () => {
@@ -138,7 +159,9 @@ test("Apply tester order from file re-orders from the file's tester_order", asyn
   await waitFor(() => expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#203"));
   expect(within(l).getAllByRole("listitem")[1]).toHaveTextContent("#201");
   expect(toast.info).toHaveBeenCalledWith("Placed 2 of 3 test cases from the file. Apply order to save.");
-  expect(screen.getByRole("button", { name: "Apply order" })).toBeEnabled();
+  // Dirty now, so the sticky bar has joined the inline row's own Apply
+  // order button - take the inline one (it renders first).
+  expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeEnabled();
 });
 
 test("a file naming none of the suite's cases changes nothing; cancelling the picker does nothing", async () => {
