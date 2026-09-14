@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.24.1",
+    date: "2026-09-14",
+    items: [
+      "Run Tests: cases that had been reset to Active showed \"None\" as their last outcome and disappeared when you filtered by Never run. They now show as never run and appear under that filter.",
+      "AI Bridge: get_test_cases can now read test cases by their own ids, so an assistant no longer needs to know which PBI a case belongs to. Pass a PBI as well to narrow its cases to those ids.",
+      "The organisation, project and team member lists now appear straight away when the app opens, from what was saved last time, instead of loading first.",
+      "Signing in with a different account on the same computer now also clears the project tags and suite lookups saved for the previous account.",
+    ],
+  },
+  {
     version: "1.24.0",
     date: "2026-09-14",
     items: [
