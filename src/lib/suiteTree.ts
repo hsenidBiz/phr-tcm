@@ -15,7 +15,7 @@ export function indented(name: string, depth: number): string {
 
 /** Rebuild the multi-level suite tree from parent links. The plan's root
  * suite is already stripped in Rust, so a null (or unknown) parent means
- * top level. Shared by the Test Suites browser and the Manage Test Cases
+ * top level. Shared by the Suite Lookup browser and the Suite Management
  * picker so both draw the same tree. */
 export function buildTree(suites: SuiteRef[]): SuiteNode[] {
   const nodes = new Map<number, SuiteNode>();

@@ -51,29 +51,22 @@ test("Auto Run is offered in dev builds and hidden in release builds", async () 
   const release = await import("./Sidebar");
   render(<release.default section="manual" onSelect={() => {}} />);
   expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Test Suites" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Suite Lookup" })).toBeInTheDocument();
 
   vi.unstubAllEnvs();
   vi.resetModules();
 });
 
-/// Manage Test Cases is on the same development-only gate as Auto Run.
-test("Manage Test Cases is offered in dev builds and hidden in release builds", async () => {
+/// Suite Management ships in release builds now, unlike Auto Run.
+test("Suite Management is offered in release builds", async () => {
   const { vi } = await import("vitest");
-
-  vi.stubEnv("DEV", true);
-  vi.resetModules();
-  const dev = await import("./Sidebar");
-  const { unmount } = render(<dev.default section="manual" onSelect={() => {}} />);
-  expect(screen.getByRole("button", { name: /Manage Test Cases/ })).toBeInTheDocument();
-  unmount();
 
   vi.stubEnv("DEV", false);
   vi.resetModules();
   const release = await import("./Sidebar");
   render(<release.default section="manual" onSelect={() => {}} />);
-  expect(screen.queryByRole("button", { name: /Manage Test Cases/ })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "AI Bridge" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Suite Management" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Auto Run/ })).not.toBeInTheDocument();
 
   vi.unstubAllEnvs();
   vi.resetModules();

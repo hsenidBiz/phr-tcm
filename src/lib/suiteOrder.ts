@@ -1,4 +1,4 @@
-/** One test case as the Manage Test Cases list shows it. */
+/** One test case as the Suite Management list shows it. */
 export type SuiteCase = { id: number; title: string };
 
 /** A copy of `list` with the item at `from` moved to `to`. Anything out of

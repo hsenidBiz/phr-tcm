@@ -89,12 +89,21 @@ the board's test count.
   paste a screenshot or attach a file. File a Bug from a failure. Submit
   as a new test run under the existing plan.
 
-### Test Suites
+### Suite Lookup
 - The plan's suite folder tree with a search box which prunes and expands
   matches.
 - View any suite or folder as an HTML report, generate an execution
   report, or hand a folder's cases to Update or Run.
 - Plan scans run concurrently and are cached for the session.
+
+### Suite Management
+- One table per test plan, with every suite and its cases listed
+  underneath.
+- Drag cases to re-order them within a suite, then Apply to save the new
+  order.
+- Select cases and copy them into another suite, or into a new static
+  suite created on the spot.
+- Picking a PBI narrows the view down to that PBI's own test plan.
 
 ### AI Bridge
 - The app runs a local bridge while you are signed in. Coding assistants

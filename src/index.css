@@ -582,7 +582,7 @@ table {
     scan-sweep 1.2s ease-in-out infinite;
 }
 
-/* Test Suites tree: guide lines in the accent, drawn by the children list
+/* Suite Lookup tree: guide lines in the accent, drawn by the children list
    from its parent's chevron (--tree-x, set inline per list). Each child
    row gets an elbow - down from the parent, then across to its own
    chevron - and every child but the last carries the trunk on down to

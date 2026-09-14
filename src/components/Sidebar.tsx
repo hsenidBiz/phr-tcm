@@ -49,11 +49,6 @@ type Item<T extends string> = {
  * still see the tab, and the release does not. */
 export const AUTO_RUN_ENABLED: boolean = import.meta.env.DEV;
 
-/** Manage Test Cases ships in development builds only until it has been
- * tried against a real project: the same `DEV` gate as Auto Run, so the
- * row exists for `tauri dev` and vitest and not for `tauri build`. */
-export const MANAGE_CASES_ENABLED: boolean = import.meta.env.DEV;
-
 export const CASE_ITEMS: Item<Section>[] = [
   { id: "manual", label: "Manual Entry", icon: PenLine, tone: "nav-ico nav-ico-manual" },
   { id: "import", label: "Import File", icon: FileUp, tone: "nav-ico nav-ico-import" },
@@ -65,9 +60,9 @@ export const CASE_ITEMS: Item<Section>[] = [
   // A radar sweep, not a second play button: Run Tests owns the play
   // glyph, and the rail has to stay scannable at 16px.
   { id: "autorun", label: "Auto Run", icon: Radar, tone: "nav-ico nav-ico-autorun", note: "In Dev" },
-  { id: "suites", label: "Test Suites", icon: FolderTree, tone: "nav-ico nav-ico-suites" },
+  { id: "suites", label: "Suite Lookup", icon: FolderTree, tone: "nav-ico nav-ico-suites" },
   // An ordered list, because ordering is the first thing this screen does.
-  { id: "manage", label: "Manage Test Cases", icon: ListOrdered, tone: "nav-ico nav-ico-manage", note: "In Dev" },
+  { id: "manage", label: "Suite Management", icon: ListOrdered, tone: "nav-ico nav-ico-manage" },
   { id: "ai", label: "AI Bridge", icon: Bot, tone: "nav-ico nav-ico-ai" },
 ];
 
@@ -104,9 +99,7 @@ export default function Sidebar<T extends string = Section>({
 }) {
   const list =
     items ??
-    (CASE_ITEMS.filter(
-      (i) => (i.id !== "autorun" || AUTO_RUN_ENABLED) && (i.id !== "manage" || MANAGE_CASES_ENABLED),
-    ) as unknown as Item<T>[]);
+    (CASE_ITEMS.filter((i) => i.id !== "autorun" || AUTO_RUN_ENABLED) as unknown as Item<T>[]);
   // Reads back through the shared store rather than its own state, so a
   // tour override (or any other future writer) can move it - the toggle
   // below still writes storage and publishes exactly as before.
