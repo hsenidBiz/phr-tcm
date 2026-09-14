@@ -162,8 +162,15 @@ test("New test suite is hidden only when Azure DevOps says no", async () => {
 
 test("an unanswerable permission check leaves New test suite in place", async () => {
   // null = could not ask. The button stays; the create itself refuses.
-  mountScreen((cmd) => (cmd === "can_create_test_suites" ? null : undefined));
+  const { calls } = mountScreen((cmd) => (cmd === "can_create_test_suites" ? null : undefined));
   const auth = await screen.findByRole("region", { name: "Auth - Test Plan" });
+  // Wait for the answer to actually land before asserting: right after the
+  // region appears, the query is still loading (data === undefined), so an
+  // assertion here would pass just as well against a falsiness bug like
+  // `!mayCreate.data`. Only once the `null` answer has been applied does
+  // this prove the fail-open posture rather than the loading state.
+  await waitFor(() => expect(calls.some((c) => c.cmd === "can_create_test_suites")).toBe(true));
+  await new Promise((r) => setTimeout(r, 0));
   expect(within(auth).getByRole("button", { name: /New test suite/i })).toBeInTheDocument();
 });
 
