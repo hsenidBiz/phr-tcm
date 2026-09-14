@@ -98,6 +98,17 @@ v1 and went with it. The suites above are the gate.
 - **Theming.** Colours come from CSS custom properties and Tailwind tokens
   (`text-text`, `bg-surface`, `border-border`, `text-success`…). Never
   hardcode a colour; the consistency gate checks this.
+- **Caching has exactly one implementation per side** - never add another.
+  Webview: `src/lib/cache.ts`. Spread `persistentQuery({ key:
+  cacheKeys.x(...), fetcher, ...CACHE.preset })` into `useQuery`; reach for
+  `cacheRead`/`cacheWrite` only for merge logic a query can't express. New
+  keys go in `cacheKeys` (existing strings are what users already have on
+  disk - never change one), new shelf lives in `CACHE`. Rust:
+  `src-tauri/src/cache/` - `cache::get/fresh/put/update/forget` for data
+  that survives a restart, `session_fresh/session_put` for memory-only
+  values; every key and TTL in `cache/keys.rs`. Both wipe themselves when a
+  different account signs in. `src/lib/cache.test.ts` and
+  `tests/cache.rs` fail on a private cache.
 - **Icons** come from the shared vocabulary in `src/lib/actionIcons.ts`,
   named for what the button DOES, not what it looks like.
 - **User-facing errors name no URL.** `reqwest`'s `Display` is `error
