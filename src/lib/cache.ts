@@ -61,6 +61,8 @@ export const cacheKeys = {
   workItemComments: (org: string, project: string, id: number) =>
     `wi-comments:${org}/${project}/${id}`,
   plansSuites: (org: string, project: string) => `plans-suites:${org}/${project}`,
+  suiteCases: (org: string, project: string, planId: number, suiteId: number) =>
+    `suite-cases:${org}/${project}/${planId}/${suiteId}`,
   runHistory: (org: string, project: string, planId: number | undefined) =>
     `run-history:${org}/${project}/${planId}`,
   points: (org: string, project: string, planId: number | undefined, suiteId: number | undefined) =>

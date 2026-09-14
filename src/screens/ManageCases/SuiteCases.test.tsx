@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
 
 afterEach(() => {
   clearMocks();
+  localStorage.clear();
   vi.clearAllMocks();
 });
 
@@ -61,12 +62,12 @@ function mount(extra: (cmd: string, args: unknown) => unknown = () => undefined,
     return extra(cmd, args);
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const { unmount } = render(
     <QueryClientProvider client={qc}>
       <Harness onToggle={onToggle} />
     </QueryClientProvider>,
   );
-  return { calls };
+  return { calls, unmount };
 }
 
 async function list() {
@@ -170,6 +171,22 @@ test("checking a row reports the case to the parent; unchecking reports it back"
   expect(toggles[toggles.length - 1]).toEqual([[201, 203], true]);
   fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
   expect(toggles[toggles.length - 1]).toEqual([[202], false]);
+});
+
+test("a suite already read once paints from the cache instead of loading again", async () => {
+  // First visit: the two reads happen and the rows appear.
+  const first = mount();
+  expect(await screen.findByText(/Case 201|#201/)).toBeInTheDocument();
+  const readsFirst = first.calls.filter((c) => c.cmd === "list_suite_entries").length;
+  expect(readsFirst).toBe(1);
+  first.unmount();
+
+  // Second visit, same suite: rows are there in the first paint, with no
+  // "Loading test cases" and no fresh read.
+  const second = mount();
+  expect(screen.getByText(/Case 201|#201/)).toBeInTheDocument();
+  expect(screen.queryByText("Loading test cases")).not.toBeInTheDocument();
+  expect(second.calls.filter((c) => c.cmd === "list_suite_entries")).toHaveLength(0);
 });
 
 test("an empty suite says so", async () => {

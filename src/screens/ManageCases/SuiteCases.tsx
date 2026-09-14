@@ -6,6 +6,7 @@ import { commands } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
 import { IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
+import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
 import { orderFromFile, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
@@ -37,9 +38,20 @@ export default function SuiteCases({
 }) {
   const qc = useQueryClient();
   const key = suiteCasesKey(org, project, planId, suiteId);
+  // Reopening a suite must not re-read it: two Azure DevOps calls per
+  // suite made Suite Management feel like it was loading from scratch
+  // every time, even standing still on one PBI. Served from disk at once,
+  // refreshed in the background after five minutes - and this screen's own
+  // edits (reorder, copy in, new suite) invalidate the key, so the user's
+  // own changes never wait for that.
   const cases = useQuery({
     queryKey: key,
-    queryFn: () => loadSuiteCases(org, project, planId, suiteId),
+    ...persistentQuery({
+      key: cacheKeys.suiteCases(org, project, planId, suiteId),
+      fetcher: () => loadSuiteCases(org, project, planId, suiteId),
+      ...CACHE.structure,
+      staleMs: 5 * 60_000,
+    }),
     retry: false,
   });
 
