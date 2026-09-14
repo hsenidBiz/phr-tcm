@@ -31,7 +31,6 @@ pub mod model;
 pub mod note_server;
 pub mod optimize;
 pub mod pipelines;
-pub mod refcache;
 pub mod report;
 pub mod speccov;
 pub mod state;
@@ -293,13 +292,11 @@ pub fn run() {
             if let Ok(dir) = app.path().app_log_dir() {
                 applog::init(dir);
             }
-            // Reference data (project tags) cached on disk and shared by the
-            // UI and the AI bridge - see refcache.rs.
+            // The app's one Rust-side cache (project tags, resolved suites,
+            // the assigned-items baseline), on disk and shared by the UI and
+            // the AI bridge - see cache/mod.rs.
             if let Ok(dir) = app.path().app_data_dir() {
-                refcache::init(dir.clone());
-                // Resolved requirement suites, shared by the upload, Run
-                // Tests and the AI bridge, and kept across restarts.
-                ado_testplan::init_suite_cache(dir.clone());
+                cache::init(dir.clone());
                 // Auto Run scripts and local runs. The commands reach this
                 // through their AppHandle; the AI bridge has no handle and
                 // reads it from here, so a script an assistant saves lands

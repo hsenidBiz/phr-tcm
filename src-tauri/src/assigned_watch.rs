@@ -25,12 +25,6 @@ pub struct AssignedItem {
     pub state: String,
 }
 
-/// Ids already announced, per org/project. Stored beside the other
-/// reference data (see refcache.rs) so it survives a restart.
-fn seen_key(org: &str, project: &str) -> String {
-    format!("{org}/{project}/assigned-seen")
-}
-
 /// The items in `current` that were not in `seen`, plus the new seen set.
 ///
 /// `first_run` is the whole point: with nothing stored yet we cannot tell
@@ -113,8 +107,10 @@ pub async fn check_once(
     project: &str,
 ) -> Result<Vec<AssignedItem>, AdoError> {
     let current = client.assigned_to_me(org, project).await?;
-    let key = seen_key(org, project);
-    let (fresh, next) = newly_assigned(&current, crate::refcache::any(&key));
-    crate::refcache::put(&key, &next);
+    // The announced ids are kept in the app's cache, on disk, so a restart
+    // doesn't re-announce everything.
+    let key = crate::cache::keys::assigned_seen(org, project);
+    let (fresh, next) = newly_assigned(&current, crate::cache::get::<Vec<String>>(&key));
+    crate::cache::put(&key, &next);
     Ok(fresh)
 }

@@ -280,7 +280,7 @@ export const commands = {
 	 *  on the second launch, since the cache is on disk - and a stale one is
 	 *  refreshed in the background for next time. Only a completely cold cache
 	 *  waits on Azure DevOps. The AI bridge reads the same cache, so an
-	 *  assistant asking for tags costs nothing extra (see refcache.rs).
+	 *  assistant asking for tags costs nothing extra (see cache/mod.rs).
 	 */
 	listProjectTags: (organization: string, project: string) => typedError<string[], AdoError>(__TAURI_INVOKE("list_project_tags", { organization, project })),
 	resultScreenshots: (organization: string, project: string, runId: number, resultId: number) => typedError<string[], AdoError>(__TAURI_INVOKE("result_screenshots", { organization, project, runId, resultId })),

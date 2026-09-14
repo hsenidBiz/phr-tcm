@@ -56,7 +56,7 @@ pub async fn classification_paths(
 /// on the second launch, since the cache is on disk - and a stale one is
 /// refreshed in the background for next time. Only a completely cold cache
 /// waits on Azure DevOps. The AI bridge reads the same cache, so an
-/// assistant asking for tags costs nothing extra (see refcache.rs).
+/// assistant asking for tags costs nothing extra (see cache/mod.rs).
 #[tauri::command]
 #[specta::specta]
 pub async fn list_project_tags(
@@ -64,11 +64,11 @@ pub async fn list_project_tags(
     organization: String,
     project: String,
 ) -> Result<Vec<String>, ado::AdoError> {
-    let key = crate::refcache::tags_key(&organization, &project);
-    if let Some(v) = crate::refcache::fresh(&key, crate::refcache::TAGS_TTL_MS) {
+    let key = crate::cache::keys::tags(&organization, &project);
+    if let Some(v) = crate::cache::fresh::<Vec<String>>(&key, crate::cache::keys::TAGS_TTL_MS) {
         return Ok(v);
     }
-    if let Some(stale) = crate::refcache::any(&key) {
+    if let Some(stale) = crate::cache::get::<Vec<String>>(&key) {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             // Best effort: a failed background refresh just leaves the
@@ -78,7 +78,7 @@ pub async fn list_project_tags(
                     .get_tags(&organization, &project)
                     .await
                 {
-                    crate::refcache::put(&key, &fresh);
+                    crate::cache::put(&key, &fresh);
                 }
             }
         });
@@ -86,8 +86,29 @@ pub async fn list_project_tags(
     }
     let token = get_fresh_token(&app).await?;
     let tags = ado::AdoClient::new(token).get_tags(&organization, &project).await?;
-    crate::refcache::put(&key, &tags);
+    crate::cache::put(&key, &tags);
     Ok(tags)
+}
+
+/// Fold tags the app just learned about locally - carried by test cases it
+/// created, so they provably exist now - into a cached tag list.
+/// Case-insensitively deduplicated and sorted; returns whether anything was
+/// added. Applied through `cache::update`, which leaves the entry's age
+/// alone and never seeds a cold key with a partial list.
+pub fn add_new_tags(tags: &mut Vec<String>, extra: &[String]) -> bool {
+    let mut added = false;
+    for v in extra {
+        let v = v.trim();
+        if v.is_empty() || tags.iter().any(|e| e.eq_ignore_ascii_case(v)) {
+            continue;
+        }
+        tags.push(v.to_string());
+        added = true;
+    }
+    if added {
+        tags.sort_by_key(|v| v.to_lowercase());
+    }
+    added
 }
 
 /// Iteration paths with sprint dates, for DevOps-style iteration pickers.

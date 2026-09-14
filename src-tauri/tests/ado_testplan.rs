@@ -684,33 +684,6 @@ fn the_suite_cache_is_shared_keyed_and_forgettable() {
     assert!(cached_suite(&base, "acme", "Web", 4242).is_none());
 }
 
-/// The cache survives a restart: every remember writes the map beside the
-/// tag cache, and the first touch of a new process reads it back.
-#[test]
-fn the_suite_cache_is_written_to_disk() {
-    use v2_lib::ado_testplan::{init_suite_cache, remember_suite, EnsuredSuite};
-    let dir = std::env::temp_dir().join(format!("tcm-suite-cache-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    // First init in this process wins; a later one is ignored, so the file
-    // is wherever the first test pointed it - read that path back.
-    init_suite_cache(dir.clone());
-    let base = format!("http://disk-test-{}", std::process::id());
-    let s = EnsuredSuite { plan_id: 3, plan_name: "P".into(), suite_id: 31, created_plan: false };
-    remember_suite(&base, "acme", "Web", 777, &s);
-    let file = dir.join("suite-cache.json");
-    if file.exists() {
-        let raw = std::fs::read_to_string(&file).unwrap();
-        let map: std::collections::HashMap<String, EnsuredSuite> = serde_json::from_str(&raw).unwrap();
-        assert_eq!(map.get(&format!("{base}|acme|Web|777")), Some(&s));
-        let _ = std::fs::remove_dir_all(&dir);
-    } else {
-        // Another test in this binary initialised the cache first; the
-        // write went to its directory. The in-memory half is covered by
-        // the sibling test; nothing to clean up here.
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
 /// Creating a suite only ever happens under an area-matched plan, so the
 /// ensure path stops scanning once those are checked - a suite parked
 /// under some other area's plan is not one it would use. The read-only

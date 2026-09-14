@@ -33,6 +33,10 @@ pub async fn sign_in(app: tauri::AppHandle) -> Result<AuthStatus, String> {
     .await
     .inspect_err(|e| crate::applog::error(format!("Sign-in failed: {e}")))?;
     crate::applog::info("Signed in to Azure DevOps");
+    // Before the tokens are visible to anything that reads the cache: a
+    // different account than last time must not be served the previous
+    // one's tags or suite ids (the webview's cache does the same).
+    crate::cache::claim_for(tokens.account.as_deref());
     let state = app.state::<Mutex<auth::AuthState>>();
     let mut s = state.lock().unwrap();
     s.tokens = Some(tokens);

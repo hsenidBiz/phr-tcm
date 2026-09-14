@@ -253,68 +253,20 @@ pub fn area_matches(plan_area: &str, pbi_area: &str) -> bool {
 /// one: the upload, Run Tests and the AI bridge. Resolving scans the
 /// project's test plans, one request per plan and throttle-paced (about a
 /// minute on a large org), and the ids are stable once found - so the map
-/// is also written to disk beside the tag cache, and the first upload
-/// after a restart is as quick as the tenth. A suite deleted in Azure
-/// DevOps since is caught by the 404 on its points; the caller forgets it
-/// and scans once. The client's base_url is in the key so parallel tests
-/// on different mock servers cannot poison each other.
-static SUITE_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-static SUITE_MEM: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, EnsuredSuite>>> =
-    std::sync::OnceLock::new();
-const SUITE_CACHE_FILE: &str = "suite-cache.json";
-
-/// Point the cache at its storage directory. Called once during app
-/// setup; tests call it with a temp directory. Later calls are ignored.
-pub fn init_suite_cache(dir: std::path::PathBuf) {
-    let _ = SUITE_DIR.set(dir);
-}
-
-fn suite_file() -> Option<std::path::PathBuf> {
-    SUITE_DIR.get().map(|d| d.join(SUITE_CACHE_FILE))
-}
-
-fn suite_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, EnsuredSuite>> {
-    SUITE_MEM.get_or_init(|| {
-        // First touch loads what the last run left behind. A corrupt or
-        // absent file starts empty: the cache is an optimisation.
-        let loaded = suite_file()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|s| serde_json::from_str::<std::collections::HashMap<String, EnsuredSuite>>(&s).ok())
-            .unwrap_or_default();
-        std::sync::Mutex::new(loaded)
-    })
-}
-
-fn persist_suites(map: &std::collections::HashMap<String, EnsuredSuite>) {
-    let Some(path) = suite_file() else { return };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(s) = serde_json::to_string(map) {
-        let _ = std::fs::write(path, s);
-    }
-}
-
-fn suite_key(base_url: &str, org: &str, project: &str, pbi_id: i32) -> String {
-    format!("{base_url}|{org}|{project}|{pbi_id}")
-}
-
+/// is kept in the app's cache (cache/mod.rs), on disk, and the first
+/// upload after a restart is as quick as the tenth. A suite deleted in
+/// Azure DevOps since is caught by the 404 on its points; the caller
+/// forgets it and scans once.
 pub fn cached_suite(base_url: &str, org: &str, project: &str, pbi_id: i32) -> Option<EnsuredSuite> {
-    suite_cache().lock().ok()?.get(&suite_key(base_url, org, project, pbi_id)).cloned()
+    crate::cache::get(&crate::cache::keys::suite(base_url, org, project, pbi_id))
 }
 
 pub fn remember_suite(base_url: &str, org: &str, project: &str, pbi_id: i32, suite: &EnsuredSuite) {
-    if let Ok(mut c) = suite_cache().lock() {
-        c.insert(suite_key(base_url, org, project, pbi_id), suite.clone());
-        persist_suites(&c);
-    }
+    crate::cache::put(&crate::cache::keys::suite(base_url, org, project, pbi_id), suite);
 }
 
 pub fn forget_suite(base_url: &str, org: &str, project: &str, pbi_id: i32) {
-    if let Ok(mut c) = suite_cache().lock() {
-        c.remove(&suite_key(base_url, org, project, pbi_id));
-        persist_suites(&c);
-    }
+    crate::cache::forget(&crate::cache::keys::suite(base_url, org, project, pbi_id));
 }
 
 pub fn default_plan_name(area_path: &str) -> String {

@@ -1232,7 +1232,7 @@ fn parse_cases_with_warnings(
 /// The project's existing tag names, for suggesting tags that match what
 /// the team already uses instead of inventing near-duplicates.
 ///
-/// Reads the shared reference cache the app fills (refcache.rs) - the
+/// Reads the shared reference cache the app fills (cache/mod.rs) - the
 /// whole point is that an assistant asking for tags does NOT repeat a
 /// request the app has already made. Only a completely cold cache (the AI
 /// asked before the developer opened a tag field) fetches, and it stores
@@ -1242,13 +1242,13 @@ async fn tags(
     client: Option<&crate::ado::AdoClient>,
     target: &str,
 ) -> (u16, String) {
-    let key = crate::refcache::tags_key(&ctx.org, &ctx.project);
-    let (values, source) = match crate::refcache::any(&key) {
+    let key = crate::cache::keys::tags(&ctx.org, &ctx.project);
+    let (values, source) = match crate::cache::get::<Vec<String>>(&key) {
         Some(v) => (v, "cache"),
         None => match client {
             Some(c) => match c.get_tags(&ctx.org, &ctx.project).await {
                 Ok(v) => {
-                    crate::refcache::put(&key, &v);
+                    crate::cache::put(&key, &v);
                     (v, "fetched")
                 }
                 Err(e) => return (502, format!("could not read tags: {e}")),
@@ -1377,7 +1377,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
     };
     // Cache-only: the guide must not become another request. If nothing is
     // cached yet, `get_tags` will fill it on demand.
-    let tag_lines = match crate::refcache::any(&crate::refcache::tags_key(&ctx.org, &ctx.project)) {
+    let tag_lines = match crate::cache::get::<Vec<String>>(&crate::cache::keys::tags(&ctx.org, &ctx.project)) {
         Some(tags) if !tags.is_empty() => {
             let shown = tags
                 .iter()
@@ -1677,43 +1677,25 @@ fn case_page(
     out
 }
 
-/// How long a scanned plan tree is reused before it is read again. A
-/// project can hold hundreds of plans, and the scan is one request per
-/// plan; an assistant that lists suites and then reads three of them must
-/// not pay for the scan three times.
-const SUITE_TREE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-
 type SuiteTree = Vec<crate::ado_testplan::PlanWithSuites>;
 
-fn suite_tree_cache() -> &'static std::sync::Mutex<
-    std::collections::HashMap<(String, String, String), (std::time::Instant, SuiteTree)>,
-> {
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<(String, String, String), (std::time::Instant, SuiteTree)>>,
-    > = std::sync::OnceLock::new();
-    CACHE.get_or_init(Default::default)
-}
-
-/// The plans and suites the Test Suites tab shows, cached per org and
-/// project for `SUITE_TREE_TTL`; `refresh=true` reads them again.
+/// The plans and suites the Test Suites tab shows, cached in memory per org
+/// and project for `cache::keys::SUITE_TREE_TTL`; `refresh=true` reads them
+/// again. Session tier: the tree is large, and TestPlan's `#[serde(skip)]`
+/// fields would not survive a trip through the disk.
 async fn suite_tree(
     ctx: &BridgeContext,
     client: &crate::ado::AdoClient,
     refresh: bool,
 ) -> Result<SuiteTree, crate::ado::AdoError> {
-    let key = (client.base_url.clone(), ctx.org.clone(), ctx.project.clone());
+    let key = crate::cache::keys::suite_tree(&client.base_url, &ctx.org, &ctx.project);
     if !refresh {
-        if let Some((at, tree)) = suite_tree_cache().lock().unwrap().get(&key) {
-            if at.elapsed() < SUITE_TREE_TTL {
-                return Ok(tree.clone());
-            }
+        if let Some(tree) = crate::cache::session_fresh::<SuiteTree>(&key, crate::cache::keys::SUITE_TREE_TTL) {
+            return Ok(tree);
         }
     }
     let tree = client.list_plans_with_suites(&ctx.org, &ctx.project).await?;
-    suite_tree_cache()
-        .lock()
-        .unwrap()
-        .insert(key, (std::time::Instant::now(), tree.clone()));
+    crate::cache::session_put(&key, tree.clone());
     Ok(tree)
 }
 

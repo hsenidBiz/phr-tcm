@@ -1353,7 +1353,7 @@ async fn an_unknown_read_is_still_a_bare_404() {
 #[tokio::test]
 async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything() {
     // A dedicated org/project keeps this test's cache entry out of every
-    // other test's way (the refcache is process-global).
+    // other test's way (the cache is process-global).
     let c = BridgeContext {
         org: "cap-org".into(),
         project: "CapProj".into(),
@@ -1362,9 +1362,9 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         disabled_tools: vec![],
         working_dir: None,
     };
-    let key = v2_lib::refcache::tags_key("cap-org", "CapProj");
+    let key = v2_lib::cache::keys::tags("cap-org", "CapProj");
     let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();
-    v2_lib::refcache::put(&key, &values);
+    v2_lib::cache::put(&key, &values);
 
     let (status, out) = route(&c, None, "GET", "/tags", "", "1.0.0").await;
     assert_eq!(status, 200, "{out}");

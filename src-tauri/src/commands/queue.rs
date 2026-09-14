@@ -848,9 +848,9 @@ pub async fn submit_queue(
         .filter(|t| !t.is_empty())
         .collect();
     if !created.is_empty() {
-        crate::refcache::merge(
-            &crate::refcache::tags_key(&organization, &project),
-            &created,
+        crate::cache::update::<Vec<String>>(
+            &crate::cache::keys::tags(&organization, &project),
+            |tags| crate::commands::discovery::add_new_tags(tags, &created),
         );
     }
     Ok(results)

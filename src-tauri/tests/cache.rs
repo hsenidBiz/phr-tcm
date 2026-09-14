@@ -213,3 +213,72 @@ fn keys_separate_projects_and_kinds() {
     assert_ne!(keys::suite("http://a", "acme", "Web", 1), keys::suite("http://b", "acme", "Web", 1));
     assert_eq!(keys::tags("acme", "Web"), "tags:acme/Web");
 }
+
+/// Tags on cases the app just created provably exist now, so they are
+/// folded into the cached list without a round trip - and without
+/// passing for a refresh.
+#[test]
+fn new_tags_merge_case_insensitively_sorted_and_keep_the_age() {
+    use v2_lib::commands::discovery::add_new_tags;
+    let dir = temp_dir("tags");
+    std::fs::write(
+        dir.join("cache.json"),
+        r#"{"owner":null,"entries":{"tags:acme/Web":{"value":["smoke","regression"],"at_ms":1}}}"#,
+    )
+    .unwrap();
+    let store = Store::open(Some(&dir));
+    let key = keys::tags("acme", "Web");
+
+    store.update::<Vec<String>>(&key, |tags| {
+        add_new_tags(
+            tags,
+            &["Login".into(), "SMOKE".into(), "  ".into(), "regression".into()],
+        )
+    });
+
+    assert_eq!(store.get::<Vec<String>>(&key).unwrap(), vec!["Login", "regression", "smoke"]);
+    assert!(store.fresh::<Vec<String>>(&key, 60_000).is_none(), "a merge is not a refresh");
+
+    let mut unchanged = vec!["smoke".to_string()];
+    assert!(!add_new_tags(&mut unchanged, &["Smoke".into()]), "nothing new, nothing written");
+}
+
+/// One cache means one: a module that needs to remember data uses
+/// `crate::cache`, not a map of its own in a static. If this fails, move
+/// that data onto the cache (a key in cache/keys.rs) instead of allowing it.
+#[test]
+fn no_module_keeps_a_private_cache_map() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    let mut stack = vec![src.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n == "cache") {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            if !path.extension().is_some_and(|e| e == "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let t = line.trim_start();
+                if !(t.starts_with("static ") || t.starts_with("pub static ")) {
+                    continue;
+                }
+                // A static's type can wrap onto following lines: read on
+                // to the terminating `;`.
+                let decl = lines[i..lines.len().min(i + 6)].join(" ");
+                if decl.split(';').next().unwrap_or("").contains("HashMap") {
+                    offenders.push(format!("{}:{}", path.strip_prefix(&src).unwrap().display(), i + 1));
+                }
+            }
+        }
+    }
+    assert!(offenders.is_empty(), "keep cached data in crate::cache, not a private static map: {offenders:?}");
+}
