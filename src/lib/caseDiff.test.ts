@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { TestCase, TestCaseFull } from "../bindings";
-import { diffCase, diffSummary } from "./caseDiff";
+import { diffCase, diffSummary, retypedLines, type CaseDiff } from "./caseDiff";
 
 function queued(over: Partial<TestCase> = {}): TestCase {
   return {
@@ -54,6 +54,8 @@ test("a step whose stored type is wrong for its Expected Result is not a no-op",
   const wrong = diffCase(q, current({ steps, step_ids: ["2", "3"], steps_xml: xml("ActionStep", "ActionStep") }));
   expect(wrong.noop).toBe(false);
   expect(wrong.steps.retyped).toBe(1); // only the step WITH a result is wrong
+  // Which step, and what it becomes - the review has to be able to show it.
+  expect(wrong.steps.retypedDetail).toEqual([{ index: 0, from: "ActionStep", to: "ValidateStep" }]);
   expect(wrong.steps.detail).toEqual([]); // the text is unchanged
   expect(diffSummary(wrong)).toBe("Click to view 1 step type changing");
 
@@ -160,4 +162,29 @@ test("preconditions are hidden the same way, and tags are never affected", () =>
   expect(d.fields.map((f) => f.name)).not.toContain("Preconditions");
   // Tags is a built-in field and always writes.
   expect(d.fields.map((f) => f.name)).toContain("Tags");
+});
+
+test("step-type repairs read as sentences, one per target type", () => {
+  const withRetyped = (retypedDetail: CaseDiff["steps"]["retypedDetail"]): CaseDiff => ({
+    fields: [],
+    steps: { added: 0, removed: 0, changed: 0, retyped: retypedDetail.length, retypedDetail, detail: [] },
+    blankSkipped: [],
+    noop: false,
+  });
+  expect(retypedLines(withRetyped([{ index: 3, from: "ActionStep", to: "ValidateStep" }]))).toEqual([
+    "Step 4 becomes a validation step, because it has an Expected Result.",
+  ]);
+  expect(
+    retypedLines(
+      withRetyped([
+        { index: 0, from: "ActionStep", to: "ValidateStep" },
+        { index: 1, from: "ValidateStep", to: "ActionStep" },
+        { index: 2, from: "ActionStep", to: "ValidateStep" },
+        { index: 4, from: "ActionStep", to: "ValidateStep" },
+      ]),
+    ),
+  ).toEqual([
+    "Steps 1, 3 and 5 become validation steps, because they have an Expected Result.",
+    "Step 2 becomes an action step, because it has no Expected Result.",
+  ]);
 });

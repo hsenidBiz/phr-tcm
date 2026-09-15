@@ -1,0 +1,76 @@
+import { render, screen } from "@testing-library/react";
+import { expect, test } from "vitest";
+import type { TestCase } from "../bindings";
+import type { CaseDiff } from "../lib/caseDiff";
+import { QueueRowInner, type QueueRowProps } from "./QueueRow";
+
+const tc: TestCase = {
+  title: "Versioning",
+  steps: [
+    { action: "Open", expected: "Shown" },
+    { action: "Wait", expected: "" },
+    { action: "Lock", expected: "Locked" },
+  ],
+  tags: "",
+  automation_status: "Not Automated",
+  module_value: "",
+  preconditions: "",
+  update_id: 154650,
+};
+
+function props(diff: CaseDiff): QueueRowProps {
+  const noop = () => {};
+  return {
+    tc,
+    index: 0,
+    org: "acme",
+    project: "Web",
+    isSelected: false,
+    stepsOpen: false,
+    diffOpen: true,
+    editing: false,
+    failed: false,
+    uploaded: false,
+    touched: undefined,
+    reviewing: false,
+    problem: null,
+    duplicate: null,
+    diff,
+    diffFailed: false,
+    busy: false,
+    onToggleSelect: noop,
+    onToggleSteps: noop,
+    onToggleDiff: noop,
+    onToggleEdit: noop,
+    onRemove: noop,
+    onSave: noop,
+    onCancelEdit: noop,
+  };
+}
+
+/// Field report 1.25.2: "Click to view 12 step types changing" opened an
+/// empty panel. The panel drew field and step-text changes only, and a
+/// step-type repair has neither.
+test("a case whose only change is step types says which steps change, in the open diff", () => {
+  const diff: CaseDiff = {
+    fields: [],
+    steps: {
+      added: 0,
+      removed: 0,
+      changed: 0,
+      retyped: 2,
+      retypedDetail: [
+        { index: 0, from: "ActionStep", to: "ValidateStep" },
+        { index: 2, from: "ActionStep", to: "ValidateStep" },
+      ],
+      detail: [],
+    },
+    blankSkipped: [],
+    noop: false,
+  };
+  render(<ul>{QueueRowInner(props(diff))}</ul>);
+  expect(screen.getByText("Step types:")).toBeInTheDocument();
+  expect(
+    screen.getByText("Steps 1 and 3 become validation steps, because they have an Expected Result."),
+  ).toBeInTheDocument();
+});

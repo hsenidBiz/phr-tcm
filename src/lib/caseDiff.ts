@@ -25,6 +25,9 @@ export type CaseDiff = {
      * their Expected Result (an ActionStep that has one). The upload repairs
      * the type in place, so this counts as a change. */
     retyped: number;
+    /** Which steps those are, and the type each moves from and to - what
+     * the open diff lists, since a retyped step has no text change to show. */
+    retypedDetail: { index: number; from: string; to: string }[];
     detail: StepDiff[];
   };
   blankSkipped: string[];
@@ -130,16 +133,23 @@ export function diffCase(
   // else is not something to claim from a regex.
   const storedTypes = storedStepTypes(current.steps_xml);
   const touched = new Set(detail.map((d) => d.index));
-  const retyped =
-    storedTypes.length === current.steps.length
-      ? queued.steps.filter((q, i) => !touched.has(i) && storedTypes[i] !== stepTypeFor(q.expected)).length
-      : 0;
+  const retypedDetail: CaseDiff["steps"]["retypedDetail"] = [];
+  if (storedTypes.length === current.steps.length) {
+    queued.steps.forEach((q, i) => {
+      const to = stepTypeFor(q.expected);
+      if (i < storedTypes.length && !touched.has(i) && storedTypes[i] !== to) {
+        retypedDetail.push({ index: i, from: storedTypes[i], to });
+      }
+    });
+  }
+  const retyped = retypedDetail.length;
 
   const steps = {
     added: detail.filter((d) => d.kind === "added").length,
     removed: detail.filter((d) => d.kind === "removed").length,
     changed: detail.filter((d) => d.kind === "changed").length,
     retyped,
+    retypedDetail,
     detail,
   };
 
@@ -149,6 +159,31 @@ export function diffCase(
     blankSkipped,
     noop: fields.length === 0 && detail.length === 0 && retyped === 0,
   };
+}
+
+/** "Steps 1, 2 and 5" - 1-based, for people. */
+function stepList(indices: number[]): string {
+  const n = indices.map((i) => String(i + 1));
+  const joined = n.length === 1 ? n[0] : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+  return `${n.length === 1 ? "Step" : "Steps"} ${joined}`;
+}
+
+/** The open diff's sentences for step-type repairs, one per target type. */
+export function retypedLines(d: CaseDiff): string[] {
+  const lines: string[] = [];
+  const toValidate = d.steps.retypedDetail.filter((r) => r.to === "ValidateStep").map((r) => r.index);
+  const toAction = d.steps.retypedDetail.filter((r) => r.to === "ActionStep").map((r) => r.index);
+  if (toValidate.length) {
+    lines.push(
+      `${stepList(toValidate)} ${toValidate.length === 1 ? "becomes a validation step, because it has" : "become validation steps, because they have"} an Expected Result.`,
+    );
+  }
+  if (toAction.length) {
+    lines.push(
+      `${stepList(toAction)} ${toAction.length === 1 ? "becomes an action step, because it has" : "become action steps, because they have"} no Expected Result.`,
+    );
+  }
+  return lines;
 }
 
 /** One-line summary for the review row.

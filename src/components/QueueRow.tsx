@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
 import { memo } from "react";
 import type { TestCase } from "../bindings";
-import { diffSummary, type CaseDiff } from "../lib/caseDiff";
+import { diffSummary, retypedLines, type CaseDiff } from "../lib/caseDiff";
 import { cn } from "../lib/cn";
 import CaseStepsTable from "./CaseStepsTable";
 import InlineDiff from "./InlineDiff";
@@ -205,6 +205,20 @@ export function QueueRowInner({
               {diff.steps.detail.map((d) => (
                 <StepDiffLines key={d.index} d={d} />
               ))}
+            </div>
+          )}
+          {/* A step-type repair has no text change to draw, so it is
+              said in words - without this, a case whose only change is
+              its step types opened an empty panel. */}
+          {diff.steps.retypedDetail.length > 0 && (
+            <div className="space-y-0.5">
+              <span className="font-medium text-muted">Step types:</span>
+              {retypedLines(diff).map((line) => (
+                <div key={line} className="text-text">
+                  {line}
+                </div>
+              ))}
+              <div className="text-faint">The step text and formatting stay exactly as they are.</div>
             </div>
           )}
           {diff.blankSkipped.length > 0 && (
