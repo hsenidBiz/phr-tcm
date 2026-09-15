@@ -13,6 +13,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.3",
+    date: "2026-09-15",
+    items: [
+      "Search Suites: Manage, Run Tests and Report now sit behind one More button on each suite, next to View and Edit cases. Hover over it or click it to see the options. Run is now called Run Tests.",
+      "Suite Management: click a test case to select it, Ctrl+click to add or remove one, and Shift+click to select a range, the same as View Test Cases. The checkboxes are gone.",
+      "Suite Management: groups can be collapsed. Click a group's header to fold it, or Ctrl+click it to select the whole group. Collapse groups folds them all, and the app remembers which are folded.",
+      "Suite Management: the Apply order and Reset bar now stays at the bottom right of the window while you scroll a long suite.",
+      "Group by title now understands titles that start with tags such as [Floor Plan][Navigation], and groups them by those tags. A symbol like > or : partway through a sentence no longer pushes a case into Ungrouped.",
+      "The review's step changes panel now lists which steps change type, instead of opening empty when step types were the only change.",
+      "Clear results now also removes the Uploaded badges and failure highlights from the queue.",
+    ],
+  },
+  {
     version: "1.25.2",
     date: "2026-09-15",
     items: [
