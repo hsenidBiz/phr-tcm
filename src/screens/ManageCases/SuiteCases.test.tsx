@@ -130,6 +130,34 @@ test("Move up and down step a row; Reset restores the server order", async () =>
   expect(screen.getByRole("button", { name: "Apply order" })).toBeDisabled();
 });
 
+/// Tick several rows and the arrows move them together, keeping their
+/// order - the keyboard's version of dragging the block.
+test("Move up on a ticked row moves the whole selection as a block", async () => {
+  mount();
+  const l = await list();
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
+  fireEvent.click(within(l).getByRole("button", { name: "Move #203 up" }));
+  const rows = () => within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0]);
+  expect(rows()).toEqual(["#202", "#203", "#201"]);
+  // An unticked row still moves alone.
+  fireEvent.click(within(l).getByRole("button", { name: "Move #201 up" }));
+  expect(rows()).toEqual(["#202", "#201", "#203"]);
+});
+
+/// The same through the mouse: dragging any ticked row carries the block.
+test("dragging a ticked row drops the whole selection at the target", async () => {
+  mount();
+  const l = await list();
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
+  const [r201, , r203] = within(l).getAllByRole("listitem");
+  fireEvent.dragStart(r201);
+  fireEvent.dragOver(r203);
+  fireEvent.drop(r203);
+  expect(within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0])).toEqual(["#203", "#201", "#202"]);
+});
+
 test("the sticky bar appears only while the order is unsaved, and names its suite", async () => {
   mount();
   const l = await list();

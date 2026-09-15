@@ -3,13 +3,14 @@ import { useState } from "react";
 import { Checkbox } from "../../components/ui/checkbox";
 import { IconMoveDown, IconMoveUp } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
-import { moveItem, type SuiteCase } from "../../lib/suiteOrder";
+import { moveBlock, nudgeBlock, type SuiteCase } from "../../lib/suiteOrder";
 
-/** The suite's cases in their current order. Drag a row onto another to
- * put it there; the arrow buttons do the same one step at a time (and are
- * what a keyboard user gets). The checkbox picks rows for the bulk
- * actions; it has nothing to do with order. Native drag events, no
- * library: the app's board already works this way. */
+/** The suite's cases in their current order. Drag a row onto another to put
+ * it there; a ticked row carries the whole selection with it, in its order.
+ * The arrow buttons do the same one step at a time (and are what a keyboard
+ * user gets). The checkbox is the one selection the screen has: the bulk
+ * actions act on it, and so does a drag. Native drag events, no library:
+ * the app's board already works this way. */
 export default function CaseOrderList({
   cases,
   selected,
@@ -28,10 +29,11 @@ export default function CaseOrderList({
   const [dragId, setDragId] = useState<number | null>(null);
   const [overId, setOverId] = useState<number | null>(null);
 
-  const indexOf = (id: number) => cases.findIndex((c) => c.id === id);
+  // A ticked row drags its whole selection; an unticked one drags alone.
+  const blockFor = (id: number): ReadonlySet<number> => (selected.has(id) ? selected : new Set([id]));
   const dropOn = (targetId: number) => {
     if (dragId == null || dragId === targetId) return;
-    onChange(moveItem(cases, indexOf(dragId), indexOf(targetId)));
+    onChange(moveBlock(cases, blockFor(dragId), targetId));
   };
   const toggle = (id: number, on: boolean) => {
     const next = new Set(selected);
@@ -80,7 +82,7 @@ export default function CaseOrderList({
             className={cn(
               "flex items-center gap-3 px-3 py-2 text-sm",
               !disabled && "cursor-grab hover:bg-surface-2",
-              dragId === c.id && "opacity-50",
+              dragId != null && blockFor(dragId).has(c.id) && "opacity-50",
               overId === c.id && dragId !== c.id && "border-t-2 border-accent",
             )}
           >
@@ -100,7 +102,7 @@ export default function CaseOrderList({
                 title="Move up"
                 disabled={disabled || i === 0}
                 className="rounded p-1 text-muted hover:text-accent disabled:opacity-30 [&_svg]:size-3.5"
-                onClick={() => onChange(moveItem(cases, i, i - 1))}
+                onClick={() => onChange(nudgeBlock(cases, blockFor(c.id), "up"))}
               >
                 <IconMoveUp aria-hidden />
               </button>
@@ -110,7 +112,7 @@ export default function CaseOrderList({
                 title="Move down"
                 disabled={disabled || i === cases.length - 1}
                 className="rounded p-1 text-muted hover:text-accent disabled:opacity-30 [&_svg]:size-3.5"
-                onClick={() => onChange(moveItem(cases, i, i + 1))}
+                onClick={() => onChange(nudgeBlock(cases, blockFor(c.id), "down"))}
               >
                 <IconMoveDown aria-hidden />
               </button>
