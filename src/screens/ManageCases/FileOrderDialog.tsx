@@ -1,7 +1,9 @@
+import { GripVertical } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { IconCancel, IconConfirm, IconImport, IconMoveDown, IconMoveUp } from "../../lib/actionIcons";
+import { cn } from "../../lib/cn";
 import { moveItem, orderFromFiles, type FileForOrder, type SuiteCase } from "../../lib/suiteOrder";
 
 export type OrderFile = FileForOrder & { path: string };
@@ -36,6 +38,12 @@ export default function FileOrderDialog({
   const result = useMemo(() => orderFromFiles(suiteCases, arranged), [suiteCases, arranged]);
   const placedTotal = result.placed.reduce((a, b) => a + b, 0);
 
+  // Native drag, same pattern as CaseOrderList's rows: no library, indices
+  // captured at drag start stay valid for the drop since nothing reorders
+  // the list in between.
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+
   return (
     <Modal onClose={onClose} className="w-[560px] max-w-full p-4">
       <h2 className="text-sm font-semibold text-text">Apply order from files</h2>
@@ -47,7 +55,33 @@ export default function FileOrderDialog({
         {arranged.map((f, i) => {
           const n = result.placed[i];
           return (
-            <li key={f.path} className="flex items-center gap-3 px-3 py-2 text-sm">
+            <li
+              key={f.path}
+              draggable
+              onDragStart={() => setDragIndex(i)}
+              onDragEnd={() => {
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (overIndex !== i) setOverIndex(i);
+              }}
+              onDragLeave={() => setOverIndex((o) => (o === i ? null : o))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragIndex != null && dragIndex !== i) setArranged((a) => moveItem(a, dragIndex, i));
+                setDragIndex(null);
+                setOverIndex(null);
+              }}
+              className={cn(
+                "flex items-center gap-3 px-3 py-2 text-sm",
+                "cursor-grab hover:bg-surface-2",
+                dragIndex === i && "opacity-50",
+                overIndex === i && dragIndex !== i && "border-t-2 border-accent",
+              )}
+            >
+              <GripVertical size={14} className="shrink-0 text-faint" aria-hidden />
               <span className="id-mono w-6 shrink-0 text-right text-faint">{i + 1}</span>
               <span className="min-w-0 flex-1 truncate text-text" title={f.path}>
                 {f.name}

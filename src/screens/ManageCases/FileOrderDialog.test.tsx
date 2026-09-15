@@ -47,6 +47,31 @@ test("the files can be rearranged, and Apply hands back the resulting order", ()
   expect(placed).toBe(4);
 });
 
+test("a file row can be dragged onto another to reorder the files", () => {
+  const onApply = vi.fn();
+  render(
+    <FileOrderDialog
+      suiteCases={suite}
+      files={[file("a.json", 1, 2), file("b.json", 3), file("c.json", 4, 5)]}
+      onAddFiles={() => {}}
+      onClose={() => {}}
+      onApply={onApply}
+    />,
+  );
+  const rows = screen.getAllByRole("listitem");
+  fireEvent.dragStart(rows[2]);
+  fireEvent.dragOver(rows[0]);
+  fireEvent.drop(rows[0]);
+  const reordered = screen.getAllByRole("listitem");
+  expect(reordered[0]).toHaveTextContent("c.json");
+  expect(reordered[1]).toHaveTextContent("a.json");
+  expect(reordered[2]).toHaveTextContent("b.json");
+
+  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  const [order] = onApply.mock.calls[0];
+  expect((order as SuiteCase[]).map((c) => c.id)).toEqual([4, 5, 1, 2, 3]);
+});
+
 test("Add more files asks the parent; Apply is disabled while nothing is placed", () => {
   const onAddFiles = vi.fn();
   render(
