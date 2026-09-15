@@ -198,39 +198,48 @@ test("the sticky bar appears only while the order is unsaved, and names its suit
   await waitFor(() => expect(screen.queryByRole("region", { name: /unsaved order/i })).not.toBeInTheDocument());
 });
 
-test("Apply tester order from file re-orders from the file's tester_order", async () => {
-  openDialog.mockResolvedValue("C:\\drafts\\auth.json");
+/// Several files, arranged in the dialog, each a block in the file's ROW
+/// order - tester_order is ignored, it is what jumbled a suite once.
+test("Apply order from files arranges the list by the files' row order and the dialog's file order", async () => {
+  openDialog.mockResolvedValue(["C:\\drafts\\a.json", "C:\\drafts\\b.json"]);
   const base = { steps: [], tags: "", automation_status: "Not Automated", module_value: "", preconditions: "" };
-  mount((cmd) => {
-    if (cmd === "parse_import_file")
-      return { cases: [{ ...base, title: "c", update_id: 203, tester_order: 1 }, { ...base, title: "a", update_id: 201, tester_order: 2 }], warnings: [] };
+  mount((cmd, args) => {
+    if (cmd === "parse_import_file") {
+      const path = (args as { path: string }).path;
+      return path.endsWith("a.json")
+        ? { cases: [{ ...base, title: "c", update_id: 203, tester_order: 2 }, { ...base, title: "a", update_id: 201, tester_order: 1 }], warnings: [] }
+        : { cases: [{ ...base, title: "b", update_id: 202, tester_order: 1 }], warnings: [] };
+    }
   });
   const l = await list();
-  fireEvent.click(screen.getByRole("button", { name: "Apply tester order from file" }));
-  await waitFor(() => expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#203"));
-  expect(within(l).getAllByRole("listitem")[1]).toHaveTextContent("#201");
-  expect(toast.info).toHaveBeenCalledWith("Placed 2 of 3 test cases from the file. Apply order to save.");
-  // Dirty now, so the sticky bar has joined the inline row's own Apply
-  // order button - take the inline one (it renders first).
+  fireEvent.click(screen.getByRole("button", { name: "Apply order from files" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getAllByRole("listitem")[0]).toHaveTextContent("a.json");
+  // b.json's block first, then a.json's: 202, then 203 and 201 in a.json's ROW order.
+  fireEvent.click(within(dialog).getByRole("button", { name: "Move b.json up" }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0])).toEqual(["#202", "#203", "#201"]);
+  expect(toast.info).toHaveBeenCalledWith("Placed 3 of 3 test cases from 2 files. Apply order to save.");
   expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeEnabled();
 });
 
-test("a file naming none of the suite's cases changes nothing; cancelling the picker does nothing", async () => {
-  openDialog.mockResolvedValueOnce("C:\\drafts\\other.json").mockResolvedValueOnce(null);
+test("cancelling the picker opens nothing, and a file naming none of the suite's cases is flagged in the dialog", async () => {
+  openDialog.mockResolvedValueOnce(null).mockResolvedValueOnce(["C:\\drafts\\other.json"]);
   const { calls } = mount((cmd) => {
     if (cmd === "parse_import_file")
       return { cases: [{ title: "x", steps: [], tags: "", automation_status: "Not Automated", module_value: "", preconditions: "", update_id: null, tester_order: 1 }], warnings: [] };
   });
-  const l = await list();
-  fireEvent.click(screen.getByRole("button", { name: "Apply tester order from file" }));
-  await waitFor(() =>
-    expect(toast.warning).toHaveBeenCalledWith("No test case in that file is in this suite. The file needs ids from an upload."),
-  );
-  expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#201");
-  const parses = calls.filter((c) => c.cmd === "parse_import_file").length;
-  fireEvent.click(screen.getByRole("button", { name: "Apply tester order from file" }));
-  await waitFor(() => expect(openDialog).toHaveBeenCalledTimes(2));
-  expect(calls.filter((c) => c.cmd === "parse_import_file").length).toBe(parses);
+  await list();
+  fireEvent.click(screen.getByRole("button", { name: "Apply order from files" }));
+  await waitFor(() => expect(openDialog).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(calls.filter((c) => c.cmd === "parse_import_file")).toHaveLength(0);
+
+  fireEvent.click(screen.getByRole("button", { name: "Apply order from files" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText("places nothing from this suite")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Apply" })).toBeDisabled();
 });
 
 test("checking a row reports the case to the parent; unchecking reports it back", async () => {

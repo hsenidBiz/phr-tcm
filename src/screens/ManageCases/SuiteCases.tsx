@@ -9,8 +9,9 @@ import { Switch } from "../../components/ui/switch";
 import { IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { orderByGroups, orderFromFile, orderGroupsAZ, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
+import { orderByGroups, orderGroupsAZ, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
+import FileOrderDialog, { type OrderFile } from "./FileOrderDialog";
 import { markSuiteDirty, useDirtyRank } from "./dirtySuites";
 import { loadSuiteCases, suiteCasesKey } from "./suiteCasesQuery";
 
@@ -105,33 +106,35 @@ export default function SuiteCases({
     onError: (e) => toast.error(`Could not save the order: ${e.message}`),
   });
 
-  /** A draft .json carries each uploaded case's id and, after the
-   * optimizer's grouping pass, its tester_order. The file only proposes:
-   * the list re-orders on screen and Apply order is what saves it. */
-  const fromFile = useMutation({
+  // The files the dialog is arranging; null = no dialog. Parsing happens
+  // here, where the IPC and its error toast live; the dialog only arranges.
+  const [orderFiles, setOrderFiles] = useState<OrderFile[] | null>(null);
+  const pickFiles = useMutation({
     mutationFn: async () => {
-      const path = await open({
-        multiple: false,
+      const picked = await open({
+        multiple: true,
         directory: false,
         filters: [{ name: "Test case files", extensions: ["json"] }],
       });
-      if (typeof path !== "string") return null;
-      const parsed = await unwrapStr(commands.parseImportFile(path));
-      return orderFromFile(order, parsed.cases);
-    },
-    onSuccess: (result) => {
-      if (!result) return;
-      if (result.matched === 0) {
-        toast.warning("No test case in that file is in this suite. The file needs ids from an upload.");
-        return;
+      const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+      const out: OrderFile[] = [];
+      for (const path of paths) {
+        const parsed = await unwrapStr(commands.parseImportFile(path));
+        out.push({ path, name: path.split(/[\\/]/).pop() ?? path, cases: parsed.cases });
       }
-      setOrder(result.order);
-      toast.info(`Placed ${result.matched} of ${order.length} test cases from the file. Apply order to save.`);
+      return out;
+    },
+    onSuccess: (files) => {
+      if (files.length === 0) return;
+      setOrderFiles((cur) => {
+        const known = new Set((cur ?? []).map((f) => f.path));
+        return [...(cur ?? []), ...files.filter((f) => !known.has(f.path))];
+      });
     },
     onError: (e) => toast.error(`Could not read the file: ${e.message ?? e}`),
   });
 
-  const busy = apply.isPending || fromFile.isPending;
+  const busy = apply.isPending || pickFiles.isPending;
 
   if (cases.isLoading) return <ScanProgress label="Loading test cases" className="my-2" />;
   if (cases.isError) return <p className="my-2 text-sm text-danger">{cases.error.message}</p>;
@@ -149,9 +152,9 @@ export default function SuiteCases({
           <IconUndo aria-hidden />
           Reset
         </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => fromFile.mutate()}>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => pickFiles.mutate()}>
           <IconImport aria-hidden />
-          {fromFile.isPending ? "Reading file" : "Apply tester order from file"}
+          {pickFiles.isPending ? "Reading files" : "Apply order from files"}
         </Button>
         <label className="ml-2 flex items-center gap-2 text-xs text-muted">
           <Switch checked={grouped} onCheckedChange={setGroupedAndRemember} ariaLabel="Group by title" />
@@ -203,6 +206,21 @@ export default function SuiteCases({
             Reset
           </Button>
         </div>
+      )}
+      {orderFiles && orderFiles.length > 0 && (
+        <FileOrderDialog
+          suiteCases={order}
+          files={orderFiles}
+          onAddFiles={() => pickFiles.mutate()}
+          onClose={() => setOrderFiles(null)}
+          onApply={(next, placedTotal) => {
+            setOrder(next);
+            setOrderFiles(null);
+            toast.info(
+              `Placed ${placedTotal} of ${order.length} test cases from ${orderFiles.length === 1 ? "1 file" : `${orderFiles.length} files`}. Apply order to save.`,
+            );
+          }}
+        />
       )}
     </div>
   );

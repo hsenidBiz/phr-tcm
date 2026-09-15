@@ -159,9 +159,3 @@ export function orderFromFiles(
   const rest = current.filter((c) => !taken.has(c.id));
   return { order: [...blocks, ...rest], placed, duplicates };
 }
-
-/** Removed in Task 4 of the suite-ordering plan - SuiteCases still imports it. */
-export const orderFromFile = (current: SuiteCase[], fileCases: Array<{ update_id: number | null; tester_order?: number | null }>) => {
-  const r = orderFromFiles(current, [{ name: "", cases: fileCases }]);
-  return { order: r.order, matched: r.placed[0] ?? 0 };
-};
