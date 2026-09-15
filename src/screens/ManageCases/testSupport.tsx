@@ -52,6 +52,8 @@ const point = (id: number, name: string, config = "Windows 10") => ({
 export function mountScreen(
   extra: (cmd: string, args: unknown) => unknown = () => undefined,
   pbi: PbiHit | null = null,
+  focus: { planId: number; suiteId: number } | null = null,
+  onFocusHandled: () => void = () => {},
 ) {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC((cmd, args) => {
@@ -76,14 +78,14 @@ export function mountScreen(
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { rerender: rtlRerender } = render(
     <QueryClientProvider client={qc}>
-      <ManageCases org="acme" project="Web" pbi={pbi} />
+      <ManageCases org="acme" project="Web" pbi={pbi} focus={focus} onFocusHandled={onFocusHandled} />
     </QueryClientProvider>,
   );
   /** Re-render the same tree with a newly picked PBI (or none). */
   const rerender = (nextPbi: PbiHit | null) =>
     rtlRerender(
       <QueryClientProvider client={qc}>
-        <ManageCases org="acme" project="Web" pbi={nextPbi} />
+        <ManageCases org="acme" project="Web" pbi={nextPbi} focus={focus} onFocusHandled={onFocusHandled} />
       </QueryClientProvider>,
     );
   return { calls, rerender };

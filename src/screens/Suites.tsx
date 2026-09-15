@@ -97,7 +97,7 @@ function SuitePoints({
 
 type SuiteAction = { planId: number; suiteIds: number[]; label: string };
 
-/** The v1 Suite Lookup browser: plan -> multi-level suite tree (plans with
+/** The v1 Search Suites browser: plan -> multi-level suite tree (plans with
  * no suites are hidden - the v1 rule). Folders collapse; a suite click
  * shows its points; folders and suites can be viewed in the browser or
  * handed to Update Test Cases; requirement suites also jump to Run. */
@@ -106,11 +106,15 @@ export default function Suites({
   project,
   onOpenPbi,
   onEditCases,
+  onManageSuite,
 }: {
   org: string;
   project: string;
   onOpenPbi?: (pbi: { id: number; title: string }, target: "edit" | "run") => void;
   onEditCases?: (label: string, caseIds: number[]) => void;
+  /** Hand this suite to Suite Management, which opens its plan with the
+   * suite unfolded. */
+  onManageSuite?: (planId: number, suiteId: number) => void;
 }) {
   const qc = useQueryClient();
   const [openSuite, setOpenSuite] = useState<number | null>(null);
@@ -365,6 +369,7 @@ export default function Suites({
               <Copy size={13} />
             </span>
             {chip("View", () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
+            {onManageSuite && chip("Manage", () => onManageSuite(planId, s.id))}
             {onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? (
               <>
                 {chip("Edit cases", () =>

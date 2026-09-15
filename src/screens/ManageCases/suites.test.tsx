@@ -33,10 +33,13 @@ test("selecting cases in a plan enables Copy to suite for that plan only; copyin
   fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
   expect(within(auth).getByText("2 selected")).toBeInTheDocument();
   expect(within(billing).queryByText(/selected/)).not.toBeInTheDocument();
-  // A target is needed: static suites of this plan (root included), never the PBI suite.
+  // A target is needed: static suites of this plan (root included), never
+  // the PBI suite. The list is searchable - a project's suites run long.
   await openSelect(auth, "Copy to");
-  const labels = screen.getAllByRole("option").map((o) => o.textContent);
-  expect(labels).toEqual(["Pick a suite", "Plan root", "Regression", "    Smoke"]);
+  const labels = screen.getAllByRole("option").map((o) => o.textContent?.trim());
+  expect(labels).toEqual(["Plan root", "Regression", "Smoke"]);
+  fireEvent.change(screen.getByPlaceholderText("Search…"), { target: { value: "regr" } });
+  expect(screen.getAllByRole("option").map((o) => o.textContent?.trim())).toEqual(["Regression"]);
   fireEvent.click(screen.getByRole("option", { name: "Regression" }));
   fireEvent.click(within(auth).getByRole("button", { name: "Copy to suite" }));
 
@@ -47,6 +50,35 @@ test("selecting cases in a plan enables Copy to suite for that plan only; copyin
   expect(toast.success).toHaveBeenCalledWith("Copied 2 test cases to Regression. They stay where they were.");
   // The selection is spent, and the target suite is read again if it is open.
   await waitFor(() => expect(within(auth).queryByText(/selected/)).not.toBeInTheDocument());
+});
+
+test("changing the picker mid-copy still names and invalidates the suite that was actually targeted (regression)", async () => {
+  let resolveAdd: (cases: number[]) => void = () => {};
+  const pending = new Promise<number[]>((resolve) => {
+    resolveAdd = resolve;
+  });
+  const { calls } = mountScreen((cmd) => (cmd === "add_cases_to_suite" ? pending : undefined));
+  const l = await expandSuite("PBI 42 suite");
+  const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
+
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
+  await openSelect(auth, "Copy to");
+  fireEvent.click(screen.getByRole("option", { name: "Regression" }));
+  fireEvent.click(within(auth).getByRole("button", { name: "Copy to suite" }));
+
+  await waitFor(() => {
+    const add = calls.find((c) => c.cmd === "add_cases_to_suite");
+    expect(add?.args).toEqual({ organization: "acme", project: "Web", planId: 9, suiteId: 91, caseIds: [201, 203] });
+  });
+
+  // Copy is still in flight (the mock hasn't resolved yet): change the picker.
+  await openSelect(auth, "Copy to");
+  fireEvent.click(screen.getByRole("option", { name: "Smoke" }));
+
+  resolveAdd([201, 203]);
+  await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  expect(toast.success).toHaveBeenCalledWith("Copied 2 test cases to Regression. They stay where they were.");
 });
 
 test("selecting in a second plan starts a new selection", async () => {
@@ -146,6 +178,29 @@ test("Clear selection in a plan's header drops the selection and unchecks its ro
   fireEvent.click(within(auth).getByRole("button", { name: "Clear selection" }));
   expect(within(auth).queryByText(/selected/)).not.toBeInTheDocument();
   expect(within(l).getByRole("checkbox", { name: "Select #201" })).not.toBeChecked();
+});
+
+test("New test suite is hidden only when Azure DevOps says no", async () => {
+  // A clear no: the control goes away.
+  mountScreen((cmd) => (cmd === "can_create_test_suites" ? false : undefined));
+  const auth = await screen.findByRole("region", { name: "Auth - Test Plan" });
+  await waitFor(() =>
+    expect(within(auth).queryByRole("button", { name: /New test suite/i })).not.toBeInTheDocument(),
+  );
+});
+
+test("an unanswerable permission check leaves New test suite in place", async () => {
+  // null = could not ask. The button stays; the create itself refuses.
+  const { calls } = mountScreen((cmd) => (cmd === "can_create_test_suites" ? null : undefined));
+  const auth = await screen.findByRole("region", { name: "Auth - Test Plan" });
+  // Wait for the answer to actually land before asserting: right after the
+  // region appears, the query is still loading (data === undefined), so an
+  // assertion here would pass just as well against a falsiness bug like
+  // `!mayCreate.data`. Only once the `null` answer has been applied does
+  // this prove the fail-open posture rather than the loading state.
+  await waitFor(() => expect(calls.some((c) => c.cmd === "can_create_test_suites")).toBe(true));
+  await new Promise((r) => setTimeout(r, 0));
+  expect(within(auth).getByRole("button", { name: /New test suite/i })).toBeInTheDocument();
 });
 
 test("a suite's header count is its own, not the whole plan's selection", async () => {

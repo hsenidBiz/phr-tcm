@@ -12,6 +12,9 @@ export default defineConfig({
     // React failed with "Cannot read properties of null (reading
     // 'useState')" - two copies of React in one run. A worktree's tests
     // belong to that worktree's own run, never to the release gate here.
-    exclude: [...configDefaults.exclude, ".claude/**"],
+    // `**/` because a worktree can sit under a subdirectory too: one at
+    // `v2/.claude/worktrees/` slipped past a root-anchored `.claude/**`
+    // and failed the gate on untouched main with that same React error.
+    exclude: [...configDefaults.exclude, "**/.claude/**"],
   },
 });

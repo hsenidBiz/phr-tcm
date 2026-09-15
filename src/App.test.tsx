@@ -79,7 +79,7 @@ test("sidebar shows the v1 tabs and switches screens", async () => {
   expect(await screen.findByText("a@b.com")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
 
-  for (const tab of ["Import File", "Update Test Cases", "Run Tests", "Suite Lookup"]) {
+  for (const tab of ["Import File", "Update Test Cases", "Run Tests", "Search Suites"]) {
     fireEvent.click(screen.getByRole("button", { name: tab }));
     expect(screen.getByRole("heading", { name: tab })).toBeInTheDocument();
   }
@@ -169,7 +169,7 @@ test("Ctrl+2 jumps to Import File; Ctrl+Shift+M toggles Work Manager", async () 
 // autorun, suites, manage, ai (9 rows) - the Ctrl+N shortcut order must
 // match it row for row, or a number opens the wrong screen and the last
 // row loses its shortcut entirely.
-test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Suite Lookup, Ctrl+8 to Suite Management and Ctrl+9 to AI Bridge", async () => {
+test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Search Suites, Ctrl+8 to Suite Management and Ctrl+9 to AI Bridge", async () => {
   signedInMocks();
   renderApp();
   await screen.findByText("a@b.com");
@@ -180,8 +180,8 @@ test("Ctrl+6 jumps to Auto Run, Ctrl+7 to Suite Lookup, Ctrl+8 to Suite Manageme
   expect(screen.getByText("In Development")).toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "7", ctrlKey: true });
-  expect(screen.getByRole("heading", { name: "Suite Lookup" })).toBeInTheDocument();
-  // Suite Lookup is finished, so it carries no pill.
+  expect(screen.getByRole("heading", { name: "Search Suites" })).toBeInTheDocument();
+  // Search Suites is finished, so it carries no pill.
   expect(screen.queryByText("In Development")).not.toBeInTheDocument();
 
   fireEvent.keyDown(window, { key: "8", ctrlKey: true });
@@ -758,11 +758,11 @@ test("the tour hands the app back to the section it was started from", async () 
   expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
 });
 
-// Suite Lookup can hand a set of cases to Update Test Cases; that handoff
+// Search Suites can hand a set of cases to Update Test Cases; that handoff
 // is App state, not a saved preference, and the tour clears it on its way
 // through (every "cases" stop does). It is captured and put back with
 // everything else - which nothing was asserting.
-test("the tour gives the Suite Lookup handoff back", async () => {
+test("the tour gives the Search Suites handoff back", async () => {
   localStorage.setItem(
     "tcm-v2-prefs",
     JSON.stringify({
@@ -813,7 +813,7 @@ test("the tour gives the Suite Lookup handoff back", async () => {
   await screen.findByText("Regression");
 
   fireEvent.click(screen.getAllByText("Edit cases")[0]);
-  const handedOver = "Showing cases handed over from Suite Lookup.";
+  const handedOver = "Showing cases handed over from Search Suites.";
   expect(await screen.findByText(handedOver)).toBeInTheDocument();
 
   await startTour();

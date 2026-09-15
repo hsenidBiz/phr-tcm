@@ -182,6 +182,14 @@ pub fn export_queue_to_html(
         } else {
             String::new()
         },
+        // Same idea, for findings: a button that hides nothing is just
+        // another thing to read.
+        if queue.iter().any(|tc| !tc.findings.is_empty()) {
+            "<button id='tc-findings' type='button' aria-pressed='false'>Hide findings</button>"
+                .to_string()
+        } else {
+            String::new()
+        },
         "<span id='tc-count'></span></div>".into(),
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),
     ];
@@ -293,7 +301,9 @@ pub fn export_queue_to_html(
         // HTML, so an assistant cannot put script on this page.
         if !tc.findings.is_empty() {
             parts.push(format!(
-                "<details class='findings' open><summary>Findings ({})</summary>",
+                "<div class='find-wrap'><details class='findings' open><summary>Findings ({})\
+                 <button type='button' class='find-close' aria-label='Hide these findings' \
+                 title='Hide these findings'>&#215;</button></summary>",
                 tc.findings.len()
             ));
             for f in &tc.findings {
@@ -320,7 +330,7 @@ pub fn export_queue_to_html(
                     esc(&f.title)
                 ));
             }
-            parts.push("</details>".into());
+            parts.push("</details></div>".into());
         }
 
         if !tc.steps.is_empty() {

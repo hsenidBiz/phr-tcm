@@ -21,8 +21,23 @@ const NONE_EXPANDED: number[] = [];
  * cases underneath. Cases are selected across a plan's suites and copied
  * into another suite or a new one; each suite's order can be changed and
  * saved. A PBI picked in the bar narrows the view to the plan that holds
- * its suite, with that suite already open. */
-export default function ManageCases({ org, project, pbi }: { org: string; project: string; pbi: PbiHit | null }) {
+ * its suite, with that suite already open. A suite handed over from
+ * Search Suites' Manage chip wins over that PBI narrowing while it lasts. */
+export default function ManageCases({
+  org,
+  project,
+  pbi,
+  focus,
+  onFocusHandled,
+}: {
+  org: string;
+  project: string;
+  pbi: PbiHit | null;
+  /** A suite the user just chose in Search Suites. It wins over the PBI in
+   * the bar: it is the thing they clicked. */
+  focus?: { planId: number; suiteId: number } | null;
+  onFocusHandled?: () => void;
+}) {
   const plans = useQuery({
     queryKey: plansSuitesKey(org, project),
     ...persistentQuery({
@@ -37,8 +52,8 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
 
   const [selection, setSelection] = useState<Selection | null>(null);
   const [showAll, setShowAll] = useState(false);
-  // A new PBI in the bar narrows the view again.
-  useEffect(() => setShowAll(false), [pbi?.id]);
+  // A new PBI in the bar, or a newly handed-over suite, narrows the view again.
+  useEffect(() => setShowAll(false), [pbi?.id, focus?.planId, focus?.suiteId]);
 
   /** The plan holding the PBI's requirement suite, and that suite. */
   const pbiPlan = useMemo(() => {
@@ -50,7 +65,27 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
     return null;
   }, [pbi, plans.data]);
 
-  const visible = pbiPlan && !showAll ? [pbiPlan.plan] : (plans.data ?? []);
+  /** The plan the focused suite lives in, if it is still in the tree - the
+   * PLAN existing is not enough: the suite itself must still be one of
+   * its suites, or there is nothing for the focus to expand. */
+  const focusPlan = useMemo(() => {
+    if (!focus || !plans.data) return null;
+    return (
+      plans.data.find(
+        ({ plan, suites }) => plan.id === focus.planId && suites.some((s) => s.id === focus.suiteId),
+      ) ?? null
+    );
+  }, [focus, plans.data]);
+
+  // A suite handed over from a deleted plan (or one Azure DevOps has since
+  // removed) has nothing to show - fall back to the ordinary view rather
+  // than an empty screen, and let the caller know it was handled.
+  useEffect(() => {
+    if (focus && plans.data && !focusPlan) onFocusHandled?.();
+  }, [focus, plans.data, focusPlan, onFocusHandled]);
+
+  const visible =
+    focusPlan && !showAll ? [focusPlan] : pbiPlan && !showAll ? [pbiPlan.plan] : (plans.data ?? []);
 
   /** When the selection's plan has been narrowed out of view (the user
    * picked a PBI whose plan differs from the one holding the selection),
@@ -67,6 +102,8 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
   // PBI whose suite sits in the SAME plan as before still produces a
   // fresh array `PlanTable` can react to (its effect keys off identity).
   const pbiExpanded = useMemo(() => (pbiPlan ? [pbiPlan.suiteId] : NONE_EXPANDED), [pbiPlan?.suiteId]);
+  // Same idea, for the suite handed over from Search Suites.
+  const focusExpanded = useMemo(() => (focus ? [focus.suiteId] : NONE_EXPANDED), [focus?.suiteId]);
 
   const onToggle = (planId: number, cases: SuiteCase[], on: boolean) =>
     setSelection((s) => toggleSelection(s, planId, cases, on));
@@ -81,19 +118,29 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
 
   return (
     <div className="space-y-3">
-      {pbi && plans.data && (
+      {focus && focusPlan && !showAll ? (
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
-          <span>
-            {pbiPlan
-              ? `Showing the plan that holds PBI #${pbi.id}.`
-              : `PBI #${pbi.id} has no test suite yet. Showing every plan.`}
-          </span>
-          {pbiPlan && (
-            <Button size="sm" variant="ghost" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? "Show only this PBI's plan" : "Show all plans"}
-            </Button>
-          )}
+          <span>Showing the suite you picked in Search Suites.</span>
+          <Button size="sm" variant="ghost" onClick={() => onFocusHandled?.()}>
+            {pbi ? "Show this PBI's plan" : "Show all plans"}
+          </Button>
         </div>
+      ) : (
+        pbi &&
+        plans.data && (
+          <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+            <span>
+              {pbiPlan
+                ? `Showing the plan that holds PBI #${pbi.id}.`
+                : `PBI #${pbi.id} has no test suite yet. Showing every plan.`}
+            </span>
+            {pbiPlan && (
+              <Button size="sm" variant="ghost" onClick={() => setShowAll((v) => !v)}>
+                {showAll ? "Show only this PBI's plan" : "Show all plans"}
+              </Button>
+            )}
+          </div>
+        )
       )}
       {hiddenSelection && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
@@ -120,7 +167,13 @@ export default function ManageCases({ org, project, pbi }: { org: string; projec
           project={project}
           plan={plan}
           suites={suites}
-          initiallyExpanded={pbiPlan && pbiPlan.plan.plan.id === plan.id ? pbiExpanded : NONE_EXPANDED}
+          initiallyExpanded={
+            focusPlan && focusPlan.plan.id === plan.id
+              ? focusExpanded
+              : pbiPlan && pbiPlan.plan.plan.id === plan.id
+                ? pbiExpanded
+                : NONE_EXPANDED
+          }
           selection={selection}
           onToggle={onToggle}
           onClearSelection={() => setSelection(null)}

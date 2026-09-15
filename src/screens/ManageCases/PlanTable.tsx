@@ -1,11 +1,11 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, FolderTree } from "lucide-react";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { commands, type PlanWithSuites, type SuiteRef } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Select } from "../../components/ui/select";
+import Combobox from "../../components/ui/combobox";
 import { IconClear, IconCopyToSuite, IconNewSuite } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { unwrap } from "../../lib/ipc";
@@ -85,14 +85,14 @@ export default function PlanTable({
   }, [target, staticTargets]);
 
   const copy = useMutation({
-    mutationFn: () =>
-      unwrap(commands.addCasesToSuite(org, project, plan.id, Number(target), selectedCases.map((c) => c.id))),
-    onSuccess: (added) => {
-      const name = staticTargets.find((t) => String(t.id) === target)?.name ?? "the suite";
+    mutationFn: (suiteId: number) =>
+      unwrap(commands.addCasesToSuite(org, project, plan.id, suiteId, selectedCases.map((c) => c.id))),
+    onSuccess: (added, suiteId) => {
+      const name = staticTargets.find((t) => t.id === suiteId)?.name ?? "the suite";
       toast.success(
         `Copied ${added.length} test case${added.length === 1 ? "" : "s"} to ${name}. ${added.length === 1 ? "It stays" : "They stay"} where ${added.length === 1 ? "it was" : "they were"}.`,
       );
-      qc.invalidateQueries({ queryKey: suiteCasesKey(org, project, plan.id, Number(target)) });
+      qc.invalidateQueries({ queryKey: suiteCasesKey(org, project, plan.id, suiteId) });
       onClearSelection();
     },
     onError: (e) => toast.error(`Could not copy the cases: ${e.message}`),
@@ -107,6 +107,23 @@ export default function PlanTable({
     });
 
   const busy = copy.isPending;
+
+  // Creating a suite needs "Manage test suites" on the plan's area. Asked
+  // per plan, because area permissions are per node. Hidden ONLY on a
+  // clear no: a check that could not be made must not take away a button
+  // the user is entitled to, and the create itself refuses with a message.
+  //
+  // Memory-only on purpose (react-query's default cache, no persistence):
+  // caching a stale "no" across restarts would hide the button after an
+  // admin fixed the user's access.
+  const mayCreate = useQuery({
+    queryKey: ["can-create-suites", org, project, plan.area_path],
+    queryFn: () => unwrap(commands.canCreateTestSuites(org, project, plan.area_path)),
+    enabled: Boolean(org && project),
+    staleTime: 60 * 60_000,
+    retry: false,
+  });
+  const hideNewSuite = mayCreate.data === false;
 
   return (
     <section aria-label={plan.name} className="rounded-md border border-border bg-surface">
@@ -124,33 +141,32 @@ export default function PlanTable({
             </Button>
           </>
         )}
-        <Select
-          aria-label="Copy to"
-          triggerClassName="py-1.5"
-          value={target}
-          disabled={busy || staticTargets.length === 0}
-          onChange={(e) => setTarget(e.target.value)}
-        >
-          <option value="">Pick a suite</option>
-          {staticTargets.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label}
-            </option>
-          ))}
-        </Select>
+        {staticTargets.length > 0 && (
+          <Combobox
+            ariaLabel="Copy to"
+            className="min-w-56"
+            triggerClassName="py-1"
+            placeholder="Pick a suite"
+            value={target}
+            onChange={setTarget}
+            items={staticTargets.map((t) => ({ value: String(t.id), label: t.label }))}
+          />
+        )}
         <Button
           size="sm"
           variant="ghost"
           disabled={busy || !target || selectedCases.length === 0}
-          onClick={() => copy.mutate()}
+          onClick={() => copy.mutate(Number(target))}
         >
           <IconCopyToSuite aria-hidden />
           {copy.isPending ? "Copying" : "Copy to suite"}
         </Button>
-        <Button size="sm" variant="ghost" disabled={busy || staticTargets.length === 0} onClick={() => setNewOpen(true)}>
-          <IconNewSuite aria-hidden />
-          New test suite
-        </Button>
+        {!hideNewSuite && (
+          <Button size="sm" variant="ghost" disabled={busy || staticTargets.length === 0} onClick={() => setNewOpen(true)}>
+            <IconNewSuite aria-hidden />
+            New test suite
+          </Button>
+        )}
       </header>
       <ul className="p-1">
         {rows.map(({ suite, depth }) => {

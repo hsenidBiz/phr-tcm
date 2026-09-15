@@ -4,24 +4,34 @@ import { cn } from "../../lib/cn";
 
 /** Searchable single-select dropdown. Click to open a filterable list;
  * type to narrow; Enter/click selects. When `allowCustom`, a value not in
- * the list can still be entered (free-entry fields). */
+ * the list can still be entered (free-entry fields). Takes either plain
+ * strings (`options`) or value/label pairs (`items`), for lists whose
+ * labels are not their values. */
 export default function Combobox({
   value,
   onChange,
-  options,
+  options = [],
+  items,
   placeholder = "Select…",
   ariaLabel,
   className,
+  triggerClassName,
   allowCustom = false,
   loading = false,
   details,
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options?: string[];
+  /** Value/label pairs, for lists whose labels are not their values (ids,
+   * indented names). When given, `options` is ignored: search matches the
+   * label, and `onChange` receives the value. */
+  items?: Array<{ value: string; label: string }>;
   placeholder?: string;
   ariaLabel?: string;
   className?: string;
+  /** Extra classes for the trigger button (width, padding). */
+  triggerClassName?: string;
   allowCustom?: boolean;
   loading?: boolean;
   /** Right-aligned faint annotation per option (e.g. a sprint's date
@@ -49,11 +59,16 @@ export default function Combobox({
   }, [open]);
 
   const q = query.trim().toLowerCase();
-  const filtered = useMemo(
-    () => (q ? options.filter((o) => o.toLowerCase().includes(q)) : options),
-    [options, q],
+  const rows = useMemo(
+    () => items ?? options.map((o) => ({ value: o, label: o })),
+    [items, options],
   );
-  const showCustom = allowCustom && query.trim() && !options.some((o) => o.toLowerCase() === q);
+  const filtered = useMemo(
+    () => (q ? rows.filter((r) => r.label.toLowerCase().includes(q)) : rows),
+    [rows, q],
+  );
+  const showCustom = allowCustom && query.trim() && !rows.some((r) => r.label.toLowerCase() === q);
+  const selectedLabel = rows.find((r) => r.value === value)?.label ?? value;
 
   const commit = (v: string) => {
     onChange(v);
@@ -64,6 +79,9 @@ export default function Combobox({
     <div ref={ref} className={cn("relative", className)}>
       <button
         type="button"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
         aria-label={ariaLabel}
         className={cn(
           "flex w-full items-center justify-between gap-2 rounded-md border border-border bg-surface px-2 py-1.5 text-left text-sm transition-colors hover:border-border-strong focus:border-accent focus:outline-none",
@@ -71,11 +89,12 @@ export default function Combobox({
           // trigger keeps the accent explicitly so every dropdown shows
           // the same lit border as a focused Input.
           open && "border-accent",
+          triggerClassName,
         )}
         onClick={() => setOpen((o) => !o)}
       >
         <span className={cn("truncate", value ? "text-text" : "text-faint")}>
-          {value || placeholder}
+          {selectedLabel || placeholder}
         </span>
         <span className="flex shrink-0 items-center gap-1">
           {value && (
@@ -121,7 +140,7 @@ export default function Combobox({
                   setActive((a) => Math.max(a - 1, 0));
                 } else if (e.key === "Enter") {
                   e.preventDefault();
-                  if (active < filtered.length) commit(filtered[active]);
+                  if (active < filtered.length) commit(filtered[active].value);
                   else if (showCustom) commit(query.trim());
                 } else if (e.key === "Escape") {
                   setOpen(false);
@@ -129,27 +148,30 @@ export default function Combobox({
               }}
             />
           </div>
-          <ul className="max-h-56 overflow-y-auto p-1">
+          <ul role="listbox" aria-label={ariaLabel} className="max-h-56 overflow-y-auto p-1">
             {loading && <li className="px-2 py-1.5 text-sm text-muted">Loading…</li>}
             {!loading && filtered.length === 0 && !showCustom && (
               <li className="px-2 py-1.5 text-sm text-muted">No matches</li>
             )}
-            {filtered.map((o, i) => (
-              <li key={o}>
+            {filtered.map((r, i) => (
+              <li key={r.value}>
                 <button
+                  type="button"
+                  role="option"
+                  aria-selected={r.value === value}
                   className={cn(
                     "flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm",
                     i === active ? "bg-accent-soft text-accent" : "text-text hover:bg-surface-2",
                   )}
                   onMouseEnter={() => setActive(i)}
-                  onClick={() => commit(o)}
+                  onClick={() => commit(r.value)}
                 >
-                  <span className="truncate">{o}</span>
+                  <span className="truncate">{r.label}</span>
                   <span className="ml-2 flex shrink-0 items-center gap-1.5">
-                    {details?.[o] && (
-                      <span className="whitespace-nowrap text-xs text-faint">{details[o]}</span>
+                    {details?.[r.label] && (
+                      <span className="whitespace-nowrap text-xs text-faint">{details[r.label]}</span>
                     )}
-                    {o === value && <Check size={13} className="shrink-0 text-accent" />}
+                    {r.value === value && <Check size={13} className="shrink-0 text-accent" />}
                   </span>
                 </button>
               </li>

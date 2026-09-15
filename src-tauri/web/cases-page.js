@@ -37,59 +37,85 @@
     return apply;
   }
 
-  // --- Reviewer notes on/off. One class on <body>; the CSS does the rest.
-  function wireNotesToggle() {
-    var notesBtn = document.getElementById('tc-notes');
-    if (!notesBtn) return;
-    var KEY = 'tcm-report-notes-off';
+  // --- Reviewer notes / findings on/off. One class on <body>; the CSS does
+  // the rest. Both blocks work the same way, so they share this.
+  function wireBlockToggle(opts) {
+    var btn = document.getElementById(opts.buttonId);
+    if (!btn) return;
     // The page is opened from a temp file, and a file:// origin can refuse
     // storage outright - so the preference is best-effort and the button
     // still works without it.
     function remember(off) {
-      try { localStorage.setItem(KEY, off ? '1' : '0'); } catch (e) {}
+      try { localStorage.setItem(opts.key, off ? '1' : '0'); } catch (e) {}
     }
     function recall() {
-      try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+      try { return localStorage.getItem(opts.key) === '1'; } catch (e) { return false; }
     }
     function paint(off) {
-      document.body.classList.toggle('notes-off', off);
-      notesBtn.setAttribute('aria-pressed', off ? 'true' : 'false');
-      notesBtn.textContent = off ? 'Show reviewer notes' : 'Hide reviewer notes';
+      document.body.classList.toggle(opts.bodyClass, off);
+      btn.setAttribute('aria-pressed', off ? 'true' : 'false');
+      btn.textContent = off ? opts.showLabel : opts.hideLabel;
     }
     paint(recall());
-    if (!notesBtn.dataset.wired) {
-      notesBtn.dataset.wired = '1';
-      notesBtn.addEventListener('click', function () {
-        var off = !document.body.classList.contains('notes-off');
+    if (!btn.dataset.wired) {
+      btn.dataset.wired = '1';
+      btn.addEventListener('click', function () {
+        var off = !document.body.classList.contains(opts.bodyClass);
         paint(off);
         remember(off);
-        // Show brings EVERY note back, including ones closed one-by-one
+        // Show brings EVERY block back, including ones closed one-by-one
         // with their own x - one button that undoes everything, rather
-        // than the reviewer having to remember which x they clicked where.
+        // than the reader having to remember which x they clicked where.
         if (!off) {
-          var closed = document.querySelectorAll('.rev-wrap.rev-closed');
-          for (var i = 0; i < closed.length; i++) closed[i].classList.remove('rev-closed');
+          var closed = document.querySelectorAll(opts.closedSelector);
+          for (var i = 0; i < closed.length; i++) closed[i].classList.remove(opts.closedClass);
         }
       });
     }
   }
 
+  function wireNotesToggle() {
+    wireBlockToggle({
+      buttonId: 'tc-notes',
+      key: 'tcm-report-notes-off',
+      bodyClass: 'notes-off',
+      closedSelector: '.rev-wrap.rev-closed',
+      closedClass: 'rev-closed',
+      hideLabel: 'Hide reviewer notes',
+      showLabel: 'Show reviewer notes',
+    });
+  }
+
+  function wireFindingsToggle() {
+    wireBlockToggle({
+      buttonId: 'tc-findings',
+      key: 'tcm-report-findings-off',
+      bodyClass: 'findings-off',
+      closedSelector: '.find-wrap.find-closed',
+      closedClass: 'find-closed',
+      hideLabel: 'Hide findings',
+      showLabel: 'Show findings',
+    });
+  }
+
   var applyFilter = wireSearch();
   wireNotesToggle();
+  wireFindingsToggle();
 
-  // Each note's own x: collapses just that case's notes, with the same
-  // motion as the global toggle. Session-only on purpose - which single
-  // notes were dismissed is scroll-position-grade state, not a preference.
+  // Each note's/finding's own x: collapses just that case's block, with the
+  // same motion as the global toggle. Session-only on purpose - which single
+  // blocks were dismissed is scroll-position-grade state, not a preference.
   // Delegated on document, so it survives every content swap untouched.
   document.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest ? e.target.closest('.rev-close') : null;
+    var btn = e.target && e.target.closest ? e.target.closest('.rev-close, .find-close') : null;
     if (!btn) return;
-    // The x lives inside a <summary>; without this, hiding the note would
+    // The x lives inside a <summary>; without this, hiding the block would
     // also toggle the disclosure underneath it.
     e.preventDefault();
     e.stopPropagation();
-    var wrap = btn.closest('.rev-wrap');
-    if (wrap) wrap.classList.add('rev-closed');
+    var wrap = btn.closest('.rev-wrap, .find-wrap');
+    if (!wrap) return;
+    wrap.classList.add(wrap.classList.contains('find-wrap') ? 'find-closed' : 'rev-closed');
   });
 
   // --- Live update. The page is a file on disk, so nothing pushes to it -

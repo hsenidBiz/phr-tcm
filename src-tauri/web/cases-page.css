@@ -90,6 +90,16 @@ body.notes-off .rev-wrap, .rev-wrap.rev-closed {
   grid-template-rows: 0fr; opacity: 0; margin: 0; visibility: hidden; }
 body:not(.notes-off) .rev-wrap:not(.rev-closed) { transition-delay: 0s; }
 .rev-wrap > .rev { overflow: hidden; min-height: 0; }
+/* Findings hide the same way the reviewer notes do - an animated grid-row
+   collapse, so a hidden block leaves the tab order instead of blinking out.
+   See the .rev-wrap rules above for why fr units rather than display:none. */
+.find-wrap { display: grid; grid-template-rows: 1fr;
+             transition: grid-template-rows .28s ease, opacity .22s ease,
+                         margin .28s ease, visibility 0s linear .28s; }
+body.findings-off .find-wrap, .find-wrap.find-closed {
+  grid-template-rows: 0fr; opacity: 0; margin: 0; visibility: hidden; }
+body:not(.findings-off) .find-wrap:not(.find-closed) { transition-delay: 0s; }
+.find-wrap > .findings { overflow: hidden; min-height: 0; }
 /* "The cases changed" bar. It offers a refresh rather than taking one:
    reloading under a reviewer costs them their scroll position, every
    section they had opened, and any comment still inside its autosave
@@ -154,10 +164,20 @@ body:not(.notes-off) .rev-wrap:not(.rev-closed) { transition-delay: 0s; }
    and the block should read that way before a word of it is read. */
 .findings{margin:8px 0;padding:8px 12px;border:1px solid color-mix(in srgb, var(--warning) 35%, transparent);border-left:3px solid var(--warning);border-radius:8px;background:color-mix(in srgb, var(--warning) 12%, var(--surface))}
 .finding{border-top-color:color-mix(in srgb, var(--warning) 25%, transparent)}
-.findings > summary{cursor:pointer;list-style:none;font-size:11.5px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--warning)}
+.findings > summary{cursor:pointer;list-style:none;font-size:11.5px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;color:var(--warning);display:flex;align-items:center;gap:4px}
 .findings > summary::-webkit-details-marker{display:none}
 .findings > summary::after{content:' \25be'}
 .findings:not([open]) > summary::after{content:' \25b8'}
+/* The x hides this ONE case's findings; the sticky Hide/Show button works
+   on every block. Same quiet-until-hover treatment as .rev-close, but in
+   the findings' own warning colour. */
+.find-close { margin-left: auto; font: inherit; font-size: 14px; line-height: 1;
+              cursor: pointer; border: 0; border-radius: 4px; padding: 1px 6px;
+              color: var(--faint); background: none; opacity: 0;
+              transition: opacity .15s ease; }
+.findings > summary:hover .find-close, .find-close:focus-visible { opacity: 1; }
+.find-close:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+@media print { .find-close { display: none; } }
 .finding{padding:8px 0;border-top:1px solid var(--border)}
 .finding:first-of-type{border-top:0}
 .finding .meta{display:flex;gap:10px;font-size:11px;opacity:.75;align-items:center}

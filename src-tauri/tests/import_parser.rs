@@ -469,6 +469,59 @@ fn the_report_can_hide_its_reviewer_notes() {
     let plain = std::fs::read_to_string(&path2).unwrap();
     assert!(!plain.contains("id='tc-notes'"), "nothing to hide, so no button");
 }
+
+/// Findings get the same two controls the reviewer notes have: one button
+/// in the sticky bar for all of them, and an x per case. A page of twenty
+/// findings blocks is otherwise a page nobody can read past.
+#[test]
+fn findings_can_be_hidden_from_the_page() {
+    use v2_lib::model::CaseFinding;
+    let with_findings = vec![TestCase {
+        title: "Has findings".into(),
+        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        automation_status: "Not Automated".into(),
+        findings: vec![CaseFinding {
+            kind: "spec".into(),
+            subject: "AC-4".into(),
+            detail: "The spec does not say what happens on a second submit.".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }];
+    let path = tmp_path("findings-toggle.html");
+    export_queue_to_html(&with_findings, &path, "", None, &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    // The toggle belongs in the sticky bar, beside the notes one.
+    let bar = html.split("class='searchbar'").nth(1).expect("search bar");
+    let bar = bar.split("</div>").next().unwrap();
+    assert!(bar.contains("id='tc-findings'"), "toggle belongs in the sticky bar: {bar}");
+    // One class on <body> does the hiding, as an animated grid collapse.
+    assert!(html.contains("body.findings-off .find-wrap"), "{html}");
+    // And each block carries its own named x.
+    assert!(html.contains("class='find-close'"), "{html}");
+    assert!(html.contains("find-closed"), "{html}");
+    assert!(
+        html.contains("aria-label='Hide these findings'"),
+        "the x needs a name for screen readers: {html}"
+    );
+    // Still open by default: a finding behind a closed disclosure is a
+    // finding nobody reads.
+    assert!(html.contains("<details class='findings' open>"), "{html}");
+
+    // No findings anywhere: no button.
+    let without = vec![TestCase {
+        title: "No findings".into(),
+        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        automation_status: "Not Automated".into(),
+        ..Default::default()
+    }];
+    let path2 = tmp_path("findings-toggle-none.html");
+    export_queue_to_html(&without, &path2, "", None, &Default::default()).unwrap();
+    let plain = std::fs::read_to_string(&path2).unwrap();
+    assert!(!plain.contains("id='tc-findings'"), "nothing to hide, so no button");
+}
+
 /// The reviewer-facing half: notes reach the browser page as RENDERED
 /// markdown, in their own panel, and the page still carries the ordinary
 /// comment boxes alongside them.

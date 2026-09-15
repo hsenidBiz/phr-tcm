@@ -173,6 +173,9 @@ test("cache keys are the strings earlier versions stored", () => {
   expect(cacheKeys.workItemDetail("acme", "Web", 2003)).toBe("wi-detail:acme/Web/2003");
   expect(cacheKeys.workItemComments("acme", "Web", 2003)).toBe("wi-comments:acme/Web/2003");
   expect(cacheKeys.plansSuites("acme", "Web")).toBe("plans-suites:acme/Web");
+  // New in this release, so not an earlier version's string - but pinned
+  // from now on, since changing it throws away every reader's copy.
+  expect(cacheKeys.suiteCases("acme", "Web", 9, 91)).toBe("suite-cases:acme/Web/9/91");
   expect(cacheKeys.runHistory("acme", "Web", 7)).toBe("run-history:acme/Web/7");
   expect(cacheKeys.points("acme", "Web", 7, 71)).toBe("points:acme/Web/7/71");
   expect(cacheKeys.boardPrs("acme", "Web")).toBe("board-prs:acme/Web");
@@ -237,7 +240,7 @@ describe("one cache", () => {
     // prefixes cacheKeys owns (React Query keys are arrays - no colon).
     expect(
       offenders(
-        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe):/,
+        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe|suite-cases|suite-seed):/,
       ),
     ).toEqual([]);
   });

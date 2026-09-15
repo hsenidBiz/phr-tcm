@@ -940,10 +940,12 @@ test("a queued update that already has a comment keeps it over the stored note",
   expect(screen.queryByText("Re-check with QA")).not.toBeInTheDocument();
 });
 
-/// Upload order is suite order. A queue whose cases all carry a
-/// tester_order goes out in that order whatever the screen shows, so the
-/// suite - and the runner walking it - read like the run sheet.
-test("an optimized queue is uploaded in tester order, not screen order", async () => {
+/// Upload order is suite order, and the order on screen is the one the
+/// user chose: the Order bar sorts the queue itself, so the send list is
+/// simply the queue. It used to re-sort by tester_order at submit, which
+/// silently overrode "Down the spec" - a file laid out one way landed in
+/// the suite another, with nothing on screen to explain it.
+test("the queue is uploaded in the order on screen, and the Order bar decides that order", async () => {
   let sentTitles: string[] = [];
   mockIPC((cmd, args) => {
     if (cmd === "plugin:event|listen") return 1;
@@ -959,12 +961,28 @@ test("an optimized queue is uploaded in tester order, not screen order", async (
     }
     return undefined;
   });
-  renderQueue([
-    makeCase({ title: "Third on the sheet", tester_order: 3 }),
-    makeCase({ title: "First on the sheet", tester_order: 1 }),
-    makeCase({ title: "Second on the sheet", tester_order: 2 }),
+  // Every case carries a tester_order that disagrees with the file's own
+  // order, and nobody has touched the Order bar: the file's order stands.
+  const { unmount } = renderQueue([
+    makeCase({ title: "Third on the sheet", spec_order: 1, tester_order: 3 }),
+    makeCase({ title: "First on the sheet", spec_order: 2, tester_order: 1 }),
+    makeCase({ title: "Second on the sheet", spec_order: 3, tester_order: 2 }),
   ]);
 
+  fireEvent.click(screen.getByRole("button", { name: /Review 3 test cases/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Yes — create 3/ }));
+  await waitFor(() => expect(sentTitles).toHaveLength(3));
+  expect(sentTitles).toEqual(["Third on the sheet", "First on the sheet", "Second on the sheet"]);
+  unmount();
+
+  // And with "For testing" chosen, THAT is what goes out.
+  sentTitles = [];
+  renderQueue([
+    makeCase({ title: "Third on the sheet", spec_order: 1, tester_order: 3 }),
+    makeCase({ title: "First on the sheet", spec_order: 2, tester_order: 1 }),
+    makeCase({ title: "Second on the sheet", spec_order: 3, tester_order: 2 }),
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "For testing" }));
   fireEvent.click(screen.getByRole("button", { name: /Review 3 test cases/ }));
   fireEvent.click(await screen.findByRole("button", { name: /Yes — create 3/ }));
   await waitFor(() => expect(sentTitles).toHaveLength(3));

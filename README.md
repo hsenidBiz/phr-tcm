@@ -89,20 +89,37 @@ the board's test count.
   paste a screenshot or attach a file. File a Bug from a failure. Submit
   as a new test run under the existing plan.
 
-### Suite Lookup
+### Search Suites
 - The plan's suite folder tree with a search box which prunes and expands
   matches.
 - View any suite or folder as an HTML report, generate an execution
   report, or hand a folder's cases to Update or Run.
 - Plan scans run concurrently and are cached for the session.
+- The Manage chip on a suite jumps straight to it in Suite Management.
 
 ### Suite Management
 - One table per test plan, with every suite and its cases listed
   underneath.
-- Drag cases to re-order them within a suite, then Apply to save the new
-  order.
+- Tick cases and drag any ticked row to move the whole selection together,
+  keeping its order; drag an unticked row to move it alone. Move up / Move
+  down do the same, one step at a time, for keyboard use.
+- Group by title arranges the cases into contiguous groups by their title,
+  each with its own header; a header ticks and drags its whole group like
+  any other block. A-Z groups (shown while grouping is on) puts the groups
+  in alphabetical order, cases keeping their order inside each one.
+  Anything ungrouped trails behind as its own group.
+- Apply order from files takes several files at once: a dialog lists them,
+  each placing as many of this suite's cases as it names; drag the files
+  (or use the arrows) into the order their blocks should take. A file that
+  places none of this suite's cases is flagged rather than refused, and a
+  case named in two files goes with the first. Applying arranges the list
+  on screen — Apply order still has to be pressed to save it.
+- Apply order and Reset stay reachable in a sticky bar at the bottom of a
+  long suite, so you don't have to scroll back up after dragging.
 - Select cases and copy them into another suite, or into a new static
-  suite created on the spot.
+  suite created on the spot. New test suite is hidden only when Azure
+  DevOps explicitly says you may not manage suites there — if the check
+  itself fails, the button stays and the create call is what tells you.
 - Picking a PBI narrows the view down to that PBI's own test plan.
 
 ### AI Bridge

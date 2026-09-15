@@ -141,6 +141,23 @@ pub async fn create_static_suite(
         .await
 }
 
+/// Whether the New test suite control should be offered. `None` = could not
+/// ask; the frontend keeps the button, and the create itself refuses with a
+/// message if Azure DevOps says no.
+#[tauri::command]
+#[specta::specta]
+pub async fn can_create_test_suites(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    area_path: Option<String>,
+) -> Result<Option<bool>, ado::AdoError> {
+    let token = get_fresh_token(&app).await?;
+    Ok(ado::AdoClient::new(token)
+        .may_manage_test_suites(&organization, &project, area_path.as_deref())
+        .await)
+}
+
 /// Copy existing test cases into a suite: they stay wherever they already
 /// were. Returns the ids the server reports as now in the suite.
 #[tauri::command]
