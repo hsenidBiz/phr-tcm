@@ -5,6 +5,7 @@ import { copyText } from "../lib/clipboard";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { toast } from "sonner";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
+import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu";
 import ScanProgress from "../components/ScanProgress";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
@@ -300,6 +301,20 @@ export default function Suites({
         return next;
       });
 
+    const pbiSuite = onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? onOpenPbi : null;
+    const more: MoreAction[] = [
+      ...(onManageSuite ? [{ label: "Manage", onSelect: () => onManageSuite(planId, s.id) }] : []),
+      {
+        label: "Run Tests",
+        onSelect: pbiSuite
+          ? () => pbiSuite({ id: s.requirement_id!, title: s.name }, "run")
+          : // Own points only, not descendants: running is a sitting, and a
+            // folder's whole subtree is a report's job.
+            () => runSuite.mutate({ planId, suiteId: s.id, label: s.name }),
+      },
+      { label: "Report", onSelect: () => report.mutate({ planId, suiteIds: allIds, label: s.name }) },
+    ];
+
     return (
       <li key={s.id} className="cv-row" style={{ "--cv-size": "32px" } as CSSProperties}>
         <button
@@ -369,24 +384,13 @@ export default function Suites({
               <Copy size={13} />
             </span>
             {chip("View", () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
-            {onManageSuite && chip("Manage", () => onManageSuite(planId, s.id))}
-            {onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? (
-              <>
-                {chip("Edit cases", () =>
-                  onOpenPbi({ id: s.requirement_id!, title: s.name }, "edit"),
-                )}
-                {chip("Run", () => onOpenPbi({ id: s.requirement_id!, title: s.name }, "run"))}
-              </>
-            ) : (
-              <>
-                {onEditCases &&
-                  chip("Edit cases", () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))}
-                {/* Own points only, not descendants: running is a sitting,
-                    and a folder's whole subtree is a report's job. */}
-                {chip("Run", () => runSuite.mutate({ planId, suiteId: s.id, label: s.name }))}
-              </>
-            )}
-            {chip("Report", () => report.mutate({ planId, suiteIds: allIds, label: s.name }))}
+            {pbiSuite
+              ? chip("Edit cases", () => pbiSuite({ id: s.requirement_id!, title: s.name }, "edit"))
+              : onEditCases &&
+                chip("Edit cases", () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))}
+            {/* Manage, Run Tests and Report are the extra options, folded
+                into one chip so the row reads as View and Edit first. */}
+            <MoreActionsMenu label={`More actions for ${s.name}`} actions={more} disabled={busy} />
           </span>
         </button>
         {!isFolder && openSuite === s.id && (

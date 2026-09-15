@@ -95,8 +95,12 @@ test("Manage hands the suite to Suite Management", async () => {
   renderSuites(undefined, undefined, (planId, suiteId) => managed.push([planId, suiteId]));
 
   await screen.findByText("PBI 42 suite");
-  fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+  // Manage is one of the extra options behind the row's More chip.
+  expect(screen.queryByRole("button", { name: "Manage" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 42 suite" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
   expect(managed).toEqual([[9, 91]]);
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
 
 test("a folder row carries Manage too - a static suite can hold cases as well as child suites", async () => {
@@ -123,8 +127,12 @@ test("a folder row carries Manage too - a static suite can hold cases as well as
 
   const folderRow = await screen.findByText("Regression");
   const row = folderRow.closest("button")!;
-  fireEvent.click(within(row).getByRole("button", { name: "Manage" }));
+  fireEvent.click(within(row).getByRole("button", { name: "More actions for Regression" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
   expect(managed).toEqual([[9, 95]]);
+  // Picking from the menu must not also fold or unfold the row under it:
+  // the menu's clicks bubble through the row in React's tree.
+  expect(screen.queryByText("PBI 50 suite")).not.toBeInTheDocument();
 });
 
 test("folders build a collapsible tree from parent links", async () => {
@@ -293,7 +301,8 @@ test("a static suite's Run chip opens a suite-scoped runner session", async () =
   renderSuites();
   await screen.findByText("Sprint stories");
 
-  fireEvent.click(screen.getByText("Run"));
+  fireEvent.click(screen.getByRole("button", { name: "More actions for Sprint stories" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Run Tests" }));
   await vi.waitFor(() => {
     const raw = localStorage.getItem("tcm-v2-runner-session");
     expect(raw).toBeTruthy();
@@ -379,4 +388,34 @@ test("the scan progress bar shows only while there is no tree yet", async () => 
   // ...and the scan bar must NOT be over it.
   expect(screen.queryByText(/Scanning test plans|Loading test plans/)).not.toBeInTheDocument();
   release();
+});
+
+/// Manage, Run Tests and Report are extra options: one chip holds them, so
+/// the row shows View and Edit cases, and the chip opens on hover as well as
+/// on click.
+test("a row shows View and Edit cases, with Manage, Run Tests and Report behind More", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 93, name: "Sprint stories", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+          ],
+        },
+      ];
+  });
+  renderSuites(() => {}, undefined, () => {});
+  const name = await screen.findByText("Sprint stories");
+  const row = name.closest("button")!;
+  expect(within(row).getByText("View")).toBeInTheDocument();
+  expect(within(row).getByText("Edit cases")).toBeInTheDocument();
+  for (const gone of ["Manage", "Run", "Run Tests", "Report"]) {
+    expect(within(row).queryByText(gone)).not.toBeInTheDocument();
+  }
+
+  const more = within(row).getByRole("button", { name: "More actions for Sprint stories" });
+  fireEvent.mouseEnter(more);
+  const menu = screen.getByRole("menu", { name: "More actions for Sprint stories" });
+  expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage", "Run Tests", "Report"]);
 });

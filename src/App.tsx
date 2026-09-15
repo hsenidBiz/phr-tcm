@@ -173,7 +173,7 @@ export default function App() {
   const [caseSelection, setCaseSelection] = useState<{ label: string; caseIds: number[] } | null>(
     null,
   );
-  // A suite handed over from Search Suites' Manage chip. Cleared once
+  // A suite handed over from Search Suites' Manage option. Cleared once
   // Suite Management has it, so going back to the tab later shows the
   // ordinary PBI-driven view rather than reopening an old click.
   const [manageFocus, setManageFocus] = useState<{ planId: number; suiteId: number } | null>(null);

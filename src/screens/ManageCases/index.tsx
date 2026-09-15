@@ -22,7 +22,7 @@ const NONE_EXPANDED: number[] = [];
  * into another suite or a new one; each suite's order can be changed and
  * saved. A PBI picked in the bar narrows the view to the plan that holds
  * its suite, with that suite already open. A suite handed over from
- * Search Suites' Manage chip wins over that PBI narrowing while it lasts. */
+ * Search Suites' Manage option wins over that PBI narrowing while it lasts. */
 export default function ManageCases({
   org,
   project,
