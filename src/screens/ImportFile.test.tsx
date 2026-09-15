@@ -613,10 +613,16 @@ test("a picked file is copied into the repo's .test-cases and imported from ther
 /// not the one being followed.
 test("copying on import stops watching the original file", async () => {
   localStorage.setItem("tcm-v2-working-dir", "D:\\repo");
+  // The stored stamp must match what `file_stamp` reports below. A stale
+  // one is a file "edited while the app was closed", and the mount-time
+  // check would (correctly) sync its case into the queue - racing the
+  // import's own append, so the row showed up once or twice depending on
+  // which microtask chain finished first. That sync is its own feature;
+  // this test is about the watch entry, so the file is unchanged here.
   localStorage.setItem(
     "tcm-v2-watch:acme/42",
     JSON.stringify([
-      { path: "C:\\Downloads\\cases.json", stamp: "old", snapshot: [oneCase] },
+      { path: "C:\\Downloads\\cases.json", stamp: "abc", snapshot: [oneCase] },
     ]),
   );
   const unwatched: string[] = [];
