@@ -36,6 +36,23 @@ export function moveBlock(list: SuiteCase[], ids: ReadonlySet<number>, targetId:
   return [...rest.slice(0, at), ...block, ...rest.slice(at)];
 }
 
+/** As moveBlock, but always inserts the block BEFORE targetId, regardless
+ * of which direction the block came from. moveBlock's up/down asymmetry
+ * (after the target from above, before it from below) is right for an
+ * ordinary row - it drops in like any other item - but a section header
+ * is a boundary, not a row: dropping a block onto it must place the block
+ * before that section every time, or a drop from above ends up INSIDE
+ * the section instead of ahead of it. A target inside the block, or not
+ * in the list, is a no-op (a fresh copy either way). */
+export function moveBlockBefore(list: SuiteCase[], ids: ReadonlySet<number>, targetId: number): SuiteCase[] {
+  const rest = list.filter((c) => !ids.has(c.id));
+  const restTargetAt = rest.findIndex((c) => c.id === targetId);
+  if (restTargetAt < 0) return list.slice();
+  const block = list.filter((c) => ids.has(c.id));
+  if (block.length === 0) return list.slice();
+  return [...rest.slice(0, restTargetAt), ...block, ...rest.slice(restTargetAt)];
+}
+
 /** The block one step up or down - what Move up / Move down do on a
  * ticked row. A scattered selection is gathered at its first member. */
 export function nudgeBlock(list: SuiteCase[], ids: ReadonlySet<number>, dir: "up" | "down"): SuiteCase[] {

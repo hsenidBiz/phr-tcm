@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  groupKeys, moveBlock, moveItem, nudgeBlock, orderByGroups, orderFromFiles, orderGroupsAZ,
+  groupKeys, moveBlock, moveBlockBefore, moveItem, nudgeBlock, orderByGroups, orderFromFiles, orderGroupsAZ,
   sameOrder, sectionsOf, type SuiteCase,
 } from "./suiteOrder";
 
@@ -50,6 +50,21 @@ describe("moveBlock", () => {
   test("one id behaves exactly like moveItem", () => {
     expect(ids(moveBlock(list, new Set([1]), 3))).toEqual(ids(moveItem(list, 0, 2)));
     expect(ids(moveBlock(list, new Set([4]), 2))).toEqual(ids(moveItem(list, 3, 1)));
+  });
+});
+
+describe("moveBlockBefore", () => {
+  const list = [c(1), c(2), c(3), c(4), c(5)];
+  test("a block from ABOVE the target still lands before it, not after (moveBlock would put it after)", () => {
+    expect(ids(moveBlockBefore(list, new Set([1, 2]), 4))).toEqual([3, 1, 2, 4, 5]);
+  });
+  test("a block from BELOW the target lands before it too, same as moveBlock", () => {
+    expect(ids(moveBlockBefore(list, new Set([4, 5]), 2))).toEqual([1, 4, 5, 2, 3]);
+  });
+  test("dropping onto a member of the block, or an unknown target, changes nothing", () => {
+    expect(ids(moveBlockBefore(list, new Set([2, 3]), 3))).toEqual([1, 2, 3, 4, 5]);
+    expect(ids(moveBlockBefore(list, new Set([2]), 99))).toEqual([1, 2, 3, 4, 5]);
+    expect(moveBlockBefore(list, new Set([2]), 99)).not.toBe(list);
   });
 });
 

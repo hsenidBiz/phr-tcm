@@ -343,3 +343,39 @@ test("A-Z groups sorts the groups by name; a header ticks its cases and moves as
   fireEvent.click(within(l).getByRole("button", { name: "Move group Zeta up" }));
   expect(rows()).toEqual(["#201", "#203", "#202", "#204"]);
 });
+
+/// A header is a section BOUNDARY, not a row: dropping onto it must land
+/// the block before that section whichever direction the drag came from.
+/// A drop from above used to land after the section's first case -
+/// inside the section - because the header reused the row drop rule.
+test("dropping a block onto a section header from above lands it before the section, not inside it", async () => {
+  mount(undefined, undefined, [
+    point(201, "Zeta | one"),
+    point(202, "Alpha | one"),
+    point(203, "Zeta | two"),
+    point(204, "Alpha | two"),
+  ]);
+  const l = await list();
+  const rows = () => within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0]);
+  fireEvent.click(screen.getByRole("switch", { name: "Group by title" }));
+  expect(rows()).toEqual(["#201", "#203", "#202", "#204"]);
+
+  // #201 sits ABOVE the Alpha section; dropping it on Alpha's header must
+  // land it right before Alpha, not as a new first row inside it.
+  const [r201] = within(l).getAllByRole("listitem");
+  const alphaHeader = within(l).getByText("Alpha").closest("li")!;
+  fireEvent.dragStart(r201);
+  fireEvent.dragOver(alphaHeader);
+  fireEvent.drop(alphaHeader);
+  expect(rows()).toEqual(["#203", "#201", "#202", "#204"]);
+
+  // Mirror, from BELOW: #204 dropped on the Zeta header lands ahead of
+  // Zeta's cases (this direction already worked before the fix).
+  const zetaHeader = within(l).getByText("Zeta").closest("li")!;
+  const rowEls = within(l).getAllByRole("listitem");
+  const last = rowEls[rowEls.length - 1];
+  fireEvent.dragStart(last);
+  fireEvent.dragOver(zetaHeader);
+  fireEvent.drop(zetaHeader);
+  expect(rows()).toEqual(["#204", "#203", "#201", "#202"]);
+});

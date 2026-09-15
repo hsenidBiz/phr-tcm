@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Checkbox } from "../../components/ui/checkbox";
 import { IconMoveDown, IconMoveUp } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
-import { moveBlock, nudgeBlock, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
+import { moveBlock, moveBlockBefore, nudgeBlock, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
 
 /** The suite's cases in their current order. Drag a row onto another to put
  * it there; a ticked row carries the whole selection with it, in its order.
@@ -52,6 +52,17 @@ export default function CaseOrderList({
     const block = blockFor(dragId);
     if (block.has(targetId)) return;
     onChange(moveBlock(cases, block, targetId));
+  };
+  // A header is a section boundary, not a row: a drop on it must land
+  // BEFORE that section whichever direction the drag came from, unlike a
+  // row drop (which keeps moveBlock's up/down asymmetry). Without this,
+  // a block dragged from above a header landed after the section's first
+  // case - inside the section - instead of ahead of it.
+  const dropBefore = (targetId: number) => {
+    if (dragId == null) return;
+    const block = blockFor(dragId);
+    if (block.has(targetId)) return;
+    onChange(moveBlockBefore(cases, block, targetId));
   };
   const toggle = (id: number, on: boolean) => {
     const next = new Set(selected);
@@ -172,7 +183,7 @@ export default function CaseOrderList({
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  dropOn(firstId);
+                  dropBefore(firstId);
                   setDragId(null);
                   setOverId(null);
                 }}
