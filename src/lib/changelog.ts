@@ -13,6 +13,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.0",
+    date: "2026-09-15",
+    items: [
+      "Uploads now create test cases in the order shown on screen. The app used to re-sort by tester order behind the scenes, so a file laid out one way could land in the suite another way. Pick For testing in the Order bar if you want run-sheet order.",
+      "Suite Management: tick several test cases and drag any of them to move the whole selection together, keeping their order. The Move up and Move down arrows move the selection too.",
+      "Suite Management: a new Group by title switch arranges a suite so each title group sits together, with a header per group you can tick or drag as a block. A-Z groups sorts the groups by name.",
+      "Suite Management: Apply order from files replaces the single-file button. Pick several files, arrange them by drag or arrows, and each file becomes a block of cases in the order they appear in that file. Files are never changed.",
+      "Suite Management: Apply order and Reset now follow you down a long suite in a bar at the bottom right, one per suite with unsaved changes.",
+      "Suite Management: a suite's test cases now appear instantly from what was saved last time and refresh in the background, instead of reloading every time you open a suite.",
+      "Suite Management: the Copy to suite picker is wider and searchable, and the New test suite button is hidden when Azure DevOps says you may not create suites in that plan.",
+      "Suite Lookup is now called Search Suites, and every suite there has a Manage button that opens it in Suite Management.",
+      "In the test cases page that opens in your browser, findings can be hidden: an x on each block, and a Hide findings button that remembers your choice.",
+    ],
+  },
+  {
     version: "1.24.1",
     date: "2026-09-14",
     items: [
