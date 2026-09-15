@@ -88,6 +88,23 @@ describe("groups", () => {
       { name: "Filter Card", ids: [5] },
     ]);
   });
+  test("sectionsOf merges adjacent cases of one group, and adjacent ungrouped cases, into one section", () => {
+    const l = [
+      c(1, "Alerts | ring once"),
+      c(2, "Alerts | ring twice"),
+      c(3, "Just one"),
+      c(4, "Another single"),
+      c(5, "Filter Card | a"),
+      c(6, "Filter Card | b"),
+      c(7, "Alerts | ring thrice"),
+    ];
+    expect(sectionsOf(l)).toEqual([
+      { name: "Alerts", ids: [1, 2] },
+      { name: "", ids: [3, 4] },
+      { name: "Filter Card", ids: [5, 6] },
+      { name: "Alerts", ids: [7] },
+    ]);
+  });
   test("orderByGroups makes each group contiguous in order of first appearance, ungrouped last", () => {
     expect(ids(orderByGroups(list))).toEqual([1, 3, 2, 5, 4]);
     // Already arranged: same order back.
