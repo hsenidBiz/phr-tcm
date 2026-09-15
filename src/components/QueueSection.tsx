@@ -13,8 +13,8 @@ import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
 import { caseKey, fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
-import { pruneCreated } from "../lib/queuePrune";
-import { failedKeys, summariseSubmit } from "../lib/submitSummary";
+import { keepUploaded } from "../lib/queueUploaded";
+import { summariseSubmit } from "../lib/submitSummary";
 import {
   queueWriterFor,
   registerQueueWriter,
@@ -166,11 +166,13 @@ export default function QueueSection({
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
-  // The rows a submit left behind because they failed. Everything that
-  // worked is pruned out, so what remains looks exactly like a queue
-  // nobody has uploaded yet - these are the ones still needing a decision,
-  // and the ring is the only thing separating them.
+  // What the last submit did to each row. Nothing leaves the queue on an
+  // upload - the user removes rows when they are finished with them - so
+  // without these marks an uploaded row and a failed one look the same.
+  // Failed rows by key; uploaded rows by work item id, which every one of
+  // them now carries and which does not shift as rows around it change.
   const [failedRows, setFailedRows] = useState<Set<string>>(() => new Set());
+  const [uploadedIds, setUploadedIds] = useState<Set<number>>(() => new Set());
   const [reviewing, setReviewing] = useState(false);
   // Progress lives at MODULE scope (lib/submitRun), not in this component:
   // the upload takes minutes and the person watching it is exactly the
@@ -193,18 +195,17 @@ export default function QueueSection({
   // every other screen's, clearing the sidebar at its current width.
   const sidebarCollapsed = useSyncExternalStore(subscribeSidebar, sidebarCollapsedSnapshot);
 
-  // While mounted, this screen's own setQueue handles the post-submit
-  // prune (through React state, as always). When it is NOT mounted at the
-  // finish, the fallback in the mutation writes the persisted draft
-  // directly - a created case still sitting in a queue is one Create away
-  // from a duplicate work item.
+  // While mounted, this screen's own setQueue applies the post-submit ids
+  // (through React state, as always). When it is NOT mounted at the finish,
+  // the fallback in the mutation writes the persisted draft directly - a
+  // created case left in a queue without its id is one Upload away from a
+  // duplicate work item.
   useEffect(
     () =>
       registerQueueWriter({
         org,
         pbiId,
         setQueue: (updater) => setQueue(updater),
-        onCleared: () => onQueueCleared?.(),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org, pbiId],
@@ -534,7 +535,7 @@ export default function QueueSection({
       };
       // Everything that actually has something to write. The skipped rows
       // are still in the queue and still on screen - they are just not
-      // sent, and they are pruned alongside the written ones afterwards.
+      // sent, and they stay there afterwards like every other row.
       //
       // IN THE ORDER ON SCREEN, which is the order the user chose: the
       // upload order is the suite order, and the "Order:" bar above the
@@ -545,10 +546,9 @@ export default function QueueSection({
       // `sent` below is THIS list, and every result index and the file
       // stamping key off it.
       const toSend = queue.filter((tc) => !noopNow(tc));
-      const skippedRows = queue.filter((tc) => noopNow(tc));
-      const skipped = skippedRows.length;
+      const skipped = queue.filter((tc) => noopNow(tc)).length;
       if (toSend.length === 0) {
-        return { results: [], sent: [], sentFor: pbiId, skipped, skippedRows };
+        return { results: [], sent: [], sentFor: pbiId, skipped };
       }
       submitStarted(org, pbiId, toSend.length);
       const unProgress = await events.submitProgress.listen((e) => {
@@ -590,11 +590,11 @@ export default function QueueSection({
         // The outcome is applied HERE, inside the promise, not in
         // onSuccess: the hook's callbacks die with the component, and the
         // person who navigated away mid-upload still needs the created
-        // cases OUT of their queue when the loop finishes. `sent` is the
-        // FILTERED list: every result index is an index into it, and
-        // pruneCreated matches on that list.
-        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows, prevQueue: queue });
-        return { results: r.data, sent: toSend, sentFor: pbiId, skipped, skippedRows };
+        // cases in their queue to carry their new ids when the loop
+        // finishes. `sent` is the FILTERED list: every result index is an
+        // index into it, and keepUploaded matches on that list.
+        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue });
+        return { results: r.data, sent: toSend, sentFor: pbiId, skipped };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
         detach(unProgress);
@@ -604,7 +604,7 @@ export default function QueueSection({
       }
     },
     // Only the parts a mounted screen can show. Everything that must
-    // happen - pruning, toasts, invalidations - already ran inside the
+    // happen - new ids, toasts, invalidations - already ran inside the
     // mutation itself, because these callbacks die with the component.
     onSuccess: ({ results }) => {
       setResults(results);
@@ -684,14 +684,12 @@ export default function QueueSection({
     sent,
     sentFor,
     skipped,
-    skippedRows,
     prevQueue,
   }: {
     results: SubmitItemResult[];
     sent: TestCase[];
     sentFor: number;
     skipped: number;
-    skippedRows: TestCase[];
     prevQueue: TestCase[];
   }) {
     // Keep failed items AND anything the loop never reached (cancelled).
@@ -699,50 +697,36 @@ export default function QueueSection({
     const ok = done.length;
     const failedCount = results.length - ok;
 
-    // The whole calculation lives in lib/queuePrune.ts, with the four
-    // ways it has been wrong written down as tests.
+    // The whole calculation lives in lib/queueUploaded.ts, with the ways
+    // matching a result back to its row has gone wrong written down as
+    // tests. Every row stays; created ones gain their new id.
     let stranded = 0;
-    let emptied = false;
-    const prune = (q: TestCase[]) => {
-      const pruned = pruneCreated(sent, q, results);
-      stranded = pruned.unmatched;
-      let next = pruned.queue;
-      // The rows deliberately skipped are finished too - nothing was
-      // written because nothing needed to be. Pruned through the same
-      // tested function rather than a key filter: two cases can share a
-      // title, and matching by key alone went wrong four times before.
-      if (skippedRows.length > 0) {
-        next = pruneCreated(
-          skippedRows,
-          next,
-          skippedRows.map((_, index) => ({ index, action: "skipped" })),
-        ).queue;
-      }
-      emptied = next.length === 0;
-      return next;
+    const keep = (q: TestCase[]) => {
+      const kept = keepUploaded(sent, q, results);
+      stranded = kept.unmatched;
+      return kept.queue;
     };
 
-    // Which of the surviving rows are survivors because they FAILED, as
-    // opposed to rows the user added while the upload ran. Computed from
-    // the sent list so the occurrence numbering lines up with the prune's.
-    setFailedRows(failedKeys(sent, results));
+    // Which rows failed and which were uploaded, for the marks on the rows.
+    // Read off the sent list rather than from inside the state updater,
+    // which must stay pure: the queue as submitted is the sent rows plus the
+    // skipped no-ops, and those carry ids already, so title-keyed rows
+    // number the same way in both.
+    const marks = keepUploaded(sent, sent, results);
+    setFailedRows(marks.failed);
+    setUploadedIds(marks.uploadedIds);
 
     const writer = queueWriterFor(org, sentFor);
     if (writer) {
       // The submitted queue is on screen (this mount or a fresh one):
       // through React state, exactly as it always went.
-      writer.setQueue(prune);
-      if (emptied && stranded === 0) writer.onCleared();
+      writer.setQueue(keep);
     } else {
       // Nobody is looking at that queue right now - the user navigated
       // away, or switched PBI. The persisted draft is the queue they will
-      // see on return; prune THAT, so a created case is never still
-      // sitting in a queue one Create away from a duplicate.
-      saveDraftQueue(org, sentFor, prune(loadDraftQueue(org, sentFor)));
-      // A finished import has nothing left to watch: with the queue gone,
-      // a later save to one of its files would refill a list already
-      // dealt with. (Any live backend watcher reconciles on next mount.)
-      if (emptied && stranded === 0) saveWatches(org, sentFor, []);
+      // see on return; stamp THAT, so a created case is never sitting there
+      // without its id, one Upload away from a duplicate.
+      saveDraftQueue(org, sentFor, keep(loadDraftQueue(org, sentFor)));
     }
 
     if (failedCount === 0 && stranded === 0) {
@@ -752,7 +736,7 @@ export default function QueueSection({
           : `${ok} test case(s) processed.`,
       );
     } else if (failedCount > 0) {
-      toast.warning(`${ok} processed, ${failedCount} failed - failed items stay queued.`);
+      toast.warning(`${ok} processed, ${failedCount} failed - the failed items are marked in the queue.`);
     }
     if (stranded > 0) {
       // Never silent: a created case still sitting in the queue is one
@@ -1116,9 +1100,9 @@ export default function QueueSection({
   // queued yet" island was a paragraph explaining an absence. So: Manual
   // Entry (no recents wiring) renders nothing below the form, and the
   // Import tab shows Recent JSON Imports alone - its way back in. Kept
-  // whole mid-submit (progress/results/reviewing): pruning empties the
-  // queue as items are created, and the progress bar must not vanish
-  // with it.
+  // whole mid-submit (progress/results/reviewing): the user can remove
+  // rows while an upload runs, and the progress bar and the results must
+  // not vanish with them.
   if (queue.length === 0 && !progress && !results && !reviewing) {
     if (!onOpenRecent) return null;
     return (
@@ -1342,6 +1326,7 @@ export default function QueueSection({
                 diffOpen={expandedDiffs.has(i)}
                 editing={editingIdx === i}
                 failed={failedRows.has(rowKeys[i])}
+                uploaded={tc.update_id != null && uploadedIds.has(tc.update_id)}
                 touched={flash?.[rowKeys[i]]}
                 reviewing={reviewing}
                 problem={problems[i]}

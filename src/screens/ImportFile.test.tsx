@@ -66,7 +66,7 @@ const sharedFor = (pbiId: number) => ({
  *  each behind the half-second pacing gap. They are not sent now.
  *
  *  The dangerous half is the indices - results are numbered against the
- *  list that was SENT, so filtering it and then pruning against the
+ *  list that was SENT, so filtering it and then matching against the
  *  original queue is exactly the mistake that stranded created cases four
  *  times before. This checks both: what went, and what is left. */
 test("an update with nothing to change is not submitted at all", async () => {
@@ -122,9 +122,16 @@ test("an update with nothing to change is not submitted at all", async () => {
   await waitFor(() => expect(sent.length).toBeGreaterThan(0));
   expect(sent.map((c) => c.title)).toEqual(["Edited now"]);
 
-  // And the skipped row does not linger: nothing was written for it
-  // because nothing needed to be, so the import is finished for it too.
-  await waitFor(() => expect(screen.queryByText("Unchanged")).not.toBeInTheDocument());
+  // Nothing leaves the queue: both rows stay until the user removes them.
+  // The written one says so; the skipped one wrote nothing, so it does not.
+  await screen.findByText("UPLOADED");
+  const rows = [...document.querySelectorAll("li.rounded-md")];
+  expect(rows.map((li) => li.textContent)).toEqual([
+    expect.stringContaining("Unchanged"),
+    expect.stringContaining("Edited now"),
+  ]);
+  expect(rows[0].textContent).not.toContain("UPLOADED");
+  expect(rows[1].textContent).toContain("UPLOADED");
 });
 
 test("import feeds the shared queue; failed items stay queued", async () => {
@@ -168,20 +175,27 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   expect(await screen.findByText("1 test case uploaded - 1 created, 1 failed")).toBeInTheDocument();
   expect(screen.getByText("FAILED")).toBeInTheDocument();
   expect(screen.getByText("boom")).toBeInTheDocument();
-  expect(screen.getByText(/1 queued/)).toBeInTheDocument();
+  expect(screen.getByText(/2 queued/)).toBeInTheDocument();
 
-  // "Good" was created and pruned away, so the one row left looks exactly
-  // like a queue nobody has uploaded yet. The ring is the only thing on
-  // screen saying this one still needs a decision.
+  // Both rows stay. "Good" was created, so it now carries its new id - it
+  // is an update of the case it made, and cannot be created a second time -
+  // and says it was uploaded. "Bad" is ringed as still needing a decision.
   //
-  // "Bad" is on screen twice now - once as the queue row, once in the
+  // Each title is on screen twice now - once as the queue row, once in the
   // results panel - so pick the queue row by the shape only it has.
-  const queueRow = screen
-    .getAllByText("Bad")
-    .map((el) => el.closest("li"))
-    .find((li) => li?.className.includes("rounded-md"));
-  expect(queueRow, "the failed case should still be queued").toBeTruthy();
-  expect(queueRow?.className).toMatch(/border-danger/);
+  const queueRow = (title: string) =>
+    screen
+      .getAllByText(title)
+      .map((el) => el.closest("li"))
+      .find((li) => li?.className.includes("rounded-md"));
+  const good = queueRow("Good");
+  expect(good, "the created case should still be queued").toBeTruthy();
+  expect(good?.textContent).toContain("UPDATE #901");
+  expect(good?.textContent).toContain("UPLOADED");
+  const bad = queueRow("Bad");
+  expect(bad, "the failed case should still be queued").toBeTruthy();
+  expect(bad?.className).toMatch(/border-danger/);
+  expect(bad?.textContent).not.toContain("UPLOADED");
 });
 
 test("a matching PBI imports straight into the queue", async () => {
@@ -825,10 +839,72 @@ test("the app's own id write-back after a submit does not re-import the file", a
   fireEvent.click(go);
   await screen.findByText(/uploaded/);
 
-  // Both cases were written, so the prune empties the queue and it stays
-  // empty - the file must not pour them back in.
+  // Both cases were written and both stay queued, now carrying their ids -
+  // and the file must not pour a second copy of them in.
+  await screen.findByText("UPDATE #153450");
   await waitFor(() =>
-    expect(document.querySelectorAll("li.rounded-md")).toHaveLength(0),
+    expect(screen.getAllByText("UPLOADED")).toHaveLength(2),
   );
+  expect(document.querySelectorAll("li.rounded-md")).toHaveLength(2);
   expect(screen.queryByText(/Loaded 2 cases/)).not.toBeInTheDocument();
+});
+
+// The field report behind keeping uploaded rows: the queue used to empty
+// after an upload while its file stayed watched, which left a watch with
+// nothing to upload. Now the rows stay, the watch stays with them, and
+// an edit to the file after the upload lands on the rows it belongs to -
+// not as a second copy of each.
+test("after an upload the rows stay, and a later file edit updates them in place", async () => {
+  const before = [jsonCase("Brand new")];
+  const stamped = [jsonCase("Brand new", { update_id: 153450 })];
+  const edited = [jsonCase("Brand new, renamed", { update_id: 153450 })];
+  localStorage.setItem("tcm-v2-draft:acme/42", JSON.stringify(before));
+  localStorage.setItem(
+    "tcm-v2-watch:acme/42",
+    JSON.stringify([{ path: CASE_PATH, stamp: "stamp-1", snapshot: before }]),
+  );
+
+  let onDisk = before;
+  const stampOf = () => (onDisk === before ? "stamp-1" : onDisk === stamped ? "stamp-2" : "stamp-3");
+  mockIPC((cmd, args) => {
+    if (cmd === "file_stamp") return stampOf();
+    if (cmd === "watch_file" || cmd === "unwatch_file" || cmd === "unwatch_all_files") return null;
+    if (cmd === "parse_import_file") return { cases: onDisk, warnings: [] };
+    if (cmd === "read_general_comment") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "save_draft_cases") {
+      onDisk = stamped;
+      return "stamp-2";
+    }
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string }> };
+      return a.queue.map((tc, index) => ({ index, title: tc.title, action: "created", id: 153450, error: null }));
+    }
+  }, { shouldMockEvents: true });
+
+  renderScreen();
+  await screen.findByText("Brand new");
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const accept = await screen.findByRole("button", { name: "Create duplicates anyway" }).catch(() => null);
+  if (accept) fireEvent.click(accept);
+  const go = await screen.findByRole("button", { name: /Yes — create|Confirm & / });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await screen.findByText("UPDATE #153450");
+
+  // Still watched: the file can still be dropped.
+  expect(screen.getByRole("button", { name: "Stop watching cases.json" })).toBeInTheDocument();
+
+  // The assistant edits the file after the upload.
+  onDisk = edited;
+  await act(async () => {
+    await fileChanged("stamp-3");
+  });
+
+  await screen.findByText("Brand new, renamed");
+  const rows = document.querySelectorAll("li.rounded-md");
+  expect(rows).toHaveLength(1);
+  expect(rows[0].textContent).toContain("UPDATE #153450");
 });

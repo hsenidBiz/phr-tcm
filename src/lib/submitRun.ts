@@ -10,11 +10,12 @@
  * exactly where it is.
  *
  * It also carries the part that must not die with the component: after a
- * submit finishes, the created cases have to leave the queue. When the
- * screen is mounted its own setQueue does that (registered here); when it
- * is not, the pruned queue is written straight into the persisted draft,
- * because a created case still sitting in a queue is one Create away from
- * a duplicate work item - and this app cannot delete one.
+ * submit finishes, the created cases in the queue have to carry their new
+ * work item ids. When the screen is mounted its own setQueue does that
+ * (registered here); when it is not, the stamped queue is written straight
+ * into the persisted draft, because a created case sitting in a queue
+ * without its id is one Upload away from a duplicate work item - and this
+ * app cannot delete one.
  */
 
 import type { TestCase } from "../bindings";
@@ -69,7 +70,6 @@ type QueueWriter = {
   org: string;
   pbiId: number;
   setQueue: (updater: (q: TestCase[]) => TestCase[]) => void;
-  onCleared: () => void;
 };
 
 let writer: QueueWriter | null = null;

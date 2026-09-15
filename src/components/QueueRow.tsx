@@ -21,6 +21,10 @@ export type QueueRowProps = {
   editing: boolean;
   /** This row failed the last submit and still needs a decision. */
   failed: boolean;
+  /** The last submit wrote this row to Azure DevOps. It stays queued until
+   * the user removes it, so this is what tells it apart from a row still
+   * waiting to go. */
+  uploaded: boolean;
   /** A watched-file sync just added or changed this row. */
   touched: "added" | "changed" | undefined;
   reviewing: boolean;
@@ -60,6 +64,7 @@ export function QueueRowInner({
   diffOpen,
   editing,
   failed,
+  uploaded,
   touched,
   reviewing,
   problem,
@@ -92,7 +97,9 @@ export function QueueRowInner({
             ? "border-success/50 bg-success/5"
             : touched === "changed"
               ? "border-warning/50 bg-warning/5"
-              : "border-border",
+              : uploaded
+                ? "border-success/40"
+                : "border-border",
       )}
     >
       <div className="flex items-center justify-between px-3 py-1.5">
@@ -122,6 +129,7 @@ export function QueueRowInner({
           ) : (
             <Badge className="mr-2 bg-success/20 text-success">NEW</Badge>
           )}
+          {uploaded && <Badge className="mr-2 bg-success/20 text-success">UPLOADED</Badge>}
           {tc.title}
           <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
           {diff?.noop && (

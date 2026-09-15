@@ -8,8 +8,7 @@
  * would tell someone to retry a case that is already there, and this app
  * cannot delete the duplicate that would make.
  */
-import type { SubmitItemResult, TestCase } from "../bindings";
-import { keysFor } from "./fileSync";
+import type { SubmitItemResult } from "../bindings";
 
 export type SubmitSummary = {
   created: number;
@@ -34,24 +33,4 @@ export function summariseSubmit(results: SubmitItemResult[]): SubmitSummary {
   const lead = uploaded === 0 ? "Nothing uploaded" : `${plural(uploaded, "test case")} uploaded`;
 
   return { created, updated, failed, headline: parts.length ? `${lead} - ${parts.join(", ")}` : lead };
-}
-
-/**
- * The keys of the rows that failed, so the queue can ring the ones still
- * sitting there needing a decision.
- *
- * Numbered over the WHOLE sent list, then selected - the same discipline
- * `pruneCreated` documents. Two queued cases can legitimately share a
- * title, and numbering over the selection alone shifts the occurrences so
- * the wrong row gets marked.
- */
-export function failedKeys(sent: TestCase[], results: SubmitItemResult[]): Set<string> {
-  const keys = keysFor(sent);
-  const out = new Set<string>();
-  for (const r of results) {
-    if (r.action !== "failed") continue;
-    const k = keys[r.index];
-    if (k != null) out.add(k);
-  }
-  return out;
 }

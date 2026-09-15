@@ -681,10 +681,10 @@ export default function ImportFile({
           // exactly like an outside edit, and the app reports its own
           // write back to itself.
           //
-          // Harmless while the queue is full, since the sync then finds
-          // nothing to do - which is why bulk edits never showed it. After
-          // a submit it was not harmless: the prune has just emptied the
-          // queue, so the phantom edit loaded the whole file back in,
+          // Harmless while the queue matches the file, since the sync then
+          // finds nothing to do - which is why bulk edits never showed it.
+          // After a submit it was not harmless while uploads still emptied
+          // the queue: the phantom edit loaded the whole file back in,
           // ringed every case as newly added, and put cases that had just
           // been created back one Create away from a duplicate.
           const moved = fields.stamp;
