@@ -13,6 +13,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.1",
+    date: "2026-09-15",
+    items: [
+      "Steps that have an Expected Result are now saved as validation steps, the way Azure DevOps' own form saves them. Before, every step went out as a plain action step, which meant a run could not mark it Pass or Fail and execution automation could not check it - and an upload would quietly undo a step someone had already fixed in the browser.",
+      "Updating a test case whose steps have the old step type now repairs it, even when nothing else changed: only the step type is corrected, so formatting and screenshots in the steps stay exactly as they are. The review lists these as step types changing. To repair a whole set, export it and import it again.",
+    ],
+  },
+  {
     version: "1.25.0",
     date: "2026-09-15",
     items: [
