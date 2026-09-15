@@ -19,6 +19,24 @@ fn step_ids_start_at_two_and_last_matches() {
     assert!(!xml.contains("<step id=\"5\""));
 }
 
+/// A step with an Expected Result is a ValidateStep - the kind a run marks
+/// Pass/Fail against, and the kind execution automation can judge. The web
+/// form writes it that way; this builder wrote every step as an ActionStep
+/// and quietly undid the form's work on the next bulk update. A step with
+/// nothing to check stays an ActionStep, as does the empty placeholder.
+#[test]
+fn a_step_with_an_expected_result_is_a_validate_step() {
+    let xml = build_steps_xml(&[
+        step("Open the login page", "Login page is shown"),
+        step("Enter the password", ""),
+        step("Submit", "   "),
+    ]);
+    assert!(xml.contains("<step id=\"2\" type=\"ValidateStep\">"), "{xml}");
+    assert!(xml.contains("<step id=\"3\" type=\"ActionStep\">"), "{xml}");
+    assert!(xml.contains("<step id=\"4\" type=\"ActionStep\">"), "whitespace is not a result: {xml}");
+    assert!(build_steps_xml(&[]).contains("type=\"ActionStep\""), "the placeholder checks nothing");
+}
+
 #[test]
 fn round_trip_preserves_action_and_expected() {
     let steps = vec![

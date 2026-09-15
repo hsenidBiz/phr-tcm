@@ -3,6 +3,9 @@
 //! vectors. Semantics preserved exactly:
 //! - step ids start at 2; `last` == last step id
 //! - empty steps list builds the single placeholder step
+//! - a step with an Expected Result is a `ValidateStep`, one without is an
+//!   `ActionStep` - the one place v2 deliberately departs from v1, which
+//!   wrote every step as an ActionStep (see `step_type`)
 //! - parse strips REAL HTML markup only. v1 removed every `<...>` run, so a
 //!   literal "<cycleId>" a user typed did not survive a round-trip; that was
 //!   silent data loss, and `strip_tags` explains what replaced it.
@@ -39,6 +42,21 @@ fn escape_xml(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// The `type` Azure DevOps gives a step: a `ValidateStep` carries an Expected
+/// Result and is marked Pass/Fail during a run - it is also the only kind an
+/// execution-automation runner can judge - while an `ActionStep` is "do
+/// this" with nothing to check. The web form decides this from the Expected
+/// Result; every step used to be written here as an ActionStep, which
+/// silently undid the form's choice on the next bulk update (case 154599,
+/// fixed in the form at 05:50 and set back at 09:58 by an upload).
+fn step_type(expected: &str) -> &'static str {
+    if expected.trim().is_empty() {
+        "ActionStep"
+    } else {
+        "ValidateStep"
+    }
+}
+
 /// Build the XML string for the Microsoft.VSTS.TCM.Steps field.
 pub fn build_steps_xml(steps: &[Step]) -> String {
     if steps.is_empty() {
@@ -47,8 +65,9 @@ pub fn build_steps_xml(steps: &[Step]) -> String {
     let mut out = format!("<steps id=\"0\" last=\"{}\">", steps.len() + 1);
     for (i, step) in steps.iter().enumerate() {
         out.push_str(&format!(
-            "<step id=\"{}\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">{}</parameterizedString><parameterizedString isformatted=\"true\">{}</parameterizedString></step>",
+            "<step id=\"{}\" type=\"{}\"><parameterizedString isformatted=\"true\">{}</parameterizedString><parameterizedString isformatted=\"true\">{}</parameterizedString></step>",
             i + 2,
+            step_type(&step.expected),
             escape_xml(&step.action),
             escape_xml(&step.expected),
         ));
