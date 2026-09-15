@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import Suites from "./Suites";
 
@@ -97,6 +97,34 @@ test("Manage hands the suite to Suite Management", async () => {
   await screen.findByText("PBI 42 suite");
   fireEvent.click(screen.getByRole("button", { name: "Manage" }));
   expect(managed).toEqual([[9, 91]]);
+});
+
+test("a folder row carries Manage too - a static suite can hold cases as well as child suites", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 95, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+            {
+              id: 96,
+              name: "PBI 50 suite",
+              suite_type: "requirementTestSuite",
+              requirement_id: 50,
+              parent_id: 95,
+            },
+          ],
+        },
+      ];
+  });
+  const managed: Array<[number, number]> = [];
+  renderSuites(undefined, undefined, (planId, suiteId) => managed.push([planId, suiteId]));
+
+  const folderRow = await screen.findByText("Regression");
+  const row = folderRow.closest("button")!;
+  fireEvent.click(within(row).getByRole("button", { name: "Manage" }));
+  expect(managed).toEqual([[9, 95]]);
 });
 
 test("folders build a collapsible tree from parent links", async () => {

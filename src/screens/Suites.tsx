@@ -369,7 +369,7 @@ export default function Suites({
               <Copy size={13} />
             </span>
             {chip("View", () => view.mutate({ planId, suiteIds: allIds, label: s.name }))}
-            {!isFolder && onManageSuite && chip("Manage", () => onManageSuite(planId, s.id))}
+            {onManageSuite && chip("Manage", () => onManageSuite(planId, s.id))}
             {onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? (
               <>
                 {chip("Edit cases", () =>

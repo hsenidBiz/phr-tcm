@@ -6,13 +6,8 @@ use v2_lib::ado::AdoClient;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-/// Project id, area node and a permission answer for the given value.
+/// Area node and a permission answer for the given value.
 async fn with_answer(server: &MockServer, allowed: bool) {
-    Mock::given(method("GET"))
-        .and(path("/o/_apis/projects/p"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "proj-guid-1" })))
-        .mount(server)
-        .await;
     Mock::given(method("GET"))
         .and(path("/o/p/_apis/wit/classificationnodes/areas/Web"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "identifier": "area-guid-1" })))
@@ -69,22 +64,13 @@ async fn the_permission_asked_for_is_manage_test_suites_on_the_plans_area() {
 /// button the user is entitled to.
 #[tokio::test]
 async fn an_unanswerable_question_is_unknown_not_no() {
+    // No mock at all: the area lookup itself has nothing to answer it.
     let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/o/_apis/projects/p"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
     let client = AdoClient::with_base_url("t".into(), server.uri());
     assert_eq!(client.may_manage_test_suites("o", "p", Some("Project\\Web")).await, None);
 
     // A 200 whose shape says nothing is equally unknown.
     let odd = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/o/_apis/projects/p"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "g" })))
-        .mount(&odd)
-        .await;
     Mock::given(method("GET"))
         .and(path("/o/p/_apis/wit/classificationnodes/areas/Web"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "identifier": "a" })))

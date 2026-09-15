@@ -113,7 +113,16 @@ impl AdoClient {
         area_path: Option<&str>,
     ) -> Option<bool> {
         match self.evaluate_manage_test_suites(org, project, area_path).await {
-            Ok(values) => values.first().copied().flatten(),
+            Ok(values) => {
+                let answer = values.first().copied().flatten();
+                if answer.is_none() {
+                    crate::applog::warn(format!(
+                        "create-suite permission for {project} area {} came back unreadable, leaving the button in place",
+                        area_path.unwrap_or("<project root>")
+                    ));
+                }
+                answer
+            }
             Err(e) => {
                 crate::applog::warn(format!(
                     "could not establish create-suite permission for {project}, leaving the button in place: {e}"

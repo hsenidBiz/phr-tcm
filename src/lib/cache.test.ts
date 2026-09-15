@@ -240,7 +240,7 @@ describe("one cache", () => {
     // prefixes cacheKeys owns (React Query keys are arrays - no colon).
     expect(
       offenders(
-        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe):/,
+        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe|suite-cases|suite-seed):/,
       ),
     ).toEqual([]);
   });

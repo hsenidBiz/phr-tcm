@@ -179,8 +179,9 @@ export default function CaseOrderList({
                 }}
                 onDragOver={(e) => {
                   e.preventDefault();
-                  if (overId !== firstId) setOverId(firstId);
+                  if (overId !== -firstId) setOverId(-firstId);
                 }}
+                onDragLeave={() => setOverId((o) => (o === -firstId ? null : o))}
                 onDrop={(e) => {
                   e.preventDefault();
                   dropBefore(firstId);
@@ -190,7 +191,7 @@ export default function CaseOrderList({
                 className={cn(
                   "flex items-center gap-3 bg-surface-2/60 px-3 py-1.5 text-xs font-medium text-muted",
                   !disabled && "cursor-grab",
-                  overId === firstId && "border-t-2 border-accent",
+                  overId === -firstId && "border-t-2 border-accent",
                 )}
               >
                 <GripVertical size={14} className="shrink-0 text-faint" aria-hidden />

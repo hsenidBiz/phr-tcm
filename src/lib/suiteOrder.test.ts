@@ -153,6 +153,10 @@ describe("orderFromFiles", () => {
     expect(placed).toEqual([2, 1]);
     expect(duplicates).toBe(1);
   });
+  test("a case in three files still counts as one duplicate, not two", () => {
+    const { duplicates } = orderFromFiles(suite, [file("a.json", 1), file("b.json", 1), file("c.json", 1)]);
+    expect(duplicates).toBe(1);
+  });
   test("ids not in this suite, null ids and repeats inside one file are ignored", () => {
     const { order, placed, duplicates } = orderFromFiles(suite, [file("a.json", 99, null, 4, 4)]);
     expect(ids(order)).toEqual([4, 1, 2, 3, 5, 6]);

@@ -138,7 +138,9 @@ export function orderFromFiles(
   const taken = new Set<number>();
   const blocks: SuiteCase[] = [];
   const placed: number[] = [];
-  let duplicates = 0;
+  // A case reappearing across N files is one duplicate, not N-1: track the
+  // distinct ids a later file claims, not how many times a claim happens.
+  const duplicateIds = new Set<number>();
   for (const f of files) {
     let n = 0;
     const seenHere = new Set<number>();
@@ -147,7 +149,7 @@ export function orderFromFiles(
       if (id == null || !byId.has(id) || seenHere.has(id)) continue;
       seenHere.add(id);
       if (taken.has(id)) {
-        duplicates += 1;
+        duplicateIds.add(id);
         continue;
       }
       taken.add(id);
@@ -157,5 +159,5 @@ export function orderFromFiles(
     placed.push(n);
   }
   const rest = current.filter((c) => !taken.has(c.id));
-  return { order: [...blocks, ...rest], placed, duplicates };
+  return { order: [...blocks, ...rest], placed, duplicates: duplicateIds.size };
 }

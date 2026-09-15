@@ -1,5 +1,5 @@
 import { clearMocks } from "@tauri-apps/api/mocks";
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { expandSuite, mountScreen } from "./testSupport";
 
@@ -80,6 +80,19 @@ test("a suite handed over from Search Suites opens, whatever PBI is in the bar",
   const billing = await screen.findByRole("region", { name: "Billing - Test Plan" });
   expect(await within(billing).findByRole("list", { name: "Test cases in Invoices" })).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Auth - Test Plan" })).not.toBeInTheDocument();
+});
+
+test("a focus whose plan exists but whose suite no longer does falls back to the ordinary view", async () => {
+  const onFocusHandled = vi.fn();
+  mountScreen(
+    undefined,
+    null,
+    { planId: 9, suiteId: 999 },
+    onFocusHandled,
+  );
+  expect(await screen.findByRole("region", { name: "Auth - Test Plan" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Billing - Test Plan" })).toBeInTheDocument();
+  await waitFor(() => expect(onFocusHandled).toHaveBeenCalledTimes(1));
 });
 
 test("no plans yet", async () => {

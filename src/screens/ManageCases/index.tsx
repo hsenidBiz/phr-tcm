@@ -65,10 +65,16 @@ export default function ManageCases({
     return null;
   }, [pbi, plans.data]);
 
-  /** The plan the focused suite lives in, if it is still in the tree. */
+  /** The plan the focused suite lives in, if it is still in the tree - the
+   * PLAN existing is not enough: the suite itself must still be one of
+   * its suites, or there is nothing for the focus to expand. */
   const focusPlan = useMemo(() => {
     if (!focus || !plans.data) return null;
-    return plans.data.find(({ plan }) => plan.id === focus.planId) ?? null;
+    return (
+      plans.data.find(
+        ({ plan, suites }) => plan.id === focus.planId && suites.some((s) => s.id === focus.suiteId),
+      ) ?? null
+    );
   }, [focus, plans.data]);
 
   // A suite handed over from a deleted plan (or one Azure DevOps has since

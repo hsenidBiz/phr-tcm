@@ -31,8 +31,9 @@ export function markSuiteDirty(suiteId: number, dirty: boolean): void {
 }
 
 /** The current ranks, newest last. Stable between changes, so it is safe
- * as a `useSyncExternalStore` snapshot. */
-export function dirtyRanks(): Map<number, number> {
+ * as a `useSyncExternalStore` snapshot. Read-only to callers: the live
+ * `Map` is module state, and only `markSuiteDirty` may mutate it. */
+export function dirtyRanks(): ReadonlyMap<number, number> {
   return snapshot;
 }
 
@@ -43,6 +44,6 @@ function subscribe(cb: () => void): () => void {
 
 /** This suite's stacking rank, or null when its order is saved. */
 export function useDirtyRank(suiteId: number): number | null {
-  const ranks = useSyncExternalStore(subscribe, dirtyRanks, dirtyRanks);
+  const ranks: ReadonlyMap<number, number> = useSyncExternalStore(subscribe, dirtyRanks, dirtyRanks);
   return ranks.get(suiteId) ?? null;
 }
