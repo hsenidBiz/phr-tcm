@@ -276,31 +276,3 @@ pub struct TakenDraft {
     pub pbi_work_item_type: String,
     pub pending_revoke: PendingRevoke,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn share_links_round_trip_and_reject_garbage() {
-        let r = ShareRef {
-            org: "acme".into(),
-            project: "Web".into(),
-            pbi_id: 144714,
-            attachment_id: "aaaa1111-2222-3333-4444-555566667777".into(),
-        };
-        let link = build_share_link(&r);
-        assert_eq!(parse_share_link(&link).unwrap(), r);
-        // Chat apps pad links with whitespace.
-        assert_eq!(parse_share_link(&format!("  {link}\n")).unwrap(), r);
-
-        for bad in [
-            "https://example.com/x",
-            "tcm-share:acme/Web/notanumber/aaaa1111",
-            "tcm-share:acme/Web/1",
-            "tcm-share:acme/Web/1/../../secrets",
-        ] {
-            assert!(parse_share_link(bad).is_err(), "{bad} should be rejected");
-        }
-    }
-}

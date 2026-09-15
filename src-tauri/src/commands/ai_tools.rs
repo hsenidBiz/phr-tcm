@@ -48,7 +48,8 @@ fn root_of(working_dir: Option<&str>) -> Option<&str> {
 /// `path` relative to `root`, forward-slashed - the shape
 /// `crate::workspace::exclude_locally` wants. None when `path` is not
 /// actually under `root`, which the caller treats as "cannot exclude".
-fn project_relative(root: &str, path: &std::path::Path) -> Option<String> {
+/// Public for `tests/ai_tools.rs`; not a command.
+pub fn project_relative(root: &str, path: &std::path::Path) -> Option<String> {
     path.strip_prefix(std::path::Path::new(root))
         .ok()
         .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -200,7 +201,8 @@ pub fn unregister_db_server(
 /// The repository a registration for `spec` targets: a tool with a project
 /// config needs one and refuses without (the UI never offers that - the
 /// AI Bridge tab is gated on the repository); a tool without one ignores it.
-fn project_root<'a>(
+/// Public for `tests/ai_tools.rs` - its only caller writes real config files.
+pub fn project_root<'a>(
     spec: &ToolSpec,
     working_dir: Option<&'a str>,
     global: bool,
@@ -677,7 +679,9 @@ fn register_claude_code_in(root: &str, server: &McpServer) -> Result<(), String>
 /// too, and the CLI then bound the server binary to `name` and reported
 /// `missing required argument 'commandOrUrl'`. Only the database server
 /// sends env pairs, which is why registering it was the first to break.
-fn mcp_add_args(server: &McpServer, scope: &str) -> Vec<String> {
+///
+/// Public for `tests/ai_tools.rs` - its only caller runs the real CLI.
+pub fn mcp_add_args(server: &McpServer, scope: &str) -> Vec<String> {
     let mut args = vec![
         "mcp".into(),
         "add".into(),
@@ -723,93 +727,4 @@ fn run_claude_mcp_add(
         return Err(format!("`claude mcp add` failed: {}", stderr.trim()));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The regression that broke the database server: env pairs BEFORE the
-    /// name feed the CLI's variadic `-e`, which then eats the name. Pin
-    /// name-first, `--` before the binary, and every env pair in between.
-    #[test]
-    fn mcp_add_puts_the_name_before_the_env_pairs() {
-        let mut env = std::collections::BTreeMap::new();
-        env.insert("DB_TYPE".to_string(), "mssql".to_string());
-        env.insert(
-            "CONNECTION_STRING".to_string(),
-            "Server=tcp:db,1433;Database=PHRX;User Id=ro".to_string(),
-        );
-        let server = McpServer {
-            name: "phr-db-mcp".to_string(),
-            command: r"C:	ools\PeoplesHR.DBMCPServer.exe".to_string(),
-            args: vec![],
-            env,
-        };
-        let args = mcp_add_args(&server, "project");
-
-        let name_at = args.iter().position(|a| a == "phr-db-mcp").unwrap();
-        let first_env = args.iter().position(|a| a == "-e").unwrap();
-        let dashes = args.iter().position(|a| a == "--").unwrap();
-        let cmd_at = args.iter().position(|a| a.ends_with(".exe")).unwrap();
-        assert!(name_at < first_env, "name must come before -e: {args:?}");
-        assert!(first_env < dashes, "-e pairs sit before --: {args:?}");
-        assert!(dashes < cmd_at, "the binary follows --: {args:?}");
-    }
-
-    /// No env pairs (the tcm server): name, then straight to `--`.
-    #[test]
-    fn mcp_add_without_env_is_name_then_command() {
-        let server = McpServer {
-            name: "tcm-testcases".to_string(),
-            command: "v2.exe".to_string(),
-            args: vec!["--mcp".to_string()],
-            env: Default::default(),
-        };
-        assert_eq!(
-            mcp_add_args(&server, "user"),
-            vec!["mcp", "add", "--scope", "user", "tcm-testcases", "--", "v2.exe", "--mcp"]
-        );
-    }
-
-    /// A repository registration is `--scope project`, which the CLI keys
-    /// on its cwd - the caller runs it inside the repo (see
-    /// `run_claude_mcp_add`).
-    #[test]
-    fn a_repo_registration_asks_for_project_scope() {
-        let server = McpServer {
-            name: "tcm-testcases".to_string(),
-            command: "v2.exe".to_string(),
-            args: vec!["--mcp".to_string()],
-            env: Default::default(),
-        };
-        let args = mcp_add_args(&server, "project");
-        assert_eq!(&args[2..4], ["--scope", "project"]);
-    }
-
-    /// The path handed to `exclude_locally` for a non-Claude tool's
-    /// project config (e.g. Cursor's `.cursor/mcp.json`) - forward-slashed
-    /// regardless of platform, and None for anything not under the root.
-    #[test]
-    fn project_relative_forward_slashes_a_path_under_the_root() {
-        assert_eq!(
-            project_relative(r"D:\repo", std::path::Path::new(r"D:\repo\.cursor\mcp.json")),
-            Some(".cursor/mcp.json".to_string())
-        );
-        assert_eq!(project_relative(r"D:\repo", std::path::Path::new(r"D:\elsewhere\mcp.json")), None);
-    }
-
-    /// The machine-wide choice is explicit: it sends every tool to its
-    /// global config even with a repository set, and without it a tool
-    /// that registers per repository still refuses to go anywhere else.
-    #[test]
-    fn the_machine_wide_choice_targets_the_global_config_for_every_tool() {
-        let cc = TOOL_SPECS.iter().find(|s| s.id == "claude-code").unwrap();
-        assert_eq!(project_root(cc, None, true).unwrap(), None);
-        assert_eq!(project_root(cc, Some("D:/repo"), true).unwrap(), None, "explicit global wins");
-        assert!(project_root(cc, None, false).is_err(), "no choice, no repo: refused");
-        assert_eq!(project_root(cc, Some("D:/repo"), false).unwrap(), Some("D:/repo"));
-        let desktop = TOOL_SPECS.iter().find(|s| s.id == "claude-desktop").unwrap();
-        assert_eq!(project_root(desktop, Some("D:/repo"), false).unwrap(), None, "no project config");
-    }
 }

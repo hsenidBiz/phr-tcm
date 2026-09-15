@@ -2,7 +2,7 @@
 //! write (AttachedFile relation), and the recipient's fetch.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ado_share::{draft_file_name, parse_share_link};
+use v2_lib::ado_share::{build_share_link, draft_file_name, parse_share_link, ShareRef};
 use wiremock::matchers::{body_string_contains, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -304,4 +304,27 @@ async fn share_reuses_an_identical_draft_already_attached() {
     // the reuse path was not taken.
     let changed = r#"{"test_cases":[{"title":"Different content","steps":[]}]}"#;
     assert!(client.share_draft("acme", "Web", 144714, changed).await.is_err());
+}
+
+#[test]
+fn share_links_round_trip_and_reject_garbage() {
+    let r = ShareRef {
+        org: "acme".into(),
+        project: "Web".into(),
+        pbi_id: 144714,
+        attachment_id: "aaaa1111-2222-3333-4444-555566667777".into(),
+    };
+    let link = build_share_link(&r);
+    assert_eq!(parse_share_link(&link).unwrap(), r);
+    // Chat apps pad links with whitespace.
+    assert_eq!(parse_share_link(&format!("  {link}\n")).unwrap(), r);
+
+    for bad in [
+        "https://example.com/x",
+        "tcm-share:acme/Web/notanumber/aaaa1111",
+        "tcm-share:acme/Web/1",
+        "tcm-share:acme/Web/1/../../secrets",
+    ] {
+        assert!(parse_share_link(bad).is_err(), "{bad} should be rejected");
+    }
 }
