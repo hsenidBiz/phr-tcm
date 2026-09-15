@@ -1,6 +1,6 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "sonner";
@@ -186,17 +186,17 @@ test("the sticky bar appears only while the order is unsaved, and names its suit
   mount();
   const l = await list();
   // Clean: the inline row is there, the sticky bar is not.
-  expect(screen.queryByRole("region", { name: /unsaved order/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: /order actions for/i })).not.toBeInTheDocument();
 
   fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
 
-  const bar = await screen.findByRole("region", { name: /unsaved order/i });
+  const bar = await screen.findByRole("region", { name: /order actions for/i });
   expect(within(bar).getByRole("button", { name: "Apply order" })).toBeEnabled();
   expect(within(bar).getByRole("button", { name: "Reset" })).toBeEnabled();
   expect(bar).toHaveTextContent("Regression");
 
   fireEvent.click(within(bar).getByRole("button", { name: "Reset" }));
-  await waitFor(() => expect(screen.queryByRole("region", { name: /unsaved order/i })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("region", { name: /order actions for/i })).not.toBeInTheDocument());
 });
 
 /// Several files, arranged in the dialog, each a block in the file's ROW
@@ -463,12 +463,69 @@ test("a group folds from its header, stays folded, and still selects as a block"
 /// inside an animated wrapper whose transform makes `fixed` mean the scroll
 /// region, so the bar has to live directly under <body>, like the Import
 /// tab's floating Review button.
-test("the unsaved-order bar is pinned to the app window, not the page", async () => {
+test("the floating order bar is pinned to the app window, not the page", async () => {
   mount();
   const l = await list();
   fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
-  const bar = await screen.findByRole("region", { name: /unsaved order/i });
+  const bar = await screen.findByRole("region", { name: /order actions for/i });
   expect(bar.parentElement).toBe(document.body);
   expect(bar.className).toMatch(/\bfixed\b/);
   expect(bar.className).toMatch(/\bright-6\b/);
+});
+
+/// Field request: the toolbar - Apply order, Reset and Apply order from
+/// files - follows the user once they scroll past it, like the Import tab's
+/// floating Review button, not only while the order is unsaved.
+test("scrolling past the toolbar while the cases are in view floats all three actions", async () => {
+  const real = globalThis.IntersectionObserver;
+  const watched: { el: Element; cb: (e: { isIntersecting: boolean }[]) => void }[] = [];
+  globalThis.IntersectionObserver = class {
+    cb: (e: { isIntersecting: boolean }[]) => void;
+    constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+      this.cb = cb;
+    }
+    observe(el: Element) {
+      watched.push({ el, cb: this.cb });
+    }
+    unobserve() {}
+    disconnect() {
+      for (let i = watched.length - 1; i >= 0; i--) if (watched[i].cb === this.cb) watched.splice(i, 1);
+    }
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+  try {
+    mount();
+    const l = await list();
+    const report = (match: (el: Element) => boolean, isIntersecting: boolean) =>
+      act(() => {
+        for (const w of watched.filter((x) => match(x.el))) w.cb([{ isIntersecting }]);
+      });
+    const isToolbar = (el: Element) => within(el as HTMLElement).queryByRole("switch", { name: "Group by title" }) != null;
+    const isList = (el: Element) => el.contains(l);
+    const bar = () => screen.queryByRole("region", { name: /order actions for/i });
+
+    // Everything on screen: no floating copy.
+    expect(bar()).not.toBeInTheDocument();
+
+    // The toolbar scrolls off the top while the cases are still in view.
+    report(isToolbar, false);
+    const floating = await screen.findByRole("region", { name: "Order actions for Regression" });
+    expect(within(floating).getByRole("button", { name: "Apply order" })).toBeDisabled(); // nothing to save yet
+    expect(within(floating).getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(within(floating).getByRole("button", { name: "Apply order from files" })).toBeEnabled();
+
+    // Scrolling back up to the toolbar sends it away again.
+    report(isToolbar, true);
+    await waitFor(() => expect(bar()).not.toBeInTheDocument());
+
+    // Scrolled past the whole suite: nothing of this suite is on screen, so
+    // a clean suite has no bar.
+    report(isToolbar, false);
+    report(isList, false);
+    await waitFor(() => expect(bar()).not.toBeInTheDocument());
+  } finally {
+    globalThis.IntersectionObserver = real;
+  }
 });

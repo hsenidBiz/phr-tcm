@@ -10,11 +10,12 @@ import { Switch } from "../../components/ui/switch";
 import { IconCollapseAll, IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
+import { useOnScreen } from "../../hooks/useOnScreen";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { orderByGroups, orderGroupsAZ, sameOrder, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList, { sectionLabel } from "./CaseOrderList";
 import FileOrderDialog, { type OrderFile } from "./FileOrderDialog";
-import { markSuiteDirty, useDirtyRank } from "./dirtySuites";
+import { markSuiteFloating, useFloatRank } from "./floatingSuites";
 import { loadSuiteCases, suiteCasesKey } from "./suiteCasesQuery";
 
 /** One expanded suite: its cases in Azure DevOps' order, re-orderable and
@@ -94,11 +95,20 @@ export default function SuiteCases({
     if (cases.data) setOrder(cases.data);
   }, [cases.data]);
   const dirty = cases.data ? !sameOrder(order, cases.data) : false;
-  const rank = useDirtyRank(suiteId);
+  // The floating bar follows the user down a long suite: it shows once this
+  // suite's own toolbar has scrolled out of view while its cases are still
+  // on screen, and stands down when the toolbar comes back - the same deal
+  // as the Import tab's floating Review button. An unsaved order keeps it up
+  // regardless, so a change is never out of reach.
+  const [toolbarRef, toolbarOnScreen] = useOnScreen();
+  const [listRef, listOnScreen] = useOnScreen();
+  const following = !toolbarOnScreen && listOnScreen;
+  const floating = dirty || following;
+  const rank = useFloatRank(suiteId);
   useEffect(() => {
-    markSuiteDirty(suiteId, dirty);
-  }, [suiteId, dirty]);
-  useEffect(() => () => markSuiteDirty(suiteId, false), [suiteId]);
+    markSuiteFloating(suiteId, floating);
+  }, [suiteId, floating]);
+  useEffect(() => () => markSuiteFloating(suiteId, false), [suiteId]);
 
   const apply = useMutation({
     mutationFn: () => unwrap(commands.reorderSuiteCases(org, project, suiteId, order.map((c) => c.id))),
@@ -152,7 +162,7 @@ export default function SuiteCases({
 
   return (
     <div className="my-2 space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
+      <div ref={toolbarRef} className="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={!dirty || busy} onClick={() => apply.mutate()}>
           <IconConfirm aria-hidden />
           {apply.isPending ? "Saving" : "Apply order"}
@@ -191,6 +201,7 @@ export default function SuiteCases({
           </Button>
         )}
       </div>
+      <div ref={listRef}>
       <CaseOrderList
         cases={order}
         selected={selected}
@@ -207,11 +218,12 @@ export default function SuiteCases({
         collapsed={collapsed}
         onToggleCollapsed={toggleCollapsed}
       />
+      </div>
       {rank != null &&
         // Bottom RIGHT of the app window, like the Import tab's floating
-        // Review button: a long suite puts Apply order a screen and a half
+        // Review button: a long suite puts the toolbar a screen and a half
         // above the row being dragged. Stacked by rank, because several
-        // suites can be open and unsaved.
+        // suites can be open at once.
         //
         // Portalled to <body>: this screen renders inside AnimatedContent,
         // whose GSAP transform makes `fixed` mean the scroll region instead
@@ -220,18 +232,22 @@ export default function SuiteCases({
         createPortal(
           <div
             role="region"
-            aria-label={`Unsaved order in ${suiteName}`}
+            aria-label={`Order actions for ${suiteName}`}
             className="fixed right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl"
             style={{ bottom: `${1.5 + rank * 3.5}rem` }}
           >
             <span className="max-w-48 truncate pl-1 text-xs text-muted">{suiteName}</span>
-            <Button size="sm" disabled={busy} onClick={() => apply.mutate()}>
+            <Button size="sm" disabled={!dirty || busy} onClick={() => apply.mutate()}>
               <IconConfirm aria-hidden />
               {apply.isPending ? "Saving" : "Apply order"}
             </Button>
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => cases.data && setOrder(cases.data)}>
+            <Button size="sm" variant="ghost" disabled={!dirty || busy} onClick={() => cases.data && setOrder(cases.data)}>
               <IconUndo aria-hidden />
               Reset
+            </Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => pickFiles.mutate()}>
+              <IconImport aria-hidden />
+              {pickFiles.isPending ? "Reading files" : "Apply order from files"}
             </Button>
           </div>,
           document.body,
