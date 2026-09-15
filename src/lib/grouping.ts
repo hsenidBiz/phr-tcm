@@ -1,11 +1,21 @@
-/** Smart grouping of test cases by title patterns - port of v1
- * app/utils/grouping.py (same two-pass strategy, same golden tests).
+/** Smart grouping of test cases by title patterns. Started as a port of v1
+ * app/utils/grouping.py and keeps its golden tests; the bracket-tag pass
+ * and the fall-throughs were added for titles v1 never saw.
  *
- * 1. Delimiter prefix: text before the first category separator
- *    (" - ", ":", "|", "/", ...) is the group key.
- * 2. Common word prefix: delimiter-free titles bucket by first word; any
- *    bucket of >= 2 becomes a folder named after the longest shared run
- *    of leading words.
+ * 1. Bracket tags: a title that starts with "[Floor Plan][Navigation]"
+ *    groups under exactly those tags. A tag set only one case uses joins a
+ *    group for its FIRST tag ("[Floor Plan]") when others share it.
+ * 2. Delimiter prefix: text before the first category separator
+ *    (" - ", ":", "|", "/", ...) is the group key - but only a short one.
+ *    A separator further in is sentence text ("Verify Format > Bring to
+ *    front"), not a category.
+ * 3. Common word prefix: what is left buckets by first word; any bucket of
+ *    >= 2 becomes a folder named after the longest shared run of leading
+ *    words. A "][" counts as a word break, so a name never ends mid-tag.
+ *
+ * Whatever a pass cannot group falls through to the next one rather than
+ * straight to Ungrouped - that shortcut is what once put cases in Ungrouped
+ * because a " > " in their sentence made a group of one.
  *
  * A folder always has >= 2 members; everything else lands in a final
  * "" (Ungrouped) group. Every index appears exactly once. */
@@ -29,6 +39,23 @@ const DELIMITERS = [
   "|",
 ];
 
+/** A category is a word or three. Anything longer before the separator is
+ * the start of a sentence that happens to contain one. */
+const MAX_PREFIX_WORDS = 3;
+
+/** The leading "[A][B]" tags, trimmed and space-collapsed; null when the
+ * title does not start with one. */
+function leadingTags(title: string): string[] | null {
+  const run = /^\s*((?:\[[^\[\]]+\]\s*)+)/.exec(title);
+  if (!run) return null;
+  const tags = [...run[1].matchAll(/\[([^\[\]]+)\]/g)]
+    .map((m) => m[1].trim().replace(/\s+/g, " "))
+    .filter(Boolean);
+  return tags.length ? tags : null;
+}
+
+const tagName = (tags: string[]) => tags.map((t) => `[${t}]`).join("");
+
 function delimiterPrefix(title: string): string | null {
   let bestI: number | null = null;
   let bestPrefix: string | null = null;
@@ -41,11 +68,12 @@ function delimiterPrefix(title: string): string | null {
       }
     }
   }
-  return bestPrefix || null;
+  if (!bestPrefix || words(bestPrefix).length > MAX_PREFIX_WORDS) return null;
+  return bestPrefix;
 }
 
 function words(s: string): string[] {
-  const t = s.trim();
+  const t = s.trim().replace(/\]\[/g, "] [");
   return t ? t.split(/\s+/) : [];
 }
 
@@ -67,40 +95,64 @@ function commonWordPrefix(titles: string[]): string {
 }
 
 export function groupIndices(titles: string[]): TitleGroup[] {
-  const delim = new Map<number, { key: string; display: string }>();
-  const noDelim: number[] = [];
-  titles.forEach((raw, i) => {
-    const t = (raw ?? "").trim();
-    const prefix = t ? delimiterPrefix(t) : null;
-    if (prefix) delim.set(i, { key: prefix.toLowerCase(), display: prefix });
-    else noDelim.push(i);
+  const groups: TitleGroup[] = [];
+  const clean = titles.map((raw) => (raw ?? "").trim());
+
+  /** Bucket `idx` by `keyOf`; buckets of >= 2 become groups, and the rest
+   * are returned for the next pass. */
+  const pass = (
+    idx: number[],
+    keyOf: (i: number) => { key: string; name: string } | null,
+  ): number[] => {
+    const buckets = new Map<string, { name: string; idx: number[] }>();
+    const left: number[] = [];
+    for (const i of idx) {
+      const k = keyOf(i);
+      if (!k) {
+        left.push(i);
+        continue;
+      }
+      const b = buckets.get(k.key) ?? { name: k.name, idx: [] };
+      b.idx.push(i);
+      buckets.set(k.key, b);
+    }
+    for (const b of buckets.values()) {
+      if (b.idx.length >= 2) groups.push({ name: b.name, indices: b.idx });
+      else left.push(...b.idx);
+    }
+    return left;
+  };
+
+  const all = clean.map((_, i) => i);
+  const tagsOf = clean.map((t) => (t ? leadingTags(t) : null));
+
+  // Pass 1: the full tag run, then the first tag for the leftovers.
+  let left = pass(all, (i) => {
+    const tags = tagsOf[i];
+    return tags ? { key: tags.join("|").toLowerCase(), name: tagName(tags) } : null;
+  });
+  left = pass(left, (i) => {
+    const tags = tagsOf[i];
+    return tags ? { key: tags[0].toLowerCase(), name: tagName([tags[0]]) } : null;
   });
 
-  const groups: TitleGroup[] = [];
+  // Pass 2: a short category before a separator.
+  left = pass(left, (i) => {
+    const prefix = clean[i] ? delimiterPrefix(clean[i]) : null;
+    return prefix ? { key: prefix.toLowerCase(), name: prefix } : null;
+  });
+
+  // Pass 3: common-word-prefix clustering.
   const ungrouped: number[] = [];
-
-  // Pass 1: delimiter-prefix buckets.
-  const buckets = new Map<string, { name: string; idx: number[] }>();
-  for (const [i, { key, display }] of delim) {
-    const b = buckets.get(key) ?? { name: display, idx: [] };
-    b.idx.push(i);
-    buckets.set(key, b);
-  }
-  for (const b of buckets.values()) {
-    if (b.idx.length >= 2) groups.push({ name: b.name, indices: b.idx });
-    else ungrouped.push(...b.idx);
-  }
-
-  // Pass 2: common-word-prefix clustering for the delimiter-free titles.
   const wordBuckets = new Map<string, number[]>();
-  for (const i of noDelim) {
-    const w = words(titles[i]);
+  for (const i of left) {
+    const w = words(clean[i]);
     const firstWord = w.length ? w[0].toLowerCase() : "";
     wordBuckets.set(firstWord, [...(wordBuckets.get(firstWord) ?? []), i]);
   }
   for (const [firstWord, idxs] of wordBuckets) {
     if (firstWord && idxs.length >= 2) {
-      groups.push({ name: commonWordPrefix(idxs.map((i) => titles[i].trim())), indices: idxs });
+      groups.push({ name: commonWordPrefix(idxs.map((i) => clean[i])), indices: idxs });
     } else {
       ungrouped.push(...idxs);
     }
