@@ -1,7 +1,7 @@
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { expandSuite, mountScreen } from "./testSupport";
+import { caseRow, expandSuite, mountScreen } from "./testSupport";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -104,7 +104,7 @@ test("narrowing back to the PBI's plan while another plan holds a selection show
   mountScreen(undefined, { id: 42, title: "Login", work_item_type: "Product Backlog Item" });
   fireEvent.click(await screen.findByRole("button", { name: "Show all plans" }));
   const l = await expandSuite("Invoices");
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
   fireEvent.click(screen.getByRole("button", { name: "Show only this PBI's plan" }));
   expect(
     screen.getByText("1 test case selected in Billing - Test Plan is out of view."),

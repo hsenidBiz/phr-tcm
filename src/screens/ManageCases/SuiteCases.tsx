@@ -1,16 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
-import { IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
+import { IconCollapseAll, IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { orderByGroups, orderGroupsAZ, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
-import CaseOrderList from "./CaseOrderList";
+import { usePersistedStringSet } from "../../lib/collapsedGroups";
+import { orderByGroups, orderGroupsAZ, sameOrder, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
+import CaseOrderList, { sectionLabel } from "./CaseOrderList";
 import FileOrderDialog, { type OrderFile } from "./FileOrderDialog";
 import { markSuiteDirty, useDirtyRank } from "./dirtySuites";
 import { loadSuiteCases, suiteCasesKey } from "./suiteCasesQuery";
@@ -81,6 +83,13 @@ export default function SuiteCases({
     }
     if (on) setOrder((o) => orderByGroups(o));
   };
+  // Folded groups, remembered by name across suites and sessions - the
+  // same store every other grouped list in the app keeps its own in.
+  const [collapsed, toggleCollapsed, collapseGroups, expandGroups] = usePersistedStringSet(
+    "tcm-v2-manage-collapsed-groups",
+  );
+  const groupNames = grouped ? [...new Set(sectionsOf(order).map((x) => sectionLabel(x.name)))] : [];
+  const anyOpen = groupNames.some((n) => !collapsed.has(n));
   useEffect(() => {
     if (cases.data) setOrder(cases.data);
   }, [cases.data]);
@@ -171,6 +180,16 @@ export default function SuiteCases({
             A-Z groups
           </Button>
         )}
+        {grouped && groupNames.length > 0 && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => (anyOpen ? collapseGroups(groupNames) : expandGroups(groupNames))}
+          >
+            <IconCollapseAll aria-hidden />
+            {anyOpen ? "Collapse groups" : "Expand groups"}
+          </Button>
+        )}
       </div>
       <CaseOrderList
         cases={order}
@@ -185,28 +204,38 @@ export default function SuiteCases({
         }}
         disabled={busy}
         grouped={grouped}
+        collapsed={collapsed}
+        onToggleCollapsed={toggleCollapsed}
       />
-      {rank != null && (
-        // Same sticky treatment as Run Tests' Close all: a long suite puts
-        // Apply order a screen and a half above the row being dragged.
-        // Stacked by rank, because several suites can be open and unsaved.
-        <div
-          role="region"
-          aria-label={`Unsaved order in ${suiteName}`}
-          className="fixed right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl"
-          style={{ bottom: `${1.5 + rank * 3.5}rem` }}
-        >
-          <span className="max-w-48 truncate pl-1 text-xs text-muted">{suiteName}</span>
-          <Button size="sm" disabled={busy} onClick={() => apply.mutate()}>
-            <IconConfirm aria-hidden />
-            {apply.isPending ? "Saving" : "Apply order"}
-          </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => cases.data && setOrder(cases.data)}>
-            <IconUndo aria-hidden />
-            Reset
-          </Button>
-        </div>
-      )}
+      {rank != null &&
+        // Bottom RIGHT of the app window, like the Import tab's floating
+        // Review button: a long suite puts Apply order a screen and a half
+        // above the row being dragged. Stacked by rank, because several
+        // suites can be open and unsaved.
+        //
+        // Portalled to <body>: this screen renders inside AnimatedContent,
+        // whose GSAP transform makes `fixed` mean the scroll region instead
+        // of the window - which is why this bar, unportalled, scrolled away
+        // with the page instead of staying put.
+        createPortal(
+          <div
+            role="region"
+            aria-label={`Unsaved order in ${suiteName}`}
+            className="fixed right-6 z-40 flex items-center gap-2 rounded-full border border-border bg-surface p-2.5 shadow-2xl"
+            style={{ bottom: `${1.5 + rank * 3.5}rem` }}
+          >
+            <span className="max-w-48 truncate pl-1 text-xs text-muted">{suiteName}</span>
+            <Button size="sm" disabled={busy} onClick={() => apply.mutate()}>
+              <IconConfirm aria-hidden />
+              {apply.isPending ? "Saving" : "Apply order"}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => cases.data && setOrder(cases.data)}>
+              <IconUndo aria-hidden />
+              Reset
+            </Button>
+          </div>,
+          document.body,
+        )}
       {orderFiles && orderFiles.length > 0 && (
         <FileOrderDialog
           suiteCases={order}

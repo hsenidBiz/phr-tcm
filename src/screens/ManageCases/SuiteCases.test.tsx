@@ -6,6 +6,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "sonner";
 import type { SuiteCase } from "../../lib/suiteOrder";
 import SuiteCases from "./SuiteCases";
+import { caseRow } from "./testSupport";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -158,8 +159,8 @@ test("Move up and down step a row; Reset restores the server order", async () =>
 test("Move up on a ticked row moves the whole selection as a block", async () => {
   mount();
   const l = await list();
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
+  fireEvent.click(caseRow(l, 202), { ctrlKey: true });
+  fireEvent.click(caseRow(l, 203), { ctrlKey: true });
   fireEvent.click(within(l).getByRole("button", { name: "Move #203 up" }));
   const rows = () => within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0]);
   expect(rows()).toEqual(["#202", "#203", "#201"]);
@@ -172,8 +173,8 @@ test("Move up on a ticked row moves the whole selection as a block", async () =>
 test("dragging a ticked row drops the whole selection at the target", async () => {
   mount();
   const l = await list();
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
+  fireEvent.click(caseRow(l, 202), { ctrlKey: true });
   const [r201, , r203] = within(l).getAllByRole("listitem");
   fireEvent.dragStart(r201);
   fireEvent.dragOver(r203);
@@ -242,17 +243,17 @@ test("cancelling the picker opens nothing, and a file naming none of the suite's
   expect(within(dialog).getByRole("button", { name: "Apply" })).toBeDisabled();
 });
 
-test("checking a row reports the case to the parent; unchecking reports it back", async () => {
+test("selecting a row reports the case to the parent; deselecting reports it back", async () => {
   const toggles: Array<[number[], boolean]> = [];
   mount(undefined, (cases, on) => toggles.push([cases.map((c) => c.id), on]));
   const l = await list();
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(caseRow(l, 202), { ctrlKey: true });
   expect(toggles[toggles.length - 1]).toEqual([[202], true]);
-  // The "select all" checkbox is CaseOrderList's header row, a sibling of
-  // the <ol> rather than one of its <li>s, so it is outside `l`'s scope.
-  fireEvent.click(screen.getByRole("checkbox", { name: "Select all test cases" }));
+  // "Select all" is in CaseOrderList's header row, a sibling of the <ol>
+  // rather than one of its <li>s, so it is outside `l`'s scope.
+  fireEvent.click(screen.getByRole("button", { name: "Select all" }));
   expect(toggles[toggles.length - 1]).toEqual([[201, 203], true]);
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(caseRow(l, 202), { ctrlKey: true });
   expect(toggles[toggles.length - 1]).toEqual([[202], false]);
 });
 
@@ -331,7 +332,7 @@ test("a remembered switch shows sections without reordering", async () => {
   expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeDisabled();
 });
 
-test("A-Z groups sorts the groups by name; a header ticks its cases and moves as a block", async () => {
+test("A-Z groups sorts the groups by name; a header selects its cases and moves as a block", async () => {
   mount(undefined, undefined, [
     point(201, "Zeta | one"),
     point(202, "Alpha | one"),
@@ -345,9 +346,10 @@ test("A-Z groups sorts the groups by name; a header ticks its cases and moves as
   fireEvent.click(screen.getByRole("button", { name: "A-Z groups" }));
   expect(rows()).toEqual(["#202", "#204", "#201", "#203"]);
 
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select group Zeta" }));
-  expect(within(l).getByRole("checkbox", { name: "Select #201" })).toBeChecked();
-  expect(within(l).getByRole("checkbox", { name: "Select #203" })).toBeChecked();
+  // Ctrl+click on a header selects its whole group.
+  fireEvent.click(within(l).getByText("Zeta").closest("li")!, { ctrlKey: true });
+  expect(caseRow(l, 201)).toHaveAttribute("data-selected", "true");
+  expect(caseRow(l, 203)).toHaveAttribute("data-selected", "true");
 
   fireEvent.click(within(l).getByRole("button", { name: "Move group Zeta up" }));
   expect(rows()).toEqual(["#201", "#203", "#202", "#204"]);
@@ -387,4 +389,86 @@ test("dropping a block onto a section header from above lands it before the sect
   fireEvent.dragOver(zetaHeader);
   fireEvent.drop(zetaHeader);
   expect(rows()).toEqual(["#204", "#203", "#201", "#202"]);
+});
+
+// ---- Selection by click, folding groups, the bar that stays put ---------
+
+const selectedRows = (l: HTMLElement) =>
+  within(l)
+    .getAllByRole("listitem")
+    .filter((r) => r.getAttribute("data-selected") === "true")
+    .map((r) => r.textContent?.match(/#\d+/)?.[0]);
+
+/// Same as View Test Cases and Update Test Cases: no checkboxes. A click
+/// selects one row, Ctrl+click adds or removes, Shift+click takes a range.
+test("rows select by click, Ctrl+click and Shift+click, with no checkboxes", async () => {
+  mount();
+  const l = await list();
+  expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+
+  fireEvent.click(caseRow(l, 201));
+  expect(selectedRows(l)).toEqual(["#201"]);
+  fireEvent.click(caseRow(l, 203));
+  expect(selectedRows(l)).toEqual(["#203"]); // a plain click replaces
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
+  expect(selectedRows(l)).toEqual(["#201", "#203"]); // Ctrl adds
+  fireEvent.click(caseRow(l, 203), { ctrlKey: true });
+  expect(selectedRows(l)).toEqual(["#201"]); // and removes
+
+  // A range runs from the last row clicked without Shift.
+  fireEvent.click(caseRow(l, 201));
+  fireEvent.click(caseRow(l, 203), { shiftKey: true });
+  expect(selectedRows(l)).toEqual(["#201", "#202", "#203"]);
+
+  // The arrow buttons move rows; they do not change the selection.
+  fireEvent.click(within(l).getByRole("button", { name: "Move #203 up" }));
+  expect(selectedRows(l)).toEqual(["#201", "#202", "#203"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  expect(selectedRows(l)).toEqual([]);
+});
+
+/// Groups fold like every other grouped list in the app, and the fold is
+/// remembered. A folded group still selects and moves as a block.
+test("a group folds from its header, stays folded, and still selects as a block", async () => {
+  localStorage.setItem("tcm-v2-group-manage", "on");
+  mount(undefined, undefined, GROUPED_POINTS);
+  const l = await list();
+  const rows = () => within(l).queryAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0]);
+  expect(rows()).toEqual(["#201", "#202", "#203", "#204"]);
+
+  // Sections are runs in the CURRENT order - Alerts, Filter Card, Alerts,
+  // Filter Card - and a fold goes by name, so both Alerts runs fold.
+  fireEvent.click(within(l).getAllByRole("button", { name: "Collapse group Alerts" })[0]);
+  expect(rows()).toEqual(["#202", "#204"]);
+  expect(JSON.parse(localStorage.getItem("tcm-v2-manage-collapsed-groups") ?? "[]")).toEqual(["Alerts"]);
+
+  // Ctrl+click on a folded header selects what is inside that run.
+  const alertsHeader = within(l).getAllByText("Alerts")[0].closest("li")!;
+  fireEvent.click(alertsHeader, { ctrlKey: true });
+  expect(screen.getByText("1 of 4 selected")).toBeInTheDocument();
+
+  // A plain click on the header unfolds it again.
+  fireEvent.click(alertsHeader);
+  expect(rows()).toEqual(["#201", "#202", "#203", "#204"]);
+  expect(selectedRows(l)).toEqual(["#201"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Collapse groups" }));
+  expect(rows()).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Expand groups" }));
+  expect(rows()).toEqual(["#201", "#202", "#203", "#204"]);
+});
+
+/// Field report: the bar scrolled away with the page. This screen renders
+/// inside an animated wrapper whose transform makes `fixed` mean the scroll
+/// region, so the bar has to live directly under <body>, like the Import
+/// tab's floating Review button.
+test("the unsaved-order bar is pinned to the app window, not the page", async () => {
+  mount();
+  const l = await list();
+  fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
+  const bar = await screen.findByRole("region", { name: /unsaved order/i });
+  expect(bar.parentElement).toBe(document.body);
+  expect(bar.className).toMatch(/\bfixed\b/);
+  expect(bar.className).toMatch(/\bright-6\b/);
 });

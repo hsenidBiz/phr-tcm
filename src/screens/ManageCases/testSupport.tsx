@@ -1,6 +1,6 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { PbiHit } from "../../bindings";
 import ManageCases from "./index";
 
@@ -97,4 +97,10 @@ export async function expandSuite(name: string) {
   const l = await screen.findByRole("list", { name: `Test cases in ${name}` });
   await new Promise((r) => setTimeout(r, 0));
   return l;
+}
+
+/** A case's row in an open suite's list - rows are selected by clicking
+ * them (Ctrl+click adds), the way the app's other lists work. */
+export function caseRow(list: HTMLElement, id: number): HTMLElement {
+  return within(list).getByText(`#${id}`).closest("li") as HTMLElement;
 }

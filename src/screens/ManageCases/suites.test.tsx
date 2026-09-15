@@ -2,7 +2,7 @@ import { clearMocks } from "@tauri-apps/api/mocks";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "sonner";
-import { expandSuite, mountScreen } from "./testSupport";
+import { caseRow, expandSuite, mountScreen } from "./testSupport";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
@@ -29,8 +29,8 @@ test("selecting cases in a plan enables Copy to suite for that plan only; copyin
   const billing = screen.getByRole("region", { name: "Billing - Test Plan" });
   expect(within(auth).getByRole("button", { name: "Copy to suite" })).toBeDisabled();
 
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
+  fireEvent.click(caseRow(l, 203), { ctrlKey: true });
   expect(within(auth).getByText("2 selected")).toBeInTheDocument();
   expect(within(billing).queryByText(/selected/)).not.toBeInTheDocument();
   // A target is needed: static suites of this plan (root included), never
@@ -61,8 +61,8 @@ test("changing the picker mid-copy still names and invalidates the suite that wa
   const l = await expandSuite("PBI 42 suite");
   const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
 
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
+  fireEvent.click(caseRow(l, 203), { ctrlKey: true });
   await openSelect(auth, "Copy to");
   fireEvent.click(screen.getByRole("option", { name: "Regression" }));
   fireEvent.click(within(auth).getByRole("button", { name: "Copy to suite" }));
@@ -84,14 +84,14 @@ test("changing the picker mid-copy still names and invalidates the suite that wa
 test("selecting in a second plan starts a new selection", async () => {
   mountScreen();
   const l1 = await expandSuite("Regression");
-  fireEvent.click(within(l1).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(caseRow(l1, 201), { ctrlKey: true });
   const l2 = await expandSuite("Invoices");
-  fireEvent.click(within(l2).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(caseRow(l2, 202), { ctrlKey: true });
   const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
   const billing = screen.getByRole("region", { name: "Billing - Test Plan" });
   expect(within(billing).getByText("1 selected")).toBeInTheDocument();
   expect(within(auth).queryByText(/selected/)).not.toBeInTheDocument();
-  expect(within(l1).getByRole("checkbox", { name: "Select #201" })).not.toBeChecked();
+  expect(caseRow(l1, 201)).not.toHaveAttribute("data-selected");
 });
 
 test("New test suite offers root and static suites as parents; with cases selected it creates and copies", async () => {
@@ -102,7 +102,7 @@ test("New test suite offers root and static suites as parents; with cases select
     return undefined;
   });
   const l = await expandSuite("Regression");
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(caseRow(l, 202), { ctrlKey: true });
   const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
   fireEvent.click(within(auth).getByRole("button", { name: "New test suite" }));
   const dialog = await screen.findByRole("dialog");
@@ -158,7 +158,7 @@ test("the suite is created but the copy fails: the suite still shows up and the 
     return undefined;
   });
   const l = await expandSuite("Regression");
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(caseRow(l, 202), { ctrlKey: true });
   const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
   fireEvent.click(within(auth).getByRole("button", { name: "New test suite" }));
   const dialog = await screen.findByRole("dialog");
@@ -172,12 +172,12 @@ test("the suite is created but the copy fails: the suite still shows up and the 
 test("Clear selection in a plan's header drops the selection and unchecks its rows", async () => {
   mountScreen();
   const l = await expandSuite("Regression");
-  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(caseRow(l, 201), { ctrlKey: true });
   const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
   expect(within(auth).getByText("1 selected")).toBeInTheDocument();
   fireEvent.click(within(auth).getByRole("button", { name: "Clear selection" }));
   expect(within(auth).queryByText(/selected/)).not.toBeInTheDocument();
-  expect(within(l).getByRole("checkbox", { name: "Select #201" })).not.toBeChecked();
+  expect(caseRow(l, 201)).not.toHaveAttribute("data-selected");
 });
 
 test("New test suite is hidden only when Azure DevOps says no", async () => {
@@ -206,8 +206,8 @@ test("an unanswerable permission check leaves New test suite in place", async ()
 test("a suite's header count is its own, not the whole plan's selection", async () => {
   mountScreen();
   const regression = await expandSuite("Regression");
-  fireEvent.click(within(regression).getByRole("checkbox", { name: "Select #201" }));
-  fireEvent.click(within(regression).getByRole("checkbox", { name: "Select #202" }));
+  fireEvent.click(caseRow(regression, 201), { ctrlKey: true });
+  fireEvent.click(caseRow(regression, 202), { ctrlKey: true });
   await expandSuite("Smoke");
   expect(screen.getByText("2 test cases")).toBeInTheDocument();
   expect(screen.getByText("2 of 3 selected")).toBeInTheDocument();

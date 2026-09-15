@@ -1,12 +1,13 @@
 import { useCallback, useState } from "react";
 
 /** A Set<string> backed by localStorage, so collapsed Group-by-Title groups
- * survive across sessions. Returns the set, a toggle for one name, and a
- * bulk add for the sticky "Collapse groups" button - callers that only
- * destructure the first two are unaffected. */
+ * survive across sessions. Returns the set, a toggle for one name, a bulk
+ * add for the sticky "Collapse groups" button, and a bulk remove for an
+ * "Expand groups" one - callers that only destructure the first few are
+ * unaffected. */
 export function usePersistedStringSet(
   key: string,
-): [Set<string>, (name: string) => void, (names: string[]) => void] {
+): [Set<string>, (name: string) => void, (names: string[]) => void, (names: string[]) => void] {
   const [set, setSet] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(key);
@@ -49,5 +50,21 @@ export function usePersistedStringSet(
     [key],
   );
 
-  return [set, toggle, addAll];
+  const removeAll = useCallback(
+    (names: string[]) => {
+      setSet((s) => {
+        const next = new Set(s);
+        for (const n of names) next.delete(n);
+        try {
+          localStorage.setItem(key, JSON.stringify([...next]));
+        } catch {
+          // storage unavailable -> session-only
+        }
+        return next;
+      });
+    },
+    [key],
+  );
+
+  return [set, toggle, addAll, removeAll];
 }
