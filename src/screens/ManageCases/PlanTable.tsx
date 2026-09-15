@@ -85,14 +85,14 @@ export default function PlanTable({
   }, [target, staticTargets]);
 
   const copy = useMutation({
-    mutationFn: () =>
-      unwrap(commands.addCasesToSuite(org, project, plan.id, Number(target), selectedCases.map((c) => c.id))),
-    onSuccess: (added) => {
-      const name = staticTargets.find((t) => String(t.id) === target)?.name ?? "the suite";
+    mutationFn: (suiteId: number) =>
+      unwrap(commands.addCasesToSuite(org, project, plan.id, suiteId, selectedCases.map((c) => c.id))),
+    onSuccess: (added, suiteId) => {
+      const name = staticTargets.find((t) => t.id === suiteId)?.name ?? "the suite";
       toast.success(
         `Copied ${added.length} test case${added.length === 1 ? "" : "s"} to ${name}. ${added.length === 1 ? "It stays" : "They stay"} where ${added.length === 1 ? "it was" : "they were"}.`,
       );
-      qc.invalidateQueries({ queryKey: suiteCasesKey(org, project, plan.id, Number(target)) });
+      qc.invalidateQueries({ queryKey: suiteCasesKey(org, project, plan.id, suiteId) });
       onClearSelection();
     },
     onError: (e) => toast.error(`Could not copy the cases: ${e.message}`),
@@ -156,7 +156,7 @@ export default function PlanTable({
           size="sm"
           variant="ghost"
           disabled={busy || !target || selectedCases.length === 0}
-          onClick={() => copy.mutate()}
+          onClick={() => copy.mutate(Number(target))}
         >
           <IconCopyToSuite aria-hidden />
           {copy.isPending ? "Copying" : "Copy to suite"}

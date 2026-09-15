@@ -52,6 +52,35 @@ test("selecting cases in a plan enables Copy to suite for that plan only; copyin
   await waitFor(() => expect(within(auth).queryByText(/selected/)).not.toBeInTheDocument());
 });
 
+test("changing the picker mid-copy still names and invalidates the suite that was actually targeted (regression)", async () => {
+  let resolveAdd: (cases: number[]) => void = () => {};
+  const pending = new Promise<number[]>((resolve) => {
+    resolveAdd = resolve;
+  });
+  const { calls } = mountScreen((cmd) => (cmd === "add_cases_to_suite" ? pending : undefined));
+  const l = await expandSuite("PBI 42 suite");
+  const auth = screen.getByRole("region", { name: "Auth - Test Plan" });
+
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #201" }));
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select #203" }));
+  await openSelect(auth, "Copy to");
+  fireEvent.click(screen.getByRole("option", { name: "Regression" }));
+  fireEvent.click(within(auth).getByRole("button", { name: "Copy to suite" }));
+
+  await waitFor(() => {
+    const add = calls.find((c) => c.cmd === "add_cases_to_suite");
+    expect(add?.args).toEqual({ organization: "acme", project: "Web", planId: 9, suiteId: 91, caseIds: [201, 203] });
+  });
+
+  // Copy is still in flight (the mock hasn't resolved yet): change the picker.
+  await openSelect(auth, "Copy to");
+  fireEvent.click(screen.getByRole("option", { name: "Smoke" }));
+
+  resolveAdd([201, 203]);
+  await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  expect(toast.success).toHaveBeenCalledWith("Copied 2 test cases to Regression. They stay where they were.");
+});
+
 test("selecting in a second plan starts a new selection", async () => {
   mountScreen();
   const l1 = await expandSuite("Regression");
