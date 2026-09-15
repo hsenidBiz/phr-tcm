@@ -21,11 +21,31 @@ export type CaseDiff = {
     added: number;
     removed: number;
     changed: number;
+    /** Steps whose text is unchanged but whose stored `type` is wrong for
+     * their Expected Result (an ActionStep that has one). The upload repairs
+     * the type in place, so this counts as a change. */
+    retyped: number;
     detail: StepDiff[];
   };
   blankSkipped: string[];
   noop: boolean;
 };
+
+/** The `type` Azure DevOps gives a step - mirrors `step_type` in Rust. */
+function stepTypeFor(expected: string): "ValidateStep" | "ActionStep" {
+  return expected.trim() ? "ValidateStep" : "ActionStep";
+}
+
+/** Each `<step>`'s `type` attribute in document order, from the raw Steps
+ * XML the server holds. Empty when there is no XML to read - a stub, the
+ * tour's sample data, or a fixture that never carried the field. */
+function storedStepTypes(stepsXml: string | undefined): string[] {
+  const out: string[] = [];
+  for (const m of (stepsXml ?? "").matchAll(/<step\b([^>]*)>/g)) {
+    out.push(/\btype="([^"]*)"/.exec(m[1])?.[1] ?? "");
+  }
+  return out;
+}
 
 function tagsEqual(a: string, b: string): boolean {
   const norm = (v: string) =>
@@ -103,10 +123,23 @@ export function diffCase(
       detail.push({ index: i, kind: "changed", old: c, new: q });
     }
   }
+  // A step with unchanged text can still need writing: every step this
+  // app wrote before 1.25.1 was an ActionStep, whatever its Expected
+  // Result, and the upload now repairs that in place. Counted only when
+  // the stored XML lines up with the parsed steps one-for-one - anything
+  // else is not something to claim from a regex.
+  const storedTypes = storedStepTypes(current.steps_xml);
+  const touched = new Set(detail.map((d) => d.index));
+  const retyped =
+    storedTypes.length === current.steps.length
+      ? queued.steps.filter((q, i) => !touched.has(i) && storedTypes[i] !== stepTypeFor(q.expected)).length
+      : 0;
+
   const steps = {
     added: detail.filter((d) => d.kind === "added").length,
     removed: detail.filter((d) => d.kind === "removed").length,
     changed: detail.filter((d) => d.kind === "changed").length,
+    retyped,
     detail,
   };
 
@@ -114,7 +147,7 @@ export function diffCase(
     fields,
     steps,
     blankSkipped,
-    noop: fields.length === 0 && detail.length === 0,
+    noop: fields.length === 0 && detail.length === 0 && retyped === 0,
   };
 }
 
@@ -129,5 +162,6 @@ export function diffSummary(d: CaseDiff): string {
   if (d.fields.length) parts.push(`${d.fields.length} field${d.fields.length === 1 ? "" : "s"}`);
   const stepCount = d.steps.added + d.steps.removed + d.steps.changed;
   if (stepCount) parts.push(`${stepCount} step${stepCount === 1 ? "" : "s"}`);
+  if (d.steps.retyped) parts.push(`${d.steps.retyped} step type${d.steps.retyped === 1 ? "" : "s"}`);
   return parts.length ? `Click to view ${parts.join(" · ")} changing` : "";
 }

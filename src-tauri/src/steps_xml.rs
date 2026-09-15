@@ -49,12 +49,93 @@ fn escape_xml(text: &str) -> String {
 /// Result; every step used to be written here as an ActionStep, which
 /// silently undid the form's choice on the next bulk update (case 154599,
 /// fixed in the form at 05:50 and set back at 09:58 by an upload).
-fn step_type(expected: &str) -> &'static str {
+pub fn step_type(expected: &str) -> &'static str {
     if expected.trim().is_empty() {
         "ActionStep"
     } else {
         "ValidateStep"
     }
+}
+
+/// The `type` attribute of each `<step>` in document order, aligned with
+/// `parse_steps_xml`'s output. A step with no type attribute reads as "".
+pub fn parse_step_types(xml_str: &str) -> Vec<String> {
+    if xml_str.trim().is_empty() {
+        return vec![];
+    }
+    let mut reader = Reader::from_str(xml_str);
+    let mut types = vec![];
+    loop {
+        match reader.read_event() {
+            Err(_) => return vec![],
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                if e.name().as_ref() == b"step" {
+                    types.push(
+                        e.attributes()
+                            .flatten()
+                            .find(|a| a.key.as_ref() == b"type")
+                            .and_then(|a| String::from_utf8(a.value.to_vec()).ok())
+                            .unwrap_or_default(),
+                    );
+                }
+            }
+            Ok(_) => {}
+        }
+    }
+    types
+}
+
+/// The original Steps XML with each `<step>`'s `type` corrected to what its
+/// Expected Result calls for, and NOTHING else touched - ids, markup,
+/// embedded images and `<description/>` all stay as Azure DevOps holds
+/// them. `None` when every type is already right (nothing to write), or
+/// when `steps` does not line up with the XML one-for-one (a guess here
+/// could retype the wrong step, so refuse).
+///
+/// This is how a case the app once wrote with every step as an ActionStep
+/// gets repaired by the next save that touches it, without paying the
+/// markup loss that rebuilding the XML from plain text would cost.
+pub fn retype_steps_xml(xml: &str, steps: &[Step]) -> Option<String> {
+    if xml.trim().is_empty() || parse_step_types(xml).len() != steps.len() {
+        return None;
+    }
+    let mut out = String::with_capacity(xml.len() + 16);
+    let mut rest = xml;
+    let mut i = 0;
+    let mut changed = false;
+    while let Some(pos) = rest.find("<step") {
+        let after = &rest[pos + 5..];
+        // "<steps" and any other prefix share these five characters.
+        if !(after.starts_with(' ') || after.starts_with('>') || after.starts_with('/')) {
+            out.push_str(&rest[..pos + 5]);
+            rest = after;
+            continue;
+        }
+        let end = after.find('>')?;
+        let tag = &after[..end];
+        let want = step_type(&steps.get(i)?.expected);
+        let retagged = match tag.find("type=\"") {
+            Some(t) => {
+                let value_start = t + "type=\"".len();
+                let value_end = value_start + tag[value_start..].find('"')?;
+                format!("{}{}{}", &tag[..value_start], want, &tag[value_end..])
+            }
+            None => format!("{tag} type=\"{want}\""),
+        };
+        if retagged != tag {
+            changed = true;
+        }
+        out.push_str(&rest[..pos + 5]);
+        out.push_str(&retagged);
+        rest = &after[end..];
+        i += 1;
+    }
+    out.push_str(rest);
+    if i != steps.len() {
+        return None;
+    }
+    changed.then_some(out)
 }
 
 /// Build the XML string for the Microsoft.VSTS.TCM.Steps field.

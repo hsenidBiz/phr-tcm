@@ -830,8 +830,16 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
 // ------------------------------------------------- steps are not clobbered
 
 /// A step as Azure DevOps really holds one: markup and an embedded image
-/// that `parse_steps_xml` cannot represent.
-const RICH_STEPS: &str = "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\">\
+/// that `parse_steps_xml` cannot represent. Typed the way the web form
+/// writes a step that has an Expected Result.
+const RICH_STEPS: &str = "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ValidateStep\">\
+<parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;\
+&lt;IMG src=\"http://ado/att/1.png\"&gt;&lt;/DIV&gt;</parameterizedString>\
+<parameterizedString isformatted=\"true\">Saved</parameterizedString></step></steps>";
+
+/// The same step as every upload through this app used to write it: an
+/// ActionStep despite its Expected Result.
+const RICH_STEPS_MISTYPED: &str = "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ActionStep\">\
 <parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;\
 &lt;IMG src=\"http://ado/att/1.png\"&gt;&lt;/DIV&gt;</parameterizedString>\
 <parameterizedString isformatted=\"true\">Saved</parameterizedString></step></steps>";
@@ -876,6 +884,22 @@ async fn a_title_only_save_does_not_touch_the_steps() {
         !body.contains("Microsoft.VSTS.TCM.Steps"),
         "Steps must be left out of the patch entirely:\n{body}"
     );
+}
+
+/// A step the app once wrote as an ActionStep despite its Expected Result
+/// is repaired by the next save that touches the case - and repaired IN
+/// PLACE: only the `type` changes, so the markup and the screenshot the
+/// title-only rule above protects are still protected.
+#[tokio::test]
+async fn a_save_repairs_a_wrong_step_type_without_losing_the_markup() {
+    let tc = case_from(RICH_STEPS_MISTYPED, "A better title");
+    let body = captured_patch(&tc, Some(RICH_STEPS_MISTYPED)).await;
+
+    assert!(body.contains("Microsoft.VSTS.TCM.Steps"), "the type must be repaired:\n{body}");
+    // The XML travels inside a JSON string, so its quotes arrive escaped.
+    assert!(body.contains("type=\\\"ValidateStep\\\""), "repaired to a ValidateStep:\n{body}");
+    assert!(body.contains("IMG src="), "the screenshot must survive the repair:\n{body}");
+    assert!(body.contains("&lt;B&gt;Click Save&lt;/B&gt;"), "and so must the markup:\n{body}");
 }
 
 /// When the user really does edit a step, it is written - the loss of markup

@@ -38,6 +38,33 @@ test("identical case is a no-op", () => {
   expect(diffSummary(d)).toBe("");
 });
 
+/// A step stored as an ActionStep despite its Expected Result (every step
+/// this app used to write) is a real change: the upload repairs the type.
+/// The review must not call such a case a no-op, or the repair is skipped.
+test("a step whose stored type is wrong for its Expected Result is not a no-op", () => {
+  const xml = (t1: string, t2: string) =>
+    `<steps id="0" last="3"><step id="2" type="${t1}"><parameterizedString isformatted="true">Open</parameterizedString><parameterizedString isformatted="true">Shown</parameterizedString></step>` +
+    `<step id="3" type="${t2}"><parameterizedString isformatted="true">Wait</parameterizedString><parameterizedString isformatted="true"></parameterizedString></step></steps>`;
+  const steps = [
+    { action: "Open", expected: "Shown" },
+    { action: "Wait", expected: "" },
+  ];
+  const q = queued({ steps });
+
+  const wrong = diffCase(q, current({ steps, step_ids: ["2", "3"], steps_xml: xml("ActionStep", "ActionStep") }));
+  expect(wrong.noop).toBe(false);
+  expect(wrong.steps.retyped).toBe(1); // only the step WITH a result is wrong
+  expect(wrong.steps.detail).toEqual([]); // the text is unchanged
+  expect(diffSummary(wrong)).toBe("Click to view 1 step type changing");
+
+  const right = diffCase(q, current({ steps, step_ids: ["2", "3"], steps_xml: xml("ValidateStep", "ActionStep") }));
+  expect(right.noop).toBe(true);
+  expect(right.steps.retyped).toBe(0);
+
+  // No XML to read (a project stub, the tour): nothing is claimed.
+  expect(diffCase(q, current({ steps, steps_xml: "" })).steps.retyped).toBe(0);
+});
+
 test("changed fields report old -> new", () => {
   const d = diffCase(
     queued({ title: "Login works v2", automation_status: "Not Automated" }),

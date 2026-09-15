@@ -37,6 +37,51 @@ fn a_step_with_an_expected_result_is_a_validate_step() {
     assert!(build_steps_xml(&[]).contains("type=\"ActionStep\""), "the placeholder checks nothing");
 }
 
+/// Repairing the type of steps the app wrote wrongly must not cost the
+/// markup Azure DevOps holds: the original XML is kept as it is - ids,
+/// formatting, images, `<description/>` - and only the `type` attribute
+/// changes, and only where it is wrong.
+#[test]
+fn retype_keeps_the_original_xml_and_changes_only_wrong_types() {
+    use v2_lib::steps_xml::{parse_steps_xml, retype_steps_xml};
+    let xml = concat!(
+        "<steps id=\"0\" last=\"9\">",
+        "<step id=\"7\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">&lt;B&gt;Open&lt;/B&gt;</parameterizedString>",
+        "<parameterizedString isformatted=\"true\">Shown</parameterizedString><description/></step>",
+        "<step id=\"9\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait</parameterizedString>",
+        "<parameterizedString isformatted=\"true\"></parameterizedString></step>",
+        "<step id=\"4\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Check</parameterizedString>",
+        "<parameterizedString isformatted=\"true\">Done</parameterizedString></step>",
+        "</steps>"
+    );
+    let steps = parse_steps_xml(xml);
+    let fixed = retype_steps_xml(xml, &steps).expect("step 7 has a result but is an ActionStep");
+    assert!(fixed.contains("<step id=\"7\" type=\"ValidateStep\">"), "{fixed}");
+    assert!(fixed.contains("<step id=\"9\" type=\"ActionStep\">"), "no result stays an action: {fixed}");
+    assert!(fixed.contains("<step id=\"4\" type=\"ValidateStep\">"), "already right, untouched: {fixed}");
+    assert!(fixed.contains("&lt;B&gt;Open&lt;/B&gt;"), "markup survives: {fixed}");
+    assert!(fixed.contains("<description/>"), "extra elements survive: {fixed}");
+    assert_eq!(fixed.len(), xml.len() + ("ValidateStep".len() - "ActionStep".len()));
+
+    // Nothing wrong: nothing to write.
+    assert!(retype_steps_xml(&fixed, &steps).is_none());
+    // A step count that does not match the XML is not something to guess at.
+    assert!(retype_steps_xml(xml, &steps[..2]).is_none());
+    assert!(retype_steps_xml("", &steps).is_none());
+}
+
+#[test]
+fn parse_step_types_reads_them_in_document_order() {
+    let xml = concat!(
+        "<steps id=\"0\" last=\"3\">",
+        "<step id=\"2\" type=\"ValidateStep\"><parameterizedString/><parameterizedString/></step>",
+        "<step id=\"3\" type=\"ActionStep\"><parameterizedString/><parameterizedString/></step>",
+        "</steps>"
+    );
+    assert_eq!(v2_lib::steps_xml::parse_step_types(xml), vec!["ValidateStep", "ActionStep"]);
+    assert!(v2_lib::steps_xml::parse_step_types("").is_empty());
+}
+
 #[test]
 fn round_trip_preserves_action_and_expected() {
     let steps = vec![

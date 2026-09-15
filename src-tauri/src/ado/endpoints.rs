@@ -1456,7 +1456,12 @@ fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> 
     }
     if let Some(xml) = original_xml {
         if crate::steps_xml::parse_steps_xml(xml) == steps {
-            return None;
+            // Same text: leave the markup alone. But a step whose stored
+            // TYPE is wrong for its Expected Result (every step this app
+            // wrote before 1.25.1 was an ActionStep) is repaired in place -
+            // only the attribute changes, so nothing Azure DevOps holds is
+            // lost - and a case with every type already right writes nothing.
+            return crate::steps_xml::retype_steps_xml(xml, steps);
         }
     }
     Some(crate::steps_xml::build_steps_xml(steps))
