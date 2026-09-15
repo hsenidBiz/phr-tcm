@@ -196,6 +196,15 @@ test("import feeds the shared queue; failed items stay queued", async () => {
   expect(bad, "the failed case should still be queued").toBeTruthy();
   expect(bad?.className).toMatch(/border-danger/);
   expect(bad?.textContent).not.toContain("UPLOADED");
+
+  // Clearing the results puts the rows back to normal: no Uploaded badge,
+  // no failure ring. The rows themselves stay, and so does the new id.
+  fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+  await waitFor(() => expect(screen.queryByText("UPLOADED")).not.toBeInTheDocument());
+  const rows = [...document.querySelectorAll("li.rounded-md")];
+  expect(rows).toHaveLength(2);
+  expect(rows[0].textContent).toContain("UPDATE #901");
+  expect(rows.map((li) => li.className).join(" ")).not.toMatch(/border-danger|border-success/);
 });
 
 test("a matching PBI imports straight into the queue", async () => {

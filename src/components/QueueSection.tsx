@@ -1190,6 +1190,7 @@ export default function QueueSection({
               const n = queue.length;
               setQueue([]);
               setFailedRows(new Set());
+              setUploadedIds(new Set());
               onQueueCleared?.();
               toast.info(`Removed ${n} queued case${n === 1 ? "" : "s"}.`);
             }}
@@ -1477,8 +1478,18 @@ export default function QueueSection({
             <h3 className="text-sm font-semibold text-text">
               {summariseSubmit(results).headline}
             </h3>
-            {/* Dismiss the results once read - the button goes with them. */}
-            <Button variant="outline" size="sm" onClick={() => setResults(null)}>
+            {/* Dismiss the results once read - the button goes with them,
+                and so do the marks on the rows: once the results are
+                gone, the queue reads as a plain queue again. */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setResults(null);
+                setFailedRows(new Set());
+                setUploadedIds(new Set());
+              }}
+            >
               <IconClear aria-hidden />
               Clear results
             </Button>
