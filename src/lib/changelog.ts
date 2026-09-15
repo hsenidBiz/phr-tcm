@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.2",
+    date: "2026-09-15",
+    items: [
+      "Test cases stay in the queue after an upload until you remove them. Before, everything that uploaded disappeared from the list while its JSON file was still being watched, leaving a watched file with nothing to upload.",
+      "Cases the upload wrote are marked Uploaded, and newly created ones now show their work item number, so uploading the same queue again updates them instead of creating copies. Cases that failed are still ringed in red.",
+      "Editing a watched file after an upload now changes the cases already in the queue rather than adding a second copy of each.",
+    ],
+  },
+  {
     version: "1.25.1",
     date: "2026-09-15",
     items: [
