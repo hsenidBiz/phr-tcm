@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.4",
+    date: "2026-09-15",
+    items: [
+      "Suite Management: once you scroll past a suite's buttons, Apply order, Reset and Apply order from files follow you at the bottom right of the window, and step aside when you scroll back up to them. Apply order and Reset stay greyed out until you change the order.",
+    ],
+  },
+  {
     version: "1.25.3",
     date: "2026-09-15",
     items: [
