@@ -19,12 +19,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const ENTRIES = [
-  { id: 95, sequence_number: 0, entry_type: "suite" },
-  { id: 201, sequence_number: 1, entry_type: "testCase" },
-  { id: 202, sequence_number: 2, entry_type: "testCase" },
-  { id: 203, sequence_number: 3, entry_type: "testCase" },
-];
 const point = (id: number, name: string, config = "Windows 10") => ({
   point_id: id * 10, test_case_id: id, test_case_name: name, config_name: config,
   tester: "", last_outcome: "none", last_run_id: null, last_result_id: null,
@@ -52,13 +46,42 @@ function Harness({ onToggle }: { onToggle?: (cases: SuiteCase[], on: boolean) =>
   );
 }
 
-function mount(extra: (cmd: string, args: unknown) => unknown = () => undefined, onToggle?: (c: SuiteCase[], on: boolean) => void) {
+const DEFAULT_POINTS = [
+  point(201, "Valid login"),
+  point(201, "Valid login", "Windows 11"),
+  point(202, "Bad password"),
+  point(203, "Locked out"),
+];
+
+/** The suite's entries, built from whichever points a test supplies: one
+ * "suite" header plus one "testCase" entry per distinct test_case_id, in
+ * the order it first appears - so a test naming ids the default fixture
+ * never used (as the A-Z groups test does) still gets a matching suite. */
+function entriesFor(points: ReturnType<typeof point>[]) {
+  const seen = new Set<number>();
+  const ids: number[] = [];
+  for (const p of points) {
+    if (!seen.has(p.test_case_id)) {
+      seen.add(p.test_case_id);
+      ids.push(p.test_case_id);
+    }
+  }
+  return [
+    { id: 95, sequence_number: 0, entry_type: "suite" },
+    ...ids.map((id, i) => ({ id, sequence_number: i + 1, entry_type: "testCase" })),
+  ];
+}
+
+function mount(
+  extra: (cmd: string, args: unknown) => unknown = () => undefined,
+  onToggle?: (c: SuiteCase[], on: boolean) => void,
+  points = DEFAULT_POINTS,
+) {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
-    if (cmd === "list_suite_entries") return ENTRIES;
-    if (cmd === "list_test_points")
-      return [point(201, "Valid login"), point(201, "Valid login", "Windows 11"), point(202, "Bad password"), point(203, "Locked out")];
+    if (cmd === "list_suite_entries") return entriesFor(points);
+    if (cmd === "list_test_points") return points;
     return extra(cmd, args);
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -253,4 +276,70 @@ test("an empty suite says so", async () => {
     </QueryClientProvider>,
   );
   expect(await screen.findByText("No test cases in this suite.")).toBeInTheDocument();
+});
+
+// "Filter Card" needs a second member: the app's existing title-grouping
+// (src/lib/grouping.ts, shared with Run Tests / View Test Cases) only
+// turns a delimiter prefix into a named group at 2+ cases - a lone case
+// falls into "" (Ungrouped) same as it does everywhere else in the app.
+const GROUPED_POINTS = [
+  point(201, "Alerts | ring once"),
+  point(202, "Filter Card | collapses"),
+  point(203, "Alerts | ring twice"),
+  point(204, "Filter Card | expands"),
+];
+
+/// Turning Group by title on arranges the list so each group is together
+/// (in order of first appearance) and shows a header per group; that is a
+/// real reorder, so Apply order lights up. Off hides the headers only.
+test("Group by title arranges the list into sections and remembers the switch", async () => {
+  mount(undefined, undefined, GROUPED_POINTS);
+  const l = await list();
+  const rows = () => within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0]);
+  expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeDisabled();
+
+  fireEvent.click(screen.getByRole("switch", { name: "Group by title" }));
+  expect(rows()).toEqual(["#201", "#203", "#202", "#204"]);
+  expect(within(l).getByText("Alerts")).toBeInTheDocument();
+  expect(within(l).getByText("Filter Card")).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeEnabled();
+  expect(localStorage.getItem("tcm-v2-group-manage")).toBe("on");
+
+  fireEvent.click(screen.getByRole("switch", { name: "Group by title" }));
+  expect(within(l).queryByText("Alerts")).not.toBeInTheDocument();
+  expect(rows()).toEqual(["#201", "#203", "#202", "#204"]);
+});
+
+/// A suite opened with the switch already on is NOT rearranged - nothing
+/// the user did not ask for may make the list dirty. Its headers show the
+/// order as it is, split groups and all.
+test("a remembered switch shows sections without reordering", async () => {
+  localStorage.setItem("tcm-v2-group-manage", "on");
+  mount(undefined, undefined, GROUPED_POINTS);
+  const l = await list();
+  expect(within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0])).toEqual(["#201", "#202", "#203", "#204"]);
+  expect(within(l).getAllByText("Alerts")).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeDisabled();
+});
+
+test("A-Z groups sorts the groups by name; a header ticks its cases and moves as a block", async () => {
+  mount(undefined, undefined, [
+    point(201, "Zeta | one"),
+    point(202, "Alpha | one"),
+    point(203, "Zeta | two"),
+    point(204, "Alpha | two"),
+  ]);
+  const l = await list();
+  const rows = () => within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0]);
+  fireEvent.click(screen.getByRole("switch", { name: "Group by title" }));
+  expect(rows()).toEqual(["#201", "#203", "#202", "#204"]);
+  fireEvent.click(screen.getByRole("button", { name: "A-Z groups" }));
+  expect(rows()).toEqual(["#202", "#204", "#201", "#203"]);
+
+  fireEvent.click(within(l).getByRole("checkbox", { name: "Select group Zeta" }));
+  expect(within(l).getByRole("checkbox", { name: "Select #201" })).toBeChecked();
+  expect(within(l).getByRole("checkbox", { name: "Select #203" })).toBeChecked();
+
+  fireEvent.click(within(l).getByRole("button", { name: "Move group Zeta up" }));
+  expect(rows()).toEqual(["#201", "#203", "#202", "#204"]);
 });

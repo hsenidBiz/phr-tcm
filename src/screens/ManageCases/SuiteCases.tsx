@@ -5,10 +5,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "../../bindings";
 import ScanProgress from "../../components/ScanProgress";
 import { Button } from "../../components/ui/button";
+import { Switch } from "../../components/ui/switch";
 import { IconConfirm, IconImport, IconUndo } from "../../lib/actionIcons";
 import { CACHE, cacheKeys, persistentQuery } from "../../lib/cache";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { orderFromFile, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
+import { orderByGroups, orderFromFile, orderGroupsAZ, sameOrder, type SuiteCase } from "../../lib/suiteOrder";
 import CaseOrderList from "./CaseOrderList";
 import { markSuiteDirty, useDirtyRank } from "./dirtySuites";
 import { loadSuiteCases, suiteCasesKey } from "./suiteCasesQuery";
@@ -59,6 +60,26 @@ export default function SuiteCases({
   // The order on screen. Starts as the server's and drifts as the user
   // drags; Apply sends it, Reset throws it away. A fresh read replaces it.
   const [order, setOrder] = useState<SuiteCase[]>([]);
+  // Remembered app-wide like the other screens' group switches. Turning
+  // it ON arranges the list (a real reorder - Apply order lights up);
+  // OFF only hides the headers. A suite opened with it already on is NOT
+  // rearranged: nothing the user did not ask for may make the list dirty.
+  const [grouped, setGrouped] = useState(() => {
+    try {
+      return localStorage.getItem("tcm-v2-group-manage") === "on";
+    } catch {
+      return false;
+    }
+  });
+  const setGroupedAndRemember = (on: boolean) => {
+    setGrouped(on);
+    try {
+      localStorage.setItem("tcm-v2-group-manage", on ? "on" : "off");
+    } catch {
+      // session-only
+    }
+    if (on) setOrder((o) => orderByGroups(o));
+  };
   useEffect(() => {
     if (cases.data) setOrder(cases.data);
   }, [cases.data]);
@@ -132,6 +153,21 @@ export default function SuiteCases({
           <IconImport aria-hidden />
           {fromFile.isPending ? "Reading file" : "Apply tester order from file"}
         </Button>
+        <label className="ml-2 flex items-center gap-2 text-xs text-muted">
+          <Switch checked={grouped} onCheckedChange={setGroupedAndRemember} ariaLabel="Group by title" />
+          Group by title
+        </label>
+        {grouped && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            title="Every group together, groups A to Z"
+            onClick={() => setOrder((o) => orderGroupsAZ(o))}
+          >
+            A-Z groups
+          </Button>
+        )}
       </div>
       <CaseOrderList
         cases={order}
@@ -145,6 +181,7 @@ export default function SuiteCases({
           if (removed.length) onToggle(removed, false);
         }}
         disabled={busy}
+        grouped={grouped}
       />
       {rank != null && (
         // Same sticky treatment as Run Tests' Close all: a long suite puts
