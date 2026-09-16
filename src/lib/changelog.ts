@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.5",
+    date: "2026-09-16",
+    items: [
+      "Dialogs now open with a gentle scale-up and close the same way in reverse.",
+      "Dropdown lists, including Search Suites' More menu, grow from the edge they open from, and the More menu shrinks away when it closes.",
+      "Switches settle with a small bounce when flipped, and checkboxes draw their tick in rather than popping it on.",
+      "All of these are turned off when Windows is set to reduce motion.",
+    ],
+  },
+  {
     version: "1.25.4",
     date: "2026-09-15",
     items: [
