@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.7",
+    date: "2026-09-16",
+    items: [
+      "The command palette (Ctrl+K) now lists every tab, and each one shows the Ctrl+number that actually opens it. Some hints were wrong before - Run Tests showed Ctrl+4, which opens View Test Cases.",
+    ],
+  },
+  {
     version: "1.25.6",
     date: "2026-09-16",
     items: [
