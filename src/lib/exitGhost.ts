@@ -21,9 +21,16 @@ export const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion:
  * positions are read then - and let React remove the original as usual.
  * `where` is "body" for something fixed over the page (a dialog) and
  * "after" for something in the flow (a folding list), which shrinks where
- * it stood. Returns a cancel that removes the copy at once.
+ * it stood. `animate`, when given, runs on the copy once it is in the page
+ * and may return the length it chose, which replaces `ms` - 0 removes the
+ * copy at once. Returns a cancel that removes the copy at once.
  */
-export function leaveExitGhost(node: HTMLElement, ms: number, where: "body" | "after" = "body"): () => void {
+export function leaveExitGhost(
+  node: HTMLElement,
+  ms: number,
+  where: "body" | "after" = "body",
+  animate?: (ghost: HTMLElement, original: HTMLElement) => number | undefined,
+): () => void {
   if (reducedMotion()) return () => {};
 
   const ghost = node.cloneNode(true) as HTMLElement;
@@ -58,13 +65,19 @@ export function leaveExitGhost(node: HTMLElement, ms: number, where: "body" | "a
   if (where === "after" && node.parentNode) node.parentNode.insertBefore(ghost, node.nextSibling);
   else document.body.appendChild(ghost);
 
+  const wait = animate?.(ghost, node) ?? ms;
   let done = false;
+  let timer = 0;
   const remove = () => {
     if (done) return;
     done = true;
     window.clearTimeout(timer);
     ghost.remove();
   };
-  const timer = window.setTimeout(remove, ms);
+  if (wait <= 0) {
+    remove();
+    return () => {};
+  }
+  timer = window.setTimeout(remove, wait);
   return remove;
 }

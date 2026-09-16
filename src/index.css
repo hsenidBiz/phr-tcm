@@ -1003,75 +1003,15 @@ table {
   animation: t-toggle-off var(--motion-draw) var(--motion-ease-toggle) both;
 }
 
-/* Collapsible content (ui/collapse.tsx): grows open from nothing and
-   shrinks shut, height by grid rows so nothing is measured. The inner box
-   is clipped only while the height moves - a settled panel must let a
-   dropdown inside it paint past its box. */
-@keyframes t-collapse-in {
-  from {
-    grid-template-rows: 0fr;
-  }
-  to {
-    grid-template-rows: 1fr;
-  }
-}
-@keyframes t-collapse-out {
-  from {
-    grid-template-rows: 1fr;
-  }
-  to {
-    grid-template-rows: 0fr;
-  }
-}
-@keyframes t-collapse-fade-in {
-  from {
-    opacity: 0;
-    filter: blur(2px);
-  }
-  to {
-    opacity: 1;
-    filter: blur(0);
-  }
-}
-@keyframes t-collapse-fade-out {
-  from {
-    opacity: 1;
-    filter: blur(0);
-  }
-  to {
-    opacity: 0;
-    filter: blur(2px);
-  }
-}
-.t-collapse {
-  display: grid;
-  grid-template-rows: 1fr;
-}
-.t-collapse > .t-collapse-inner {
-  min-height: 0;
-}
-.t-collapse.is-entering {
-  animation: t-collapse-in var(--motion-fast) var(--motion-ease-smooth-out) both;
-}
-.t-collapse.is-entering > .t-collapse-inner {
-  overflow: hidden;
-  animation: t-collapse-fade-in var(--motion-fast) var(--motion-ease-smooth-out) both;
-}
-.t-collapse.is-closing {
-  animation: t-collapse-out var(--motion-fast) var(--motion-ease-smooth-out) both;
-}
-.t-collapse.is-closing > .t-collapse-inner {
-  overflow: hidden;
-  animation: t-collapse-fade-out var(--motion-fast) var(--motion-ease-smooth-out) both;
-}
-/* The table-row form: the closing class lands on the copied row, and the
-   box inside its cell does the shrinking. */
+/* Collapsible content (ui/collapse.tsx). The height is animated from
+   script, not here: how far and how long depend on how much of the fold is
+   on screen, which CSS cannot know. All that lives here is the clip, and
+   only while the height moves - a settled panel must let a dropdown inside
+   it paint past its box. */
+.t-collapse.is-entering,
+.t-collapse.is-closing,
 .t-collapse-row.is-closing .t-collapse {
-  animation: t-collapse-out var(--motion-fast) var(--motion-ease-smooth-out) both;
-}
-.t-collapse-row.is-closing .t-collapse-inner {
   overflow: hidden;
-  animation: t-collapse-fade-out var(--motion-fast) var(--motion-ease-smooth-out) both;
 }
 
 /* Checkbox check: the box fills, then the tick draws itself. Unchecking
@@ -1103,10 +1043,7 @@ table {
   .t-dropdown,
   .t-modal,
   .t-backdrop,
-  .t-toggle-thumb,
-  .t-collapse,
-  .t-collapse-row,
-  .t-collapse-inner {
+  .t-toggle-thumb {
     animation: none !important;
   }
   .t-dropdown.is-closing,

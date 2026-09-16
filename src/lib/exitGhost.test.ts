@@ -62,6 +62,28 @@ test("an in-flow copy shrinks where the original stood", () => {
   expect(ghost?.nextElementSibling).toBe(after);
 });
 
+test("an animate hook runs on the placed copy and sets how long it stays", () => {
+  const el = mount();
+  let seen: HTMLElement | null = null;
+  leaveExitGhost(el, 150, "after", (ghost, original) => {
+    expect(ghost.isConnected).toBe(true);
+    expect(original).toBe(el);
+    seen = ghost;
+    return 400;
+  });
+  expect(seen).not.toBeNull();
+  vi.advanceTimersByTime(399);
+  expect(document.querySelector(".is-closing")).not.toBeNull();
+  vi.advanceTimersByTime(1);
+  expect(document.querySelector(".is-closing")).toBeNull();
+});
+
+test("an animate hook that returns 0 removes the copy at once", () => {
+  const el = mount();
+  leaveExitGhost(el, 150, "after", () => 0);
+  expect(document.querySelector(".is-closing")).toBeNull();
+});
+
 test("cancelling removes the copy at once", () => {
   const el = mount();
   const cancel = leaveExitGhost(el, 150);
