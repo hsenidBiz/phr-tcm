@@ -7,6 +7,7 @@ import ElectricBorder from "./ElectricBorder";
 import { usePrAttention } from "../hooks/usePrAttention";
 import NotificationBell from "./NotificationBell";
 import { unwrap } from "../lib/ipc";
+import { cssLengthPx } from "../lib/cssLength";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
 import { PBI_GLOW_EVENT } from "../lib/pbiGlow";
 import PbiPicker from "./PbiPicker";
@@ -135,7 +136,9 @@ export default function ContextBar({
               .trim()}
             speed={1}
             chaos={0.01}
-            borderRadius={16}
+            // The chip's own corners (rounded-md), read from the same token,
+            // so the glow traces the control instead of a rounder box.
+            borderRadius={cssLengthPx("--radius-md", 6)}
           >
             <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
           </ElectricBorder>
