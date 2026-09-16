@@ -13,6 +13,21 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.6",
+    date: "2026-09-16",
+    items: [
+      "Folding lists open and close with an animation everywhere, including Run Tests, a suite's cases, pull request details, the pipeline history and the Work Manager history. Taller lists take a little longer, so a big group visibly unfolds.",
+      "Run Tests: a case's preview slides open beneath its row.",
+      "Settings: the changelog shows the latest version, with Show more for the earlier ones. Backup & transfer and Updates now sit under it.",
+      "Settings: the app log is coloured like a log file in VS Code - the level in brackets, and numbers, addresses and ids picked out.",
+      "Settings: the request rate now starts at Full speed. If you already chose a level, it is kept.",
+      "Suite Management: only one set of Apply order, Reset and Apply order from files buttons shows at a time.",
+      "Search Suites: the folder guide lines no longer run through an opened suite's test cases, however deep it is.",
+      "Unchecking a checkbox no longer flashes the tick white before it goes.",
+      "The glow around the PBI before an upload is calmer and follows the corners of the PBI box.",
+    ],
+  },
+  {
     version: "1.25.5",
     date: "2026-09-16",
     items: [
