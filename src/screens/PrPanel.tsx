@@ -21,6 +21,7 @@ import {
   Rocket,
   X,
 } from "lucide-react";
+import { Collapse } from "../components/ui/collapse";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, type PrBuild, type PullRequest, type PrWorkItem } from "../bindings";
@@ -539,7 +540,7 @@ function PrRow({
         </span>
       </button>
 
-      {open && (
+      <Collapse open={open}>
         <div className="border-t border-border/60 px-9 py-2 text-xs">
           {/* Two columns once there's room, Azure DevOps' own layout: the
               description/threads/reviewers/pipeline stack on the left, work
@@ -621,7 +622,7 @@ function PrRow({
             )}
           </div>
         </div>
-      )}
+      </Collapse>
 
       {showPipeline && (
         <PipelineDialog

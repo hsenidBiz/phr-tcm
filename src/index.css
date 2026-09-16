@@ -1064,6 +1064,15 @@ table {
   overflow: hidden;
   animation: t-collapse-fade-out var(--motion-fast) var(--motion-ease-smooth-out) both;
 }
+/* The table-row form: the closing class lands on the copied row, and the
+   box inside its cell does the shrinking. */
+.t-collapse-row.is-closing .t-collapse {
+  animation: t-collapse-out var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+.t-collapse-row.is-closing .t-collapse-inner {
+  overflow: hidden;
+  animation: t-collapse-fade-out var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
 
 /* Checkbox check: the box fills, then the tick draws itself. Unchecking
    dissolves it: the tick fades as it retracts and its colour follows the
@@ -1096,6 +1105,7 @@ table {
   .t-backdrop,
   .t-toggle-thumb,
   .t-collapse,
+  .t-collapse-row,
   .t-collapse-inner {
     animation: none !important;
   }

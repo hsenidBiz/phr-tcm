@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { commands, type PlanWithSuites, type SuiteRef } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Collapse } from "../../components/ui/collapse";
 import Combobox from "../../components/ui/combobox";
 import { IconClear, IconCopyToSuite, IconNewSuite } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
@@ -190,7 +191,7 @@ export default function PlanTable({
                 )}
                 <span className="min-w-0 flex-1 break-words">{suite.name}</span>
               </button>
-              {open && (
+              <Collapse open={open}>
                 <div style={{ paddingLeft: 8 + depth * 18 + 20 }}>
                   <SuiteCases
                     org={org}
@@ -202,7 +203,7 @@ export default function PlanTable({
                     onToggle={(cases, on) => onToggle(plan.id, cases, on)}
                   />
                 </div>
-              )}
+              </Collapse>
             </li>
           );
         })}

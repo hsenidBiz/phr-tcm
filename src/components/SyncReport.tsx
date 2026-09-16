@@ -13,6 +13,7 @@ import { useState } from "react";
 import { cn } from "../lib/cn";
 import { countBy, type SyncChange } from "../lib/fileSync";
 import CaseStepsTable from "./CaseStepsTable";
+import { Collapse } from "./ui/collapse";
 import InlineDiff from "./InlineDiff";
 import StepDiffLines from "./StepDiffLines";
 
@@ -157,7 +158,7 @@ export default function SyncReport({
                       ))}
                     </div>
                   )}
-                  {showing && (
+                  <Collapse open={showing}>
                     <div className="overflow-hidden rounded border border-border/60">
                       <CaseStepsTable
                         steps={c.full.steps}
@@ -165,7 +166,7 @@ export default function SyncReport({
                         reviewerNotes={c.full.reviewer_notes}
                       />
                     </div>
-                  )}
+                  </Collapse>
                 </div>
               </li>
             );

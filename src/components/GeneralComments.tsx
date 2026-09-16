@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { commands } from "../bindings";
 import { fileName, type WatchedFile } from "../lib/fileSync";
 import { cn } from "../lib/cn";
+import { Collapse } from "./ui/collapse";
 
 /** Autosave delay. Long enough that a sentence isn't written to disk a
  * character at a time, short enough that closing the app right after
@@ -105,7 +106,7 @@ export default function GeneralComments({
           — notes about the set, saved into the JSON
         </span>
       </button>
-      {open && (
+      <Collapse open={open}>
         <div className="space-y-3 px-2.5 pb-2.5">
           {watches.map((w) => (
             <div key={w.path} className="space-y-1">
@@ -129,7 +130,7 @@ export default function GeneralComments({
             </div>
           ))}
         </div>
-      )}
+      </Collapse>
     </div>
   );
 }

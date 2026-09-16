@@ -37,6 +37,7 @@ export function Collapse({
   children,
   className,
   animateIn = true,
+  row,
 }: {
   open: boolean;
   children: ReactNode;
@@ -44,16 +45,34 @@ export function Collapse({
   /** Play the open animation on mount. Off while a screen is still
    * settling, so content that appears with the data does not unfold. */
   animateIn?: boolean;
+  /** Render as a table row spanning this many columns - for content that
+   * unfolds beneath a row of a table, where a div cannot go. The folding
+   * box lives inside the row's one cell, and the copy that shrinks on close
+   * is the whole row. */
+  row?: number;
 }) {
   return open ? (
-    <Panel className={className} animateIn={animateIn}>
+    <Panel className={className} animateIn={animateIn} row={row}>
       {children}
     </Panel>
   ) : null;
 }
 
-function Panel({ children, className, animateIn }: { children: ReactNode; className?: string; animateIn: boolean }) {
+function Panel({
+  children,
+  className,
+  animateIn,
+  row,
+}: {
+  children: ReactNode;
+  className?: string;
+  animateIn: boolean;
+  row?: number;
+}) {
+  // The box that grows and shrinks, and the node whose copy plays the
+  // shrink - the same element, unless this is a table row.
   const el = useRef<HTMLDivElement>(null);
+  const outer = useRef<HTMLTableRowElement>(null);
   // Overflow is clipped only WHILE the height moves: a settled panel must
   // let a dropdown inside it paint past its box.
   const [entering, setEntering] = useState(() => animateIn && !reducedMotion());
@@ -74,13 +93,13 @@ function Panel({ children, className, animateIn }: { children: ReactNode; classN
   useLayoutEffect(() => {
     ghost.current?.();
     ghost.current = null;
-    const node = el.current;
+    const node = outer.current ?? el.current;
     return () => {
       if (node) ghost.current = leaveExitGhost(node, motionMs("--motion-fast", 250), "after");
     };
   }, []);
 
-  return (
+  const box = (
     <div
       ref={el}
       className={cn("t-collapse", entering && "is-entering", className)}
@@ -90,5 +109,14 @@ function Panel({ children, className, animateIn }: { children: ReactNode; classN
     >
       <div className="t-collapse-inner">{children}</div>
     </div>
+  );
+  return row ? (
+    <tr ref={outer} className="t-collapse-row">
+      <td colSpan={row} className="p-0">
+        {box}
+      </td>
+    </tr>
+  ) : (
+    box
   );
 }

@@ -96,3 +96,45 @@ test("useSettled turns true one commit after the content is ready", () => {
   // settles, and the re-render that follows is what a later toggle sees.
   expect(seen.slice(2)).toEqual([false, true]);
 });
+
+/// Run Tests unfolds a preview beneath a table row, where no div can go:
+/// the row form puts the box in a cell of its own row, and the copy that
+/// shrinks on close is the whole row, in place in the table.
+test("the row form folds inside a table row and shrinks as a row", () => {
+  vi.useFakeTimers();
+  function Table() {
+    const [open, setOpen] = useState(true);
+    return (
+      <table>
+        <tbody>
+          <tr>
+            <td>
+              <button onClick={() => setOpen((o) => !o)}>Toggle</button>
+            </td>
+          </tr>
+          <Collapse row={3} open={open}>
+            <p>Preview</p>
+          </Collapse>
+          <tr>
+            <td>After</td>
+          </tr>
+        </tbody>
+      </table>
+    );
+  }
+  render(<Table />);
+  const row = document.querySelector("tr.t-collapse-row") as HTMLTableRowElement;
+  expect(row.querySelector("td")).toHaveAttribute("colspan", "3");
+  expect(row.querySelector(".t-collapse .t-collapse-inner")?.textContent).toBe("Preview");
+
+  fireEvent.click(screen.getByText("Toggle"));
+  expect(screen.queryByText("Preview")).not.toBeInTheDocument();
+  const ghost = document.querySelector("tr.t-collapse-row.is-closing");
+  expect(ghost).not.toBeNull();
+  expect(ghost?.parentElement?.tagName).toBe("TBODY");
+  expect(ghost?.nextElementSibling?.textContent).toBe("After");
+  act(() => {
+    vi.advanceTimersByTime(250);
+  });
+  expect(document.querySelector("tr.t-collapse-row")).toBeNull();
+});

@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import { commands, type WorkRevision } from "../bindings";
 import { cn } from "../lib/cn";
 import InlineDiff from "./InlineDiff";
+import { Collapse } from "./ui/collapse";
 import {
   displayValue,
   groupByDay,
@@ -129,7 +130,7 @@ function Entry({ r }: { r: WorkRevision }) {
               )}
             </div>
 
-            {open && (
+            <Collapse open={open}>
               <dl className="mt-1.5 space-y-1 rounded-md border border-border bg-surface-2 p-2 text-xs">
                 {r.fields.map((f) => (
                   <div key={f.reference_name} className="flex flex-wrap items-baseline gap-x-2">
@@ -140,7 +141,7 @@ function Entry({ r }: { r: WorkRevision }) {
                   </div>
                 ))}
               </dl>
-            )}
+            </Collapse>
           </div>
         </div>
       </div>

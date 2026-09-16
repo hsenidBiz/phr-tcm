@@ -18,6 +18,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { Collapse, useSettled } from "./ui/collapse";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -403,6 +404,8 @@ function RunNode({
   onShowLog: (view: { buildId: number; title: string; logId: number; live: boolean }) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // The build that opens with the dialog does not unfold; a later toggle does.
+  const settled = useSettled();
   const failed = failurePath(b);
   const running = runningPath(b);
   // A search should reveal what it matched, not hide it behind a collapse.
@@ -456,7 +459,7 @@ function RunNode({
           <p className="rounded bg-accent-soft px-2 py-1 text-xs text-accent">Running {running}</p>
         )}
 
-        {expanded && (
+        <Collapse open={expanded} animateIn={settled}>
           <>
             {b.stages.length > 0 ? (
               <StageTree
@@ -515,7 +518,7 @@ function RunNode({
               </button>
             )}
           </>
-        )}
+        </Collapse>
       </div>
     </li>
   );

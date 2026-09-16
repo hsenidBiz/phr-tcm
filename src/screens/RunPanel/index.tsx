@@ -7,6 +7,7 @@ import { commands, events, type TestPoint } from "../../bindings";
 import { onPointRecorded, patchPointRows } from "../../lib/runnerBus";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
+import { Collapse, useSettled } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { Select } from "../../components/ui/select";
 import HistoryDots from "../../components/HistoryDots";
@@ -48,6 +49,18 @@ const outcomeRowTint: Record<string, string> = {
   blocked: "bg-warning/10",
   notapplicable: "bg-surface-2/60",
 };
+
+/** The three columns' widths, shared by every table on the screen so they
+ * line up: the first takes what is left. */
+function RunCols() {
+  return (
+    <colgroup>
+      <col />
+      <col className="w-32" />
+      <col className="w-40" />
+    </colgroup>
+  );
+}
 
 export default function RunPanel({
   org,
@@ -287,6 +300,7 @@ export default function RunPanel({
   // sitting above them labels columns that aren't there. It comes back
   // with the first row that shows.
   const anyRowsShown = sections.some(({ name, pts }) => visibleRows(name, pts).length > 0);
+  const settled = useSettled((points.data?.length ?? 0) > 0);
 
   // Click toggles a row; shift+click selects the whole range from the
   // last clicked row, in the visible (filtered/grouped) order.
@@ -471,23 +485,30 @@ export default function RunPanel({
       )}
 
       {points.data && points.data.length > 0 && (
-        <table className="w-full border-collapse text-sm">
+        <div>
+          {/* One table per group, so a group can fold as one box - a run of
+              table rows cannot be wrapped. Every table is fixed-layout with
+              the same column widths (RunCols), so the columns line up down
+              the screen exactly as they did in one table; the heading is a
+              table of its own for the same reason. */}
           {anyRowsShown && (
-            <thead>
-              <tr className="border-b border-border text-left text-xs text-muted">
-                <th className="px-2 py-1 font-medium">Test case</th>
-                <th className="px-2 py-1 font-medium">Last outcome</th>
-                <th className="px-2 py-1 font-medium">History</th>
-              </tr>
-            </thead>
+            <table className="w-full table-fixed border-collapse text-sm">
+              <RunCols />
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted">
+                  <th className="px-2 py-1 font-medium">Test case</th>
+                  <th className="px-2 py-1 font-medium">Last outcome</th>
+                  <th className="px-2 py-1 font-medium">History</th>
+                </tr>
+              </thead>
+            </table>
           )}
-          <tbody>
-            {sections.map(({ name, pts }) => (
+          {sections.map(({ name, pts }) => {
+            const shown = visibleRows(name, pts);
+            return (
               <Fragment key={name || "__all"}>
                 {name && (
-                  <tr>
-                    <td colSpan={3} className="px-2 pb-1 pt-2">
-                      <div className="flex w-full items-center gap-3">
+                      <div className="flex w-full items-center gap-3 px-2 pb-1 pt-2">
                         {/* Left-anchored with a trailing rule - see ViewCases for why. */}
                         <button
                           aria-label={`${collapsedGroups.has(name) ? "Expand" : "Collapse"} group ${name}`}
@@ -528,10 +549,14 @@ export default function RunPanel({
                         </button>
                         <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
                       </div>
-                    </td>
-                  </tr>
                 )}
-                {visibleRows(name, pts).map((p) => (
+                {/* The fold animates the list away only when nothing in it
+                    is held open: an open preview stays, so its list stays. */}
+                <Collapse open={shown.length > 0} animateIn={settled}>
+                <table className="w-full table-fixed border-collapse text-sm">
+                <RunCols />
+                <tbody>
+                {shown.map((p) => (
               <Fragment key={p.point_id}>
               <tr
                 className={cn(
@@ -577,24 +602,23 @@ export default function RunPanel({
                   />
                 </td>
               </tr>
-              {expanded.has(p.point_id) && (
-                <tr>
-                  <td colSpan={3} className="p-0">
-                    <CasePreview
-                      org={org}
-                      project={project}
-                      point={p}
-                      history={p.test_case_id != null ? (historyByCase.get(p.test_case_id) ?? []) : []}
-                    />
-                  </td>
-                </tr>
-              )}
+              <Collapse row={3} open={expanded.has(p.point_id)}>
+                <CasePreview
+                  org={org}
+                  project={project}
+                  point={p}
+                  history={p.test_case_id != null ? (historyByCase.get(p.test_case_id) ?? []) : []}
+                />
+              </Collapse>
               </Fragment>
                 ))}
+                </tbody>
+                </table>
+                </Collapse>
               </Fragment>
-            ))}
-          </tbody>
-        </table>
+            );
+          })}
+        </div>
       )}
 
       {/* Floating action bar, PORTALLED to <body> - and that is the whole
