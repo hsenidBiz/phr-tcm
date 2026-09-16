@@ -8,6 +8,7 @@ import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
+import { Collapse } from "../components/ui/collapse";
 import { Modal } from "../components/ui/modal";
 import { Input, Textarea } from "../components/ui/input";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -62,6 +63,9 @@ export default function Settings({ org, project }: { org: string; project: strin
   // The right column shows one panel at a time - the changelog, or the
   // app's own log for when something needs reporting.
   const [rightPanel, setRightPanel] = useState<"changelog" | "logs">("changelog");
+  // The changelog opens on the latest version only; the rest of the
+  // history is one click away rather than filling the column.
+  const [allChanges, setAllChanges] = useState(false);
 
   // Machine-wide AI tool registration is opt-in; the AI Bridge tab reads
   // the same store and offers the choice only while this is on.
@@ -347,65 +351,11 @@ export default function Settings({ org, project }: { org: string; project: strin
           is the only screen that uses them - a setting two screens from
           its effect is one you have to already know exists. */}
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Backup &amp; transfer</h2>
-        <p className="text-sm text-muted">
-          Moving to a new computer? Export your settings and local data -
-          theme, default tags, drafts, cached lists, Auto Run scripts - to a
-          single file, then import it on the other machine. Your Microsoft
-          sign-in is never included; you simply sign in again there.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={exportBackup.isPending}
-            onClick={() => exportBackup.mutate()}
-          >
-            {exportBackup.isPending ? "Exporting" : "Export to file"}
-          </Button>
-          <Button size="sm" variant="outline" onClick={pickImport}>
-            Import from file
-          </Button>
-        </div>
-        {importPath && (
-          <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
-            <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
-            <p className="text-sm text-muted">
-              This replaces the settings and local data on this machine with
-              the backup&apos;s copy, then reloads the app. Anything you
-              changed here since the backup was made will be overwritten.
-            </p>
-            <p className="break-all text-xs text-faint">{importPath}</p>
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={importBackup.isPending}
-                onClick={() => importBackup.mutate(importPath)}
-              >
-                {importBackup.isPending ? "Importing" : "Import and reload"}
-              </Button>
-            </div>
-          </Modal>
-        )}
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-text">Updates</h2>
-        <p className="text-sm text-muted">
-          Version {version.data ?? "-"} - updates install automatically from
-          the releases feed.
-        </p>
-        <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
-          <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
-          {check.isPending ? "Checking" : "Check for updates"}
-        </Button>
-      </section>
       </div>
 
+      {/* The right column: the changelog (or the app log) kept short, with
+          the remaining settings under it rather than a column of history. */}
+      <div className="space-y-8">
       {/* Masked in the visual regression suite: this panel's content
           changes with every release (and every log line), which would
           otherwise invalidate the Settings golden on each ship. */}
@@ -478,7 +428,7 @@ export default function Settings({ org, project }: { org: string; project: strin
                 Open log folder
               </Button>
             </div>
-            <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[70vh]">
+            <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[50vh]">
               {shownLogs.length === 0 ? (
                 <p className="text-xs text-faint">Nothing logged yet this session.</p>
               ) : (
@@ -510,24 +460,94 @@ export default function Settings({ org, project }: { org: string; project: strin
         <p className="text-sm text-muted">
           What changed in each version - the same notes the post-update popup shows.
         </p>
-        <div className="max-h-72 space-y-4 overflow-y-auto rounded-md border border-border p-3 lg:max-h-[70vh]">
-          {CHANGELOG.map((e) => (
-            <div key={e.version} className="space-y-1.5">
-              <h3 className="text-xs font-semibold text-text">
-                Version {e.version}
-                <span className="ml-2 font-normal text-faint">{e.date}</span>
-              </h3>
-              <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
-                {e.items.map((item, i) => (
-                  <li key={i}>{item}</li>
-                ))}
-              </ul>
-            </div>
+        <div className="space-y-4 rounded-md border border-border p-3">
+          {CHANGELOG.slice(0, 1).map((e) => (
+            <ChangelogVersion key={e.version} entry={e} />
           ))}
+          {/* Earlier versions unfold in place, in a box of their own so a
+              long history scrolls without pushing the settings below it
+              off the screen. */}
+          <Collapse open={allChanges}>
+            <div id="changelog-history" className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
+              {CHANGELOG.slice(1).map((e) => (
+                <ChangelogVersion key={e.version} entry={e} />
+              ))}
+            </div>
+          </Collapse>
+          {CHANGELOG.length > 1 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-expanded={allChanges}
+              aria-controls="changelog-history"
+              onClick={() => setAllChanges((v) => !v)}
+            >
+              {allChanges ? "Show less" : `Show more (${CHANGELOG.length - 1} earlier versions)`}
+            </Button>
+          )}
         </div>
           </>
         )}
       </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Backup &amp; transfer</h2>
+        <p className="text-sm text-muted">
+          Moving to a new computer? Export your settings and local data -
+          theme, default tags, drafts, cached lists, Auto Run scripts - to a
+          single file, then import it on the other machine. Your Microsoft
+          sign-in is never included; you simply sign in again there.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exportBackup.isPending}
+            onClick={() => exportBackup.mutate()}
+          >
+            {exportBackup.isPending ? "Exporting" : "Export to file"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={pickImport}>
+            Import from file
+          </Button>
+        </div>
+        {importPath && (
+          <Modal onClose={() => setImportPath(null)} className="w-full max-w-md space-y-4 p-5">
+            <h3 className="text-sm font-semibold text-text">Import this backup?</h3>
+            <p className="text-sm text-muted">
+              This replaces the settings and local data on this machine with
+              the backup&apos;s copy, then reloads the app. Anything you
+              changed here since the backup was made will be overwritten.
+            </p>
+            <p className="break-all text-xs text-faint">{importPath}</p>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setImportPath(null)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={importBackup.isPending}
+                onClick={() => importBackup.mutate(importPath)}
+              >
+                {importBackup.isPending ? "Importing" : "Import and reload"}
+              </Button>
+            </div>
+          </Modal>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text">Updates</h2>
+        <p className="text-sm text-muted">
+          Version {version.data ?? "-"} - updates install automatically from
+          the releases feed.
+        </p>
+        <Button size="sm" variant="outline" disabled={check.isPending} onClick={() => check.mutate()}>
+          <IconRefresh aria-hidden className={check.isPending ? "animate-spin" : undefined} />
+          {check.isPending ? "Checking" : "Check for updates"}
+        </Button>
+      </section>
+      </div>
 
       {/* Sizing and padding belong on the Modal, not inside it: the panel
           itself is only a bordered surface, so a child with no className
@@ -599,6 +619,23 @@ export default function Settings({ org, project }: { org: string; project: strin
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** One version's notes, as the changelog lists them. */
+function ChangelogVersion({ entry }: { entry: (typeof CHANGELOG)[number] }) {
+  return (
+    <div className="space-y-1.5">
+      <h3 className="text-xs font-semibold text-text">
+        Version {entry.version}
+        <span className="ml-2 font-normal text-faint">{entry.date}</span>
+      </h3>
+      <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
+        {entry.items.map((item, i) => (
+          <li key={i}>{item}</li>
+        ))}
+      </ul>
     </div>
   );
 }

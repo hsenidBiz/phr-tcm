@@ -1,8 +1,9 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import Settings from "./Settings";
+import { CHANGELOG } from "../lib/changelog";
 
 afterEach(() => clearMocks());
 
@@ -52,13 +53,44 @@ test("up-to-date check clears any stale banner state", async () => {
   await waitFor(() => expect(qc.getQueryData(["update"])).toBeNull());
 });
 
-test("the changelog history section lists released versions", async () => {
+/// The changelog used to fill the right column. It now opens on the latest
+/// version, with the rest behind Show more.
+test("the changelog shows the latest version, and Show more unfolds the history", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
   expect(await screen.findByRole("heading", { name: "Changelog" })).toBeInTheDocument();
+  expect(screen.getByText(`Version ${CHANGELOG[0].version}`)).toBeInTheDocument();
+  expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
+
+  const more = screen.getByRole("button", { name: `Show more (${CHANGELOG.length - 1} earlier versions)` });
+  expect(more).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(more);
   expect(screen.getByText("Version 1.9.0")).toBeInTheDocument();
   expect(screen.getByText("Version 1.7.1")).toBeInTheDocument();
+
+  const less = screen.getByRole("button", { name: "Show less" });
+  expect(less).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(less);
+  expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
+});
+
+/// The settings that used to sit alone at the bottom of the left column now
+/// sit under the changelog, in the right column.
+test("Backup and Updates sit under the changelog, in the same column", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  const changelog = await screen.findByRole("heading", { name: "Changelog" });
+  const column = changelog.closest("section")!.parentElement!;
+  const headings = within(column)
+    .getAllByRole("heading", { level: 2 })
+    .map((h) => h.textContent);
+  expect(headings).toEqual(["Changelog", "Backup & transfer", "Updates"]);
+  // And the left column keeps the rest, without them.
+  const appearance = screen.getByRole("heading", { name: "Appearance" }).closest("section")!.parentElement!;
+  expect(within(appearance).queryByRole("heading", { name: "Updates" })).not.toBeInTheDocument();
+  expect(appearance).not.toBe(column);
 });
 
 /// Machine-wide registration is an explicit opt-in, and this switch is the
