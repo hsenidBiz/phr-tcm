@@ -1,10 +1,21 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
 
 // vitest runs without injected globals, so RTL's automatic cleanup never
 // registers - without this, each test's DOM leaks into the next.
-afterEach(() => cleanup());
+// The fading copy a dialog leaves behind as it closes (lib/exitGhost) is a
+// picture, and a text query must not read it: a test that has just closed
+// a dialog would otherwise still "see" its buttons for the next 150ms.
+configure({ defaultIgnore: "script, style, [data-exit-ghost], [data-exit-ghost] *" });
+
+afterEach(() => {
+  cleanup();
+  // A dialog unmounted by that cleanup leaves its fading copy in the page
+  // for the length of the close animation (lib/exitGhost) - on a real
+  // timer, which the next test would otherwise find by text.
+  for (const ghost of document.querySelectorAll("[data-exit-ghost]")) ghost.remove();
+});
 
 // jsdom gaps that cmdk relies on.
 if (typeof globalThis.ResizeObserver === "undefined") {

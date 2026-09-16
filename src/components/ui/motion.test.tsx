@@ -2,12 +2,16 @@
 // what each shared control has to carry for its transition to play, and the
 // reduced-motion guard every one of them must sit behind.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { useState } from "react";
-import { expect, test } from "vitest";
+import { StrictMode, useState } from "react";
+import { afterEach, expect, test, vi } from "vitest";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 import { Checkbox } from "./checkbox";
 import { Modal } from "./modal";
 import { Switch } from "./switch";
@@ -64,4 +68,61 @@ test("every transition class is switched off under prefers-reduced-motion", () =
   const guard = motion.slice(motion.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
   const missing = [...animated].filter((c) => !guard.includes(`.${c}`));
   expect(missing).toEqual([]);
+});
+
+/// Screens unmount a dialog the moment it is dismissed, so the close
+/// animation plays on a copy the Modal leaves behind - hidden, inert and
+/// gone once the animation is.
+test("a dismissed modal fades out on a copy that nothing can reach, then leaves", () => {
+  vi.useFakeTimers();
+  function Host() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button onClick={() => setOpen(false)}>Done</button>
+        {open && (
+          <Modal onClose={() => setOpen(false)}>
+            <p>Are you sure?</p>
+          </Modal>
+        )}
+      </>
+    );
+  }
+  render(<Host />);
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Done"));
+  // The real dialog is gone at once...
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  // ...while its picture is still there, closing.
+  const ghosts = [...document.querySelectorAll(".t-backdrop.is-closing")];
+  const ghost = ghosts.find((g) => g.textContent?.includes("Are you sure?"));
+  expect(ghost).toBeDefined();
+  expect(ghost).toHaveAttribute("aria-hidden", "true");
+
+  act(() => {
+    vi.advanceTimersByTime(150);
+  });
+  expect(document.querySelector(".t-backdrop")).toBeNull();
+});
+
+/// StrictMode rehearses an unmount right after the first mount. That must
+/// not leave a fading copy of a dialog that is, in fact, still open.
+test("StrictMode's rehearsal unmount leaves no copy behind", () => {
+  vi.useFakeTimers();
+  render(
+    <StrictMode>
+      <Modal onClose={() => {}}>
+        <p>Still here</p>
+      </Modal>
+    </StrictMode>,
+  );
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  const copies = () => [...document.querySelectorAll(".is-closing")].filter((g) => g.textContent?.includes("Still here"));
+  expect(copies()).toHaveLength(0);
+  act(() => {
+    vi.advanceTimersByTime(200);
+  });
+  expect(copies()).toHaveLength(0);
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
 });

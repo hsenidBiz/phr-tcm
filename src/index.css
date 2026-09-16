@@ -914,7 +914,9 @@ table {
     transform var(--motion-quick) var(--motion-ease-smooth-out);
 }
 
-/* Modal: the panel scales up from centre as the backdrop fades in. */
+/* Modal: the panel scales up from centre as the backdrop fades in, and on
+   the way out the copy the Modal leaves behind (lib/exitGhost) plays the
+   reverse, quicker. */
 @keyframes t-modal-in {
   from {
     opacity: 0;
@@ -938,6 +940,30 @@ table {
 }
 .t-backdrop {
   animation: t-backdrop-in var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+@keyframes t-modal-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(var(--motion-scale-modal));
+  }
+}
+@keyframes t-backdrop-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.t-backdrop.is-closing {
+  animation: t-backdrop-out var(--motion-quick) var(--motion-ease-smooth-out) both;
+}
+.t-backdrop.is-closing .t-modal {
+  animation: t-modal-out var(--motion-quick) var(--motion-ease-smooth-out) both;
 }
 
 /* Toggle: the knob overshoots the far end by a pixel and settles. Only
