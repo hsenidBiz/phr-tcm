@@ -11,6 +11,12 @@ export type MoreAction = { label: string; onSelect: () => void };
  * reached at all. */
 const HOVER_GRACE_MS = 180;
 
+/** The list's shrink on close - --motion-quick in index.css. It stays in
+ * the page (hidden from assistive tech, unclickable) for this long. */
+const EXIT_MS = 150;
+
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
 /**
  * A chip that holds secondary actions. Hovering it opens the list; clicking
  * it opens the list and keeps it open until an action is picked, the user
@@ -38,28 +44,61 @@ export default function MoreActionsMenu({
   text?: string;
 }) {
   const [open, setOpen] = useState<null | "hover" | "click">(null);
+  // True for the few frames the list spends shrinking away after a close.
+  const [closing, setClosing] = useState(false);
   const [pos, setPos] = useState<CSSProperties>({});
+  const [origin, setOrigin] = useState<"top-right" | "bottom-right">("top-right");
   const trigger = useRef<HTMLSpanElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
+  const exitTimer = useRef<number | null>(null);
+  const openRef = useRef(open);
+  openRef.current = open;
 
   const cancelClose = () => {
     if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
     closeTimer.current = null;
   };
+  const cancelExit = () => {
+    if (exitTimer.current != null) window.clearTimeout(exitTimer.current);
+    exitTimer.current = null;
+    setClosing(false);
+  };
+  const show = (mode: "hover" | "click") => {
+    cancelClose();
+    cancelExit();
+    setOpen((o) => (mode === "hover" ? (o ?? "hover") : "click"));
+  };
   const close = () => {
     cancelClose();
-    setOpen(null);
+    if (!openRef.current) return;
+    if (reducedMotion()) {
+      setOpen(null);
+      return;
+    }
+    setClosing(true);
+    exitTimer.current = window.setTimeout(() => {
+      exitTimer.current = null;
+      setClosing(false);
+      setOpen(null);
+    }, EXIT_MS);
   };
   // Only a hover-opened menu closes on its own; one the user clicked open
   // stays until they decide.
   const scheduleClose = () => {
     cancelClose();
     closeTimer.current = window.setTimeout(() => {
-      setOpen((o) => (o === "hover" ? null : o));
+      if (openRef.current === "hover") close();
     }, HOVER_GRACE_MS);
   };
-  useEffect(() => cancelClose, []);
+  useEffect(
+    () => () => {
+      cancelClose();
+      if (exitTimer.current != null) window.clearTimeout(exitTimer.current);
+    },
+    [],
+  );
+  const shown = open != null && !closing;
 
   // Placed under the trigger, right edges aligned; above it when there is
   // no room below.
@@ -68,7 +107,10 @@ export default function MoreActionsMenu({
     const r = trigger.current.getBoundingClientRect();
     const below = window.innerHeight - r.bottom;
     const right = Math.max(8, window.innerWidth - r.right);
-    setPos(below < 140 ? { right, bottom: window.innerHeight - r.top + 4 } : { right, top: r.bottom + 4 });
+    const above = below < 140;
+    setPos(above ? { right, bottom: window.innerHeight - r.top + 4 } : { right, top: r.bottom + 4 });
+    // It grows out of the corner nearest the chip.
+    setOrigin(above ? "bottom-right" : "top-right");
   }, [open]);
 
   // Clicking anywhere else, Escape, or scrolling closes it. A scroll moves
@@ -110,33 +152,32 @@ export default function MoreActionsMenu({
         tabIndex={disabled ? -1 : 0}
         aria-label={label}
         aria-haspopup="menu"
-        aria-expanded={open != null}
+        aria-expanded={shown}
         className={cn(
           "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-muted transition-colors",
           "hover:border-accent hover:bg-accent-soft hover:text-accent",
-          open != null && "border-accent bg-accent-soft text-accent",
+          shown && "border-accent bg-accent-soft text-accent",
           disabled && "pointer-events-none opacity-50",
         )}
         onMouseEnter={() => {
           if (disabled) return;
-          cancelClose();
-          setOpen((o) => o ?? "hover");
+          show("hover");
         }}
         onMouseLeave={scheduleClose}
         onClick={(e) => {
           e.stopPropagation();
           if (disabled) return;
-          cancelClose();
           // A click on a menu the pointer opened pins it; a click on a
           // pinned one closes it.
-          setOpen((o) => (o === "click" ? null : "click"));
+          if (open === "click" && !closing) close();
+          else show("click");
         }}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " " && e.key !== "ArrowDown") return;
           e.preventDefault();
           e.stopPropagation();
           if (disabled) return;
-          setOpen("click");
+          show("click");
           window.setTimeout(() => menu.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus(), 0);
         }}
       >
@@ -149,9 +190,19 @@ export default function MoreActionsMenu({
             ref={menu}
             role="menu"
             aria-label={label}
-            className="fixed z-50 min-w-36 rounded-md border border-border bg-surface p-1 shadow-2xl"
+            // Shrinking away: gone for assistive tech and the pointer, still
+            // painted for the length of the animation.
+            aria-hidden={closing || undefined}
+            data-origin={origin}
+            className={cn(
+              "t-dropdown fixed z-50 min-w-36 rounded-md border border-border bg-surface p-1 shadow-2xl",
+              closing && "is-closing",
+            )}
             style={pos}
-            onMouseEnter={cancelClose}
+            onMouseEnter={() => {
+              if (closing) show(openRef.current ?? "hover");
+              else cancelClose();
+            }}
             onMouseLeave={scheduleClose}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}

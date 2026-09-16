@@ -83,3 +83,35 @@ test("Enter opens the list from the keyboard; Escape closes it", () => {
   fireEvent.keyDown(document, { key: "Escape" });
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 });
+
+/// transitions.dev's menu dropdown: the list grows from the chip's corner
+/// and, on close, shrinks away for a moment before it leaves the page.
+test("closing plays a short shrink: hidden and unclickable at once, gone after it", () => {
+  vi.useFakeTimers();
+  const { trigger } = setup();
+  fireEvent.click(trigger);
+  const list = screen.getByRole("menu");
+  expect(list).toHaveClass("t-dropdown");
+  expect(list).toHaveAttribute("data-origin", "top-right");
+
+  fireEvent.mouseDown(document.body);
+  // Out of reach straight away...
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  // ...but still painted, shrinking.
+  expect(document.querySelector("[role=menu].is-closing")).not.toBeNull();
+
+  act(() => {
+    vi.advanceTimersByTime(150);
+  });
+  expect(document.querySelector("[role=menu]")).toBeNull();
+
+  // Hovering back in mid-shrink reopens it rather than letting it go.
+  fireEvent.click(trigger);
+  fireEvent.mouseDown(document.body);
+  fireEvent.mouseEnter(trigger);
+  act(() => {
+    vi.advanceTimersByTime(150);
+  });
+  expect(screen.getByRole("menu")).not.toHaveClass("is-closing");
+});

@@ -39,7 +39,7 @@ export function Modal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="t-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={onClose}
     >
       <div
@@ -48,7 +48,8 @@ export function Modal({
         aria-modal="true"
         tabIndex={-1}
         className={cn(
-          "rounded-lg border border-border bg-surface shadow-2xl focus:outline-none",
+          // Scales up from centre as it opens (see "Motion" in index.css).
+          "t-modal rounded-lg border border-border bg-surface shadow-2xl focus:outline-none",
           className,
         )}
         onClick={(e) => e.stopPropagation()}

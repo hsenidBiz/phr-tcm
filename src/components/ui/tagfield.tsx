@@ -169,7 +169,7 @@ export default function TagField({
       </div>
 
       {open && (options.length > 0 || showCreate) && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-full min-w-48 rounded-md border border-border bg-surface shadow-xl">
+        <div className="t-dropdown absolute left-0 top-full z-40 mt-1 w-full min-w-48 rounded-md border border-border bg-surface shadow-xl">
           <ul className="max-h-56 overflow-y-auto p-1">
             {options.map((o, i) => (
               <li key={o}>

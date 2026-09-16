@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cn } from "../../lib/cn";
 
 /**
@@ -22,6 +23,9 @@ export function Switch({
   disabled?: boolean;
   className?: string;
 }) {
+  // Set on the first click, so the knob's bounce plays when the user flips
+  // the switch and not once for every switch as a screen appears.
+  const [used, setUsed] = useState(false);
   return (
     <button
       type="button"
@@ -30,7 +34,8 @@ export function Switch({
       aria-label={ariaLabel}
       disabled={disabled}
       className={cn(
-        "relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full border transition-colors",
+        "t-toggle relative inline-flex h-[18px] w-8 shrink-0 items-center rounded-full border transition-colors",
+        used && "is-init",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         checked
           ? "border-accent bg-accent"
@@ -38,14 +43,18 @@ export function Switch({
         disabled && "cursor-not-allowed opacity-50",
         className,
       )}
-      onClick={() => onCheckedChange(!checked)}
+      onClick={() => {
+        setUsed(true);
+        onCheckedChange(!checked);
+      }}
     >
       <span
         aria-hidden
         className={cn(
           // Travel is the track width minus the knob and both insets, so
-          // the knob lands flush at each end rather than near it.
-          "inline-block h-3 w-3 rounded-full transition-transform motion-reduce:transition-none",
+          // the knob lands flush at each end rather than near it. The same
+          // two positions are the ends of the bounce in index.css.
+          "t-toggle-thumb inline-block h-3 w-3 rounded-full",
           checked ? "translate-x-[16px] bg-on-accent" : "translate-x-[3px] bg-border-strong",
         )}
       />

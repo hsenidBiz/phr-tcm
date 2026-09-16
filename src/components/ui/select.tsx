@@ -139,7 +139,7 @@ export function Select({
         <ul
           role="listbox"
           aria-label={ariaLabel}
-          className="absolute left-0 top-full z-40 mt-1 max-h-56 w-full min-w-32 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-xl"
+          className="t-dropdown absolute left-0 top-full z-40 mt-1 max-h-56 w-full min-w-32 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-xl"
         >
           {options.map((o, i) => (
             <li key={o.value + i}>

@@ -859,3 +859,153 @@ table {
   outline-offset: 2px;
 }
 
+/* ── Motion ─────────────────────────────────────────────────────────────
+   Transitions adapted from transitions.dev's free set (MIT, the
+   `transitions-dev` package): menu dropdown, modal, toggle and checkbox
+   check. One scale of durations and easings so the controls that share a
+   job move alike. Prefixed --motion-* because Tailwind's theme already owns
+   --ease-out and friends, and redefining those would quietly change every
+   `ease-out` utility in the app. */
+:root {
+  --motion-quick: 150ms; /* dropdown / modal close, checkbox fill */
+  --motion-fast: 250ms; /* dropdown / modal open */
+  --motion-draw: 350ms; /* checkbox tick draw, switch travel */
+  --motion-ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-ease-toggle: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --motion-scale-dropdown: 0.97;
+  --motion-scale-dropdown-close: 0.99;
+  --motion-scale-modal: 0.96;
+}
+
+/* Menu dropdown: grows from the edge it is anchored to. Keyframed rather
+   than class-toggled because most of the app's lists mount when they open;
+   a list that stays mounted through its close (the More menu) adds
+   `.is-closing` for the short shrink before it goes. */
+@keyframes t-dropdown-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--motion-scale-dropdown));
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.t-dropdown {
+  transform-origin: top left;
+  animation: t-dropdown-in var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+.t-dropdown[data-origin="top-right"] {
+  transform-origin: top right;
+}
+.t-dropdown[data-origin="bottom-left"] {
+  transform-origin: bottom left;
+}
+.t-dropdown[data-origin="bottom-right"] {
+  transform-origin: bottom right;
+}
+.t-dropdown.is-closing {
+  animation: none;
+  opacity: 0;
+  transform: scale(var(--motion-scale-dropdown-close));
+  pointer-events: none;
+  transition:
+    opacity var(--motion-quick) var(--motion-ease-smooth-out),
+    transform var(--motion-quick) var(--motion-ease-smooth-out);
+}
+
+/* Modal: the panel scales up from centre as the backdrop fades in. */
+@keyframes t-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--motion-scale-modal));
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes t-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.t-modal {
+  animation: t-modal-in var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+.t-backdrop {
+  animation: t-backdrop-in var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+
+/* Toggle: the knob overshoots the far end by a pixel and settles. Only
+   after the switch has been used (`.is-init`) - otherwise every switch on
+   a screen would play its bounce once as the screen appears. The travel
+   ends are the Switch's own rest positions. */
+@keyframes t-toggle-on {
+  0% {
+    translate: var(--toggle-off-x) 0;
+  }
+  55% {
+    translate: calc(var(--toggle-on-x) + 1px) 0;
+  }
+  100% {
+    translate: var(--toggle-on-x) 0;
+  }
+}
+@keyframes t-toggle-off {
+  0% {
+    translate: var(--toggle-on-x) 0;
+  }
+  55% {
+    translate: calc(var(--toggle-off-x) - 1px) 0;
+  }
+  100% {
+    translate: var(--toggle-off-x) 0;
+  }
+}
+.t-toggle {
+  --toggle-off-x: 3px;
+  --toggle-on-x: 16px;
+}
+.t-toggle.is-init[aria-checked="true"] .t-toggle-thumb {
+  animation: t-toggle-on var(--motion-draw) var(--motion-ease-toggle) both;
+}
+.t-toggle.is-init[aria-checked="false"] .t-toggle-thumb {
+  animation: t-toggle-off var(--motion-draw) var(--motion-ease-toggle) both;
+}
+
+/* Checkbox check: the box fills, then the tick draws itself. Unchecking
+   rubs it out quickly. The dash is the tick path's own length rounded up
+   (14.4 -> 15), so it never over- or under-draws; the rest offset sits a
+   unit past it, so the round line cap cannot leave a dot on an empty box. */
+.t-check {
+  transition:
+    background-color var(--motion-quick) var(--motion-ease-smooth-out),
+    border-color var(--motion-quick) var(--motion-ease-smooth-out);
+}
+.t-check .t-check-tick {
+  stroke-dasharray: 15 20;
+  stroke-dashoffset: 16;
+  transition: stroke-dashoffset var(--motion-quick) var(--motion-ease-smooth-out);
+}
+.t-check[aria-checked="true"] .t-check-tick {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset var(--motion-draw) var(--motion-ease-smooth-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-dropdown,
+  .t-modal,
+  .t-backdrop,
+  .t-toggle-thumb {
+    animation: none !important;
+  }
+  .t-dropdown.is-closing,
+  .t-check,
+  .t-check .t-check-tick {
+    transition: none !important;
+  }
+}

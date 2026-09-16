@@ -94,7 +94,7 @@ export default function MultiSelect({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-40 mt-1 w-full min-w-44 rounded-md border border-border bg-surface shadow-xl">
+        <div className="t-dropdown absolute left-0 top-full z-40 mt-1 w-full min-w-44 rounded-md border border-border bg-surface shadow-xl">
           {options.length > SEARCH_FROM && (
             <div className="border-b border-border p-1.5">
               <input

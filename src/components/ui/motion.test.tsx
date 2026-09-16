@@ -1,0 +1,67 @@
+// The transitions adapted from transitions.dev (see "Motion" in index.css):
+// what each shared control has to carry for its transition to play, and the
+// reduced-motion guard every one of them must sit behind.
+
+import { fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { useState } from "react";
+import { expect, test } from "vitest";
+import { Checkbox } from "./checkbox";
+import { Modal } from "./modal";
+import { Switch } from "./switch";
+
+test("a switch bounces only once it has been used, not as the screen appears", () => {
+  function Host() {
+    const [on, setOn] = useState(false);
+    return <Switch checked={on} onCheckedChange={setOn} ariaLabel="Group by title" />;
+  }
+  render(<Host />);
+  const sw = screen.getByRole("switch", { name: "Group by title" });
+  expect(sw).toHaveClass("t-toggle");
+  expect(sw).not.toHaveClass("is-init");
+  fireEvent.click(sw);
+  expect(sw).toHaveClass("is-init");
+  expect(sw).toHaveAttribute("aria-checked", "true");
+});
+
+test("the checkbox tick is always there to draw in; the mixed state shows a dash instead", () => {
+  const { rerender } = render(<Checkbox checked={false} onCheckedChange={() => {}} ariaLabel="Pick" />);
+  const box = screen.getByRole("checkbox", { name: "Pick" });
+  expect(box).toHaveClass("t-check");
+  // Present while unchecked, so checking can DRAW it rather than pop it in.
+  expect(box.querySelector(".t-check-tick")).not.toBeNull();
+  rerender(<Checkbox checked onCheckedChange={() => {}} ariaLabel="Pick" />);
+  expect(box.querySelector(".t-check-tick")).not.toBeNull();
+  rerender(<Checkbox checked={false} indeterminate onCheckedChange={() => {}} ariaLabel="Pick" />);
+  expect(box.querySelector(".t-check-tick")).toBeNull();
+});
+
+test("a modal's panel scales in over a fading backdrop", () => {
+  render(
+    <Modal onClose={() => {}}>
+      <p>Body</p>
+    </Modal>,
+  );
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveClass("t-modal");
+  expect(dialog.parentElement).toHaveClass("t-backdrop");
+});
+
+test("every transition class is switched off under prefers-reduced-motion", () => {
+  const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../index.css"), "utf8");
+  const motion = css.slice(css.indexOf("/* ── Motion"));
+  expect(motion.length).toBeGreaterThan(0);
+  // Every .t-* class that animates or transitions...
+  const animated = new Set<string>();
+  for (const block of motion.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/\b(animation|transition)\s*:/.test(block[2])) continue;
+    for (const m of block[1].matchAll(/\.(t-[a-z-]+)/g)) animated.add(m[1]);
+  }
+  expect(animated.size).toBeGreaterThan(3);
+  // ...is named inside the reduced-motion block.
+  const guard = motion.slice(motion.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
+  const missing = [...animated].filter((c) => !guard.includes(`.${c}`));
+  expect(missing).toEqual([]);
+});
