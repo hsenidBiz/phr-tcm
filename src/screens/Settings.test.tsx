@@ -60,6 +60,8 @@ test("the changelog shows the latest version, and Show more unfolds the history"
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
   expect(await screen.findByRole("heading", { name: "Changelog" })).toBeInTheDocument();
+  // No line of description under the title - the heading says it.
+  expect(screen.queryByText(/the same notes the post-update popup shows/)).not.toBeInTheDocument();
   expect(screen.getByText(`Version ${CHANGELOG[0].version}`)).toBeInTheDocument();
   expect(screen.queryByText("Version 1.9.0")).not.toBeInTheDocument();
 
@@ -134,15 +136,13 @@ test("the right column switches from the changelog to the app log", async () => 
   renderSettings(qc);
 
   // Changelog is the default panel.
-  expect(await screen.findByText(/the same notes the post-update popup shows/)).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /Show more/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Logs" }));
   expect(await screen.findByText("Test Case Manager started")).toBeInTheDocument();
   expect(screen.getByText("Submit failed for 'X'")).toBeInTheDocument();
   // The changelog panel is gone, not merely hidden below.
-  expect(
-    screen.queryByText(/the same notes the post-update popup shows/),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Show more/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copy log" })).toBeInTheDocument();
 });
 
@@ -274,4 +274,31 @@ test("the PHR-X card switch persists its choice, on by default", async () => {
   fireEvent.click(sw);
   expect(localStorage.getItem("tcm-v2-ai-show-db")).toBeNull();
   localStorage.clear();
+});
+
+/// Field request: colour the log the way VS Code's Log mode does.
+test("the app log colours the level tag and the values in each line", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "app_logs")
+      return [
+        { at: "2026-09-11 04:11:18", level: "debug", message: "GET dev.azure.com/acme/_apis/testplan/Plans/107281/suites -> 200 in 184 ms" },
+        { at: "2026-09-11 04:11:21", level: "error", message: "Submit failed for 'Login works': Azure DevOps returned HTTP 400" },
+      ];
+    if (cmd === "app_log_dir") return "C:\logs";
+    return undefined;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderSettings(qc);
+  fireEvent.click(await screen.findByRole("button", { name: "Logs" }));
+
+  expect(await screen.findByText("[error]")).toHaveClass("text-danger");
+  expect(screen.getByText("[debug]")).toHaveClass("text-warning/70");
+  expect(screen.getByText("dev.azure.com")).toHaveClass("text-accent");
+  expect(screen.getByText("107281")).toHaveClass("text-accent");
+  expect(screen.getByText("400")).toHaveClass("text-accent");
+  // Nothing is lost between the tokens, and the prose stays the text colour.
+  const line = screen.getByText("dev.azure.com").parentElement!;
+  expect(line.textContent).toBe("GET dev.azure.com/acme/_apis/testplan/Plans/107281/suites -> 200 in 184 ms");
+  expect(line.firstElementChild).toHaveTextContent("GET");
+  expect(line.firstElementChild).toHaveClass("text-text");
 });

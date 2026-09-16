@@ -2,7 +2,7 @@ import { reportUpdateCheck } from "../lib/updateToast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getVersion } from "@tauri-apps/api/app";
 import { CHANGELOG } from "../lib/changelog";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { toast } from "sonner";
 import { commands } from "../bindings";
 import { copyText } from "../lib/clipboard";
@@ -18,6 +18,7 @@ import { loadGlobalAllowed, saveGlobalAllowed, loadShowDb, saveShowDb } from "..
 import { applyLocalStorage, collectLocalStorage } from "../lib/backup";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { cn } from "../lib/cn";
+import { LOG_KIND_CLASS, levelOf, tokenizeLog } from "../lib/logSyntax";
 import {
   ACCENTS,
   THEMES,
@@ -432,34 +433,15 @@ export default function Settings({ org, project }: { org: string; project: strin
               {shownLogs.length === 0 ? (
                 <p className="text-xs text-faint">Nothing logged yet this session.</p>
               ) : (
-                shownLogs.map((l, i) => (
-                  <p key={i} className="id-mono flex gap-2 text-[11px] leading-relaxed">
-                    <span className="shrink-0 text-faint">{l.at}</span>
-                    <span
-                      className={cn(
-                        "shrink-0 uppercase",
-                        l.level === "error"
-                          ? "text-danger"
-                          : l.level === "warn"
-                            ? "text-warning"
-                            : l.level === "debug"
-                              ? "text-faint"
-                              : "text-muted",
-                      )}
-                    >
-                      {l.level}
-                    </span>
-                    <span className="break-words text-text">{l.message}</span>
-                  </p>
-                ))
+                // Coloured the way VS Code's Log mode colours a log: the
+                // level tag by severity, and the numbers, hosts and ids the
+                // eye scans for picked out from the prose (lib/logSyntax).
+                shownLogs.map((l, i) => <LogLine key={i} at={l.at} level={l.level} message={l.message} />)
               )}
             </div>
           </>
         ) : (
           <>
-        <p className="text-sm text-muted">
-          What changed in each version - the same notes the post-update popup shows.
-        </p>
         <div className="space-y-4 rounded-md border border-border p-3">
           {CHANGELOG.slice(0, 1).map((e) => (
             <ChangelogVersion key={e.version} entry={e} />
@@ -639,3 +621,22 @@ function ChangelogVersion({ entry }: { entry: (typeof CHANGELOG)[number] }) {
     </div>
   );
 }
+
+/** One app log line, coloured. Memoised: the view refetches every two
+ * seconds, and re-colouring up to two thousand unchanged lines each time
+ * is work nobody sees. */
+const LogLine = memo(function LogLine({ at, level, message }: { at: string; level: string; message: string }) {
+  return (
+    <p className="id-mono flex gap-2 text-[11px] leading-relaxed">
+      <span className="shrink-0 text-muted">{at}</span>
+      <span className={cn("shrink-0 uppercase", LOG_KIND_CLASS[levelOf(level) ?? "info"])}>[{level}]</span>
+      <span className="min-w-0 break-words">
+        {tokenizeLog(message).map((t, j) => (
+          <span key={j} className={LOG_KIND_CLASS[t.kind]}>
+            {t.text}
+          </span>
+        ))}
+      </span>
+    </p>
+  );
+});
