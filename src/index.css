@@ -1003,22 +1003,90 @@ table {
   animation: t-toggle-off var(--motion-draw) var(--motion-ease-toggle) both;
 }
 
+/* Collapsible content (ui/collapse.tsx): grows open from nothing and
+   shrinks shut, height by grid rows so nothing is measured. The inner box
+   is clipped only while the height moves - a settled panel must let a
+   dropdown inside it paint past its box. */
+@keyframes t-collapse-in {
+  from {
+    grid-template-rows: 0fr;
+  }
+  to {
+    grid-template-rows: 1fr;
+  }
+}
+@keyframes t-collapse-out {
+  from {
+    grid-template-rows: 1fr;
+  }
+  to {
+    grid-template-rows: 0fr;
+  }
+}
+@keyframes t-collapse-fade-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+@keyframes t-collapse-fade-out {
+  from {
+    opacity: 1;
+    filter: blur(0);
+  }
+  to {
+    opacity: 0;
+    filter: blur(2px);
+  }
+}
+.t-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.t-collapse > .t-collapse-inner {
+  min-height: 0;
+}
+.t-collapse.is-entering {
+  animation: t-collapse-in var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+.t-collapse.is-entering > .t-collapse-inner {
+  overflow: hidden;
+  animation: t-collapse-fade-in var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+.t-collapse.is-closing {
+  animation: t-collapse-out var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+.t-collapse.is-closing > .t-collapse-inner {
+  overflow: hidden;
+  animation: t-collapse-fade-out var(--motion-fast) var(--motion-ease-smooth-out) both;
+}
+
 /* Checkbox check: the box fills, then the tick draws itself. Unchecking
-   rubs it out quickly. The dash is the tick path's own length rounded up
+   dissolves it: the tick fades as it retracts and its colour follows the
+   box's, so it never sits white on a box that has already gone pale. The dash is the tick path's own length rounded up
    (14.4 -> 15), so it never over- or under-draws; the rest offset sits a
    unit past it, so the round line cap cannot leave a dot on an empty box. */
 .t-check {
   transition:
     background-color var(--motion-quick) var(--motion-ease-smooth-out),
-    border-color var(--motion-quick) var(--motion-ease-smooth-out);
+    border-color var(--motion-quick) var(--motion-ease-smooth-out),
+    color var(--motion-quick) var(--motion-ease-smooth-out);
 }
 .t-check .t-check-tick {
   stroke-dasharray: 15 20;
   stroke-dashoffset: 16;
-  transition: stroke-dashoffset var(--motion-quick) var(--motion-ease-smooth-out);
+  opacity: 0;
+  transition:
+    stroke-dashoffset var(--motion-quick) var(--motion-ease-smooth-out),
+    opacity var(--motion-quick) var(--motion-ease-smooth-out);
 }
 .t-check[aria-checked="true"] .t-check-tick {
   stroke-dashoffset: 0;
+  opacity: 1;
   transition: stroke-dashoffset var(--motion-draw) var(--motion-ease-smooth-out);
 }
 
@@ -1026,7 +1094,9 @@ table {
   .t-dropdown,
   .t-modal,
   .t-backdrop,
-  .t-toggle-thumb {
+  .t-toggle-thumb,
+  .t-collapse,
+  .t-collapse-inner {
     animation: none !important;
   }
   .t-dropdown.is-closing,
