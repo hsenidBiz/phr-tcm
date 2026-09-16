@@ -94,6 +94,45 @@ function mount(
   return { calls, unmount };
 }
 
+/// A hand-driven IntersectionObserver: jsdom's never reports anything, so
+/// every element reads as on screen until a test says otherwise.
+function stubScroll() {
+  const real = globalThis.IntersectionObserver;
+  const watched: { el: Element; cb: (e: { isIntersecting: boolean }[]) => void }[] = [];
+  globalThis.IntersectionObserver = class {
+    cb: (e: { isIntersecting: boolean }[]) => void;
+    constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
+      this.cb = cb;
+    }
+    observe(el: Element) {
+      watched.push({ el, cb: this.cb });
+    }
+    unobserve() {}
+    disconnect() {
+      for (let i = watched.length - 1; i >= 0; i--) if (watched[i].cb === this.cb) watched.splice(i, 1);
+    }
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+  const report = (match: (el: Element) => boolean, isIntersecting: boolean) =>
+    act(() => {
+      for (const w of watched.filter((x) => match(x.el))) w.cb([{ isIntersecting }]);
+    });
+  return {
+    /** The suite's own toolbar scrolls out of view, or back into it. */
+    toolbar: (onScreen: boolean) =>
+      report((el) => within(el as HTMLElement).queryByRole("switch", { name: "Group by title" }) != null, onScreen),
+    /** The suite's case list scrolls out of view, or back into it. */
+    list: (l: HTMLElement, onScreen: boolean) => report((el) => el.contains(l), onScreen),
+    restore: () => {
+      globalThis.IntersectionObserver = real;
+    },
+  };
+}
+
+const floatingBar = () => screen.queryByRole("region", { name: /order actions for/i });
+
 async function list() {
   const l = await screen.findByRole("list", { name: "Test cases in Regression" });
   // Let the passive effects that follow the first paint (order mirror,
@@ -124,9 +163,8 @@ test("drag re-orders; Apply order sends the ids, disables at once, and reloads",
   fireEvent.dragOver(rows[0]);
   fireEvent.drop(rows[0]);
   expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#203");
-  // Dirty now, so the sticky bar has joined the inline row's own Apply
-  // order button - take the inline one (it renders first).
-  const apply = screen.getAllByRole("button", { name: "Apply order" })[0];
+  // Dirty now, but the toolbar is on screen, so its button is the only one.
+  const apply = screen.getByRole("button", { name: "Apply order" });
   expect(apply).toBeEnabled();
   fireEvent.click(apply);
   await waitFor(() => {
@@ -146,10 +184,8 @@ test("Move up and down step a row; Reset restores the server order", async () =>
   fireEvent.click(within(l).getByRole("button", { name: "Move #202 down" }));
   expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#201");
   fireEvent.click(within(l).getByRole("button", { name: "Move #201 down" }));
-  // Dirty now, so the sticky bar has joined the inline row's own buttons -
-  // take the inline ones (they render first).
-  expect(screen.getAllByRole("button", { name: "Apply order" })[0]).toBeEnabled();
-  fireEvent.click(screen.getAllByRole("button", { name: "Reset" })[0]);
+  expect(screen.getByRole("button", { name: "Apply order" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Reset" }));
   expect(within(l).getAllByRole("listitem")[0]).toHaveTextContent("#201");
   expect(screen.getByRole("button", { name: "Apply order" })).toBeDisabled();
 });
@@ -182,21 +218,40 @@ test("dragging a ticked row drops the whole selection at the target", async () =
   expect(within(l).getAllByRole("listitem").map((r) => r.textContent?.match(/#\d+/)?.[0])).toEqual(["#203", "#201", "#202"]);
 });
 
-test("the sticky bar appears only while the order is unsaved, and names its suite", async () => {
-  mount();
-  const l = await list();
-  // Clean: the inline row is there, the sticky bar is not.
-  expect(screen.queryByRole("region", { name: /order actions for/i })).not.toBeInTheDocument();
+/// Field report: with an unsaved order, the floating bar showed alongside
+/// the suite's own toolbar - two Apply orders, two Resets. It stands in for
+/// the toolbar, so it never shows while the toolbar is on screen.
+test("an unsaved order does not float a second bar while the toolbar is on screen", async () => {
+  const scroll = stubScroll();
+  try {
+    mount();
+    const l = await list();
+    fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
+    expect(screen.getAllByRole("button", { name: "Apply order" })).toHaveLength(1);
+    expect(floatingBar()).not.toBeInTheDocument();
 
-  fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
+    // Scroll past the toolbar: the bar takes over, naming its suite.
+    scroll.toolbar(false);
+    const bar = await screen.findByRole("region", { name: "Order actions for Regression" });
+    expect(within(bar).getByRole("button", { name: "Apply order" })).toBeEnabled();
+    expect(within(bar).getByRole("button", { name: "Reset" })).toBeEnabled();
 
-  const bar = await screen.findByRole("region", { name: /order actions for/i });
-  expect(within(bar).getByRole("button", { name: "Apply order" })).toBeEnabled();
-  expect(within(bar).getByRole("button", { name: "Reset" })).toBeEnabled();
-  expect(bar).toHaveTextContent("Regression");
+    // Past the whole suite: the unsaved order keeps it up.
+    scroll.list(l, false);
+    expect(floatingBar()).toBeInTheDocument();
 
-  fireEvent.click(within(bar).getByRole("button", { name: "Reset" }));
-  await waitFor(() => expect(screen.queryByRole("region", { name: /order actions for/i })).not.toBeInTheDocument());
+    // Back up to the toolbar: one set of buttons again.
+    scroll.toolbar(true);
+    await waitFor(() => expect(floatingBar()).not.toBeInTheDocument());
+    expect(screen.getAllByRole("button", { name: "Apply order" })).toHaveLength(1);
+
+    // A clean suite scrolled right away has no bar at all.
+    scroll.toolbar(false);
+    fireEvent.click(within(await screen.findByRole("region", { name: /order actions for/i })).getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect(floatingBar()).not.toBeInTheDocument());
+  } finally {
+    scroll.restore();
+  }
 });
 
 /// Several files, arranged in the dialog, each a block in the file's ROW
@@ -464,68 +519,49 @@ test("a group folds from its header, stays folded, and still selects as a block"
 /// region, so the bar has to live directly under <body>, like the Import
 /// tab's floating Review button.
 test("the floating order bar is pinned to the app window, not the page", async () => {
-  mount();
-  const l = await list();
-  fireEvent.click(within(l).getByRole("button", { name: "Move #202 up" }));
-  const bar = await screen.findByRole("region", { name: /order actions for/i });
-  expect(bar.parentElement).toBe(document.body);
-  expect(bar.className).toMatch(/\bfixed\b/);
-  expect(bar.className).toMatch(/\bright-6\b/);
+  const scroll = stubScroll();
+  try {
+    mount();
+    await list();
+    scroll.toolbar(false);
+    const bar = await screen.findByRole("region", { name: /order actions for/i });
+    expect(bar.parentElement).toBe(document.body);
+    expect(bar.className).toMatch(/\bfixed\b/);
+    expect(bar.className).toMatch(/\bright-6\b/);
+  } finally {
+    scroll.restore();
+  }
 });
 
 /// Field request: the toolbar - Apply order, Reset and Apply order from
 /// files - follows the user once they scroll past it, like the Import tab's
 /// floating Review button, not only while the order is unsaved.
 test("scrolling past the toolbar while the cases are in view floats all three actions", async () => {
-  const real = globalThis.IntersectionObserver;
-  const watched: { el: Element; cb: (e: { isIntersecting: boolean }[]) => void }[] = [];
-  globalThis.IntersectionObserver = class {
-    cb: (e: { isIntersecting: boolean }[]) => void;
-    constructor(cb: (e: { isIntersecting: boolean }[]) => void) {
-      this.cb = cb;
-    }
-    observe(el: Element) {
-      watched.push({ el, cb: this.cb });
-    }
-    unobserve() {}
-    disconnect() {
-      for (let i = watched.length - 1; i >= 0; i--) if (watched[i].cb === this.cb) watched.splice(i, 1);
-    }
-    takeRecords() {
-      return [];
-    }
-  } as unknown as typeof IntersectionObserver;
+  const scroll = stubScroll();
   try {
     mount();
     const l = await list();
-    const report = (match: (el: Element) => boolean, isIntersecting: boolean) =>
-      act(() => {
-        for (const w of watched.filter((x) => match(x.el))) w.cb([{ isIntersecting }]);
-      });
-    const isToolbar = (el: Element) => within(el as HTMLElement).queryByRole("switch", { name: "Group by title" }) != null;
-    const isList = (el: Element) => el.contains(l);
-    const bar = () => screen.queryByRole("region", { name: /order actions for/i });
 
     // Everything on screen: no floating copy.
-    expect(bar()).not.toBeInTheDocument();
+    expect(floatingBar()).not.toBeInTheDocument();
 
     // The toolbar scrolls off the top while the cases are still in view.
-    report(isToolbar, false);
+    scroll.toolbar(false);
     const floating = await screen.findByRole("region", { name: "Order actions for Regression" });
     expect(within(floating).getByRole("button", { name: "Apply order" })).toBeDisabled(); // nothing to save yet
     expect(within(floating).getByRole("button", { name: "Reset" })).toBeDisabled();
     expect(within(floating).getByRole("button", { name: "Apply order from files" })).toBeEnabled();
 
     // Scrolling back up to the toolbar sends it away again.
-    report(isToolbar, true);
-    await waitFor(() => expect(bar()).not.toBeInTheDocument());
+    scroll.toolbar(true);
+    await waitFor(() => expect(floatingBar()).not.toBeInTheDocument());
 
     // Scrolled past the whole suite: nothing of this suite is on screen, so
     // a clean suite has no bar.
-    report(isToolbar, false);
-    report(isList, false);
-    await waitFor(() => expect(bar()).not.toBeInTheDocument());
+    scroll.toolbar(false);
+    scroll.list(l, false);
+    await waitFor(() => expect(floatingBar()).not.toBeInTheDocument());
   } finally {
-    globalThis.IntersectionObserver = real;
+    scroll.restore();
   }
 });

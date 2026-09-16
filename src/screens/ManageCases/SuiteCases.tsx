@@ -95,15 +95,15 @@ export default function SuiteCases({
     if (cases.data) setOrder(cases.data);
   }, [cases.data]);
   const dirty = cases.data ? !sameOrder(order, cases.data) : false;
-  // The floating bar follows the user down a long suite: it shows once this
-  // suite's own toolbar has scrolled out of view while its cases are still
-  // on screen, and stands down when the toolbar comes back - the same deal
-  // as the Import tab's floating Review button. An unsaved order keeps it up
-  // regardless, so a change is never out of reach.
+  // The floating bar stands in for the suite's own toolbar, so it never
+  // shows while that toolbar is on screen - one set of buttons at a time,
+  // like the Import tab's floating Review button. With the toolbar out of
+  // view it follows the user down the suite's cases; an unsaved order keeps
+  // it up even once the whole suite has scrolled away, so a change is never
+  // out of reach.
   const [toolbarRef, toolbarOnScreen] = useOnScreen();
   const [listRef, listOnScreen] = useOnScreen();
-  const following = !toolbarOnScreen && listOnScreen;
-  const floating = dirty || following;
+  const floating = !toolbarOnScreen && (listOnScreen || dirty);
   const rank = useFloatRank(suiteId);
   useEffect(() => {
     markSuiteFloating(suiteId, floating);
