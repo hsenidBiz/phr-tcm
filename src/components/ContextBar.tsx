@@ -134,7 +134,7 @@ export default function ContextBar({
               .getPropertyValue("--color-accent")
               .trim()}
             speed={1}
-            chaos={0.07}
+            chaos={0.01}
             borderRadius={16}
           >
             <PbiPicker org={org} project={project} pbi={pbi} onChange={setPbi} />
