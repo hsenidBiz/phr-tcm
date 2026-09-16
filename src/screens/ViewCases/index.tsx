@@ -8,6 +8,7 @@ import CountUp from "../../components/CountUp";
 import PickPbiEmpty from "../../components/PickPbiEmpty";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
+import { Collapse, useSettled } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
@@ -101,6 +102,7 @@ export default function ViewCases({
   });
 
   const list = cases.data ?? [];
+  const settled = useSettled(list.length > 0);
   const q = search.trim().toLowerCase();
   const visible = useMemo(
     () =>
@@ -407,15 +409,15 @@ export default function ViewCases({
               reader closes them - their own chevron, or the sticky Close
               all. Collapsing is tidying, and tidying must not snatch away
               the thing being studied. */}
-          {(group && collapsedGroups.has(group)
-            ? items.filter((c) => openIds.has(c.id))
-            : items
-          ).length === 0 ? null : (
+          {(() => {
+            const folded = Boolean(group) && collapsedGroups.has(group);
+            const shown = folded ? items.filter((c) => openIds.has(c.id)) : items;
+            // The fold animates the list away only when nothing in it is
+            // held open: a row being read stays, so its list stays with it.
+            return (
+            <Collapse open={shown.length > 0} animateIn={settled}>
             <ul className="space-y-1">
-              {(group && collapsedGroups.has(group)
-                ? items.filter((c) => openIds.has(c.id))
-                : items
-              ).map((c) => (
+              {shown.map((c) => (
                 <li
                   key={c.id}
                   className={cn(
@@ -460,17 +462,19 @@ export default function ViewCases({
                       {c.steps.length} steps · {c.automation_status}
                     </span>
                   </div>
-                  {openIds.has(c.id) && (
+                  <Collapse open={openIds.has(c.id)}>
                     <CaseDetail
                       c={c}
                       note={notes[String(c.id)] ?? ""}
                       onSaveNote={(text) => setNotes(saveNote(org, c.id, text))}
                     />
-                  )}
+                  </Collapse>
                 </li>
               ))}
             </ul>
-          )}
+            </Collapse>
+            );
+          })()}
         </div>
       ))}
 

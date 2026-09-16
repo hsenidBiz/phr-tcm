@@ -11,6 +11,7 @@ import { useMemo, useState } from "react";
 import { commands, type PbiHit } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Checkbox } from "../../components/ui/checkbox";
+import { Collapse, useSettled } from "../../components/ui/collapse";
 import { groupIndices } from "../../lib/grouping";
 import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
@@ -111,6 +112,7 @@ export default function AutoRun({
   const [collapsed, toggleCollapsed] = usePersistedStringSet("tcm-v2-autorun-collapsed");
 
   const rows = cases.data ?? [];
+  const settled = useSettled(rows.length > 0);
   /** Same title-prefix grouping View Test Cases uses, so a person reading
    * both screens is reading one idea. */
   const groups = useMemo(
@@ -295,7 +297,9 @@ export default function AutoRun({
                 </button>
                 <span aria-hidden className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
               </div>
-              {!shut && <ul className="space-y-1">{indices.map(row)}</ul>}
+              <Collapse open={!shut} animateIn={settled}>
+                <ul className="space-y-1">{indices.map(row)}</ul>
+              </Collapse>
             </div>
           );
         })

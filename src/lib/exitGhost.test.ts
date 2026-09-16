@@ -51,6 +51,17 @@ test("a scrolled dialog keeps its place in the copy", () => {
   expect(ghostScroller.scrollTop).toBe(120);
 });
 
+test("an in-flow copy shrinks where the original stood", () => {
+  const el = mount();
+  const after = document.createElement("p");
+  after.textContent = "After";
+  document.body.appendChild(after);
+  leaveExitGhost(el, 150, "after");
+  el.remove();
+  const ghost = document.querySelector(".is-closing");
+  expect(ghost?.nextElementSibling).toBe(after);
+});
+
 test("cancelling removes the copy at once", () => {
   const el = mount();
   const cancel = leaveExitGhost(el, 150);

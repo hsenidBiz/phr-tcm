@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, GripVertical } from "lucide-react";
 import { useState, type KeyboardEvent, type MouseEvent } from "react";
 import { Button } from "../../components/ui/button";
+import { Collapse, useSettled } from "../../components/ui/collapse";
 import { IconClear, IconMoveDown, IconMoveUp } from "../../lib/actionIcons";
 import { cn } from "../../lib/cn";
 import { moveBlock, moveBlockBefore, nudgeBlock, sectionsOf, type SuiteCase } from "../../lib/suiteOrder";
@@ -48,6 +49,7 @@ export default function CaseOrderList({
   const [overId, setOverId] = useState<number | null>(null);
   // Where a Shift+click range starts: the last row clicked without Shift.
   const [anchor, setAnchor] = useState<number | null>(null);
+  const settled = useSettled(cases.length > 0);
   const sections = grouped ? sectionsOf(cases) : [];
   const isFolded = (name: string) => collapsed.has(sectionLabel(name));
 
@@ -331,7 +333,15 @@ export default function CaseOrderList({
                   </button>
                 </span>
               </li>,
-              ...(folded ? [] : s.ids.map((id) => row(cases.find((c) => c.id === id)!, indexOf(id)))),
+              // The section's rows fold as one, in a nested list so the
+              // fold has one box to grow and shrink.
+              <li key={`rows-${si}-${firstId}`} role="presentation">
+                <Collapse open={!folded} animateIn={settled}>
+                  <ol className="divide-y divide-border">
+                    {s.ids.map((id) => row(cases.find((c) => c.id === id)!, indexOf(id)))}
+                  </ol>
+                </Collapse>
+              </li>,
             ];
           })}
       </ol>

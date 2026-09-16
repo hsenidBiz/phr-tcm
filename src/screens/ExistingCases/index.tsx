@@ -13,6 +13,7 @@ import CaseEditor from "./CaseEditor";
 import CountUp from "../../components/CountUp";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
+import { Collapse, useSettled } from "../../components/ui/collapse";
 import { Input } from "../../components/ui/input";
 import { Skeleton } from "../../components/ui/skeleton";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
@@ -99,6 +100,7 @@ export default function ExistingCases({
   });
 
   const list = cases.data ?? [];
+  const settled = useSettled(list.length > 0);
   const q = search.trim().toLowerCase();
   // Search narrows the visible cards (title, #id or tag); grouping and the
   // header count follow the filtered view.
@@ -366,15 +368,15 @@ export default function ExistingCases({
               is now a fold control, and folding away unsaved edits with it
               would be a silent discard. Same rule as View Test Cases -
               tidying must not snatch away the thing being worked on. */}
-          {(group && collapsedGroups.has(group)
-            ? items.filter((c) => c.id === openId)
-            : items
-          ).length === 0 ? null : (
+          {(() => {
+            const folded = Boolean(group) && collapsedGroups.has(group);
+            const shown = folded ? items.filter((c) => c.id === openId) : items;
+            // The fold animates the list away only when nothing in it is
+            // held open: the open editor stays, so its list stays with it.
+            return (
+          <Collapse open={shown.length > 0} animateIn={settled}>
           <ul className="space-y-1">
-            {(group && collapsedGroups.has(group)
-              ? items.filter((c) => c.id === openId)
-              : items
-            ).map((c) => (
+            {shown.map((c) => (
               <li
                 key={c.id}
                 className={cn(
@@ -407,7 +409,7 @@ export default function ExistingCases({
                     {c.steps.length} steps · {c.automation_status}
                   </span>
                 </div>
-                {openId === c.id && (
+                <Collapse open={openId === c.id}>
                   <CaseEditor
                     original={c}
                     org={org}
@@ -416,11 +418,13 @@ export default function ExistingCases({
                     preconditionsRef={prefs.preconditionsRef}
                     onSaved={refresh}
                   />
-                )}
+                </Collapse>
               </li>
             ))}
           </ul>
-          )}
+          </Collapse>
+            );
+          })()}
         </div>
       ))}
 

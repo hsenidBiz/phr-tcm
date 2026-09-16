@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { commands, events, type SuiteRef, type TestCase } from "../bindings";
 import MoreActionsMenu, { type MoreAction } from "../components/MoreActionsMenu";
 import ScanProgress from "../components/ScanProgress";
+import { Collapse, useSettled } from "../components/ui/collapse";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { loadNotes } from "../lib/caseNotes";
@@ -158,6 +159,7 @@ export default function Suites({
     };
   }, []);
 
+  const settled = useSettled(Boolean(plans.data));
   const trees = useMemo(
     () => (plans.data ?? []).map(({ plan, suites }) => ({ plan, roots: buildTree(suites) })),
     [plans.data],
@@ -393,19 +395,24 @@ export default function Suites({
             <MoreActionsMenu label={`More actions for ${s.name}`} actions={more} disabled={busy} />
           </span>
         </button>
-        {!isFolder && openSuite === s.id && (
-          <SuitePoints org={org} project={project} planId={planId} suite={s} />
+        {!isFolder && (
+          <Collapse open={openSuite === s.id} animateIn={settled}>
+            <SuitePoints org={org} project={project} planId={planId} suite={s} />
+          </Collapse>
         )}
-        {isFolder && !isCollapsed && (
-          // Guide lines hang off the parent's chevron: --tree-x is that
-          // chevron's centre (8px pad + 18px per level + half of 14px), and
-          // the CSS draws the trunk and each child's elbow from there.
-          <ul
-            className="suite-tree"
-            style={{ "--tree-x": `${8 + depth * 18 + 7}px` } as CSSProperties}
-          >
-            {node.children.map((c) => renderNode(c, planId, depth + 1))}
-          </ul>
+        {isFolder && (
+          <Collapse open={!isCollapsed} animateIn={settled}>
+            {/* Guide lines hang off the parent's chevron: --tree-x is that
+                chevron's centre (8px pad + 18px per level + half of 14px),
+                and the CSS draws the trunk and each child's elbow from
+                there. */}
+            <ul
+              className="suite-tree"
+              style={{ "--tree-x": `${8 + depth * 18 + 7}px` } as CSSProperties}
+            >
+              {node.children.map((c) => renderNode(c, planId, depth + 1))}
+            </ul>
+          </Collapse>
         )}
       </li>
     );

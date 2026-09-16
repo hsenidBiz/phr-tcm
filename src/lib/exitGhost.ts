@@ -13,15 +13,17 @@
  * Under prefers-reduced-motion nothing is left behind at all.
  */
 
-const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+export const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
 /**
  * Clone `node` into the page with `.is-closing` and remove the clone after
  * `ms`. Call it while `node` is still in the document - its scroll
  * positions are read then - and let React remove the original as usual.
- * Returns a cancel that removes the copy at once.
+ * `where` is "body" for something fixed over the page (a dialog) and
+ * "after" for something in the flow (a folding list), which shrinks where
+ * it stood. Returns a cancel that removes the copy at once.
  */
-export function leaveExitGhost(node: HTMLElement, ms: number): () => void {
+export function leaveExitGhost(node: HTMLElement, ms: number, where: "body" | "after" = "body"): () => void {
   if (reducedMotion()) return () => {};
 
   const ghost = node.cloneNode(true) as HTMLElement;
@@ -53,7 +55,8 @@ export function leaveExitGhost(node: HTMLElement, ms: number): () => void {
   ghost.setAttribute("aria-hidden", "true");
   ghost.setAttribute("inert", "");
   ghost.style.pointerEvents = "none";
-  document.body.appendChild(ghost);
+  if (where === "after" && node.parentNode) node.parentNode.insertBefore(ghost, node.nextSibling);
+  else document.body.appendChild(ghost);
 
   let done = false;
   const remove = () => {

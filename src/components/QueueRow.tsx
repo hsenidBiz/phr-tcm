@@ -9,6 +9,7 @@ import QueueCaseEditor from "./QueueCaseEditor";
 import StepDiffLines from "./StepDiffLines";
 import { Badge } from "./ui/badge";
 import { Checkbox } from "./ui/checkbox";
+import { Collapse } from "./ui/collapse";
 
 export type QueueRowProps = {
   tc: TestCase;
@@ -179,15 +180,16 @@ export function QueueRowInner({
           onCancel={onCancelEdit}
         />
       )}
-      {stepsOpen && (
+      <Collapse open={stepsOpen}>
         <div className="border-t border-border">
           {/* Shared with the watched-file change report, which
               needed the same "read the case start to finish"
               view - see CaseStepsTable. */}
           <CaseStepsTable steps={tc.steps} preconditions={tc.preconditions} reviewerNotes={tc.reviewer_notes} />
         </div>
-      )}
-      {diff && !diff.noop && diffOpen && (
+      </Collapse>
+      <Collapse open={Boolean(diff && !diff.noop && diffOpen)}>
+      {diff && !diff.noop && (
         <div className="space-y-1 border-t border-border px-3 py-2 text-xs">
           {/* Word-level, like the step lines below: editing one
               word of a title must not read as the whole title
@@ -226,6 +228,7 @@ export function QueueRowInner({
           )}
         </div>
       )}
+      </Collapse>
     </li>
   );
 }
