@@ -2,7 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import Suites from "./Suites";
+import Suites, { pointsIndent } from "./Suites";
 
 afterEach(() => {
   clearMocks();
@@ -418,4 +418,53 @@ test("a row shows View and Edit cases, with Manage, Run Tests and Report behind 
   fireEvent.mouseEnter(more);
   const menu = screen.getByRole("menu", { name: "More actions for Sprint stories" });
   expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage", "Run Tests", "Report"]);
+});
+
+/// Field report: in a deep tree the guide lines ran through an opened
+/// suite's case ids. The table sat a fixed 32px in, while every level moves
+/// the guides 18px further right.
+test("an opened suite's cases sit past every guide line above them, however deep", async () => {
+  baseMock((cmd, args) => {
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: PLAN,
+          suites: [
+            { id: 1, name: "Root folder", suite_type: "staticTestSuite", requirement_id: null, parent_id: null },
+            { id: 2, name: "Mid folder", suite_type: "staticTestSuite", requirement_id: null, parent_id: 1 },
+            { id: 3, name: "Regression", suite_type: "staticTestSuite", requirement_id: null, parent_id: 2 },
+            { id: 4, name: "Sibling", suite_type: "staticTestSuite", requirement_id: null, parent_id: 2 },
+          ],
+        },
+      ];
+    if (cmd === "list_test_points" && (args as { suiteId: number }).suiteId === 3)
+      return [
+        {
+          point_id: 1,
+          test_case_id: 81165,
+          test_case_name: "CMS | Menu Page Validation",
+          config_name: "Windows 10",
+          tester: "",
+          last_outcome: "Passed",
+          last_run_id: null,
+          last_result_id: null,
+        },
+      ];
+  });
+  renderSuites();
+  fireEvent.click(await screen.findByText("Root folder"));
+  fireEvent.click(await screen.findByText("Mid folder"));
+  fireEvent.click(await screen.findByText("Regression"));
+  const table = await screen.findByRole("table", { name: "Test points in Regression" });
+
+  // Regression is two levels down. The rightmost guide beside it hangs off
+  // its parent's chevron: 8px + 18px per level + half the 14px chevron.
+  const depth = 2;
+  const deepestGuide = 8 + (depth - 1) * 18 + 7;
+  const inset = parseFloat(table.style.marginLeft);
+  expect(inset).toBe(pointsIndent(depth));
+  expect(inset).toBeGreaterThan(deepestGuide);
+  // And the table still fits its row.
+  expect(table.style.width).toBe(`calc(100% - ${inset}px)`);
+  expect(within(table).getByText("Windows 10")).toHaveClass("whitespace-nowrap");
 });

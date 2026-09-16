@@ -42,16 +42,25 @@ function pruneTree(nodes: SuiteNode[], q: string): SuiteNode[] {
     .filter((n): n is SuiteNode => n !== null);
 }
 
+/** How far an opened suite's cases sit in from the tree's edge: past the
+ * suite's own chevron (8px pad + 18px per level + the 14px chevron and its
+ * gap). Every guide line above it hangs off an ancestor's chevron, further
+ * left, so none can run through the table. */
+export const pointsIndent = (depth: number) => 8 + depth * 18 + 22;
+
 function SuitePoints({
   org,
   project,
   planId,
   suite,
+  indent,
 }: {
   org: string;
   project: string;
   planId: number;
   suite: SuiteRef;
+  /** Left inset in px - see pointsIndent. */
+  indent: number;
 }) {
   // Outcomes DO move (a run changes them), so the disk seed only avoids
   // the empty-flash: it paints, then revalidates immediately.
@@ -65,19 +74,37 @@ function SuitePoints({
     retry: false,
   });
 
-  if (points.isLoading) return <p className="ml-8 text-sm text-muted">Loading test points</p>;
+  const inset = { marginLeft: indent };
+  if (points.isLoading)
+    return (
+      <p className="text-sm text-muted" style={inset}>
+        Loading test points
+      </p>
+    );
   if (points.isError)
-    return <p className="ml-8 text-sm text-danger">{points.error.message}</p>;
+    return (
+      <p className="text-sm text-danger" style={inset}>
+        {points.error.message}
+      </p>
+    );
   if (!points.data || points.data.length === 0)
-    return <p className="ml-8 text-sm text-muted">No test points in this suite.</p>;
+    return (
+      <p className="text-sm text-muted" style={inset}>
+        No test points in this suite.
+      </p>
+    );
 
   return (
-    <table className="ml-8 w-[calc(100%-2rem)] border-collapse text-sm">
+    <table
+      aria-label={`Test points in ${suite.name}`}
+      className="border-collapse text-sm"
+      style={{ ...inset, width: `calc(100% - ${indent}px)` }}
+    >
       <thead>
         <tr className="border-b border-border text-left text-xs text-muted">
           <th className="px-2 py-1 font-medium">Test case</th>
-          <th className="px-2 py-1 font-medium">Configuration</th>
-          <th className="px-2 py-1 font-medium">Last outcome</th>
+          <th className="whitespace-nowrap px-2 py-1 font-medium">Configuration</th>
+          <th className="whitespace-nowrap px-2 py-1 font-medium">Last outcome</th>
         </tr>
       </thead>
       <tbody>
@@ -86,7 +113,7 @@ function SuitePoints({
             <td className="px-2 py-1 text-text">
               <span className="id-mono text-faint">#{p.test_case_id}</span> {p.test_case_name}
             </td>
-            <td className="px-2 py-1 text-muted">{p.config_name}</td>
+            <td className="whitespace-nowrap px-2 py-1 text-muted">{p.config_name}</td>
             <td className={cn("px-2 py-1", outcomeColor[p.last_outcome.toLowerCase()] ?? "text-faint")}>
               {outcomeLabel(p.last_outcome) || "—"}
             </td>
@@ -397,7 +424,7 @@ export default function Suites({
         </button>
         {!isFolder && (
           <Collapse open={openSuite === s.id} animateIn={settled}>
-            <SuitePoints org={org} project={project} planId={planId} suite={s} />
+            <SuitePoints org={org} project={project} planId={planId} suite={s} indent={pointsIndent(depth)} />
           </Collapse>
         )}
         {isFolder && (
