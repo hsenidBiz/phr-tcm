@@ -22,18 +22,25 @@ use tauri_specta::Event;
 const MAX_BACKOFF_SECS: u64 = 30;
 
 /// Minimum gap between any two ADO requests. 0 = unthrottled.
-static MIN_INTERVAL_MS: AtomicU64 = AtomicU64::new(DEFAULT_MS);
+///
+/// Starts at Full speed, the app's default level - the same one Settings
+/// shows when nothing has been chosen, and pushes down at startup.
+static MIN_INTERVAL_MS: AtomicU64 = AtomicU64::new(FULL_MS);
+
+/// Full speed: no gap. The default.
+const FULL_MS: u64 = 0;
 
 /// Balanced: noticeably gentler than a burst, still brisk for one user.
-const DEFAULT_MS: u64 = 200;
+const BALANCED_MS: u64 = 200;
 
 /// The three levels offered in Settings. Anything unrecognised falls back
-/// to Balanced rather than accidentally unthrottling.
+/// to Balanced, NOT to the default: a value this code does not know must
+/// never read as "no limit".
 pub fn interval_for(level: &str) -> u64 {
     match level {
-        "full" => 0,
+        "full" => FULL_MS,
         "gentle" => 800,
-        _ => DEFAULT_MS,
+        _ => BALANCED_MS,
     }
 }
 

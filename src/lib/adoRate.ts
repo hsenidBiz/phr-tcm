@@ -17,8 +17,12 @@ export type RateLevel = "full" | "balanced" | "gentle";
 const KEY = "tcm-v2-ado-rate";
 
 export const RATE_LEVELS: { id: RateLevel; label: string; hint: string }[] = [
-  { id: "full", label: "Full speed", hint: "No delay. Fastest, but competes with your browser." },
-  { id: "balanced", label: "Balanced", hint: "A small gap between requests. Recommended." },
+  {
+    id: "full",
+    label: "Full speed",
+    hint: "No delay. The default - fastest, but shares your Azure DevOps budget with your browser.",
+  },
+  { id: "balanced", label: "Balanced", hint: "A small gap between requests. Try this if Azure DevOps warns about usage." },
   { id: "gentle", label: "Gentle", hint: "Wide gaps. Use when you are working in Azure DevOps too." },
 ];
 
@@ -29,7 +33,8 @@ export function getRateLevel(): RateLevel {
   } catch {
     // storage unavailable
   }
-  return "balanced";
+  // Nothing chosen yet: full speed. Someone who picked a level keeps it.
+  return "full";
 }
 
 export function setRateLevel(level: RateLevel): void {
