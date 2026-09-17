@@ -213,6 +213,14 @@ describe("fitTransform", () => {
     expect(g.nodes[0].x * t.scale + t.tx).toBeCloseTo(200);
     expect(g.nodes[0].y * t.scale + t.ty).toBeCloseTo(150);
   });
+
+  test("clamps to the zoom floor instead of going negative on a 0x0 viewport", () => {
+    const g = G.buildGraph(tree());
+    const t = G.fitTransform(g.nodes, 0, 0, 40);
+    expect(t.scale).toBe(0.2);
+    expect(Number.isFinite(t.tx)).toBe(true);
+    expect(Number.isFinite(t.ty)).toBe(true);
+  });
 });
 
 describe("caseLabel", () => {

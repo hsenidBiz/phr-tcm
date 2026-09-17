@@ -158,7 +158,10 @@
     }
     if (!any) return { scale: 1, tx: w / 2, ty: h / 2 };
     var bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
-    var scale = Math.min(1.5, (w - 2 * pad) / bw, (h - 2 * pad) / bh);
+    // A 0x0 viewport (page loaded in a hidden tab) makes (w - 2*pad)/bw
+    // negative; clamp to the page's zoom floor so the graph never draws
+    // mirrored before the first settle re-fits it.
+    var scale = Math.max(0.2, Math.min(1.5, (w - 2 * pad) / bw, (h - 2 * pad) / bh));
     return {
       scale: scale,
       tx: (w - bw * scale) / 2 - minX * scale,

@@ -152,20 +152,29 @@
         return;
       }
       // Case labels scale with the graph and cross-fade from id to title.
+      // The id-only and id+title strings share the "#id" prefix, so both are
+      // drawn left-aligned from the same x - computed from the id-only
+      // string's width - and only the title part visibly fades in; centring
+      // each string on its own (different) width would make them ghost.
       var size = Math.max(9, Math.min(22, 11 * scale));
       ctx.font = size + 'px ' + FONT;
+      var idText = G.caseLabel(n, false);
+      ctx.textAlign = 'left';
+      var x0 = p.x - ctx.measureText(idText).width / 2;
       if (n === hover) {
-        ctx.fillText(G.caseLabel(n, true), p.x, p.y + r + 3);
+        ctx.fillText(G.caseLabel(n, true), x0, p.y + r + 3);
+        ctx.textAlign = 'center';
         return;
       }
       if (titleA > 0) {
         ctx.globalAlpha = base * titleA;
-        ctx.fillText(G.caseLabel(n, true), p.x, p.y + r + 3);
+        ctx.fillText(G.caseLabel(n, true), x0, p.y + r + 3);
       }
       if (idA > 0 && titleA < 1) {
         ctx.globalAlpha = base * idA * (1 - titleA);
-        ctx.fillText(G.caseLabel(n, false), p.x, p.y + r + 3);
+        ctx.fillText(idText, x0, p.y + r + 3);
       }
+      ctx.textAlign = 'center';
     });
     ctx.globalAlpha = 1;
     zoomLabel.textContent = Math.round(scale * 100) + '%';
@@ -250,11 +259,13 @@
     G.fold(graph, area, folded);
     if (activeNode && activeNode.hidden) hideCase();
     warm(0.5);
+    draw(); // a background tab gets no animation frames, so paint now too
   }
   function foldAll(folded) {
     areaNodes.forEach(function (a) { G.fold(graph, a, folded); });
     if (activeNode && activeNode.hidden) hideCase();
     warm(0.5);
+    draw(); // a background tab gets no animation frames, so paint now too
   }
 
   // ---- Pointer: hover, click, drag a node, pan the graph.
@@ -265,25 +276,31 @@
     viewport.classList.toggle('over-node', !!(hover || (drag && drag.node)));
   }
   viewport.addEventListener('mousemove', function (e) {
+    if (drag) return; // tracked on window, so it keeps going once the pointer leaves
     var p = local(e);
-    if (drag) {
-      if (!moved && (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4)) moved = true;
-      if (drag.node) {
-        var g = toGraph(p.x, p.y);
-        drag.node.x = g.x; drag.node.y = g.y;
-        drag.node.vx = 0; drag.node.vy = 0;
-        warm(0.3);
-      } else {
-        tx = p.x - drag.panX; ty = p.y - drag.panY;
-        draw();
-      }
-      return;
-    }
     var h = nodeAt(p.x, p.y);
     if (h !== hover) { hover = h; setCursor(); draw(); }
   });
   viewport.addEventListener('mouseleave', function () {
     if (!drag && hover) { hover = null; setCursor(); draw(); }
+  });
+  // A node drag or a pan can carry the pointer out of the viewport (into the
+  // header, the side panel, or past the window edge); this listener is on
+  // window so it keeps updating instead of freezing at the last position
+  // inside the viewport.
+  window.addEventListener('mousemove', function (e) {
+    if (!drag) return;
+    var p = local(e);
+    if (!moved && (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4)) moved = true;
+    if (drag.node) {
+      var g = toGraph(p.x, p.y);
+      drag.node.x = g.x; drag.node.y = g.y;
+      drag.node.vx = 0; drag.node.vy = 0;
+      warm(0.3);
+    } else {
+      tx = p.x - drag.panX; ty = p.y - drag.panY;
+      draw();
+    }
   });
   viewport.addEventListener('mousedown', function (e) {
     if (e.button !== 0) return;
