@@ -62,13 +62,43 @@ fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
     assert_eq!(parsed[0]["children"][0]["cases"][1]["title"], "Fill details</script><b>x</b>");
 
     // The chrome the script drives, and the script itself.
-    for id in ["map-expand", "map-collapse", "map-in", "map-out", "map-reset", "map-zoom", "viewport", "canvas", "detail"] {
+    for id in ["map-expand", "map-collapse", "map-in", "map-out", "map-reset", "map-zoom", "viewport", "graph", "detail", "map-list"] {
         assert!(html.contains(&format!("id='{id}'")), "missing #{id}: {html}");
     }
     assert!(html.contains("getElementById('map-data')"), "the script reads the data block");
+    assert!(html.contains("root.testMap = {"), "the graph helpers are embedded");
+    assert!(
+        html.find("root.testMap = {").unwrap() < html.find("getElementById('map-data')").unwrap(),
+        "the helpers load before the page script uses them"
+    );
+    // The canvas says what it is; the hidden list carries every case for
+    // screen readers and the keyboard, numbered the way the script numbers
+    // its case nodes (an area's cases before its children).
+    assert!(html.contains("<canvas id='graph' role='img' aria-label='Test map: 2 areas, 3 test cases'>"), "{html}");
+    let list = html
+        .split("<div id='map-list' class='sr-only'>")
+        .nth(1)
+        .and_then(|rest| rest.split("<aside id='detail'").next())
+        .expect("the hidden list");
+    assert!(list.contains("<h3>Manage Events (3)</h3>"), "{list}");
+    assert!(list.contains("<h3>Create (2)</h3>"), "{list}");
+    assert!(list.contains("<button type='button' class='case' data-i='0'>#81310 Page navigation</button>"), "{list}");
+    assert!(list.contains("<button type='button' class='case' data-i='1'>#81314 Validation &amp; limits</button>"), "{list}");
+    assert!(list.contains("<button type='button' class='case' data-i='2'>NEW Fill details&lt;/script&gt;&lt;b&gt;x&lt;/b&gt;</button>"), "{list}");
+    assert!(!list.contains("<b>x</b>"), "titles are escaped in the list: {list}");
     // The app's palette and the light/dark switch, like every other report.
     assert!(html.contains("--accent"), "{html}");
     assert!(html.contains("data-scheme=\"light\""), "{html}");
+}
+
+#[test]
+fn an_empty_map_says_so_and_still_has_the_chrome() {
+    let path = tmp_path("map-empty.html");
+    export_test_map_html(&[], &path, "", &PagePalette::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("<p id='map-empty' class='empty'>No test cases to map.</p>"), "{html}");
+    assert!(html.contains("aria-label='Test map: 0 areas, 0 test cases'"), "{html}");
+    assert!(html.contains("<div id='map-list' class='sr-only'></div>"), "{html}");
 }
 
 #[test]

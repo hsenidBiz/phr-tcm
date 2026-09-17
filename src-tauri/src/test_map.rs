@@ -1,6 +1,7 @@
-//! The Test map: a set of cases drawn as a tree of the areas they test, in
-//! the browser. The webview builds the tree (one grouping implementation,
-//! in `src/lib/testMap.ts`); this side only writes the page.
+//! The Test map: a set of cases drawn as a graph of the areas they test, in
+//! the browser - areas and cases as nodes, membership as edges, laid out by
+//! a force simulation. The webview builds the tree (one grouping
+//! implementation, in `src/lib/testMap.ts`); this side only writes the page.
 //!
 //! Same page shell as the other reports - the app's palette, the
 //! light/dark switch - but static: no revision poll, no comment boxes.
@@ -12,6 +13,7 @@ use crate::webtheme::PagePalette;
 
 const MAP_CSS: &str = include_str!("../web/test-map.css");
 const MAP_JS: &str = include_str!("../web/test-map.js");
+const GRAPH_JS: &str = include_str!("../web/test-map-graph.js");
 
 /// One case as the map shows it: enough for the side panel, nothing the
 /// app keeps to itself (no notes, no findings).
@@ -36,6 +38,38 @@ pub struct MapNode {
     pub children: Vec<MapNode>,
 }
 
+/// Areas and cases in the whole tree, for the canvas's accessible name.
+fn totals(nodes: &[MapNode]) -> (usize, usize) {
+    nodes.iter().fold((0, 0), |(a, c), n| {
+        let (ca, cc) = totals(&n.children);
+        (a + 1 + ca, c + n.cases.len() + cc)
+    })
+}
+
+/// The hidden list: every area as a heading, every case as a button. The
+/// button's `data-i` is the case's position in this walk - cases before
+/// children - which is the order `buildGraph` numbers its case nodes, so
+/// the script finds a button's node by index.
+fn list_html(nodes: &[MapNode], next: &mut usize, out: &mut String) {
+    for n in nodes {
+        out.push_str(&format!("<h3>{} ({})</h3>", esc(&n.name), n.count));
+        if !n.cases.is_empty() {
+            out.push_str("<ol>");
+            for c in &n.cases {
+                let id = c.id.map(|i| format!("#{i}")).unwrap_or_else(|| "NEW".into());
+                out.push_str(&format!(
+                    "<li><button type='button' class='case' data-i='{}'>{id} {}</button></li>",
+                    *next,
+                    esc(&c.title)
+                ));
+                *next += 1;
+            }
+            out.push_str("</ol>");
+        }
+        list_html(&n.children, next, out);
+    }
+}
+
 /// Write the page to `path`. The tree travels inside it as a JSON script
 /// block (never executed, `</` escaped, so a title cannot close it) and a
 /// script draws it on load.
@@ -51,6 +85,10 @@ pub fn export_test_map_html(
     } else {
         esc(subtitle)
     };
+    let (areas, cases) = totals(nodes);
+    let mut list = String::new();
+    list_html(nodes, &mut 0, &mut list);
+    let empty = if cases == 0 { "<p id='map-empty' class='empty'>No test cases to map.</p>" } else { "" };
     let html = format!(
         "<!DOCTYPE html>\n\
          <html lang=\"en\" data-scheme=\"{scheme}\"><head><meta charset=\"utf-8\">\
@@ -68,10 +106,14 @@ pub fn export_test_map_html(
          <span id='map-zoom' aria-live='polite'>100%</span>\
          </div></header>\
          <div class='layout'>\
-         <div id='viewport' class='viewport'><div id='canvas' class='canvas'></div></div>\
+         <div id='viewport' class='viewport'>\
+         <canvas id='graph' role='img' aria-label='Test map: {areas} areas, {cases} test cases'></canvas>\
+         {empty}</div>\
+         <div id='map-list' class='sr-only'>{list}</div>\
          <aside id='detail' class='detail' aria-label='Test case' hidden></aside>\
          </div>\
          <script type='application/json' id='map-data'>{data}</script>\
+         <script>{graph_js}</script>\
          <script>{js}</script>\
          <script>{switch_js}</script>\
          </body></html>",
@@ -79,7 +121,12 @@ pub fn export_test_map_html(
         vars = palette.css(),
         css = MAP_CSS,
         switch = crate::webtheme::SWITCH_HTML,
+        areas = areas,
+        cases = cases,
+        empty = empty,
+        list = list,
         data = script_json(&nodes, "[]"),
+        graph_js = GRAPH_JS,
         js = MAP_JS,
         switch_js = crate::webtheme::SWITCH_JS,
     );
