@@ -28,7 +28,7 @@ is a list of problems found while writing THIS case: each entry has 'kind' (test
 optional 'subject' (the spec section or code symbol), a one-line 'title' and an optional markdown 'detail'. \
 Put a contradiction between the spec and the code here, never in 'comment' (the developer's field) and \
 never in 'reviewer_notes'. An optional 'area' says where the case sits on the page or in the feature, as a \
-path with '/' between the levels ('Manage Events / Create / Validation'); it draws \
+path with '/' between the levels ('Manage Events / Create / Validation'). This is the app's own grouping path, not the work item's Area Path; it draws \
 the app's Test map and never reaches Azure DevOps.";
 
 pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {

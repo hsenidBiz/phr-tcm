@@ -338,4 +338,6 @@ test("Test map sends the shown cases as a tree, grouped by title", async () => {
   expect(sent!.subtitle).toBe("PBI #42");
   const total = sent!.nodes.reduce((n, node) => n + node.count, 0);
   expect(total).toBe(3);
+  expect(sent!.nodes.map((n) => n.name)).toEqual(["Login", "Ungrouped"]);
+  expect(sent!.nodes[0].count).toBe(2);
 });

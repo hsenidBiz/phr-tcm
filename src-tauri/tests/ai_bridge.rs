@@ -340,13 +340,14 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(area.contains("Manage Events / Create / Validation"), "{area}");
     assert!(area.contains("same spelling"), "{area}");
     assert!(area.contains("Never sent to Azure DevOps"), "{area}");
+    assert!(area.contains("not the work item's Area Path"), "{area}");
 
     // The style rules are scoped to the case text - an assistant that read
     // them as a rule for its own replies would stop explaining itself.
     let style = body
         .split("## Writing style")
         .nth(1)
-        .and_then(|rest| rest.split("## reviewer_notes").next())
+        .and_then(|rest| rest.split("## area").next())
         .expect("the guide has a writing style section");
     assert!(style.contains("TEST CASES THEMSELVES"), "{style}");
     assert!(style.contains("not bound by it"), "{style}");

@@ -59,6 +59,7 @@
     li.setOpen = setOpen;
     setOpen(true);
     row.addEventListener('click', function () {
+      if (moved) return; // a drag that started on the row must not also toggle it
       setOpen(li.getAttribute('data-open') !== 'true');
     });
     return li;
@@ -95,18 +96,22 @@
       detail.appendChild(el('h3', null, 'Preconditions'));
       detail.appendChild(el('p', 'pre', c.preconditions));
     }
-    var table = el('table');
-    var head = el('tr');
-    ['#', 'Action', 'Expected'].forEach(function (h) { head.appendChild(el('th', null, h)); });
-    table.appendChild(head);
-    c.steps.forEach(function (s, i) {
-      var tr = el('tr');
-      tr.appendChild(el('td', 'n', String(i + 1)));
-      tr.appendChild(el('td', null, s.action));
-      tr.appendChild(el('td', 'exp', s.expected));
-      table.appendChild(tr);
-    });
-    detail.appendChild(table);
+    if (c.steps.length === 0) {
+      detail.appendChild(el('p', 'meta', 'No steps.'));
+    } else {
+      var table = el('table');
+      var head = el('tr');
+      ['#', 'Action', 'Expected'].forEach(function (h) { head.appendChild(el('th', null, h)); });
+      table.appendChild(head);
+      c.steps.forEach(function (s, i) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'n', String(i + 1)));
+        tr.appendChild(el('td', null, s.action));
+        tr.appendChild(el('td', 'exp', s.expected));
+        table.appendChild(tr);
+      });
+      detail.appendChild(table);
+    }
     detail.hidden = false;
   }
 
@@ -142,20 +147,32 @@
   document.getElementById('map-collapse').addEventListener('click', function () { setAll(false); });
 
   viewport.addEventListener('wheel', function (e) {
-    if (!e.ctrlKey && !e.metaKey) return; // plain wheel scrolls the page
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY);
+      return;
+    }
+    // Plain wheel pans the tree vertically, so a tall tree can be
+    // scrolled with the wheel; Ctrl/Cmd + wheel zooms instead.
     e.preventDefault();
-    zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY);
+    ty -= e.deltaY;
+    apply();
   }, { passive: false });
 
   var drag = null;
+  var moved = false;
   viewport.addEventListener('mousedown', function (e) {
     if (e.button !== 0) return;
     if (e.target.closest('button')) return; // a click, not a drag
-    drag = { x: e.clientX - tx, y: e.clientY - ty };
+    moved = false;
+    drag = { x: e.clientX - tx, y: e.clientY - ty, startX: e.clientX, startY: e.clientY };
     viewport.classList.add('dragging');
   });
   window.addEventListener('mousemove', function (e) {
     if (!drag) return;
+    if (!moved && (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4)) {
+      moved = true;
+    }
     tx = e.clientX - drag.x;
     ty = e.clientY - drag.y;
     apply();

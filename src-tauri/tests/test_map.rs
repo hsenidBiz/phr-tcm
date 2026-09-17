@@ -56,9 +56,9 @@ fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
         .expect("the data block");
     assert!(data.contains("\"Manage Events\""), "{data}");
     assert!(data.contains("81310"), "{data}");
-    assert!(!data.contains("</script"), "a title with </script> must be escaped inside the JSON: {data}");
-    assert!(data.contains("<\\/script"), "{data}");
-    let parsed: serde_json::Value = serde_json::from_str(&data.replace("<\\/", "</")).unwrap();
+    assert!(data.contains("\\u003c/script"), "{data}");
+    assert!(!html.contains("Fill details</script>"), "{html}");
+    let parsed: serde_json::Value = serde_json::from_str(&data).unwrap();
     assert_eq!(parsed[0]["children"][0]["cases"][1]["title"], "Fill details</script><b>x</b>");
 
     // The chrome the script drives, and the script itself.

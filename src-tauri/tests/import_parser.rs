@@ -197,6 +197,7 @@ fn json_export_round_trips_through_the_importer() {
         doc["instructions"].as_str().unwrap().contains("'area'"),
         "the file's own instructions must tell an assistant about area"
     );
+    assert!(doc["instructions"].as_str().unwrap().contains("not the work item's Area Path"));
 
     // And neither app-only field is written when it is empty, so a draft
     // an assistant round-trips does not grow keys nobody asked for.

@@ -284,10 +284,10 @@ fn a_hostile_title_cannot_escape_the_card_or_the_script() {
     assert!(!markup.contains("<img"), "markup reached the card");
     assert!(markup.contains("&lt;img src=x"));
 
-    // In the SCRIPT the only way out is a literal `</script`, so that is
-    // what is escaped. Counting the tags proves none was smuggled in.
+    // In the SCRIPT the only way out is a literal `</script`, so every `<`
+    // is escaped as `<`. Counting the tags proves none was smuggled in.
     assert_eq!(html.matches("</script>").count(), html.matches("<script").count());
-    assert!(html.contains(r"<\/script>"), "the JSON copy must be escaped");
+    assert!(html.contains(r"</script>"), "the JSON copy must be escaped");
 }
 
 /// Numbering is for reading the page aloud, nothing more: it counts the
