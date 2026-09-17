@@ -520,6 +520,7 @@ pub fn parse_ops_full(
                         // assistant just lost its review context silently.
                         comment: pick(rv, &crate::import_parser::COMMENT_KEYS),
                         reviewer_notes: pick(rv, &crate::import_parser::REVIEWER_NOTES_KEYS),
+                        area: pick(rv, &crate::import_parser::AREA_KEYS),
                         // A case inserted mid-draft has no position in
                         // either reading yet; the next optimize stamps both.
                         spec_order: None,

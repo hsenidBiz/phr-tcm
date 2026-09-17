@@ -1549,6 +1549,15 @@ export type TestCase_Deserialize = {
 	 */
 	reviewer_notes?: string,
 	/**
+	 *  Where this case sits on the page or in the feature it tests, as a
+	 *  path: "Manage Events / Create / Validation". Levels are separated by
+	 *  "/" (spaces around it optional). It draws the Test map. App-only,
+	 *  like the notes above: round-trips through the JSON, never sent to
+	 *  Azure DevOps (`app_only_fields_never_reach_a_request_body` covers it
+	 *  by scanning the write path), absent from the file when empty.
+	 */
+	area?: string,
+	/**
 	 *  This case's 1-based position when the set is read AGAINST THE SPEC -
 	 *  cases walking down the document, so a reviewer scrolls the spec and
 	 *  the file together. Stamped by the optimizer from the order the
@@ -1611,6 +1620,15 @@ export type TestCase_Serialize = {
 	 *  material they read while writing one.
 	 */
 	reviewer_notes?: string,
+	/**
+	 *  Where this case sits on the page or in the feature it tests, as a
+	 *  path: "Manage Events / Create / Validation". Levels are separated by
+	 *  "/" (spaces around it optional). It draws the Test map. App-only,
+	 *  like the notes above: round-trips through the JSON, never sent to
+	 *  Azure DevOps (`app_only_fields_never_reach_a_request_body` covers it
+	 *  by scanning the write path), absent from the file when empty.
+	 */
+	area?: string,
 	/**
 	 *  This case's 1-based position when the set is read AGAINST THE SPEC -
 	 *  cases walking down the document, so a reviewer scrolls the spec and

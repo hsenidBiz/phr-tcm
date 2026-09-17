@@ -22,6 +22,7 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
         update_id: None,
         comment: String::new(),
         reviewer_notes: String::new(),
+        area: String::new(),
         spec_order: None,
         tester_order: None,
         findings: vec![],

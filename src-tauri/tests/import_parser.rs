@@ -148,6 +148,7 @@ fn json_export_round_trips_through_the_importer() {
             update_id: Some(77),
             comment: "Flaky on Fridays - re-check with QA".into(),
             reviewer_notes: "## Source\n\nSpec **3.2**, AC-4. Out of scope: SSO.".into(),
+            area: "Manage Events / Create / Validation".into(),
             spec_order: None,
             tester_order: None,
             findings: vec![],
@@ -188,12 +189,21 @@ fn json_export_round_trips_through_the_importer() {
         "## Source\n\nSpec **3.2**, AC-4. Out of scope: SSO."
     );
     assert_eq!(cases[1].reviewer_notes, "");
+    // The area path rides the same road as the notes: written, read back
+    // verbatim, and absent from a case that has none.
+    assert_eq!(cases[0].area, "Manage Events / Create / Validation");
+    assert_eq!(cases[1].area, "");
+    assert!(
+        doc["instructions"].as_str().unwrap().contains("'area'"),
+        "the file's own instructions must tell an assistant about area"
+    );
 
     // And neither app-only field is written when it is empty, so a draft
     // an assistant round-trips does not grow keys nobody asked for.
     let second = &doc["test_cases"][1];
     assert!(second.get("comment").is_none(), "{second}");
     assert!(second.get("reviewer_notes").is_none(), "{second}");
+    assert!(second.get("area").is_none(), "{second}");
     // Nor `id`. It used to be written as `null` for every case that did not
     // have one, which says exactly what saying nothing says - while making
     // a caller who passed 14 id-less cases read past an added key on all 14
@@ -592,6 +602,7 @@ fn html_export_carries_cases_and_search() {
         update_id: Some(42),
         comment: String::new(),
         reviewer_notes: String::new(),
+        area: String::new(),
         spec_order: None,
         tester_order: None,
         findings: vec![],
@@ -625,6 +636,7 @@ fn the_test_case_page_is_themed_and_can_be_flipped() {
         update_id: None,
         comment: String::new(),
         reviewer_notes: String::new(),
+        area: String::new(),
         spec_order: None,
         tester_order: None,
         findings: vec![],
@@ -894,4 +906,27 @@ fn a_cases_findings_render_in_their_own_block() {
     assert!(block.contains("<strong>closed</strong>"), "detail is markdown: {block}");
     assert!(!block.contains("<img") && !block.contains("onerror"), "raw HTML never reaches the page: {block}");
     assert!(block.contains("Test case") && block.contains("Step 3 expects a toast"), "{block}");
+}
+
+/// The alias list, so a file an author typed by hand still lands: an
+/// assistant told to add a "section" writes the word it was given.
+#[test]
+fn area_is_read_under_its_aliases_and_trimmed() {
+    let path = tmp_path("area-aliases.json");
+    std::fs::write(
+        &path,
+        r#"{"test_cases":[
+            {"title":"A","steps":[{"action":"do","expected":""}],"area":"  Page / Section  "},
+            {"title":"B","steps":[{"action":"do","expected":""}],"section":"Page/Other"},
+            {"title":"C","steps":[{"action":"do","expected":""}],"group":"Page"},
+            {"title":"D","steps":[{"action":"do","expected":""}]}
+        ]}"#,
+    )
+    .unwrap();
+    let (cases, warnings) = parse_file(&path).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(cases[0].area, "Page / Section");
+    assert_eq!(cases[1].area, "Page/Other");
+    assert_eq!(cases[2].area, "Page");
+    assert_eq!(cases[3].area, "");
 }

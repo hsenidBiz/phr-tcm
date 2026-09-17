@@ -27,7 +27,9 @@ when the cases are opened in a browser, so a link to the spec works. A third fil
 is a list of problems found while writing THIS case: each entry has 'kind' (test_case, spec or code), an \
 optional 'subject' (the spec section or code symbol), a one-line 'title' and an optional markdown 'detail'. \
 Put a contradiction between the spec and the code here, never in 'comment' (the developer's field) and \
-never in 'reviewer_notes'.";
+never in 'reviewer_notes'. An optional 'area' says where the case sits on the page or in the feature, as a \
+path with '/' between the levels ('Manage Events / Create / Validation'); it draws \
+the app's Test map and never reaches Azure DevOps.";
 
 pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
     let records: Vec<serde_json::Value> = queue
@@ -62,6 +64,10 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
             }
             if !tc.reviewer_notes.is_empty() {
                 rec["reviewer_notes"] = serde_json::json!(tc.reviewer_notes);
+            }
+            // The area path, present only when set - same shape rule.
+            if !tc.area.is_empty() {
+                rec["area"] = serde_json::json!(tc.area);
             }
             // The two sort orders, present only when known - same shape
             // rule as the notes above.

@@ -36,6 +36,10 @@ pub(crate) const COMMENT_KEYS: [&str; 2] = ["comment", "notes"];
 pub(crate) const REVIEWER_NOTES_KEYS: [&str; 4] =
     ["reviewer_notes", "reviewerNotes", "Reviewer Notes", "review_notes"];
 
+/// Spellings accepted for the area path. Same reasoning as the notes: the
+/// word an assistant or an author was given is the word they write.
+pub(crate) const AREA_KEYS: [&str; 3] = ["area", "section", "group"];
+
 pub const EXCEL_HEADERS: [&str; 9] = [
     "TestCaseID",
     "TestCaseName",
@@ -292,6 +296,7 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             // the notes and both sort orders are JSON only.
             comment: String::new(),
             reviewer_notes: String::new(),
+            area: String::new(),
             spec_order: None,
             tester_order: None,
             findings: vec![],
@@ -438,6 +443,12 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             .unwrap_or_default()
             .trim()
             .to_string();
+        // The area path. Trimmed like the notes; the map splits it later.
+        let area = json_value(&raw_v, &AREA_KEYS)
+            .map(value_to_string)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         // The two sort orders. Stamped by the optimizer, but hand-written
         // values are read the same way - a junk value warns rather than
         // silently vanishing, because a file that LOOKS ordered and is not
@@ -568,6 +579,7 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
             update_id,
             comment,
             reviewer_notes,
+            area,
             spec_order,
             tester_order,
             findings,
