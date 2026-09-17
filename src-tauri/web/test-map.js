@@ -163,8 +163,8 @@
   var moved = false;
   viewport.addEventListener('mousedown', function (e) {
     if (e.button !== 0) return;
+    moved = false; // every press starts clean, even one that lands on a button
     if (e.target.closest('button')) return; // a click, not a drag
-    moved = false;
     drag = { x: e.clientX - tx, y: e.clientY - ty, startX: e.clientX, startY: e.clientY };
     viewport.classList.add('dragging');
   });

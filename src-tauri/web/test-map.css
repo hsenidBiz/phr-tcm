@@ -17,6 +17,7 @@ body {
   align-items: baseline;
   gap: 16px;
   padding: 10px 16px;
+  padding-right: 100px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex: 0 0 auto;

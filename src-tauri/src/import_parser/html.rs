@@ -35,10 +35,11 @@ const NOTE_JS: &str = include_str!("../../web/cases-notes.js");
 /// here: a test case titled `</script><img onerror=...>` would otherwise
 /// close the script element and run as markup, and a title carrying a
 /// literal `<!--` could open a comment that swallows markup after it.
-/// Escaping every `<` as `<` closes both holes at once - `serde_json`
-/// never emits `<` outside a string literal, and `<` is a valid
-/// escape in both JavaScript and JSON, so the value the page parses is
-/// unchanged.
+/// Escaping every `<` as its JSON unicode escape - a backslash followed by
+/// `u003c` - closes both holes at once: `serde_json` never emits `<`
+/// outside a string literal, that escape is valid in both JavaScript and
+/// JSON, and it decodes back to a plain `<` once the page's own
+/// `JSON.parse` reads it, so the value is unchanged.
 pub(crate) fn script_json<T: serde::Serialize>(value: &T, fallback: &str) -> String {
     serde_json::to_string(value)
         .map(|s| s.replace('<', "\\u003c"))

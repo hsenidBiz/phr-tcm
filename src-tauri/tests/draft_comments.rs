@@ -285,9 +285,11 @@ fn a_hostile_title_cannot_escape_the_card_or_the_script() {
     assert!(markup.contains("&lt;img src=x"));
 
     // In the SCRIPT the only way out is a literal `</script`, so every `<`
-    // is escaped as `<`. Counting the tags proves none was smuggled in.
+    // is escaped as its JSON unicode escape (a backslash followed by
+    // `u003c`). Counting the tags proves none was smuggled in.
     assert_eq!(html.matches("</script>").count(), html.matches("<script").count());
-    assert!(html.contains(r"</script>"), "the JSON copy must be escaped");
+    let escaped_open = String::from("\\") + "u003c/script";
+    assert!(html.contains(&escaped_open), "the JSON copy must be escaped: {html}");
 }
 
 /// Numbering is for reading the page aloud, nothing more: it counts the
