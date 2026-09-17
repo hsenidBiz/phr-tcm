@@ -33,6 +33,7 @@ type Helpers = {
   buildGraph: (tree: unknown[]) => Graph;
   layoutTree: (graph: Graph) => { width: number; height: number };
   fold: (graph: Graph, area: Node, folded: boolean) => void;
+  pathTo: (node: Node) => Node[];
   labelAlpha: (kind: "case-id" | "case-title", scale: number, reduced?: boolean) => number;
   fitTransform: (nodes: Node[], w: number, h: number, pad: number) => { scale: number; tx: number; ty: number };
   fitWidthTransform: (
@@ -293,18 +294,33 @@ describe("fitWidthTransform", () => {
 });
 
 describe("caseLabel", () => {
-  test("shows the id or NEW, and the ellipsised title when asked", () => {
+  test("shows the id, the title alone for a new case, and ellipsises long titles", () => {
     const long = "A very long title that keeps going well past seventy characters so it has to be cut";
     const g = G.buildGraph([
       { name: "A", count: 2, cases: [mapCase(7, "Short"), mapCase(null, long)], children: [] },
     ]);
     const [, c1, c2] = g.nodes;
     expect(G.caseLabel(c1, false)).toBe("#7");
-    expect(G.caseLabel(c2, false)).toBe("NEW");
     expect(G.caseLabel(c1, true)).toBe("#7  Short");
+    // A new case has no id: nothing at the id-only level, no "NEW" prefix.
+    expect(G.caseLabel(c2, false)).toBe("");
     const cut = G.caseLabel(c2, true);
-    expect(cut.startsWith("NEW  A very long title")).toBe(true);
+    expect(cut.startsWith("A very long title")).toBe(true);
     expect(cut.endsWith("…")).toBe(true);
-    expect(cut.length).toBeLessThanOrEqual("NEW  ".length + 70);
+    expect(cut.length).toBeLessThanOrEqual(70);
+  });
+});
+
+describe("pathTo", () => {
+  test("is the chain from the top-level area down to the node, inclusive", () => {
+    const g = G.buildGraph(tree());
+    const [manage, create, reports] = g.nodes.filter((n) => n.kind === "area");
+    const cases = g.nodes.filter((n) => n.kind === "case");
+    expect(G.pathTo(cases[2]).map(label)).toEqual(["Manage Events", "Create", "Fill details"]);
+    expect(G.pathTo(cases[0]).map(label)).toEqual(["Manage Events", "Page navigation"]);
+    expect(G.pathTo(create).map(label)).toEqual(["Manage Events", "Create"]);
+    expect(G.pathTo(manage)).toEqual([manage]);
+    expect(G.pathTo(cases[3]).map(label)).toEqual(["Reports", "Export"]);
+    expect(G.pathTo(reports)).toEqual([reports]);
   });
 });

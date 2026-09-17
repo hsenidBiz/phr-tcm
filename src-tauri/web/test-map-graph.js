@@ -145,12 +145,24 @@
     return { scale: scale, tx: pad - b.minX * scale, ty: pad - b.minY * scale };
   }
 
+  // The chain from the top-level area down to `node`, inclusive, in that
+  // order: what a hover lights up, and the route the pulse travels.
+  function pathTo(node) {
+    var chain = [node];
+    var p = node.kind === 'case' ? node.area : node.parent;
+    while (p) { chain.unshift(p); p = p.parent; }
+    return chain;
+  }
+
+  // "#81034  Title" for a case that exists in Azure DevOps; a new case shows
+  // its title alone (the side panel says it is new), and nothing at the
+  // id-only zoom level, since it has no id.
   function caseLabel(node, withTitle) {
-    var id = node.data.id != null ? '#' + node.data.id : 'NEW';
+    var id = node.data.id != null ? '#' + node.data.id : '';
     if (!withTitle) return id;
     var title = node.data.title || '';
     if (title.length > TITLE_MAX) title = title.slice(0, TITLE_MAX - 1) + '…';
-    return id + '  ' + title;
+    return id ? id + '  ' + title : title;
   }
 
   root.testMap = {
@@ -159,6 +171,7 @@
     buildGraph: buildGraph,
     layoutTree: layoutTree,
     fold: fold,
+    pathTo: pathTo,
     labelAlpha: labelAlpha,
     fitTransform: fitTransform,
     fitWidthTransform: fitWidthTransform,

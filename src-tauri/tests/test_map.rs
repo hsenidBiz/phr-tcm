@@ -84,7 +84,7 @@ fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
     assert!(list.contains("<h3>Create (2)</h3>"), "{list}");
     assert!(list.contains("<button type='button' class='case' data-i='0'>#81310 Page navigation</button>"), "{list}");
     assert!(list.contains("<button type='button' class='case' data-i='1'>#81314 Validation &amp; limits</button>"), "{list}");
-    assert!(list.contains("<button type='button' class='case' data-i='2'>NEW Fill details&lt;/script&gt;&lt;b&gt;x&lt;/b&gt;</button>"), "{list}");
+    assert!(list.contains("<button type='button' class='case' data-i='2'>Fill details&lt;/script&gt;&lt;b&gt;x&lt;/b&gt;</button>"), "{list}");
     assert!(!list.contains("<b>x</b>"), "titles are escaped in the list: {list}");
     // The app's palette and the light/dark switch, like every other report.
     assert!(html.contains("--accent"), "{html}");

@@ -56,9 +56,11 @@ fn list_html(nodes: &[MapNode], next: &mut usize, out: &mut String) {
         if !n.cases.is_empty() {
             out.push_str("<ol>");
             for c in &n.cases {
-                let id = c.id.map(|i| format!("#{i}")).unwrap_or_else(|| "NEW".into());
+                // "#id Title" for a case in Azure DevOps; a new case is its
+                // title alone - the page says it is new when it is opened.
+                let id = c.id.map(|i| format!("#{i} ")).unwrap_or_default();
                 out.push_str(&format!(
-                    "<li><button type='button' class='case' data-i='{}'>{id} {}</button></li>",
+                    "<li><button type='button' class='case' data-i='{}'>{id}{}</button></li>",
                     *next,
                     esc(&c.title)
                 ));

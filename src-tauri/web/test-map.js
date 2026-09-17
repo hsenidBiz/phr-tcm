@@ -96,14 +96,63 @@
   var hover = null, activeNode = null;
   var FONT = 'ui-sans-serif, system-ui, "Segoe UI", sans-serif';
 
-  function neighbourhood(n) {
-    var keep = {};
-    keep[n.i] = true;
-    edges.forEach(function (e) {
-      if (e.a === n) keep[e.b.i] = true;
-      if (e.b === n) keep[e.a.i] = true;
-    });
-    return keep;
+  // A hover lights the whole chain from the top-level area down to the
+  // node - the nodes, and the limbs between consecutive ones.
+  function chainFocus(n) {
+    var chain = G.pathTo(n), keep = {};
+    for (var i = 0; i < chain.length; i++) keep[chain[i].i] = true;
+    return { keep: keep, chain: chain };
+  }
+
+  // ---- The pulse: while a case is hovered, a short bright segment runs
+  // along its chain's limbs from the top-level area to the case, one pass
+  // per PULSE_MS, until the pointer leaves. Not under reduced motion.
+  var PULSE_MS = 900, PULSE_TAIL = 0.18;
+  var pulseT = 0, pulseAt = 0, pulsing = false;
+  function pulseTick(now) {
+    if (!hover || hover.kind !== 'case' || reduced) { pulsing = false; return; }
+    if (pulseAt) pulseT = (pulseT + (now - pulseAt) / PULSE_MS) % 1;
+    pulseAt = now;
+    draw();
+    requestAnimationFrame(pulseTick);
+  }
+  function startPulse() {
+    if (pulsing || reduced || !hover || hover.kind !== 'case') return;
+    pulsing = true; pulseT = 0; pulseAt = 0;
+    requestAnimationFrame(pulseTick);
+  }
+  // The point at t along the limb from a to b (the same curve limb() draws).
+  function limbPoint(a, b, t) {
+    var p = toScreen(a.x, a.y), q = toScreen(b.x, b.y);
+    var mx = (p.x + q.x) / 2, u = 1 - t;
+    return {
+      x: u * u * u * p.x + 3 * u * u * t * mx + 3 * u * t * t * mx + t * t * t * q.x,
+      y: u * u * u * p.y + 3 * u * u * t * p.y + 3 * u * t * t * q.y + t * t * t * q.y
+    };
+  }
+  function drawPulse(chain) {
+    var limbs = chain.length - 1;
+    if (limbs < 1) return;
+    var pos = pulseT * limbs;
+    var idx = Math.min(limbs - 1, Math.floor(pos));
+    var head = pos - idx;
+    var a = chain[idx], b = chain[idx + 1];
+    ctx.save();
+    ctx.strokeStyle = colours.accent;
+    ctx.fillStyle = colours.accent;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    var steps = 8, t0 = Math.max(0, head - PULSE_TAIL);
+    for (var i = 0; i <= steps; i++) {
+      var pt = limbPoint(a, b, t0 + (head - t0) * (i / steps));
+      if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+    }
+    ctx.stroke();
+    var h = limbPoint(a, b, head);
+    ctx.beginPath(); ctx.arc(h.x, h.y, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
   }
   function screenRadius(n) {
     if (n.kind === 'area') return n.r * scale;
@@ -126,7 +175,7 @@
     var dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    var focus = hover ? neighbourhood(hover) : null;
+    var focus = hover ? chainFocus(hover) : null;
     var idA = G.labelAlpha('case-id', scale, reduced);
     var titleA = G.labelAlpha('case-title', scale, reduced);
     // Only what is on screen is drawn: a 500-row tree is mostly off-screen
@@ -139,17 +188,20 @@
     edges.forEach(function (e) {
       if (e.a.hidden || e.b.hidden) return;
       if (!onScreen(e.a) && !onScreen(e.b) && (e.a.y - top) * (e.b.y - top) > 0 && (e.a.y - bottom) * (e.b.y - bottom) > 0) return;
-      var dim = focus && !(focus[e.a.i] && focus[e.b.i]);
-      ctx.globalAlpha = dim ? 0.25 : 1;
+      var onChain = focus && focus.keep[e.a.i] && focus.keep[e.b.i];
+      ctx.globalAlpha = focus && !onChain ? 0.25 : 1;
+      ctx.strokeStyle = onChain ? colours.accent : colours.border;
       limb(e.a, e.b);
     });
+    ctx.strokeStyle = colours.border;
+    if (focus && hover.kind === 'case' && !reduced) drawPulse(focus.chain);
 
     ctx.textAlign = 'left';
     nodes.forEach(function (n) {
       if (n.hidden || !onScreen(n)) return;
       var p = toScreen(n.x, n.y);
       var r = screenRadius(n);
-      var base = focus && !focus[n.i] ? 0.25 : 1;
+      var base = focus && !focus.keep[n.i] ? 0.25 : 1;
       ctx.globalAlpha = base;
       ctx.fillStyle = n.kind === 'area' ? colours.accent : colours.muted;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
@@ -238,7 +290,8 @@
     close.addEventListener('click', hideCase);
     detail.appendChild(close);
     detail.appendChild(el('h2', null, (c.id != null ? '#' + c.id + '  ' : '') + c.title));
-    var meta = [];
+    // Status first: whether this case exists in Azure DevOps yet.
+    var meta = [c.id != null ? 'In Azure DevOps as #' + c.id : 'New – not yet in Azure DevOps'];
     if (c.tags) meta.push('Tags: ' + c.tags);
     if (c.automation_status) meta.push(c.automation_status);
     detail.appendChild(el('p', 'meta', meta.join(' · ')));
@@ -308,7 +361,7 @@
     if (drag) return; // tracked on window, so it keeps going once the pointer leaves
     var p = local(e);
     var h = nodeAt(p.x, p.y);
-    if (h !== hover) { hover = h; setCursor(); draw(); }
+    if (h !== hover) { hover = h; setCursor(); draw(); startPulse(); }
   });
   viewport.addEventListener('mouseleave', function () {
     if (!drag && hover) { hover = null; setCursor(); draw(); }

@@ -53,7 +53,7 @@ Decided in the draw loop from `scale` (graph units → screen px):
 | scale | case nodes | case label | area label |
 |---|---|---|---|
 | `< 0.5` | dots (screen radius 2) | none | name, fixed 13 px screen size |
-| `0.5 – 0.8` | scaled | `#id` (or NEW) | name |
+| `0.5 – 0.8` | scaled | `#id` (nothing for a new case) | name |
 | `≥ 0.8` | scaled | `#id  title`, ellipsised at 70 chars | name |
 
 Every case has its own row, so labels never collide; the thresholds exist
@@ -75,11 +75,17 @@ plus 320 units of label room, never above 100 %, starting at the top left
 
 ## Interaction
 
-- Hover: the node under the pointer (distance ≤ radius + 4 px screen) and
-  its neighbours draw at full colour, everything else at 25 % opacity; the
-  hovered node's full label draws regardless of LOD.
+- Hover: the node under the pointer and its whole ancestor chain
+  (`pathTo(node)`: every area from the top-level one down to it, and the
+  limbs between them) draw at full colour, everything else at 25 %
+  opacity; the hovered node's full label draws regardless of LOD. While a
+  case is hovered, a short accent-coloured pulse travels along the chain's
+  limbs from the top-level area to the case, one pass every 900 ms,
+  repeating until the pointer leaves; not under `prefers-reduced-motion`.
 - Click a case node: `showCase` opens the existing side panel; the node is
-  ringed while the panel is open.
+  ringed while the panel is open. The panel's meta line leads with the
+  case's status: "New – not yet in Azure DevOps", or "In Azure DevOps as
+  #id".
 - Click an area node: folds its subtree - its cases and descendant areas
   leave the simulation and its label gains ` (n)` with the folded count;
   click again to unfold. "Expand all" / "Collapse all" fold or unfold every
@@ -104,7 +110,7 @@ Canvas is invisible to screen readers and to jsdom, so Rust also writes a
 visually hidden `<div id='map-list'>` into the page: for each area a
 heading (`<h3>` name and count) followed by an `<ol>` of
 `<button type='button' class='case' data-i='N'>` entries (`#id title`,
-or `NEW title`), where `N` is the case's position in a depth-first walk
+or the title alone for a new case), where `N` is the case's position in a depth-first walk
 that visits an area's cases before its children - the same order
 `buildGraph` numbers case nodes, so the script wires each button to its
 node by index. Keyboard users tab through it; the Rust test asserts on it.
