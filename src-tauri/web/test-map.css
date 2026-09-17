@@ -97,16 +97,52 @@ body {
 }
 .sr-only button.case[aria-current='true'] { color: var(--accent); }
 
-/* The side panel: one case's steps. */
+/* The side panel: one case's steps. Its width is the reader's to set -
+   the grip on its left edge drags it, and the script keeps the chosen
+   width in --detail-w. */
 .detail {
-  flex: 0 0 400px;
-  max-width: 50vw;
+  flex: 0 0 var(--detail-w, 400px);
+  min-width: 280px;
+  max-width: 80vw;
   overflow: auto;
   border-left: 1px solid var(--border);
   background: var(--surface);
   padding: 14px 16px;
 }
+.detail-grip {
+  flex: 0 0 6px;
+  cursor: col-resize;
+  background: transparent;
+  margin-right: -6px;
+  position: relative;
+  z-index: 2;
+}
+.detail-grip:hover, .detail-grip.dragging { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.detail-grip[hidden] { display: none; }
 .detail h2 { margin: 0 0 4px; font-size: 15px; }
+/* The status chip in front of the title: what an upload would do with
+   this case, in the colours the app's queue uses for the same words. */
+.detail .chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-right: 8px;
+  vertical-align: 2px;
+}
+.detail .chip.new {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.detail .chip.update {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+}
 .detail h3 { margin: 10px 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .detail .meta { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
 .detail .close {
@@ -126,4 +162,4 @@ body {
 .detail td { vertical-align: top; padding: 5px 6px; border-top: 1px solid var(--border); white-space: pre-wrap; }
 .detail td.n { color: var(--faint); width: 2em; font-variant-numeric: tabular-nums; }
 .detail td.exp { color: var(--muted); }
-@media print { .tools, .detail { display: none; } }
+@media print { .tools, .detail, .detail-grip { display: none; } }

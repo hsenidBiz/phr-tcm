@@ -83,9 +83,12 @@ plus 320 units of label room, never above 100 %, starting at the top left
   limbs from the top-level area to the case, one pass every 900 ms,
   repeating until the pointer leaves; not under `prefers-reduced-motion`.
 - Click a case node: `showCase` opens the existing side panel; the node is
-  ringed while the panel is open. The panel's meta line leads with the
-  case's status: "New – not yet in Azure DevOps", or "In Azure DevOps as
-  #id".
+  ringed while the panel is open. The title leads with a status chip -
+  **New** (accent) for a case with no id, **Update** (warning colour, like
+  the queue's UPDATE chip) for one that names a work item. A 6 px grip on
+  the panel's left edge drags its width (280 px to 80 % of the window,
+  default 400 px, double-click resets); the width is kept in
+  `localStorage` when the page's origin allows it.
 - Click an area node: folds its subtree - its cases and descendant areas
   leave the simulation and its label gains ` (n)` with the folded count;
   click again to unfold. "Expand all" / "Collapse all" fold or unfold every

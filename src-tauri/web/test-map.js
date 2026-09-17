@@ -298,9 +298,13 @@
     close.setAttribute('aria-label', 'Close the test case');
     close.addEventListener('click', hideCase);
     detail.appendChild(close);
-    detail.appendChild(el('h2', null, (c.id != null ? '#' + c.id + '  ' : '') + c.title));
-    // Status first: whether this case exists in Azure DevOps yet.
-    var meta = [c.id != null ? 'In Azure DevOps as #' + c.id : 'New – not yet in Azure DevOps'];
+    // The title leads with what an upload would do: create it (New) or
+    // update the work item it names.
+    var h2 = el('h2');
+    h2.appendChild(el('span', 'chip ' + (c.id != null ? 'update' : 'new'), c.id != null ? 'Update' : 'New'));
+    h2.appendChild(document.createTextNode((c.id != null ? '#' + c.id + '  ' : '') + c.title));
+    detail.appendChild(h2);
+    var meta = [];
     if (c.tags) meta.push('Tags: ' + c.tags);
     if (c.automation_status) meta.push(c.automation_status);
     detail.appendChild(el('p', 'meta', meta.join(' · ')));
@@ -325,6 +329,7 @@
       detail.appendChild(table);
     }
     detail.hidden = false;
+    grip.hidden = false;
     // The panel changes the viewport's width.
     resize();
   }
@@ -332,9 +337,59 @@
     activeNode = null;
     for (var i = 0; i < listButtons.length; i++) listButtons[i].removeAttribute('aria-current');
     detail.hidden = true;
+    grip.hidden = true;
     detail.innerHTML = '';
     resize();
   }
+
+  // ---- The panel's width: dragged by the grip on its left edge, kept for
+  // next time when storage allows (a file:// page may refuse it), reset by
+  // a double-click on the grip.
+  var DETAIL_KEY = 'tcm-map-detail-w', DETAIL_DEFAULT = 400, DETAIL_MIN = 280;
+  var grip = el('div', 'detail-grip');
+  grip.setAttribute('role', 'separator');
+  grip.setAttribute('aria-orientation', 'vertical');
+  grip.setAttribute('aria-label', 'Resize the test case panel');
+  grip.title = 'Drag to resize; double-click to reset';
+  grip.hidden = true;
+  detail.parentNode.insertBefore(grip, detail);
+  function setDetailWidth(w) {
+    var max = Math.max(DETAIL_MIN, window.innerWidth * 0.8);
+    w = Math.round(Math.min(max, Math.max(DETAIL_MIN, w)));
+    document.documentElement.style.setProperty('--detail-w', w + 'px');
+    return w;
+  }
+  try {
+    var kept = parseInt(localStorage.getItem(DETAIL_KEY), 10);
+    if (kept > 0) setDetailWidth(kept);
+  } catch (e) { /* file:// storage refused */ }
+  var gripDrag = null;
+  grip.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    gripDrag = { startX: e.clientX, startW: detail.getBoundingClientRect().width };
+    grip.classList.add('dragging');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (!gripDrag) return;
+    if (e.buttons === 0) { endGrip(); return; }
+    // The panel is on the right, so moving left widens it.
+    setDetailWidth(gripDrag.startW + (gripDrag.startX - e.clientX));
+    resize();
+  });
+  function endGrip() {
+    if (!gripDrag) return;
+    gripDrag = null;
+    grip.classList.remove('dragging');
+    try { localStorage.setItem(DETAIL_KEY, String(Math.round(detail.getBoundingClientRect().width))); } catch (e) { /* file:// */ }
+  }
+  window.addEventListener('mouseup', endGrip);
+  window.addEventListener('blur', endGrip);
+  grip.addEventListener('dblclick', function () {
+    setDetailWidth(DETAIL_DEFAULT);
+    try { localStorage.removeItem(DETAIL_KEY); } catch (e) { /* file:// */ }
+    resize();
+  });
   for (var b = 0; b < listButtons.length; b++) {
     listButtons[b].addEventListener('click', function () {
       var node = caseNodes[Number(this.getAttribute('data-i'))];
