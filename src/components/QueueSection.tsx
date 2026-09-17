@@ -31,9 +31,10 @@ import { sidebarCollapsedSnapshot, stickyLeftPx, subscribeSidebar } from "../lib
 import { loadNotes, saveNote } from "../lib/caseNotes";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { copyText } from "../lib/clipboard";
-import { unwrap } from "../lib/ipc";
+import { unwrap, unwrapStr } from "../lib/ipc";
 import { duplicateWarning, validateCase } from "../lib/validate";
 import { pagePalette } from "../lib/reportTheme";
+import { buildTestMap } from "../lib/testMap";
 import QueueBulkEditDialog from "./QueueBulkEditDialog";
 import QueueRow from "./QueueRow";
 import { Badge } from "./ui/badge";
@@ -52,6 +53,7 @@ import {
   IconCopy,
   IconShare,
   IconRename,
+  IconTestMap,
 } from "../lib/actionIcons";
 
 /** The shared pending-creation queue with the review gate, live progress and
@@ -442,6 +444,14 @@ export default function QueueSection({
     },
     onSuccess: () => setReportOpen(true),
     onError: (e) => toast.error(`Could not open the report: ${e.message}`),
+  });
+
+  // The Test map: the queue as a tree of the areas its cases test, drawn
+  // from each case's `area` path (a file field) or, for a case without
+  // one, its title group. Built here (lib/testMap) and written by Rust.
+  const viewMap = useMutation({
+    mutationFn: () => unwrapStr(commands.viewTestMapHtml(buildTestMap(queue), `PBI #${pbiId}`, pagePalette())),
+    onError: (e) => toast.error(`Could not open the test map: ${e.message}`),
   });
 
   // Keep an already-open report in step with the queue.
@@ -1167,6 +1177,16 @@ export default function QueueSection({
           >
             <IconOpenInBrowser aria-hidden />
             View in browser
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            title="Open the queue as a tree of the areas its test cases cover"
+            disabled={queue.length === 0 || viewMap.isPending}
+            onClick={() => viewMap.mutate()}
+          >
+            <IconTestMap aria-hidden />
+            Test map
           </Button>
           <Button
             variant="outline"

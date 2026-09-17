@@ -25,10 +25,17 @@ import { unwrap, unwrapStr } from "../../lib/ipc";
 import { exportPathFor, rememberExportPath } from "../../lib/exportDir";
 import { pagePalette } from "../../lib/reportTheme";
 import { toTestCase } from "../../lib/testCaseConvert";
+import { buildTestMap } from "../../lib/testMap";
 import { save } from "@tauri-apps/plugin-dialog";
 import CaseDetail from "./CaseDetail";
 import CommentModal from "./CommentModal";
-import { IconClear, IconCollapseAll, IconExport, IconOpenInBrowser } from "../../lib/actionIcons";
+import {
+  IconClear,
+  IconCollapseAll,
+  IconExport,
+  IconOpenInBrowser,
+  IconTestMap,
+} from "../../lib/actionIcons";
 
 
 
@@ -195,6 +202,21 @@ export default function ViewCases({
     onError: (e) => toast.error(`Could not open the report: ${e.message ?? e}`),
   });
 
+  // Same scope as the browser view: the selection when there is one,
+  // otherwise everything the filter shows. Cases from Azure DevOps carry
+  // no area, so this map groups by title.
+  const viewMap = useMutation({
+    mutationFn: () =>
+      unwrapStr(
+        commands.viewTestMapHtml(
+          buildTestMap(chosen.map(toTestCase)),
+          pbiId != null ? `PBI #${pbiId}` : "",
+          pagePalette(),
+        ),
+      ),
+    onError: (e) => toast.error(`Could not open the test map: ${e.message ?? e}`),
+  });
+
   // Same scope rule as the browser view: the selection when there is one,
   // otherwise everything the filter shows. The exported JSON is the
   // Import File format, ids included - so re-importing it updates these
@@ -314,6 +336,16 @@ export default function ViewCases({
             {selected.size > 0
               ? `View ${selected.size} Test Case${selected.size === 1 ? "" : "s"} in Browser`
               : "View All Test Cases in Browser"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            title="Open these test cases as a tree of the areas they cover"
+            disabled={chosen.length === 0 || viewMap.isPending}
+            onClick={() => viewMap.mutate()}
+          >
+            <IconTestMap aria-hidden />
+            Test map
           </Button>
         </div>
       </div>

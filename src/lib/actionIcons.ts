@@ -23,6 +23,8 @@ export {
   Import as IconImport,
   Download as IconExport,
   ExternalLink as IconOpenInBrowser,
+  // Draws the cases as a tree of the areas they test
+  Network as IconTestMap,
   Share2 as IconShare,
   Copy as IconCopy,
   FolderOpen as IconBrowse,
