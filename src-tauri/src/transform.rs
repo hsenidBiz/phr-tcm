@@ -1189,7 +1189,8 @@ fn insert_case_unknown_keys(rv: &serde_json::Value) -> Vec<String> {
         for k in obj.keys() {
             let known = KNOWN.contains(&k.as_str())
                 || crate::import_parser::COMMENT_KEYS.contains(&k.as_str())
-                || crate::import_parser::REVIEWER_NOTES_KEYS.contains(&k.as_str());
+                || crate::import_parser::REVIEWER_NOTES_KEYS.contains(&k.as_str())
+                || crate::import_parser::AREA_KEYS.contains(&k.as_str());
             if !known {
                 out.push(k.clone());
             }

@@ -201,6 +201,28 @@ fn unknown_operation_keys_and_dropped_case_fields_are_echoed() {
     }
 }
 
+/// `area` is one of the keys `insert_cases` actually reads (via
+/// `AREA_KEYS`), so it must never show up in the discarded-fields echo -
+/// and the inserted case must carry it through.
+#[test]
+fn insert_cases_keeps_area_and_does_not_report_it_discarded() {
+    let cases = vec![case("Alpha", vec![step("s")])];
+    let (ops, ignored) = parse_ops_full(&serde_json::json!([
+        { "op": "insert_cases", "cases": [{
+            "title": "Target", "steps": [{ "action": "s", "expected": "e" }],
+            "area": "Manage Events / Grid"
+        }] },
+    ]))
+    .unwrap();
+    assert!(
+        !ignored.iter().any(|l| l.contains("area")),
+        "'area' must not be reported as discarded: {ignored:?}"
+    );
+    let (out, _) = apply(cases, &ops);
+    let inserted = out.iter().find(|c| c.title == "Target").expect("inserted case");
+    assert_eq!(inserted.area, "Manage Events / Grid");
+}
+
 // ---- §10: the draft travels as a path, and both-sources is refused ------
 
 #[tokio::test]
