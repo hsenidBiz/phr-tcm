@@ -12,7 +12,6 @@
   // Every case has its own row, so labels never collide: the only reason
   // to hide them is text too small to read. Ids from 50%, titles from 80%.
   var ID_AT = 0.5, TITLE_AT = 0.8, RAMP = 0.1;
-  var TITLE_MAX = 70;
 
   function areaRadius(count) {
     return Math.max(7, Math.min(16, 5 + 1.5 * Math.sqrt(count)));
@@ -156,12 +155,12 @@
 
   // "#81034  Title" for a case that exists in Azure DevOps; a new case shows
   // its title alone (the side panel says it is new), and nothing at the
-  // id-only zoom level, since it has no id.
+  // id-only zoom level, since it has no id. The whole title, never cut:
+  // every case has its own row, so there is nothing for it to collide with.
   function caseLabel(node, withTitle) {
     var id = node.data.id != null ? '#' + node.data.id : '';
     if (!withTitle) return id;
     var title = node.data.title || '';
-    if (title.length > TITLE_MAX) title = title.slice(0, TITLE_MAX - 1) + '…';
     return id ? id + '  ' + title : title;
   }
 

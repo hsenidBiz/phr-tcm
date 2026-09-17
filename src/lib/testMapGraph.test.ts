@@ -294,8 +294,8 @@ describe("fitWidthTransform", () => {
 });
 
 describe("caseLabel", () => {
-  test("shows the id, the title alone for a new case, and ellipsises long titles", () => {
-    const long = "A very long title that keeps going well past seventy characters so it has to be cut";
+  test("shows the id, the title alone for a new case, and never cuts a long title", () => {
+    const long = "A very long title that keeps going well past seventy characters and is shown whole";
     const g = G.buildGraph([
       { name: "A", count: 2, cases: [mapCase(7, "Short"), mapCase(null, long)], children: [] },
     ]);
@@ -304,10 +304,7 @@ describe("caseLabel", () => {
     expect(G.caseLabel(c1, true)).toBe("#7  Short");
     // A new case has no id: nothing at the id-only level, no "NEW" prefix.
     expect(G.caseLabel(c2, false)).toBe("");
-    const cut = G.caseLabel(c2, true);
-    expect(cut.startsWith("A very long title")).toBe(true);
-    expect(cut.endsWith("…")).toBe(true);
-    expect(cut.length).toBeLessThanOrEqual(70);
+    expect(G.caseLabel(c2, true)).toBe(long);
   });
 });
 

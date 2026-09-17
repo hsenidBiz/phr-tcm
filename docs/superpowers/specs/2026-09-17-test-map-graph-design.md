@@ -54,7 +54,7 @@ Decided in the draw loop from `scale` (graph units → screen px):
 |---|---|---|---|
 | `< 0.5` | dots (screen radius 2) | none | name, fixed 13 px screen size |
 | `0.5 – 0.8` | scaled | `#id` (nothing for a new case) | name |
-| `≥ 0.8` | scaled | `#id  title`, ellipsised at 70 chars | name |
+| `≥ 0.8` | scaled | `#id  title`, the whole title | name |
 
 Every case has its own row, so labels never collide; the thresholds exist
 only because text below about 9 px is unreadable. Case labels are drawn to

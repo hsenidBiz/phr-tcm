@@ -25,10 +25,16 @@
   G.layoutTree(graph);
 
   // Room left of the tree for the padding, and right of the last column
-  // for its labels, when fitting the width.
-  var PAD = 40, LABEL_SPACE = 320;
-  // How far right of a case's dot its label may reach, for hit testing.
-  var LABEL_REACH = 420;
+  // for its labels, when fitting the width: sized from the longest label
+  // at roughly 6.2 units per character (11px text at 100%), capped so one
+  // very long title cannot shrink the whole tree.
+  var PAD = 40;
+  var longest = 0;
+  caseNodes.forEach(function (n) { longest = Math.max(longest, G.caseLabel(n, true).length); });
+  var LABEL_SPACE = Math.min(700, 60 + longest * 6.2);
+  // How far right of a case's dot its label reaches, for hit testing:
+  // measured when drawn, this estimate until then.
+  var LABEL_REACH = LABEL_SPACE;
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -229,13 +235,15 @@
       ctx.font = size + 'px ' + FONT;
       ctx.textBaseline = 'middle';
       var x0 = p.x + r + 6;
+      var full = G.caseLabel(n, true);
+      n.labelW = ctx.measureText(full).width;
       if (n === hover) {
-        ctx.fillText(G.caseLabel(n, true), x0, p.y);
+        ctx.fillText(full, x0, p.y);
         return;
       }
       if (titleA > 0) {
         ctx.globalAlpha = base * titleA;
-        ctx.fillText(G.caseLabel(n, true), x0, p.y);
+        ctx.fillText(full, x0, p.y);
       }
       if (idA > 0 && titleA < 1) {
         ctx.globalAlpha = base * idA * (1 - titleA);
@@ -262,7 +270,8 @@
       } else {
         var half = Math.max(r + 4, (G.ROW / 2) * scale);
         if (Math.abs(sy - p.y) > half) continue;
-        if (sx < p.x - r - 4 || sx > p.x + LABEL_REACH * scale) continue;
+        var reach = n.labelW != null ? r + 6 + n.labelW : LABEL_REACH * scale;
+        if (sx < p.x - r - 4 || sx > p.x + reach) continue;
         d = Math.abs(sy - p.y) + (sx < p.x ? p.x - sx : 0);
       }
       if (d < bestD) { best = n; bestD = d; }
