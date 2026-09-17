@@ -134,6 +134,78 @@ test("an update with nothing to change is not submitted at all", async () => {
   expect(rows[1].textContent).toContain("UPLOADED");
 });
 
+/// Field request: after an upload, a tester needs to know which cases
+/// changed - by id, so they can tell whether one they already ran needs
+/// running again - and what changed in each.
+test("Copy changes puts each updated case's id and changes on the clipboard", async () => {
+  const unchanged = {
+    title: "Unchanged", steps: [{ action: "A", expected: "ok" }], tags: "",
+    automation_status: "Not Automated", module_value: "", preconditions: "", update_id: 201,
+  };
+  const edited = {
+    title: "Edited now", steps: [{ action: "B", expected: "shown" }], tags: "",
+    automation_status: "Not Automated", module_value: "", preconditions: "", update_id: 202,
+  };
+  let copied: string | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:clipboard-manager|write_text") {
+      copied = (args as { text: string }).text;
+      return null;
+    }
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "list_repos") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "classification_paths") return [];
+    if (cmd === "list_iterations") return [];
+    if (cmd === "plugin:dialog|open") return "C:\\cases.json";
+    if (cmd === "parse_import_file") return { cases: [unchanged, edited], warnings: [] };
+    if (cmd === "test_cases_by_ids")
+      return [
+        { id: 201, title: "Unchanged", tags: "", automation_status: "Not Automated",
+          steps: [{ action: "A", expected: "ok" }], step_ids: ["2"], module_value: "",
+          preconditions: "" },
+        { id: 202, title: "Edited BEFORE", tags: "", automation_status: "Not Automated",
+          steps: [{ action: "B", expected: "ok" }], step_ids: ["2"], module_value: "",
+          preconditions: "" },
+      ];
+    if (cmd === "submit_queue") {
+      const a = args as { queue: Array<{ title: string; update_id: number }> };
+      return a.queue.map((tc, index) => ({
+        index, title: tc.title, action: "updated", id: tc.update_id, error: null,
+      }));
+    }
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Unchanged");
+  fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & update 2/ }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Copy changes" }));
+  await waitFor(() => expect(copied).not.toBeNull());
+  expect(copied).toBe(
+    [
+      "Test case changes for PBI #42",
+      "",
+      "Updated (1)",
+      "#202  Edited now",
+      '  - Title: "Edited BEFORE" -> "Edited now"',
+      "  - Step 1 changed",
+      '      Expected: "ok" -> "shown"',
+    ].join("\n"),
+  );
+  // The skipped, unchanged case is not something to re-test.
+  expect(copied).not.toContain("#201");
+
+  // Clearing the results takes the button with them.
+  fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+  expect(screen.queryByRole("button", { name: "Copy changes" })).not.toBeInTheDocument();
+});
+
 test("import feeds the shared queue; failed items stay queued", async () => {
   mockIPC((cmd, args) => {
     if (cmd === "plugin:event|listen") return 1;

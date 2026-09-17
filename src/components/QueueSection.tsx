@@ -8,7 +8,8 @@ import PowerRenameDialog, { type RenameTarget } from "./PowerRenameDialog";
 import { commands, events, type SubmitItemResult, type TestCase, type TestCaseFull } from "../bindings";
 import { useFieldRefs } from "../hooks/useFieldRefs";
 import { useOnScreen } from "../hooks/useOnScreen";
-import { diffCase } from "../lib/caseDiff";
+import { diffCase, type CaseDiff } from "../lib/caseDiff";
+import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
 import { caseKey, fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
@@ -48,6 +49,7 @@ import {
   IconOpenInBrowser,
   IconRemove,
   IconReview,
+  IconCopy,
   IconShare,
   IconRename,
 } from "../lib/actionIcons";
@@ -166,6 +168,11 @@ export default function QueueSection({
   const qc = useQueryClient();
   const { prefs } = useFieldRefs(org, project);
   const [results, setResults] = useState<SubmitItemResult[] | null>(null);
+  // The last upload's "what changed" note for testers, or null when it
+  // changed nothing a tester would act on. Built from diffs taken just
+  // before the write - once the upload lands, the queue matches the server
+  // and there is nothing left to diff.
+  const [changeNotes, setChangeNotes] = useState<string | null>(null);
   // What the last submit did to each row. Nothing leaves the queue on an
   // upload - the user removes rows when they are finished with them - so
   // without these marks an uploaded row and a failed one look the same.
@@ -548,8 +555,17 @@ export default function QueueSection({
       const toSend = queue.filter((tc) => !noopNow(tc));
       const skipped = queue.filter((tc) => noopNow(tc)).length;
       if (toSend.length === 0) {
-        return { results: [], sent: [], sentFor: pbiId, skipped };
+        return { results: [], sent: [], sentFor: pbiId, skipped, diffs: [] };
       }
+      // What each sent update is about to change, from the same fresh
+      // baseline - kept for the "Copy changes" note, since after the write
+      // the server already holds the new values.
+      const diffs: (CaseDiff | null)[] = toSend.map((tc) => {
+        const cur = tc.update_id != null ? freshById.get(tc.update_id) : undefined;
+        return cur
+          ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
+          : null;
+      });
       submitStarted(org, pbiId, toSend.length);
       const unProgress = await events.submitProgress.listen((e) => {
         submitProgressed(e.payload.index + 1, e.payload.total, e.payload.title);
@@ -594,7 +610,7 @@ export default function QueueSection({
         // finishes. `sent` is the FILTERED list: every result index is an
         // index into it, and keepUploaded matches on that list.
         applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue });
-        return { results: r.data, sent: toSend, sentFor: pbiId, skipped };
+        return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
         detach(unProgress);
@@ -606,8 +622,11 @@ export default function QueueSection({
     // Only the parts a mounted screen can show. Everything that must
     // happen - new ids, toasts, invalidations - already ran inside the
     // mutation itself, because these callbacks die with the component.
-    onSuccess: ({ results }) => {
+    onSuccess: ({ results, sent, sentFor, diffs }) => {
       setResults(results);
+      setChangeNotes(
+        hasTesterNotes(results, diffs) ? testerNotes({ pbiId: sentFor, sent, results, diffs }) : null,
+      );
       setReviewing(false);
     },
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
@@ -1481,18 +1500,39 @@ export default function QueueSection({
             {/* Dismiss the results once read - the button goes with them,
                 and so do the marks on the rows: once the results are
                 gone, the queue reads as a plain queue again. */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setResults(null);
-                setFailedRows(new Set());
-                setUploadedIds(new Set());
-              }}
-            >
-              <IconClear aria-hidden />
-              Clear results
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              {/* For the tester: every updated case by id with what changed,
+                  then the new ones - so they can tell whether a case they
+                  already ran needs running again. */}
+              {changeNotes && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Copy the updated test case ids and what changed, to send to a tester"
+                  onClick={() => {
+                    copyText(changeNotes)
+                      .then(() => toast.success("Changes copied."))
+                      .catch(() => toast.error("Could not copy to clipboard."));
+                  }}
+                >
+                  <IconCopy aria-hidden />
+                  Copy changes
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setResults(null);
+                  setChangeNotes(null);
+                  setFailedRows(new Set());
+                  setUploadedIds(new Set());
+                }}
+              >
+                <IconClear aria-hidden />
+                Clear results
+              </Button>
+            </div>
           </div>
           <ul className="space-y-1 text-sm">
             {results.map((r) => (
