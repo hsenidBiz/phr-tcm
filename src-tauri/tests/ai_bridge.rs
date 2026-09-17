@@ -330,6 +330,17 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(body.contains("Login") && body.contains("Payroll"), "live modules");
     assert!(body.contains("optimize_cases"), "the guide points at the optimizer");
 
+    // Every case gets an area path, so the Test map draws itself from
+    // files assistants write - nobody edits JSON to get a tree.
+    let area = body
+        .split("## area")
+        .nth(1)
+        .and_then(|rest| rest.split("## Findings").next())
+        .expect("the guide has an area section");
+    assert!(area.contains("Manage Events / Create / Validation"), "{area}");
+    assert!(area.contains("same spelling"), "{area}");
+    assert!(area.contains("Never sent to Azure DevOps"), "{area}");
+
     // The style rules are scoped to the case text - an assistant that read
     // them as a rule for its own replies would stop explaining itself.
     let style = body

@@ -335,3 +335,22 @@ test("the notification calls a fill-of-an-empty-queue a load, not additions", ()
   // The same changes into a NON-empty queue keep the edit wording.
   expect(syncNotification("FDP.json", all).body).toContain("2 added");
 });
+
+const areaCase = (area?: string) => ({
+  title: "Login works",
+  steps: [{ action: "Open", expected: "Shown" }],
+  tags: "",
+  automation_status: "Not Automated",
+  module_value: "",
+  preconditions: "",
+  update_id: null,
+  ...(area ? { area } : {}),
+});
+
+/// An assistant moving a case to another area is a change worth seeing.
+test("an edit to a case's area is reported as a field change", () => {
+  expect(changedFields(areaCase("Manage Events / Grid"), areaCase("Manage Events / Create"))).toEqual([
+    { name: "Area", old: "Manage Events / Grid", new: "Manage Events / Create" },
+  ]);
+  expect(changedFields(areaCase(), areaCase())).toEqual([]);
+});

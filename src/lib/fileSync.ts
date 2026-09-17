@@ -72,6 +72,7 @@ export function changedFields(before: TestCase, after: TestCase): FieldChange[] 
   // especially: an assistant filling them in IS the change worth seeing.
   push("Comment", before.comment ?? "", after.comment ?? "");
   push("Reviewer notes", before.reviewer_notes ?? "", after.reviewer_notes ?? "");
+  push("Area", before.area ?? "", after.area ?? "");
   if ((before.update_id ?? null) !== (after.update_id ?? null)) {
     out.push({
       name: "Work item id",

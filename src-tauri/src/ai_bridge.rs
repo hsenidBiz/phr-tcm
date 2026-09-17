@@ -1476,6 +1476,12 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         boost, skyrocketing, opened up, powerful, inquiries, ever-evolving.\n\n\
         IMPORTANT: review every case before handing it back and make sure\n\
         there are no em dashes.\n\n\
+        ## area\n\
+        Give every case an `area`: where it sits on the page or in the\n\
+        feature, as a path with `/` between the levels, page or screen\n\
+        first: `\"Manage Events / Create / Validation\"`. Reuse the same spelling\n\
+        for the same place across the set, so its cases stack under one\n\
+        node in the app's Test map instead of two. Never sent to Azure DevOps.\n\n\
         ## Findings\n\
         When something you read is WRONG - a case that contradicts its spec,\n\
         a spec that contradicts itself, code that does what neither says -\n\
