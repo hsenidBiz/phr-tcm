@@ -16,7 +16,7 @@ use crate::model::TestCase;
 /// ignored, which left an all-None filter - and `Filter::matches` reads that
 /// as "every case", so one typo turned a targeted edit into a draft-wide
 /// rewrite that reported success.
-const FILTER_KEYS: [&str; 4] = ["title_contains", "has_tag", "module_is", "at_index"];
+const FILTER_KEYS: [&str; 5] = ["title_contains", "has_tag", "module_is", "area_is", "at_index"];
 
 /// First non-empty value among `keys`, using the file importer's own
 /// lookup so the two paths cannot disagree about what a key means.
@@ -36,6 +36,9 @@ pub enum Op {
     SetModule(String),
     SetAutomationStatus(String),
     SetPreconditions(String),
+    /// Overwrite the app-only `area` path (never sent to Azure DevOps);
+    /// normalised, so "a/b" and "a / b" write the same thing. Empty clears.
+    SetArea(String),
     /// Overwrite the local reviewer notes (never sent to Azure DevOps).
     SetReviewerNotes(String),
     /// Replace the case's findings - the problems an assistant found in the
@@ -89,9 +92,9 @@ pub enum Op {
 /// lists them. One list, two readers: the unknown-op refusal and the MCP
 /// tool description (mcp.rs) are both built from it, so an op can no
 /// longer be reachable and undocumented at the same time.
-pub const SUPPORTED_OPS: [&str; 24] = [
+pub const SUPPORTED_OPS: [&str; 25] = [
     "set_tags", "add_tags", "remove_tags", "set_module", "set_automation_status",
-    "set_preconditions", "set_reviewer_notes", "set_findings", "prefix_title", "suffix_title",
+    "set_preconditions", "set_area", "set_reviewer_notes", "set_findings", "prefix_title", "suffix_title",
     "replace_in_title", "replace_in_steps", "replace_in_notes", "replace_in_preconditions",
     "normalise_citations", "prepend_step", "append_step", "remove_step_matching", "split_step",
     "sort_by", "group_by", "dedupe", "remove_cases", "insert_cases",
@@ -118,6 +121,9 @@ pub struct Filter {
     pub has_tag: Option<String>,
     /// Case-insensitive exact module match.
     pub module_is: Option<String>,
+    /// Case-insensitive match of the normalised area path. `Some("")`
+    /// selects the cases that have no area.
+    pub area_is: Option<String>,
     /// Zero-based position in the draft as it stands when the op runs -
     /// the same numbering `insert_cases`' at_index uses. The selector of
     /// last resort: two cases whose titles converged (a fan-out hazard,
@@ -178,6 +184,12 @@ impl Filter {
         }
         if let Some(m) = &self.module_is {
             if !c.module_value.trim().eq_ignore_ascii_case(m.trim()) {
+                return false;
+            }
+        }
+        if let Some(a) = &self.area_is {
+            let want = crate::import_parser::normalise_area(a).to_lowercase();
+            if crate::import_parser::normalise_area(&c.area).to_lowercase() != want {
                 return false;
             }
         }
@@ -284,7 +296,7 @@ fn parse_filter(v: &serde_json::Value, label: &str) -> Result<Filter, String> {
             ));
         }
     }
-    for key in ["title_contains", "has_tag", "module_is"] {
+    for key in ["title_contains", "has_tag", "module_is", "area_is"] {
         if obj.get(key).is_some_and(|x| !x.is_string()) {
             return Err(format!("{label}: \"where.{key}\" must be a string."));
         }
@@ -299,6 +311,7 @@ fn parse_filter(v: &serde_json::Value, label: &str) -> Result<Filter, String> {
         title_contains: f["title_contains"].as_str().map(str::to_string),
         has_tag: f["has_tag"].as_str().map(str::to_string),
         module_is: f["module_is"].as_str().map(str::to_string),
+        area_is: f["area_is"].as_str().map(str::to_string),
         at_index,
     })
 }
@@ -365,6 +378,7 @@ pub fn parse_ops_full(
                 Op::SetAutomationStatus(value)
             }
             "set_preconditions" => Op::SetPreconditions(required_str(v, "value", &label)?),
+            "set_area" => Op::SetArea(crate::import_parser::normalise_area(&required_str(v, "value", &label)?)),
             "set_reviewer_notes" => Op::SetReviewerNotes(required_str(v, "value", &label)?),
             "set_findings" => Op::SetFindings(findings_of(v, &label)?),
             "replace_in_title" => Op::ReplaceInTitle {
@@ -463,6 +477,7 @@ pub fn parse_ops_full(
                 let has_filter = f["title_contains"].as_str().is_some()
                     || f["has_tag"].as_str().is_some()
                     || f["module_is"].as_str().is_some()
+                    || f["area_is"].as_str().is_some()
                     || f["at_index"].as_u64().is_some();
                 if !has_filter {
                     return Err(format!(
@@ -862,6 +877,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             | Op::ReplaceInPreconditions { .. }
                             | Op::RemoveStepMatching(_)
                             | Op::SplitStep { .. }
+                            | Op::SetArea(_)
                     )
                     .then(|| c.clone());
                     match other {
@@ -886,6 +902,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         Op::SetModule(v) => c.module_value = v.clone(),
                         Op::SetAutomationStatus(v) => c.automation_status = v.clone(),
                         Op::SetPreconditions(v) => c.preconditions = v.clone(),
+                        Op::SetArea(v) => c.area = v.clone(),
                         Op::SetReviewerNotes(v) => c.reviewer_notes = v.clone(),
                         Op::SetFindings(v) => c.findings = v.clone(),
                         Op::ReplaceInTitle { find, replace } => {
@@ -1019,6 +1036,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             || before.steps != c.steps
                             || before.reviewer_notes != c.reviewer_notes
                             || before.preconditions != c.preconditions
+                            || before.area != c.area
                         {
                             modified += 1;
                         }
@@ -1045,6 +1063,15 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                         "Normalised citations: {normalised} normalised, {exempted} exempted, \
                          {unchanged} unchanged, {by_hand} left for hand."
                     ));
+                } else if matches!(other, Op::SetArea(_)) {
+                    // Reported like the find-driven ops (`modified`, not
+                    // `applied to`), because "touched" here is every case
+                    // the filter selected and says nothing about whether
+                    // the area actually changed - the same gap round 5 §12
+                    // found for find/replace.
+                    report
+                        .applied
+                        .push(format!("{} modified {modified} case(s).", describe(other)));
                 } else if find_driven {
                     if occurrence_counted {
                         report.applied.push(format!(
@@ -1128,6 +1155,8 @@ fn describe(op: &Op) -> String {
         Op::SetModule(v) => format!("Set module to '{v}'"),
         Op::SetAutomationStatus(v) => format!("Set automation status to '{v}'"),
         Op::SetPreconditions(v) => format!("Set preconditions to '{v}'"),
+        Op::SetArea(v) if v.is_empty() => "Cleared area".to_string(),
+        Op::SetArea(v) => format!("Set area to '{v}'"),
         Op::SetReviewerNotes(v) => format!("Set reviewer notes to '{v}'"),
         Op::SetFindings(v) => format!("Set {} finding(s)", v.len()),
         Op::ReplaceInTitle { find, replace } => format!("Replaced '{find}' with '{replace}' in titles"),
@@ -1161,7 +1190,7 @@ fn describe(op: &Op) -> String {
 fn known_keys(op_name: &str) -> &'static [&'static str] {
     match op_name {
         "set_tags" | "add_tags" | "remove_tags" | "set_module" | "set_automation_status"
-        | "set_preconditions" | "set_reviewer_notes" | "set_findings" | "prefix_title" | "suffix_title"
+        | "set_preconditions" | "set_area" | "set_reviewer_notes" | "set_findings" | "prefix_title" | "suffix_title"
         | "sort_by" | "group_by" => &["op", "where", "value"],
         "replace_in_title" | "replace_in_steps" | "replace_in_notes" | "replace_in_preconditions" => {
             &["op", "where", "find", "replace"]

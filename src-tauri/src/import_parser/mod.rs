@@ -41,6 +41,18 @@ pub(crate) const REVIEWER_NOTES_KEYS: [&str; 4] =
 /// word an assistant or an author was given is the word they write.
 pub(crate) const AREA_KEYS: [&str; 3] = ["area", "section", "group"];
 
+/// "Manage Events/Create " -> "Manage Events / Create": segments trimmed,
+/// empty ones dropped, one spelling of the separator. The Test map splits
+/// on the same rule (`splitArea` in `src/lib/testMap.ts`), so two spellings
+/// of one path land on one node.
+pub fn normalise_area(raw: &str) -> String {
+    raw.split('/')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
 pub const EXCEL_HEADERS: [&str; 9] = [
     "TestCaseID",
     "TestCaseName",

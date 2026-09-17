@@ -1481,7 +1481,7 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         feature, as a path with `/` between the levels, page or screen\n\
         first: `\"Manage Events / Create / Validation\"`. Reuse the same spelling\n\
         for the same place across the set, so its cases stack under one\n\
-        node in the app's Test map instead of two. This is the app's own grouping path, not the work item's Area Path. Never sent to Azure DevOps.\n\n\
+        node in the app's Test map instead of two. This is the app's own grouping path, not the work item's Area Path. Never sent to Azure DevOps. Set or move it in bulk with `transform_cases` (`set_area`, and `where.area_is` to pick an area).\n\n\
         ## Findings\n\
         When something you read is WRONG - a case that contradicts its spec,\n\
         a spec that contradicts itself, code that does what neither says -\n\

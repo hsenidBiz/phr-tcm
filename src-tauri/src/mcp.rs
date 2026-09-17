@@ -104,7 +104,7 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
     let ops = crate::transform::SUPPORTED_OPS.join(", ");
     let transform_ops_desc = format!(
         "Ops applied in order. Every op the server accepts: {ops}. WHICH KEYS EACH OP READS: \
-         set_tags/add_tags/remove_tags/set_module/set_automation_status/set_preconditions/\
+         set_tags/add_tags/remove_tags/set_module/set_automation_status/set_preconditions/set_area/\
          set_reviewer_notes/prefix_title/suffix_title/sort_by/group_by take {{value}}; \
          set_findings takes {{value: [...]}}, a list of {{kind, subject, title, detail}} objects \
          (kind is test_case, spec or code) that REPLACES the matched cases' findings - the \
@@ -121,7 +121,8 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
          ONE of at_index (zero-based) | before | after (a title fragment)}} - without one it \
          appends; dedupe takes nothing (first copy wins, no merge). There is no op for `comment`: \
          it is the developer's field and is never written by an assistant. Every op accepts \
-         `where` with title_contains/has_tag/module_is/at_index - at_index (zero-based position \
+         `where` with title_contains/has_tag/module_is/area_is/at_index - area_is matches the normalised \
+         area path case-insensitively (\"\" selects cases with no area); at_index (zero-based position \
          in the current draft) is the selector of last resort when two cases share a title. \
          sort_by/group_by values: title, module, tags, preconditions. A key an op does not read \
          is reported in `ignored`, never silently dropped. Replace ops are literal, \

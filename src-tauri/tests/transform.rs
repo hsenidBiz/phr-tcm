@@ -344,6 +344,89 @@ fn set_reviewer_notes_overwrites_and_requires_a_value() {
     assert!(err.contains("value"), "{err}");
 }
 
+fn in_area(title: &str, area: &str) -> TestCase {
+    TestCase { area: area.into(), ..case(title, vec![step("s")]) }
+}
+
+// ---- set_area / where.area_is -------------------------------------------
+
+#[test]
+fn set_area_overwrites_normalises_and_clears() {
+    let cases = vec![in_area("A", "Old"), in_area("B", "")];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "set_area", "value": "Manage Events/Create /  / Validation " },
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert_eq!(out[0].area, "Manage Events / Create / Validation");
+    assert_eq!(out[1].area, "Manage Events / Create / Validation");
+    assert!(report.applied[0].starts_with("Set area to 'Manage Events / Create / Validation'"), "{:?}", report.applied);
+
+    let ops = parse_ops(&serde_json::json!([{ "op": "set_area", "value": "" }])).unwrap();
+    let (out, report) = apply(out, &ops);
+    assert_eq!(out[0].area, "");
+    assert!(report.applied[0].starts_with("Cleared area"), "{:?}", report.applied);
+
+    let err = parse_ops(&serde_json::json!([{ "op": "set_area" }])).unwrap_err();
+    assert!(err.contains("value"), "{err}");
+}
+
+#[test]
+fn area_is_selects_one_area_case_insensitively_by_normalised_path() {
+    let cases = vec![
+        in_area("A", "Manage Events / Create"),
+        in_area("B", "manage events/create"),
+        in_area("C", "Manage Events / Edit"),
+        in_area("D", ""),
+    ];
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "set_area", "value": "Events / Create", "where": { "area_is": "MANAGE EVENTS /CREATE" } },
+    ]))
+    .unwrap();
+    let (out, report) = apply(cases, &ops);
+    assert_eq!(out[0].area, "Events / Create");
+    assert_eq!(out[1].area, "Events / Create");
+    assert_eq!(out[2].area, "Manage Events / Edit", "another area is left alone");
+    assert_eq!(out[3].area, "", "a case with no area is not in that area");
+    assert!(report.applied[0].contains("modified 2 case(s)"), "{:?}", report.applied);
+
+    // An empty area_is is the way to address the cases that have none.
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "set_area", "value": "Unsorted", "where": { "area_is": "" } },
+    ]))
+    .unwrap();
+    let (out, _) = apply(out, &ops);
+    assert_eq!(out[3].area, "Unsorted");
+    assert_eq!(out[0].area, "Events / Create");
+
+    // remove_cases accepts area_is as its required filter.
+    let ops = parse_ops(&serde_json::json!([
+        { "op": "remove_cases", "where": { "area_is": "Manage Events / Edit" } },
+    ]))
+    .unwrap();
+    let (out, _) = apply(out, &ops);
+    assert_eq!(out.len(), 3);
+    assert!(out.iter().all(|c| c.title != "C"));
+}
+
+#[test]
+fn set_area_echoes_keys_it_does_not_read() {
+    let (_, ignored) = parse_ops_full(&serde_json::json!([
+        { "op": "set_area", "value": "X", "find": "y" },
+    ]))
+    .unwrap();
+    assert!(ignored.iter().any(|s| s.contains("find")), "{ignored:?}");
+}
+
+#[test]
+fn normalise_area_trims_segments_and_drops_empty_ones() {
+    use v2_lib::import_parser::normalise_area;
+    assert_eq!(normalise_area(" Manage Events/Create "), "Manage Events / Create");
+    assert_eq!(normalise_area("A //  / B"), "A / B");
+    assert_eq!(normalise_area("  "), "");
+    assert_eq!(normalise_area("/"), "");
+}
+
 // ---- round 6 §5: where.at_index addresses one of two title twins --------
 
 #[test]
@@ -578,7 +661,7 @@ fn no_op_can_write_the_comment_field() {
 #[test]
 fn supported_ops_is_the_parsers_whole_vocabulary() {
     use v2_lib::transform::SUPPORTED_OPS;
-    assert_eq!(SUPPORTED_OPS.len(), 24);
+    assert_eq!(SUPPORTED_OPS.len(), 25);
     assert!(!SUPPORTED_OPS.contains(&"set_comment"));
     for name in SUPPORTED_OPS {
         let extra = match name {
