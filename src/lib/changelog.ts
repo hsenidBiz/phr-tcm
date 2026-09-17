@@ -13,6 +13,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.9",
+    date: "2026-09-17",
+    items: [
+      "Test map: a new button on the queue and on View Test Cases opens the test cases in your browser as a tree of the areas they cover, with a count on every branch. Click a branch to fold it, click a test case to see its steps, zoom with the buttons or Ctrl and the mouse wheel, and drag to move around.",
+      "Test case files can now give each case an area, a path such as \"Manage Events / Create / Validation\", which is what the Test map draws. It stays in the file and is never sent to Azure DevOps. Cases without one are grouped by their titles, the same way Group by title works.",
+      "AI assistants writing test cases are now asked to set an area on every case, so files they write map themselves.",
+      "An edit to a case's area in a watched file now shows in the change report.",
+    ],
+  },
+  {
     version: "1.25.8",
     date: "2026-09-17",
     items: [
