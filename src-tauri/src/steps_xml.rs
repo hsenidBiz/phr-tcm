@@ -271,7 +271,13 @@ pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
             Ok(Event::End(e)) => {
                 if let Some((buf, depth)) = capture.as_mut() {
                     if *depth == 0 && e.name().as_ref() == b"parameterizedString" {
-                        let text = collapse_ws(&strip_tags(buf));
+                        // Two layers of escaping: quick-xml (and the
+                        // GeneralRef arm below) undid the XML's, leaving the
+                        // HTML that ADO stores escaped inside it - `&quot;`,
+                        // `&amp;`, `&lt;P&gt;`. Undo that layer too, THEN
+                        // strip tags, so real markup goes and a typed
+                        // `<cycleId>` stays (see HTML_TAGS).
+                        let text = collapse_ws(&strip_tags(&unescape_html(buf)));
                         if let Some(parts) = steps.last_mut() {
                             parts.push(text);
                         }

@@ -177,8 +177,39 @@ fn parse_html_encoded_content() {
     );
     let steps = parse_steps_xml(xml);
     assert_eq!(steps.len(), 1);
-    assert!(steps[0].action.contains("Click"));
+    // Two layers: the XML's, then the HTML's. One pass left "Click &amp; hold".
+    assert_eq!(steps[0].action, "Click & hold");
     assert_eq!(steps[0].expected, "Done");
+}
+
+/// The bug behind 140 cases showing as changed the moment they were
+/// uploaded: Azure DevOps stores a step's HTML escaped inside the XML, so a
+/// quote comes back as `&amp;quot;`. Decoding the XML layer alone left the
+/// literal text `&quot;My Assessment&quot;`, which never matched the file.
+#[test]
+fn parse_decodes_the_html_layer_under_the_xml_layer() {
+    let xml = concat!(
+        "<steps id=\"0\" last=\"2\"><step id=\"2\" type=\"ValidateStep\">",
+        "<parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;P&gt;Open the &amp;quot;My Assessment&amp;quot; tab &amp;amp; wait&lt;/P&gt;&lt;/DIV&gt;</parameterizedString>",
+        "<parameterizedString isformatted=\"true\">Reads 3.60 &amp;lt; 5.00; the &amp;lt;cycleId&amp;gt; placeholder stays</parameterizedString>",
+        "</step></steps>"
+    );
+    let steps = parse_steps_xml(xml);
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].action, "Open the \"My Assessment\" tab & wait");
+    // Typed angle brackets survive: `<cycleId>` is not a tag the editor emits.
+    assert_eq!(steps[0].expected, "Reads 3.60 < 5.00; the <cycleId> placeholder stays");
+
+    // What this app writes (one layer: only & < > escaped, quotes raw) reads
+    // back unchanged too, so a case round-trips whether or not the server
+    // normalised it.
+    let ours = v2_lib::steps_xml::build_steps_xml(&[v2_lib::steps_xml::Step {
+        action: "Open the \"My Assessment\" tab & wait".into(),
+        expected: "Reads 3.60 < 5.00".into(),
+    }]);
+    let back = parse_steps_xml(&ours);
+    assert_eq!(back[0].action, "Open the \"My Assessment\" tab & wait");
+    assert_eq!(back[0].expected, "Reads 3.60 < 5.00");
 }
 
 #[test]
