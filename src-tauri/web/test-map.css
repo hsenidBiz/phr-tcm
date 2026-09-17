@@ -1,7 +1,8 @@
 /* Test map page. Colours are the palette variables the app emits
    (--bg, --surface, --surface-2, --text, --muted, --faint, --border,
    --accent, --success, --danger, --warning), so the page follows the
-   app's theme and its own light/dark switch. */
+   app's theme and its own light/dark switch. The graph itself is drawn on
+   the canvas by test-map.js from the same variables. */
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -47,66 +48,22 @@ body {
   user-select: none;
 }
 .viewport.dragging { cursor: grabbing; }
-.canvas {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform-origin: 0 0;
-  padding: 8px;
-  min-width: 320px;
-}
+.viewport.over-node { cursor: pointer; }
+#graph { display: block; position: absolute; left: 0; top: 0; }
+.empty { position: absolute; left: 16px; top: 16px; margin: 0; color: var(--muted); }
 
-/* The tree: one indented branch per level, a guide line down its left. */
-.branch { list-style: none; margin: 0; padding: 0 0 0 20px; border-left: 1px solid var(--border); }
-.canvas > .branch { border-left: 0; padding-left: 0; }
-.node { margin: 2px 0; }
-.row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px 4px 6px;
-  border-radius: 6px;
-  cursor: pointer;
+/* The accessible list: every case as a real button, off-screen for sighted
+   users but in the tab order and the accessibility tree. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
-.row:hover { background: var(--surface-2); }
-.fold {
-  font: inherit;
-  color: var(--muted);
-  background: none;
-  border: 0;
-  padding: 0 2px;
-  cursor: pointer;
-  width: 16px;
-}
-.name { font-weight: 600; }
-.count {
-  color: var(--muted);
-  font-size: 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 8px;
-  font-variant-numeric: tabular-nums;
-}
-.node[data-open="false"] > .body { display: none; }
-.cases { list-style: none; margin: 0; padding: 0 0 0 26px; }
-.case {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  font: inherit;
-  color: var(--text);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 3px 8px;
-  cursor: pointer;
-  text-align: left;
-  white-space: nowrap;
-}
-.case:hover, .case.active { border-color: var(--accent); background: var(--surface); }
-.wid { color: var(--faint); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+.sr-only button:focus-visible { outline: 2px solid var(--accent); }
 
 /* The side panel: one case's steps. */
 .detail {
@@ -118,6 +75,7 @@ body {
   padding: 14px 16px;
 }
 .detail h2 { margin: 0 0 4px; font-size: 15px; }
+.detail h3 { margin: 10px 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .detail .meta { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
 .detail .close {
   float: right;
@@ -136,5 +94,4 @@ body {
 .detail td { vertical-align: top; padding: 5px 6px; border-top: 1px solid var(--border); white-space: pre-wrap; }
 .detail td.n { color: var(--faint); width: 2em; font-variant-numeric: tabular-nums; }
 .detail td.exp { color: var(--muted); }
-.empty { color: var(--muted); padding: 16px; }
-@media print { .tools, .detail { display: none; } .viewport { overflow: visible; } }
+@media print { .tools, .detail { display: none; } }
