@@ -35,13 +35,13 @@ const NOTE_JS: &str = include_str!("../../web/cases-notes.js");
 /// here: a test case titled `</script><img onerror=...>` would otherwise
 /// close the script element and run as markup. `<\/` is a valid escape in
 /// both JavaScript and JSON, so the value the page parses is unchanged.
-fn script_json<T: serde::Serialize>(value: &T, fallback: &str) -> String {
+pub(crate) fn script_json<T: serde::Serialize>(value: &T, fallback: &str) -> String {
     serde_json::to_string(value)
         .map(|s| s.replace("</", "<\\/"))
         .unwrap_or_else(|_| fallback.to_string())
 }
 
-fn esc(text: &str) -> String {
+pub(crate) fn esc(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
