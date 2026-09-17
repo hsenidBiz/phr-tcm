@@ -76,6 +76,16 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
 #tc-notes:hover { border-color: var(--accent); }
 #tc-notes[aria-pressed='true'] { color: var(--muted); background: var(--surface-2);
                                  border-color: var(--border); }
+/* The findings toggle is the same chip in the findings' own colour - orange,
+   like the blocks it hides, so the two buttons read as a pair and each one
+   says what it controls. */
+#tc-findings { font: inherit; font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+               border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+               border-radius: 8px; white-space: nowrap; color: var(--warning);
+               background: color-mix(in srgb, var(--warning) 8%, transparent); }
+#tc-findings:hover { border-color: var(--warning); }
+#tc-findings[aria-pressed='true'] { color: var(--muted); background: var(--surface-2);
+                                    border-color: var(--border); }
 /* One rule, on the body, so nothing has to be walked to hide them - and a
    grid-row collapse rather than display:none, so they close with a motion
    that says WHERE they went instead of blinking out of existence. The same
