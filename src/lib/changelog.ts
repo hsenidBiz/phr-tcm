@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.8",
+    date: "2026-09-17",
+    items: [
+      "After an upload, Copy changes copies a note for testers: each updated test case by its ID with what changed in it, then the new test cases. Paste it into chat or email so a tester can see whether a case they already ran needs running again. Step type repairs are left out.",
+    ],
+  },
+  {
     version: "1.25.7",
     date: "2026-09-16",
     items: [
