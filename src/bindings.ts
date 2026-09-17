@@ -1583,7 +1583,8 @@ export type TestCase_Deserialize = {
 	/**
 	 *  Where this case sits on the page or in the feature it tests, as a
 	 *  path: "Manage Events / Create / Validation". Levels are separated by
-	 *  "/" (spaces around it optional). It draws the Test map. App-only,
+	 *  "/" (spaces around it optional). It draws the Test map. This is the
+	 *  app's own grouping path, not the work item's Area Path. App-only,
 	 *  like the notes above: round-trips through the JSON, never sent to
 	 *  Azure DevOps (`app_only_fields_never_reach_a_request_body` covers it
 	 *  by scanning the write path), absent from the file when empty.
@@ -1655,7 +1656,8 @@ export type TestCase_Serialize = {
 	/**
 	 *  Where this case sits on the page or in the feature it tests, as a
 	 *  path: "Manage Events / Create / Validation". Levels are separated by
-	 *  "/" (spaces around it optional). It draws the Test map. App-only,
+	 *  "/" (spaces around it optional). It draws the Test map. This is the
+	 *  app's own grouping path, not the work item's Area Path. App-only,
 	 *  like the notes above: round-trips through the JSON, never sent to
 	 *  Azure DevOps (`app_only_fields_never_reach_a_request_body` covers it
 	 *  by scanning the write path), absent from the file when empty.
