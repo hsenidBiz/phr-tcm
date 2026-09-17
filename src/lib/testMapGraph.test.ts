@@ -13,27 +13,34 @@ type Node = {
   i: number;
   x: number;
   y: number;
-  vx: number;
-  vy: number;
   r: number;
   hidden: boolean;
-  pinned: boolean;
   name?: string;
   count?: number;
   folded?: boolean;
+  parent?: Node | null;
+  area?: Node;
   children?: Node[];
   cases?: Node[];
   ci?: number;
   data?: { id: number | null; title: string };
 };
-type Edge = { a: Node; b: Node; len: number };
+type Edge = { a: Node; b: Node };
 type Graph = { nodes: Node[]; edges: Edge[] };
 type Helpers = {
+  ROW: number;
+  LEVEL: number;
   buildGraph: (tree: unknown[]) => Graph;
-  step: (nodes: Node[], edges: Edge[], alpha: number) => void;
+  layoutTree: (graph: Graph) => { width: number; height: number };
   fold: (graph: Graph, area: Node, folded: boolean) => void;
   labelAlpha: (kind: "case-id" | "case-title", scale: number, reduced?: boolean) => number;
   fitTransform: (nodes: Node[], w: number, h: number, pad: number) => { scale: number; tx: number; ty: number };
+  fitWidthTransform: (
+    nodes: Node[],
+    w: number,
+    pad: number,
+    labelSpace: number,
+  ) => { scale: number; tx: number; ty: number };
   caseLabel: (node: Node, withTitle: boolean) => string;
 };
 
@@ -66,12 +73,23 @@ const tree = () => [
 ];
 
 beforeAll(() => {
-  // import.meta.url, not __dirname: this file is ESM under vitest.
+  // import.meta.url, not `__dirname`: this file is ESM under vitest.
   const here = dirname(fileURLToPath(import.meta.url));
   const src = readFileSync(resolve(here, "../../src-tauri/web/test-map-graph.js"), "utf8");
   new Function(src)();
   G = (window as unknown as { testMap: Helpers }).testMap;
 });
+
+const visible = (g: Graph) => g.nodes.filter((n) => !n.hidden);
+const label = (n: Node) => n.name ?? n.data!.title;
+const isUnder = (n: Node, a: Node): boolean => {
+  let p: Node | null | undefined = n.kind === "case" ? n.area : n.parent;
+  while (p) {
+    if (p === a) return true;
+    p = p.parent;
+  }
+  return false;
+};
 
 describe("buildGraph", () => {
   test("one node per area and case, one edge per membership, cases numbered in walk order", () => {
@@ -88,62 +106,86 @@ describe("buildGraph", () => {
     expect(cases.map((c) => c.ci)).toEqual([0, 1, 2, 3]);
     // 4 case→area edges + 1 area→area edge (Create under Manage Events).
     expect(g.edges).toHaveLength(5);
-    const areaEdges = g.edges.filter((e) => e.a.kind === "area" && e.b.kind === "area");
-    expect(areaEdges).toHaveLength(1);
-    expect(areaEdges[0].len).toBe(110);
-    expect(g.edges.filter((e) => e.b.kind === "case").every((e) => e.len === 40)).toBe(true);
+    expect(g.edges.filter((e) => e.a.kind === "area" && e.b.kind === "area")).toHaveLength(1);
     g.nodes.forEach((n, i) => expect(n.i).toBe(i));
+    expect(areas[1].parent).toBe(areas[0]);
+    expect(areas[2].parent).toBeNull();
   });
 
-  test("area radius grows with count and is clamped; the start is deterministic", () => {
-    const g1 = G.buildGraph(tree());
-    const g2 = G.buildGraph(tree());
-    expect(g1.nodes.map((n) => [n.x, n.y])).toEqual(g2.nodes.map((n) => [n.x, n.y]));
+  test("area radius grows with count and is clamped", () => {
     const big = G.buildGraph([{ name: "Huge", count: 1000, cases: [], children: [] }]);
-    expect(big.nodes[0].r).toBe(28);
+    expect(big.nodes[0].r).toBe(16);
     const tiny = G.buildGraph([{ name: "Tiny", count: 0, cases: [], children: [] }]);
-    expect(tiny.nodes[0].r).toBe(10);
-    // Two top-level areas start apart, not on top of each other.
-    const [a, , b] = g1.nodes.filter((n) => n.kind === "area");
-    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(100);
+    expect(tiny.nodes[0].r).toBe(7);
+    const mid = G.buildGraph([{ name: "Mid", count: 16, cases: [], children: [] }]);
+    expect(mid.nodes[0].r).toBe(11);
   });
 });
 
-describe("step", () => {
-  const energy = (nodes: Node[]) => nodes.reduce((s, n) => s + n.vx * n.vx + n.vy * n.vy, 0);
-
-  test("settles: kinetic energy falls as alpha cools and every position stays finite", () => {
+describe("layoutTree", () => {
+  test("every visible case has its own row; depth sets the column", () => {
     const g = G.buildGraph(tree());
-    let alpha = 1;
-    let early = 0;
-    for (let k = 0; k < 200; k++) {
-      G.step(g.nodes, g.edges, alpha);
-      alpha *= 0.97;
-      if (k === 10) early = energy(g.nodes);
-    }
-    expect(energy(g.nodes)).toBeLessThan(early);
-    expect(g.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
+    G.layoutTree(g);
+    const cases = g.nodes.filter((n) => n.kind === "case");
+    const rows = cases.map((c) => c.y);
+    expect(new Set(rows).size).toBe(rows.length);
+    // File order top to bottom.
+    expect(rows).toEqual([...rows].sort((a, b) => a - b));
+    // Adjacent rows are one ROW apart within a tree.
+    expect(rows[1] - rows[0]).toBe(G.ROW);
+    expect(rows[2] - rows[1]).toBe(G.ROW);
+    const [manage, create, reports] = g.nodes.filter((n) => n.kind === "area");
+    expect(manage.x).toBe(0);
+    expect(create.x).toBe(G.LEVEL);
+    expect(reports.x).toBe(0);
+    // A case sits one level right of its area.
+    expect(cases[0].x).toBe(G.LEVEL);
+    expect(cases[1].x).toBe(2 * G.LEVEL);
   });
 
-  test("a pinned node does not move; a hidden node is left out", () => {
+  test("an area sits at the midpoint of the rows beneath it", () => {
     const g = G.buildGraph(tree());
-    const pinned = g.nodes[0];
-    pinned.pinned = true;
-    const hidden = g.nodes[1];
-    hidden.hidden = true;
-    const before = [pinned.x, pinned.y, hidden.x, hidden.y];
-    for (let k = 0; k < 20; k++) G.step(g.nodes, g.edges, 1);
-    expect([pinned.x, pinned.y, hidden.x, hidden.y]).toEqual(before);
+    G.layoutTree(g);
+    const [manage, create] = g.nodes.filter((n) => n.kind === "area");
+    const under = (a: Node) => visible(g).filter((n) => n !== a && isUnder(n, a)).map((n) => n.y);
+    const m = under(manage);
+    expect(manage.y).toBeCloseTo((Math.min(...m) + Math.max(...m)) / 2);
+    const c = under(create);
+    expect(create.y).toBeCloseTo((Math.min(...c) + Math.max(...c)) / 2);
   });
 
-  test("two coincident nodes are pushed apart rather than dividing by zero", () => {
-    const g = G.buildGraph([{ name: "A", count: 2, cases: [mapCase(1, "x"), mapCase(2, "y")], children: [] }]);
-    const [, c1, c2] = g.nodes;
-    c2.x = c1.x;
-    c2.y = c1.y;
-    for (let k = 0; k < 5; k++) G.step(g.nodes, g.edges, 1);
-    expect(Math.hypot(c1.x - c2.x, c1.y - c2.y)).toBeGreaterThan(0);
-    expect(g.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))).toBe(true);
+  test("top-level areas stack as separate trees with a gap, and never overlap", () => {
+    const g = G.buildGraph(tree());
+    const size = G.layoutTree(g);
+    const manage = g.nodes[0];
+    const reports = g.nodes.find((n) => n.name === "Reports")!;
+    const manageRows = visible(g).filter((n) => n === manage || isUnder(n, manage)).map((n) => n.y);
+    expect(reports.y).toBeGreaterThan(Math.max(...manageRows) + G.ROW);
+    const rows = visible(g).map((n) => n.y);
+    expect(size.height).toBeGreaterThanOrEqual(Math.max(...rows));
+    expect(size.width).toBeGreaterThanOrEqual(2 * G.LEVEL);
+  });
+
+  test("a folded area collapses to one row and the layout closes the gap", () => {
+    const g = G.buildGraph(tree());
+    const manage = g.nodes[0];
+    const before = G.layoutTree(g).height;
+    G.fold(g, manage, true);
+    const after = G.layoutTree(g).height;
+    expect(after).toBeLessThan(before);
+    expect(visible(g).map(label)).toEqual(["Manage Events", "Reports", "Export"]);
+    const reports = g.nodes.find((n) => n.name === "Reports")!;
+    expect(reports.y - manage.y).toBeLessThan(3 * G.ROW + 40);
+    G.fold(g, manage, false);
+    expect(G.layoutTree(g).height).toBe(before);
+  });
+
+  test("layout is deterministic", () => {
+    const a = G.buildGraph(tree());
+    const b = G.buildGraph(tree());
+    G.layoutTree(a);
+    G.layoutTree(b);
+    expect(a.nodes.map((n) => [n.x, n.y])).toEqual(b.nodes.map((n) => [n.x, n.y]));
   });
 });
 
@@ -154,8 +196,7 @@ describe("fold", () => {
     G.fold(g, manage, true);
     expect(manage.folded).toBe(true);
     expect(manage.hidden).toBe(false);
-    const visible = g.nodes.filter((n) => !n.hidden).map((n) => n.name ?? n.data!.title);
-    expect(visible).toEqual(["Manage Events", "Reports", "Export"]);
+    expect(visible(g).map(label)).toEqual(["Manage Events", "Reports", "Export"]);
     G.fold(g, manage, false);
     expect(g.nodes.every((n) => !n.hidden)).toBe(true);
   });
@@ -175,27 +216,27 @@ describe("fold", () => {
 
 describe("labelAlpha", () => {
   test("is 0 below, ramps across ±0.1, and is 1 above each threshold", () => {
+    expect(G.labelAlpha("case-id", 0.3)).toBe(0);
     expect(G.labelAlpha("case-id", 0.4)).toBe(0);
-    expect(G.labelAlpha("case-id", 0.5)).toBe(0);
-    expect(G.labelAlpha("case-id", 0.6)).toBeCloseTo(0.5);
-    expect(G.labelAlpha("case-id", 0.7)).toBe(1);
-    expect(G.labelAlpha("case-title", 1.0)).toBe(0);
-    expect(G.labelAlpha("case-title", 1.15)).toBeCloseTo(0.25);
-    expect(G.labelAlpha("case-title", 1.3)).toBe(1);
+    expect(G.labelAlpha("case-id", 0.5)).toBeCloseTo(0.5);
+    expect(G.labelAlpha("case-id", 0.6)).toBe(1);
+    expect(G.labelAlpha("case-title", 0.6)).toBe(0);
+    expect(G.labelAlpha("case-title", 0.75)).toBeCloseTo(0.25);
+    expect(G.labelAlpha("case-title", 0.9)).toBe(1);
   });
 
   test("reduced motion makes the ramp a step at the threshold", () => {
-    expect(G.labelAlpha("case-id", 0.59, true)).toBe(0);
-    expect(G.labelAlpha("case-id", 0.6, true)).toBe(1);
-    expect(G.labelAlpha("case-title", 1.19, true)).toBe(0);
-    expect(G.labelAlpha("case-title", 1.2, true)).toBe(1);
+    expect(G.labelAlpha("case-id", 0.49, true)).toBe(0);
+    expect(G.labelAlpha("case-id", 0.5, true)).toBe(1);
+    expect(G.labelAlpha("case-title", 0.79, true)).toBe(0);
+    expect(G.labelAlpha("case-title", 0.8, true)).toBe(1);
   });
 });
 
 describe("fitTransform", () => {
   test("keeps every visible node inside the viewport with the padding, capped at 1.5", () => {
     const g = G.buildGraph(tree());
-    for (let k = 0; k < 100; k++) G.step(g.nodes, g.edges, 0.5);
+    G.layoutTree(g);
     const t = G.fitTransform(g.nodes, 800, 600, 40);
     expect(t.scale).toBeLessThanOrEqual(1.5);
     for (const n of g.nodes) {
@@ -210,6 +251,7 @@ describe("fitTransform", () => {
 
   test("ignores hidden nodes and copes with a single node", () => {
     const g = G.buildGraph(tree());
+    G.layoutTree(g);
     g.nodes.forEach((n, i) => (n.hidden = i !== 0));
     const t = G.fitTransform(g.nodes, 400, 300, 40);
     expect(t.scale).toBe(1.5);
@@ -217,8 +259,9 @@ describe("fitTransform", () => {
     expect(g.nodes[0].y * t.scale + t.ty).toBeCloseTo(150);
   });
 
-  test("clamps to the zoom floor instead of going negative on a 0x0 viewport", () => {
+  test("a 0x0 viewport clamps to the zoom floor instead of going negative", () => {
     const g = G.buildGraph(tree());
+    G.layoutTree(g);
     const t = G.fitTransform(g.nodes, 0, 0, 40);
     expect(t.scale).toBe(0.2);
     expect(Number.isFinite(t.tx)).toBe(true);
@@ -226,23 +269,42 @@ describe("fitTransform", () => {
   });
 });
 
+describe("fitWidthTransform", () => {
+  test("fits the tree's width plus label room, never above 100%, top-left with the padding", () => {
+    const g = G.buildGraph(tree());
+    G.layoutTree(g);
+    const t = G.fitWidthTransform(g.nodes, 2000, 40, 300);
+    expect(t.scale).toBe(1);
+    const minX = Math.min(...g.nodes.map((n) => n.x - n.r));
+    const minY = Math.min(...g.nodes.map((n) => n.y - n.r));
+    expect(minX * t.scale + t.tx).toBeCloseTo(40);
+    expect(minY * t.scale + t.ty).toBeCloseTo(40);
+  });
+
+  test("shrinks a wide tree to the viewport width, down to the zoom floor", () => {
+    const g = G.buildGraph(tree());
+    G.layoutTree(g);
+    const maxX = Math.max(...g.nodes.map((n) => n.x + n.r));
+    const minX = Math.min(...g.nodes.map((n) => n.x - n.r));
+    const t = G.fitWidthTransform(g.nodes, 400, 40, 300);
+    expect(t.scale).toBeCloseTo(Math.max(0.2, (400 - 80) / (maxX - minX + 300)));
+    expect(G.fitWidthTransform(g.nodes, 0, 40, 300).scale).toBe(0.2);
+  });
+});
+
 describe("caseLabel", () => {
   test("shows the id or NEW, and the ellipsised title when asked", () => {
+    const long = "A very long title that keeps going well past seventy characters so it has to be cut";
     const g = G.buildGraph([
-      {
-        name: "A",
-        count: 2,
-        cases: [mapCase(7, "Short"), mapCase(null, "A very long title that keeps going well past forty characters")],
-        children: [],
-      },
+      { name: "A", count: 2, cases: [mapCase(7, "Short"), mapCase(null, long)], children: [] },
     ]);
     const [, c1, c2] = g.nodes;
     expect(G.caseLabel(c1, false)).toBe("#7");
     expect(G.caseLabel(c2, false)).toBe("NEW");
     expect(G.caseLabel(c1, true)).toBe("#7  Short");
-    const long = G.caseLabel(c2, true);
-    expect(long.startsWith("NEW  A very long title")).toBe(true);
-    expect(long.endsWith("…")).toBe(true);
-    expect(long.length).toBeLessThanOrEqual("NEW  ".length + 40);
+    const cut = G.caseLabel(c2, true);
+    expect(cut.startsWith("NEW  A very long title")).toBe(true);
+    expect(cut.endsWith("…")).toBe(true);
+    expect(cut.length).toBeLessThanOrEqual("NEW  ".length + 70);
   });
 });

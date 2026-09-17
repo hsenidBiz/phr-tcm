@@ -1,9 +1,10 @@
-/* Draws the Test map from the #map-data JSON block as a graph: areas and
-   cases as nodes on a canvas, laid out by the simulation in
-   test-map-graph.js (window.testMap). Zoom decides how much each node
-   says - zoomed out, the area names; zoomed in, the cases - and clicking
-   a case opens the side panel. Plain script, no dependencies: the page is
-   a file in the temp directory and must work with nothing else present. */
+/* Draws the Test map from the #map-data JSON block as a tree that grows
+   left to right: areas and cases as nodes on a canvas, laid out by
+   test-map-graph.js (window.testMap), each case on its own row with its
+   label beside it. Zoom decides how much each node says - zoomed out, the
+   area names; zoomed in, the cases - and clicking a case opens the side
+   panel. Plain script, no dependencies: the page is a file in the temp
+   directory and must work with nothing else present. */
 (function () {
   var dataEl = document.getElementById('map-data');
   if (!dataEl || !window.testMap) return;
@@ -21,6 +22,13 @@
   var caseNodes = [];
   var areaNodes = [];
   nodes.forEach(function (n) { (n.kind === 'case' ? caseNodes : areaNodes).push(n); });
+  G.layoutTree(graph);
+
+  // Room left of the tree for the padding, and right of the last column
+  // for its labels, when fitting the width.
+  var PAD = 40, LABEL_SPACE = 320;
+  // How far right of a case's dot its label may reach, for hit testing.
+  var LABEL_REACH = 420;
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -33,7 +41,7 @@
   var colours = {};
   function readColours() {
     var cs = getComputedStyle(document.documentElement);
-    ['text', 'muted', 'faint', 'border', 'accent', 'surface', 'bg'].forEach(function (k) {
+    ['text', 'muted', 'border', 'accent'].forEach(function (k) {
       colours[k] = cs.getPropertyValue('--' + k).trim();
     });
   }
@@ -46,7 +54,6 @@
   // ---- The view: graph units -> screen px.
   var scale = 1, tx = 0, ty = 0, width = 0, height = 0;
   function toScreen(x, y) { return { x: x * scale + tx, y: y * scale + ty }; }
-  function toGraph(sx, sy) { return { x: (sx - tx) / scale, y: (sy - ty) / scale }; }
   function setZoom(next, cx, cy) {
     next = Math.min(4, Math.max(0.2, next));
     // Zoom about the pointer (or the viewport's centre), so the spot under
@@ -57,8 +64,9 @@
     scale = next;
     draw();
   }
+  // The tree is read like a document: fit its width, start at the top.
   function fit() {
-    var t = G.fitTransform(nodes, width, height, 40);
+    var t = G.fitWidthTransform(nodes, width, PAD, LABEL_SPACE);
     scale = t.scale; tx = t.tx; ty = t.ty;
     draw();
   }
@@ -84,24 +92,6 @@
   // stays as the fallback for browsers without ResizeObserver.
   if (window.ResizeObserver) { new ResizeObserver(resize).observe(viewport); }
 
-  // ---- The simulation: runs while warm, cools to a stop.
-  var alpha = 0, running = false, settledOnce = false;
-  function warm(a) {
-    alpha = Math.max(alpha, a);
-    if (!running) { running = true; requestAnimationFrame(tick); }
-  }
-  function tick() {
-    if (alpha < 0.005) {
-      running = false; alpha = 0;
-      if (!settledOnce) { settledOnce = true; fit(); } else draw();
-      return;
-    }
-    G.step(nodes, edges, alpha);
-    alpha *= 0.97;
-    draw();
-    requestAnimationFrame(tick);
-  }
-
   // ---- Drawing.
   var hover = null, activeNode = null;
   var FONT = 'ui-sans-serif, system-ui, "Segoe UI", sans-serif';
@@ -117,7 +107,18 @@
   }
   function screenRadius(n) {
     if (n.kind === 'area') return n.r * scale;
-    return scale < 0.6 ? 2 : n.r * scale;
+    return scale < 0.5 ? 2 : n.r * scale;
+  }
+
+  // A limb from an area to what hangs off it: leaves the right side of the
+  // parent, arrives at the left of the child, bending at the halfway column.
+  function limb(a, b) {
+    var p = toScreen(a.x, a.y), q = toScreen(b.x, b.y);
+    var mx = (p.x + q.x) / 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.bezierCurveTo(mx, p.y, mx, q.y, q.x, q.y);
+    ctx.stroke();
   }
 
   function draw() {
@@ -128,21 +129,24 @@
     var focus = hover ? neighbourhood(hover) : null;
     var idA = G.labelAlpha('case-id', scale, reduced);
     var titleA = G.labelAlpha('case-title', scale, reduced);
+    // Only what is on screen is drawn: a 500-row tree is mostly off-screen
+    // at any one time.
+    var top = -ty / scale - G.ROW, bottom = (height - ty) / scale + G.ROW;
+    function onScreen(n) { return n.y >= top && n.y <= bottom; }
 
-    ctx.lineWidth = 1;
+    ctx.lineWidth = Math.max(1, 1.2 * scale);
     ctx.strokeStyle = colours.border;
     edges.forEach(function (e) {
       if (e.a.hidden || e.b.hidden) return;
+      if (!onScreen(e.a) && !onScreen(e.b) && (e.a.y - top) * (e.b.y - top) > 0 && (e.a.y - bottom) * (e.b.y - bottom) > 0) return;
       var dim = focus && !(focus[e.a.i] && focus[e.b.i]);
       ctx.globalAlpha = dim ? 0.25 : 1;
-      var a = toScreen(e.a.x, e.a.y), b = toScreen(e.b.x, e.b.y);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      limb(e.a, e.b);
     });
 
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
     nodes.forEach(function (n) {
-      if (n.hidden) return;
+      if (n.hidden || !onScreen(n)) return;
       var p = toScreen(n.x, n.y);
       var r = screenRadius(n);
       var base = focus && !focus[n.i] ? 0.25 : 1;
@@ -152,58 +156,64 @@
       if (n === activeNode) {
         ctx.strokeStyle = colours.accent; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(p.x, p.y, r + 3, 0, Math.PI * 2); ctx.stroke();
-        ctx.lineWidth = 1; ctx.strokeStyle = colours.border;
+        ctx.lineWidth = Math.max(1, 1.2 * scale); ctx.strokeStyle = colours.border;
       }
 
       ctx.fillStyle = colours.text;
       if (n.kind === 'area') {
         // Area names keep a fixed screen size: they are the map's titles.
+        // Drawn above the node, starting at its left edge, so they sit in
+        // the gap the limbs leave and never on a case row.
         ctx.font = '600 13px ' + FONT;
-        ctx.fillText(n.name + (n.folded ? ' (' + n.count + ')' : ''), p.x, p.y + r + 4);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(n.name + (n.folded ? ' (' + n.count + ')' : ''), p.x - r, p.y - r - 3);
         return;
       }
-      // Case labels scale with the graph and cross-fade from id to title.
-      // The id-only and id+title strings share the "#id" prefix, so both are
-      // drawn left-aligned from the same x - computed from the id-only
-      // string's width - and only the title part visibly fades in; centring
-      // each string on its own (different) width would make them ghost.
-      // Skip the font/measureText work entirely when no case label draws:
-      // hover always draws (both id and title), otherwise at least one of
-      // the id/title alphas must be positive.
+      // Case labels sit to the right of the dot, on the case's own row, and
+      // scale with the graph; the id-only and id+title strings share the
+      // "#id" prefix, so drawn from the same x only the title fades in.
       if (titleA <= 0 && idA <= 0 && n !== hover) return;
       var size = Math.max(9, Math.min(22, 11 * scale));
       ctx.font = size + 'px ' + FONT;
-      var idText = G.caseLabel(n, false);
-      ctx.textAlign = 'left';
-      var x0 = p.x - ctx.measureText(idText).width / 2;
+      ctx.textBaseline = 'middle';
+      var x0 = p.x + r + 6;
       if (n === hover) {
-        ctx.fillText(G.caseLabel(n, true), x0, p.y + r + 3);
-        ctx.textAlign = 'center';
+        ctx.fillText(G.caseLabel(n, true), x0, p.y);
         return;
       }
       if (titleA > 0) {
         ctx.globalAlpha = base * titleA;
-        ctx.fillText(G.caseLabel(n, true), x0, p.y + r + 3);
+        ctx.fillText(G.caseLabel(n, true), x0, p.y);
       }
       if (idA > 0 && titleA < 1) {
         ctx.globalAlpha = base * idA * (1 - titleA);
-        ctx.fillText(idText, x0, p.y + r + 3);
+        ctx.fillText(G.caseLabel(n, false), x0, p.y);
       }
-      ctx.textAlign = 'center';
     });
     ctx.globalAlpha = 1;
     zoomLabel.textContent = Math.round(scale * 100) + '%';
   }
 
-  // ---- Hit testing: the nearest visible node within its radius + 4px.
+  // ---- Hit testing: an area by its circle (+4px); a case by its row, from
+  // the dot to the end of where its label can reach.
   function nodeAt(sx, sy) {
     var best = null, bestD = Infinity;
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i];
       if (n.hidden) continue;
       var p = toScreen(n.x, n.y);
-      var d = Math.sqrt((p.x - sx) * (p.x - sx) + (p.y - sy) * (p.y - sy));
-      if (d <= screenRadius(n) + 4 && d < bestD) { best = n; bestD = d; }
+      var r = screenRadius(n);
+      var d;
+      if (n.kind === 'area') {
+        d = Math.sqrt((p.x - sx) * (p.x - sx) + (p.y - sy) * (p.y - sy));
+        if (d > r + 4) continue;
+      } else {
+        var half = Math.max(r + 4, (G.ROW / 2) * scale);
+        if (Math.abs(sy - p.y) > half) continue;
+        if (sx < p.x - r - 4 || sx > p.x + LABEL_REACH * scale) continue;
+        d = Math.abs(sy - p.y) + (sx < p.x ? p.x - sx : 0);
+      }
+      if (d < bestD) { best = n; bestD = d; }
     }
     return best;
   }
@@ -270,28 +280,29 @@
     });
   }
 
-  // ---- Fold.
-  function setFolded(area, folded) {
-    G.fold(graph, area, folded);
+  // ---- Fold: the tree re-lays out around the change.
+  function afterFold() {
+    G.layoutTree(graph);
     if (hover && hover.hidden) { hover = null; setCursor(); }
     if (activeNode && activeNode.hidden) hideCase();
-    warm(0.5);
-    draw(); // a background tab gets no animation frames, so paint now too
+    draw();
+  }
+  function setFolded(area, folded) {
+    G.fold(graph, area, folded);
+    afterFold();
   }
   function foldAll(folded) {
     areaNodes.forEach(function (a) { G.fold(graph, a, folded); });
-    if (hover && hover.hidden) { hover = null; setCursor(); }
-    if (activeNode && activeNode.hidden) hideCase();
-    warm(0.5);
-    draw(); // a background tab gets no animation frames, so paint now too
+    afterFold();
   }
 
-  // ---- Pointer: hover, click, drag a node, pan the graph.
-  var drag = null; // { node } or { panX, panY }
+  // ---- Pointer: hover, click, pan. A press that moves is a pan wherever it
+  // started; a press that does not move on a node is a click on it.
+  var drag = null; // { panX, panY, startX, startY, node }
   var moved = false;
   function setCursor() {
-    viewport.classList.toggle('dragging', !!(drag && !drag.node));
-    viewport.classList.toggle('over-node', !!(hover || (drag && drag.node)));
+    viewport.classList.toggle('dragging', !!(drag && moved));
+    viewport.classList.toggle('over-node', !!hover && !(drag && moved));
   }
   viewport.addEventListener('mousemove', function (e) {
     if (drag) return; // tracked on window, so it keeps going once the pointer leaves
@@ -302,28 +313,25 @@
   viewport.addEventListener('mouseleave', function () {
     if (!drag && hover) { hover = null; setCursor(); draw(); }
   });
-  // A node drag or a pan can carry the pointer out of the viewport (into the
-  // header, the side panel, or past the window edge); this listener is on
-  // window so it keeps updating instead of freezing at the last position
-  // inside the viewport.
+  // A pan can carry the pointer out of the viewport (into the header, the
+  // side panel, or past the window edge); this listener is on window so it
+  // keeps updating instead of freezing at the last position inside.
   window.addEventListener('mousemove', function (e) {
     if (!drag) return;
     if (e.buttons === 0) {
       // The button went up somewhere that never delivered a 'mouseup' (an
-      // alt-tab, a release over an OS dialog). Treat it as the drag ending,
+      // alt-tab, a release over an OS dialog). Treat it as the pan ending,
       // not as a click - the pointer already moved once since the press.
       moved = true;
       endDrag();
       return;
     }
     var p = local(e);
-    if (!moved && (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4)) moved = true;
-    if (drag.node) {
-      var g = toGraph(p.x, p.y);
-      drag.node.x = g.x; drag.node.y = g.y;
-      drag.node.vx = 0; drag.node.vy = 0;
-      warm(0.3);
-    } else {
+    if (!moved && (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4)) {
+      moved = true;
+      setCursor();
+    }
+    if (moved) {
       tx = p.x - drag.panX; ty = p.y - drag.panY;
       draw();
     }
@@ -332,13 +340,7 @@
     if (e.button !== 0) return;
     moved = false; // every press starts clean
     var p = local(e);
-    var n = nodeAt(p.x, p.y);
-    if (n) {
-      n.pinned = true;
-      drag = { node: n, startX: e.clientX, startY: e.clientY };
-    } else {
-      drag = { panX: p.x - tx, panY: p.y - ty, startX: e.clientX, startY: e.clientY };
-    }
+    drag = { panX: p.x - tx, panY: p.y - ty, startX: e.clientX, startY: e.clientY, node: nodeAt(p.x, p.y) };
     setCursor();
     e.preventDefault();
   });
@@ -346,10 +348,8 @@
     if (!drag) return;
     var n = drag.node;
     drag = null;
-    if (n) {
-      n.pinned = false;
-      if (moved) warm(0.5);
-      else if (n.kind === 'case') showCase(n);
+    if (n && !moved) {
+      if (n.kind === 'case') showCase(n);
       else setFolded(n, !n.folded);
     }
     setCursor();
@@ -366,7 +366,7 @@
       setZoom(scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1), p.x, p.y);
       return;
     }
-    // Plain wheel pans; Ctrl/Cmd + wheel zooms about the cursor.
+    // Plain wheel scrolls the tree; Ctrl/Cmd + wheel zooms about the cursor.
     tx -= e.deltaX; ty -= e.deltaY;
     draw();
   }, { passive: false });
@@ -381,8 +381,5 @@
 
   // ---- Go.
   resize();
-  if (nodes.length) {
-    fit();
-    warm(1);
-  }
+  if (nodes.length) fit();
 })();

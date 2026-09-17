@@ -1,11 +1,13 @@
 # Test map as a graph - design
 
-The Test map page (see `2026-09-17-test-map-design.md`) drawn the way
-Obsidian draws its graph view: areas and cases as nodes, membership as
-edges, laid out by a force simulation, with labels that depend on the zoom
-so a zoomed-out map reads as the structure's titles and a zoomed-in one as
-the cases. The graph replaces the tree; the data contract, the buttons in
-the app and the side panel are unchanged.
+The Test map page (see `2026-09-17-test-map-design.md`) drawn on a canvas
+as a tree that grows left to right: areas and cases as nodes, membership
+as curved limbs, every case on its own row, with labels that depend on the
+zoom so a zoomed-out map reads as the structure's titles and a zoomed-in
+one as the cases. (A first version used a force-directed graph in the
+Obsidian style; it was replaced because labels piled up unreadably once a
+set passed a few hundred cases.) The data contract, the buttons in the app
+and the side panel are unchanged.
 
 Alongside it, `transform_cases` gains a `set_area` op and an `area_is`
 filter so an assistant can set or move areas without editing JSON.
@@ -16,9 +18,9 @@ Built from the `MapNode` tree the webview sends (`src/lib/testMap.ts`);
 `export_test_map_html(nodes, path, subtitle, palette)` keeps its signature
 and its `#map-data` JSON block.
 
-- **Area node** - one per `MapNode`. Radius `clamp(10, 6 + 3*sqrt(count), 28)`
+- **Area node** - one per `MapNode`. Radius `clamp(7, 5 + 1.5*sqrt(count), 16)`
   px in graph units. An edge to its parent area; top-level areas have no
-  parent and float as separate components.
+  parent and are laid out as separate trees, stacked.
 - **Case node** - one per `MapCase`, radius 4. An edge to the area that
   holds it.
 - Colours from the page palette variables: area nodes `--accent`, case
@@ -28,24 +30,21 @@ and its `#map-data` JSON block.
 
 ## Layout
 
-A force simulation in `test-map.js`, no dependency:
+A tidy tree in `test-map-graph.js` (`layoutTree(graph)`), no dependency:
 
-- Spring along every edge: rest length 40 for case→area, 110 for
-  area→area, strength 0.08.
-- Repulsion between every pair of nodes, `k / d²` with `k = 900`, applied
-  through a uniform grid bucket (cell 120) so 500 nodes stays cheap; pairs
-  more than two cells apart are skipped.
-- A weak pull toward the origin, strength 0.01.
-- Velocity damping 0.85 per step; `alpha` starts at 1, multiplies by 0.97
-  per step and the loop stops below 0.005 (about 2 s at 60 fps).
-- Deterministic start: top-level areas on a ring of radius 220 by index,
-  child areas on a ring of radius 90 around their parent, cases jittered
-  ±30 around their area by a seeded hash of their index. The same file
-  opens looking the same.
-- Re-warm to `alpha = 0.5` after a fold, unfold or node drag.
-
-`step(nodes, edges, alpha)` mutates positions and returns nothing; it
-depends on nothing but its inputs so it can be tested off the page.
+- Depth is the column: an area at depth `d` sits at `x = d * 220`; its
+  cases one column further right.
+- Every visible case takes the next row (`ROW = 22` units), in file order,
+  an area's cases before its child areas. A folded area, or an empty one,
+  takes one row itself.
+- An area sits at the vertical midpoint of the first and last row beneath
+  it.
+- Top-level areas are separate trees stacked top to bottom with a 40-unit
+  gap.
+- Hidden nodes (inside a folded area) are skipped and keep their last
+  position. The layout is recomputed after every fold or unfold, and is
+  deterministic: the same file opens looking the same.
+- `layoutTree` returns `{width, height}` in graph units.
 
 ## Level of detail
 
@@ -53,9 +52,14 @@ Decided in the draw loop from `scale` (graph units → screen px):
 
 | scale | case nodes | case label | area label |
 |---|---|---|---|
-| `< 0.6` | dots (screen radius 2) | none | name, fixed 13 px screen size |
-| `0.6 – 1.2` | scaled | `#id` (or NEW) | name |
-| `≥ 1.2` | scaled | `#id  title`, ellipsised at 40 chars | name |
+| `< 0.5` | dots (screen radius 2) | none | name, fixed 13 px screen size |
+| `0.5 – 0.8` | scaled | `#id` (or NEW) | name |
+| `≥ 0.8` | scaled | `#id  title`, ellipsised at 70 chars | name |
+
+Every case has its own row, so labels never collide; the thresholds exist
+only because text below about 9 px is unreadable. Case labels are drawn to
+the right of the dot, on the row; area names above the node, from its
+left edge.
 
 Each label's opacity ramps linearly over ±0.1 of its threshold
 (`labelAlpha(kind, scale)` returns 0–1); under
@@ -63,9 +67,11 @@ Each label's opacity ramps linearly over ±0.1 of its threshold
 at constant screen size at every zoom; case labels scale with the graph.
 Zoom range 0.2–4. Ctrl/⌘ + wheel zooms about the cursor; plain wheel and a
 drag on empty space pan; `+` and `−` zoom by 1.2 about the viewport
-centre; Reset calls `fitTransform(nodes, width, height)`, which returns
-`{scale, tx, ty}` fitting every visible node with 40 px padding, capped at
-scale 1.5.
+centre; Reset and the first view call
+`fitWidthTransform(nodes, width, 40, 320)`, which fits the tree's width
+plus 320 units of label room, never above 100 %, starting at the top left
+- a tall tree is read by scrolling, not shrunk to fit. `fitTransform`
+(fit everything, centred, cap 1.5) remains as a helper.
 
 ## Interaction
 
@@ -78,9 +84,10 @@ scale 1.5.
   leave the simulation and its label gains ` (n)` with the folded count;
   click again to unfold. "Expand all" / "Collapse all" fold or unfold every
   area. Folded state is `node.folded`, not remembered across opens.
-- Drag a node: it follows the pointer and is pinned until release. Drag on
-  empty space pans. The 4 px `moved` guard from the tree stays: a press
-  that moved never also clicks.
+- Drag anywhere pans (nodes have fixed places in the tree, so there is no
+  node drag). The 4 px `moved` guard stays: a press that moved never also
+  clicks. A case is hit by its whole row, from the dot to the end of its
+  label; an area by its circle.
 - Cursor: `grab` on empty space, `grabbing` while panning, `pointer` over a
   node.
 
@@ -107,8 +114,10 @@ The canvas carries `role='img'` and an `aria-label` of
 The simulation and LOD helpers live in their own file,
 `src-tauri/web/test-map-graph.js`, which attaches them to
 `window.testMap`: `buildGraph(tree)` (returns `{nodes, edges}`),
-`step(nodes, edges, alpha)`, `fold(graph, areaNode, folded)`,
-`labelAlpha(kind, scale, reduced)` and `fitTransform(nodes, w, h, pad)`.
+`layoutTree(graph)`, `fold(graph, areaNode, folded)`,
+`labelAlpha(kind, scale, reduced)`, `fitTransform(nodes, w, h, pad)`,
+`fitWidthTransform(nodes, w, pad, labelSpace)`, `caseLabel(node,
+withTitle)` and the constants `ROW` and `LEVEL`.
 The page embeds it before `test-map.js`. A vitest file under `src/` loads
 the helper file and exercises it.
 
@@ -136,13 +145,15 @@ the helper file and exercises it.
   normalised path, and excludes cases in other areas; an unknown key on
   `set_area` lands in `ignored`.
 - Vitest `src/lib/testMapGraph.test.ts`: `buildGraph` makes one node per
-  area and case and one edge per membership; `step` lowers total kinetic
-  energy over 200 steps from the deterministic start; `fold` removes a
-  subtree's nodes and edges and `fold(..., false)` restores them;
-  `labelAlpha` is 0 / ramping / 1 across each threshold; `fitTransform`
-  keeps every node inside the viewport with the padding.
+  area and case and one edge per membership; `layoutTree` gives every
+  visible case its own row in file order, puts areas at the midpoint of
+  their rows, stacks top-level trees without overlap, collapses a folded
+  area to one row, and is deterministic; `fold` removes a subtree and
+  `fold(..., false)` restores it; `labelAlpha` is 0 / ramping / 1 across
+  each threshold; `fitTransform` keeps every node inside the viewport;
+  `fitWidthTransform` fits the width at most 100 % and starts top-left.
 - Manual walk of a generated page in the in-app browser: fold, hover,
-  zoom LOD, drag, theme switch, side panel.
+  zoom LOD, pan, theme switch, side panel.
 
 ## Deferred
 
