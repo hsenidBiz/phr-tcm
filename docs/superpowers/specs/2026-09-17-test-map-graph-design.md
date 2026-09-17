@@ -44,8 +44,8 @@ A force simulation in `test-map.js`, no dependency:
   opens looking the same.
 - Re-warm to `alpha = 0.5` after a fold, unfold or node drag.
 
-`step(nodes, edges, alpha)` mutates positions and returns nothing; it is a
-pure function of its inputs so it can be tested off the page.
+`step(nodes, edges, alpha)` mutates positions and returns nothing; it
+depends on nothing but its inputs so it can be tested off the page.
 
 ## Level of detail
 
@@ -93,18 +93,24 @@ side panel `<aside id='detail'>` is as before.
 
 ## Accessibility and testability
 
-Canvas is invisible to screen readers and to jsdom, so the page also
-renders a visually hidden `<div id='map-list'>`: for each area a heading
-(`<h3>` name and count) followed by a `<ol>` of `<button class='case'>`
-entries (`#id title`) wired to the same `showCase`. Keyboard users tab
-through it; the Rust test asserts on it. The canvas carries
-`role='img'` and an `aria-label` of "Test map: N areas, M test cases".
+Canvas is invisible to screen readers and to jsdom, so Rust also writes a
+visually hidden `<div id='map-list'>` into the page: for each area a
+heading (`<h3>` name and count) followed by an `<ol>` of
+`<button type='button' class='case' data-i='N'>` entries (`#id title`,
+or `NEW title`), where `N` is the case's position in a depth-first walk
+that visits an area's cases before its children - the same order
+`buildGraph` numbers case nodes, so the script wires each button to its
+node by index. Keyboard users tab through it; the Rust test asserts on it.
+The canvas carries `role='img'` and an `aria-label` of
+"Test map: N areas, M test cases".
 
-The simulation and LOD helpers are attached to `window.testMap` when the
-script runs outside the page (no `#map-data`): `step`, `labelAlpha`,
-`fitTransform`, `buildGraph(nodes)` (returns `{nodes, edges}`), and
-`fold(graph, areaNode, folded)`. A vitest file under `src/` loads
-`src-tauri/web/test-map.js` and exercises them.
+The simulation and LOD helpers live in their own file,
+`src-tauri/web/test-map-graph.js`, which attaches them to
+`window.testMap`: `buildGraph(tree)` (returns `{nodes, edges}`),
+`step(nodes, edges, alpha)`, `fold(graph, areaNode, folded)`,
+`labelAlpha(kind, scale, reduced)` and `fitTransform(nodes, w, h, pad)`.
+The page embeds it before `test-map.js`. A vitest file under `src/` loads
+the helper file and exercises it.
 
 ## `transform_cases`
 
