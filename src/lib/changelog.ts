@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.12",
+    date: "2026-09-17",
+    items: [
+      "Fixed: test cases whose steps contain quotation marks showed as changed the moment they were uploaded, with the quotes doubled up in the comparison, and would have been rewritten on every upload after. Steps read back from Azure DevOps are now decoded the way Azure DevOps stores them.",
+    ],
+  },
+  {
     version: "1.25.11",
     date: "2026-09-17",
     items: [
