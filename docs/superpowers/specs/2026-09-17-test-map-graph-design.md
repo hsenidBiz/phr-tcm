@@ -80,7 +80,7 @@ plus 320 units of label room, never above 100 %, starting at the top left
   limbs between them) draw at full colour, everything else at 25 %
   opacity; the hovered node's full label draws regardless of LOD. While a
   case is hovered, a short accent-coloured pulse travels along the chain's
-  limbs from the top-level area to the case, one pass every 900 ms,
+  limbs from the top-level area to the case, one pass every 1.8 s,
   repeating until the pointer leaves; not under `prefers-reduced-motion`.
 - Click a case node: `showCase` opens the existing side panel; the node is
   ringed while the panel is open. The title leads with a status chip -

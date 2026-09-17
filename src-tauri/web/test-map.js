@@ -113,7 +113,7 @@
   // ---- The pulse: while a case is hovered, a short bright segment runs
   // along its chain's limbs from the top-level area to the case, one pass
   // per PULSE_MS, until the pointer leaves. Not under reduced motion.
-  var PULSE_MS = 900, PULSE_TAIL = 0.18;
+  var PULSE_MS = 1800, PULSE_TAIL = 0.18;
   var pulseT = 0, pulseAt = 0, pulsing = false;
   function pulseTick(now) {
     if (!hover || hover.kind !== 'case' || reduced) { pulsing = false; return; }

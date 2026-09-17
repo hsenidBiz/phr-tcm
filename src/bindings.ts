@@ -346,13 +346,6 @@ export const commands = {
 	 *  nothing here should touch the browser.
 	 */
 	refreshQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_queue_html", { queue, subtitle, organization, notes, palette })),
-	/**
-	 *  Write the Test map for `nodes` to the temp directory and open it in the
-	 *  default browser. The webview builds the tree; see `test_map.rs`. Static,
-	 *  unlike the two reports above: no revision poll, so opening it again
-	 *  simply rewrites the same file.
-	 */
-	viewTestMapHtml: (nodes: MapNode[], subtitle: string, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_test_map_html", { nodes, subtitle, palette })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
 	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
@@ -994,31 +987,6 @@ export type LogLine = {
 	/**  "debug" | "info" | "warn" | "error". */
 	level: string,
 	message: string,
-};
-
-/**
- *  One case as the map shows it: enough for the side panel, nothing the
- *  app keeps to itself (no notes, no findings).
- */
-export type MapCase = {
-	/**  The work item id, or None for a draft not yet created. */
-	id: number | null,
-	title: string,
-	steps: Step[],
-	preconditions: string,
-	tags: string,
-	automation_status: string,
-};
-
-/**
- *  One area. `count` is this node's cases plus everything beneath it,
- *  computed by the webview.
- */
-export type MapNode = {
-	name: string,
-	count: number,
-	cases: MapCase[],
-	children: MapNode[],
 };
 
 export type MaterializedDraft = {
