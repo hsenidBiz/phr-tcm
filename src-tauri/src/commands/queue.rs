@@ -467,6 +467,23 @@ pub fn refresh_queue_html(
     render_queue_html(&app, queue, subtitle, organization, notes, palette).map(|_| ())
 }
 
+/// Write the Test map for `nodes` to the temp directory and open it in the
+/// default browser. The webview builds the tree; see `test_map.rs`. Static,
+/// unlike the two reports above: no revision poll, so opening it again
+/// simply rewrites the same file.
+#[tauri::command]
+#[specta::specta]
+pub fn view_test_map_html(
+    nodes: Vec<crate::test_map::MapNode>,
+    subtitle: String,
+    palette: crate::webtheme::PagePalette,
+) -> Result<(), String> {
+    let path = std::env::temp_dir().join(format!("test-map-{}.html", std::process::id()));
+    let path_str = path.to_string_lossy().to_string();
+    crate::test_map::export_test_map_html(&nodes, &path_str, &subtitle, &palette)?;
+    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
+}
+
 fn render_queue_html(
     app: &tauri::AppHandle,
     queue: Vec<model::TestCase>,
