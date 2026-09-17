@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.10",
+    date: "2026-09-17",
+    items: [
+      "The Test map is now a graph, the way Obsidian draws one: every area and test case is a dot joined to the area it belongs to, and the whole thing settles into place on its own. Zoomed out you see the area names; zoom in and the test case IDs appear, then their titles. Click an area to fold everything under it, click a test case for its steps, drag a dot to move it, drag the background to pan, and Ctrl + wheel to zoom.",
+      "AI assistants can now set or move areas in bulk: transform_cases has a set_area operation and an area filter, so a whole area can be renamed without editing the file by hand.",
+      "In the browser review page, the Show findings button is now orange to match the findings it controls, and styled like the reviewer notes button next to it.",
+    ],
+  },
+  {
     version: "1.25.9",
     date: "2026-09-17",
     items: [
