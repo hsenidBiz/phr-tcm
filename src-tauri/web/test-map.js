@@ -63,6 +63,7 @@
     draw();
   }
   function resize() {
+    var prevW = width, prevH = height;
     var r = viewport.getBoundingClientRect();
     width = r.width; height = r.height;
     var dpr = window.devicePixelRatio || 1;
@@ -70,8 +71,18 @@
     canvas.height = Math.round(height * dpr);
     canvas.style.width = width + 'px';
     canvas.style.height = height + 'px';
-    draw();
+    // A page loaded in a hidden tab measures 0x0 here; becoming visible
+    // later fires no window 'resize', only the ResizeObserver below. Either
+    // way, the first time a real size arrives after a 0x0 start, the initial
+    // fit() (computed against 0x0) is stale - fit again instead of just
+    // drawing.
+    if ((prevW === 0 || prevH === 0) && width > 0 && height > 0) fit();
+    else draw();
   }
+  // Covers becoming visible with no window 'resize' (a hidden tab, or a
+  // panel resize that doesn't change the window); the window listener below
+  // stays as the fallback for browsers without ResizeObserver.
+  if (window.ResizeObserver) { new ResizeObserver(resize).observe(viewport); }
 
   // ---- The simulation: runs while warm, cools to a stop.
   var alpha = 0, running = false, settledOnce = false;
@@ -156,6 +167,10 @@
       // drawn left-aligned from the same x - computed from the id-only
       // string's width - and only the title part visibly fades in; centring
       // each string on its own (different) width would make them ghost.
+      // Skip the font/measureText work entirely when no case label draws:
+      // hover always draws (both id and title), otherwise at least one of
+      // the id/title alphas must be positive.
+      if (titleA <= 0 && idA <= 0 && n !== hover) return;
       var size = Math.max(9, Math.min(22, 11 * scale));
       ctx.font = size + 'px ' + FONT;
       var idText = G.caseLabel(n, false);
@@ -203,7 +218,8 @@
     var c = node.data;
     activeNode = node;
     for (var i = 0; i < listButtons.length; i++) {
-      listButtons[i].classList.toggle('active', Number(listButtons[i].getAttribute('data-i')) === node.ci);
+      if (Number(listButtons[i].getAttribute('data-i')) === node.ci) listButtons[i].setAttribute('aria-current', 'true');
+      else listButtons[i].removeAttribute('aria-current');
     }
     detail.innerHTML = '';
     var close = el('button', 'close', 'Close');
@@ -242,7 +258,7 @@
   }
   function hideCase() {
     activeNode = null;
-    for (var i = 0; i < listButtons.length; i++) listButtons[i].classList.remove('active');
+    for (var i = 0; i < listButtons.length; i++) listButtons[i].removeAttribute('aria-current');
     detail.hidden = true;
     detail.innerHTML = '';
     resize();
@@ -257,12 +273,14 @@
   // ---- Fold.
   function setFolded(area, folded) {
     G.fold(graph, area, folded);
+    if (hover && hover.hidden) { hover = null; setCursor(); }
     if (activeNode && activeNode.hidden) hideCase();
     warm(0.5);
     draw(); // a background tab gets no animation frames, so paint now too
   }
   function foldAll(folded) {
     areaNodes.forEach(function (a) { G.fold(graph, a, folded); });
+    if (hover && hover.hidden) { hover = null; setCursor(); }
     if (activeNode && activeNode.hidden) hideCase();
     warm(0.5);
     draw(); // a background tab gets no animation frames, so paint now too
@@ -290,6 +308,14 @@
   // inside the viewport.
   window.addEventListener('mousemove', function (e) {
     if (!drag) return;
+    if (e.buttons === 0) {
+      // The button went up somewhere that never delivered a 'mouseup' (an
+      // alt-tab, a release over an OS dialog). Treat it as the drag ending,
+      // not as a click - the pointer already moved once since the press.
+      moved = true;
+      endDrag();
+      return;
+    }
     var p = local(e);
     if (!moved && (Math.abs(e.clientX - drag.startX) > 4 || Math.abs(e.clientY - drag.startY) > 4)) moved = true;
     if (drag.node) {
@@ -316,7 +342,7 @@
     setCursor();
     e.preventDefault();
   });
-  window.addEventListener('mouseup', function () {
+  function endDrag() {
     if (!drag) return;
     var n = drag.node;
     drag = null;
@@ -328,6 +354,10 @@
     }
     setCursor();
     draw();
+  }
+  window.addEventListener('mouseup', endDrag);
+  window.addEventListener('blur', function () {
+    if (drag) { moved = true; endDrag(); }
   });
   viewport.addEventListener('wheel', function (e) {
     e.preventDefault();

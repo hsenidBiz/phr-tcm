@@ -4,7 +4,8 @@
  * dependency, so this loads the file as-is and exercises them here.
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, test } from "vitest";
 
 type Node = {
@@ -65,7 +66,9 @@ const tree = () => [
 ];
 
 beforeAll(() => {
-  const src = readFileSync(resolve(__dirname, "../../src-tauri/web/test-map-graph.js"), "utf8");
+  // import.meta.url, not __dirname: this file is ESM under vitest.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(resolve(here, "../../src-tauri/web/test-map-graph.js"), "utf8");
   new Function(src)();
   G = (window as unknown as { testMap: Helpers }).testMap;
 });
