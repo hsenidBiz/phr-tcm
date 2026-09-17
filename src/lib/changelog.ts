@@ -13,6 +13,19 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.11",
+    date: "2026-09-17",
+    items: [
+      "The Test map is now a tree that grows left to right, like a family tree: every test case has its own row beside its area, so nothing overlaps however many cases there are. Curved branches join areas to what they hold; zoom out for the area names, zoom in for the ids and then the full titles. Click an area to fold it, click a case for its steps.",
+      "Hover a test case on the map and its whole chain lights up - from the top-level area down to the case - with a pulse running along the branches to it.",
+      "The map reaches the review page: after View in Browser, a View as Tree button opens the map for those cases when at least one of them has an area, and the map links back to the review page. The separate Test map buttons in the app are gone.",
+      "On the map, new test cases show their title alone instead of NEW, and the steps panel leads its title with a New or Update chip. The panel can be widened by dragging its left edge; double-click the edge to reset.",
+      "In the app, reviewer notes are shown in the same tinted box the browser review page uses.",
+      "Power Rename is now called Rename.",
+      "Fixed: on a machine where the browser engine draws WebGL in software, the sign-in screen no longer pins the processor at 100% - its animated backdrop stays off there.",
+    ],
+  },
+  {
     version: "1.25.10",
     date: "2026-09-17",
     items: [
