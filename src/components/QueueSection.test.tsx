@@ -420,7 +420,7 @@ test("power rename scoped to the selection writes the file back", async () => {
 
   fireEvent.click(screen.getByRole("checkbox", { name: "Select Old name" }));
   // The bulk bar's rename button carries the count - proof of the scoping.
-  fireEvent.click(screen.getByRole("button", { name: /Power Rename 1/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Rename 1/ }));
   const dialog = await screen.findByText(/1 selected draft/);
   expect(dialog).toBeInTheDocument();
 });

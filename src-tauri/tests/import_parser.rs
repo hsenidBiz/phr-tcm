@@ -931,3 +931,33 @@ fn area_is_read_under_its_aliases_and_trimmed() {
     assert_eq!(cases[2].area, "Page");
     assert_eq!(cases[3].area, "");
 }
+
+/// "View as Tree" is offered only when the app wrote a Test map beside the
+/// page - which it does only for a set with at least one area. The plain
+/// export never has one; the page export links to whatever name it is given.
+#[test]
+fn the_review_page_links_to_the_tree_only_when_given_one() {
+    use v2_lib::import_parser::export_queue_page;
+    let queue = vec![TestCase {
+        title: "T".into(),
+        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        area: "Reports".into(),
+        ..Default::default()
+    }];
+    let dir = std::env::temp_dir().join("tcm-v2-tree-link-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}-with.html", std::process::id())).to_string_lossy().to_string();
+    export_queue_page(&queue, &path, "", None, &Default::default(), Some("test-map-1.html")).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        html.contains("<a id='tc-tree' href='test-map-1.html' target='_blank' rel='noopener'>View as Tree</a>"),
+        "{html}"
+    );
+    let bar = html.split("<div class='searchbar'>").nth(1).unwrap().split("</div>").next().unwrap();
+    assert!(bar.contains("id='tc-tree'"), "the link belongs in the sticky bar: {bar}");
+
+    let path2 = dir.join(format!("{}-without.html", std::process::id())).to_string_lossy().to_string();
+    export_queue_to_html(&queue, &path2, "", None, &Default::default()).unwrap();
+    let plain = std::fs::read_to_string(&path2).unwrap();
+    assert!(!plain.contains("id='tc-tree'"), "no map written, so no button: {plain}");
+}

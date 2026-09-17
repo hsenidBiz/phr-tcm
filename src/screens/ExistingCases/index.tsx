@@ -291,7 +291,7 @@ export default function ExistingCases({
           </Button>
           <Button size="sm" onClick={() => setRenameOpen(true)}>
             <IconRename aria-hidden />
-            Power Rename
+            Rename
           </Button>
           <Button variant="outline" size="sm" onClick={() => exportJson.mutate()}>
             <IconExport aria-hidden />

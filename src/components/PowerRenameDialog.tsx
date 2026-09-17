@@ -109,7 +109,7 @@ export default function PowerRenameDialog({
     <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-4 p-5">
       <div className="shrink-0">
         <h2 className="text-sm font-semibold text-text">
-          Power Rename {target.cases.length} test case{target.cases.length === 1 ? "" : "s"}
+          Rename {target.cases.length} test case{target.cases.length === 1 ? "" : "s"}
         </h2>
         <p className="mt-1 text-xs text-muted">
           Only titles change. The preview below is exactly what gets saved to {target.label}.

@@ -1,7 +1,7 @@
-//! The Test map: a set of cases drawn as a graph of the areas they test, in
-//! the browser - areas and cases as nodes, membership as edges, laid out by
-//! a force simulation. The webview builds the tree (one grouping
-//! implementation, in `src/lib/testMap.ts`); this side only writes the page.
+//! The Test map: a set of cases drawn as a tree of the areas they test, in
+//! the browser - areas and cases as nodes, membership as limbs. The tree is
+//! built here from each case's `area` path (`build_tree`) and the page is
+//! written beside the review page that links to it (`write_beside`).
 //!
 //! Same page shell as the other reports - the app's palette, the
 //! light/dark switch - but static: no revision poll, no comment boxes.
@@ -70,6 +70,99 @@ fn list_html(nodes: &[MapNode], next: &mut usize, out: &mut String) {
         }
         list_html(&n.children, next, out);
     }
+}
+
+pub const UNGROUPED: &str = "Ungrouped";
+
+/// Whether a set has anything to map: at least one case with an `area`.
+/// Without one the tree would only be title groups, which the review page
+/// already shows, so no link is offered.
+pub fn has_areas(cases: &[crate::model::TestCase]) -> bool {
+    cases.iter().any(|c| !crate::import_parser::normalise_area(&c.area).is_empty())
+}
+
+struct Draft {
+    name: String,
+    cases: Vec<MapCase>,
+    children: Vec<Draft>,
+}
+
+impl Draft {
+    /// The child named `name`, made if missing. Names compare without
+    /// case, and the first spelling seen is the one shown.
+    fn child(&mut self, name: &str) -> &mut Draft {
+        let at = self.children.iter().position(|d| d.name.eq_ignore_ascii_case(name));
+        let at = at.unwrap_or_else(|| {
+            self.children.push(Draft { name: name.to_string(), cases: vec![], children: vec![] });
+            self.children.len() - 1
+        });
+        &mut self.children[at]
+    }
+    fn finish(self) -> MapNode {
+        let mut children: Vec<MapNode> = self.children.into_iter().map(Draft::finish).collect();
+        children.sort_by(by_name);
+        let count = self.cases.len() as u32 + children.iter().map(|c| c.count).sum::<u32>();
+        MapNode { name: self.name, count, cases: self.cases, children }
+    }
+}
+
+/// A-Z without case, "Ungrouped" last.
+fn by_name(a: &MapNode, b: &MapNode) -> std::cmp::Ordering {
+    match (a.name == UNGROUPED, b.name == UNGROUPED) {
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    }
+}
+
+fn to_map_case(tc: &crate::model::TestCase) -> MapCase {
+    MapCase {
+        id: tc.update_id,
+        title: tc.title.clone(),
+        steps: tc.steps.clone(),
+        preconditions: tc.preconditions.clone(),
+        tags: tc.tags.clone(),
+        automation_status: tc.automation_status.clone(),
+    }
+}
+
+/// The tree of areas: a case lands under its `area` path ("Manage Events /
+/// Create" is two levels), a case without one under "Ungrouped". Cases keep
+/// the order they were given; children sort A-Z, "Ungrouped" last.
+pub fn build_tree(cases: &[crate::model::TestCase]) -> Vec<MapNode> {
+    let mut root = Draft { name: String::new(), cases: vec![], children: vec![] };
+    for tc in cases {
+        let path = crate::import_parser::normalise_area(&tc.area);
+        let mut node = &mut root;
+        if path.is_empty() {
+            node = node.child(UNGROUPED);
+        } else {
+            for segment in path.split(" / ") {
+                node = node.child(segment);
+            }
+        }
+        node.cases.push(to_map_case(tc));
+    }
+    root.finish().children
+}
+
+/// Write the Test map for these cases next to a review page, when there is
+/// one to draw (`has_areas`). Returns the file NAME - the review page links
+/// to it relatively, both being in the temp directory - or None, in which
+/// case no link is offered. One file per process, like the review pages, so
+/// a refresh rewrites the page a tab already has open.
+pub fn write_beside(
+    cases: &[crate::model::TestCase],
+    subtitle: &str,
+    palette: &PagePalette,
+) -> Result<Option<String>, String> {
+    if !has_areas(cases) {
+        return Ok(None);
+    }
+    let name = format!("test-map-{}.html", std::process::id());
+    let path = std::env::temp_dir().join(&name);
+    export_test_map_html(&build_tree(cases), &path.to_string_lossy(), subtitle, palette)?;
+    Ok(Some(name))
 }
 
 /// Write the page to `path`. The tree travels inside it as a JSON script

@@ -138,6 +138,20 @@ pub fn export_queue_to_html(
     ctx: Option<CommentCtx>,
     palette: &crate::webtheme::PagePalette,
 ) -> Result<(), String> {
+    export_queue_page(queue, path, subtitle, ctx, palette, None)
+}
+
+/// `export_queue_to_html` with a "View as Tree" button linking to
+/// `tree_href` - the Test map the app wrote beside this page
+/// (`test_map::write_beside`). None means no button: nothing to map.
+pub fn export_queue_page(
+    queue: &[TestCase],
+    path: &str,
+    subtitle: &str,
+    ctx: Option<CommentCtx>,
+    palette: &crate::webtheme::PagePalette,
+    tree_href: Option<&str>,
+) -> Result<(), String> {
     // The side column only exists for a draft that came from files. Without
     // it the page keeps its original single centred column.
     let files: &[DraftFile] = match &ctx {
@@ -194,6 +208,15 @@ pub fn export_queue_to_html(
                 .to_string()
         } else {
             String::new()
+        },
+        // The same cases as a tree of their areas, in a new tab. Only when
+        // the app wrote one: a set with no areas has no tree worth a button.
+        match tree_href {
+            Some(href) => format!(
+                "<a id='tc-tree' href='{}' target='_blank' rel='noopener'>View as Tree</a>",
+                esc(href)
+            ),
+            None => String::new(),
         },
         "<span id='tc-count'></span></div>".into(),
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),

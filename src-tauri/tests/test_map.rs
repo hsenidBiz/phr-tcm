@@ -110,3 +110,63 @@ fn a_dark_app_opens_a_dark_page_and_a_blank_subtitle_says_the_count() {
     assert!(html.contains("data-scheme=\"dark\""), "{html}");
     assert!(html.contains("<p class='subtitle'>3 test case(s)</p>"), "{html}");
 }
+
+// ---- build_tree: the area paths become the tree -------------------------
+
+fn tc(title: &str, area: &str, id: Option<i32>) -> v2_lib::model::TestCase {
+    v2_lib::model::TestCase {
+        title: title.into(),
+        area: area.into(),
+        update_id: id,
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn build_tree_nests_area_paths_merges_spellings_and_sorts() {
+    use v2_lib::test_map::build_tree;
+    let cases = vec![
+        tc("Nav", "Manage Events", Some(1)),
+        tc("Limits", "Manage Events / Create / Validation", Some(2)),
+        tc("Fill", "manage events/create", None),
+        tc("Export", "Reports", Some(4)),
+        tc("Loose", "", Some(5)),
+        tc("Also loose", "  /  ", None),
+    ];
+    let tree = build_tree(&cases);
+    assert_eq!(
+        tree.iter().map(|n| (n.name.as_str(), n.count)).collect::<Vec<_>>(),
+        vec![("Manage Events", 3), ("Reports", 1), ("Ungrouped", 2)],
+        "A-Z, Ungrouped last, counts include descendants"
+    );
+    let manage = &tree[0];
+    assert_eq!(manage.cases.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), vec!["Nav"]);
+    assert_eq!(manage.cases[0].id, Some(1));
+    let create = &manage.children[0];
+    assert_eq!(create.name, "Create", "first spelling seen is the one shown");
+    assert_eq!(create.count, 2);
+    assert_eq!(create.cases.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), vec!["Fill"]);
+    assert_eq!(create.cases[0].id, None);
+    assert_eq!(create.children[0].name, "Validation");
+    assert_eq!(create.children[0].cases[0].title, "Limits");
+    let loose = &tree[2];
+    assert_eq!(loose.cases.iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), vec!["Loose", "Also loose"]);
+}
+
+#[test]
+fn has_areas_and_write_beside_need_at_least_one_area() {
+    use v2_lib::test_map::{has_areas, write_beside};
+    let none = vec![tc("A", "", None), tc("B", " / ", None)];
+    assert!(!has_areas(&none));
+    assert_eq!(write_beside(&none, "", &PagePalette::default()).unwrap(), None);
+
+    let some = vec![tc("A", "", None), tc("B", "Reports", None)];
+    assert!(has_areas(&some));
+    let name = write_beside(&some, "PBI #9", &PagePalette::default()).unwrap().expect("a map file");
+    assert_eq!(name, format!("test-map-{}.html", std::process::id()));
+    let html = std::fs::read_to_string(std::env::temp_dir().join(&name)).unwrap();
+    assert!(html.contains("<p class='subtitle'>PBI #9</p>"), "{html}");
+    assert!(html.contains("\"Reports\""), "{html}");
+    assert!(html.contains("\"Ungrouped\""), "the area-less case is still on the map: {html}");
+}

@@ -41,8 +41,11 @@ export default function CaseStepsTable({
         </p>
       ) : null}
       {notes ? (
-        <div className="border-b border-border/60 px-3 py-2">
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-faint">
+        // The same box the browser review page draws around notes: tinted
+        // with the accent and given a left rule, so it reads as commentary
+        // ABOUT the case rather than part of it.
+        <div className="mx-3 my-2 rounded-md border border-accent/30 border-l-[3px] border-l-accent bg-accent-soft px-3 py-2">
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-accent">
             Reviewer notes
           </p>
           {/* Markdown, like everywhere else this field is shown - a citation

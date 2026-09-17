@@ -241,7 +241,7 @@ test("cancelling Power Rename keeps the selection", async () => {
   fireEvent.click(screen.getByText("Invalid login"), { ctrlKey: true });
   expect(screen.getByText("2 selected")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Power Rename" }));
+  fireEvent.click(screen.getByRole("button", { name: "Rename" }));
   fireEvent.click(await screen.findByRole("button", { name: /Cancel/ }));
 
   expect(screen.getByText("2 selected")).toBeInTheDocument();

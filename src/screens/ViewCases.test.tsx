@@ -41,7 +41,6 @@ const caseC = { ...caseA, id: 203, title: "Checkout", tags: "" };
 function mockCases(
   onView?: (queue: Array<{ update_id: number | null }>) => void,
   onRefresh?: () => void,
-  onMap?: (args: { nodes: Array<{ name: string; count: number }>; subtitle: string }) => void,
 ) {
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
@@ -52,10 +51,6 @@ function mockCases(
     }
     if (cmd === "refresh_queue_html") {
       onRefresh?.();
-      return null;
-    }
-    if (cmd === "view_test_map_html") {
-      onMap?.(args as { nodes: Array<{ name: string; count: number }>; subtitle: string });
       return null;
     }
   });
@@ -322,22 +317,3 @@ test("Export JSON writes the chosen cases through the save dialog", async () => 
   expect(exported[1].firstId).toBe(202);
 });
 
-/// Cases from Azure DevOps carry no area, so the map groups them by title -
-/// the same rule as the Group by title switch - and the selection scope is
-/// the browser view's: everything shown, or the highlighted cases.
-test("Test map sends the shown cases as a tree, grouped by title", async () => {
-  let sent: { nodes: Array<{ name: string; count: number }>; subtitle: string } | null = null;
-  mockCases(undefined, undefined, (args) => {
-    sent = args;
-  });
-  renderView();
-  await screen.findByText(caseA.title);
-
-  fireEvent.click(screen.getByRole("button", { name: "Test map" }));
-  await waitFor(() => expect(sent).not.toBeNull());
-  expect(sent!.subtitle).toBe("PBI #42");
-  const total = sent!.nodes.reduce((n, node) => n + node.count, 0);
-  expect(total).toBe(3);
-  expect(sent!.nodes.map((n) => n.name)).toEqual(["Login", "Ungrouped"]);
-  expect(sent!.nodes[0].count).toBe(2);
-});

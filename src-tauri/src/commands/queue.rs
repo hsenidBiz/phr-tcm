@@ -467,23 +467,6 @@ pub fn refresh_queue_html(
     render_queue_html(&app, queue, subtitle, organization, notes, palette).map(|_| ())
 }
 
-/// Write the Test map for `nodes` to the temp directory and open it in the
-/// default browser. The webview builds the tree; see `test_map.rs`. Static,
-/// unlike the two reports above: no revision poll, so opening it again
-/// simply rewrites the same file.
-#[tauri::command]
-#[specta::specta]
-pub fn view_test_map_html(
-    nodes: Vec<crate::test_map::MapNode>,
-    subtitle: String,
-    palette: crate::webtheme::PagePalette,
-) -> Result<(), String> {
-    let path = std::env::temp_dir().join(format!("test-map-{}.html", std::process::id()));
-    let path_str = path.to_string_lossy().to_string();
-    crate::test_map::export_test_map_html(&nodes, &path_str, &subtitle, &palette)?;
-    tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
-}
-
 fn render_queue_html(
     app: &tauri::AppHandle,
     queue: Vec<model::TestCase>,
@@ -507,12 +490,16 @@ fn render_queue_html(
             org: organization,
             notes,
         });
-    import_parser::export_queue_to_html(
+    // The Test map beside the page, when the cases have areas to map; the
+    // page's "View as Tree" links to it.
+    let tree = crate::test_map::write_beside(&queue, &subtitle, &palette)?;
+    import_parser::export_queue_page(
         &queue,
         &path_str,
         &subtitle,
         note_ctx.as_ref().map(import_parser::CommentCtx::Ado),
         &palette,
+        tree.as_deref(),
     )?;
     // And tell a page already open on these cases that it is behind - and
     // where to pull the fresh content from.
@@ -583,12 +570,14 @@ fn render_draft_html(
         owners,
         files,
     });
-    import_parser::export_queue_to_html(
+    let tree = crate::test_map::write_beside(&queue, &subtitle, &palette)?;
+    import_parser::export_queue_page(
         &queue,
         &path_str,
         &subtitle,
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
         &palette,
+        tree.as_deref(),
     )?;
     // Where an open page can pull the fresh content from, and the signal
     // that it should: the poll sees the revision move, fetches /report,

@@ -76,6 +76,14 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
 #tc-notes:hover { border-color: var(--accent); }
 #tc-notes[aria-pressed='true'] { color: var(--muted); background: var(--surface-2);
                                  border-color: var(--border); }
+/* "View as Tree": the same cases as a tree of their areas, in another tab.
+   The same chip as the toggles beside it, so the bar reads as one row. */
+#tc-tree { font: inherit; font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+           border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+           border-radius: 8px; white-space: nowrap; color: var(--accent);
+           text-decoration: none;
+           background: color-mix(in srgb, var(--accent) 8%, transparent); }
+#tc-tree:hover { border-color: var(--accent); }
 /* The findings toggle is the same chip in the findings' own colour - orange,
    like the blocks it hides, so the two buttons read as a pair and each one
    says what it controls. */
