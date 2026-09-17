@@ -209,13 +209,11 @@ pub fn export_queue_page(
         } else {
             String::new()
         },
-        // The same cases as a tree of their areas, in a new tab. Only when
-        // the app wrote one: a set with no areas has no tree worth a button.
+        // The same cases as a tree of their areas; the map links back here.
+        // Only when the app wrote one: a set with no areas has no tree
+        // worth a button.
         match tree_href {
-            Some(href) => format!(
-                "<a id='tc-tree' href='{}' target='_blank' rel='noopener'>View as Tree</a>",
-                esc(href)
-            ),
+            Some(href) => format!("<a id='tc-tree' href='{}'>View as Tree</a>", esc(href)),
             None => String::new(),
         },
         "<span id='tc-count'></span></div>".into(),

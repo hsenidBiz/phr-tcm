@@ -950,7 +950,7 @@ fn the_review_page_links_to_the_tree_only_when_given_one() {
     export_queue_page(&queue, &path, "", None, &Default::default(), Some("test-map-1.html")).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(
-        html.contains("<a id='tc-tree' href='test-map-1.html' target='_blank' rel='noopener'>View as Tree</a>"),
+        html.contains("<a id='tc-tree' href='test-map-1.html'>View as Tree</a>"),
         "{html}"
     );
     let bar = html.split("<div class='searchbar'>").nth(1).unwrap().split("</div>").next().unwrap();

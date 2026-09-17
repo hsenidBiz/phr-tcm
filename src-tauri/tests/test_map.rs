@@ -41,7 +41,7 @@ fn tree() -> Vec<MapNode> {
 #[test]
 fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
     let path = tmp_path("map.html");
-    export_test_map_html(&tree(), &path, "PBI #42", &PagePalette::default()).unwrap();
+    export_test_map_html(&tree(), &path, "PBI #42", &PagePalette::default(), Some("test-cases-7.html")).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
 
     assert!(html.starts_with("<!DOCTYPE html>"), "{html}");
@@ -89,12 +89,14 @@ fn the_page_carries_the_tree_as_json_and_the_script_that_draws_it() {
     // The app's palette and the light/dark switch, like every other report.
     assert!(html.contains("--accent"), "{html}");
     assert!(html.contains("data-scheme=\"light\""), "{html}");
+    // The way back to the review page it was opened from.
+    assert!(html.contains("<a id='map-back' class='back' href='test-cases-7.html'>"), "{html}");
 }
 
 #[test]
 fn an_empty_map_says_so_and_still_has_the_chrome() {
     let path = tmp_path("map-empty.html");
-    export_test_map_html(&[], &path, "", &PagePalette::default()).unwrap();
+    export_test_map_html(&[], &path, "", &PagePalette::default(), None).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<p id='map-empty' class='empty'>No test cases to map.</p>"), "{html}");
     assert!(html.contains("aria-label='Test map: 0 areas, 0 test cases'"), "{html}");
@@ -105,7 +107,8 @@ fn an_empty_map_says_so_and_still_has_the_chrome() {
 fn a_dark_app_opens_a_dark_page_and_a_blank_subtitle_says_the_count() {
     let path = tmp_path("map-dark.html");
     let palette = PagePalette { dark_first: true, ..PagePalette::default() };
-    export_test_map_html(&tree(), &path, "", &palette).unwrap();
+    export_test_map_html(&tree(), &path, "", &palette, None).unwrap();
+    assert!(!html_has_back(&path), "a map written on its own has nothing to go back to");
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("data-scheme=\"dark\""), "{html}");
     assert!(html.contains("<p class='subtitle'>3 test case(s)</p>"), "{html}");
@@ -159,14 +162,19 @@ fn has_areas_and_write_beside_need_at_least_one_area() {
     use v2_lib::test_map::{has_areas, write_beside};
     let none = vec![tc("A", "", None), tc("B", " / ", None)];
     assert!(!has_areas(&none));
-    assert_eq!(write_beside(&none, "", &PagePalette::default()).unwrap(), None);
+    assert_eq!(write_beside(&none, "", &PagePalette::default(), "test-cases-1.html").unwrap(), None);
 
     let some = vec![tc("A", "", None), tc("B", "Reports", None)];
     assert!(has_areas(&some));
-    let name = write_beside(&some, "PBI #9", &PagePalette::default()).unwrap().expect("a map file");
+    let name = write_beside(&some, "PBI #9", &PagePalette::default(), "test-cases-draft-1.html").unwrap().expect("a map file");
     assert_eq!(name, format!("test-map-{}.html", std::process::id()));
     let html = std::fs::read_to_string(std::env::temp_dir().join(&name)).unwrap();
     assert!(html.contains("<p class='subtitle'>PBI #9</p>"), "{html}");
     assert!(html.contains("\"Reports\""), "{html}");
     assert!(html.contains("\"Ungrouped\""), "the area-less case is still on the map: {html}");
+    assert!(html.contains("href='test-cases-draft-1.html'"), "links back to the page it sits beside: {html}");
+}
+
+fn html_has_back(path: &str) -> bool {
+    std::fs::read_to_string(path).unwrap().contains("id='map-back'")
 }

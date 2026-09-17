@@ -151,28 +151,36 @@ pub fn build_tree(cases: &[crate::model::TestCase]) -> Vec<MapNode> {
 /// to it relatively, both being in the temp directory - or None, in which
 /// case no link is offered. One file per process, like the review pages, so
 /// a refresh rewrites the page a tab already has open.
+///
+/// `page_name` is the review page's own file name, so the map can link
+/// back to it the same way.
 pub fn write_beside(
     cases: &[crate::model::TestCase],
     subtitle: &str,
     palette: &PagePalette,
+    page_name: &str,
 ) -> Result<Option<String>, String> {
     if !has_areas(cases) {
         return Ok(None);
     }
     let name = format!("test-map-{}.html", std::process::id());
     let path = std::env::temp_dir().join(&name);
-    export_test_map_html(&build_tree(cases), &path.to_string_lossy(), subtitle, palette)?;
+    export_test_map_html(&build_tree(cases), &path.to_string_lossy(), subtitle, palette, Some(page_name))?;
     Ok(Some(name))
 }
 
 /// Write the page to `path`. The tree travels inside it as a JSON script
 /// block (never executed, `</` escaped, so a title cannot close it) and a
 /// script draws it on load.
+///
+/// `back_href` is the review page this map was opened from; the header
+/// links back to it. None (a map written on its own) shows no link.
 pub fn export_test_map_html(
     nodes: &[MapNode],
     path: &str,
     subtitle: &str,
     palette: &PagePalette,
+    back_href: Option<&str>,
 ) -> Result<(), String> {
     let total: u32 = nodes.iter().map(|n| n.count).sum();
     let subtitle = if subtitle.is_empty() {
@@ -190,7 +198,7 @@ pub fn export_test_map_html(
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>Test map ({total})</title>\
          <style>{vars}{css}</style></head><body>{switch}\
-         <header class='bar'><h1>Test map</h1><p class='subtitle'>{subtitle}</p>\
+         <header class='bar'>{back}<h1>Test map</h1><p class='subtitle'>{subtitle}</p>\
          <div class='tools'>\
          <button type='button' id='map-expand'>Expand all</button>\
          <button type='button' id='map-collapse'>Collapse all</button>\
@@ -212,6 +220,10 @@ pub fn export_test_map_html(
          <script>{js}</script>\
          <script>{switch_js}</script>\
          </body></html>",
+        back = match back_href {
+            Some(href) => format!("<a id='map-back' class='back' href='{}'>\u{2190} Test cases</a>", esc(href)),
+            None => String::new(),
+        },
         scheme = palette.initial_scheme(),
         vars = palette.css(),
         css = MAP_CSS,

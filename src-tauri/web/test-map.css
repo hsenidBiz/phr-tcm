@@ -24,6 +24,9 @@ body {
   flex: 0 0 auto;
 }
 .bar h1 { margin: 0; font-size: 16px; }
+/* The way back to the review page this map was opened from. */
+.bar .back { color: var(--accent); text-decoration: none; font-size: 13px; white-space: nowrap; }
+.bar .back:hover { text-decoration: underline; }
 .subtitle { margin: 0; color: var(--muted); }
 .tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .tools button {
