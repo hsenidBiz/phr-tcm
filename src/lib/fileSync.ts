@@ -109,16 +109,20 @@ function sameCase(a: TestCase, b: TestCase): boolean {
   return changedFields(a, b).length === 0 && stepsSig(a) === stepsSig(b);
 }
 
-/** Which queue rows a file put there: for each row, the key that case has
- * in the FILE's own list (repeats numbered over the file), or null for a
- * row this file does not own.
+/** Which queue rows a file put there: for each row, a key identifying that
+ * ownership, or null for a row this file does not own. Usually the key the
+ * case has in the FILE's own list (repeats numbered over the file); for the
+ * id write-back pass below it is the row's own `id:` key instead, since
+ * that snapshot entry has no id yet to number.
  *
  * Numbering repeats over the whole queue let a hand-typed "Login" that sat
  * first take the key of the file's "Login": the file's edits then landed on
  * the hand-typed case, and dropping it from the file removed the wrong row.
- * So the file's cases claim rows instead, per identity: first the rows that
- * still match a file case exactly, then the rest in queue order. A row
- * nothing claims belongs to no file.
+ * So the file's cases claim rows instead, per identity - title matching is
+ * a best-effort heuristic, not a fact the app can verify, so this is the
+ * closest it can get: first the rows that still match a file case exactly,
+ * then an id-stamped row whose id the snapshot doesn't know yet, then the
+ * rest in queue order. A row nothing claims belongs to no file.
  *
  * `taken` marks rows another file already claimed; they are skipped. */
 export function fileOwnedKeys(
@@ -145,6 +149,20 @@ export function fileOwnedKeys(
     if (j === -1) return;
     out[i] = list[j].key;
     list.splice(j, 1);
+  });
+  // An id-stamped row whose id isn't in the snapshot yet (the post-upload
+  // write-back racing a stale snapshot) claims the file's matching title
+  // slot next, before an unrelated id-less row gets to just by coming
+  // earlier in the queue - an id is exact evidence once it exists, and
+  // outranks a title match even one that hasn't caught up yet.
+  queue.forEach((c, i) => {
+    if (!free(i)) return;
+    if (c.update_id == null) return;
+    const idKey = caseKey(c);
+    if (open.has(idKey)) return; // the id IS in the snapshot; the next pass handles it
+    const titleKey = caseKey({ ...c, update_id: null });
+    const claim = open.get(titleKey)?.shift();
+    if (claim) out[i] = idKey;
   });
   // Then rows edited in the app, in order.
   queue.forEach((c, i) => {

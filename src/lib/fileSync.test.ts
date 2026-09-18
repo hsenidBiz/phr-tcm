@@ -409,3 +409,23 @@ test("a row carrying a work item id takes the file's edit even when the snapshot
   expect(r.queue[0].title).toBe("Brand new, renamed");
   expect(countBy(r.changes, "added")).toBe(0);
 });
+
+/// Review round 1: an id-stamped row's own key is "id:N", which the stale
+/// snapshot (predating the id) never indexes - so it fell through to the
+/// snapshot's title bucket, and a hand-typed row of the same title, sharing
+/// nothing but that title, claimed it first just by sitting earlier in the
+/// queue. The id-carrying row must win that title slot before any id-less
+/// row gets a chance at it.
+test("an id-stamped row claims the file's title slot before a hand-typed row can", () => {
+  const typed = tc("Login", { tags: "mine" });
+  const stamped = tc("Login", { update_id: 5 });
+  const queue = [typed, stamped];
+  const prev = [tc("Login")]; // the snapshot predates the id stamp
+
+  const r = syncFromFile(queue, prev, [tc("Login, renamed", { update_id: 5 })]);
+  expect(r.queue.map((c) => c.tags)).toEqual(["mine", ""]);
+  expect(r.queue[1].title).toBe("Login, renamed");
+  expect(countBy(r.changes, "removed")).toBe(0);
+
+  expect(ownerPaths(queue, [watch("C:/w/one.json", prev)])).toEqual(["", "C:/w/one.json"]);
+});
