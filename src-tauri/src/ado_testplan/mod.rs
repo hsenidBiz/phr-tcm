@@ -215,7 +215,10 @@ pub fn build_iteration_details(
     let mut action_results = vec![];
     for (idx, sid) in step_ids.iter().enumerate() {
         let Some(Some(oc)) = step_outcomes.get(idx) else { continue };
-        if oc.is_empty() {
+        // "" is a shared-step reference (see parse_step_ids): its result
+        // would need the compref's AND the child's id, which the app does
+        // not have. Dropped rather than sent under a wrong path.
+        if oc.is_empty() || sid.is_empty() {
             continue;
         }
         let action_path = match sid.parse::<i64>() {

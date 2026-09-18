@@ -10,7 +10,7 @@ fn case(steps: &[(&str, &str)]) -> TestCase {
         title: "T".into(),
         steps: steps
             .iter()
-            .map(|(a, e)| Step { action: (*a).into(), expected: (*e).into() })
+            .map(|(a, e)| Step { action: (*a).into(), expected: (*e).into(), shared: None })
             .collect(),
         automation_status: "Not Automated".into(),
         ..Default::default()
@@ -150,7 +150,7 @@ fn a_title_declaring_its_branch_is_never_asked_to_split_again() {
             ("Read the employee's own file row.", "A Delete control is shown on the employee's own file."),
         ]
         .iter()
-        .map(|(a, e)| Step { action: (*a).into(), expected: (*e).into() })
+        .map(|(a, e)| Step { action: (*a).into(), expected: (*e).into(), shared: None })
         .collect(),
         automation_status: "Not Automated".into(),
         ..Default::default()

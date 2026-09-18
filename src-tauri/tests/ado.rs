@@ -250,6 +250,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         steps: vec![v2_lib::steps_xml::Step {
             action: "Do".into(),
             expected: "Done".into(),
+            shared: None,
         }],
         tags: "smoke".into(),
         automation_status: "Planned".into(),
@@ -807,7 +808,7 @@ async fn preconditions_are_html_escaped_on_create_and_update() {
         let client = v2_lib::ado::AdoClient::with_base_url("t".into(), server.uri());
         let tc = v2_lib::model::TestCase {
             title: "T".into(),
-            steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into() }],
+            steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
             automation_status: "Planned".into(),
             preconditions: "value < 10 & rising".into(),
             ..Default::default()
@@ -994,7 +995,7 @@ async fn a_case_exported_and_reimported_does_not_rewrite_its_steps() {
 async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
     let blank = v2_lib::model::TestCase {
         title: "T".into(),
-        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
         automation_status: "Planned".into(),
         tags: String::new(),
         module_value: String::new(),
@@ -1061,7 +1062,7 @@ async fn the_editor_can_clear_a_field_but_an_import_still_cannot() {
 async fn a_field_of_only_spaces_counts_as_blank() {
     let spaces = v2_lib::model::TestCase {
         title: "T".into(),
-        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![v2_lib::steps_xml::Step { action: "a".into(), expected: "b".into(), shared: None }],
         automation_status: "Planned".into(),
         tags: "   ".into(),
         module_value: "\t ".into(),

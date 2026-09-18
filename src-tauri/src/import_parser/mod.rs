@@ -292,7 +292,7 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             if action_wrapped || expected_wrapped {
                 wrapped_steps = true;
             }
-            steps.push(Step { action, expected });
+            steps.push(Step { action, expected, shared: None });
         }
 
         if steps.is_empty() {
@@ -582,7 +582,7 @@ fn parse_json(path: &str) -> Result<ParsedFile, String> {
             if action_wrapped || expected_wrapped {
                 wrapped_steps = true;
             }
-            steps.push(Step { action, expected });
+            steps.push(Step { action, expected, shared: None });
         }
 
         if steps.is_empty() {

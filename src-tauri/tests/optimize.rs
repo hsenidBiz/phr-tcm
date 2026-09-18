@@ -8,7 +8,7 @@ use v2_lib::steps_xml::Step;
 use v2_lib::transform::{apply, parse_ops};
 
 fn step(action: &str, expected: &str) -> Step {
-    Step { action: action.into(), expected: expected.into() }
+    Step { action: action.into(), expected: expected.into(), shared: None }
 }
 
 fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
@@ -66,8 +66,9 @@ fn a_declined_entry_step_says_why() {
             Step {
                 action: "In the PMS Module, open Performance Management from the main menu.".into(),
                 expected: "The list is shown.".into(),
+                shared: None,
             },
-            Step { action: "Click Approve.".into(), expected: "It is approved.".into() },
+            Step { action: "Click Approve.".into(), expected: "It is approved.".into(), shared: None },
         ],
     );
     let (_out, report) = optimize(
@@ -93,7 +94,7 @@ fn reorder_false_keeps_document_order_but_still_cleans_up() {
             title,
             "",
             pre,
-            vec![Step { action: "Click Submit.".into(), expected: "Verify that it saves".into() }],
+            vec![Step { action: "Click Submit.".into(), expected: "Verify that it saves".into(), shared: None }],
         )
     };
     // Deliberately alternating setups: the tester ordering would group
@@ -131,7 +132,7 @@ fn reorder_false_keeps_document_order_but_still_cleans_up() {
 #[test]
 fn both_orders_are_stamped_whatever_the_array_order_is() {
     let mk = |title: &str, pre: &str| {
-        case(title, "", pre, vec![Step { action: "Click.".into(), expected: String::new() }])
+        case(title, "", pre, vec![Step { action: "Click.".into(), expected: String::new(), shared: None }])
     };
     // Alternating setups so spec order and tester order genuinely differ.
     let draft = vec![
@@ -1513,4 +1514,18 @@ fn nested_parentheticals_pair_correctly() {
     let out = clean_expected("The row is shown (see the table (above) for the full list)");
     assert_eq!(out, "The row is shown.");
     assert!(!out.contains(')'), "no stray bracket: {out}");
+}
+
+/// The optimizer removes empty steps. A shared step has no text of its own
+/// and is not empty.
+#[test]
+fn the_optimizer_keeps_shared_steps() {
+    let c = case(
+        "Report opens after sign in",
+        "",
+        "",
+        vec![Step { shared: Some(812), ..Default::default() }, step("Open the report.", "The report is shown.")],
+    );
+    let (out, _) = optimize(vec![c], None);
+    assert!(out[0].steps.iter().any(|s| s.shared == Some(812)), "{:?}", out[0].steps);
 }

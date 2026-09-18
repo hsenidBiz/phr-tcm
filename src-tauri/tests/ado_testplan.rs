@@ -831,3 +831,16 @@ async fn ensure_tries_one_plan_per_area_and_names_the_area() {
     }
     server.verify().await;
 }
+
+/// A shared-step row has no step id of its own ("" from parse_step_ids).
+/// A mark on it must be dropped, never sent under a made-up action path.
+#[test]
+fn iteration_details_skip_a_step_without_an_id() {
+    let ids = vec!["2".to_string(), String::new(), "4".to_string()];
+    let outcomes = vec![Some("Passed".to_string()), Some("Failed".to_string()), Some("Passed".to_string())];
+    let details = build_iteration_details(&ids, &outcomes, "Failed").unwrap();
+    let actions = details[0]["actionResults"].as_array().unwrap();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[0]["stepIdentifier"], "2");
+    assert_eq!(actions[1]["stepIdentifier"], "4");
+}

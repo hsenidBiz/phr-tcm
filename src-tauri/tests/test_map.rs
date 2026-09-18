@@ -17,7 +17,7 @@ fn case(id: Option<i32>, title: &str) -> MapCase {
     MapCase {
         id,
         title: title.into(),
-        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into(), shared: None }],
         preconditions: "Signed in".into(),
         tags: "smoke".into(),
         automation_status: "Not Automated".into(),
@@ -121,7 +121,7 @@ fn tc(title: &str, area: &str, id: Option<i32>) -> v2_lib::model::TestCase {
         title: title.into(),
         area: area.into(),
         update_id: id,
-        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into(), shared: None }],
         ..Default::default()
     }
 }

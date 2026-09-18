@@ -706,6 +706,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
                 None => "Sign in.".to_string(),
             },
             expected: "The home page is displayed.".to_string(),
+            shared: None,
         }
     });
 
@@ -717,6 +718,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
         out.push(Step {
             action: entry.to_string(),
             expected: "The application opens.".to_string(),
+            shared: None,
         });
         out.extend(signin_step);
     } else {
@@ -724,6 +726,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
         out.push(Step {
             action: entry.to_string(),
             expected: "The module opens.".to_string(),
+            shared: None,
         });
     }
 
@@ -756,6 +759,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
         out.push(Step {
             action: format!("Navigate to the {target}."),
             expected: format!("The {target} is displayed."),
+            shared: None,
         });
         consumed.push((*sentence).clone());
     }
@@ -766,6 +770,7 @@ fn preamble_steps(c: &TestCase, entry: &str) -> (Vec<Step>, Vec<String>) {
         out.push(Step {
             action: format!("Navigate to {}.", c.module_value.trim()),
             expected: format!("The {} page is displayed.", c.module_value.trim()),
+            shared: None,
         });
     }
     (out, consumed)
@@ -931,7 +936,7 @@ pub fn optimize_full(
         }
 
         let before = c.steps.len();
-        c.steps.retain(|s| !s.action.trim().is_empty() || !s.expected.trim().is_empty());
+        c.steps.retain(|s| s.shared.is_some() || !s.action.trim().is_empty() || !s.expected.trim().is_empty());
         report.empty_steps_removed += before - c.steps.len();
 
         for (i, s) in c.steps.iter_mut().enumerate() {

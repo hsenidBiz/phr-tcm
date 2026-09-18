@@ -169,7 +169,7 @@ export const commands = {
 	 */
 	devProbeBoardsSuite: (organization: string, project: string, pbiId: number, caseId: number, planId: number) => typedError<string, string>(__TAURI_INVOKE("dev_probe_boards_suite", { organization, project, pbiId, caseId, planId })),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
-	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
+	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull_Serialize[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**
 	 *  Save one existing case from the editor (no suite-ensure, no pacing).
 	 *  The case must carry update_id; blank-skip semantics apply as always.
@@ -476,7 +476,7 @@ export const commands = {
 	 */
 	refreshQueueHtml: (queue: TestCase_Deserialize[], subtitle: string, organization: string, notes: { [key in string]: string }, palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_queue_html", { queue, subtitle, organization, notes, palette })),
 	/**  Test cases for arbitrary ids (suite browser handoffs). */
-	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
+	testCasesByIds: (organization: string, ids: number[], moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull_Serialize[], AdoError>(__TAURI_INVOKE("test_cases_by_ids", { organization, ids, moduleRef, preconditionsRef })),
 	/**
 	 *  Values for ANY Test Case field: the definition's picklist when one
 	 *  exists, otherwise the distinct values in use on the project's Test
@@ -1983,10 +1983,7 @@ export type StateInfo = {
 	category: string,
 };
 
-export type Step = {
-	action: string,
-	expected: string,
-};
+export type Step = Step_Serialize | Step_Deserialize;
 
 export type StepRecord = StepRecord_Serialize | StepRecord_Deserialize;
 
@@ -2029,6 +2026,30 @@ export type StepScript_Serialize = {
 	 *  check only when this says why, and the app shows the sentence.
 	 */
 	unchecked?: string | null,
+};
+
+export type Step_Deserialize = {
+	action: string,
+	expected: string,
+	/**
+	 *  A Shared Steps reference - `<compref ref="N">` in the Steps XML - as
+	 *  the id of the Shared Steps work item. Its steps live in THAT item,
+	 *  so `action` and `expected` stay empty and the app never edits them;
+	 *  it only keeps, moves or drops the reference.
+	 */
+	shared?: number | null,
+};
+
+export type Step_Serialize = {
+	action: string,
+	expected: string,
+	/**
+	 *  A Shared Steps reference - `<compref ref="N">` in the Steps XML - as
+	 *  the id of the Shared Steps work item. Its steps live in THAT item,
+	 *  so `action` and `expected` stay empty and the app never edits them;
+	 *  it only keeps, moves or drops the reference.
+	 */
+	shared?: number | null,
 };
 
 export type SubmitItemResult = {
@@ -2123,12 +2144,49 @@ export type TestCase = TestCase_Serialize | TestCase_Deserialize;
  *  preconditions flattened to plain text. `id` doubles as update_id when the
  *  editor saves.
  */
-export type TestCaseFull = {
+export type TestCaseFull = TestCaseFull_Serialize | TestCaseFull_Deserialize;
+
+/**
+ *  A fully-loaded Test Case for the editor: steps parsed from the XML blob,
+ *  preconditions flattened to plain text. `id` doubles as update_id when the
+ *  editor saves.
+ */
+export type TestCaseFull_Deserialize = {
 	id: number,
 	title: string,
 	tags: string,
 	automation_status: string,
-	steps: Step[],
+	steps: Step_Deserialize[],
+	/**
+	 *  Real ADO step ids (document order, aligned with `steps`) - the runner
+	 *  needs them to build iterationDetails.
+	 */
+	step_ids: string[],
+	/**
+	 *  The Steps field EXACTLY as Azure DevOps holds it.
+	 * 
+	 *  `steps` above is a lossy read: parse_steps_xml strips every tag, so
+	 *  bold, links and embedded screenshots do not survive it. Writing that
+	 *  back would delete them from the work item. Keeping the original
+	 *  lets a save ask "did the user actually change the steps?" and, when
+	 *  the answer is no, leave the field out of the patch entirely.
+	 */
+	steps_xml: string,
+	module_value: string,
+	preconditions: string,
+};
+
+/**
+ *  A fully-loaded Test Case for the editor: steps parsed from the XML blob,
+ *  preconditions flattened to plain text. `id` doubles as update_id when the
+ *  editor saves.
+ */
+export type TestCaseFull_Serialize = {
+	id: number,
+	title: string,
+	tags: string,
+	automation_status: string,
+	steps: Step_Serialize[],
 	/**
 	 *  Real ADO step ids (document order, aligned with `steps`) - the runner
 	 *  needs them to build iterationDetails.
@@ -2157,7 +2215,7 @@ export type TestCaseSummary = {
 
 export type TestCase_Deserialize = {
 	title: string,
-	steps: Step[],
+	steps: Step_Deserialize[],
 	/**  Semicolon-separated. */
 	tags: string,
 	/**  "Not Automated" or "Planned". */
@@ -2230,7 +2288,7 @@ export type TestCase_Deserialize = {
 
 export type TestCase_Serialize = {
 	title: string,
-	steps: Step[],
+	steps: Step_Serialize[],
 	/**  Semicolon-separated. */
 	tags: string,
 	/**  "Not Automated" or "Planned". */

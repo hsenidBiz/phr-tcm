@@ -109,7 +109,9 @@ impl TestCase {
             return Err("At least one step is required.".into());
         }
         for (i, step) in self.steps.iter().enumerate() {
-            if step.action.trim().is_empty() {
+            // A Shared Steps reference has no action of its own - its steps
+            // live in the referenced work item.
+            if step.shared.is_none() && step.action.trim().is_empty() {
                 return Err(format!("Step {} action is empty.", i + 1));
             }
         }

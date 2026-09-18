@@ -11,7 +11,7 @@
 //!   silent data loss, and `strip_tags` explains what replaced it.
 //! - malformed XML parses to an empty list, never an error
 
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 
@@ -34,12 +34,167 @@ const HTML_TAGS: [&str; 42] = [
 pub struct Step {
     pub action: String,
     pub expected: String,
+    /// A Shared Steps reference - `<compref ref="N">` in the Steps XML - as
+    /// the id of the Shared Steps work item. Its steps live in THAT item,
+    /// so `action` and `expected` stay empty and the app never edits them;
+    /// it only keeps, moves or drops the reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared: Option<i32>,
 }
 
 fn escape_xml(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// The HTML layer. Azure DevOps renders a step's `parameterizedString` as
+/// HTML, so plain text written without this is read as markup: a typed
+/// `<cycleId>` vanished from ADO's own view, and a typed `&lt;` came back as
+/// `<`. The parser already undoes both layers, and it reads older
+/// single-escaped steps the same as before.
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Plain step text as it goes into the XML: HTML-escaped, then XML-escaped.
+fn step_text(text: &str) -> String {
+    escape_xml(&escape_html(text))
+}
+
+/// One `<step>` element built from plain text.
+fn step_node(id: &str, step: &Step) -> String {
+    format!(
+        "<step id=\"{id}\" type=\"{}\"><parameterizedString isformatted=\"true\">{}</parameterizedString><parameterizedString isformatted=\"true\">{}</parameterizedString></step>",
+        step_type(&step.expected),
+        step_text(&step.action),
+        step_text(&step.expected),
+    )
+}
+
+/// A Shared Steps reference with no copy of its steps. Azure DevOps expands
+/// it from the referenced work item.
+fn compref_node(id: &str, reference: i32) -> String {
+    format!("<compref id=\"{id}\" ref=\"{reference}\" />")
+}
+
+/// The attribute's raw value, or "" when it is absent.
+fn attr(e: &BytesStart, key: &[u8]) -> String {
+    e.attributes()
+        .flatten()
+        .find(|a| a.key.as_ref() == key)
+        .and_then(|a| String::from_utf8(a.value.to_vec()).ok())
+        .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeKind {
+    Step,
+    Compref,
+}
+
+fn node_kind(e: &BytesStart) -> Option<NodeKind> {
+    match e.name().as_ref() {
+        b"step" => Some(NodeKind::Step),
+        b"compref" => Some(NodeKind::Compref),
+        _ => None,
+    }
+}
+
+/// One top-level child of `<steps>`: where it sits in the source and the
+/// attributes the writers need. `start..open_end` is its opening tag;
+/// `start..end` the whole element (equal ends for a self-closing one).
+#[derive(Debug, Clone)]
+struct Node {
+    kind: NodeKind,
+    start: usize,
+    open_end: usize,
+    end: usize,
+    id: String,
+    ty: String,
+}
+
+/// The `<step>` and `<compref>` children of the root, in document order.
+/// A compref's own nested steps are part of that compref, not nodes of
+/// their own. `None` on empty or malformed input.
+fn top_level_nodes(xml: &str) -> Option<Vec<Node>> {
+    if xml.trim().is_empty() {
+        return None;
+    }
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut depth = 0usize;
+    let mut nodes = vec![];
+    let mut open: Option<Node> = None;
+    loop {
+        let before = reader.buffer_position() as usize;
+        let event = reader.read_event().ok()?;
+        let after = reader.buffer_position() as usize;
+        match event {
+            Event::Eof => break,
+            Event::Start(e) => {
+                depth += 1;
+                if depth == 2 {
+                    open = node_kind(&e).map(|kind| Node {
+                        kind,
+                        start: before,
+                        open_end: after,
+                        end: after,
+                        id: attr(&e, b"id"),
+                        ty: attr(&e, b"type"),
+                    });
+                }
+            }
+            Event::Empty(e) => {
+                if depth == 1 {
+                    if let Some(kind) = node_kind(&e) {
+                        nodes.push(Node {
+                            kind,
+                            start: before,
+                            open_end: after,
+                            end: after,
+                            id: attr(&e, b"id"),
+                            ty: attr(&e, b"type"),
+                        });
+                    }
+                }
+            }
+            Event::End(_) => {
+                if depth == 2 {
+                    if let Some(mut n) = open.take() {
+                        n.end = after;
+                        nodes.push(n);
+                    }
+                }
+                depth = depth.checked_sub(1)?;
+            }
+            _ => {}
+        }
+    }
+    (depth == 0).then_some(nodes)
+}
+
+/// `open` (an opening tag, `<x ...>` or `<x .../>`) with attribute `name`
+/// set to `value`: replaced in place when present, otherwise added before
+/// the closing `>` or `/>`. The `/>` case is D4: appending after the `/`
+/// wrote `<step id="2"/ type="...">`, which is not XML.
+fn with_attr(open: &str, name: &str, value: &str) -> String {
+    for q in ['"', '\''] {
+        let pat = format!(" {name}={q}");
+        if let Some(at) = open.find(&pat) {
+            let value_start = at + pat.len();
+            if let Some(len) = open[value_start..].find(q) {
+                return format!("{}{}{}", &open[..value_start], value, &open[value_start + len..]);
+            }
+        }
+    }
+    match open.strip_suffix("/>") {
+        Some(head) => format!("{} {name}=\"{value}\"/>", head.trim_end()),
+        None => format!("{} {name}=\"{value}\">", &open[..open.len() - 1]),
+    }
 }
 
 /// The `type` Azure DevOps gives a step: a `ValidateStep` carries an Expected
@@ -57,33 +212,18 @@ pub fn step_type(expected: &str) -> &'static str {
     }
 }
 
-/// The `type` attribute of each `<step>` in document order, aligned with
-/// `parse_steps_xml`'s output. A step with no type attribute reads as "".
+/// The `type` attribute of each top-level node in document order, aligned
+/// with `parse_steps_xml`'s output: "" for a shared-step reference and for
+/// a step with no type attribute.
 pub fn parse_step_types(xml_str: &str) -> Vec<String> {
-    if xml_str.trim().is_empty() {
-        return vec![];
-    }
-    let mut reader = Reader::from_str(xml_str);
-    let mut types = vec![];
-    loop {
-        match reader.read_event() {
-            Err(_) => return vec![],
-            Ok(Event::Eof) => break,
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.name().as_ref() == b"step" {
-                    types.push(
-                        e.attributes()
-                            .flatten()
-                            .find(|a| a.key.as_ref() == b"type")
-                            .and_then(|a| String::from_utf8(a.value.to_vec()).ok())
-                            .unwrap_or_default(),
-                    );
-                }
-            }
-            Ok(_) => {}
-        }
-    }
-    types
+    top_level_nodes(xml_str)
+        .map(|nodes| {
+            nodes
+                .into_iter()
+                .map(|n| if n.kind == NodeKind::Step { n.ty } else { String::new() })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The original Steps XML with each `<step>`'s `type` corrected to what its
@@ -96,62 +236,50 @@ pub fn parse_step_types(xml_str: &str) -> Vec<String> {
 /// This is how a case the app once wrote with every step as an ActionStep
 /// gets repaired by the next save that touches it, without paying the
 /// markup loss that rebuilding the XML from plain text would cost.
+///
+/// Shared-step references, and the steps nested in them, are never touched.
 pub fn retype_steps_xml(xml: &str, steps: &[Step]) -> Option<String> {
-    if xml.trim().is_empty() || parse_step_types(xml).len() != steps.len() {
+    let nodes = top_level_nodes(xml)?;
+    if nodes.len() != steps.len() {
         return None;
     }
     let mut out = String::with_capacity(xml.len() + 16);
-    let mut rest = xml;
-    let mut i = 0;
+    let mut copied = 0;
     let mut changed = false;
-    while let Some(pos) = rest.find("<step") {
-        let after = &rest[pos + 5..];
-        // "<steps" and any other prefix share these five characters.
-        if !(after.starts_with(' ') || after.starts_with('>') || after.starts_with('/')) {
-            out.push_str(&rest[..pos + 5]);
-            rest = after;
-            continue;
+    for (n, s) in nodes.iter().zip(steps) {
+        match (n.kind, s.shared) {
+            (NodeKind::Compref, Some(_)) => continue,
+            (NodeKind::Step, None) => {}
+            // The list says "shared" where the XML has a step, or the
+            // other way round: it does not line up, so do not guess.
+            _ => return None,
         }
-        let end = after.find('>')?;
-        let tag = &after[..end];
-        let want = step_type(&steps.get(i)?.expected);
-        let retagged = match tag.find("type=\"") {
-            Some(t) => {
-                let value_start = t + "type=\"".len();
-                let value_end = value_start + tag[value_start..].find('"')?;
-                format!("{}{}{}", &tag[..value_start], want, &tag[value_end..])
-            }
-            None => format!("{tag} type=\"{want}\""),
-        };
-        if retagged != tag {
+        let open = &xml[n.start..n.open_end];
+        let retagged = with_attr(open, "type", step_type(&s.expected));
+        if retagged != open {
             changed = true;
+            out.push_str(&xml[copied..n.start]);
+            out.push_str(&retagged);
+            copied = n.open_end;
         }
-        out.push_str(&rest[..pos + 5]);
-        out.push_str(&retagged);
-        rest = &after[end..];
-        i += 1;
     }
-    out.push_str(rest);
-    if i != steps.len() {
-        return None;
-    }
+    out.push_str(&xml[copied..]);
     changed.then_some(out)
 }
 
-/// Build the XML string for the Microsoft.VSTS.TCM.Steps field.
+/// Build the XML string for the Microsoft.VSTS.TCM.Steps field. A shared
+/// step becomes a `<compref>` that takes its place in the id sequence.
 pub fn build_steps_xml(steps: &[Step]) -> String {
     if steps.is_empty() {
         return "<steps id=\"0\" last=\"1\"><step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\"></parameterizedString><parameterizedString isformatted=\"true\"></parameterizedString></step></steps>".to_string();
     }
     let mut out = format!("<steps id=\"0\" last=\"{}\">", steps.len() + 1);
     for (i, step) in steps.iter().enumerate() {
-        out.push_str(&format!(
-            "<step id=\"{}\" type=\"{}\"><parameterizedString isformatted=\"true\">{}</parameterizedString><parameterizedString isformatted=\"true\">{}</parameterizedString></step>",
-            i + 2,
-            step_type(&step.expected),
-            escape_xml(&step.action),
-            escape_xml(&step.expected),
-        ));
+        let id = (i + 2).to_string();
+        out.push_str(&match step.shared {
+            Some(reference) => compref_node(&id, reference),
+            None => step_node(&id, step),
+        });
     }
     out.push_str("</steps>");
     out
@@ -240,8 +368,21 @@ fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Parse the Steps XML into Step structs. Returns [] on empty or malformed
-/// input, mirroring v1 parse_steps_xml.
+/// A `<compref>` as a step: the reference only. An unreadable `ref` reads
+/// as 0, so the node still counts as a shared step. It is never mistaken
+/// for an empty local step, which a save would rebuild without the
+/// reference.
+fn shared_step(e: &BytesStart) -> Step {
+    Step {
+        shared: Some(attr(e, b"ref").trim().parse::<i32>().unwrap_or(0)),
+        ..Default::default()
+    }
+}
+
+/// Parse the Steps XML into Step structs: one per top-level `<step>` or
+/// `<compref>`, in document order. A compref's nested steps belong to the
+/// Shared Steps work item and are not flattened into the case. Returns []
+/// on empty or malformed input, mirroring v1 parse_steps_xml.
 pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
     if xml_str.trim().is_empty() {
         return vec![];
@@ -249,7 +390,11 @@ pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
     let mut reader = Reader::from_str(xml_str);
     reader.config_mut().trim_text(false);
 
-    let mut steps: Vec<Vec<String>> = vec![];
+    let mut out: Vec<Step> = vec![];
+    // Element depth: the root `<steps>` is 1, its children 2, theirs 3.
+    let mut depth = 0usize;
+    // The text fields of the top-level `<step>` being read.
+    let mut parts: Option<Vec<String>> = None;
     let mut capture: Option<(String, usize)> = None; // (buffer, nested depth)
 
     loop {
@@ -257,20 +402,24 @@ pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
             Err(_) => return vec![], // malformed
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) => {
-                let name = e.name().as_ref().to_vec();
-                if let Some((buf, depth)) = capture.as_mut() {
-                    *depth += 1;
+                depth += 1;
+                if let Some((buf, nested)) = capture.as_mut() {
+                    *nested += 1;
                     buf.push(' ');
-                    let _ = name;
-                } else if name == b"step" {
-                    steps.push(vec![]);
-                } else if name == b"parameterizedString" && !steps.is_empty() {
-                    capture = Some((String::new(), 0));
+                    continue;
+                }
+                match (depth, e.name().as_ref()) {
+                    (2, b"step") => parts = Some(vec![]),
+                    (2, b"compref") => out.push(shared_step(&e)),
+                    (3, b"parameterizedString") if parts.is_some() => {
+                        capture = Some((String::new(), 0))
+                    }
+                    _ => {}
                 }
             }
             Ok(Event::End(e)) => {
-                if let Some((buf, depth)) = capture.as_mut() {
-                    if *depth == 0 && e.name().as_ref() == b"parameterizedString" {
+                if let Some((buf, nested)) = capture.as_mut() {
+                    if *nested == 0 {
                         // Two layers of escaping: quick-xml (and the
                         // GeneralRef arm below) undid the XML's, leaving the
                         // HTML that ADO stores escaped inside it - `&quot;`,
@@ -278,19 +427,41 @@ pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
                         // strip tags, so real markup goes and a typed
                         // `<cycleId>` stays (see HTML_TAGS).
                         let text = collapse_ws(&strip_tags(&unescape_html(buf)));
-                        if let Some(parts) = steps.last_mut() {
-                            parts.push(text);
+                        if let Some(p) = parts.as_mut() {
+                            p.push(text);
                         }
                         capture = None;
                     } else {
-                        *depth = depth.saturating_sub(1);
+                        *nested -= 1;
                         buf.push(' ');
                     }
+                } else if depth == 2 && e.name().as_ref() == b"step" {
+                    if let Some(p) = parts.take() {
+                        out.push(Step {
+                            action: p.first().cloned().unwrap_or_default(),
+                            expected: p.get(1).cloned().unwrap_or_default(),
+                            shared: None,
+                        });
+                    }
                 }
+                depth = depth.saturating_sub(1);
             }
-            Ok(Event::Empty(_)) => {
+            Ok(Event::Empty(e)) => {
                 if let Some((buf, _)) = capture.as_mut() {
                     buf.push(' ');
+                    continue;
+                }
+                match (depth + 1, e.name().as_ref()) {
+                    (2, b"step") => out.push(Step::default()),
+                    (2, b"compref") => out.push(shared_step(&e)),
+                    // An empty field is still a field: without this, an
+                    // empty action moved the expected result into its slot.
+                    (3, b"parameterizedString") => {
+                        if let Some(p) = parts.as_mut() {
+                            p.push(String::new());
+                        }
+                    }
+                    _ => {}
                 }
             }
             Ok(Event::Text(t)) => {
@@ -313,49 +484,28 @@ pub fn parse_steps_xml(xml_str: &str) -> Vec<Step> {
             Ok(_) => {}
         }
     }
-    // A dangling capture means the XML was truncated mid-element.
-    if capture.is_some() {
+    // A dangling capture or step means the XML was truncated mid-element.
+    if capture.is_some() || parts.is_some() {
         return vec![];
     }
-
-    steps
-        .into_iter()
-        .map(|parts| Step {
-            action: parts.first().cloned().unwrap_or_default(),
-            expected: parts.get(1).cloned().unwrap_or_default(),
-        })
-        .collect()
+    out
 }
 
-/// The step ids in document order from a Steps XML blob. ADO assigns
-/// arbitrary ids (not 2,3,4...) once a case has been edited in the web UI,
-/// and iterationDetails must reference the REAL ids - never index math.
+/// The step ids in document order from a Steps XML blob, index-aligned with
+/// `parse_steps_xml`. ADO assigns arbitrary ids (not 2,3,4...) once a case
+/// has been edited in the web UI, and iterationDetails must reference the
+/// REAL ids - never index math. A shared-step reference (and a step with
+/// no id) holds "": no per-step result can be recorded against it, and
+/// `build_iteration_details` skips it.
 pub fn parse_step_ids(xml_str: &str) -> Vec<String> {
-    if xml_str.trim().is_empty() {
-        return vec![];
-    }
-    let mut reader = Reader::from_str(xml_str);
-    let mut ids = vec![];
-    loop {
-        match reader.read_event() {
-            Err(_) => return vec![],
-            Ok(Event::Eof) => break,
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.name().as_ref() == b"step" {
-                    if let Some(id) = e
-                        .attributes()
-                        .flatten()
-                        .find(|a| a.key.as_ref() == b"id")
-                        .and_then(|a| String::from_utf8(a.value.to_vec()).ok())
-                    {
-                        ids.push(id);
-                    }
-                }
-            }
-            Ok(_) => {}
-        }
-    }
-    ids
+    top_level_nodes(xml_str)
+        .map(|nodes| {
+            nodes
+                .into_iter()
+                .map(|n| if n.kind == NodeKind::Step { n.id } else { String::new() })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Flatten an ADO rich-text/HTML field to clean plain text, ported from v1

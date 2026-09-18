@@ -140,7 +140,7 @@ fn json_export_round_trips_through_the_importer() {
     let queue = vec![
         TestCase {
             title: "JSON case".into(),
-            steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+            steps: vec![Step { action: "Do".into(), expected: "Done".into(), shared: None }],
             tags: "smoke".into(),
             automation_status: "Planned".into(),
             module_value: "Auth".into(),
@@ -155,7 +155,7 @@ fn json_export_round_trips_through_the_importer() {
         },
         TestCase {
             title: "New one".into(),
-            steps: vec![Step { action: "Go".into(), expected: "".into() }],
+            steps: vec![Step { action: "Go".into(), expected: "".into(), shared: None }],
             automation_status: "Not Automated".into(),
             ..Default::default()
         },
@@ -272,7 +272,7 @@ fn sort_orders_round_trip_and_junk_values_warn() {
     let queue = vec![
         TestCase {
             title: "Ordered".into(),
-            steps: vec![Step { action: "Do".into(), expected: String::new() }],
+            steps: vec![Step { action: "Do".into(), expected: String::new(), shared: None }],
             automation_status: "Not Automated".into(),
             spec_order: Some(2),
             tester_order: Some(1),
@@ -280,7 +280,7 @@ fn sort_orders_round_trip_and_junk_values_warn() {
         },
         TestCase {
             title: "Unordered".into(),
-            steps: vec![Step { action: "Go".into(), expected: String::new() }],
+            steps: vec![Step { action: "Go".into(), expected: String::new(), shared: None }],
             automation_status: "Not Automated".into(),
             ..Default::default()
         },
@@ -328,13 +328,13 @@ fn the_draft_page_badges_each_case_new_or_update() {
     let queue = vec![
         TestCase {
             title: "Creates fresh".into(),
-            steps: vec![Step { action: "x".into(), expected: String::new() }],
+            steps: vec![Step { action: "x".into(), expected: String::new(), shared: None }],
             automation_status: "Not Automated".into(),
             ..Default::default()
         },
         TestCase {
             title: "Writes over 77".into(),
-            steps: vec![Step { action: "x".into(), expected: String::new() }],
+            steps: vec![Step { action: "x".into(), expected: String::new(), shared: None }],
             automation_status: "Not Automated".into(),
             update_id: Some(77),
             ..Default::default()
@@ -392,7 +392,7 @@ fn merging_cases_back_preserves_the_rest_of_the_file() {
     .to_string();
     let edited = vec![TestCase {
         title: "Renamed by bulk edit".into(),
-        steps: vec![Step { action: "x".into(), expected: String::new() }],
+        steps: vec![Step { action: "x".into(), expected: String::new(), shared: None }],
         automation_status: "Not Automated".into(),
         tags: "smoke".into(),
         ..Default::default()
@@ -421,7 +421,7 @@ fn merging_cases_back_preserves_the_rest_of_the_file() {
 fn merging_into_a_bare_array_produces_the_wrapper_shape() {
     let edited = vec![TestCase {
         title: "A".into(),
-        steps: vec![Step { action: "x".into(), expected: String::new() }],
+        steps: vec![Step { action: "x".into(), expected: String::new(), shared: None }],
         automation_status: "Not Automated".into(),
         ..Default::default()
     }];
@@ -439,7 +439,7 @@ fn merging_into_a_bare_array_produces_the_wrapper_shape() {
 fn the_report_can_hide_its_reviewer_notes() {
     let with_notes = vec![TestCase {
         title: "Has notes".into(),
-        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        steps: vec![Step { action: "Do".into(), expected: "Done".into(), shared: None }],
         automation_status: "Not Automated".into(),
         reviewer_notes: "Spec: Step10.md 7.7".into(),
         spec_order: None,
@@ -476,7 +476,7 @@ fn the_report_can_hide_its_reviewer_notes() {
     // another thing to read.
     let without = vec![TestCase {
         title: "No notes".into(),
-        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        steps: vec![Step { action: "Do".into(), expected: "Done".into(), shared: None }],
         automation_status: "Not Automated".into(),
         ..Default::default()
     }];
@@ -494,7 +494,7 @@ fn findings_can_be_hidden_from_the_page() {
     use v2_lib::model::CaseFinding;
     let with_findings = vec![TestCase {
         title: "Has findings".into(),
-        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        steps: vec![Step { action: "Do".into(), expected: "Done".into(), shared: None }],
         automation_status: "Not Automated".into(),
         findings: vec![CaseFinding {
             kind: "spec".into(),
@@ -528,7 +528,7 @@ fn findings_can_be_hidden_from_the_page() {
     // No findings anywhere: no button.
     let without = vec![TestCase {
         title: "No findings".into(),
-        steps: vec![Step { action: "Do".into(), expected: "Done".into() }],
+        steps: vec![Step { action: "Do".into(), expected: "Done".into(), shared: None }],
         automation_status: "Not Automated".into(),
         ..Default::default()
     }];
@@ -545,7 +545,7 @@ fn findings_can_be_hidden_from_the_page() {
 fn reviewer_notes_render_as_markdown_in_the_review_page() {
     let queue = vec![TestCase {
         title: "Login".into(),
-        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into(), shared: None }],
         automation_status: "Planned".into(),
         reviewer_notes: "## Where this came from\n\n\
                          Covers [AC-4](https://spec.invalid/auth#ac4).\n\n\
@@ -584,7 +584,7 @@ fn reviewer_notes_render_as_markdown_in_the_review_page() {
     // every card would be worse than nothing.
     let bare = vec![TestCase {
         title: "No notes".into(),
-        steps: vec![Step { action: "Open".into(), expected: "".into() }],
+        steps: vec![Step { action: "Open".into(), expected: "".into(), shared: None }],
         automation_status: "Planned".into(),
         ..Default::default()
     }];
@@ -600,7 +600,7 @@ fn reviewer_notes_render_as_markdown_in_the_review_page() {
 fn html_export_carries_cases_and_search() {
     let queue = vec![TestCase {
         title: "Login <works>".into(),
-        steps: vec![Step { action: "Open & go".into(), expected: "Shown".into() }],
+        steps: vec![Step { action: "Open & go".into(), expected: "Shown".into(), shared: None }],
         tags: "smoke; ui".into(),
         automation_status: "Planned".into(),
         module_value: "Auth".into(),
@@ -765,7 +765,7 @@ fn html_export_with_note_ctx_adds_autosaving_comment_boxes() {
 fn is_valid_rules_ported() {
     let ok = TestCase {
         title: "T".into(),
-        steps: vec![Step { action: "Do".into(), expected: "".into() }],
+        steps: vec![Step { action: "Do".into(), expected: "".into(), shared: None }],
         automation_status: "Planned".into(),
         ..Default::default()
     };
@@ -900,7 +900,7 @@ fn a_step_that_spans_lines_is_folded_and_the_author_is_told() {
 fn a_cases_findings_render_in_their_own_block() {
     let mut with = TestCase {
         title: "Cut-off closes the order".into(),
-        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into(), shared: None }],
         automation_status: "Not Automated".into(),
         ..Default::default()
     };
@@ -910,7 +910,7 @@ fn a_cases_findings_render_in_their_own_block() {
     ];
     let without = TestCase {
         title: "Plain".into(),
-        steps: vec![Step { action: "Open".into(), expected: "Shown".into() }],
+        steps: vec![Step { action: "Open".into(), expected: "Shown".into(), shared: None }],
         automation_status: "Not Automated".into(),
         ..Default::default()
     };
@@ -958,7 +958,7 @@ fn the_review_page_links_to_the_tree_only_when_given_one() {
     use v2_lib::import_parser::export_queue_page;
     let queue = vec![TestCase {
         title: "T".into(),
-        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
         area: "Reports".into(),
         ..Default::default()
     }];
@@ -989,7 +989,7 @@ fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
     use v2_lib::spec_pane::SpecDoc;
     let queue = vec![TestCase {
         title: "T".into(),
-        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
         reviewer_notes: "Spec: Step13-CalculationEngine.md 5.8 Display Rules\n\n> \"shown\"".into(),
         ..Default::default()
     }];
@@ -1038,7 +1038,7 @@ fn the_shell_carries_has_files_when_a_draft_file_sits_beside_the_spec_pane() {
     use v2_lib::spec_pane::SpecDoc;
     let queue = vec![TestCase {
         title: "T".into(),
-        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        steps: vec![Step { action: "a".into(), expected: "b".into(), shared: None }],
         ..Default::default()
     }];
     let files = vec![DraftFile {

@@ -465,6 +465,7 @@ pub fn parse_ops_full(
                     into.push(crate::steps_xml::Step {
                         action,
                         expected: sv["expected"].as_str().unwrap_or("").to_string(),
+                        shared: None,
                     });
                 }
                 if into.is_empty() {
@@ -506,6 +507,7 @@ pub fn parse_ops_full(
                                 .map(|sv| crate::steps_xml::Step {
                                     action: sv["action"].as_str().unwrap_or("").to_string(),
                                     expected: sv["expected"].as_str().unwrap_or("").to_string(),
+                                    shared: None,
                                 })
                                 .collect()
                         })
@@ -959,6 +961,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                                 crate::steps_xml::Step {
                                     action: action.clone(),
                                     expected: expected.clone(),
+                                    shared: None,
                                 },
                             );
                         }
@@ -966,6 +969,7 @@ pub fn apply(cases: Vec<TestCase>, ops: &[Operation]) -> (Vec<TestCase>, Transfo
                             c.steps.push(crate::steps_xml::Step {
                                 action: action.clone(),
                                 expected: expected.clone(),
+                                shared: None,
                             });
                         }
                         Op::RemoveStepMatching(find) => {
