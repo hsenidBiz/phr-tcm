@@ -2,7 +2,7 @@
 //! the ADO-backed routes (Task 2) via wiremock. The TCP loop (Task 3) is
 //! deliberately thin - everything interesting lives in `route`.
 
-use v2_lib::ai_bridge::{new_token, q, route, BridgeContext};
+use v2_lib::ai_bridge::{bridge_may_write, new_token, q, route, BridgeContext};
 
 fn ctx() -> BridgeContext {
     BridgeContext {
@@ -1072,12 +1072,13 @@ async fn a_draft_can_be_optimized_from_a_path() {
 #[tokio::test]
 async fn optimize_in_place_writes_back_and_returns_only_the_report() {
     let dir = TempDir::new();
-    let path = draft_on_disk(&dir);
+    let ctx = repo_ctx(&dir);
+    let path = in_repo(&dir, &draft_on_disk(&dir));
     let target = format!(
         "/optimize?in_place=true&path={}",
         path.to_string_lossy().replace('\\', "%5C")
     );
-    let (status, out) = route(&ctx(), None, "POST", &target, "", "1.0.0").await;
+    let (status, out) = route(&ctx, None, "POST", &target, "", "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(v.get("test_cases").is_none(), "in_place must not echo the draft: {out}");
@@ -1612,9 +1613,10 @@ fn assert_file_kept_its_other_keys(on_disk: &str) {
 #[tokio::test]
 async fn optimize_in_place_keeps_the_files_specs_and_comments() {
     let dir = TempDir::new();
-    let path = draft_with_specs_on_disk(&dir);
+    let ctx = repo_ctx(&dir);
+    let path = in_repo(&dir, &draft_with_specs_on_disk(&dir));
     let target = format!("/optimize?in_place=true&path={}", path.to_string_lossy().replace('\\', "%5C"));
-    let (status, out) = route(&ctx(), None, "POST", &target, "", "1.0.0").await;
+    let (status, out) = route(&ctx, None, "POST", &target, "", "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let on_disk = std::fs::read_to_string(&path).unwrap();
     assert!(on_disk.contains("tester_order"), "the cases were rewritten: {on_disk}");
@@ -1624,14 +1626,15 @@ async fn optimize_in_place_keeps_the_files_specs_and_comments() {
 #[tokio::test]
 async fn transform_in_place_keeps_the_files_specs_and_comments() {
     let dir = TempDir::new();
-    let path = draft_with_specs_on_disk(&dir);
+    let ctx = repo_ctx(&dir);
+    let path = in_repo(&dir, &draft_with_specs_on_disk(&dir));
     let body = serde_json::json!({
         "path": path.to_string_lossy(),
         "in_place": true,
         "operations": [{ "op": "set_tags", "value": "smoke" }],
     })
     .to_string();
-    let (status, out) = route(&ctx(), None, "POST", "/transform", &body, "1.0.0").await;
+    let (status, out) = route(&ctx, None, "POST", "/transform", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     let on_disk = std::fs::read_to_string(&path).unwrap();
     assert!(on_disk.contains("\"smoke\""), "the cases were rewritten: {on_disk}");
@@ -2121,4 +2124,77 @@ dbo\tLeaveRequest\tReason\tnvarchar\t200\tYES\n\
         assert_eq!(refused.0, 502);
         assert!(!refused.1.contains("M5kjapL2H3bEIuZZ4YA4"), "{}", refused.1);
     }
+}
+
+#[tokio::test]
+async fn a_wiki_name_that_climbs_out_is_refused_before_any_request() {
+    let server = MockServer::start().await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    for wiki in ["..%2F..%2FotherOrg", "a%2Fb", "a%5Cb", ".."] {
+        let (status, out) = route(
+            &ctx(),
+            Some(&client),
+            "GET",
+            &format!("/wiki-page?wiki={wiki}&path=%2FHome"),
+            "",
+            "1.0.0",
+        )
+        .await;
+        assert_eq!(status, 400, "{wiki}: {out}");
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+/// A working repository with its `.test-cases` folder: the one place the
+/// bridge may write a draft in place without the app following the file.
+fn repo_ctx(dir: &TempDir) -> BridgeContext {
+    std::fs::create_dir_all(dir.0.join(".test-cases")).unwrap();
+    BridgeContext { working_dir: Some(dir.0.to_string_lossy().into_owned()), ..ctx() }
+}
+
+fn in_repo(dir: &TempDir, src: &std::path::Path) -> std::path::PathBuf {
+    let to = dir.0.join(".test-cases").join(src.file_name().unwrap());
+    std::fs::rename(src, &to).unwrap();
+    to
+}
+
+/// "Reads only" wrote any path that parsed as a draft.
+#[tokio::test]
+async fn in_place_refuses_a_file_the_app_does_not_own() {
+    let dir = TempDir::new();
+    let ctx = repo_ctx(&dir);
+    let path = draft_on_disk(&dir); // beside .test-cases, not in it
+    let before = std::fs::read_to_string(&path).unwrap();
+
+    let target = format!("/optimize?in_place=true&path={}", path.to_string_lossy().replace('\\', "%5C"));
+    let (status, out) = route(&ctx, None, "POST", &target, "", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains(".test-cases"), "{out}");
+
+    let body = serde_json::json!({
+        "path": path.to_string_lossy(), "in_place": true,
+        "operations": [{ "op": "set_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (status, out) = route(&ctx, None, "POST", "/transform", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before, "nothing was written");
+}
+
+#[test]
+fn bridge_writes_only_under_test_cases_or_to_a_watched_file() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.0.join(".test-cases")).unwrap();
+    let inside = dir.0.join(".test-cases").join("a.json");
+    let outside = dir.0.join("b.json");
+    std::fs::write(&inside, "{}").unwrap();
+    std::fs::write(&outside, "{}").unwrap();
+    let root = dir.0.to_string_lossy().into_owned();
+    let (inside, outside) = (inside.to_string_lossy().into_owned(), outside.to_string_lossy().into_owned());
+    assert!(bridge_may_write(&inside, Some(&root), &[]));
+    assert!(!bridge_may_write(&outside, Some(&root), &[]));
+    assert!(!bridge_may_write(&inside, None, &[]), "no working repository, no folder rule");
+    assert!(bridge_may_write(&outside, None, &[outside.clone()]), "a followed file may be written");
+    let sneaky = dir.0.join(".test-cases").join("..").join("b.json");
+    assert!(!bridge_may_write(&sneaky.to_string_lossy(), Some(&root), &[]), "`..` is resolved first");
 }

@@ -280,6 +280,32 @@ fn writable(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
     Err("this file is no longer open in the app - reopen the report from the queue".into())
 }
 
+/// Whether the app's own commands may rewrite `path` as a draft.
+///
+/// Not `writable()`: the post-upload id stamp writes the files a queue came
+/// from after a PBI switch has already unwatched them, and refusing it
+/// leaves files that re-import as duplicates. So: a watched file, or an
+/// existing `.json` file that already holds a draft (`test_cases`, or a
+/// bare case array). Anything else is not ours to overwrite.
+pub fn draft_write_allowed(path: &str, watched: &[String]) -> Result<(), String> {
+    if watched.iter().any(|p| p == path) {
+        return Ok(());
+    }
+    let p = std::path::Path::new(path);
+    let is_json = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    if !is_json || !p.is_file() {
+        return Err("that is not a draft file this app can write to".into());
+    }
+    let text = std::fs::read_to_string(p).map_err(|e| format!("could not read the file: {e}"))?;
+    match serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) {
+        Ok(v) if v.is_array() || v.get("test_cases").is_some_and(|t| t.is_array()) => Ok(()),
+        _ => Err("that file is not a test case draft, so the app will not write to it".into()),
+    }
+}
+
 /// Where a comment posted from a report page belongs. The default arm also
 /// catches pages generated before drafts had comments, which send no kind.
 fn route_note(app: &tauri::AppHandle, n: note_server::NotePayload) -> Result<(), String> {
@@ -415,6 +441,7 @@ pub fn save_draft_comment(
     // different routes, and read-patch-write from both at once loses one of
     // them silently.
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    draft_write_allowed(&path, &crate::filewatch::watched_paths(&watch_state(&app)))?;
     let json = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
     let target = import_parser::comments::CaseTarget { id, title };
     let patched = import_parser::comments::patch_case_comment(&json, &target, &text)?;
@@ -439,6 +466,7 @@ pub fn save_draft_cases(
     // autosave can reach the same file, and read-patch-write from both at
     // once loses one of them silently.
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    draft_write_allowed(&path, &crate::filewatch::watched_paths(&watch_state(&app)))?;
     let old = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
     let out = import_parser::merge_cases_into_draft(&old, &cases)?;
     crate::filewatch::write_watched(&watch_state(&app), &path, &out)

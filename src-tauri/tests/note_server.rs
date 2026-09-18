@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc;
-use v2_lib::note_server::{parse_note, start, NotePayload};
+use v2_lib::note_server::{body_if_complete, parse_note, start, NotePayload};
 
 fn post(port: u16, path: &str, body: &str) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -219,4 +219,16 @@ fn report_requests_parse_and_the_path_registry_keeps_kinds_apart() {
     set_report_path(REPORT_QUEUE, "C:/tmp/queue.html");
     assert_eq!(report_path(REPORT_DRAFT).as_deref(), Some("C:/tmp/draft.html"));
     assert_eq!(report_path(REPORT_QUEUE).as_deref(), Some("C:/tmp/queue.html"));
+}
+
+/// `body[..len]` on a lossy string panicked when Content-Length ended inside
+/// a multi-byte character - before the token check, so any page could do it.
+#[test]
+fn a_content_length_inside_a_character_does_not_panic() {
+    let cut = "POST /note HTTP/1.1\r\nContent-Length: 1\r\n\r\né".as_bytes();
+    assert_eq!(body_if_complete(cut).as_deref(), Some("\u{FFFD}"));
+    let whole = "POST /note HTTP/1.1\r\nContent-Length: 2\r\n\r\né".as_bytes();
+    assert_eq!(body_if_complete(whole).as_deref(), Some("é"));
+    let short = "POST /note HTTP/1.1\r\nContent-Length: 5\r\n\r\nab".as_bytes();
+    assert_eq!(body_if_complete(short), None, "not all here yet");
 }

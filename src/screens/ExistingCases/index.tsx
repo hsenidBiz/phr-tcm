@@ -458,6 +458,7 @@ export default function ExistingCases({
         <DeleteConfirm
           org={org}
           project={project}
+          pbiId={pbiId}
           cases={selectedCases.map((c) => ({ id: c.id, title: c.title }))}
           onClose={() => setDeleteOpen(false)}
           onDeleted={() => {

@@ -141,6 +141,22 @@ pub async fn test_case_field_values(
         .await
 }
 
+/// The area of the PBI whose cases are on screen, or None for the root.
+async fn pbi_area(
+    client: &ado::AdoClient,
+    organization: &str,
+    project: &str,
+    pbi_id: Option<i32>,
+) -> Result<Option<String>, ado::AdoError> {
+    match pbi_id {
+        Some(id) => client
+            .get_work_item_paths(organization, project, id)
+            .await
+            .map(|(area, _)| Some(area)),
+        None => Ok(None),
+    }
+}
+
 /// Whether this user may delete work items here, which is what decides
 /// whether the app offers to at all.
 ///
@@ -161,14 +177,11 @@ pub async fn can_delete_test_cases(
     // shown actually live under. Area permissions are per node, and the
     // root said yes to a user the TCM API then refused; the sign-in-time
     // call passes no PBI and gets the root heuristic.
-    let area = match pbi_id {
-        Some(id) => match client.get_work_item_paths(&organization, &project, id).await {
-            Ok((area, _)) => Some(area),
-            // Fail closed: if the area cannot be learned, do not offer a
-            // button whose real gate could not be asked.
-            Err(_) => return Ok(false),
-        },
-        None => None,
+    let area = match pbi_area(&client, &organization, &project, pbi_id).await {
+        Ok(a) => a,
+        // Fail closed: if the area cannot be learned, do not offer a
+        // button whose real gate could not be asked.
+        Err(_) => return Ok(false),
     };
     Ok(client
         .can_delete_work_items(&organization, &project, area.as_deref())
@@ -227,6 +240,7 @@ pub async fn delete_test_cases(
     organization: String,
     project: String,
     ids: Vec<i32>,
+    pbi_id: Option<i32>,
 ) -> Result<Vec<ado::deletion::DeleteOutcome>, ado::AdoError> {
     if ids.is_empty() {
         return Ok(vec![]);
@@ -236,7 +250,9 @@ pub async fn delete_test_cases(
         ids.len()
     ));
     let token = get_fresh_token(&app).await?;
-    ado::AdoClient::new(token)
-        .delete_test_cases_permanently(&organization, &project, &ids)
+    let client = ado::AdoClient::new(token);
+    let area = pbi_area(&client, &organization, &project, pbi_id).await?;
+    client
+        .delete_test_cases_permanently(&organization, &project, area.as_deref(), &ids)
         .await
 }

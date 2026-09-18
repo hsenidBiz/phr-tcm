@@ -242,8 +242,6 @@ impl Drop for LiveGuard {
     }
 }
 
-/// Once the whole body (per Content-Length) has arrived, return it.
-
 /// Called whenever a report file is rewritten.
 pub fn bump_revision(kind: &str) {
     slot(kind).fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -311,15 +309,21 @@ pub fn request_report(buf: &[u8]) -> Option<(String, String)> {
     Some((token?, kind))
 }
 
-fn body_if_complete(buf: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(buf);
-    let (head, body) = text.split_once("\r\n\r\n")?;
+/// Once the whole body (per Content-Length) has arrived, return it.
+///
+/// Works in BYTES: Content-Length counts bytes, and slicing a lossy-decoded
+/// string at that count panicked inside a multi-byte character - before
+/// the token check, so any page that found the port could do it.
+pub fn body_if_complete(buf: &[u8]) -> Option<String> {
+    let split = buf.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let head = String::from_utf8_lossy(&buf[..split]);
+    let body = &buf[split + 4..];
     let len: usize = head
         .lines()
         .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(str::trim).map(String::from))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    (body.len() >= len).then(|| body[..len].to_string())
+    (body.len() >= len).then(|| String::from_utf8_lossy(&body[..len]).into_owned())
 }
 
 /// The note, if this is a POST /note request with a valid body.

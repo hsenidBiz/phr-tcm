@@ -189,3 +189,14 @@ fn report_points_filter_to_the_asked_for_cases() {
     let ids: Vec<i32> = kept.iter().map(|p| p.test_case_id.unwrap()).collect();
     assert_eq!(ids, vec![201, 203]);
 }
+
+#[test]
+fn outcome_and_org_are_escaped_and_the_page_fits_a_phone() {
+    let points = vec![point(1, "A", "<b>odd</b>"), point(2, "B", "Failed")];
+    let mut failures = HashMap::new();
+    failures.insert(2, FailureInfo { comment: String::new(), bug_ids: vec![7] });
+    let html = build_report_html("T", r#"o"><img src=x>"#, "p", &points, &failures, "now", &PagePalette::default());
+    assert!(!html.contains("<b>odd</b>"), "an outcome is data, not markup");
+    assert!(!html.contains(r#"o"><img"#), "the org must not break out of the bug link");
+    assert!(html.contains(r#"<meta name="viewport" content="width=device-width, initial-scale=1">"#));
+}

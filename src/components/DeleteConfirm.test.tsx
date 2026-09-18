@@ -30,6 +30,7 @@ function mount(onDeleted = vi.fn(), onClose = vi.fn()) {
       <DeleteConfirm
         org="acme"
         project="Web"
+        pbiId={42}
         cases={CASES}
         onClose={onClose}
         onDeleted={onDeleted}
@@ -100,6 +101,7 @@ test("delete sends exactly the listed ids", async () => {
 
   await waitFor(() => expect(onDeleted).toHaveBeenCalled());
   expect((sent as { ids: number[] }).ids).toEqual([5001, 5002]);
+  expect((sent as { pbiId: number | null }).pbiId).toBe(42);
   expect(onClose).toHaveBeenCalled();
 });
 

@@ -315,3 +315,42 @@ fn cases_are_numbered_from_one_in_page_order() {
         "<span class='seq'>1</span><span class='chip op-update'>UPDATE</span><span class='wid'>#42</span>"
     ));
 }
+
+/// A file label goes into single-quoted attributes; `esc` leaves `'` raw.
+#[test]
+fn a_file_label_with_a_quote_cannot_break_out_of_its_attribute() {
+    let files = vec![DraftFile {
+        path: "C:/w/a.json".into(),
+        label: "it's' onmouseover='alert(1)".into(),
+        comment: String::new(),
+        specs: vec![],
+    }];
+    let html = draft_page(&[draft("A", None, "")], vec!["C:/w/a.json".into()], files);
+    assert!(
+        html.contains("aria-label='General comments for it&#39;s&#39; onmouseover=&#39;alert(1)'"),
+        "{html}"
+    );
+    assert!(!html.contains("for it's'"), "{html}");
+}
+
+#[test]
+fn the_apps_own_draft_writes_need_a_watched_file_or_a_real_draft() {
+    use v2_lib::commands::queue::draft_write_allowed;
+    let draft = tmp("owned.json");
+    let notes = tmp("notes.txt");
+    let config = tmp("settings.json");
+    std::fs::write(&draft, FILE).unwrap();
+    std::fs::write(&notes, "hello").unwrap();
+    std::fs::write(&config, r#"{"theme":"dark"}"#).unwrap();
+    assert!(
+        draft_write_allowed(&draft, &[]).is_ok(),
+        "an unwatched draft is still written - the post-upload id stamp depends on it"
+    );
+    assert!(draft_write_allowed(&notes, &[]).is_err());
+    assert!(draft_write_allowed(&config, &[]).is_err(), "JSON, but not a draft");
+    assert!(draft_write_allowed(&tmp("missing.json"), &[]).is_err());
+    assert!(draft_write_allowed(&notes, &[notes.clone()]).is_ok(), "a watched path is always allowed");
+    for p in [draft, notes, config] {
+        let _ = std::fs::remove_file(p);
+    }
+}

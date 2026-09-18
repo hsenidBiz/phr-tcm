@@ -71,6 +71,13 @@ fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// An outcome as a CSS class suffix: letters and digits only. The outcome
+/// comes from the server and used to be written into `class="o-..."` raw.
+fn outcome_key(outcome: &str) -> String {
+    let key: String = outcome.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    if key.is_empty() { "neverrun".into() } else { key }
+}
+
 fn outcome_rank(outcome: &str) -> u8 {
     match outcome.to_lowercase().as_str() {
         "failed" => 0,
@@ -151,17 +158,12 @@ pub fn build_report_html(
 
     let mut rows = String::new();
     for p in &sorted {
-        let key = if p.last_outcome.is_empty() {
-            "neverrun".to_string()
-        } else {
-            p.last_outcome.to_lowercase()
-        };
         rows.push_str(&format!(
             r#"<tr><td class="mono">#{}</td><td>{}</td><td class="o-{}">{}</td></tr>"#,
             p.test_case_id.map(|i| i.to_string()).unwrap_or_default(),
             esc(&p.test_case_name),
-            key,
-            outcome_label(&p.last_outcome)
+            outcome_key(&p.last_outcome),
+            esc(&outcome_label(&p.last_outcome))
         ));
     }
 
@@ -179,7 +181,8 @@ pub fn build_report_html(
                 .iter()
                 .map(|id| {
                     format!(
-                        r#"<a href="https://dev.azure.com/{org}/{}/_workitems/edit/{id}">Bug #{id}</a>"#,
+                        r#"<a href="https://dev.azure.com/{}/{}/_workitems/edit/{id}">Bug #{id}</a>"#,
+                        urlencoding::encode(org),
                         urlencoding::encode(project)
                     )
                 })
@@ -204,7 +207,7 @@ pub fn build_report_html(
     };
 
     format!(
-        r#"<!doctype html><html lang="en" data-scheme="{scheme}"><head><meta charset="utf-8"><title>{t}</title><style>{vars}{CSS}</style></head>
+        r#"<!doctype html><html lang="en" data-scheme="{scheme}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{t}</title><style>{vars}{CSS}</style></head>
 <body>{switch}<div class="page">
 <h1>Execution report — {t}</h1>
 <div class="sub">{org} / {proj}</div>

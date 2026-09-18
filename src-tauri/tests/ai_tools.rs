@@ -8,7 +8,7 @@ use v2_lib::ai_tools::{
     remove_entry, resolve_db_command, tcm_server, McpServer, COMMAND_MARKER, COMMANDS,
     DB_SERVER, TCM_SERVER, TOOL_SPECS,
 };
-use v2_lib::commands::ai_tools::{mcp_add_args, project_relative, project_root};
+use v2_lib::commands::ai_tools::{mcp_add_args, mcp_add_command, project_relative, project_root};
 
 /// Minimal self-cleaning temp directory (no `tempfile` crate - none is a
 /// dependency of this project). Unique per-call via time + an atomic
@@ -836,4 +836,42 @@ fn the_machine_wide_choice_targets_the_global_config_for_every_tool() {
     assert_eq!(project_root(cc, Some("D:/repo"), false).unwrap(), Some("D:/repo"));
     let desktop = TOOL_SPECS.iter().find(|s| s.id == "claude-desktop").unwrap();
     assert_eq!(project_root(desktop, Some("D:/repo"), false).unwrap(), None, "no project config");
+}
+
+/// `cmd /C` used to carry the env values, and cmd.exe acted on `& | ^`
+/// and expanded `%VAR%` in them. The probe is a `.cmd` - the shape of the
+/// npm install - that writes the arguments it received.
+#[cfg(windows)]
+#[test]
+fn cmd_metacharacters_in_an_env_value_reach_the_cli_literally() {
+    let dir = TempDir::new();
+    let probe = dir.path().join("probe.cmd");
+    let out = dir.path().join("args.txt");
+    std::fs::write(&probe, format!("@echo off\r\n>\"{}\" echo(%*\r\n", out.display())).unwrap();
+    let mut env = std::collections::BTreeMap::new();
+    env.insert(
+        "CONNECTION_STRING".to_string(),
+        "Server=db;Password=a&b|c^d<e>f(g)%PATH%&echo pwned>pwned.txt".to_string(),
+    );
+    let server = McpServer { name: "phr-db-mcp".into(), command: "db.exe".into(), args: vec![], env };
+    let status = mcp_add_command(&probe, &server, "user", Some(dir.path())).status().unwrap();
+    assert!(status.success());
+    let seen = std::fs::read_to_string(&out).unwrap();
+    assert!(seen.contains("a&b|c^d<e>f(g)"), "{seen}");
+    assert!(seen.contains("%PATH%"), "cmd expanded a variable: {seen}");
+    assert!(!dir.path().join("pwned.txt").exists(), "an & in the value ran a second command");
+}
+
+#[test]
+fn the_cli_is_run_directly_not_through_cmd() {
+    let server = McpServer {
+        name: "tcm-testcases".into(),
+        command: "v2.exe".into(),
+        args: vec!["--mcp".into()],
+        env: Default::default(),
+    };
+    let cmd = mcp_add_command(std::path::Path::new("C:/x/claude.cmd"), &server, "user", None);
+    assert_eq!(cmd.get_program(), "C:/x/claude.cmd");
+    let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+    assert_eq!(args, mcp_add_args(&server, "user"));
 }

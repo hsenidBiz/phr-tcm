@@ -225,12 +225,17 @@ impl AdoClient {
         wiki: &str,
         path: &str,
     ) -> Result<WikiPage, AdoError> {
+        // A dot segment is normalised away by the URL parser in any
+        // encoding (%2e%2e included), so encoding alone cannot contain it.
+        if wiki.is_empty() || wiki == "." || wiki == ".." {
+            return Err(AdoError::NotFound);
+        }
         let url = format!(
             "{}/{}/{}/_apis/wiki/wikis/{}/pages?path={}&includeContent=true&api-version=7.1",
             self.base_url,
             percent_encode_segment(organization),
             percent_encode_segment(project),
-            wiki,
+            percent_encode_segment(wiki),
             percent_encode_path(&wiki_page_path(path))
         );
         let body = self.get_json(url).await?;

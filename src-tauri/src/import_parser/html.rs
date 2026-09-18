@@ -271,7 +271,7 @@ pub fn export_queue_page(
         // Only when the app wrote one: a set with no areas has no tree
         // worth a button.
         match tree_href {
-            Some(href) => format!("<a id='tc-tree' href='{}'>View as Tree</a>", esc(href)),
+            Some(href) => format!("<a id='tc-tree' href='{}'>View as Tree</a>", esc_attr(href)),
             None => String::new(),
         },
         // The Hide/Show chip for the spec pane - only when there is one.
@@ -564,7 +564,7 @@ pub fn export_queue_page(
                      <textarea class='note-box' id='nb-f{i}' data-file='{i}' \
                      data-status='ns-f{i}' aria-label='General comments for {}' \
                      placeholder='Notes about this set as a whole - saved into {}'>{}</textarea></div>",
-                    esc(&f.label), esc(&f.label), esc(&f.label), esc(&f.comment)
+                    esc(&f.label), esc_attr(&f.label), esc_attr(&f.label), esc(&f.comment)
                 ));
             }
             parts.push("</div></details>".into());
@@ -633,7 +633,7 @@ fn note_box(id: &str, hook: &str, placeholder: &str, value: &str) -> String {
          <span class='note-status' id='{status}'></span></label>\
          <textarea class='note-box' id='{id}' {hook} data-status='{status}' \
          placeholder='{}'>{}</textarea></div>",
-        esc(placeholder),
+        esc_attr(placeholder),
         esc(value)
     )
 }

@@ -58,6 +58,13 @@ pub async fn bridge_status(app: tauri::AppHandle) -> Result<BridgeStatus, String
         let _ = crate::events::IntakeOutputPath { path }.emit(&app_for_intake);
     }));
 
+    // In-place bridge writes are allowed on the files the app follows.
+    let app_for_watch = app.clone();
+    crate::ai_bridge::set_watch_source(Box::new(move || {
+        use tauri::Manager;
+        crate::filewatch::watched_paths(&app_for_watch.state::<crate::filewatch::FileWatchState>())
+    }));
+
     let (port, _token) = crate::ai_bridge::start_listener(
         Arc::clone(&shared),
         Some(factory),

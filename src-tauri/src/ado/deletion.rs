@@ -46,9 +46,8 @@ use super::{AdoClient, AdoError};
 // MANAGE_TEST_PLANS / MANAGE_TEST_SUITES, and why this gate and that one
 // lean opposite ways on an uncertain answer.
 //
-// Root area, not the case's own: cases under one PBI can span areas, and a
-// root-level check that fails closed is the posture this module documents
-// - a missing button for an edge-case user beats a button that lies.
+// The re-check asks about the area the caller names (the PBI's, from the
+// command) and falls back to the root only when none is known.
 
 /// One work item's fate after a delete attempt.
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
@@ -177,9 +176,12 @@ impl AdoClient {
         &self,
         org: &str,
         project: &str,
+        area_path: Option<&str>,
         ids: &[i32],
     ) -> Result<Vec<DeleteOutcome>, AdoError> {
-        if !self.can_delete_work_items(org, project, None).await {
+        // The same area the button was decided on - area permissions are
+        // per node, and a root re-check refused users the UI had offered it to.
+        if !self.can_delete_work_items(org, project, area_path).await {
             return Err(AdoError::Forbidden);
         }
 

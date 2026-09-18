@@ -1396,3 +1396,15 @@ fn each_case_has_a_bookmark_button_and_the_bar_a_go_to() {
     // only from the mark itself.
     assert!(html.contains(".case.marked"), "the stylesheet paints the marked case: {html}");
 }
+
+#[test]
+fn the_tree_link_is_attribute_escaped() {
+    use v2_lib::import_parser::export_queue_page;
+    let queue = vec![TestCase { title: "T".into(), area: "Reports".into(), ..Default::default() }];
+    let dir = std::env::temp_dir().join("tcm-v2-tree-link-escape-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}.html", std::process::id())).to_string_lossy().to_string();
+    export_queue_page(&queue, &path, "", None, &Default::default(), Some("x' onclick='y"), &[]).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("href='x&#39; onclick=&#39;y'"), "{html}");
+}

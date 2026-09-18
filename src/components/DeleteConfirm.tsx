@@ -20,12 +20,14 @@ import { Modal } from "./ui/modal";
 export default function DeleteConfirm({
   org,
   project,
+  pbiId,
   cases,
   onClose,
   onDeleted,
 }: {
   org: string;
   project: string;
+  pbiId: number | null;
   cases: { id: number; title: string }[];
   onClose: () => void;
   onDeleted: () => void;
@@ -37,7 +39,7 @@ export default function DeleteConfirm({
   const [deleted, setDeleted] = useState(0);
 
   const remove = useMutation({
-    mutationFn: () => unwrap(commands.deleteTestCases(org, project, cases.map((c) => c.id))),
+    mutationFn: () => unwrap(commands.deleteTestCases(org, project, cases.map((c) => c.id), pbiId)),
     onSuccess: (outcomes) => {
       const failed = outcomes.filter((o) => !o.deleted);
       const gone = outcomes.length - failed.length;

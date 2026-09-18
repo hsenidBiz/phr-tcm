@@ -40,6 +40,35 @@ fn is_on_path(cmd: &str) -> bool {
     command.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
+/// `claude` as PATH resolves it. `where` honours PATHEXT, so this finds the
+/// npm `.cmd` shim as well as a native `.exe`; `Command::new("claude")`
+/// alone would only look for `claude.exe`. Falls back to the bare name so
+/// the spawn fails with "not found" rather than something stranger.
+fn claude_on_path() -> PathBuf {
+    let mut command = Command::new("where");
+    command.arg("claude");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(str::trim)
+                .find(|l| {
+                    let l = l.to_ascii_lowercase();
+                    l.ends_with(".exe") || l.ends_with(".cmd") || l.ends_with(".bat")
+                })
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(|| PathBuf::from("claude"))
+}
+
 /// A trimmed, non-empty working directory, or None.
 fn root_of(working_dir: Option<&str>) -> Option<&str> {
     working_dir.map(str::trim).filter(|s| !s.is_empty())
@@ -566,7 +595,7 @@ fn remove_commands_in(dir: &std::path::Path) -> Result<(), String> {
 fn unregister_claude_code(server_name: &str) -> Result<(), String> {
     match claude_cli() {
         Some(cli) => run_claude_mcp_remove(&cli, server_name, "user", None),
-        None => match run_claude_mcp_remove(&PathBuf::from("claude"), server_name, "user", None) {
+        None => match run_claude_mcp_remove(&claude_on_path(), server_name, "user", None) {
             Ok(()) => Ok(()),
             Err(_) => remove_from_file(
                 &PathBuf::from(home_dir()).join(".claude.json"),
@@ -586,7 +615,7 @@ fn register_claude_code_global(server: &McpServer) -> Result<(), String> {
     if let Some(cli) = claude_cli() {
         return run_claude_mcp_add(&cli, server, "user", None).or_else(|_| via_file());
     }
-    match run_claude_mcp_add(&PathBuf::from("claude"), server, "user", None) {
+    match run_claude_mcp_add(&claude_on_path(), server, "user", None) {
         Ok(()) => Ok(()),
         Err(_) => via_file(),
     }
@@ -600,7 +629,7 @@ fn unregister_claude_code_in(root: &str, server_name: &str) -> Result<(), String
     let via_file = || remove_from_file(&cwd.join(".mcp.json"), "mcpServers", server_name);
     match claude_cli() {
         Some(cli) => run_claude_mcp_remove(&cli, server_name, "project", Some(cwd)).or_else(|_| via_file()),
-        None => match run_claude_mcp_remove(&PathBuf::from("claude"), server_name, "project", Some(cwd)) {
+        None => match run_claude_mcp_remove(&claude_on_path(), server_name, "project", Some(cwd)) {
             Ok(()) => Ok(()),
             Err(_) => via_file(),
         },
@@ -613,19 +642,7 @@ fn run_claude_mcp_remove(
     scope: &str,
     cwd: Option<&std::path::Path>,
 ) -> Result<(), String> {
-    let mut command = Command::new("cmd");
-    command.arg("/C");
-    command.arg(cli);
-    command.args(["mcp", "remove", "--scope", scope, server_name]);
-    if let Some(dir) = cwd {
-        command.current_dir(dir);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let output = command
+    let output = mcp_remove_command(cli, server_name, scope, cwd)
         .output()
         .map_err(|e| format!("failed to run `claude mcp remove`: {e}"))?;
     if !output.status.success() {
@@ -641,9 +658,8 @@ fn run_claude_mcp_remove(
 }
 
 /// Registers via `claude mcp add --scope user`, so it applies regardless
-/// of the app's cwd. `claude` is a `.cmd` shim on Windows, hence `cmd /C`.
-/// Environment pairs go through `-e`, which is how the CLI carries the
-/// database server's connection settings.
+/// of the app's cwd. Environment pairs go through `-e`, which is how the
+/// CLI carries the database server's connection settings.
 /// The Claude Code CLI's absolute path, or None when it is not where the
 /// installers put it. See `ai_tools::claude_cli_candidates` for why this
 /// does not simply trust PATH.
@@ -664,7 +680,7 @@ fn register_claude_code_in(root: &str, server: &McpServer) -> Result<(), String>
     if let Some(cli) = claude_cli() {
         return run_claude_mcp_add(&cli, server, "project", Some(cwd)).or_else(|_| via_file());
     }
-    match run_claude_mcp_add(&PathBuf::from("claude"), server, "project", Some(cwd)) {
+    match run_claude_mcp_add(&claude_on_path(), server, "project", Some(cwd)) {
         Ok(()) => Ok(()),
         Err(_) => via_file(),
     }
@@ -699,17 +715,19 @@ pub fn mcp_add_args(server: &McpServer, scope: &str) -> Vec<String> {
     args
 }
 
-fn run_claude_mcp_add(
+/// The `claude mcp add` process, run DIRECTLY - not through `cmd /C`.
+///
+/// cmd.exe parsed the command line itself, so an env value containing
+/// `& | ^ < >` ran as syntax and `%VAR%` was expanded. std escapes arguments
+/// for a `.cmd`/`.bat` target itself (the npm shim) and for an `.exe` the
+/// normal way, and refuses an argument it cannot pass safely.
+pub fn mcp_add_command(
     cli: &std::path::Path,
     server: &McpServer,
     scope: &str,
     cwd: Option<&std::path::Path>,
-) -> Result<(), String> {
-    // Still via `cmd /C`: the npm install is a `.cmd` shim, which cannot be
-    // executed directly.
-    let mut command = Command::new("cmd");
-    command.arg("/C");
-    command.arg(cli);
+) -> Command {
+    let mut command = Command::new(cli);
     command.args(mcp_add_args(server, scope));
     if let Some(dir) = cwd {
         command.current_dir(dir);
@@ -719,7 +737,35 @@ fn run_claude_mcp_add(
         use std::os::windows::process::CommandExt;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let output = command
+    command
+}
+
+fn mcp_remove_command(
+    cli: &std::path::Path,
+    server_name: &str,
+    scope: &str,
+    cwd: Option<&std::path::Path>,
+) -> Command {
+    let mut command = Command::new(cli);
+    command.args(["mcp", "remove", "--scope", scope, server_name]);
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
+fn run_claude_mcp_add(
+    cli: &std::path::Path,
+    server: &McpServer,
+    scope: &str,
+    cwd: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let output = mcp_add_command(cli, server, scope, cwd)
         .output()
         .map_err(|e| format!("failed to run `claude mcp add`: {e}"))?;
     if !output.status.success() {

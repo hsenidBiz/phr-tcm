@@ -88,6 +88,45 @@ fn announce_intake_path(path: &str) {
     }
 }
 
+type WatchSource = Box<dyn Fn() -> Vec<String> + Send + Sync>;
+static WATCH_SOURCE: std::sync::OnceLock<WatchSource> = std::sync::OnceLock::new();
+
+/// Called once by the app when the bridge starts: the files the app is
+/// following right now. Unset in tests, where nothing is followed.
+pub fn set_watch_source(f: WatchSource) {
+    let _ = WATCH_SOURCE.set(f);
+}
+
+fn watched_now() -> Vec<String> {
+    WATCH_SOURCE.get().map(|f| f()).unwrap_or_default()
+}
+
+/// Whether an in-place tool run may rewrite `path`: a file the app is
+/// following, or one under the working repository's `.test-cases` folder.
+/// Paths are compared canonicalised, so `..` and case/format differences
+/// cannot walk out. A path that does not exist is never writable here.
+pub fn bridge_may_write(path: &str, working_dir: Option<&str>, watched: &[String]) -> bool {
+    let Ok(file) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    if watched
+        .iter()
+        .any(|w| std::fs::canonicalize(w).map(|c| c == file).unwrap_or(false))
+    {
+        return true;
+    }
+    let Some(root) = working_dir.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    match std::fs::canonicalize(std::path::Path::new(root).join(".test-cases")) {
+        Ok(dir) => file.starts_with(&dir),
+        Err(_) => false,
+    }
+}
+
+/// The refusal for an in-place write outside what the app owns.
+const IN_PLACE_REFUSAL: &str = "in_place only writes a draft the app is following or one under the working repository's .test-cases folder - call again without in_place and write the returned JSON yourself.";
+
 /// Per-launch shared secret for the handshake file (32 hex chars).
 pub fn new_token() -> String {
     let mut rng = rand::rng();
@@ -175,8 +214,8 @@ pub async fn route(
             })
             .to_string(),
         ),
-        ("POST", "/optimize") => optimize_json(body, target),
-        ("POST", "/transform") => transform_json(body),
+        ("POST", "/optimize") => optimize_json(body, target, ctx),
+        ("POST", "/transform") => transform_json(body, ctx),
         ("POST", "/validate") => (200, validate_json(body, target, ctx, client).await),
         ("POST", "/check-coverage") => check_coverage_route(body).await,
         ("POST", "/merge-cases") => merge_cases_route(body, ctx),
@@ -1041,7 +1080,7 @@ async fn save_autorun_scripts(
 /// `in_place` match transform_cases exactly; with `in_place: true` the
 /// response is the report alone, which removes the return half of the
 /// cost as well as the send half.
-fn optimize_json(body: &str, target: &str) -> (u16, String) {
+fn optimize_json(body: &str, target: &str, ctx: &BridgeContext) -> (u16, String) {
     let from_path = q(target, "path").filter(|p| !p.trim().is_empty());
     let in_place = matches!(q(target, "in_place").as_deref(), Some("true") | Some("1"));
     if from_path.is_some() && !body.trim().is_empty() {
@@ -1117,6 +1156,9 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
         // Temp-in-same-directory + rename, like transform_cases: a half-
         // written draft under a watched path is worse than no write.
         let path = from_path.expect("guarded above");
+        if !bridge_may_write(&path, ctx.working_dir.as_deref(), &watched_now()) {
+            return (400, serde_json::json!({ "error": IN_PLACE_REFUSAL }).to_string());
+        }
         let tmp = format!("{path}.tmp");
         if let Err(e) = std::fs::write(&tmp, &json) {
             let _ = std::fs::remove_file(&tmp);
@@ -1167,7 +1209,7 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
 /// discard §15 condemns. `in_place: true` writes the transformed draft
 /// back to the path atomically and skips echoing the JSON, which for a
 /// bulk retag is the whole cost.
-fn transform_json(body: &str) -> (u16, String) {
+fn transform_json(body: &str, ctx: &BridgeContext) -> (u16, String) {
     let doc: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return (400, serde_json::json!({ "error": format!("invalid JSON: {e}") }).to_string()),
@@ -1249,6 +1291,9 @@ fn transform_json(body: &str) -> (u16, String) {
         // Temp-in-same-directory + rename, like merge_case_files: a half-
         // written draft under a watched path is worse than no write.
         let path = from_path.expect("guarded above");
+        if !bridge_may_write(&path, ctx.working_dir.as_deref(), &watched_now()) {
+            return (400, serde_json::json!({ "error": IN_PLACE_REFUSAL }).to_string());
+        }
         let tmp = format!("{path}.tmp");
         if let Err(e) = std::fs::write(&tmp, &json) {
             let _ = std::fs::remove_file(&tmp);
@@ -2907,6 +2952,11 @@ async fn wiki_page(
     let wiki_id = q(target, "wiki").filter(|s| !s.trim().is_empty()).unwrap_or_default();
     if wiki_id.is_empty() && !is_url {
         return (400, "pass ?wiki=<wiki id>&path=<page path>, or ?path=<wiki url>".into());
+    }
+    // One wiki name or id - never a route. The decoded value used to reach
+    // the URL raw, so `..%2F` climbed out to any GET endpoint.
+    if wiki_id.contains('/') || wiki_id.contains('\\') || wiki_id.contains("..") {
+        return (400, "the wiki parameter is a wiki name or id - it cannot contain '/', '\\' or '..'".into());
     }
     match client.get_wiki_page(&ctx.org, &ctx.project, &wiki_id, &path).await {
         Ok(page) => (

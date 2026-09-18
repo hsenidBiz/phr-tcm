@@ -1356,3 +1356,32 @@ async fn the_create_document_folds_the_pbi_link_in_when_asked() {
     assert!(plain.iter().all(|op| op["path"] != "/relations/-"));
     assert_eq!(plain.len() + 1, linked.len());
 }
+
+/// The `wiki` segment was interpolated raw, so `..%2F` from the AI bridge
+/// (which percent-decodes it) climbed out to any GET endpoint on
+/// dev.azure.com, in any org, with the user's token.
+#[tokio::test]
+async fn a_wiki_name_is_one_path_segment_never_a_route() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "path": "/Home", "content": "x"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    client
+        .get_wiki_page("o", "p", "../../other/p/_apis/git/repositories/R/items", "/Home")
+        .await
+        .unwrap();
+    let sent = server.received_requests().await.unwrap();
+    assert_eq!(sent.len(), 1);
+    let p = sent[0].url.path();
+    assert!(p.starts_with("/o/p/_apis/wiki/wikis/") && p.ends_with("/pages"), "{p}");
+    assert!(!p.contains("/git/"), "{p}");
+
+    // A bare dot segment is normalised away by the URL parser whatever its
+    // encoding, so it is refused outright.
+    assert!(client.get_wiki_page("o", "p", "..", "/Home").await.is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), 1, "no second request");
+}

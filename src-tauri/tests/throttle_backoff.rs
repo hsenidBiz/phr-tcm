@@ -200,7 +200,7 @@ async fn a_delete_honours_the_servers_request_to_slow_down() {
         .await;
     let client = AdoClient::with_base_url("tok".into(), server.uri());
     let started = std::time::Instant::now();
-    let out = client.delete_test_cases_permanently("o", "p", &[1, 2]).await.unwrap();
+    let out = client.delete_test_cases_permanently("o", "p", None, &[1, 2]).await.unwrap();
     assert!(out.iter().all(|o| o.deleted));
     assert!(
         started.elapsed() >= std::time::Duration::from_millis(900),

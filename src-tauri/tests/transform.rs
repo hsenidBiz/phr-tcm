@@ -228,7 +228,12 @@ fn insert_cases_keeps_area_and_does_not_report_it_discarded() {
 #[tokio::test]
 async fn a_draft_can_be_transformed_from_a_path_and_written_back_in_place() {
     let dir = TempDir::new();
-    let path = dir.0.join("draft.json");
+    std::fs::create_dir_all(dir.0.join(".test-cases")).unwrap();
+    let path = dir.0.join(".test-cases").join("draft.json");
+    let ctx = BridgeContext {
+        working_dir: Some(dir.0.to_string_lossy().into_owned()),
+        ..BridgeContext::default()
+    };
     std::fs::write(
         &path,
         serde_json::json!({ "test_cases": [
@@ -244,7 +249,7 @@ async fn a_draft_can_be_transformed_from_a_path_and_written_back_in_place() {
         "operations": [ { "op": "replace_in_steps", "find": "Expand", "replace": "Open" } ],
     })
     .to_string();
-    let (status, out) = route(&ctx(), None, "POST", "/transform", &body, "1.0.0").await;
+    let (status, out) = route(&ctx, None, "POST", "/transform", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
 
     // No JSON echo - the write-back IS the result - and the file changed.

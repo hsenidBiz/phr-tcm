@@ -502,7 +502,7 @@ export const commands = {
 	 *  Every id is reported individually: a partly-completed delete has to be
 	 *  able to say which ones survived.
 	 */
-	deleteTestCases: (organization: string, project: string, ids: number[]) => typedError<DeleteOutcome[], AdoError>(__TAURI_INVOKE("delete_test_cases", { organization, project, ids })),
+	deleteTestCases: (organization: string, project: string, ids: number[], pbiId: number | null) => typedError<DeleteOutcome[], AdoError>(__TAURI_INVOKE("delete_test_cases", { organization, project, ids, pbiId })),
 	/**
 	 *  Move test cases from one PBI's Tested By list to another's - the fix
 	 *  for a case that landed in the wrong PBI. One rev-guarded PATCH per

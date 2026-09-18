@@ -56,7 +56,7 @@ async fn a_delete_goes_to_the_test_management_endpoint_and_nowhere_else() {
         .await;
 
     let client = AdoClient::with_base_url("t".into(), server.uri());
-    let out = client.delete_test_cases_permanently("o", "p", &[42]).await.unwrap();
+    let out = client.delete_test_cases_permanently("o", "p", None, &[42]).await.unwrap();
     assert_eq!(out.len(), 1);
     assert!(out[0].deleted);
 
@@ -84,7 +84,7 @@ async fn permission_fails_closed_on_every_uncertain_answer() {
     let c = AdoClient::with_base_url("t".into(), denied.uri());
     assert!(!c.can_delete_work_items("o", "p", None).await);
     assert!(matches!(
-        c.delete_test_cases_permanently("o", "p", &[42]).await.unwrap_err(),
+        c.delete_test_cases_permanently("o", "p", None, &[42]).await.unwrap_err(),
         AdoError::Forbidden
     ));
     // And nothing was sent.
@@ -155,7 +155,7 @@ async fn one_failure_does_not_stop_the_others_and_is_named() {
         .await;
 
     let out = AdoClient::with_base_url("t".into(), server.uri())
-        .delete_test_cases_permanently("o", "p", &[1, 2, 3])
+        .delete_test_cases_permanently("o", "p", None, &[1, 2, 3])
         .await
         .unwrap();
     assert_eq!(out.len(), 3);
@@ -188,7 +188,7 @@ async fn an_unmapped_failure_carries_azure_devops_own_explanation() {
         .await;
 
     let out = AdoClient::with_base_url("t".into(), server.uri())
-        .delete_test_cases_permanently("o", "p", &[7])
+        .delete_test_cases_permanently("o", "p", None, &[7])
         .await
         .unwrap();
 
@@ -218,7 +218,7 @@ async fn a_throttled_delete_is_reported_as_rate_limiting() {
         .await;
 
     let out = AdoClient::with_base_url("t".into(), server.uri())
-        .delete_test_cases_permanently("o", "p", &[9])
+        .delete_test_cases_permanently("o", "p", None, &[9])
         .await
         .unwrap();
     // The delete now honours the hint, which is process-wide: clear it so
@@ -387,6 +387,49 @@ async fn a_given_area_path_is_asked_about_its_own_node() {
         body["evaluations"][1]["token"].as_str(),
         Some("vstfs:///Classification/Node/deep-node-guid"),
         "the manage-test question must be about the given area's node"
+    );
+}
+
+/// The UI decides from the PBI's area; the re-check used to ask about the
+/// root, so a user allowed only on the sub-area saw the button and then got
+/// Forbidden on every case.
+#[tokio::test]
+async fn the_delete_rechecks_the_same_area_the_ui_asked_about() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/o/_apis/projects/p"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "proj-guid-1" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/classificationnodes/areas/Team/Component"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "identifier": "deep-node-guid" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/o/_apis/security/permissionevaluationbatch"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "evaluations": [{ "value": true }, { "value": true }, { "value": true }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/o/p/_apis/test/testcases/42"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let out = AdoClient::with_base_url("t".into(), server.uri())
+        .delete_test_cases_permanently("o", "p", Some(r"p\Team\Component"), &[42])
+        .await
+        .unwrap();
+    assert!(out[0].deleted);
+    let sent = server.received_requests().await.unwrap();
+    let eval = sent.iter().find(|r| r.url.path().ends_with("/permissionevaluationbatch")).unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&eval.body).unwrap();
+    assert_eq!(
+        body["evaluations"][1]["token"].as_str(),
+        Some("vstfs:///Classification/Node/deep-node-guid")
     );
 }
 
