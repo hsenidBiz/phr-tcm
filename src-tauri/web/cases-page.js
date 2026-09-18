@@ -365,11 +365,17 @@
           // null means the app did not recognise this page; that is not
           // staleness and must not be reported as it.
           if (typeof v.revision !== 'number' || v.revision === rev) { return; }
-          // Never swap under a reviewer's typing: a comment still inside
-          // its autosave debounce would be clobbered. The revision stays
-          // ahead of ours, so the next poll simply tries again.
+          // Never swap under a reviewer's typing, or under an edit that
+          // has not landed yet: the focused-textarea check alone misses a
+          // box clicked away from before its debounce fired, or while its
+          // save is still in flight or queued behind another (see
+          // window.tcmNotes.busy in cases-notes.js) - any of that would
+          // show the box's OLD text under whatever was typed next. The
+          // revision stays ahead of ours either way, so the next poll
+          // simply tries again.
           var ae = document.activeElement;
           if (ae && ae.tagName === 'TEXTAREA') { return; }
+          if (window.tcmNotes && window.tcmNotes.busy() > 0) { return; }
           var target = v.revision;
           fetch(base + '/report?' + qs)
             .then(function (r) {

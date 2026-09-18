@@ -30,10 +30,29 @@
       run(payload, seq);
     };
   }
-  window.tcmNotes = { makeQueue: makeQueue };
+
+  // How many boxes have an edit not yet safely on disk: an armed debounce
+  // timer, a save in flight, or a newer save waiting behind one. The live
+  // update in cases-page.js checks this before swapping in a fresh copy -
+  // a reviewer can click out of a textarea (so it is no longer focused)
+  // before the debounce fires, or while the save it armed is still in
+  // flight or queued, and a swap during any of that would show the box's
+  // OLD text under whatever was typed next. One counter for the whole
+  // page: the poll only needs to know "is anything dirty", never which box.
+  var busyCount = 0;
+  function busyStart() { busyCount++; }
+  function busyEnd() { if (busyCount > 0) busyCount--; }
+  window.tcmNotes = { makeQueue: makeQueue, busy: function () { return busyCount; } };
 
   function wire(box, status, build) {
     var timer = null;
+    // Whether THIS box currently holds the one busy-count unit it is
+    // allowed to hold - typing again while already dirty (armed, in
+    // flight, or queued - see makeQueue) must not double-count it.
+    var dirty = false;
+    function settle() {
+      if (dirty) { dirty = false; busyEnd(); }
+    }
     var save = makeQueue(function (payload) {
       return fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
         method: 'POST',
@@ -41,6 +60,10 @@
         body: JSON.stringify(payload)
       }).then(function (r) { return r.json(); });
     }, function (r, err) {
+      // The report callback fires only for the newest save once nothing is
+      // queued behind it (see makeQueue's `finish`) - exactly when this box
+      // stops being dirty, saved or not.
+      settle();
       if (err) {
         status.className = 'note-status bad';
         status.textContent = 'Not saved — the app is closed';
@@ -53,6 +76,7 @@
       }
     });
     box.addEventListener('input', function () {
+      if (!dirty) { dirty = true; busyStart(); }
       status.className = 'note-status';
       status.textContent = 'Saving…';
       clearTimeout(timer);

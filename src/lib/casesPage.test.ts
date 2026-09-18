@@ -55,7 +55,7 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  for (const k of ["REPORT_REV", "NOTE_PORT", "NOTE_TOKEN", "NOTE_ORG", "REPORT_KIND"]) {
+  for (const k of ["REPORT_REV", "NOTE_PORT", "NOTE_TOKEN", "NOTE_ORG", "REPORT_KIND", "tcmNotes"]) {
     delete (globalThis as Record<string, unknown>)[k];
   }
 });
@@ -106,4 +106,18 @@ test("openState keys by the title without its position number, plus the section'
   tcmPage().restoreOpen(document, { "Login\nrev": false, "Login\nfindings": true });
   expect(document.querySelector(".case details.rev")!.hasAttribute("open")).toBe(false);
   expect(document.querySelector(".case details.findings")!.hasAttribute("open")).toBe(true);
+});
+
+// A reviewer can click out of a textarea before its 600 ms debounce fires,
+// or while the save it armed is still in flight or queued behind another -
+// the focused-textarea check alone misses all of that, and a swap during it
+// would show the box's OLD text under text the reviewer already moved past.
+test("the poll skips the swap while a comment box is busy (armed, in flight, or queued), and swaps once nothing is", async () => {
+  (window as unknown as { tcmNotes: { busy: () => number } }).tcmNotes = { busy: () => 1 };
+  await poll();
+  expect(document.querySelector(".rev-body")!.textContent).toBe("old");
+
+  (window as unknown as { tcmNotes: { busy: () => number } }).tcmNotes.busy = () => 0;
+  await poll();
+  expect(document.querySelector(".rev-body")!.textContent).toBe("fresh");
 });

@@ -5,10 +5,13 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 
 type Report = (r: unknown, err: unknown) => void;
-type Notes = { makeQueue: (send: (payload: string) => Promise<unknown>, report: Report) => (payload: string) => void };
+type Notes = {
+  makeQueue: (send: (payload: string) => Promise<unknown>, report: Report) => (payload: string) => void;
+  busy: () => number;
+};
 let N: Notes;
 
 beforeAll(() => {
@@ -61,4 +64,69 @@ test("a failed newest save is reported, a failed older one is not", async () => 
   h.settle[1].fail(new Error("closed"));
   await flush();
   expect(h.reports).toEqual(["error"]);
+});
+
+// busy() is what cases-page.js asks before swapping in a fresh copy: it must
+// stay >0 for as long as a box has an edit not yet safely on disk - the
+// 600ms debounce window, the save it fires in flight, and any later edit
+// queued behind that save - or a swap mid-typing shows the box's OLD text
+// under whatever the reviewer already typed next.
+type Wire = { __tcmWireNotes: () => void };
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  document.body.innerHTML =
+    '<textarea data-case="0" data-status="st"></textarea><div id="st"></div>' +
+    `<script type="application/json" id="tc-data">${JSON.stringify({
+      pbi: 1,
+      cases: [{ path: "", id: null, title: "T", key: "t:t" }],
+      files: [],
+    })}</script>`;
+  Object.assign(globalThis, { NOTE_PORT: 4711, NOTE_TOKEN: "t", NOTE_ORG: "" });
+});
+
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  document.body.innerHTML = "";
+  for (const k of ["NOTE_PORT", "NOTE_TOKEN", "NOTE_ORG"]) {
+    delete (globalThis as Record<string, unknown>)[k];
+  }
+});
+
+test("busy() counts an armed debounce timer, an in-flight save, and a save queued behind it", async () => {
+  const settle: Array<{ ok: (v: unknown) => void; fail: (e: unknown) => void }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise((ok, fail) => settle.push({ ok, fail }))),
+  );
+  (window as unknown as Wire).__tcmWireNotes();
+  expect(N.busy()).toBe(0);
+
+  const box = document.querySelector("textarea") as HTMLTextAreaElement;
+  box.value = "hi";
+  box.dispatchEvent(new Event("input"));
+  expect(N.busy()).toBe(1); // debounce armed, nothing sent yet
+  expect(settle.length).toBe(0);
+
+  await vi.advanceTimersByTimeAsync(600);
+  expect(settle.length).toBe(1); // the debounce fired: a save is now in flight
+  expect(N.busy()).toBe(1);
+
+  // A second edit lands while that save is still in flight.
+  box.value = "hi there";
+  box.dispatchEvent(new Event("input"));
+  await vi.advanceTimersByTimeAsync(600);
+  expect(settle.length).toBe(1); // queued behind the one in flight, not sent
+  expect(N.busy()).toBe(1);
+
+  settle[0].ok({ json: () => Promise.resolve({ ok: true }) });
+  await flush();
+  expect(settle.length).toBe(2); // the queued save goes out now
+  expect(N.busy()).toBe(1);
+
+  settle[1].ok({ json: () => Promise.resolve({ ok: true }) });
+  await flush();
+  expect(N.busy()).toBe(0);
 });
