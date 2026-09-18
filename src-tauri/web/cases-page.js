@@ -84,7 +84,9 @@
       btn.setAttribute('aria-pressed', off ? 'true' : 'false');
       btn.textContent = off ? opts.showLabel : opts.hideLabel;
     }
-    paint(recall());
+    // After a live swap the button is new but <body> is not: keep what the
+    // body already says, so the label matches even where storage is refused.
+    paint(document.body.classList.contains(opts.bodyClass) || recall());
     if (!btn.dataset.wired) {
       btn.dataset.wired = '1';
       btn.addEventListener('click', function () {
@@ -258,6 +260,43 @@
     wrap.classList.add(wrap.classList.contains('find-wrap') ? 'find-closed' : 'rev-closed');
   });
 
+  // --- Which sections of which case are open. Keyed by the case TITLE
+  // (the h2 without its position number, so a reorder keeps it) plus the
+  // section's class - not by the first <summary>, which is "Reviewer
+  // notes" in every case that has notes. Both states are restored: a
+  // section the reader folded stays folded even though fresh markup opens it.
+  function caseTitle(caseEl) {
+    var h = caseEl && caseEl.querySelector('h2');
+    if (!h) return '';
+    var copy = h.cloneNode(true);
+    var seq = copy.querySelector('.seq');
+    if (seq) seq.parentNode.removeChild(seq);
+    return copy.textContent.replace(/\s+/g, ' ').trim();
+  }
+  function detailsKey(d) {
+    return caseTitle(d.closest('.case')) + '\n' + d.className;
+  }
+  function openState(root) {
+    var out = {};
+    Array.prototype.forEach.call(root.querySelectorAll('.case details'), function (d) {
+      out[detailsKey(d)] = d.hasAttribute('open');
+    });
+    return out;
+  }
+  function restoreOpen(root, state) {
+    Array.prototype.forEach.call(root.querySelectorAll('.case details'), function (d) {
+      var k = detailsKey(d);
+      if (!Object.prototype.hasOwnProperty.call(state, k)) return;
+      if (state[k]) d.setAttribute('open', ''); else d.removeAttribute('open');
+    });
+  }
+  window.tcmPage = {
+    openState: openState,
+    restoreOpen: restoreOpen,
+    // A property, not a bare call, so the vitest file can see Refresh fire.
+    reload: function () { location.reload(); }
+  };
+
   // --- Live update. The page is a file on disk, so nothing pushes to it -
   // it asks. When the app says the content moved on, the page pulls the
   // fresh copy over the same loopback listener the comment boxes use and
@@ -269,13 +308,21 @@
     var rev = REPORT_REV;
     var base = 'http://127.0.0.1:' + NOTE_PORT;
     var qs = 'token=' + encodeURIComponent(NOTE_TOKEN) + '&kind=' + encodeURIComponent(REPORT_KIND);
-    var stale = document.getElementById('tc-stale');
-    var go = document.getElementById('tc-stale-go');
-    if (go) go.addEventListener('click', function () { location.reload(); });
-    // The banner survives as the FALLBACK: anything the swap cannot do
-    // safely - fetch failed, structure unrecognisable - degrades to the
-    // old offer of a manual refresh, never to silently stale content.
-    function banner() { if (stale) stale.classList.add('show'); }
+    // The banner and its Refresh button live inside .page, which swap()
+    // replaces - so they are looked up each time, and Refresh is a click
+    // delegated on document, never a listener on one button.
+    function staleBanner() { return document.getElementById('tc-stale'); }
+    // The FALLBACK for anything the swap cannot do safely - fetch failed,
+    // structure unrecognisable: offer a manual refresh, never silently
+    // leave stale content up.
+    function banner() {
+      var s = staleBanner();
+      if (s) s.classList.add('show');
+    }
+    document.addEventListener('click', function (e) {
+      var go = e.target && e.target.closest ? e.target.closest('#tc-stale-go') : null;
+      if (go) window.tcmPage.reload();
+    });
 
     function swap(fresh) {
       var doc = new DOMParser().parseFromString(fresh, 'text/html');
@@ -289,27 +336,19 @@
       var sel = document.getElementById('tc-field');
       var f = sel ? sel.value : '';
       var y = window.scrollY;
-      var openTitles = {};
-      Array.prototype.forEach.call(document.querySelectorAll('.case details[open]'), function (d) {
-        var caseEl = d.closest('.case');
-        var t = caseEl && caseEl.querySelector('summary');
-        if (t) openTitles[t.textContent] = true;
-      });
+      var open = openState(document);
 
       cur.parentNode.replaceChild(document.importNode(next, true), cur);
 
-      // Restore: filter text, expanded sections, notes state, scroll.
+      // Restore: filter text, open/closed sections, toggles, scroll.
       var input2 = document.getElementById('tc-search');
       if (input2) input2.value = q;
       var sel2 = document.getElementById('tc-field');
       if (sel2 && f) sel2.value = f;
-      Array.prototype.forEach.call(document.querySelectorAll('.case details'), function (d) {
-        var caseEl = d.closest('.case');
-        var t = caseEl && caseEl.querySelector('summary');
-        if (t && openTitles[t.textContent]) d.setAttribute('open', '');
-      });
+      restoreOpen(document, open);
       applyFilter = wireSearch();
       wireNotesToggle();
+      wireFindingsToggle();
       wireMarks();
       if (window.__tcmWireNotes) window.__tcmWireNotes();
       if (window.__tcmWireSpecs) window.__tcmWireSpecs();
@@ -318,7 +357,8 @@
     }
 
     setInterval(function () {
-      if (document.hidden || (stale && stale.classList.contains('show'))) { return; }
+      var s = staleBanner();
+      if (document.hidden || (s && s.classList.contains('show'))) { return; }
       fetch(base + '/version?' + qs)
         .then(function (r) { return r.json(); })
         .then(function (v) {

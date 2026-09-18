@@ -162,12 +162,21 @@ fn has_areas_and_write_beside_need_at_least_one_area() {
     use v2_lib::test_map::{has_areas, write_beside};
     let none = vec![tc("A", "", None), tc("B", " / ", None)];
     assert!(!has_areas(&none));
-    assert_eq!(write_beside(&none, "", &PagePalette::default(), "test-cases-1.html").unwrap(), None);
+    assert_eq!(write_beside(&none, "", &PagePalette::default(), "test-cases-1.html", "queue").unwrap(), None);
 
     let some = vec![tc("A", "", None), tc("B", "Reports", None)];
     assert!(has_areas(&some));
-    let name = write_beside(&some, "PBI #9", &PagePalette::default(), "test-cases-draft-1.html").unwrap().expect("a map file");
-    assert_eq!(name, format!("test-map-{}.html", std::process::id()));
+    let name = write_beside(&some, "PBI #9", &PagePalette::default(), "test-cases-draft-1.html", "draft")
+        .unwrap()
+        .expect("a map file");
+    assert_eq!(name, format!("test-map-draft-{}.html", std::process::id()));
+    // The queue page's map is its own file: refreshing one page must never
+    // overwrite the other's map, or its back-link.
+    let queue_name = write_beside(&some, "PBI #9", &PagePalette::default(), "test-cases-1.html", "queue")
+        .unwrap()
+        .expect("a map file");
+    assert_eq!(queue_name, format!("test-map-queue-{}.html", std::process::id()));
+
     let html = std::fs::read_to_string(std::env::temp_dir().join(&name)).unwrap();
     assert!(html.contains("<p class='subtitle'>PBI #9</p>"), "{html}");
     assert!(html.contains("\"Reports\""), "{html}");

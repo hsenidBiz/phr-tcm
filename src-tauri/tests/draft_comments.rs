@@ -448,3 +448,28 @@ fn a_comment_stored_as_notes_is_edited_there_and_cleared_under_every_spelling() 
     let case = &cases(&cleared)[0];
     assert!(case.get("comment").is_none() && case.get("notes").is_none(), "{cleared}");
 }
+
+/// cases-page.js decides at LOAD time whether the page is live
+/// (`typeof REPORT_REV === 'number'`). Classic scripts run in order and a
+/// `var` in a later script is not hoisted into an earlier one, so the
+/// globals must be emitted before it - or the live update never runs.
+#[test]
+fn the_page_globals_are_defined_before_the_script_that_reads_them() {
+    let html = draft_page(&[draft("A", None, "")], vec![String::new()], vec![]);
+    let globals = html.find("var REPORT_REV=").expect("the globals script");
+    let page_js = html.find("typeof REPORT_REV").expect("cases-page.js");
+    let notes_js = html.find("window.__tcmWireNotes = function").expect("cases-notes.js");
+    assert!(globals < page_js, "globals must come before cases-page.js");
+    assert!(page_js < notes_js, "cases-notes.js stays after cases-page.js");
+}
+
+/// The file is written at revision r+1 (its writer bumps right after the
+/// write), so that is what it must say - one behind, and every freshly
+/// opened page swaps itself for no reason on its first poll.
+#[test]
+fn the_page_embeds_the_revision_it_is_written_at() {
+    use v2_lib::note_server::{revision, REPORT_DRAFT};
+    let html = draft_page(&[draft("A", None, "")], vec![String::new()], vec![]);
+    let want = format!("var REPORT_REV={};", revision(REPORT_DRAFT) + 1);
+    assert!(html.contains(&want), "expected {want}");
+}

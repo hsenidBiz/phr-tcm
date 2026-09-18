@@ -149,21 +149,24 @@ pub fn build_tree(cases: &[crate::model::TestCase]) -> Vec<MapNode> {
 /// Write the Test map for these cases next to a review page, when there is
 /// one to draw (`has_areas`). Returns the file NAME - the review page links
 /// to it relatively, both being in the temp directory - or None, in which
-/// case no link is offered. One file per process, like the review pages, so
-/// a refresh rewrites the page a tab already has open.
+/// case no link is offered. One file per process AND per report kind, like
+/// the review pages: the draft page and the queue page each get their own
+/// map, so refreshing one never overwrites the other's map or back-link.
 ///
 /// `page_name` is the review page's own file name, so the map can link
-/// back to it the same way.
+/// back to it the same way. `kind` is `note_server::REPORT_DRAFT` or
+/// `REPORT_QUEUE`.
 pub fn write_beside(
     cases: &[crate::model::TestCase],
     subtitle: &str,
     palette: &PagePalette,
     page_name: &str,
+    kind: &str,
 ) -> Result<Option<String>, String> {
     if !has_areas(cases) {
         return Ok(None);
     }
-    let name = format!("test-map-{}.html", std::process::id());
+    let name = format!("test-map-{kind}-{}.html", std::process::id());
     let path = std::env::temp_dir().join(&name);
     export_test_map_html(&build_tree(cases), &path.to_string_lossy(), subtitle, palette, Some(page_name))?;
     Ok(Some(name))

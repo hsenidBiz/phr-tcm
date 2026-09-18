@@ -300,6 +300,15 @@ pub fn revision(kind: &str) -> u64 {
     slot(kind).load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// The revision a report being written right now will have once its
+/// writer calls `bump_revision` after the write. Embedded in the page, so a
+/// freshly opened tab's first poll matches instead of swapping for nothing.
+/// The bump stays AFTER the write: bumping first would let a page pull
+/// `/report` before the new file exists and mark old content current.
+pub fn next_revision(kind: &str) -> u64 {
+    revision(kind) + 1
+}
+
 /// Fixed slots rather than a map: there are two report kinds, both known
 /// at compile time, and a lock on the read path would be paid by every
 /// poll from every open page.

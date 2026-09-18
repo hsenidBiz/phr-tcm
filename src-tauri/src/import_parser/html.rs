@@ -607,28 +607,31 @@ pub fn export_queue_page(
         parts.push("</div>".into()); // .shell
     }
 
-    parts.push(format!("<script>{HTML_JS}</script>"));
-    parts.push(format!("<script>{SPECS_JS}</script>"));
-    parts.push(format!("<script>{}</script>", crate::webtheme::SWITCH_JS));
+    // The globals come FIRST: cases-page.js decides as it loads whether the
+    // page is live (`typeof REPORT_REV`), and a `var` in a later classic
+    // script does not exist yet at that point. REPORT_REV is the revision
+    // this file will have once its writer bumps it after the write. The
+    // comment-box identities are NOT here - they live in the #tc-data JSON
+    // block inside the page, so a live swap carries them with the boxes.
     if let Some(c) = &ctx {
         let org = match c {
             CommentCtx::Ado(a) => a.org.clone(),
             CommentCtx::Draft(_) => String::new(),
         };
         parts.push(format!(
-            // REPORT_REV is the revision this file was written at. The page
-            // compares it with what the app reports now; they diverge the
-            // moment the report is re-exported behind an open tab. The
-            // comment-box identities are NOT here any more - they live in
-            // the #tc-data JSON block inside the page, so a live swap
-            // carries them along with the boxes they describe.
-            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var REPORT_REV={};var REPORT_KIND={};{NOTE_JS}</script>",
+            "<script>var NOTE_PORT={};var NOTE_TOKEN={};var NOTE_ORG={};var REPORT_REV={};var REPORT_KIND={};</script>",
             c.port(),
             script_json(&c.token(), "\"\""),
             script_json(&org, "\"\""),
-            crate::note_server::revision(c.report_kind()),
+            crate::note_server::next_revision(c.report_kind()),
             script_json(&c.report_kind(), "\"draft\""),
         ));
+    }
+    parts.push(format!("<script>{HTML_JS}</script>"));
+    parts.push(format!("<script>{SPECS_JS}</script>"));
+    parts.push(format!("<script>{}</script>", crate::webtheme::SWITCH_JS));
+    if ctx.is_some() {
+        parts.push(format!("<script>{NOTE_JS}</script>"));
     }
     parts.push("</body></html>".into());
     std::fs::write(path, parts.join("\n")).map_err(|e| e.to_string())

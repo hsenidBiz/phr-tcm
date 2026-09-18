@@ -529,7 +529,7 @@ fn render_queue_html(
     // The Test map beside the page, when the cases have areas to map; the
     // page's "View as Tree" links to it.
     let page_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let tree = crate::test_map::write_beside(&queue, &subtitle, &palette, &page_name)?;
+    let tree = crate::test_map::write_beside(&queue, &subtitle, &palette, &page_name, crate::note_server::REPORT_QUEUE)?;
     import_parser::export_queue_page(
         &queue,
         &path_str,
@@ -635,7 +635,7 @@ async fn render_draft_html(
         files,
     });
     let page_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let tree = crate::test_map::write_beside(&queue, &subtitle, &palette, &page_name)?;
+    let tree = crate::test_map::write_beside(&queue, &subtitle, &palette, &page_name, crate::note_server::REPORT_DRAFT)?;
     import_parser::export_queue_page(
         &queue,
         &path_str,

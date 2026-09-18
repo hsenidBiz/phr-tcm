@@ -1,29 +1,62 @@
 
 (function () {
+  // One save in flight per box, the newest text next. Each debounced save
+  // used to be its own fetch; the server handles each on its own thread,
+  // so an older text could land last and the status showed whichever reply
+  // came back last. Now a save waits for the one in flight, only the newest
+  // waiting text is sent after it, and only the newest save's reply is shown.
+  function makeQueue(send, report) {
+    var seq = 0, inflight = false, pending = null;
+    function run(payload, n) {
+      inflight = true;
+      send(payload).then(
+        function (r) { finish(n, r, null); },
+        function (e) { finish(n, null, e || new Error('failed')); }
+      );
+    }
+    function finish(n, r, err) {
+      inflight = false;
+      if (pending) {
+        var p = pending;
+        pending = null;
+        run(p.payload, p.n);
+        return;
+      }
+      if (n === seq) report(r, err);
+    }
+    return function save(payload) {
+      seq++;
+      if (inflight) { pending = { payload: payload, n: seq }; return; }
+      run(payload, seq);
+    };
+  }
+  window.tcmNotes = { makeQueue: makeQueue };
+
   function wire(box, status, build) {
     var timer = null;
+    var save = makeQueue(function (payload) {
+      return fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(payload)
+      }).then(function (r) { return r.json(); });
+    }, function (r, err) {
+      if (err) {
+        status.className = 'note-status bad';
+        status.textContent = 'Not saved — the app is closed';
+      } else if (r && r.ok) {
+        status.className = 'note-status';
+        status.textContent = 'Saved ✓';
+      } else {
+        status.className = 'note-status bad';
+        status.textContent = 'Not saved — ' + ((r && r.error) || 'the app refused it');
+      }
+    });
     box.addEventListener('input', function () {
       status.className = 'note-status';
       status.textContent = 'Saving…';
       clearTimeout(timer);
-      timer = setTimeout(function () {
-        fetch('http://127.0.0.1:' + NOTE_PORT + '/note', {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(build(box.value))
-        }).then(function (r) { return r.json(); }).then(function (r) {
-          if (r && r.ok) {
-            status.className = 'note-status';
-            status.textContent = 'Saved ✓';
-          } else {
-            status.className = 'note-status bad';
-            status.textContent = 'Not saved — ' + ((r && r.error) || 'the app refused it');
-          }
-        }).catch(function () {
-          status.className = 'note-status bad';
-          status.textContent = 'Not saved — the app is closed';
-        });
-      }, 600);
+      timer = setTimeout(function () { save(build(box.value)); }, 600);
     });
   }
 
