@@ -360,6 +360,40 @@ fn a_late_tag_refresh_keeps_what_was_learned_meanwhile() {
     );
 }
 
+/// Wiki page bodies are the one thing that grows with use: every page ever
+/// opened in a spec pane. They go after a week, and at most 50 are kept,
+/// oldest out first. Nothing else is touched, however old.
+#[test]
+fn wiki_pages_are_evicted_after_a_week_and_capped_at_fifty() {
+    use serde_json::json;
+    let dir = temp_dir("wiki-evict");
+    let now = v2_lib::cache::now_ms();
+    let page = |i: u64| keys::wiki_page(&format!("https://dev.azure.com/o/p/_wiki/wikis/w/{i}/Page"));
+    let mut entries = serde_json::Map::new();
+    for i in 0..55u64 {
+        // i = 0 is the oldest, i = 54 the newest.
+        entries.insert(page(i), json!({ "value": format!("body {i}"), "at_ms": now - (55 - i) * 1000 }));
+    }
+    entries.insert(page(999), json!({ "value": "stale", "at_ms": now - keys::WIKI_PAGE_KEEP_MS - 60_000 }));
+    entries.insert("tags:o|p".into(), json!({ "value": ["t"], "at_ms": 1 }));
+    std::fs::write(dir.join("cache.json"), json!({ "owner": null, "entries": entries }).to_string()).unwrap();
+
+    let store = Store::open(Some(&dir));
+    store.put(&page(1000), &"fresh".to_string());
+
+    assert!(store.get::<String>(&page(999)).is_none(), "a week-old page is gone");
+    assert!(store.get::<String>(&page(1000)).is_some(), "the page just stored stays");
+    for i in 0..6 {
+        assert!(store.get::<String>(&page(i)).is_none(), "page {i} is among the oldest and goes");
+    }
+    for i in 6..55 {
+        assert!(store.get::<String>(&page(i)).is_some(), "page {i} is among the newest 50 and stays");
+    }
+    assert_eq!(store.get::<Vec<String>>("tags:o|p").unwrap(), vec!["t"], "other keys are never evicted");
+    let reopened = Store::open(Some(&dir));
+    assert!(reopened.get::<String>(&page(0)).is_none() && reopened.get::<String>(&page(1000)).is_some(), "the file agrees");
+}
+
 #[test]
 fn only_one_tag_refresh_runs_per_key() {
     use v2_lib::commands::discovery::claim_tag_refresh;

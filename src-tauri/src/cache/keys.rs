@@ -78,7 +78,16 @@ pub fn db_lookup(server: &str, database: &str, limit: usize, query: &str) -> Str
 /// does not move that fast.
 pub const WIKI_PAGE_TTL_MS: u64 = 10 * 60 * 1000;
 
+/// Every wiki-page key starts with this; `cache::put` evicts by it.
+pub const WIKI_PAGE_PREFIX: &str = "wiki-page:";
+
+/// A wiki page not fetched for a week is dropped from the cache file.
+pub const WIKI_PAGE_KEEP_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+
+/// At most this many wiki pages are kept; the oldest go first.
+pub const WIKI_PAGE_MAX: usize = 50;
+
 /// One wiki page's content, keyed by the URL the file names.
 pub fn wiki_page(url: &str) -> String {
-    format!("wiki-page:{url}")
+    format!("{WIKI_PAGE_PREFIX}{url}")
 }

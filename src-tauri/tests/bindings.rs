@@ -6,21 +6,23 @@
 //! the Common-Controls v6 manifest link args, and any test binary linking
 //! tauri dies at startup without them (STATUS_ENTRYPOINT_NOT_FOUND).
 
-/// Token must never appear in any type exported over IPC.
+/// No token may appear in any type exported over IPC.
+///
+/// Written to a file of its own, never ../src/bindings.ts: `export_bindings`
+/// writes that one, tests run in parallel, and reading it while the other
+/// test truncates it made this check read a half-written file.
 #[test]
 fn bindings_never_expose_a_token() {
+    let path = std::env::temp_dir().join(format!("tcm-bindings-token-check-{}.ts", std::process::id()));
     v2_lib::specta_builder()
-        .export(
-            specta_typescript::Typescript::default(),
-            "../src/bindings.ts",
-        )
+        .export(specta_typescript::Typescript::default(), &path)
         .expect("export failed");
-    let ts = std::fs::read_to_string("../src/bindings.ts").unwrap();
-    let lower = ts.to_lowercase();
-    assert!(
-        !lower.contains("access_token") && !lower.contains("accesstoken"),
-        "generated bindings must not contain token fields"
-    );
+    let ts = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    for name in ["access_token", "accessToken", "refresh_token", "refreshToken", "id_token", "idToken"] {
+        assert!(!ts.contains(name), "generated bindings must not contain a token field ({name})");
+    }
+    assert!(!ts.to_lowercase().contains("bearer"), "generated bindings must not mention a bearer token");
 }
 
 #[test]

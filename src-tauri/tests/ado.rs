@@ -35,6 +35,17 @@ async fn maps_401_to_unauthorized() {
 
 #[tokio::test]
 async fn maps_429_with_retry_after() {
+    // The 429 sets the process-wide hold (17 s). Clear it when this test
+    // ends, pass or fail - the reset throttle_backoff.rs uses - or every
+    // other test in this binary waits it out in `pace()`.
+    struct ClearHold;
+    impl Drop for ClearHold {
+        fn drop(&mut self) {
+            v2_lib::ado::throttle::clear_backoff();
+        }
+    }
+    let clear_hold = ClearHold;
+
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "17"))
@@ -43,6 +54,11 @@ async fn maps_429_with_retry_after() {
     let client = AdoClient::with_base_url("t".into(), server.uri());
     let err = client.get_projects("o").await.unwrap_err();
     assert!(matches!(err, AdoError::RateLimited { retry_after_secs: 17 }));
+
+    drop(clear_hold);
+    let t = std::time::Instant::now();
+    v2_lib::ado::throttle::pace().await;
+    assert!(t.elapsed() < std::time::Duration::from_secs(2), "the 17 s hold must not outlive this test");
 }
 
 #[tokio::test]

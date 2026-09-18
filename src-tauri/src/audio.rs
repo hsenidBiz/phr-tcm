@@ -61,13 +61,29 @@ pub fn analyze(samples: &[f32], sample_rate: f32, n_bands: usize) -> Vec<f32> {
     bands
 }
 
-struct Capture {
-    stop: Arc<AtomicBool>,
+pub struct Capture {
+    pub stop: Arc<AtomicBool>,
 }
 
 fn slot() -> &'static Mutex<Option<Capture>> {
     static SLOT: OnceLock<Mutex<Option<Capture>>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// Empty `slot` only if it still holds the capture whose stop flag is `own`.
+/// A stop followed at once by a start puts the NEW capture in the slot while
+/// the old thread is still winding down; the old one clearing it on exit
+/// would orphan the new thread, with nothing left able to stop it.
+pub fn release_if_owner(slot: &Mutex<Option<Capture>>, own: &Arc<AtomicBool>) -> bool {
+    let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+    let mine = match guard.as_ref() {
+        Some(c) => Arc::ptr_eq(&c.stop, own),
+        None => false,
+    };
+    if mine {
+        *guard = None;
+    }
+    mine
 }
 
 /// Start the loopback capture thread (no-op if already running).
@@ -132,8 +148,9 @@ fn capture_loop(app: tauri::AppHandle, stop: Arc<AtomicBool>) {
         let device_name = device.to_string();
         stream_session(&app, &stop, &host, device, &device_name);
     }
-    // Free the slot so a later start() spawns a fresh thread.
-    slot().lock().unwrap().take();
+    // Free the slot so a later start() spawns a fresh thread - unless a
+    // newer capture already holds it.
+    release_if_owner(slot(), &stop);
 }
 
 /// Capture on ONE device until stop, stream death or a default-device

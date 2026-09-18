@@ -6,19 +6,39 @@ export const BAND_COUNT = 36;
 
 // One capture + one event subscription per webview, shared by every ring
 // via a module-level refcount; `latest` holds the newest raw frame.
+// `generation` changes on every full release, so a start that finishes
+// after its owner already let go knows it is stale.
 const latest = new Float32Array(BAND_COUNT);
 let refs = 0;
+let generation = 0;
 let unlisten: (() => void) | null = null;
+
+/** The unlisten fn invokes the event plugin and can reject or throw
+ * (teardown, window closing) - decorative, so either is swallowed. */
+function dropListener(off: (() => void) | null) {
+  try {
+    void Promise.resolve(off?.() as unknown).catch(() => {});
+  } catch {
+    // synchronous throw - same story
+  }
+}
 
 async function acquire() {
   refs++;
   if (refs > 1) return;
+  const mine = ++generation;
   try {
     await commands.audioCaptureStart(); // decorative: ignore failures
-    unlisten = await events.audioSpectrum.listen((e) => {
+    if (mine !== generation) return; // released while starting
+    const off = await events.audioSpectrum.listen((e) => {
       const bands = e.payload.bands;
       for (let i = 0; i < BAND_COUNT; i++) latest[i] = bands[i] ?? 0;
     });
+    if (mine !== generation) {
+      dropListener(off); // released while subscribing
+      return;
+    }
+    unlisten = off;
   } catch {
     // no audio device / capture unsupported - bars stay at baseline
   }
@@ -27,13 +47,8 @@ async function acquire() {
 function release() {
   refs = Math.max(0, refs - 1);
   if (refs > 0) return;
-  try {
-    // The unlisten fn invokes the event plugin and can reject (teardown,
-    // window closing) - decorative feature, swallow either failure mode.
-    void Promise.resolve(unlisten?.() as unknown).catch(() => {});
-  } catch {
-    // synchronous throw - same story
-  }
+  generation++;
+  dropListener(unlisten);
   unlisten = null;
   latest.fill(0);
   commands.audioCaptureStop().catch(() => {});

@@ -49,11 +49,17 @@ struct Disk {
 struct Inner {
     disk: Disk,
     session: HashMap<String, (Instant, Box<dyn Any + Send>)>,
+    /// Bumped on every change that is written, so writes that finish out of
+    /// order never put an older state on disk over a newer one.
+    generation: u64,
 }
 
 pub struct Store {
     file: Option<PathBuf>,
     inner: Mutex<Inner>,
+    /// The generation last written to disk. Also serialises the writes
+    /// themselves (one `.tmp` file), without holding the data lock.
+    written: Mutex<u64>,
 }
 
 pub fn now_ms() -> u64 {
@@ -85,6 +91,28 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
+/// Wiki page bodies are the one kind of entry that grows with use - one per
+/// page ever opened in a spec pane. Drop those not fetched for a week, then
+/// keep the newest `WIKI_PAGE_MAX`. Other keys are never touched here.
+fn evict_wiki_pages(entries: &mut HashMap<String, Entry>, now: u64) {
+    entries.retain(|k, e| {
+        !k.starts_with(keys::WIKI_PAGE_PREFIX) || now.saturating_sub(e.at_ms) < keys::WIKI_PAGE_KEEP_MS
+    });
+    let mut wiki: Vec<(u64, String)> = entries
+        .iter()
+        .filter(|(k, _)| k.starts_with(keys::WIKI_PAGE_PREFIX))
+        .map(|(k, e)| (e.at_ms, k.clone()))
+        .collect();
+    if wiki.len() <= keys::WIKI_PAGE_MAX {
+        return;
+    }
+    wiki.sort();
+    let excess = wiki.len() - keys::WIKI_PAGE_MAX;
+    for (_, k) in wiki.into_iter().take(excess) {
+        entries.remove(&k);
+    }
+}
+
 impl Store {
     /// Open the cache in `dir`, or memory-only with `None`. A corrupt or
     /// absent file simply starts empty - never an error.
@@ -92,6 +120,7 @@ impl Store {
         let store = Store {
             file: dir.map(|d| d.join(FILE)),
             inner: Mutex::new(Inner::default()),
+            written: Mutex::new(0),
         };
         let Some(dir) = dir else { return store };
         if let Some(disk) = read_json::<Disk>(&dir.join(FILE)) {
@@ -102,18 +131,24 @@ impl Store {
             // it is not silently left on disk, unread, forever - but never
             // overwrite a current entry with a stale one.
             if let Some(legacy_disk) = legacy::read(dir) {
-                let mut inner = store.lock();
-                for (key, entry) in legacy_disk.entries {
-                    inner.disk.entries.entry(key).or_insert(entry);
-                }
-                if store.persist(&inner.disk) {
+                let snap = {
+                    let mut inner = store.lock();
+                    for (key, entry) in legacy_disk.entries {
+                        inner.disk.entries.entry(key).or_insert(entry);
+                    }
+                    store.snapshot(&mut inner)
+                };
+                if store.write(snap) {
                     legacy::remove(dir);
                 }
             }
         } else if let Some(disk) = legacy::read(dir) {
-            let mut inner = store.lock();
-            inner.disk = disk;
-            if store.persist(&inner.disk) {
+            let snap = {
+                let mut inner = store.lock();
+                inner.disk = disk;
+                store.snapshot(&mut inner)
+            };
+            if store.write(snap) {
                 legacy::remove(dir);
             }
         }
@@ -126,21 +161,34 @@ impl Store {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Write to a `.tmp` sibling then rename it over `cache.json`. One file
-    /// now holds both tags and suites, so a crash mid-write must not lose
-    /// both halves to a half-written `cache.json` - the rename is atomic,
-    /// a plain write to the real path is not.
-    fn persist(&self, disk: &Disk) -> bool {
-        let Some(path) = &self.file else { return false };
+    /// The disk half, serialised under the data lock, with its generation.
+    /// None for a memory-only store.
+    fn snapshot(&self, inner: &mut Inner) -> Option<(u64, String)> {
+        self.file.as_ref()?;
+        inner.generation += 1;
+        let s = serde_json::to_string(&inner.disk).ok()?;
+        Some((inner.generation, s))
+    }
+
+    /// Write a snapshot AFTER the data lock is released - a slow disk must
+    /// not stall every cache read. Through a `.tmp` sibling renamed over
+    /// `cache.json`, so a crash mid-write never leaves half a file. A
+    /// snapshot older than what is already on disk is skipped.
+    fn write(&self, snap: Option<(u64, String)>) -> bool {
+        let (Some((generation, s)), Some(path)) = (snap, &self.file) else { return false };
+        let mut written = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        if *written >= generation {
+            return true;
+        }
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let Ok(s) = serde_json::to_string(disk) else { return false };
         let tmp = path.with_extension("json.tmp");
         if std::fs::write(&tmp, s).is_err() || std::fs::rename(&tmp, path).is_err() {
             let _ = std::fs::remove_file(&tmp);
             return false;
         }
+        *written = generation;
         true
     }
 
@@ -160,12 +208,18 @@ impl Store {
         serde_json::from_value(entry.value.clone()).ok()
     }
 
-    /// Store a freshly fetched value, replacing whatever was there.
+    /// Store a freshly fetched value, replacing whatever was there. Also
+    /// where old wiki pages are evicted (`evict_wiki_pages`).
     pub fn put<T: Serialize>(&self, key: &str, value: &T) {
         let Ok(value) = serde_json::to_value(value) else { return };
-        let mut inner = self.lock();
-        inner.disk.entries.insert(key.to_string(), Entry { value, at_ms: now_ms() });
-        self.persist(&inner.disk);
+        let snap = {
+            let mut inner = self.lock();
+            let now = now_ms();
+            inner.disk.entries.insert(key.to_string(), Entry { value, at_ms: now });
+            evict_wiki_pages(&mut inner.disk.entries, now);
+            self.snapshot(&mut inner)
+        };
+        self.write(snap);
     }
 
     /// Change a cached value in place. `f` returns whether it changed
@@ -177,24 +231,31 @@ impl Store {
     /// this cache (directly or through the free functions below), or it
     /// will deadlock on itself.
     pub fn update<T: Serialize + DeserializeOwned>(&self, key: &str, f: impl FnOnce(&mut T) -> bool) {
-        let mut inner = self.lock();
-        let Some(entry) = inner.disk.entries.get_mut(key) else { return };
-        let Ok(mut value) = serde_json::from_value::<T>(entry.value.clone()) else { return };
-        if !f(&mut value) {
-            return;
-        }
-        let Ok(json) = serde_json::to_value(&value) else { return };
-        entry.value = json;
-        self.persist(&inner.disk);
+        let snap = {
+            let mut inner = self.lock();
+            let Some(entry) = inner.disk.entries.get_mut(key) else { return };
+            let Ok(mut value) = serde_json::from_value::<T>(entry.value.clone()) else { return };
+            if !f(&mut value) {
+                return;
+            }
+            let Ok(json) = serde_json::to_value(&value) else { return };
+            entry.value = json;
+            self.snapshot(&mut inner)
+        };
+        self.write(snap);
     }
 
     /// Drop one key from both tiers.
     pub fn forget(&self, key: &str) {
-        let mut inner = self.lock();
-        inner.session.remove(key);
-        if inner.disk.entries.remove(key).is_some() {
-            self.persist(&inner.disk);
-        }
+        let snap = {
+            let mut inner = self.lock();
+            inner.session.remove(key);
+            if inner.disk.entries.remove(key).is_none() {
+                return;
+            }
+            self.snapshot(&mut inner)
+        };
+        self.write(snap);
     }
 
     /// A session value younger than `ttl`, as it was stored.
@@ -236,7 +297,9 @@ impl Store {
             inner.disk.entries.clear();
             inner.session.clear();
             inner.disk.owner = Some(UNNAMED_OWNER.to_string());
-            self.persist(&inner.disk);
+            let snap = self.snapshot(&mut inner);
+            drop(inner);
+            self.write(snap);
             return;
         };
         let tag = owner_tag(account);
@@ -251,15 +314,20 @@ impl Store {
             None => {}
         }
         inner.disk.owner = Some(tag);
-        self.persist(&inner.disk);
+        let snap = self.snapshot(&mut inner);
+        drop(inner);
+        self.write(snap);
     }
 
     /// Drop every entry in both tiers (the owner is kept).
     pub fn clear(&self) {
-        let mut inner = self.lock();
-        inner.disk.entries.clear();
-        inner.session.clear();
-        self.persist(&inner.disk);
+        let snap = {
+            let mut inner = self.lock();
+            inner.disk.entries.clear();
+            inner.session.clear();
+            self.snapshot(&mut inner)
+        };
+        self.write(snap);
     }
 }
 

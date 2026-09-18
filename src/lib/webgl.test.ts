@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { hasWebGL, isSoftwareRenderer } from "./webgl";
 
 /// WebView2 can answer "yes, WebGL" while drawing it on the CPU: after an
@@ -24,4 +24,20 @@ describe("isSoftwareRenderer", () => {
 
 test("hasWebGL is false where no context can be made (jsdom)", () => {
   expect(hasWebGL()).toBe(false);
+});
+
+test("hasWebGL releases the context it made to probe", () => {
+  const loseContext = vi.fn();
+  const gl = {
+    RENDERER: 0x1f01,
+    getExtension: (name: string) => (name === "WEBGL_lose_context" ? { loseContext } : null),
+    getParameter: () => "ANGLE (NVIDIA, NVIDIA GeForce RTX 5080 Direct3D11 vs_5_0 ps_5_0)",
+  };
+  const spy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => gl) as never);
+  try {
+    expect(hasWebGL()).toBe(true);
+    expect(loseContext).toHaveBeenCalledTimes(1);
+  } finally {
+    spy.mockRestore();
+  }
 });

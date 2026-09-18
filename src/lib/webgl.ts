@@ -17,9 +17,23 @@ export function hasWebGL(): boolean {
       canvas.getContext("webgl") ||
       canvas.getContext("experimental-webgl");
     if (!gl) return false;
-    return !isSoftwareRenderer(rendererName(gl as WebGLRenderingContext));
+    try {
+      return !isSoftwareRenderer(rendererName(gl as WebGLRenderingContext));
+    } finally {
+      release(gl as WebGLRenderingContext);
+    }
   } catch {
     return false;
+  }
+}
+
+/** Give the probe's context back at once: Chromium keeps only about 16
+ * live WebGL contexts, and this one is made on every sign-in mount. */
+function release(gl: WebGLRenderingContext) {
+  try {
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+  } catch {
+    // best effort - the context is garbage-collected eventually anyway
   }
 }
 
