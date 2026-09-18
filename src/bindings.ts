@@ -447,16 +447,17 @@ export const commands = {
 	saveDraftComment: (path: string, id: number | null, title: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_draft_comment", { path, id, title, text })),
 	/**
 	 *  Write a queue edit back into the draft file its cases came from, so the
-	 *  file says what the queue says. `cases` are the edited cases, `origins[k]`
-	 *  is the row `cases[k]` was before the edit (how the file finds its own
-	 *  copy, since a rename changes the title), and `removed` are rows the edit
-	 *  dropped. The file is patched (`apply_draft_edits`): cases it holds that
-	 *  the queue never showed, keys the app does not model, and the author's
-	 *  spellings all survive. Returns the file's new fingerprint so the caller
-	 *  can move its watch snapshot forward - the watcher stays silent about
-	 *  our own write, so nothing else would.
+	 *  file says what the queue says. `edits` holds one entry per queue row the
+	 *  file owns, IN QUEUE ORDER: the row before the edit (how the file finds
+	 *  its own copy, since a rename changes the title) and after it (`None` when
+	 *  the edit removed it). Order matters: the Nth same-titled row claims the
+	 *  Nth same-titled entry. The file is patched (`apply_draft_edits`): cases
+	 *  it holds that the queue never showed, keys the app does not model, and
+	 *  the author's spellings all survive. Returns the file's new fingerprint so
+	 *  the caller can move its watch snapshot forward - the watcher stays silent
+	 *  about our own write, so nothing else would.
 	 */
-	saveDraftCases: (path: string, cases: TestCase_Deserialize[], origins: TestCase_Deserialize[], removed: TestCase_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("save_draft_cases", { path, cases, origins, removed })),
+	saveDraftCases: (path: string, edits: DraftEdit_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("save_draft_cases", { path, edits })),
 	/**
 	 *  Re-render the draft page WITHOUT opening a browser. This is what the
 	 *  background keep-in-step refresh calls: it used to share `view_draft_html`
@@ -1123,6 +1124,39 @@ export type DraftCommentSaved = {
 	id: number | null,
 	title: string,
 	text: string,
+};
+
+/**
+ *  One queue row's part in a draft write-back (`save_draft_cases`): the row
+ *  as it was BEFORE the edit (how the file finds its own copy - a rename
+ *  changes the title) and what it is now, or `None` when the edit removed
+ *  it. A write-back sends one per owned row, in queue order, so the Nth
+ *  same-titled row claims the Nth same-titled entry in the file.
+ */
+export type DraftEdit = DraftEdit_Serialize | DraftEdit_Deserialize;
+
+/**
+ *  One queue row's part in a draft write-back (`save_draft_cases`): the row
+ *  as it was BEFORE the edit (how the file finds its own copy - a rename
+ *  changes the title) and what it is now, or `None` when the edit removed
+ *  it. A write-back sends one per owned row, in queue order, so the Nth
+ *  same-titled row claims the Nth same-titled entry in the file.
+ */
+export type DraftEdit_Deserialize = {
+	before: TestCase_Deserialize,
+	after: TestCase_Deserialize | null,
+};
+
+/**
+ *  One queue row's part in a draft write-back (`save_draft_cases`): the row
+ *  as it was BEFORE the edit (how the file finds its own copy - a rename
+ *  changes the title) and what it is now, or `None` when the edit removed
+ *  it. A write-back sends one per owned row, in queue order, so the Nth
+ *  same-titled row claims the Nth same-titled entry in the file.
+ */
+export type DraftEdit_Serialize = {
+	before: TestCase_Serialize,
+	after: TestCase_Serialize | null,
 };
 
 /**

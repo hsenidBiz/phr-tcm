@@ -15,7 +15,7 @@
  * top-level key it does not own).
  */
 
-import type { TestCase } from "../bindings";
+import type { DraftEdit, TestCase } from "../bindings";
 
 export type StampOutcome = {
   index: number;
@@ -23,9 +23,10 @@ export type StampOutcome = {
   id?: number | null;
 };
 
-/** `origins[k]` is the queue row `slice[k]` was before the submit - how the
- * file finds its own copy of the case (`save_draft_cases`). */
-export type StampedFile = { slice: TestCase[]; origins: TestCase[]; changed: boolean };
+/** `slice` is the file's rows after the submit; `edits` pairs each with the
+ * queue row it was before the submit (how the file finds its own copy of
+ * the case, `save_draft_cases`), in queue order. */
+export type StampedFile = { slice: TestCase[]; edits: DraftEdit[]; changed: boolean };
 
 /**
  * Per owning file: the case list to write back, in queue order.
@@ -62,9 +63,10 @@ export function stampFileSlices(
   prev.forEach((tc, i) => {
     const path = owners[i];
     if (!path) return;
-    const f = files.get(path) ?? { slice: [], origins: [], changed: false };
-    f.slice.push(post.get(i) ?? tc);
-    f.origins.push(tc);
+    const f = files.get(path) ?? { slice: [], edits: [], changed: false };
+    const after = post.get(i) ?? tc;
+    f.slice.push(after);
+    f.edits.push({ before: tc, after });
     if (post.has(i)) f.changed = true;
     files.set(path, f);
   });

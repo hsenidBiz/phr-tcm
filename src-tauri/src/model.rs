@@ -109,6 +109,17 @@ pub struct TestCase {
     pub source: SourceIndex,
 }
 
+/// One queue row's part in a draft write-back (`save_draft_cases`): the row
+/// as it was BEFORE the edit (how the file finds its own copy - a rename
+/// changes the title) and what it is now, or `None` when the edit removed
+/// it. A write-back sends one per owned row, in queue order, so the Nth
+/// same-titled row claims the Nth same-titled entry in the file.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+pub struct DraftEdit {
+    pub before: TestCase,
+    pub after: Option<TestCase>,
+}
+
 impl TestCase {
     /// Ported from v1 TestCase.is_valid(): Ok(()) if ready to submit.
     pub fn is_valid(&self) -> Result<(), String> {

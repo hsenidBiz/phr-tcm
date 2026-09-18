@@ -74,8 +74,9 @@ describe("stampFileSlices", () => {
     ]);
     const f = files.get("C:/d/a.json")!;
     // The file finds its own copy of each case by the row as it was before
-    // the upload - the id-less draft the file still holds.
-    expect(f.origins).toEqual([a, b]);
+    // the upload - the id-less draft the file still holds - in queue order.
+    expect(f.edits.map((e) => e.before)).toEqual([a, b]);
+    expect(f.edits.map((e) => e.after?.update_id)).toEqual([501, 9]);
     expect(f.slice.map((c) => c.update_id)).toEqual([501, 9]);
   });
 });

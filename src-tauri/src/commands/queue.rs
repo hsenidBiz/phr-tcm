@@ -436,22 +436,21 @@ pub fn save_draft_comment(
 }
 
 /// Write a queue edit back into the draft file its cases came from, so the
-/// file says what the queue says. `cases` are the edited cases, `origins[k]`
-/// is the row `cases[k]` was before the edit (how the file finds its own
-/// copy, since a rename changes the title), and `removed` are rows the edit
-/// dropped. The file is patched (`apply_draft_edits`): cases it holds that
-/// the queue never showed, keys the app does not model, and the author's
-/// spellings all survive. Returns the file's new fingerprint so the caller
-/// can move its watch snapshot forward - the watcher stays silent about
-/// our own write, so nothing else would.
+/// file says what the queue says. `edits` holds one entry per queue row the
+/// file owns, IN QUEUE ORDER: the row before the edit (how the file finds
+/// its own copy, since a rename changes the title) and after it (`None` when
+/// the edit removed it). Order matters: the Nth same-titled row claims the
+/// Nth same-titled entry. The file is patched (`apply_draft_edits`): cases
+/// it holds that the queue never showed, keys the app does not model, and
+/// the author's spellings all survive. Returns the file's new fingerprint so
+/// the caller can move its watch snapshot forward - the watcher stays silent
+/// about our own write, so nothing else would.
 #[tauri::command]
 #[specta::specta]
 pub fn save_draft_cases(
     app: tauri::AppHandle,
     path: String,
-    cases: Vec<model::TestCase>,
-    origins: Vec<model::TestCase>,
-    removed: Vec<model::TestCase>,
+    edits: Vec<model::DraftEdit>,
 ) -> Result<String, String> {
     // Same guard as the comment writers: a bulk edit and a comment box
     // autosave can reach the same file, and read-patch-write from both at
@@ -459,7 +458,7 @@ pub fn save_draft_cases(
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     draft_write_allowed(&path, &crate::filewatch::watched_paths(&watch_state(&app)))?;
     let old = import_parser::read_json_text(std::path::Path::new(&path))?;
-    let out = import_parser::apply_draft_edits(&old, &cases, &origins, &removed)?;
+    let out = import_parser::apply_draft_edits(&old, &edits)?;
     crate::filewatch::write_watched(&watch_state(&app), &path, &out)
 }
 

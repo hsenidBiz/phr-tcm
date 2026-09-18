@@ -363,11 +363,17 @@ test("offline disables the network writes and says why", async () => {
 /// Selecting rows arms the bulk bar; Remove writes the survivors back into
 /// the file the removed cases came from - the file must say what the queue
 /// says, or the next external save quietly reverts the removal.
+/** What `save_draft_cases` receives: one edit per owned row, in queue order. */
+type SentEdits = { path: string; edits: Array<{ before: TestCase; after: TestCase | null }> };
+/** The titles the file will hold for the queue's rows (removed rows drop out). */
+const keptTitles = (p: SentEdits) =>
+  p.edits.flatMap((e) => (e.after ? [e.after.title] : []));
+
 test("bulk remove updates the queue AND the owning .json file", async () => {
   const a = makeCase({ title: "From file A" });
   const b = makeCase({ title: "Also from file A" });
   const hand = makeCase({ title: "Typed by hand" });
-  const saved: Array<{ path: string; titles: string[] }> = [];
+  const saved: Array<{ path: string; titles: string[]; edits: Array<[string, string | null]> }> = [];
   mockIPC((cmd, args) => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
@@ -376,8 +382,12 @@ test("bulk remove updates the queue AND the owning .json file", async () => {
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
-      const p = args as { path: string; cases: TestCase[] };
-      saved.push({ path: p.path, titles: p.cases.map((c) => c.title) });
+      const p = args as SentEdits;
+      saved.push({
+        path: p.path,
+        titles: keptTitles(p),
+        edits: p.edits.map((e) => [e.before.title, e.after?.title ?? null]),
+      });
       return "stamp-2";
     }
     return undefined;
@@ -397,6 +407,13 @@ test("bulk remove updates the queue AND the owning .json file", async () => {
   await waitFor(() => expect(saved).toHaveLength(1));
   expect(saved[0].path).toBe("C:/drafts/a.json");
   expect(saved[0].titles).toEqual(["Also from file A"]);
+  // In QUEUE order, the removal interleaved where it happened: the file
+  // claims its entries in this order, so the Nth same-titled row is the
+  // Nth same-titled entry.
+  expect(saved[0].edits).toEqual([
+    ["From file A", null],
+    ["Also from file A", "Also from file A"],
+  ]);
   await waitFor(() => expect(patched).toEqual([{ path: "C:/drafts/a.json", stamp: "stamp-2" }]));
 });
 
@@ -415,8 +432,10 @@ test("bulk edit applies to the selection and leaves unselected rows alone", asyn
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
-      const p = args as { cases: TestCase[] };
-      for (const c of p.cases) saved.push({ title: c.title, status: c.automation_status });
+      const p = args as SentEdits;
+      for (const e of p.edits) {
+        if (e.after) saved.push({ title: e.after.title, status: e.after.automation_status });
+      }
       return "stamp-2";
     }
     return undefined;
@@ -456,8 +475,7 @@ test("power rename scoped to the selection writes the file back", async () => {
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
-      const p = args as { cases: TestCase[] };
-      saved.push({ titles: p.cases.map((c) => c.title) });
+      saved.push({ titles: keptTitles(args as SentEdits) });
       return "stamp-2";
     }
     return undefined;
@@ -572,8 +590,8 @@ test("single Edit save writes the change through to the owning file", async () =
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
-      const p = args as { path: string; cases: TestCase[] };
-      saved.push({ path: p.path, titles: p.cases.map((c) => c.title) });
+      const p = args as SentEdits;
+      saved.push({ path: p.path, titles: keptTitles(p) });
       return "stamp-2";
     }
     return undefined;
@@ -600,7 +618,7 @@ test("single Edit save writes the change through to the owning file", async () =
 /// write-back sends the row as it was before the edit alongside it.
 test("a rename write-back tells the file which case it was", async () => {
   const a = makeCase({ title: "Original title" });
-  const saved: Array<{ titles: string[]; origins: string[]; removed: string[] }> = [];
+  const saved: Array<Array<{ before: string; after: string | null }>> = [];
   mockIPC((cmd, args) => {
     if (cmd === "plugin:event|listen") return 1;
     if (cmd === "plugin:event|unlisten") return null;
@@ -609,12 +627,8 @@ test("a rename write-back tells the file which case it was", async () => {
     if (cmd === "test_case_field_values") return [];
     if (cmd === "pbi_test_cases") return [];
     if (cmd === "save_draft_cases") {
-      const p = args as { cases: TestCase[]; origins: TestCase[]; removed: TestCase[] };
-      saved.push({
-        titles: p.cases.map((c) => c.title),
-        origins: p.origins.map((c) => c.title),
-        removed: p.removed.map((c) => c.title),
-      });
+      const p = args as SentEdits;
+      saved.push(p.edits.map((e) => ({ before: e.before.title, after: e.after?.title ?? null })));
       return "stamp-2";
     }
     return undefined;
@@ -631,7 +645,7 @@ test("a rename write-back tells the file which case it was", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
 
   await waitFor(() => expect(saved).toHaveLength(1));
-  expect(saved[0]).toEqual({ titles: ["Renamed title"], origins: ["Original title"], removed: [] });
+  expect(saved[0]).toEqual([{ before: "Original title", after: "Renamed title" }]);
 });
 
 /// The last safeguard: the final Yes re-checks ADO and STOPS when a case

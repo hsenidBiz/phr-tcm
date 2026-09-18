@@ -8,7 +8,7 @@ use super::{
     REVIEWER_NOTES_KEYS, SPEC_ORDER_KEYS, STEP_ACTION_KEYS, STEP_EXPECTED_KEYS, TESTER_ORDER_KEYS,
     TITLE_KEYS,
 };
-use crate::model::{SourceIndex, TestCase};
+use crate::model::{DraftEdit, SourceIndex, TestCase};
 use crate::steps_xml::Step;
 use serde_json::{Map, Value};
 
@@ -313,37 +313,29 @@ fn patch_step(raw: &Value, old: &Step, new: &Step) -> Value {
     }
 }
 
-/// The write-back behind `save_draft_cases`. `cases[k]` is the queue's
-/// current version of the case whose pre-edit row was `origins[k]`;
-/// `removed` are pre-edit rows the edit dropped. Each row finds its entry in
-/// the file by work item id, or by title among id-less entries, the first
-/// unclaimed one in file order. Found entries are patched or removed. File
-/// entries no row mentions are kept (cases an assistant added since the last
-/// sync). A row whose entry is gone from the file is appended.
-pub fn apply_draft_edits(
-    old_text: &str,
-    cases: &[TestCase],
-    origins: &[TestCase],
-    removed: &[TestCase],
-) -> Result<String, String> {
-    if origins.len() != cases.len() {
-        return Err("internal error: every written case needs the row it came from".into());
-    }
+/// The write-back behind `save_draft_cases`. `edits` are the owned queue
+/// rows IN QUEUE ORDER: each one's pre-edit row (`before`) and what it is
+/// now (`after`, `None` = removed). Each `before` finds its entry in the
+/// file by work item id, or by title among id-less entries, the first
+/// unclaimed one in file order - claimed in queue order, so the Nth
+/// same-titled row is the Nth same-titled entry (the app's occurrence rule,
+/// `keysFor`). Found entries are patched or removed. File entries no row
+/// mentions are kept (cases an assistant added since the last sync). A row
+/// whose entry is gone from the file is appended.
+pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, String> {
     let old_text = super::strip_bom(old_text);
     let parsed = super::parse_json_text(old_text).map(|p| p.cases).unwrap_or_default();
     let mut claimed = vec![false; parsed.len()];
     // None = untouched; Some(None) = removed; Some(Some(case)) = edited.
     let mut fate: Vec<Option<Option<&TestCase>>> = vec![None; parsed.len()];
     let mut unmatched: Vec<TestCase> = vec![];
-    for (after, before) in cases.iter().zip(origins) {
-        match claim(&parsed, &mut claimed, before) {
-            Some(k) => fate[k] = Some(Some(after)),
-            None => unmatched.push(TestCase { source: SourceIndex(None), ..after.clone() }),
-        }
-    }
-    for before in removed {
-        if let Some(k) = claim(&parsed, &mut claimed, before) {
-            fate[k] = Some(None);
+    for edit in edits {
+        match (claim(&parsed, &mut claimed, &edit.before), &edit.after) {
+            (Some(k), after) => fate[k] = Some(after.as_ref()),
+            (None, Some(after)) => {
+                unmatched.push(TestCase { source: SourceIndex(None), ..after.clone() })
+            }
+            (None, None) => {} // removed, and already gone from the file
         }
     }
     let mut out: Vec<TestCase> = vec![];

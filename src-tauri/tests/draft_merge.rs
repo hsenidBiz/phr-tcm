@@ -5,7 +5,11 @@
 use serde_json::{json, Value};
 use v2_lib::ai_bridge::{route, BridgeContext};
 use v2_lib::import_parser::{apply_draft_edits, merge_cases_into_draft, parse_json_text};
-use v2_lib::model::TestCase;
+use v2_lib::model::{DraftEdit, TestCase};
+
+fn edit(before: TestCase, after: Option<TestCase>) -> DraftEdit {
+    DraftEdit { before, after }
+}
 
 struct TempDir(std::path::PathBuf);
 impl TempDir {
@@ -213,7 +217,7 @@ fn a_bulk_edit_patches_its_cases_and_leaves_the_rest_of_the_file_alone() {
     let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
     let renamed = TestCase { title: "Renamed".into(), ..row(0) };
 
-    let out = apply_draft_edits(&old, &[renamed], &[row(0)], &[row(1)]).unwrap();
+    let out = apply_draft_edits(&old, &[edit(row(0), Some(renamed)), edit(row(1), None)]).unwrap();
     let doc: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(titles(&doc), ["Renamed", "Half written", "Added after the last sync"], "{out}");
     assert_eq!(doc["test_cases"][0]["author"], "avin");
@@ -233,11 +237,30 @@ fn an_upload_stamps_the_new_id_onto_the_case_it_came_from() {
     let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
     let created = TestCase { update_id: Some(501), ..row(1) };
 
-    let out = apply_draft_edits(&old, &[row(0), created], &[row(0), row(1)], &[]).unwrap();
+    let out =
+        apply_draft_edits(&old, &[edit(row(0), Some(row(0))), edit(row(1), Some(created))]).unwrap();
     let doc: Value = serde_json::from_str(&out).unwrap();
     assert!(doc["test_cases"][0].get("id").is_none(), "{out}");
     assert_eq!(doc["test_cases"][1]["id"], 501);
     assert_eq!(doc["test_cases"][1]["steps"][0]["step"], "Two.", "the step keeps its spelling");
+}
+
+/// The Nth "X" in the queue is the Nth "X" in the file. Removing the first
+/// of two same-titled drafts removes the FIRST entry; the second keeps
+/// every key it had.
+#[test]
+fn removing_the_first_of_two_same_titled_drafts_removes_the_first_entry() {
+    let first = json!({ "title": "X", "author": "a", "steps": [{ "action": "A.", "expected": "" }] });
+    let second =
+        json!({ "title": "X", "steps": [{ "action": "B.", "expected": "", "screenshot": "b.png" }] });
+    let old = json!({ "test_cases": [first, second.clone()] }).to_string();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
+
+    // Queue order: Q1 (= the first entry) removed, Q2 kept as it was.
+    let out = apply_draft_edits(&old, &[edit(row(0), None), edit(row(1), Some(row(1)))]).unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["test_cases"], json!([second]), "{out}");
 }
 
 #[test]
