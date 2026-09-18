@@ -18,6 +18,27 @@ use crate::model::TestCase;
 /// come apart into floating text.
 const HTML_CSS: &str = include_str!("../../web/cases-page.css");
 
+/// `HTML_CSS` with the spec-pane rules (between the `SPEC-PANE-CSS-START`
+/// and `SPEC-PANE-CSS-END` markers) cut out when there is no pane - so a
+/// page without one never carries the `with-specs` class name anywhere in
+/// its stylesheet, matching the markup, which also never uses it.
+fn html_css(with_specs: bool) -> std::borrow::Cow<'static, str> {
+    if with_specs {
+        return std::borrow::Cow::Borrowed(HTML_CSS);
+    }
+    const START: &str = "/* SPEC-PANE-CSS-START";
+    const END: &str = "SPEC-PANE-CSS-END */";
+    match (HTML_CSS.find(START), HTML_CSS.find(END)) {
+        (Some(s), Some(e)) if e >= s => {
+            let mut out = String::with_capacity(HTML_CSS.len());
+            out.push_str(&HTML_CSS[..s]);
+            out.push_str(&HTML_CSS[e + END.len()..]);
+            std::borrow::Cow::Owned(out)
+        }
+        _ => std::borrow::Cow::Borrowed(HTML_CSS),
+    }
+}
+
 const HTML_JS: &str = include_str!("../../web/cases-page.js");
 
 /// Autosaving comment boxes in the report: debounce each textarea and POST
@@ -28,6 +49,10 @@ const HTML_JS: &str = include_str!("../../web/cases-page.js");
 /// may have moved, or an assistant may have renamed the case out from
 /// under it. "Saved ✓" has to mean saved.
 const NOTE_JS: &str = include_str!("../../web/cases-notes.js");
+
+/// The spec pane: tabs, the resize grip, the Hide/Show chip, heading
+/// anchors, and the `Spec:` citation links in reviewer notes.
+const SPECS_JS: &str = include_str!("../../web/cases-specs.js");
 
 /// JSON for embedding inside a `<script>` element.
 ///
@@ -73,6 +98,9 @@ pub struct DraftFile {
     /// What to call it in the panel - the file name, not the full path.
     pub label: String,
     pub comment: String,
+    /// The file's `specs` entries, verbatim - resolved by the app.
+    #[serde(default)]
+    pub specs: Vec<String>,
 }
 
 /// Context for comment boxes on a page of DRAFT cases: every case gets a
@@ -138,12 +166,15 @@ pub fn export_queue_to_html(
     ctx: Option<CommentCtx>,
     palette: &crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    export_queue_page(queue, path, subtitle, ctx, palette, None)
+    export_queue_page(queue, path, subtitle, ctx, palette, None, &[])
 }
 
 /// `export_queue_to_html` with a "View as Tree" button linking to
 /// `tree_href` - the Test map the app wrote beside this page
 /// (`test_map::write_beside`). None means no button: nothing to map.
+///
+/// `specs` are the resolved documents for the spec pane beside the cases -
+/// empty means no pane at all.
 pub fn export_queue_page(
     queue: &[TestCase],
     path: &str,
@@ -151,6 +182,7 @@ pub fn export_queue_page(
     ctx: Option<CommentCtx>,
     palette: &crate::webtheme::PagePalette,
     tree_href: Option<&str>,
+    specs: &[crate::spec_pane::SpecDoc],
 ) -> Result<(), String> {
     // The side column only exists for a draft that came from files. Without
     // it the page keeps its original single centred column.
@@ -162,9 +194,19 @@ pub fn export_queue_page(
     // export (no ctx) is a draft too; only the Ado page shows cases that
     // already exist, where "what will importing do" is not a question.
     let draft_page = !matches!(&ctx, Some(CommentCtx::Ado(_)));
-    let shell_open = if files.is_empty() { "" } else { "<div class='shell'>" };
+    // The side column exists for a draft from files (general comments) or
+    // for a page with specs; `with-specs` widens it for the pane.
+    let has_side = !files.is_empty() || !specs.is_empty();
+    let shell_open = if !has_side {
+        ""
+    } else if specs.is_empty() {
+        "<div class='shell'>"
+    } else {
+        "<div class='shell with-specs'>"
+    };
     // Identity of each draft box, resolved by the app when the note lands.
     let mut draft_cases: Vec<serde_json::Value> = vec![];
+    let css = html_css(!specs.is_empty());
 
     let mut parts: Vec<String> = vec![
         "<!DOCTYPE html>".into(),
@@ -175,7 +217,7 @@ pub fn export_queue_page(
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">".into(),
         format!("<title>Test Cases ({})</title>", queue.len()),
         format!(
-            "<style>{vars}{HTML_CSS}</style></head><body>{switch}{shell_open}<div class='page'>",
+            "<style>{vars}{css}</style></head><body>{switch}{shell_open}<div class='page'>",
             vars = palette.css(),
             switch = crate::webtheme::SWITCH_HTML,
         ),
@@ -215,6 +257,12 @@ pub fn export_queue_page(
         match tree_href {
             Some(href) => format!("<a id='tc-tree' href='{}'>View as Tree</a>", esc(href)),
             None => String::new(),
+        },
+        // The Hide/Show chip for the spec pane - only when there is one.
+        if specs.is_empty() {
+            String::new()
+        } else {
+            "<button id='tc-spec' type='button' aria-pressed='false'>Hide spec</button>".to_string()
         },
         "<span id='tc-count'></span></div>".into(),
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),
@@ -429,31 +477,55 @@ pub fn export_queue_page(
     }
     parts.push("</div>".into());
 
-    // The whole-set comments, one box per file, collapsible and out of the
-    // way of the cards.
-    if !files.is_empty() {
-        parts.push(
-            "<details class='aside' open><summary>General comments</summary><div class='aside-body'>"
-                .into(),
-        );
-        for (i, f) in files.iter().enumerate() {
-            parts.push(format!(
-                "<div class='file'><div class='filename'>{} \
-                 <span class='note-status' id='ns-f{i}'></span></div>\
-                 <textarea class='note-box' id='nb-f{i}' data-file='{i}' \
-                 data-status='ns-f{i}' aria-label='General comments for {}' \
-                 placeholder='Notes about this set as a whole - saved into {}'>{}</textarea></div>",
-                esc(&f.label),
-                esc(&f.label),
-                esc(&f.label),
-                esc(&f.comment)
-            ));
+    // The side column: general comments (drafts from files) above the spec
+    // pane, when either exists.
+    if has_side {
+        parts.push("<div class='side'>".into());
+        if !files.is_empty() {
+            parts.push(
+                "<details class='aside' open><summary>General comments</summary><div class='aside-body'>".into(),
+            );
+            for (i, f) in files.iter().enumerate() {
+                parts.push(format!(
+                    "<div class='file'><div class='filename'>{} \
+                     <span class='note-status' id='ns-f{i}'></span></div>\
+                     <textarea class='note-box' id='nb-f{i}' data-file='{i}' \
+                     data-status='ns-f{i}' aria-label='General comments for {}' \
+                     placeholder='Notes about this set as a whole - saved into {}'>{}</textarea></div>",
+                    esc(&f.label), esc(&f.label), esc(&f.label), esc(&f.comment)
+                ));
+            }
+            parts.push("</div></details>".into());
         }
-        parts.push("</div></details>".into());
+        if !specs.is_empty() {
+            parts.push("<section class='specs' id='tc-specs' aria-label='Specifications'><div class='spec-grip' role='separator' aria-orientation='vertical' aria-label='Resize the spec pane' title='Drag to resize; double-click to reset'></div><div class='spec-tabs' role='tablist'>".into());
+            for (i, d) in specs.iter().enumerate() {
+                let kind = if d.kind == "wiki" { " <span class='spec-kind'>wiki</span>" } else { "" };
+                parts.push(format!("<button type='button' class='spec-tab' data-spec='{i}'>{}{kind}</button>", esc(&d.title)));
+            }
+            parts.push("</div>".into());
+            for (i, d) in specs.iter().enumerate() {
+                let open = if d.kind == "wiki" {
+                    format!("<a class='spec-open' href='{}' target='_blank' rel='noopener noreferrer'>Open in Azure DevOps</a>", esc(&d.source))
+                } else {
+                    format!("<span class='spec-path' title='{}'>{}</span>", esc(&d.source), esc(&d.source))
+                };
+                let body = match &d.error {
+                    Some(e) => format!("<p class='spec-error'>{}</p>", esc(e)),
+                    None => d.html.clone(),
+                };
+                parts.push(format!("<article class='spec-doc' data-spec='{i}' hidden><div class='spec-head'>{open}</div><div class='spec-body rev-body'>{body}</div></article>"));
+            }
+            let meta: Vec<serde_json::Value> = specs.iter().map(|d| serde_json::json!({ "title": d.title, "kind": d.kind, "source": d.source })).collect();
+            parts.push(format!("<script type='application/json' id='tc-specs-data'>{}</script>", script_json(&meta, "[]")));
+            parts.push("</section>".into());
+        }
+        parts.push("</div>".into()); // .side
         parts.push("</div>".into()); // .shell
     }
 
     parts.push(format!("<script>{HTML_JS}</script>"));
+    parts.push(format!("<script>/* cases-specs.js */{SPECS_JS}</script>"));
     parts.push(format!("<script>{}</script>", crate::webtheme::SWITCH_JS));
     if let Some(c) = &ctx {
         let org = match c {

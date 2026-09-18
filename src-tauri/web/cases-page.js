@@ -167,6 +167,7 @@
       applyFilter = wireSearch();
       wireNotesToggle();
       if (window.__tcmWireNotes) window.__tcmWireNotes();
+      if (window.__tcmWireSpecs) window.__tcmWireSpecs();
       window.scrollTo(0, y);
       return true;
     }

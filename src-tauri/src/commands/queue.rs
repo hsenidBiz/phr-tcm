@@ -527,6 +527,7 @@ fn render_queue_html(
         note_ctx.as_ref().map(import_parser::CommentCtx::Ado),
         &palette,
         tree.as_deref(),
+        &[],
     )?;
     // And tell a page already open on these cases that it is behind - and
     // where to pull the fresh content from.
@@ -606,6 +607,7 @@ fn render_draft_html(
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
         &palette,
         tree.as_deref(),
+        &[],
     )?;
     // Where an open page can pull the fresh content from, and the signal
     // that it should: the poll sees the revision move, fetches /report,

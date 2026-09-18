@@ -954,7 +954,7 @@ fn the_review_page_links_to_the_tree_only_when_given_one() {
     let dir = std::env::temp_dir().join("tcm-v2-tree-link-tests");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{}-with.html", std::process::id())).to_string_lossy().to_string();
-    export_queue_page(&queue, &path, "", None, &Default::default(), Some("test-map-1.html")).unwrap();
+    export_queue_page(&queue, &path, "", None, &Default::default(), Some("test-map-1.html"), &[]).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(
         html.contains("<a id='tc-tree' href='test-map-1.html'>View as Tree</a>"),
@@ -967,4 +967,49 @@ fn the_review_page_links_to_the_tree_only_when_given_one() {
     export_queue_to_html(&queue, &path2, "", None, &Default::default()).unwrap();
     let plain = std::fs::read_to_string(&path2).unwrap();
     assert!(!plain.contains("id='tc-tree'"), "no map written, so no button: {plain}");
+}
+
+/// The spec pane: one tab per document beside the cases, only when there
+/// are documents; an error doc shows its message in its tab; the sticky
+/// bar offers a Hide/Show chip.
+#[test]
+fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
+    use v2_lib::import_parser::{export_queue_page, DraftFile};
+    use v2_lib::spec_pane::SpecDoc;
+    let queue = vec![TestCase {
+        title: "T".into(),
+        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        reviewer_notes: "Spec: Step13-CalculationEngine.md 5.8 Display Rules\n\n> \"shown\"".into(),
+        ..Default::default()
+    }];
+    let docs = vec![
+        SpecDoc { title: "Calculation Engine".into(), kind: "file".into(), source: "C:/s/Step13-CalculationEngine.md".into(), html: "<h2>5.8 Display Rules</h2><p>Shown.</p>".into(), error: None },
+        SpecDoc { title: "Engine".into(), kind: "wiki".into(), source: "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine".into(), html: String::new(), error: Some("Could not fetch this wiki page: not signed in.".into()) },
+    ];
+    let dir = std::env::temp_dir().join("tcm-v2-spec-pane-page-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}-with.html", std::process::id())).to_string_lossy().to_string();
+    export_queue_page(&queue, &path, "", None, &Default::default(), None, &docs).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("<div class='shell with-specs'>"), "{html}");
+    assert!(html.contains("<section class='specs' id='tc-specs'"), "{html}");
+    assert!(html.contains("<button type='button' class='spec-tab' data-spec='0'>Calculation Engine</button>"), "{html}");
+    assert!(html.contains("<button type='button' class='spec-tab' data-spec='1'>Engine <span class='spec-kind'>wiki</span></button>"), "{html}");
+    assert!(html.contains("<article class='spec-doc' data-spec='0'"), "{html}");
+    assert!(html.contains("<h2>5.8 Display Rules</h2>"), "the rendered document is inside: {html}");
+    assert!(html.contains("<p class='spec-error'>Could not fetch this wiki page: not signed in.</p>"), "{html}");
+    assert!(html.contains("<a class='spec-open' href='https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine' target='_blank' rel='noopener noreferrer'>Open in Azure DevOps</a>"), "{html}");
+    let bar = html.split("<div class='searchbar'>").nth(1).unwrap().split("</div>").next().unwrap();
+    assert!(bar.contains("<button id='tc-spec' type='button' aria-pressed='false'>Hide spec</button>"), "{bar}");
+    // The pane's own data block, for the script (titles and sources only).
+    assert!(html.contains("<script type='application/json' id='tc-specs-data'>"), "{html}");
+    assert!(html.contains("cases-specs"), "the pane script is embedded: {html}");
+    let _ = DraftFile { path: "x".into(), label: "x".into(), comment: String::new(), specs: vec!["a.md".into()] };
+
+    let path2 = dir.join(format!("{}-without.html", std::process::id())).to_string_lossy().to_string();
+    export_queue_page(&queue, &path2, "", None, &Default::default(), None, &[]).unwrap();
+    let plain = std::fs::read_to_string(&path2).unwrap();
+    assert!(!plain.contains("id='tc-specs'"), "{plain}");
+    assert!(!plain.contains("id='tc-spec'"), "{plain}");
+    assert!(!plain.contains("with-specs"), "{plain}");
 }

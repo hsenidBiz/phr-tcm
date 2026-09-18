@@ -234,11 +234,13 @@ fn the_side_panel_lists_one_box_per_watched_file() {
                 path: "C:/work/login.json".into(),
                 label: "login.json".into(),
                 comment: "Spec 3.2 is ambiguous".into(),
+                specs: vec![],
             },
             DraftFile {
                 path: "C:/work/pay.json".into(),
                 label: "pay.json".into(),
                 comment: String::new(),
+                specs: vec![],
             },
         ],
     );
