@@ -1091,3 +1091,120 @@ test("specEntryFor matches the directory case-insensitively", () => {
 test("specEntryFor keeps a file elsewhere as the absolute path", () => {
   expect(specEntryFor("C:/w/cases.json", "D:/elsewhere/Rules.md")).toBe("D:/elsewhere/Rules.md");
 });
+
+// ---------------------------------------------------------------------
+// Two watched files reconciling at once: the guard that serializes their
+// sync must never drop one on the floor.
+
+/// Review finding: the arming loop sets `detected` once per watched file.
+/// With two stale files, the second file's arrival re-ran the reconcile
+/// while the first file's sync was mid-flight: the cleanup cancelled it,
+/// the new run bailed on the busy guard, and nothing ever retried. Neither
+/// file's edits reached the queue.
+test("two watched files that both changed while the app was closed both sync on arming", async () => {
+  const LOGOUT_PATH = String.raw`C:\work\logout.json`;
+  localStorage.setItem(
+    "tcm-v2-draft:acme/42",
+    JSON.stringify([jsonCase("Login works"), jsonCase("Logout works")]),
+  );
+  localStorage.setItem(
+    "tcm-v2-watch:acme/42",
+    JSON.stringify([
+      { path: CASE_PATH, stamp: "s1", snapshot: [jsonCase("Login works")] },
+      { path: LOGOUT_PATH, stamp: "s1", snapshot: [jsonCase("Logout works")] },
+    ]),
+  );
+  // Pin the interleaving: the second file is armed only once the first
+  // file's sync is parsing, and that parse is held until the second file's
+  // fingerprint is in - so the first sync is always cancelled mid-flight.
+  let firstParseAsked: () => void = () => {};
+  const firstParsing = new Promise<void>((r) => {
+    firstParseAsked = r;
+  });
+  let releaseFirst: () => void = () => {};
+  const firstHeld = new Promise<void>((r) => {
+    releaseFirst = r;
+  });
+  mockIPC(async (cmd, args) => {
+    const path = (args as { path?: string } | undefined)?.path;
+    if (cmd === "watch_file") {
+      if (path === LOGOUT_PATH) await firstParsing;
+      return null;
+    }
+    if (cmd === "file_stamp") {
+      if (path === LOGOUT_PATH) setTimeout(releaseFirst, 50);
+      return "s2";
+    }
+    if (cmd === "unwatch_file" || cmd === "unwatch_all_files") return null;
+    if (cmd === "parse_import_file") {
+      if (path === CASE_PATH) {
+        firstParseAsked();
+        await firstHeld;
+        return { cases: [jsonCase("Login works"), jsonCase("Login added while away")], warnings: [] };
+      }
+      return { cases: [jsonCase("Logout works"), jsonCase("Logout added while away")], warnings: [] };
+    }
+    if (cmd === "read_general_comment") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  }, { shouldMockEvents: true });
+  renderScreen();
+
+  expect(await screen.findByText("Login added while away", {}, { timeout: 3000 })).toBeInTheDocument();
+  expect(await screen.findByText("Logout added while away", {}, { timeout: 3000 })).toBeInTheDocument();
+});
+
+/// Review finding: the shared-import write finished with the setter of the
+/// PBI it started on, but that setter's `prev` was whatever PBI was on
+/// screen by then. It saved the NEW PBI's list (plus the share) under the
+/// OLD PBI's key - wiping the old PBI's own watches - and showed the share
+/// file as watched on the new PBI.
+test("a shared import that finishes after a PBI switch records its watch under its own PBI", async () => {
+  localStorage.setItem(
+    "tcm-v2-watch:acme/42",
+    JSON.stringify([{ path: CASE_PATH, stamp: "s", snapshot: [] }]),
+  );
+  let asked = false;
+  let finish: (v: unknown) => void = () => {};
+  mockIPC((cmd) => {
+    if (cmd === "fetch_shared_queue") return sharedFor(42);
+    if (cmd === "materialize_shared_draft") {
+      asked = true;
+      return new Promise((r) => {
+        finish = r;
+      });
+    }
+    if (cmd === "watch_file" || cmd === "unwatch_file" || cmd === "unwatch_all_files") return null;
+    if (cmd === "file_stamp") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const at = (p: typeof pbi) => (
+    <QueryClientProvider client={qc}>
+      <ImportFile org="acme" project="Web" pbi={p} />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(at(pbi));
+  fireEvent.change(screen.getByLabelText("Share link"), {
+    target: { value: "tcm-share:acme/Web/42/aaaa-1111" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Import shared" }));
+  expect(await screen.findByText("Shared case")).toBeInTheDocument();
+  await waitFor(() => expect(asked).toBe(true));
+
+  // The user moves to another PBI before the local copy is written.
+  rerender(at({ ...pbi, id: 77, title: "Another PBI" }));
+  await act(async () => {
+    finish({ path: "C:/drafts/shared-pbi-42.json", stamp: "shared-stamp-1" });
+  });
+
+  // PBI 77 shows nothing it does not watch, and stores nothing.
+  expect(screen.queryByText(/Watching 1 file/)).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-watch:acme/77")).toBeNull();
+  // PBI 42 keeps its own watch AND gains the share.
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-watch:acme/42") as string) as { path: string }[];
+  expect(stored.map((w) => w.path)).toEqual([CASE_PATH, "C:/drafts/shared-pbi-42.json"]);
+});

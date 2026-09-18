@@ -104,6 +104,57 @@ export function changedSteps(before: TestCase, after: TestCase): StepDiff[] {
   return out;
 }
 
+/** The same case, field for field and step for step. */
+function sameCase(a: TestCase, b: TestCase): boolean {
+  return changedFields(a, b).length === 0 && stepsSig(a) === stepsSig(b);
+}
+
+/** Which queue rows a file put there: for each row, the key that case has
+ * in the FILE's own list (repeats numbered over the file), or null for a
+ * row this file does not own.
+ *
+ * Numbering repeats over the whole queue let a hand-typed "Login" that sat
+ * first take the key of the file's "Login": the file's edits then landed on
+ * the hand-typed case, and dropping it from the file removed the wrong row.
+ * So the file's cases claim rows instead, per identity: first the rows that
+ * still match a file case exactly, then the rest in queue order. A row
+ * nothing claims belongs to no file.
+ *
+ * `taken` marks rows another file already claimed; they are skipped. */
+export function fileOwnedKeys(
+  queue: TestCase[],
+  snapshot: TestCase[],
+  taken?: boolean[],
+): (string | null)[] {
+  const snapKeys = keysFor(snapshot);
+  const open = new Map<string, { key: string; c: TestCase }[]>();
+  snapshot.forEach((c, i) => {
+    const base = caseKey(c);
+    const list = open.get(base);
+    if (list) list.push({ key: snapKeys[i], c });
+    else open.set(base, [{ key: snapKeys[i], c }]);
+  });
+  const out: (string | null)[] = queue.map(() => null);
+  const free = (i: number) => out[i] == null && !taken?.[i];
+  // Exact matches first: an untouched file case is its own best evidence.
+  queue.forEach((c, i) => {
+    if (!free(i)) return;
+    const list = open.get(caseKey(c));
+    if (!list) return;
+    const j = list.findIndex((o) => sameCase(o.c, c));
+    if (j === -1) return;
+    out[i] = list[j].key;
+    list.splice(j, 1);
+  });
+  // Then rows edited in the app, in order.
+  queue.forEach((c, i) => {
+    if (!free(i)) return;
+    const claim = open.get(caseKey(c))?.shift();
+    if (claim) out[i] = claim.key;
+  });
+  return out;
+}
+
 export type SyncChange = {
   kind: "added" | "changed" | "removed";
   key: string;
@@ -153,12 +204,17 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
   const prevKeys = keysFor(prev);
   const gone = new Set(prevKeys.filter((k) => !nextBy.has(k)));
 
-  const queueKeys = keysFor(queue);
-  const keptKeys: string[] = [];
+  // Only the rows this file owns are keyed against it; a hand-typed row
+  // that shares a title is left alone. One exception: a row carrying a work
+  // item id is matched by that id even when the snapshot predates it (the
+  // id write-back after an upload) - an id is exact, never a guess.
+  const owned = fileOwnedKeys(queue, prev);
+  const queueKeys = owned.map((k, i) => k ?? (queue[i].update_id != null ? caseKey(queue[i]) : null));
+  const keptKeys: (string | null)[] = [];
   const kept = queue.filter((c, i) => {
-    const k = queueKeys[i];
-    if (!gone.has(k)) {
-      keptKeys.push(k);
+    const k = owned[i];
+    if (k == null || !gone.has(k)) {
+      keptKeys.push(queueKeys[i]);
       return true;
     }
     changes.push({ kind: "removed", key: k, title: c.title, fields: [], steps: [], full: c });
@@ -172,6 +228,7 @@ export function syncFromFile(queue: TestCase[], prev: TestCase[], next: TestCase
   const present = new Set<string>();
   const synced = kept.map((c, i) => {
     const k = keptKeys[i];
+    if (k == null) return c; // not this file's row
     present.add(k);
     const fresh = unclaimed.get(k);
     if (!fresh) return c;
@@ -293,36 +350,41 @@ export function upsertWatch(list: WatchedFile[], w: WatchedFile): WatchedFile[] 
 /** The queue with everything a given file contributed taken out. Used when
  * a watch is dropped and the user says yes to removing its cases. Cases
  * that came from elsewhere - typed by hand, or owned by another watched
- * file - are left alone. */
+ * file - are left alone: the other files claim their rows first. */
 export function withoutFileCases(
   queue: TestCase[],
   snapshot: TestCase[],
   otherSnapshots: TestCase[][],
 ): TestCase[] {
-  const owned = new Set(keysFor(snapshot));
+  const taken = queue.map(() => false);
   for (const other of otherSnapshots) {
-    for (const k of keysFor(other)) owned.delete(k);
+    fileOwnedKeys(queue, other, taken).forEach((k, i) => {
+      if (k != null) taken[i] = true;
+    });
   }
-  const keys = keysFor(queue);
-  return queue.filter((_, i) => !owned.has(keys[i]));
+  const mine = fileOwnedKeys(queue, snapshot, taken);
+  return queue.filter((_, i) => mine[i] == null);
 }
 
 /** The file each queued case came from, aligned with `queue`; empty for a
  * case that was typed by hand and belongs to no file.
  *
  * A comment is written back into the file that put the case there, so this
- * is what decides where it lands. If two files both claim a case - same
- * title in each, which the app cannot tell apart - the one imported first
- * keeps it, matching the order `withoutFileCases` uses to decide ownership
- * when a watch is dropped. */
+ * is what decides where it lands. Files claim rows in the order they were
+ * imported, so when two files hold the same title the first keeps the row
+ * both match, and the second claims the next same-titled row if there is
+ * one - the same claiming `withoutFileCases` and `syncFromFile` use. */
 export function ownerPaths(queue: TestCase[], watches: WatchedFile[]): string[] {
-  const owner = new Map<string, string>();
+  const out = queue.map(() => "");
+  const taken = queue.map(() => false);
   for (const w of watches) {
-    for (const k of keysFor(w.snapshot)) {
-      if (!owner.has(k)) owner.set(k, w.path);
-    }
+    fileOwnedKeys(queue, w.snapshot, taken).forEach((k, i) => {
+      if (k == null) return;
+      out[i] = w.path;
+      taken[i] = true;
+    });
   }
-  return keysFor(queue).map((k) => owner.get(k) ?? "");
+  return out;
 }
 
 /** Trailing path segment, for the "watching X" line. */

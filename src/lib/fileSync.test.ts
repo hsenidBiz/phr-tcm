@@ -362,3 +362,50 @@ test("pointing a step at different Shared Steps is a step change", () => {
   expect(changedSteps(before, after)).toHaveLength(1);
   expect(changedSteps(before, before)).toEqual([]);
 });
+
+// ------------------------------- a hand-typed case sharing a file case's title
+
+/// Reported in review: the queue was numbered INCLUDING hand-typed rows while
+/// the file was numbered over itself, so a hand-typed "Login" sitting first
+/// took the key of the file's own "Login". The file's edits landed on the
+/// hand-typed case, the file's drop removed it, and write-back put it into
+/// the JSON in place of the real one.
+test("a hand-typed case sharing a file case's title is never matched against the file", () => {
+  const typed = tc("Login", { tags: "mine" });
+  const fromFile = tc("Login", { tags: "file" });
+  const queue = [typed, fromFile];
+
+  // The file edits its case: the file's row takes it, the typed one is untouched.
+  const edited = syncFromFile(queue, [fromFile], [tc("Login", { tags: "file-2" })]);
+  expect(edited.queue.map((c) => c.tags)).toEqual(["mine", "file-2"]);
+
+  // The file drops its case: the file's row goes, the typed one stays.
+  const dropped = syncFromFile(queue, [fromFile], []);
+  expect(dropped.queue).toEqual([typed]);
+  expect(countBy(dropped.changes, "removed")).toBe(1);
+
+  // Ownership and removal agree with the sync about which row is the file's.
+  expect(ownerPaths(queue, [watch("C:/w/one.json", [fromFile])])).toEqual(["", "C:/w/one.json"]);
+  expect(withoutFileCases(queue, [fromFile], [])).toEqual([typed]);
+});
+
+/// Two files each contributing a same-titled case own one row each - the
+/// second file is not locked out by the first file's claim.
+test("two files with the same title each own their own row", () => {
+  const one = tc("Shared", { tags: "one" });
+  const two = tc("Shared", { tags: "two" });
+  expect(
+    ownerPaths([one, two], [watch("C:/w/one.json", [one]), watch("C:/w/two.json", [two])]),
+  ).toEqual(["C:/w/one.json", "C:/w/two.json"]);
+});
+
+/// The exception to "unowned rows are never matched": a row stamped with its
+/// work item id after an upload, whose watch snapshot missed the stamp, still
+/// takes the file's edit by that id instead of getting a second copy.
+test("a row carrying a work item id takes the file's edit even when the snapshot predates the id", () => {
+  const stamped = tc("Brand new", { update_id: 153450 });
+  const r = syncFromFile([stamped], [tc("Brand new")], [tc("Brand new, renamed", { update_id: 153450 })]);
+  expect(r.queue).toHaveLength(1);
+  expect(r.queue[0].title).toBe("Brand new, renamed");
+  expect(countBy(r.changes, "added")).toBe(0);
+});

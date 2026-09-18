@@ -216,6 +216,11 @@ export default function ImportFile({
     [org, pbiId],
   );
 
+  // The scope on screen NOW, for callbacks that outlive the render that
+  // created them (the shared-import write below).
+  const scopeNow = useRef({ org, pbiId });
+  scopeNow.current = { org, pbiId };
+
   // Scope switch -> that PBI's watches, and drop a report about the old one.
   useEffect(() => {
     setWatchesState(pbiId != null ? loadWatches(org, pbiId) : []);
@@ -321,7 +326,13 @@ export default function ImportFile({
   // One reconcile per file whose fingerprint moved. Serialized through a
   // ref-guard so two files saved at once can't interleave their queue
   // writes and lose one of them.
+  //
+  // A run that a re-render cancels bumps `syncTick` when it lets go of the
+  // guard. Without it the cancelled file was never retried: the re-render
+  // that cancelled it had already bailed on the guard, and nothing else
+  // re-runs this. Arming two stale files did exactly that on every launch.
   const syncing = useRef(false);
+  const [syncTick, setSyncTick] = useState(0);
   useEffect(() => {
     const stale = watches.find((w) => detected[w.path] && detected[w.path] !== w.stamp);
     if (!stale || syncing.current) return;
@@ -342,16 +353,17 @@ export default function ImportFile({
           toast.error(`${fileName(stale.path)} could not be read: ${r.error}`);
           return;
         }
+        // The set-wide comment lives in the same file, so an edit can have
+        // moved it as well. Read BEFORE the sync is computed: nothing may
+        // await between reading the queue and writing it back.
+        const comment = await commands.readGeneralComment(stale.path);
+        if (cancelled) return;
+        const specs = r.data.specs;
         // Captured BEFORE the sync lands: whether these cases flowed into
         // an empty queue decides whether the banner says "loaded" or
         // reports an edit.
         const wasEmpty = queueRef.current.length === 0;
         const synced = syncFromFile(queueRef.current, stale.snapshot, r.data.cases);
-        // The set-wide comment lives in the same file, so an edit can have
-        // moved it as well - re-read rather than let the panel go stale.
-        const comment = await commands.readGeneralComment(stale.path);
-        const specs = r.data.specs;
-        if (cancelled) return;
         setWatches((prev) =>
           patchWatch(prev, stale.path, {
             stamp: fresh,
@@ -361,7 +373,11 @@ export default function ImportFile({
           }),
         );
         setWarnings(r.data.warnings);
-        if (synced.changes.length > 0) setQueue(synced.queue);
+        // Re-applied to the queue as it is when React runs the update, so a
+        // row save or the post-submit id stamp landing in between is kept.
+        if (synced.changes.length > 0) {
+          setQueue((q) => syncFromFile(q, stale.snapshot, r.data.cases).queue);
+        }
         // Report a save that produced only warnings too - a draft that
         // stopped being valid is exactly what someone needs to hear about.
         if (synced.changes.length > 0 || r.data.warnings.length > 0) {
@@ -404,12 +420,13 @@ export default function ImportFile({
         }
       } finally {
         syncing.current = false;
+        if (cancelled) setSyncTick((n) => n + 1);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [detected, watches, setWatches, setQueue]);
+  }, [detected, watches, setWatches, setQueue, syncTick]);
 
   // A general comment typed in the browser view. The file is already
   // written; this keeps the app's panel and its fingerprint in step.
@@ -503,9 +520,17 @@ export default function ImportFile({
         );
         return;
       }
-      setWatches((prev) =>
-        upsertWatch(prev, { path: r.data.path, stamp: r.data.stamp, snapshot: data.cases }),
-      );
+      const entry = { path: r.data.path, stamp: r.data.stamp, snapshot: data.cases };
+      const now = scopeNow.current;
+      if (now.org === org && now.pbiId === forPbi) {
+        setWatches((prev) => upsertWatch(prev, entry));
+      } else {
+        // The user moved to another PBI while the copy was written. The
+        // setter above would read THAT PBI's list and save it under this
+        // one's key, so the watch goes straight into this PBI's stored
+        // list instead - picked up when the user comes back.
+        saveWatches(org, forPbi, upsertWatch(loadWatches(org, forPbi), entry));
+      }
       toast.info(`Saved a local copy and watching it for changes: ${fileName(r.data.path)}`);
     });
     toast.success(
