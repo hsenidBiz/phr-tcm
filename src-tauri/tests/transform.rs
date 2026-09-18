@@ -837,3 +837,100 @@ fn an_in_place_transform_waits_for_the_draft_write_lock() {
     assert_eq!(status, 200, "{out}");
     assert!(std::fs::read_to_string(&path).unwrap().contains("Open the row."));
 }
+
+// ---- review E4/E5: remove_cases' guard and insert_cases' readers --------
+
+#[test]
+fn remove_cases_refuses_an_empty_title_filter() {
+    for t in ["", "   "] {
+        let err = parse_ops(&serde_json::json!([
+            { "op": "remove_cases", "where": { "title_contains": t } }
+        ]))
+        .unwrap_err();
+        assert!(err.contains("title_contains"), "{err}");
+    }
+    // It looks like a filter but is not one, even next to a real one.
+    assert!(parse_ops(&serde_json::json!([
+        { "op": "remove_cases", "where": { "title_contains": "", "has_tag": "smoke" } }
+    ]))
+    .is_err());
+    assert!(parse_ops(&serde_json::json!([
+        { "op": "remove_cases", "where": { "title_contains": "Login" } }
+    ]))
+    .is_ok());
+}
+
+fn insert_one(case: serde_json::Value) -> Result<Vec<v2_lib::transform::Operation>, String> {
+    parse_ops(&serde_json::json!([{ "op": "insert_cases", "cases": [case] }]))
+}
+
+#[test]
+fn insert_cases_reads_ids_the_way_the_importer_does() {
+    let ops = insert_one(serde_json::json!({
+        "title": "T", "id": "12345", "steps": [{ "action": "s", "expected": "e" }]
+    }))
+    .unwrap();
+    let (out, _) = apply(vec![], &ops);
+    assert_eq!(out[0].update_id, Some(12345), "a string id is an UPDATE, as on import");
+
+    for bad in [
+        serde_json::json!(4294967419i64),
+        serde_json::json!(0),
+        serde_json::json!(-5),
+        serde_json::json!("abc"),
+        serde_json::json!(12.5),
+    ] {
+        let err = insert_one(serde_json::json!({
+            "title": "T", "id": bad.clone(), "steps": [{ "action": "s", "expected": "e" }]
+        }))
+        .unwrap_err();
+        assert!(err.contains("not a valid work item id"), "{bad}: {err}");
+    }
+}
+
+#[test]
+fn insert_cases_joins_a_list_of_tags_like_the_importer() {
+    let ops = insert_one(serde_json::json!({
+        "title": "T", "tags": ["auth", " smoke ", ""], "steps": [{ "action": "s", "expected": "e" }]
+    }))
+    .unwrap();
+    let (out, _) = apply(vec![], &ops);
+    assert_eq!(out[0].tags, "auth; smoke");
+}
+
+#[test]
+fn insert_cases_refuses_a_case_with_no_step_that_has_an_action() {
+    for steps in [
+        serde_json::json!([]),
+        serde_json::json!([{ "action": "", "expected": "e" }]),
+        serde_json::Value::Null,
+    ] {
+        let err = insert_one(serde_json::json!({ "title": "T", "steps": steps.clone() })).unwrap_err();
+        assert!(err.contains("no step with an action"), "{steps}: {err}");
+    }
+    // A blank step next to a real one is dropped, and the report says so.
+    let (ops, ignored) = parse_ops_full(&serde_json::json!([{ "op": "insert_cases", "cases": [{
+        "title": "T",
+        "steps": [{ "action": "", "expected": "x" }, { "action": "Go.", "expected": "" }]
+    }] }]))
+    .unwrap();
+    let (out, _) = apply(vec![], &ops);
+    assert_eq!(out[0].steps.len(), 1);
+    assert!(ignored.iter().any(|l| l.contains("step 1 has no action")), "{ignored:?}");
+}
+
+/// Carried from Task 11's review: `insert_cases` used to map every step to
+/// `{action, expected, shared: None}`, so an AI-inserted case carrying a
+/// step `{"shared": N}` lost the reference and became an empty step the
+/// importer would drop on the next round trip.
+#[test]
+fn insert_cases_keeps_a_shared_step_reference() {
+    let ops = insert_one(serde_json::json!({
+        "title": "T",
+        "steps": [{ "shared": 999 }]
+    }))
+    .unwrap();
+    let (out, _) = apply(vec![], &ops);
+    assert_eq!(out[0].steps.len(), 1);
+    assert_eq!(out[0].steps[0].shared, Some(999));
+}

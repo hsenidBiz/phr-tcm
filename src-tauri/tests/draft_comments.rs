@@ -374,3 +374,47 @@ fn a_file_saved_with_a_bom_still_takes_comments_and_keeps_its_keys() {
         "reading a BOM'd file finds its comment"
     );
 }
+
+/// The importer accepts "154599", 123.0, `test_case_id` and a title under
+/// `name`; the queue shows those cases as normal. A comment typed on one
+/// used to fail with "'<title>' is not in this file".
+#[test]
+fn a_comment_finds_its_case_by_any_id_or_title_spelling_the_importer_accepts() {
+    let file = r#"{ "test_cases": [
+        { "id": "154599", "title": "String id", "steps": [] },
+        { "id": 123.0, "title": "Float id", "steps": [] },
+        { "test_case_id": 77, "title": "Aliased id", "steps": [] },
+        { "name": "Aliased title", "steps": [] }
+    ] }"#;
+    for (id, title, at) in [
+        (Some(154599), "x", 0usize),
+        (Some(123), "x", 1),
+        (Some(77), "x", 2),
+        (None, "aliased TITLE", 3),
+    ] {
+        let out = patch_case_comment(file, &CaseTarget { id, title: title.into() }, "seen").unwrap();
+        assert_eq!(cases(&out)[at]["comment"], "seen", "{id:?} {title}");
+    }
+}
+
+#[test]
+fn an_id_less_target_does_not_claim_a_case_with_a_string_id() {
+    let file = r#"{ "test_cases": [{ "id": "42", "title": "Sign in", "steps": [] }] }"#;
+    assert!(patch_case_comment(file, &CaseTarget { id: None, title: "Sign in".into() }, "x").is_err());
+}
+
+/// `notes` is an accepted spelling of the comment. Clearing used to remove
+/// only `comment`, so the old note came back on the next import.
+#[test]
+fn a_comment_stored_as_notes_is_edited_there_and_cleared_under_every_spelling() {
+    let t = CaseTarget { id: None, title: "T".into() };
+    let file = r#"{ "test_cases": [{ "title": "T", "notes": "old", "steps": [] }] }"#;
+    let edited = patch_case_comment(file, &t, "new").unwrap();
+    assert_eq!(cases(&edited)[0]["notes"], "new");
+    assert!(cases(&edited)[0].get("comment").is_none(), "{edited}");
+
+    let both = r#"{ "test_cases": [{ "title": "T", "comment": "a", "notes": "b", "steps": [] }] }"#;
+    let cleared = patch_case_comment(both, &t, "  ").unwrap();
+    let case = &cases(&cleared)[0];
+    assert!(case.get("comment").is_none() && case.get("notes").is_none(), "{cleared}");
+}

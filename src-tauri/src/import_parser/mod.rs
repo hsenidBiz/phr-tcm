@@ -167,6 +167,88 @@ fn work_item_id(raw: &str) -> Option<i32> {
     Some(f as i32)
 }
 
+/// The work item id a case object names, read exactly as the importer reads
+/// it: the first of `keys` holding a value, as a string or a number. `None`
+/// when there is no id; `Some(Err(raw))` when there is one and it is not a
+/// work item id (see `work_item_id`).
+pub(crate) fn read_case_id(v: &serde_json::Value, keys: &[&str]) -> Option<Result<i32, String>> {
+    let s = value_to_string(json_value(v, keys)?);
+    Some(work_item_id(&s).ok_or(s))
+}
+
+/// A case object's valid work item id, under any spelling the importer accepts.
+pub(crate) fn case_id_of(v: &serde_json::Value) -> Option<i32> {
+    read_case_id(v, &ID_KEYS).and_then(Result::ok)
+}
+
+/// A case object's title, under any spelling the importer accepts, trimmed.
+pub(crate) fn case_title_of(v: &serde_json::Value) -> String {
+    json_value(v, &TITLE_KEYS).map(value_to_string).unwrap_or_default().trim().to_string()
+}
+
+/// `tags` as the importer reads it: a list is joined with "; " with blank
+/// entries dropped, a null is no tags, anything else is its text.
+pub(crate) fn read_tags(v: &serde_json::Value) -> String {
+    match v.get("tags") {
+        Some(serde_json::Value::Array(list)) => list
+            .iter()
+            .map(value_to_string)
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("; "),
+        None | Some(serde_json::Value::Null) => String::new(),
+        Some(v) => value_to_string(v).trim().to_string(),
+    }
+}
+
+/// One case's `steps` list, read the way the importer reads it: `action`/
+/// `step`, `expected`/`expected_result`/`result`, and `{"shared": id}` for a
+/// Shared Steps reference (an id the importer would refuse - `0`, `-5`,
+/// non-numeric - drops that step, same as a blank action). Line breaks
+/// inside a step are flattened, as on import. Used by `insert_cases` so an
+/// AI-inserted case's steps survive the same shapes a real import accepts,
+/// instead of a copy of the reader that quietly falls out of step with it.
+pub(crate) fn case_steps_of(v: &serde_json::Value) -> Vec<Step> {
+    let raw_steps = match v.get("steps") {
+        Some(serde_json::Value::Array(list)) => list.clone(),
+        _ => vec![],
+    };
+    let mut steps = vec![];
+    for rs in &raw_steps {
+        let (action, expected, shared) = match rs {
+            serde_json::Value::String(s) => (s.trim().to_string(), String::new(), None),
+            serde_json::Value::Object(_) => {
+                let action = json_value(rs, &STEP_ACTION_KEYS)
+                    .map(value_to_string)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                let expected = json_value(rs, &STEP_EXPECTED_KEYS)
+                    .map(value_to_string)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                let shared = json_value(rs, &["shared"])
+                    .and_then(|raw| work_item_id(value_to_string(raw).trim()));
+                (action, expected, shared)
+            }
+            _ => continue,
+        };
+        if let Some(id) = shared {
+            steps.push(Step { shared: Some(id), ..Default::default() });
+            continue;
+        }
+        if action.is_empty() {
+            continue;
+        }
+        let (action, _) = flatten_step_text(&action);
+        let (expected, _) = flatten_step_text(&expected);
+        steps.push(Step { action, expected, shared: None });
+    }
+    steps
+}
+
 /// Flatten a step's internal line breaks, reporting whether any were there.
 ///
 /// Azure DevOps stores steps in an HTML field, and the app's own step
@@ -442,11 +524,7 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
         };
         let raw_v = serde_json::Value::Object(obj.clone());
 
-        let title = json_value(&raw_v, &TITLE_KEYS)
-            .map(value_to_string)
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+        let title = case_title_of(&raw_v);
         if title.is_empty() {
             warnings.push(format!("{label}: skipped - no title."));
             continue;
@@ -459,27 +537,15 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
         }
 
         let mut update_id = None;
-        if let Some(raw_id) = json_value(&raw_v, &ID_KEYS) {
-            let s = value_to_string(raw_id);
-            match work_item_id(&s) {
-                Some(id) => update_id = Some(id),
-                None => warnings.push(format!(
-                    "{label} ('{title}'): id '{s}' is not a valid work item ID; it will be created as a new test case instead of updating."
-                )),
-            }
+        match read_case_id(&raw_v, &ID_KEYS) {
+            None => {}
+            Some(Ok(id)) => update_id = Some(id),
+            Some(Err(s)) => warnings.push(format!(
+                "{label} ('{title}'): id '{s}' is not a valid work item ID; it will be created as a new test case instead of updating."
+            )),
         }
 
-        let tags = match obj.get("tags") {
-            Some(serde_json::Value::Array(list)) => list
-                .iter()
-                .map(value_to_string)
-                .map(|t| t.trim().to_string())
-                .filter(|t| !t.is_empty())
-                .collect::<Vec<_>>()
-                .join("; "),
-            Some(v) => value_to_string(v).trim().to_string(),
-            None => String::new(),
-        };
+        let tags = read_tags(&raw_v);
         if tags.contains(',') {
             warnings.push(format!(
                 "{label} ('{title}'): Tags contain a comma; separate tags with semicolons (Azure DevOps does not allow commas in tag names)."

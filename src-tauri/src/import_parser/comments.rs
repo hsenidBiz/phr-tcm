@@ -34,18 +34,21 @@ pub struct CaseTarget {
 }
 
 impl CaseTarget {
+    /// The importer's own readers decide: an id under any accepted key,
+    /// given as a number or a string, and a title under any accepted key.
+    /// A case whose id the importer refused is id-less here too, just as
+    /// the queue shows it.
     fn matches(&self, case: &Value) -> bool {
+        let file_id = super::case_id_of(case);
         if let Some(id) = self.id {
-            return case.get("id").and_then(Value::as_i64) == Some(id as i64);
+            return file_id == Some(id);
         }
         // An id-less case in the file must not be claimed by an id-ful
-        // target's title, and vice versa - that is what the id branch above
-        // already guarantees. Here both sides are id-less.
-        if case.get("id").and_then(Value::as_i64).is_some() {
+        // target's title, and vice versa. Here both sides are id-less.
+        if file_id.is_some() {
             return false;
         }
-        let title = case.get("title").and_then(Value::as_str).unwrap_or("");
-        title.trim().eq_ignore_ascii_case(self.title.trim())
+        super::case_title_of(case).eq_ignore_ascii_case(self.title.trim())
     }
 }
 
@@ -106,10 +109,16 @@ pub fn patch_case_comment(json: &str, target: &CaseTarget, text: &str) -> Result
     let obj = cases[idx]
         .as_object_mut()
         .ok_or("a test case in this file is not an object")?;
-    if text.trim().is_empty() {
-        obj.remove("comment");
-    } else {
-        obj.insert("comment".into(), Value::String(text.to_string()));
+    // Every accepted spelling counts. The one already in use is written;
+    // the others go, so the importer cannot read a stale note back from them.
+    let key = super::alias_in_use(obj, &super::COMMENT_KEYS).unwrap_or("comment");
+    for k in super::COMMENT_KEYS {
+        if text.trim().is_empty() || k != key {
+            obj.remove(k);
+        }
+    }
+    if !text.trim().is_empty() {
+        obj.insert(key.to_string(), Value::String(text.to_string()));
     }
     render(&doc)
 }

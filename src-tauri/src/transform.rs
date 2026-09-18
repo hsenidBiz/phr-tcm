@@ -357,6 +357,16 @@ pub fn parse_ops_full(
                             unknown.join(", ")
                         ));
                     }
+                    for (k, sv) in rv["steps"].as_array().into_iter().flatten().enumerate() {
+                        let blank = sv["action"].as_str().map_or(true, |a| a.trim().is_empty())
+                            && sv.get("shared").map_or(true, serde_json::Value::is_null);
+                        if blank {
+                            ignored.push(format!(
+                                "{label}: cases[{j}] step {} has no action - dropped, as the importer would.",
+                                k + 1
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -475,6 +485,14 @@ pub fn parse_ops_full(
             }
             "remove_cases" => {
                 let f = &v["where"];
+                // `"x".contains("")` is true for every title, so an empty
+                // title_contains reads as a filter while selecting every case.
+                if f["title_contains"].as_str().is_some_and(|t| t.trim().is_empty()) {
+                    return Err(format!(
+                        "{label}: remove_cases got an empty \"where.title_contains\" - it matches \
+                         every title, so it is not a filter. Name part of a title, or use at_index."
+                    ));
+                }
                 let has_filter = f["title_contains"].as_str().is_some()
                     || f["has_tag"].as_str().is_some()
                     || f["module_is"].as_str().is_some()
@@ -496,26 +514,42 @@ pub fn parse_ops_full(
                     .ok_or(format!("{label}: \"cases\" must be a list of test-case objects."))?;
                 let mut cases = vec![];
                 for (j, rv) in raw.iter().enumerate() {
-                    let title = rv["title"].as_str().unwrap_or("").trim().to_string();
+                    let title = crate::import_parser::case_title_of(rv);
                     if title.is_empty() {
                         return Err(format!("{label}: cases[{j}] has no title."));
                     }
-                    let steps = rv["steps"]
-                        .as_array()
-                        .map(|a| {
-                            a.iter()
-                                .map(|sv| crate::steps_xml::Step {
-                                    action: sv["action"].as_str().unwrap_or("").to_string(),
-                                    expected: sv["expected"].as_str().unwrap_or("").to_string(),
-                                    shared: None,
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    // The importer's own step reader: action/expected
+                    // aliases and a `{"shared": id}` reference all read the
+                    // way a real import would read them, and a step with
+                    // neither an action nor a valid shared id is dropped
+                    // here too - keeping it only defers the loss to the
+                    // next import.
+                    let steps = crate::import_parser::case_steps_of(rv);
+                    if steps.is_empty() {
+                        return Err(format!(
+                            "{label}: cases[{j}] ('{title}') has no step with an action - the \
+                             importer would drop it on the next import."
+                        ));
+                    }
+                    // The importer's id reader: strings accepted, and only a
+                    // real work item id - never a wrapped or truncated one.
+                    let update_id = match crate::import_parser::read_case_id(
+                        rv,
+                        &["id", "test_case_id", "work_item_id", "update_id"],
+                    ) {
+                        None => None,
+                        Some(Ok(id)) => Some(id),
+                        Some(Err(raw)) => {
+                            return Err(format!(
+                                "{label}: cases[{j}] id '{raw}' is not a valid work item id - give a \
+                                 positive whole number, or leave it out to create a new case."
+                            ))
+                        }
+                    };
                     cases.push(TestCase {
                         title,
                         steps,
-                        tags: rv["tags"].as_str().unwrap_or("").to_string(),
+                        tags: crate::import_parser::read_tags(rv),
                         automation_status: rv["automation_status"]
                             .as_str()
                             .filter(|s| !s.trim().is_empty())
@@ -527,10 +561,7 @@ pub fn parse_ops_full(
                             .unwrap_or("")
                             .to_string(),
                         preconditions: rv["preconditions"].as_str().unwrap_or("").to_string(),
-                        update_id: rv["id"]
-                            .as_i64()
-                            .or_else(|| rv["update_id"].as_i64())
-                            .map(|n| n as i32),
+                        update_id,
                         // The file importer's own alias lists, not a copy of
                         // them: the copy that used to live here was already
                         // one spelling short, and a case inserted by an
@@ -1215,8 +1246,9 @@ fn known_keys(op_name: &str) -> &'static [&'static str] {
 /// with `warnings: []` - so the discard is now echoed.
 fn insert_case_unknown_keys(rv: &serde_json::Value) -> Vec<String> {
     const KNOWN: &[&str] = &[
-        "title", "steps", "tags", "automation_status", "module", "module_value",
-        "preconditions", "id", "update_id", "spec_order", "tester_order",
+        "title", "name", "test_case_name", "steps", "tags", "automation_status", "module",
+        "module_value", "preconditions", "id", "test_case_id", "work_item_id", "update_id",
+        "spec_order", "tester_order",
     ];
     let mut out = vec![];
     if let Some(obj) = rv.as_object() {
@@ -1234,7 +1266,10 @@ fn insert_case_unknown_keys(rv: &serde_json::Value) -> Vec<String> {
         for sv in steps {
             if let Some(obj) = sv.as_object() {
                 for k in obj.keys() {
-                    if k != "action" && k != "expected" && !out.contains(&format!("steps.{k}")) {
+                    let known_step_key = crate::import_parser::STEP_ACTION_KEYS.contains(&k.as_str())
+                        || crate::import_parser::STEP_EXPECTED_KEYS.contains(&k.as_str())
+                        || k == "shared";
+                    if !known_step_key && !out.contains(&format!("steps.{k}")) {
                         out.push(format!("steps.{k}"));
                     }
                 }
