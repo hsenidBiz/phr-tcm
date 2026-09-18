@@ -1384,9 +1384,21 @@ pub struct ReconciledCase {
     pub id: i32,
 }
 
+/// The answer to a Check. `found` is an unambiguous match, treated exactly
+/// like a created case. `ambiguous` lists checked titles that had more
+/// unclaimed matches in Azure DevOps than rows being checked - which one is
+/// genuinely this upload's cannot be told apart (see `reconcile_pairs`), so
+/// that row is neither cleared nor claimed: it stays held. Any title in
+/// neither list was not found at all, and its hold is lifted.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct ReconcileAnswer {
+    pub found: Vec<ReconciledCase>,
+    pub ambiguous: Vec<String>,
+}
+
 /// The lookup behind `reconcile_upload`, with the client passed in.
 /// `titles` has one entry per held row (repeats allowed); each found case
-/// is paired once (`match_reconciled`).
+/// is paired once (`reconcile_pairs`).
 pub async fn reconcile_with(
     client: &ado::AdoClient,
     organization: &str,
@@ -1394,7 +1406,7 @@ pub async fn reconcile_with(
     pbi_id: i32,
     since: &str,
     titles: &[String],
-) -> Result<Vec<ReconciledCase>, String> {
+) -> Result<ReconcileAnswer, String> {
     if ado::endpoints::wiql_datetime(since).is_none() {
         return Err("The time to check from is not a valid date.".into());
     }
@@ -1403,12 +1415,12 @@ pub async fn reconcile_with(
         .await
         .map_err(|e| e.to_string())?;
     let creates: Vec<(usize, String)> = titles.iter().cloned().enumerate().collect();
-    let pairs = match_reconciled(&creates, &found);
+    let (pairs, ambiguous) = reconcile_pairs(&creates, &found);
     log_claimed(&pairs);
-    Ok(pairs
-        .into_iter()
-        .map(|(k, id)| ReconciledCase { title: titles[k].clone(), id })
-        .collect())
+    Ok(ReconcileAnswer {
+        found: pairs.into_iter().map(|(k, id)| ReconciledCase { title: titles[k].clone(), id }).collect(),
+        ambiguous: ambiguous.into_iter().collect(),
+    })
 }
 
 /// Check what an interrupted upload created: the rows the queue holds as
@@ -1422,7 +1434,7 @@ pub async fn reconcile_upload(
     pbi_id: i32,
     since: String,
     titles: Vec<String>,
-) -> Result<Vec<ReconciledCase>, String> {
+) -> Result<ReconcileAnswer, String> {
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
     let client = ado::AdoClient::new(token);
     reconcile_with(&client, &organization, &project, pbi_id, &since, &titles).await

@@ -26,6 +26,15 @@ export type QueueRowProps = {
    * the user removes it, so this is what tells it apart from a row still
    * waiting to go. */
   uploaded: boolean;
+  /** The last upload could not confirm whether this create landed
+   * (lib/uploadHold). It may exist - Upload is held until a Check. */
+  held: boolean;
+  /** Held specifically because Azure DevOps has more than one test case
+   * with this title (lib/uploadHold's `ambiguous`), not merely because the
+   * outcome is unknown - a Check cannot tell which one is this row's, so
+   * the row says that instead of the generic held message. Deviation from
+   * the brief: see uploadHold.ts. */
+  ambiguous: boolean;
   /** A watched-file sync just added or changed this row. */
   touched: "added" | "changed" | undefined;
   reviewing: boolean;
@@ -66,6 +75,8 @@ export function QueueRowInner({
   editing,
   failed,
   uploaded,
+  held,
+  ambiguous,
   touched,
   reviewing,
   problem,
@@ -92,15 +103,17 @@ export function QueueRowInner({
         // Ranked above the file-sync colours on purpose: a row that
         // failed to upload needs a decision now, and that outranks
         // where its text last came from.
-        failed
-          ? "border-danger/60 bg-danger/5"
-          : touched === "added"
-            ? "border-success/50 bg-success/5"
-            : touched === "changed"
-              ? "border-warning/50 bg-warning/5"
-              : uploaded
-                ? "border-success/40"
-                : "border-border",
+        held
+          ? "border-warning/60 bg-warning/5"
+          : failed
+            ? "border-danger/60 bg-danger/5"
+            : touched === "added"
+              ? "border-success/50 bg-success/5"
+              : touched === "changed"
+                ? "border-warning/50 bg-warning/5"
+                : uploaded
+                  ? "border-success/40"
+                  : "border-border",
       )}
     >
       <div className="flex items-center justify-between px-3 py-1.5">
@@ -133,6 +146,13 @@ export function QueueRowInner({
           {uploaded && <Badge className="mr-2 bg-success/20 text-success">UPLOADED</Badge>}
           {tc.title}
           <span className="ml-2 text-xs text-faint">{tc.steps.length} steps</span>
+          {held && (
+            <span className="ml-2 text-xs text-warning">
+              {ambiguous
+                ? "More than one test case with this title exists in Azure DevOps - check there before uploading again."
+                : "Outcome unknown - check before uploading again"}
+            </span>
+          )}
           {diff?.noop && (
             <Badge className="ml-2 bg-warning/20 text-warning">no-op — nothing will change</Badge>
           )}

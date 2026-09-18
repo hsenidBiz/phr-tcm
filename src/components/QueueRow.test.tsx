@@ -31,6 +31,8 @@ function props(diff: CaseDiff): QueueRowProps {
     editing: false,
     failed: false,
     uploaded: false,
+    held: false,
+    ambiguous: false,
     touched: undefined,
     reviewing: false,
     problem: null,
@@ -73,4 +75,23 @@ test("a case whose only change is step types says which steps change, in the ope
   expect(
     screen.getByText("Steps 1 and 3 become validation steps, because they have an Expected Result."),
   ).toBeInTheDocument();
+});
+
+test("a row whose upload outcome is unknown says so", () => {
+  render(<QueueRowInner {...props(null as unknown as CaseDiff)} diff={null} held />);
+  expect(screen.getByText("Outcome unknown - check before uploading again")).toBeInTheDocument();
+});
+
+// Deviation from brief (controller ruling): reconcile_upload cannot tell
+// "not found" from "ambiguous" - a title with more matches in Azure DevOps
+// than rows being checked stays held with its own reason, not the generic
+// "outcome unknown" text.
+test("a row held because its title is ambiguous in Azure DevOps says that instead", () => {
+  render(<QueueRowInner {...props(null as unknown as CaseDiff)} diff={null} held ambiguous />);
+  expect(
+    screen.getByText(
+      "More than one test case with this title exists in Azure DevOps - check there before uploading again.",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument();
 });

@@ -17,6 +17,15 @@ import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { keepUploaded } from "../lib/queueUploaded";
 import { summariseSubmit } from "../lib/submitSummary";
 import {
+  ambiguousRows,
+  heldRows,
+  holdFromResults,
+  loadHold,
+  reconciledResults,
+  saveHold,
+  subscribeHold,
+} from "../lib/uploadHold";
+import {
   queueWriterFor,
   registerQueueWriter,
   submitFinished,
@@ -53,7 +62,11 @@ import {
   IconCopy,
   IconShare,
   IconRename,
+  IconRefresh,
 } from "../lib/actionIcons";
+
+const HOLD_REFUSAL =
+  "Some cases from the last upload have an unknown outcome - check them before uploading again.";
 
 /** The shared pending-creation queue with the review gate, live progress and
  * exports. Manual Entry and Import File both render this under their own
@@ -188,6 +201,12 @@ export default function QueueSection({
   // reads the same phase, so coming back shows the bar where it really is.
   const phase = useSyncExternalStore(subscribeSubmit, submitPhaseSnapshot);
   const progress = phase && phase.org === org && phase.pbiId === pbiId ? phase : null;
+
+  // Creates from an interrupted upload that Azure DevOps could not confirm
+  // (lib/uploadHold). Persisted per PBI: a restart must not lift the one
+  // thing between the user and a duplicate.
+  const hold = useSyncExternalStore(subscribeHold, () => loadHold(org, pbiId));
+  const [checkingHold, setCheckingHold] = useState(false);
 
   // An upload runs to the end once started - there is no Stop. The case
   // in flight could never be taken back (created cases cannot be deleted),
@@ -511,6 +530,8 @@ export default function QueueSection({
 
   const submit = useMutation({
     mutationFn: async () => {
+      // The buttons are disabled while a hold stands; this is the backstop.
+      if (loadHold(org, pbiId)) throw new Error(HOLD_REFUSAL);
       // Rows this submit has nothing to write for. The review gate prints
       // "no-op - nothing will change" per row; on a queue of 81 imported
       // cases where ten had really changed, writing anyway meant 71
@@ -591,6 +612,9 @@ export default function QueueSection({
           ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
           : null;
       });
+      // The lower bound for a later "what did this upload create" check,
+      // early by the same five minutes Rust allows for clock drift.
+      const since = new Date(Date.now() - 5 * 60_000).toISOString();
       submitStarted(org, pbiId, toSend.length);
       const unProgress = await events.submitProgress.listen((e) => {
         submitProgressed(e.payload.index + 1, e.payload.total, e.payload.title);
@@ -641,7 +665,7 @@ export default function QueueSection({
         // cases in their queue to carry their new ids when the loop
         // finishes. `sent` is the FILTERED list: every result index is an
         // index into it, and keepUploaded matches on that list.
-        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue });
+        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue, since });
         return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
@@ -719,6 +743,10 @@ export default function QueueSection({
    * case, while a hundred cases are being read. It stops only for a clash
    * nobody has been shown, so the common path never asks twice. */
   const guardedSubmit = async () => {
+    if (loadHold(org, pbiId)) {
+      toast.warning(HOLD_REFUSAL);
+      return;
+    }
     const titles = await refreshTitles();
     const have = new Set(titles.map((t) => t.trim().toLowerCase()));
     const ok = new Set(acceptedDups.map((t) => t.trim().toLowerCase()));
@@ -732,6 +760,58 @@ export default function QueueSection({
     submit.mutate();
   };
 
+  /** Ask Azure DevOps what an interrupted upload actually created. Found
+   * cases go through applyOutcome exactly as created results do: id on the
+   * row, the file and the notes learn it. The rest were never created and
+   * are ordinary queued rows again.
+   *
+   * Deviation from the brief (controller ruling): `reconcile_upload` cannot
+   * tell "not found" from "ambiguous" - a title with more unclaimed matches
+   * in Azure DevOps than rows being checked comes back in `ambiguous`
+   * rather than `found`. Those titles stay held (a new, smaller hold); a
+   * check that fails outright keeps the whole hold as it was. */
+  const checkHold = async () => {
+    const h = loadHold(org, pbiId);
+    if (!h) return;
+    setCheckingHold(true);
+    try {
+      const r = await commands.reconcileUpload(org, project, pbiId, h.since, h.titles);
+      if (r.status === "error") {
+        toast.error(`Could not check with Azure DevOps: ${r.error} The cases stay marked - try again.`);
+        return;
+      }
+      const { found, ambiguous: stillAmbiguous } = r.data;
+      const { results: createdResults, orphans } = reconciledResults(queue, heldRows(queue, h), found);
+      saveHold(
+        org,
+        pbiId,
+        stillAmbiguous.length > 0 ? { since: h.since, titles: stillAmbiguous, ambiguous: stillAmbiguous } : null,
+      );
+      if (createdResults.length > 0) {
+        applyOutcome({ results: createdResults, sent: queue, sentFor: pbiId, skipped: 0, prevQueue: queue });
+      }
+      const missing = h.titles.length - found.length - stillAmbiguous.length;
+      toast.info(
+        `${found.length} of ${h.titles.length} case(s) had been created` +
+          (missing > 0 ? `; ${missing} had not and can be uploaded again.` : "."),
+      );
+      if (stillAmbiguous.length > 0) {
+        toast.warning(
+          `${stillAmbiguous.length} case(s) still cannot be confirmed - more than one test case with ` +
+            `that title exists in Azure DevOps. They stay marked until that is resolved there.`,
+          { duration: 20000 },
+        );
+      }
+      if (orphans > 0) {
+        toast.warning(`${orphans} created case(s) are no longer in the queue - View Test Cases has them.`, {
+          duration: 20000,
+        });
+      }
+    } finally {
+      setCheckingHold(false);
+    }
+  };
+
   /** Everything a finished submit owes the user, wherever they are now.
    * Runs inside the mutation promise, so navigating away cannot skip it. */
   function applyOutcome({
@@ -740,17 +820,23 @@ export default function QueueSection({
     sentFor,
     skipped,
     prevQueue,
+    since,
   }: {
     results: SubmitItemResult[];
     sent: TestCase[];
     sentFor: number;
     skipped: number;
     prevQueue: TestCase[];
+    /** When this upload started - set by a submit, absent for a Check. */
+    since?: string;
   }) {
-    // Keep failed items AND anything the loop never reached (cancelled).
-    const done = results.filter((r) => r.action !== "failed");
-    const ok = done.length;
-    const failedCount = results.length - ok;
+    // Only what Azure DevOps confirmed counts as done. "unknown" is neither
+    // done nor failed: it may exist, so it is held until someone checks.
+    const ok = results.filter((r) => r.action === "created" || r.action === "updated").length;
+    const failedCount = results.filter((r) => r.action === "failed").length;
+    const unknownCount = results.filter((r) => r.action === "unknown").length;
+    const newHold = since ? holdFromResults(results, sent, since) : null;
+    if (newHold) saveHold(org, sentFor, newHold);
 
     // The whole calculation lives in lib/queueUploaded.ts, with the ways
     // matching a result back to its row has gone wrong written down as
@@ -784,7 +870,7 @@ export default function QueueSection({
       saveDraftQueue(org, sentFor, keep(loadDraftQueue(org, sentFor)));
     }
 
-    if (failedCount === 0 && stranded === 0) {
+    if (failedCount === 0 && unknownCount === 0 && stranded === 0) {
       toast.success(
         skipped > 0
           ? `${ok} test case(s) processed, ${skipped} already up to date.`
@@ -792,6 +878,13 @@ export default function QueueSection({
       );
     } else if (failedCount > 0) {
       toast.warning(`${ok} processed, ${failedCount} failed - the failed items are marked in the queue.`);
+    }
+    if (unknownCount > 0) {
+      toast.warning(
+        `${unknownCount} case(s) may or may not have been created - the upload was interrupted and ` +
+          `Azure DevOps could not be asked. They are marked in the queue; check them before uploading again.`,
+        { duration: 30000 },
+      );
     }
     if (stranded > 0) {
       // Never silent: a created case still sitting in the queue is one
@@ -893,6 +986,8 @@ export default function QueueSection({
   // Same occurrence-aware keys the file sync reports changes under, so a
   // second case sharing a title still lights up its own row.
   const rowKeys = useMemo(() => keysFor(queue), [queue]);
+  const held = useMemo(() => heldRows(queue, hold), [queue, hold]);
+  const ambiguous = useMemo(() => ambiguousRows(queue, hold), [queue, hold]);
   const [renameOpen, setRenameOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
@@ -1394,6 +1489,8 @@ export default function QueueSection({
                 editing={editingIdx === i}
                 failed={failedRows.has(rowKeys[i])}
                 uploaded={tc.update_id != null && uploadedIds.has(tc.update_id)}
+                held={held[i]}
+                ambiguous={ambiguous[i]}
                 touched={flash?.[rowKeys[i]]}
                 reviewing={reviewing}
                 problem={problems[i]}
@@ -1424,6 +1521,28 @@ export default function QueueSection({
           done={progress.done > 0 ? progress.done : undefined}
           total={progress.done > 0 ? progress.total : undefined}
         />
+      )}
+
+      {hold && !progress && (
+        <div className="space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3">
+          <p className="text-sm font-semibold text-text">
+            Outcome unknown for {hold.titles.length} case{hold.titles.length === 1 ? "" : "s"} - check
+            before uploading again.
+          </p>
+          <p className="text-xs text-muted">
+            The last upload was interrupted and Azure DevOps could not be asked what it had created.
+            Uploading again before checking could create {hold.titles.length === 1 ? "it" : "them"} twice.
+          </p>
+          <Button
+            size="sm"
+            disabled={checkingHold || !online}
+            title={online ? undefined : OFFLINE_HINT}
+            onClick={() => void checkHold()}
+          >
+            <IconRefresh aria-hidden />
+            {checkingHold ? "Checking" : "Check with Azure DevOps"}
+          </Button>
+        </div>
       )}
 
       <div
@@ -1510,6 +1629,7 @@ export default function QueueSection({
               <Button
                 disabled={
                   queue.length === 0 ||
+                  hold != null ||
                   hasBlockers ||
                   submit.isPending ||
                   !online ||
@@ -1541,6 +1661,9 @@ export default function QueueSection({
               </Button>
               {hasBlockers && (
                 <span className="text-xs text-danger">Fix the flagged items first.</span>
+              )}
+              {hold && (
+                <span className="text-xs text-warning">Check the cases marked "Outcome unknown" first.</span>
               )}
             </div>
           </div>
@@ -1601,12 +1724,18 @@ export default function QueueSection({
                     "shrink-0",
                     r.action === "created"
                       ? "bg-success/20 text-success"
-                      : r.action === "updated"
+                      : r.action === "updated" || r.action === "unknown"
                         ? "bg-warning/20 text-warning"
                         : "bg-danger/20 text-danger",
                   )}
                 >
-                  {r.action === "created" ? "NEW" : r.action === "updated" ? "UPDATED" : "FAILED"}
+                  {r.action === "created"
+                    ? "NEW"
+                    : r.action === "updated"
+                      ? "UPDATED"
+                      : r.action === "unknown"
+                        ? "UNKNOWN"
+                        : "FAILED"}
                 </Badge>
                 {r.id != null && <span className="id-mono shrink-0 text-faint">#{r.id}</span>}
                 <span className="min-w-0 break-words text-text">{r.title}</span>
@@ -1700,7 +1829,7 @@ export default function QueueSection({
             ) : (
               <Button
                 tabIndex={-1}
-                disabled={hasBlockers || submit.isPending || !online}
+                disabled={hold != null || hasBlockers || submit.isPending || !online}
                 title={online ? undefined : OFFLINE_HINT}
                 onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
               >

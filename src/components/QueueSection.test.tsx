@@ -1286,3 +1286,140 @@ test("View in browser passes each watch's specs through to the draft page", asyn
   await waitFor(() => expect(files).toHaveLength(1));
   expect(files[0].specs).toEqual(["Step13.md"]);
 });
+
+/// C2: a failed batch whose creates Azure DevOps could not be asked about
+/// holds those rows until someone checks.
+///
+/// Deviation from the brief (controller ruling): `reconcile_upload` now
+/// answers `{ found, ambiguous }` rather than a bare array - a title with
+/// more unclaimed matches in Azure DevOps than rows being checked cannot be
+/// told apart from a colleague's case, so it comes back separately and the
+/// row stays held rather than being cleared on a guess. `onReconcile` may
+/// return either the old bare array (wrapped here as `{ found, ambiguous:
+/// [] }`) or a full answer object, so the existing scenarios below need no
+/// other change.
+function holdMocks(onReconcile: (args: Record<string, unknown>) => unknown) {
+  let submits = 0;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      submits += 1;
+      return [
+        {
+          index: 0,
+          title: "Brand new",
+          action: "unknown",
+          id: null,
+          error: "Outcome unknown (http 500). Azure DevOps may have created this case - check before uploading it again.",
+        },
+      ];
+    }
+    if (cmd === "reconcile_upload") {
+      const r = onReconcile(args as Record<string, unknown>);
+      return Array.isArray(r) ? { found: r, ambiguous: [] } : r;
+    }
+    return undefined;
+  });
+  return { submits: () => submits };
+}
+
+async function uploadOnce() {
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Yes —/ }));
+  await screen.findByText("Outcome unknown - check before uploading again");
+}
+
+test("an unknown outcome marks the row and refuses the next upload", async () => {
+  const ipc = holdMocks(() => []);
+  renderQueue([makeCase({ title: "Brand new" })]);
+  await uploadOnce();
+  expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Check with Azure DevOps/ })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  expect(await screen.findByText(/Check the cases marked "Outcome unknown" first/)).toBeInTheDocument();
+  const yes = screen.getByRole("button", { name: /Yes —/ });
+  expect(yes).toBeDisabled();
+  fireEvent.click(yes);
+  expect(ipc.submits()).toBe(1);
+});
+
+test("Check that finds the case stamps its id and lifts the hold", async () => {
+  let asked: Record<string, unknown> | null = null;
+  holdMocks((args) => {
+    asked = args;
+    return [{ title: "Brand new", id: 901 }];
+  });
+  renderQueue([makeCase({ title: "Brand new" })]);
+  await uploadOnce();
+
+  fireEvent.click(screen.getByRole("button", { name: /Check with Azure DevOps/ }));
+  await waitFor(() =>
+    expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument(),
+  );
+  expect(screen.getByText("UPDATE #901")).toBeInTheDocument();
+  expect(asked).toMatchObject({ organization: "acme", project: "Web", pbiId: 42, titles: ["Brand new"] });
+  expect(typeof asked!.since).toBe("string");
+  expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).toBeNull();
+});
+
+test("Check that finds nothing returns the row to normal", async () => {
+  holdMocks(() => []);
+  renderQueue([makeCase({ title: "Brand new" })]);
+  await uploadOnce();
+
+  fireEvent.click(screen.getByRole("button", { name: /Check with Azure DevOps/ }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /Check with Azure DevOps/ })).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument();
+  expect(screen.getByText("NEW")).toBeInTheDocument();
+});
+
+test("a Check that cannot reach Azure DevOps keeps the hold", async () => {
+  holdMocks(() => {
+    throw "Could not reach Azure DevOps.";
+  });
+  renderQueue([makeCase({ title: "Brand new" })]);
+  await uploadOnce();
+
+  fireEvent.click(screen.getByRole("button", { name: /Check with Azure DevOps/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Check with Azure DevOps/ })).toBeEnabled());
+  expect(screen.getByText("Outcome unknown - check before uploading again")).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).not.toBeNull();
+});
+
+test("a hold from an earlier session is still enforced", () => {
+  localStorage.setItem(
+    "tcm-v2-upload-hold:acme/42",
+    JSON.stringify({ since: "2026-09-18T10:00:00.000Z", titles: ["Brand new"] }),
+  );
+  baseMocks();
+  renderQueue([makeCase({ title: "Brand new" })]);
+  expect(screen.getByText("Outcome unknown - check before uploading again")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Check with Azure DevOps/ })).toBeInTheDocument();
+});
+
+/// Deviation from the brief (controller ruling): a title Azure DevOps
+/// cannot disambiguate stays held, with its own reason on the row, and the
+/// hold shrinks to just that title rather than lifting.
+test("Check that finds an ambiguous title keeps that row held, with its own reason", async () => {
+  holdMocks(() => ({ found: [], ambiguous: ["Brand new"] }));
+  renderQueue([makeCase({ title: "Brand new" })]);
+  await uploadOnce();
+
+  fireEvent.click(screen.getByRole("button", { name: /Check with Azure DevOps/ }));
+  await screen.findByText(
+    "More than one test case with this title exists in Azure DevOps - check there before uploading again.",
+  );
+  expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Check with Azure DevOps/ })).toBeInTheDocument();
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-upload-hold:acme/42")!);
+  expect(stored.titles).toEqual(["Brand new"]);
+  expect(stored.ambiguous).toEqual(["Brand new"]);
+});

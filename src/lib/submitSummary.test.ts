@@ -54,3 +54,14 @@ test("a written case that reported an error afterwards still counts as uploaded"
   expect(s.updated).toBe(1);
   expect(s.headline).toBe("1 test case uploaded - 1 updated");
 });
+
+// "unknown" may or may not exist in Azure DevOps: neither uploaded nor failed.
+test("an unknown outcome is counted apart, never as uploaded or failed", () => {
+  const s = summariseSubmit([
+    r({ index: 0, action: "created" }),
+    r({ index: 1, action: "unknown", id: null, error: "Outcome unknown" }),
+  ]);
+  expect(s.unknown).toBe(1);
+  expect(s.failed).toBe(0);
+  expect(s.headline).toBe("1 test case uploaded - 1 created, 1 unknown");
+});

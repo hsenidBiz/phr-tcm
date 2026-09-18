@@ -128,3 +128,14 @@ test("a result index with no matching sent row is ignored rather than crashing",
   expect(failed.size).toBe(0);
   expect(unmatched).toBe(0);
 });
+
+test("an unknown outcome leaves its row untouched and unmarked", () => {
+  const sent = [tc("A")];
+  const { queue, failed, uploadedIds, unmatched } = keepUploaded(sent, sent, [
+    { index: 0, action: "unknown", id: null },
+  ]);
+  expect(queue[0]).toBe(sent[0]);
+  expect(failed.size).toBe(0);
+  expect(uploadedIds.size).toBe(0);
+  expect(unmatched).toBe(0);
+});

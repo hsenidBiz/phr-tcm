@@ -14,6 +14,8 @@ export type SubmitSummary = {
   created: number;
   updated: number;
   failed: number;
+  /** May or may not exist in Azure DevOps - held until checked. */
+  unknown: number;
   headline: string;
 };
 
@@ -23,14 +25,22 @@ export function summariseSubmit(results: SubmitItemResult[]): SubmitSummary {
   const created = results.filter((r) => r.action === "created").length;
   const updated = results.filter((r) => r.action === "updated").length;
   const failed = results.filter((r) => r.action === "failed").length;
+  const unknown = results.filter((r) => r.action === "unknown").length;
 
   const parts: string[] = [];
   if (created > 0) parts.push(`${created} created`);
   if (updated > 0) parts.push(`${updated} updated`);
   if (failed > 0) parts.push(`${failed} failed`);
+  if (unknown > 0) parts.push(`${unknown} unknown`);
 
   const uploaded = created + updated;
   const lead = uploaded === 0 ? "Nothing uploaded" : `${plural(uploaded, "test case")} uploaded`;
 
-  return { created, updated, failed, headline: parts.length ? `${lead} - ${parts.join(", ")}` : lead };
+  return {
+    created,
+    updated,
+    failed,
+    unknown,
+    headline: parts.length ? `${lead} - ${parts.join(", ")}` : lead,
+  };
 }

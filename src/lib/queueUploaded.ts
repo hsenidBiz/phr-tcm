@@ -33,7 +33,8 @@ import type { TestCase } from "../bindings";
 export type SubmitOutcome = {
   /** Position in the list that was SENT, not in the queue now. */
   index: number;
-  /** "created" | "updated" | "failed" */
+  /** "created" | "updated" | "failed" | "unknown". An unknown row is left
+   * exactly as it was: lib/uploadHold marks and holds it. */
   action: string;
   /** The work item id; the NEW one for a created case. */
   id?: number | null;

@@ -168,6 +168,7 @@ use v2_lib::ado::{AdoError, NET_TIMEOUT};
 use v2_lib::commands::queue::{
     failed_batch_results, iso_utc, reconcile_with, resolve_failed_batch, ReconciledCase,
 };
+use v2_lib::commands::queue::ReconcileAnswer;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -336,8 +337,34 @@ async fn check_later_pairs_titles_with_what_exists() {
         .unwrap();
     assert_eq!(
         got,
-        vec![ReconciledCase { title: "A".into(), id: 901 }, ReconciledCase { title: "A".into(), id: 903 }]
+        ReconcileAnswer {
+            found: vec![
+                ReconciledCase { title: "A".into(), id: 901 },
+                ReconciledCase { title: "A".into(), id: 903 }
+            ],
+            ambiguous: vec![],
+        }
     );
+}
+
+/// A title with more unclaimed matches in Azure DevOps than rows being
+/// checked cannot be told apart from a colleague's case: it is reported
+/// ambiguous, not found, so the caller keeps the row held rather than
+/// clearing it on a guess.
+#[tokio::test]
+async fn check_later_reports_an_ambiguous_title_separately_from_found() {
+    let server = MockServer::start().await;
+    mount_lookup(&server, &[901, 902], serde_json::json!({"value": [
+        {"id": 901, "fields": {"System.Title": "A"}},
+        {"id": 902, "fields": {"System.Title": "A"}}
+    ]}))
+    .await;
+    let titles = vec!["A".to_string()];
+    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles)
+        .await
+        .unwrap();
+    assert_eq!(got.found, vec![]);
+    assert_eq!(got.ambiguous, vec!["A".to_string()]);
 }
 
 #[tokio::test]
