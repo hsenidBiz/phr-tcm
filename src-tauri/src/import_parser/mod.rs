@@ -79,18 +79,46 @@ pub struct ParsedFile {
     pub specs: Vec<String>,
 }
 
-/// Parse a file into test cases. Returns the parsed file or a user-facing
-/// error string (bad file type / missing columns / unreadable file).
-pub fn parse_file(path: &str) -> Result<ParsedFile, String> {
+/// Text without a leading UTF-8 byte-order mark. PowerShell 5.1's
+/// `Set-Content -Encoding utf8` and `Out-File` write one, and serde_json
+/// refuses a document that starts with it.
+pub fn strip_bom(s: &str) -> &str {
+    s.strip_prefix('\u{feff}').unwrap_or(s)
+}
+
+/// A draft file's text with any BOM removed. Every reader and writer of a
+/// draft goes through this, so a file the importer accepts is never "not
+/// valid JSON" to the code that saves a comment into it.
+pub fn read_json_text(path: &Path) -> Result<String, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("could not read the file: {e}"))?;
+    Ok(match text.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_string(),
+        None => text,
+    })
+}
+
+/// Read and parse a draft in one go, returning the exact text the cases
+/// were parsed from. A caller that writes back must merge into THAT text,
+/// never into a second read of a file that may have changed in between.
+pub fn read_draft(path: &str) -> Result<(String, ParsedFile), String> {
     let ext = Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    match ext.as_str() {
-        "json" => parse_json(path),
-        other => Err(format!("Unsupported file type: .{other}. Use .json")),
+    if ext != "json" {
+        return Err(format!("Unsupported file type: .{ext}. Use .json"));
     }
+    let text = read_json_text(Path::new(path))?;
+    let parsed = parse_json_text(&text)?;
+    Ok((text, parsed))
+}
+
+/// Parse a file into test cases. Returns the parsed file or a user-facing
+/// error string (bad file type / missing columns / unreadable file).
+pub fn parse_file(path: &str) -> Result<ParsedFile, String> {
+    read_draft(path).map(|(_, parsed)| parsed)
 }
 
 /// A work item id from a file, or None with the reason it was rejected.
@@ -349,11 +377,10 @@ pub(crate) fn value_to_string(v: &serde_json::Value) -> String {
 }
 
 /// Parse the AI round-trip JSON format (wrapper {"test_cases": [...]} or a
-/// bare list). A kept `id` flags the case as an UPDATE - same contract as
-/// the TestCaseID column. Ported from v1 _parse_json.
-fn parse_json(path: &str) -> Result<ParsedFile, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("Could not read JSON: {e}"))?;
-    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+/// bare list) from its text. A kept `id` flags the case as an UPDATE - same
+/// contract as the TestCaseID column. Ported from v1 _parse_json.
+pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
+    let content = strip_bom(content);
     let data: serde_json::Value =
         serde_json::from_str(content).map_err(|e| format!("Invalid JSON: {e}"))?;
 

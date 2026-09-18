@@ -27,6 +27,16 @@ use tauri_specta::Event;
 
 use crate::events::WatchedFileChanged;
 
+/// Serialises the read-patch-write that every save into a draft performs.
+///
+/// Saving a comment reads the whole JSON file, patches one value and writes
+/// it back. Two of those interleaving means the second read happens before
+/// the first write, and the first change is gone. The note listener, the
+/// app's own save commands and the AI bridge's in-place rewrites all take
+/// it, held only across one file read and one file write. It lives here,
+/// beside the write itself, so every one of them can reach it.
+pub static NOTE_WRITE: Mutex<()> = Mutex::new(());
+
 /// A single save raises a burst of events; wait this long for the burst to
 /// finish before reading, so the file isn't hashed half-written.
 const COALESCE: Duration = Duration::from_millis(200);
@@ -191,14 +201,20 @@ where
 /// the fingerprint BEFORE the write closes the race where the watcher
 /// notices the new bytes before we get a chance to claim them.
 ///
-/// A path that is not being watched is written normally - Manual Entry
+/// The write goes to a temp file beside the target and is then renamed over
+/// it. A crash or a full disk part-way through leaves the old draft intact
+/// instead of a truncated one. The watch is on the folder and filters by
+/// file name, so the temp file never registers as a change, and the rename
+/// is seen and absorbed like any other self-write.
+///
+/// A path that is not being watched is written the same way - Manual Entry
 /// drafts and one-off exports have no watch to confuse.
 pub fn write_watched(state: &FileWatchState, path: &str, text: &str) -> Result<String, String> {
     let stamp = fingerprint(text.as_bytes());
     if let Some(watch) = state.0.lock().unwrap().get(path) {
         *watch.expected.lock().unwrap() = Some(stamp.clone());
     }
-    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    crate::ai_tools::atomic_write(Path::new(path), text)?;
     Ok(stamp)
 }
 

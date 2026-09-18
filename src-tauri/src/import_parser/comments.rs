@@ -50,7 +50,7 @@ impl CaseTarget {
 }
 
 pub(crate) fn document(json: &str) -> Result<Value, String> {
-    serde_json::from_str(json).map_err(|e| format!("not valid JSON: {e}"))
+    serde_json::from_str(super::strip_bom(json)).map_err(|e| format!("not valid JSON: {e}"))
 }
 
 /// The cases, whether the file is the wrapper shape or the bare list the
@@ -133,7 +133,7 @@ pub fn patch_general_comment(json: &str, text: &str) -> Result<String, String> {
 /// missing or unreadable simply has no comment - the caller is prefilling a
 /// text box, not validating the file.
 pub fn general_comment(json: &str) -> String {
-    serde_json::from_str::<Value>(json)
+    serde_json::from_str::<Value>(super::strip_bom(json))
         .ok()
         .and_then(|d| d.get("comments").and_then(Value::as_str).map(String::from))
         .unwrap_or_default()

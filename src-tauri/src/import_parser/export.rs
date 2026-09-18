@@ -121,7 +121,7 @@ pub fn export_queue_to_json(queue: &[TestCase], path: &str) -> Result<(), String
 /// and the wrapper is the repair rather than a loss.
 pub fn merge_cases_into_draft(old_text: &str, cases: &[TestCase]) -> Result<String, String> {
     let fresh = queue_to_json_string(cases)?;
-    match serde_json::from_str::<serde_json::Value>(old_text) {
+    match serde_json::from_str::<serde_json::Value>(super::strip_bom(old_text)) {
         Ok(mut doc) if doc.is_object() => {
             let fresh_doc: serde_json::Value =
                 serde_json::from_str(&fresh).map_err(|e| e.to_string())?;

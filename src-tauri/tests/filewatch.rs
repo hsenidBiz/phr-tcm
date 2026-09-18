@@ -280,3 +280,33 @@ fn a_busy_folder_cannot_starve_the_change_notification() {
 
     assert!(got.is_ok(), "the change was never emitted while the folder stayed busy");
 }
+
+/// A crash or a full disk during an in-place rewrite leaves the user's draft
+/// truncated. A second hard link to the file shows which kind of write
+/// happened: rewriting in place changes what both names show, while a temp
+/// file renamed over `cases.json` leaves the other name on the old bytes.
+#[test]
+fn write_watched_replaces_the_file_instead_of_rewriting_it_in_place() {
+    let dir = temp_dir("atomic");
+    let file = dir.0.join("cases.json");
+    std::fs::write(&file, "old").unwrap();
+    let twin = dir.0.join("twin.json");
+    std::fs::hard_link(&file, &twin).unwrap();
+
+    let state = FileWatchState::default();
+    v2_lib::filewatch::write_watched(&state, &file.to_string_lossy(), "new").unwrap();
+
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+    assert_eq!(
+        std::fs::read_to_string(&twin).unwrap(),
+        "old",
+        "the draft was truncated and rewritten in place"
+    );
+    let leftovers: Vec<String> = std::fs::read_dir(&dir.0)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n != "cases.json" && n != "twin.json")
+        .collect();
+    assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+}

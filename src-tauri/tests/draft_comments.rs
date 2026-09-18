@@ -354,3 +354,23 @@ fn the_apps_own_draft_writes_need_a_watched_file_or_a_real_draft() {
         let _ = std::fs::remove_file(p);
     }
 }
+
+/// The importer accepts a BOM'd file; saving a comment into the same file
+/// used to fail with "not valid JSON", and the prefill showed an empty box.
+#[test]
+fn a_file_saved_with_a_bom_still_takes_comments_and_keeps_its_keys() {
+    let bom = format!("\u{feff}{FILE}");
+    let out = patch_case_comment(&bom, &CaseTarget { id: Some(42), title: String::new() }, "noted")
+        .unwrap();
+    assert!(!out.starts_with('\u{feff}'), "the rewrite is written without a BOM");
+    assert_eq!(cases(&out)[0]["comment"], "noted");
+    assert!(out.contains("\"instructions\""), "{out}");
+
+    let out = patch_general_comment(&bom, "for the set").unwrap();
+    assert_eq!(general_comment(&out), "for the set");
+    assert_eq!(
+        general_comment(&format!("\u{feff}{out}")),
+        "for the set",
+        "reading a BOM'd file finds its comment"
+    );
+}

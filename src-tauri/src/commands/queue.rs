@@ -4,24 +4,10 @@
 use tauri::Manager;
 use tauri_specta::Event;
 
-/// Serialises the read-patch-write that every comment save performs.
-///
-/// Saving a comment reads the whole JSON file, patches one value and writes
-/// it back. Two of those interleaving means the second read happens before
-/// the first write, and the first comment is gone - the box on the page
-/// still shows it, so nobody finds out until the file is reopened.
-///
-/// This became reachable when the note listener started handling
-/// connections off the accept thread: the single-threaded loop used to
-/// serialise these by accident, and that was the only thing stopping it.
-/// The listener has to stay concurrent - one stalled peer must not block
-/// every save - so the guarantee moves here, where it is only ever held
-/// across a file read and a file write.
-static NOTE_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 use crate::events::{
     CaseNoteSaved, DraftCommentSaved, DraftGeneralCommentSaved, PlanCreated, SubmitProgress,
 };
+use crate::filewatch::NOTE_WRITE;
 use crate::state::{get_fresh_token, SubmitCancel};
 use crate::{ado, import_parser, model, note_server};
 
@@ -342,8 +328,7 @@ fn save_draft_case_comment(
     let mut stamp = String::new();
     if !n.path.is_empty() {
         writable(app, &n.path)?;
-        let json = std::fs::read_to_string(&n.path)
-            .map_err(|e| format!("could not read the file: {e}"))?;
+        let json = import_parser::read_json_text(std::path::Path::new(&n.path))?;
         let target = import_parser::comments::CaseTarget {
             id: n.id,
             title: n.title.clone(),
@@ -382,8 +367,7 @@ fn write_general_comment(
     text: &str,
 ) -> Result<String, String> {
     writable(app, path)?;
-    let json =
-        std::fs::read_to_string(path).map_err(|e| format!("could not read the file: {e}"))?;
+    let json = import_parser::read_json_text(std::path::Path::new(path))?;
     let patched = import_parser::comments::patch_general_comment(&json, text)?;
     crate::filewatch::write_watched(&watch_state(app), path, &patched)
 }
@@ -393,7 +377,7 @@ fn write_general_comment(
 #[tauri::command]
 #[specta::specta]
 pub fn read_general_comment(path: String) -> String {
-    std::fs::read_to_string(&path)
+    import_parser::read_json_text(std::path::Path::new(&path))
         .map(|j| import_parser::comments::general_comment(&j))
         .unwrap_or_default()
 }
@@ -423,7 +407,7 @@ pub fn save_specs(app: tauri::AppHandle, path: String, specs: Vec<String>) -> Re
     // Same guard as the comment saves: one read-patch-write at a time.
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     writable(&app, &path)?;
-    let json = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
+    let json = import_parser::read_json_text(std::path::Path::new(&path))?;
     let patched = import_parser::specs::patch_specs(&json, &specs)?;
     crate::filewatch::write_watched(&watch_state(&app), &path, &patched)
 }
@@ -445,7 +429,7 @@ pub fn save_draft_comment(
     // them silently.
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     draft_write_allowed(&path, &crate::filewatch::watched_paths(&watch_state(&app)))?;
-    let json = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
+    let json = import_parser::read_json_text(std::path::Path::new(&path))?;
     let target = import_parser::comments::CaseTarget { id, title };
     let patched = import_parser::comments::patch_case_comment(&json, &target, &text)?;
     crate::filewatch::write_watched(&watch_state(&app), &path, &patched)
@@ -470,7 +454,7 @@ pub fn save_draft_cases(
     // once loses one of them silently.
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     draft_write_allowed(&path, &crate::filewatch::watched_paths(&watch_state(&app)))?;
-    let old = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
+    let old = import_parser::read_json_text(std::path::Path::new(&path))?;
     let out = import_parser::merge_cases_into_draft(&old, &cases)?;
     crate::filewatch::write_watched(&watch_state(&app), &path, &out)
 }

@@ -2,7 +2,7 @@
 //! read by the app for the review page's spec pane and written back by the
 //! Import File tab's Attach control.
 
-use v2_lib::import_parser::specs::{patch_specs, read_specs};
+use v2_lib::import_parser::specs::{ignored_spec_entries, patch_specs, read_specs};
 
 const FILE: &str = r#"{
   "format": "azure-devops-test-cases",
@@ -76,4 +76,16 @@ fn the_export_instructions_name_the_field() {
     let json = v2_lib::import_parser::queue_to_json_string(&[]).unwrap();
     let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert!(doc["instructions"].as_str().unwrap().contains("'specs'"), "{}", doc["instructions"]);
+}
+
+#[test]
+fn a_file_saved_with_a_bom_reads_and_saves_its_specs() {
+    let bom = format!("\u{feff}{FILE}");
+    assert_eq!(read_specs(&bom).len(), 2, "the spec pane must not go empty on a BOM");
+    assert_eq!(ignored_spec_entries(&bom), 2);
+    let out = patch_specs(&bom, &["A.md".into()]).unwrap();
+    assert!(!out.starts_with('\u{feff}'));
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["specs"], serde_json::json!(["A.md"]));
+    assert_eq!(doc["comments"], "whole-set note");
 }

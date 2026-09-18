@@ -40,6 +40,21 @@ impl Drop for TempDir {
     }
 }
 
+/// A repository with a `.test-cases` folder and a context that points at it.
+/// In-place writes are allowed there (A9), so these tests do not depend on
+/// a file watch.
+fn repo_draft(dir: &TempDir, name: &str, text: &str) -> (BridgeContext, std::path::PathBuf) {
+    let folder = dir.0.join(".test-cases");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join(name);
+    std::fs::write(&path, text).unwrap();
+    let ctx = BridgeContext {
+        working_dir: Some(dir.0.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+    (ctx, path)
+}
+
 // ---- §12: an op that matched nothing must not read like one that worked
 
 #[test]
@@ -761,4 +776,64 @@ fn set_findings_replaces_the_list_and_validates_it() {
     assert!(err.contains("no title"), "{err}");
     let err = parse_ops(&serde_json::json!([{ "op": "set_findings", "value": "not a list" }])).unwrap_err();
     assert!(err.contains("list"), "{err}");
+}
+
+#[tokio::test]
+async fn an_in_place_transform_of_a_bom_file_keeps_its_specs_and_comments() {
+    let dir = TempDir::new();
+    let doc = serde_json::json!({
+        "specs": ["Spec.md"],
+        "comments": "whole-set note",
+        "test_cases": [{ "title": "A", "steps": [{ "action": "Expand the row.", "expected": "Opens." }] }]
+    });
+    let (ctx, path) = repo_draft(&dir, "bom.json", &format!("\u{feff}{doc}"));
+    let body = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "in_place": true,
+        "operations": [ { "op": "replace_in_steps", "find": "Expand", "replace": "Open" } ],
+    })
+    .to_string();
+    let (status, out) = route(&ctx, None, "POST", "/transform", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.starts_with('\u{feff}'));
+    let written: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(written["specs"], serde_json::json!(["Spec.md"]), "{text}");
+    assert_eq!(written["comments"], "whole-set note");
+    assert_eq!(written["test_cases"][0]["steps"][0]["action"], "Open the row.");
+}
+
+/// A comment autosave holds NOTE_WRITE across its read and its write. An
+/// in-place transform that ignored the lock could land between the two and
+/// be silently reverted by the comment's write of the older text.
+#[test]
+fn an_in_place_transform_waits_for_the_draft_write_lock() {
+    let dir = TempDir::new();
+    let original = serde_json::json!({ "test_cases": [
+        { "title": "A", "steps": [{ "action": "Expand the row.", "expected": "Opens." }] }
+    ]})
+    .to_string();
+    let (ctx, path) = repo_draft(&dir, "locked.json", &original);
+    let body = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "in_place": true,
+        "operations": [ { "op": "replace_in_steps", "find": "Expand", "replace": "Open" } ],
+    })
+    .to_string();
+
+    let held = v2_lib::filewatch::NOTE_WRITE.lock().unwrap();
+    let worker = std::thread::spawn(move || {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(route(&ctx, None, "POST", "/transform", &body, "1.0.0"))
+    });
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    assert!(!worker.is_finished(), "the transform ran while a comment save held the file");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+
+    drop(held);
+    let (status, out) = worker.join().unwrap();
+    assert_eq!(status, 200, "{out}");
+    assert!(std::fs::read_to_string(&path).unwrap().contains("Open the row."));
 }

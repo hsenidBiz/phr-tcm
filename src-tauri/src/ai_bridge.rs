@@ -1098,6 +1098,14 @@ fn optimize_json(body: &str, target: &str, ctx: &BridgeContext) -> (u16, String)
                 .to_string(),
         );
     }
+    // An in-place rewrite is a read-patch-write, like a comment save, and a
+    // comment autosave on the same file must not interleave with it. Take
+    // the same lock BEFORE the read and hold it until the write is done.
+    let _serialised = in_place
+        .then(|| crate::filewatch::NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner()));
+    // The exact text the cases were parsed from. The write-back merges into
+    // this, never into a second read of a file that may have moved on.
+    let mut draft_text: Option<String> = None;
     // Warnings are not failures - a long title or a comma in a tag is worth
     // saying and not worth refusing over - but they must reach the caller,
     // because some of them mean a case was dropped.
@@ -1110,8 +1118,11 @@ fn optimize_json(body: &str, target: &str, ctx: &BridgeContext) -> (u16, String)
                         .to_string(),
                 );
             }
-            match crate::import_parser::parse_file(path) {
-                Ok(v) => (v.cases, v.warnings),
+            match crate::import_parser::read_draft(path) {
+                Ok((text, v)) => {
+                    draft_text = Some(text);
+                    (v.cases, v.warnings)
+                }
                 Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
             }
         }
@@ -1120,7 +1131,10 @@ fn optimize_json(body: &str, target: &str, ctx: &BridgeContext) -> (u16, String)
             Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
         },
     };
-    let file_specs = from_path.as_deref().map(specs_of_file).unwrap_or_default();
+    let file_specs = draft_text
+        .as_deref()
+        .map(crate::import_parser::specs::read_specs)
+        .unwrap_or_default();
     let entry = q(target, "entry");
     let dry_run = matches!(q(target, "dry_run").as_deref(), Some("true") | Some("1"));
     // Default true: regrouping for the tester is what this tool is mostly
@@ -1148,25 +1162,19 @@ fn optimize_json(body: &str, target: &str, ctx: &BridgeContext) -> (u16, String)
             .to_string(),
         );
     }
-    let json = match draft_text_for(from_path.as_deref(), &optimized) {
+    let json = match draft_text_for(draft_text.as_deref(), &optimized) {
         Ok(j) => j,
         Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
     };
     if in_place {
-        // Temp-in-same-directory + rename, like transform_cases: a half-
-        // written draft under a watched path is worse than no write.
+        // Temp file + rename: a half-written draft under a watched path is
+        // worse than no write.
         let path = from_path.expect("guarded above");
         if !bridge_may_write(&path, ctx.working_dir.as_deref(), &watched_now()) {
             return (400, serde_json::json!({ "error": IN_PLACE_REFUSAL }).to_string());
         }
-        let tmp = format!("{path}.tmp");
-        if let Err(e) = std::fs::write(&tmp, &json) {
-            let _ = std::fs::remove_file(&tmp);
-            return (500, serde_json::json!({ "error": format!("could not write {tmp}: {e}") }).to_string());
-        }
-        if let Err(e) = std::fs::rename(&tmp, &path) {
-            let _ = std::fs::remove_file(&tmp);
-            return (500, serde_json::json!({ "error": format!("could not replace {path}: {e}") }).to_string());
+        if let Err(e) = crate::ai_tools::atomic_write(std::path::Path::new(&path), &json) {
+            return (500, serde_json::json!({ "error": e }).to_string());
         }
         return (
             200,
@@ -1233,6 +1241,10 @@ fn transform_json(body: &str, ctx: &BridgeContext) -> (u16, String) {
         );
     }
 
+    // Same lock as a comment save, taken before the read (see optimize_json).
+    let _serialised = in_place
+        .then(|| crate::filewatch::NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner()));
+    let mut draft_text: Option<String> = None;
     let (cases, import_warnings) = match &from_path {
         Some(path) => {
             if !std::path::Path::new(path).is_file() {
@@ -1242,8 +1254,11 @@ fn transform_json(body: &str, ctx: &BridgeContext) -> (u16, String) {
                         .to_string(),
                 );
             }
-            match crate::import_parser::parse_file(path) {
-                Ok(v) => (v.cases, v.warnings),
+            match crate::import_parser::read_draft(path) {
+                Ok((text, v)) => {
+                    draft_text = Some(text);
+                    (v.cases, v.warnings)
+                }
                 Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
             }
         }
@@ -1281,27 +1296,24 @@ fn transform_json(body: &str, ctx: &BridgeContext) -> (u16, String) {
     }
     let (out, mut report) = crate::transform::apply(cases, &ops);
     report.ignored.extend(ignored);
-    let file_specs = from_path.as_deref().map(specs_of_file).unwrap_or_default();
-    let json = match draft_text_for(from_path.as_deref(), &out) {
+    let file_specs = draft_text
+        .as_deref()
+        .map(crate::import_parser::specs::read_specs)
+        .unwrap_or_default();
+    let json = match draft_text_for(draft_text.as_deref(), &out) {
         Ok(j) => j,
         Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
     };
 
     if in_place {
-        // Temp-in-same-directory + rename, like merge_case_files: a half-
-        // written draft under a watched path is worse than no write.
+        // Temp file + rename: a half-written draft under a watched path is
+        // worse than no write.
         let path = from_path.expect("guarded above");
         if !bridge_may_write(&path, ctx.working_dir.as_deref(), &watched_now()) {
             return (400, serde_json::json!({ "error": IN_PLACE_REFUSAL }).to_string());
         }
-        let tmp = format!("{path}.tmp");
-        if let Err(e) = std::fs::write(&tmp, &json) {
-            let _ = std::fs::remove_file(&tmp);
-            return (500, serde_json::json!({ "error": format!("could not write {tmp}: {e}") }).to_string());
-        }
-        if let Err(e) = std::fs::rename(&tmp, &path) {
-            let _ = std::fs::remove_file(&tmp);
-            return (500, serde_json::json!({ "error": format!("could not replace {path}: {e}") }).to_string());
+        if let Err(e) = crate::ai_tools::atomic_write(std::path::Path::new(&path), &json) {
+            return (500, serde_json::json!({ "error": e }).to_string());
         }
         return (
             200,
@@ -1331,22 +1343,14 @@ fn transform_json(body: &str, ctx: &BridgeContext) -> (u16, String) {
     (200, response.to_string())
 }
 
-/// The `specs` list of a draft file, empty when it has none or cannot be
-/// read - the tool's own parse already reported that.
-fn specs_of_file(path: &str) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .map(|j| crate::import_parser::specs::read_specs(&j))
-        .unwrap_or_default()
-}
-
 /// The text to write back over a draft file: the new cases inside the
-/// file's OWN document, so its `specs`, its whole-set `comments` and any
-/// key this app has never heard of survive the rewrite - a tool owns the
-/// cases, never the file. Without a file (the draft came inline) it is the
-/// standard wrapper.
-fn draft_text_for(path: Option<&str>, cases: &[crate::model::TestCase]) -> Result<String, String> {
-    match path.and_then(|p| std::fs::read_to_string(p).ok()) {
-        Some(old) => crate::import_parser::merge_cases_into_draft(&old, cases),
+/// file's OWN document (`old` is the exact text they were parsed from), so
+/// its `specs`, its whole-set `comments` and any key this app has never
+/// heard of survive the rewrite - a tool owns the cases, never the file.
+/// Without a file (the draft came inline) it is the standard wrapper.
+fn draft_text_for(old: Option<&str>, cases: &[crate::model::TestCase]) -> Result<String, String> {
+    match old {
+        Some(old) => crate::import_parser::merge_cases_into_draft(old, cases),
         None => crate::import_parser::queue_to_json_string(cases),
     }
 }

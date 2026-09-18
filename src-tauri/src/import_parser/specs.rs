@@ -27,13 +27,13 @@ pub fn specs_from_value(doc: &Value) -> (Vec<String>, usize) {
 /// are dropped (the importer warns about them). A file that is not an
 /// object, or does not parse, simply has none.
 pub fn read_specs(json: &str) -> Vec<String> {
-    let doc = serde_json::from_str::<Value>(json).unwrap_or(Value::Null);
+    let doc = serde_json::from_str::<Value>(super::strip_bom(json)).unwrap_or(Value::Null);
     specs_from_value(&doc).0
 }
 
 /// How many entries `read_specs` would drop - for the importer's warning.
 pub fn ignored_spec_entries(json: &str) -> usize {
-    let doc = serde_json::from_str::<Value>(json).unwrap_or(Value::Null);
+    let doc = serde_json::from_str::<Value>(super::strip_bom(json)).unwrap_or(Value::Null);
     specs_from_value(&doc).1
 }
 

@@ -1476,3 +1476,47 @@ fn a_bad_shared_reference_is_skipped_with_a_warning() {
     assert!(all.contains("step 2") && all.contains("step 3") && all.contains("Shared Steps work item"), "{all}");
     assert!(all.contains("step 4") && all.contains("ignored"), "{all}");
 }
+
+/// PowerShell 5.1's `Set-Content -Encoding utf8` writes a BOM. The importer
+/// always tolerated it; every reader of a draft now goes through the same door.
+#[test]
+fn a_bom_is_stripped_by_the_one_draft_reader() {
+    use v2_lib::import_parser::{read_json_text, strip_bom};
+    assert_eq!(strip_bom("\u{feff}{}"), "{}");
+    assert_eq!(strip_bom("{}"), "{}");
+    let path = tmp_path("bom-read.json");
+    std::fs::write(&path, "\u{feff}{\"test_cases\":[]}").unwrap();
+    assert_eq!(read_json_text(std::path::Path::new(&path)).unwrap(), "{\"test_cases\":[]}");
+    let missing = tmp_path("no-such-draft.json");
+    assert!(read_json_text(std::path::Path::new(&missing))
+        .unwrap_err()
+        .contains("could not read the file"));
+}
+
+/// A bulk edit into a BOM'd draft used to fall back to a fresh document and
+/// silently drop `specs`, `comments` and every key the app does not own.
+#[test]
+fn a_bulk_edit_into_a_bom_file_keeps_its_specs_and_comments() {
+    let original = format!(
+        "\u{feff}{}",
+        serde_json::json!({
+            "specs": ["Spec.md"],
+            "comments": "whole-set note",
+            "owner_key": 1,
+            "test_cases": [{ "title": "A", "steps": [{ "action": "x", "expected": "" }] }]
+        })
+    );
+    let edited = vec![TestCase {
+        title: "A renamed".into(),
+        steps: vec![Step { action: "x".into(), expected: String::new(), ..Default::default() }],
+        automation_status: "Not Automated".into(),
+        ..Default::default()
+    }];
+    let out = v2_lib::import_parser::merge_cases_into_draft(&original, &edited).unwrap();
+    assert!(!out.starts_with('\u{feff}'), "a rewrite must not carry a BOM");
+    let doc: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["specs"], serde_json::json!(["Spec.md"]), "{out}");
+    assert_eq!(doc["comments"], "whole-set note");
+    assert_eq!(doc["owner_key"], 1);
+    assert_eq!(doc["test_cases"][0]["title"], "A renamed");
+}
