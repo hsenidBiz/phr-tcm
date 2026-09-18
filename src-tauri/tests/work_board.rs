@@ -847,6 +847,79 @@ fn an_attachment_url_is_given_an_api_version_when_it_has_none() {
     assert_eq!(attachment_download_url(already, base), Some(already.into()));
 }
 
+/// The host is read by the SAME parser reqwest connects with (WHATWG, the
+/// `url` crate). The hand-rolled split on `/ ? #` read
+/// `https://attacker.example\.dev.azure.com/...` as a dev.azure.com
+/// subdomain, while reqwest treats `\` as a path separator for https and
+/// connected to attacker.example - with the bearer token attached.
+#[test]
+fn the_host_check_reads_the_url_the_way_the_request_will() {
+    use v2_lib::work_board::detail::{attachment_download_url, token_may_be_sent_to};
+    let base = "https://dev.azure.com";
+    for bad in [
+        // Backslash: a path separator for https, so the host is attacker.example.
+        r"https://attacker.example\.dev.azure.com/_apis/wit/attachments/x",
+        r"https://attacker.example\.visualstudio.com/_apis/wit/attachments/x",
+        // Cleartext to Microsoft's own domains: the header is readable on the wire.
+        "http://dev.azure.com/o/p/_apis/wit/attachments/x",
+        "http://vssps.dev.azure.com/o/_apis/graph/Subjects/abc/avatars",
+        "http://acme.visualstudio.com/_apis/wit/attachments/x",
+        // Userinfo in either half.
+        "https://user:pw@dev.azure.com/o/p/_apis/wit/attachments/x",
+        "https://dev.azure.com:443@evil.example/_apis/wit/attachments/x",
+        // Encoded dots/separators decode INTO the host, never around it.
+        "https://dev.azure.com%2eevil.example/_apis/wit/attachments/x",
+        "https://evil.example%2f.dev.azure.com/_apis/wit/attachments/x",
+        "https://evil.example%5c.dev.azure.com/_apis/wit/attachments/x",
+        // A trailing dot is a different name.
+        "https://dev.azure.com.evil.example./_apis/wit/attachments/x",
+        // Not http(s) at all.
+        "ftp://dev.azure.com/_apis/wit/attachments/x",
+        "javascript:alert(1)//dev.azure.com/_apis/attachment",
+    ] {
+        assert!(!token_may_be_sent_to(bad, base), "token would go to {bad}");
+        assert_eq!(attachment_download_url(bad, base), None, "{bad}");
+    }
+
+    for good in [
+        // Case does not change the host.
+        "https://DEV.AZURE.COM/o/p/_apis/wit/attachments/x",
+        "https://VSSPS.dev.azure.com/o/_apis/graph/Subjects/abc/avatars",
+        "https://Acme.VisualStudio.com/_apis/wit/attachments/x",
+        // The subdomains test results, releases and avatars live on.
+        "https://vsrm.dev.azure.com/o/p/_apis/release/attachments/x",
+        "https://vstmr.dev.azure.com/o/p/_apis/testresults/runs/1/attachments/2",
+        // Decodes to exactly dev.azure.com - which is where reqwest connects.
+        "https://dev%2eazure%2ecom/o/p/_apis/wit/attachments/x",
+    ] {
+        assert!(token_may_be_sent_to(good, base), "should be allowed: {good}");
+    }
+
+    // http only for the exact origin (scheme, host, port) already in use.
+    assert!(token_may_be_sent_to("http://tfs.corp.local:8080/tfs/a.png", "http://tfs.corp.local:8080/tfs"));
+    assert!(!token_may_be_sent_to("http://tfs.corp.local:8081/a.png", "http://tfs.corp.local:8080"));
+    assert!(!token_may_be_sent_to("http://dev.azure.com/a.png", "https://dev.azure.com"));
+}
+
+/// The attachment test is on the PATH, not the whole string: "attachment"
+/// in a query must not turn a work-item GET into something we fetch.
+#[test]
+fn attachment_in_the_query_alone_is_not_an_attachment() {
+    use v2_lib::work_board::detail::attachment_download_url;
+    assert_eq!(
+        attachment_download_url(
+            "https://dev.azure.com/o/p/_apis/wit/workitems/42?x=attachment",
+            "https://dev.azure.com"
+        ),
+        None
+    );
+    // And what is fetched is the parsed URL, so it is the URL that was checked.
+    assert_eq!(
+        attachment_download_url("https://DEV.AZURE.COM/o/p/_apis/wit/attachments/G", "https://dev.azure.com"),
+        Some("https://dev.azure.com/o/p/_apis/wit/attachments/G?api-version=7.1".into())
+    );
+}
+
 /// A related id of 0 means "no work item here" (a bug filed from a
 /// suite-scoped runner session has no PBI). Linking /workitems/0 would
 /// 400 the whole create, so non-positive ids are skipped, not sent.

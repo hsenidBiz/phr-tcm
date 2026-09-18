@@ -275,18 +275,32 @@ impl AdoClient {
     }
 }
 
-/// The scheme+host of a URL, lower-cased, or None if it has neither.
-fn host_of(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
-    let host = rest.split(['/', '?', '#']).next()?;
-    // Userinfo makes a URL read as one host and connect to another
-    // ("https://dev.azure.com@evil.example/"). Nothing legitimate here has
-    // it, so refuse outright rather than rely on which half we happen to
-    // keep.
-    if host.is_empty() || host.contains('@') {
+/// A URL the bearer token could be attached to, parsed by the SAME parser
+/// reqwest uses to connect (WHATWG, via the `url` crate). Checking a string
+/// we split by hand and then connecting to what reqwest parsed is how
+/// `https://evil.example\.dev.azure.com/` passed: `\` is a path separator
+/// to the real parser, so the token went to evil.example.
+///
+/// None for anything that is not http(s), has no host, or carries userinfo
+/// ("https://dev.azure.com@evil.example/" reads as one host and connects to
+/// another - nothing legitimate here has it).
+fn parse_target(url: &str) -> Option<reqwest::Url> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "https" | "http") {
         return None;
     }
-    Some(host.to_ascii_lowercase())
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return None;
+    }
+    parsed.host_str()?;
+    Some(parsed)
+}
+
+/// The (scheme, host) of a URL as the request will see it: lower-cased,
+/// percent-decoded, IDNA-mapped. None when `parse_target` refuses it.
+fn host_of(url: &str) -> Option<(String, String)> {
+    let u = parse_target(url)?;
+    Some((u.scheme().to_string(), u.host_str()?.to_string()))
 }
 
 /// The image type, from the bytes themselves.
@@ -328,15 +342,28 @@ fn sniff_image_mime(bytes: &[u8]) -> &'static str {
 /// passes over IPC - and none of that is a reason to send it somewhere
 /// new. So: the host this client is already talking to (which covers an
 /// on-premises server), or Microsoft's own Azure DevOps domains.
+/// Only https for Microsoft's domains; http only for the client's own origin.
 pub fn token_may_be_sent_to(url: &str, base_url: &str) -> bool {
-    let Some(host) = host_of(url) else {
+    let Some(target) = parse_target(url) else {
         return false;
     };
-    host_of(base_url).is_some_and(|b| b == host)
-        || host == "dev.azure.com"
-        // vssps./vsrm./vstmr. - avatars and test results live on these.
-        || host.ends_with(".dev.azure.com")
-        || host.ends_with(".visualstudio.com")
+    // The origin this client already talks to - scheme, host AND port. This
+    // is the only way plain http is ever allowed: an on-premises server the
+    // user configured as http.
+    if parse_target(base_url).is_some_and(|b| b.origin() == target.origin()) {
+        return true;
+    }
+    // Microsoft's own Azure DevOps domains, and only over https: over http
+    // the Authorization header is readable by anyone on the network path
+    // before any redirect to https could happen.
+    let Some((scheme, host)) = host_of(url) else {
+        return false;
+    };
+    scheme == "https"
+        && (host == "dev.azure.com"
+            // vssps./vsrm./vstmr. - avatars and test results live on these.
+            || host.ends_with(".dev.azure.com")
+            || host.ends_with(".visualstudio.com"))
 }
 
 /// The URL to download an `<img src>` from with the user's token, or None
@@ -362,13 +389,19 @@ pub fn attachment_download_url(src: &str, base_url: &str) -> Option<String> {
     if !token_may_be_sent_to(src, base_url) {
         return None;
     }
-    let path = src.to_ascii_lowercase();
+    let mut target = parse_target(src)?;
+    // The PATH decides, not the whole string: "?x=attachment" on a work
+    // item URL is not an attachment.
+    let path = target.path().to_ascii_lowercase();
     if !path.contains("/_apis/") || !path.contains("attachment") {
         return None;
     }
-    if path.contains("api-version=") {
-        return Some(src.to_string());
+    target.set_fragment(None);
+    // What goes out is the parsed form - the exact URL that was checked.
+    let url = target.as_str().to_string();
+    match target.query() {
+        Some(q) if q.to_ascii_lowercase().contains("api-version=") => Some(url),
+        Some(_) => Some(format!("{url}&api-version=7.1")),
+        None => Some(format!("{url}?api-version=7.1")),
     }
-    let sep = if src.contains('?') { '&' } else { '?' };
-    Some(format!("{src}{sep}api-version=7.1"))
 }
