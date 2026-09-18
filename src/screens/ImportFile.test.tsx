@@ -995,3 +995,80 @@ test("after an upload the rows stay, and a later file edit updates them in place
   expect(rows).toHaveLength(1);
   expect(rows[0].textContent).toContain("UPDATE #153450");
 });
+
+// ---------------------------------------------------------------------
+// Specs per watched file: Attach spec / Add wiki link write the list back
+// to the file's own `specs`, and a remove button takes an entry back out.
+// Task 4 (specs.rs / import_parser) owns the file format; this covers the
+// app's side of the seam - the control and the write-back.
+
+test("a watched file lists its specs and Attach spec writes the list back", async () => {
+  let saved: { path: string; specs: string[] } | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") {
+      const a = args as { options?: { multiple?: boolean } };
+      // The initial import picks the JSON file (single); Attach spec picks
+      // one or more markdown files under the same directory.
+      return a.options?.multiple ? ["C:/w/specs/Rules.md"] : "C:/w/cases.json";
+    }
+    if (cmd === "parse_import_file")
+      return { cases: [jsonCase("A")], warnings: [], specs: ["Step13.md"] };
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "read_specs") return ["Step13.md"];
+    if (cmd === "save_specs") {
+      saved = args as { path: string; specs: string[] };
+      return "stamp-2";
+    }
+    if (cmd === "file_stamp") return "stamp-1";
+    if (cmd === "watch_file") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Step13.md");
+  fireEvent.click(screen.getByRole("button", { name: /Attach spec/i }));
+  await waitFor(() => expect(saved).not.toBeNull());
+  expect(saved!.path).toBe("C:/w/cases.json");
+  expect(saved!.specs).toEqual(["Step13.md", "specs/Rules.md"]);
+  expect(await screen.findByText("specs/Rules.md")).toBeInTheDocument();
+});
+
+test("a wiki link is added by pasting it, and an entry can be removed", async () => {
+  const saved: string[][] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "plugin:dialog|open") return "C:/w/cases.json";
+    if (cmd === "parse_import_file")
+      return { cases: [jsonCase("A")], warnings: [], specs: ["Step13.md"] };
+    if (cmd === "read_general_comment") return "";
+    if (cmd === "read_specs") return ["Step13.md"];
+    if (cmd === "save_specs") {
+      saved.push((args as { specs: string[] }).specs);
+      return "stamp-" + saved.length;
+    }
+    if (cmd === "file_stamp") return "stamp-1";
+    if (cmd === "watch_file") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_case_field_values") return [];
+  });
+  renderScreen();
+  fireEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+  await screen.findByText("Step13.md");
+  fireEvent.click(screen.getByRole("button", { name: /Add wiki link/i }));
+  const box = screen.getByLabelText("Wiki page link");
+  fireEvent.change(box, {
+    target: { value: " https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine " },
+  });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual(["Step13.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]);
+  fireEvent.click(screen.getByRole("button", { name: "Remove spec Step13.md" }));
+  await waitFor(() => expect(saved).toHaveLength(2));
+  expect(saved[1]).toEqual(["https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]);
+});

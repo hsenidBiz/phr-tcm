@@ -214,6 +214,11 @@ export type WatchedFile = {
    * panel can show it without re-reading on every render. Absent in
    * entries written before general comments existed. */
   comment?: string;
+  /** The file's `specs` list - spec files (paths, relative to the file or
+   * absolute) and wiki URLs shown beside the cases in the browser review
+   * page. Lives in the file's top-level `specs`, so it travels with it.
+   * Absent in entries written before specs existed. */
+  specs?: string[];
 };
 
 /** Replace one file's remembered fields, leaving the rest of the list (and
@@ -244,7 +249,8 @@ function isWatchedFile(v: unknown): v is WatchedFile {
     w.path.length > 0 &&
     typeof w.stamp === "string" &&
     Array.isArray(w.snapshot) &&
-    (w.comment === undefined || typeof w.comment === "string")
+    (w.comment === undefined || typeof w.comment === "string") &&
+    (w.specs === undefined || Array.isArray(w.specs))
   );
 }
 

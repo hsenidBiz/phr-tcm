@@ -31,13 +31,16 @@ import {
 } from "../lib/fileSync";
 import { useQueue } from "../hooks/useQueue";
 import {
+  IconAttach,
   IconCancel,
   IconConfirm,
   IconImport,
   IconNext,
   IconRemove,
   IconStopWatching,
+  IconWikiLink,
 } from "../lib/actionIcons";
+import { unwrapStr } from "../lib/ipc";
 
 /** Two spellings of the same file. Windows paths compare case-insensitively
  * and either separator reaches us (the picker, a recent-imports entry, a
@@ -45,6 +48,99 @@ import {
  * is genuinely on the same file. */
 const samePath = (a: string, b: string) =>
   a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase();
+
+/** A picked spec path as it is stored: relative when it lives under the
+ * JSON file's directory (so the pair travels together), else absolute. */
+export function specEntryFor(jsonPath: string, picked: string): string {
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const dir = norm(jsonPath).replace(/\/[^/]*$/, "") + "/";
+  const p = norm(picked);
+  return p.toLowerCase().startsWith(dir.toLowerCase()) ? p.slice(dir.length) : picked;
+}
+
+/** One watched file's `specs` list: spec documents and wiki links shown
+ * beside its cases in the browser review page. Attach spec picks one or
+ * more files off disk; Add wiki link pastes a URL; either writes the list
+ * straight back to the file's own `specs` field. */
+function FileSpecs({
+  watch,
+  onSaved,
+}: {
+  watch: WatchedFile;
+  onSaved: (specs: string[], stamp: string) => void;
+}) {
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [link, setLink] = useState("");
+  const specs = watch.specs ?? [];
+  const save = useMutation({
+    mutationFn: (next: string[]) => unwrapStr(commands.saveSpecs(watch.path, next)),
+    onSuccess: (stamp, next) => onSaved(next, stamp),
+    onError: (e) => toast.error(`Could not save the specs: ${e.message}`),
+  });
+  const attach = async () => {
+    const picked = await open({
+      multiple: true,
+      filters: [{ name: "Spec documents", extensions: ["md", "markdown", "txt"] }],
+    });
+    const list = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+    if (list.length === 0) return;
+    const added = list.map((p) => specEntryFor(watch.path, p)).filter((p) => !specs.includes(p));
+    if (added.length > 0) save.mutate([...specs, ...added]);
+  };
+  const addLink = () => {
+    const url = link.trim();
+    if (!url) return;
+    setLink("");
+    setLinkOpen(false);
+    if (!specs.includes(url)) save.mutate([...specs, url]);
+  };
+  return (
+    <div className="ml-4 space-y-1 text-xs">
+      {specs.map((s) => (
+        <div key={s} className="flex items-center gap-2">
+          <span className="id-mono min-w-0 flex-1 truncate text-muted" title={s}>
+            {s}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Remove spec ${s}`}
+            onClick={() => save.mutate(specs.filter((x) => x !== s))}
+          >
+            <IconRemove aria-hidden />
+          </Button>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="sm" disabled={save.isPending} onClick={() => void attach()}>
+          <IconAttach aria-hidden />
+          Attach spec…
+        </Button>
+        {linkOpen ? (
+          <Input
+            aria-label="Wiki page link"
+            placeholder="Paste an Azure DevOps wiki page link"
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addLink();
+              if (e.key === "Escape") {
+                setLinkOpen(false);
+                setLink("");
+              }
+            }}
+            autoFocus
+          />
+        ) : (
+          <Button variant="ghost" size="sm" onClick={() => setLinkOpen(true)}>
+            <IconWikiLink aria-hidden />
+            Add wiki link
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function ImportFile({
   org,
@@ -253,12 +349,14 @@ export default function ImportFile({
         // The set-wide comment lives in the same file, so an edit can have
         // moved it as well - re-read rather than let the panel go stale.
         const comment = await commands.readGeneralComment(stale.path);
+        const specs = r.data.specs;
         if (cancelled) return;
         setWatches((prev) =>
           patchWatch(prev, stale.path, {
             stamp: fresh,
             snapshot: synced.snapshot,
             comment,
+            specs,
           }),
         );
         setWarnings(r.data.warnings);
@@ -473,11 +571,15 @@ export default function ImportFile({
         // Whatever the file already says about the set as a whole - very
         // often written by whoever generated it.
         comment: await commands.readGeneralComment(path),
+        // The parse already carries `specs` when the file has it; older
+        // callers (or a shape the parse didn't resolve) fall back to a
+        // dedicated read.
+        specs: r.data.specs ?? (await commands.readSpecs(path)),
       };
     },
     onSuccess: (res) => {
       if (!res) return;
-      const { path, picked, copied, displaced, stamp, data, comment } = res;
+      const { path, picked, copied, displaced, stamp, data, comment, specs } = res;
       // The copy is the file from here on, so a watch left on the ORIGINAL
       // would keep feeding the queue from the download folder - two files
       // claiming the same cases, and the one the assistant edits is not the
@@ -495,7 +597,9 @@ export default function ImportFile({
       // Re-importing the same file replaces its entry rather than adding a
       // second watch on it.
       if (stamp)
-        setWatches((prev) => upsertWatch(prev, { path, stamp, snapshot: data.cases, comment }));
+        setWatches((prev) =>
+          upsertWatch(prev, { path, stamp, snapshot: data.cases, comment, specs }),
+        );
       toast.success(
         `Imported ${data.cases.length} case${data.cases.length === 1 ? "" : "s"}` +
           (data.warnings.length ? ` with ${data.warnings.length} warning(s)` : "") +
@@ -571,29 +675,42 @@ export default function ImportFile({
                 </Button>
               )}
             </div>
-            {/* One row per file once there is a choice to make. A single
-                file needs no list - its name goes on the line above. */}
+            {/* One row per file, each with its own specs beneath - a single
+                file gets these too, so every watched file can carry specs. */}
             <ul className="space-y-0.5">
               {watches.map((w) => (
-                <li key={w.path} className="flex items-center gap-2">
-                  <span
-                    className="id-mono min-w-0 flex-1 truncate text-text"
-                    title={w.path}
-                  >
-                    {fileName(w.path)}
-                  </span>
-                  <span className="shrink-0 text-faint">
-                    {w.snapshot.length} case{w.snapshot.length === 1 ? "" : "s"}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Stop watching ${fileName(w.path)}`}
-                    onClick={() => setDropping([w])}
-                  >
-                    <IconStopWatching aria-hidden />
-                    Stop
-                  </Button>
+                <li key={w.path} className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="id-mono min-w-0 flex-1 truncate text-text"
+                      title={w.path}
+                    >
+                      {fileName(w.path)}
+                    </span>
+                    <span className="shrink-0 text-faint">
+                      {w.snapshot.length} case{w.snapshot.length === 1 ? "" : "s"}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Stop watching ${fileName(w.path)}`}
+                      onClick={() => setDropping([w])}
+                    >
+                      <IconStopWatching aria-hidden />
+                      Stop
+                    </Button>
+                  </div>
+                  <FileSpecs
+                    watch={w}
+                    onSaved={(specs, stamp) => {
+                      setWatches((prev) => patchWatch(prev, w.path, { specs, stamp }));
+                      // Same reasoning as onWatchPatched below: this write's
+                      // own fingerprint must not be mistaken for an outside
+                      // edit, or the very specs just saved get overwritten
+                      // by a reconcile against the last-observed content.
+                      setDetected((d) => ({ ...d, [w.path]: stamp }));
+                    }}
+                  />
                 </li>
               ))}
             </ul>

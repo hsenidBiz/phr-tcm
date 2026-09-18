@@ -433,6 +433,7 @@ export default function QueueSection({
           path: w.path,
           label: fileName(w.path),
           comment: w.comment ?? "",
+          specs: w.specs ?? [],
         })),
         // Read at click time so the page opens in the theme in front of
         // the user; it carries both schemes and its own switch.
@@ -472,6 +473,7 @@ export default function QueueSection({
             path: w.path,
             label: fileName(w.path),
             comment: w.comment ?? "",
+            specs: w.specs ?? [],
           })),
           pagePalette(),
         )

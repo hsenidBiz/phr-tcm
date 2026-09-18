@@ -70,6 +70,9 @@ export {
   Scissors as IconSnip,
   ClipboardPaste as IconPasteImage,
   Paperclip as IconAttach,
+  // Adding a wiki page as a spec reference - a plain link glyph, since the
+  // button pastes a URL rather than picking a file.
+  Link as IconWikiLink,
 
   // Everything else
   LogIn as IconSignIn,

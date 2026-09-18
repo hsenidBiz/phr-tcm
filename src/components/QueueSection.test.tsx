@@ -988,3 +988,34 @@ test("the queue is uploaded in the order on screen, and the Order bar decides th
   await waitFor(() => expect(sentTitles).toHaveLength(3));
   expect(sentTitles).toEqual(["First on the sheet", "Second on the sheet", "Third on the sheet"]);
 });
+
+/// A watch's `specs` travel to the browser review page through the same
+/// `files` array as its label and comment - the page (Task 4) reads them
+/// from there. Missing them here would mean specs never reach the page.
+test("View in browser passes each watch's specs through to the draft page", async () => {
+  let files: Array<{ path: string; label: string; comment: string; specs: string[] }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "view_draft_html") {
+      files = (args as { files: typeof files }).files;
+      return null;
+    }
+    return undefined;
+  });
+  const watch: WatchedFile = {
+    path: "C:/w/cases.json",
+    stamp: "stamp-1",
+    snapshot: [],
+    specs: ["Step13.md"],
+  };
+  renderQueue([makeCase()], { watches: [watch] });
+
+  fireEvent.click(screen.getByRole("button", { name: "View in browser" }));
+  await waitFor(() => expect(files).toHaveLength(1));
+  expect(files[0].specs).toEqual(["Step13.md"]);
+});
