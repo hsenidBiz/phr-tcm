@@ -13,6 +13,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.13",
+    date: "2026-09-18",
+    items: [
+      "View in Browser now shows the specification beside the test cases. A test case file can list its specs - markdown files, or Azure DevOps wiki pages by their link - and the review page opens them in a pane on the right with a tab per document, like an editor. Drag the pane's edge to resize it, hide it with the Spec button, and it keeps your place when the page refreshes. Wiki pages are read with your own sign-in, so you see exactly what you can open in Azure DevOps.",
+      "A reviewer note's Spec citation is now a link: click it and the spec pane opens that document at the cited section.",
+      "On the Import File tab, each file lists its specs; Attach spec picks markdown files, Add wiki link takes a pasted wiki page link, and either is saved into the file so it travels with it. AI assistants are asked to fill the list from the documents named at intake.",
+    ],
+  },
+  {
     version: "1.25.12",
     date: "2026-09-17",
     items: [
