@@ -363,6 +363,9 @@ pub fn plan_markdown(a: &IntakeAnswers, feature: &str) -> String {
          Agreed with the developer before any case was written.\n\n\
          ## Scope\n\n\
          **Specifications**\n{specs}\n\n\
+         Copy these into the file's top-level `specs` list - paths relative to the \
+         JSON file, wiki links as they are - so the developer reads them beside \
+         the cases in the browser.\n\n\
          **Sections in scope:** {sections}\n\n\
          **Authority:** {authority}\n\n\
          **Ordered:** {ordering}\n\n\

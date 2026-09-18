@@ -329,6 +329,7 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
             Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
         },
     };
+    let file_specs = from_path.as_deref().map(specs_of_file).unwrap_or_default();
     let entry = q(target, "entry");
     let dry_run = matches!(q(target, "dry_run").as_deref(), Some("true") | Some("1"));
     // Default true: regrouping for the tester is what this tool is mostly
@@ -356,7 +357,7 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
             .to_string(),
         );
     }
-    let json = match crate::import_parser::queue_to_json_string(&optimized) {
+    let json = match draft_text_for(from_path.as_deref(), &optimized) {
         Ok(j) => j,
         Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
     };
@@ -386,19 +387,20 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
         );
     }
     let doc: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
-    (
-        200,
-        serde_json::json!({
-            "test_cases": doc.get("test_cases").cloned().unwrap_or(doc),
-            "report": report,
-            // Anything the importer could not read. A case it skipped is
-            // simply not in the output, so silence here read as success
-            // over a draft that had quietly got shorter.
-            "import_warnings": import_warnings,
-            "note": "Hand this JSON to the developer as the file to import. Every case now carries spec_order and tester_order - keep both fields exactly as set; the app flips the queue between the two readings. The report explains what was reordered and why. Check import_warnings - a case listed there was NOT read and is not in this output.",
-        })
-        .to_string(),
-    )
+    let mut response = serde_json::json!({
+        "test_cases": doc.get("test_cases").cloned().unwrap_or(doc),
+        "report": report,
+        // Anything the importer could not read. A case it skipped is
+        // simply not in the output, so silence here read as success
+        // over a draft that had quietly got shorter.
+        "import_warnings": import_warnings,
+        "note": "Hand this JSON to the developer as the file to import. Every case now carries spec_order and tester_order - keep both fields exactly as set; the app flips the queue between the two readings. The report explains what was reordered and why. Check import_warnings - a case listed there was NOT read and is not in this output.",
+    });
+    // The file's `specs` travel with the cases the caller writes back.
+    if !file_specs.is_empty() {
+        response["specs"] = serde_json::json!(file_specs);
+    }
+    (200, response.to_string())
 }
 
 /// Apply declarative edits to a draft - the restructuring an assistant
@@ -485,7 +487,8 @@ fn transform_json(body: &str) -> (u16, String) {
     }
     let (out, mut report) = crate::transform::apply(cases, &ops);
     report.ignored.extend(ignored);
-    let json = match crate::import_parser::queue_to_json_string(&out) {
+    let file_specs = from_path.as_deref().map(specs_of_file).unwrap_or_default();
+    let json = match draft_text_for(from_path.as_deref(), &out) {
         Ok(j) => j,
         Err(e) => return (500, serde_json::json!({ "error": e }).to_string()),
     };
@@ -517,15 +520,38 @@ fn transform_json(body: &str) -> (u16, String) {
     }
 
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
-    (
-        200,
-        serde_json::json!({
-            "test_cases": parsed.get("test_cases").cloned().unwrap_or(parsed),
-            "report": report,
-            "import_warnings": import_warnings,
-        })
-        .to_string(),
-    )
+    let mut response = serde_json::json!({
+        "test_cases": parsed.get("test_cases").cloned().unwrap_or(parsed),
+        "report": report,
+        "import_warnings": import_warnings,
+    });
+    // The caller writes the file back itself, so the file's `specs` travel
+    // with the cases - or the rewrite would drop them. Absent, not empty,
+    // when the draft came inline: nothing to carry.
+    if !file_specs.is_empty() {
+        response["specs"] = serde_json::json!(file_specs);
+    }
+    (200, response.to_string())
+}
+
+/// The `specs` list of a draft file, empty when it has none or cannot be
+/// read - the tool's own parse already reported that.
+fn specs_of_file(path: &str) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .map(|j| crate::import_parser::specs::read_specs(&j))
+        .unwrap_or_default()
+}
+
+/// The text to write back over a draft file: the new cases inside the
+/// file's OWN document, so its `specs`, its whole-set `comments` and any
+/// key this app has never heard of survive the rewrite - a tool owns the
+/// cases, never the file. Without a file (the draft came inline) it is the
+/// standard wrapper.
+fn draft_text_for(path: Option<&str>, cases: &[crate::model::TestCase]) -> Result<String, String> {
+    match path.and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(old) => crate::import_parser::merge_cases_into_draft(&old, cases),
+        None => crate::import_parser::queue_to_json_string(cases),
+    }
 }
 
 /// Hand control to the developer before a single case is written.
@@ -1113,6 +1139,9 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
     let mut merged: Vec<crate::model::TestCase> = Vec::new();
     let mut per_file: Vec<serde_json::Value> = Vec::with_capacity(req.paths.len());
     let mut warnings: Vec<String> = Vec::new();
+    // The slices' documents, once each in first-seen order: the merged file
+    // names what every slice named, so its review page has a spec pane.
+    let mut specs: Vec<String> = Vec::new();
     // Title -> the slice files it appeared in. A fan-out makes title
     // collisions likely precisely because no slice-writer sees another's
     // output, and `dedupe` is the wrong repair (first-wins would delete a
@@ -1127,6 +1156,11 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
             Ok(parsed) => {
                 let cases = parsed.cases;
                 let file_warnings = parsed.warnings;
+                for s in parsed.specs {
+                    if !specs.iter().any(|have| have.eq_ignore_ascii_case(&s)) {
+                        specs.push(s);
+                    }
+                }
                 per_file.push(serde_json::json!({ "path": path, "cases": cases.len() }));
                 // Prefixed with the slice's own file name - a warning
                 // aggregated across several slices is useless if it can't
@@ -1167,7 +1201,9 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
         }
     }
 
-    let text = match crate::import_parser::queue_to_json_string(&merged) {
+    let text = match crate::import_parser::queue_to_json_string(&merged)
+        .and_then(|t| if specs.is_empty() { Ok(t) } else { crate::import_parser::specs::patch_specs(&t, &specs) })
+    {
         Ok(t) => t,
         Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
     };

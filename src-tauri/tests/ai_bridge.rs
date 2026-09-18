@@ -1504,3 +1504,96 @@ async fn the_guide_asks_for_the_specs_list() {
     assert!(section.contains("wiki"), "wiki URLs are valid entries: {section}");
     assert!(section.contains("relative"), "paths relative to the file: {section}");
 }
+
+/// A draft on disk with everything a file carries besides its cases: the
+/// `specs` list, the whole-set `comments`, and a key this app has never
+/// heard of. An in-place tool run must leave all three exactly as written.
+fn draft_with_specs_on_disk(dir: &TempDir) -> std::path::PathBuf {
+    let path = dir.0.join("draft-with-specs.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({
+            "format": "azure-devops-test-cases",
+            "specs": ["Step13-CalculationEngine.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"],
+            "comments": "whole-set note",
+            "unknown_key": { "kept": true },
+            "test_cases": [
+                { "title": "A", "steps": [{ "action": "Open the module.", "expected": "It opens." }] },
+                { "title": "B", "steps": [{ "action": "Open the module.", "expected": "It opens." }] }
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    path
+}
+
+fn assert_file_kept_its_other_keys(on_disk: &str) {
+    let doc: serde_json::Value = serde_json::from_str(on_disk).unwrap();
+    assert_eq!(
+        doc["specs"],
+        serde_json::json!(["Step13-CalculationEngine.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]),
+        "specs survive the rewrite: {on_disk}"
+    );
+    assert_eq!(doc["comments"], "whole-set note", "{on_disk}");
+    assert_eq!(doc["unknown_key"]["kept"], true, "{on_disk}");
+}
+
+/// An in-place optimize used to write a fresh wrapper holding only
+/// `test_cases`, so the file's `specs` (and `comments`) vanished on the
+/// first run. The cases are the tool's; the file is not.
+#[tokio::test]
+async fn optimize_in_place_keeps_the_files_specs_and_comments() {
+    let dir = TempDir::new();
+    let path = draft_with_specs_on_disk(&dir);
+    let target = format!("/optimize?in_place=true&path={}", path.to_string_lossy().replace('\\', "%5C"));
+    let (status, out) = route(&ctx(), None, "POST", &target, "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(on_disk.contains("tester_order"), "the cases were rewritten: {on_disk}");
+    assert_file_kept_its_other_keys(&on_disk);
+}
+
+#[tokio::test]
+async fn transform_in_place_keeps_the_files_specs_and_comments() {
+    let dir = TempDir::new();
+    let path = draft_with_specs_on_disk(&dir);
+    let body = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "in_place": true,
+        "operations": [{ "op": "set_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/transform", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert!(on_disk.contains("\"smoke\""), "the cases were rewritten: {on_disk}");
+    assert_file_kept_its_other_keys(&on_disk);
+}
+
+/// Without in_place the tool echoes the cases for the assistant to write
+/// back itself - so the file's `specs` ride along in the response, or the
+/// assistant would drop them when it rewrites the file.
+#[tokio::test]
+async fn transform_from_a_file_echoes_its_specs() {
+    let dir = TempDir::new();
+    let path = draft_with_specs_on_disk(&dir);
+    let body = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "operations": [{ "op": "set_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/transform", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["specs"], serde_json::json!(["Step13-CalculationEngine.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]), "{out}");
+    // An inline draft has no file and no specs: the key is absent, not empty.
+    let inline = serde_json::json!({
+        "test_cases": [{ "title": "A", "steps": [{ "action": "a", "expected": "b" }] }],
+        "operations": [{ "op": "set_tags", "value": "smoke" }],
+    })
+    .to_string();
+    let (_, out) = route(&ctx(), None, "POST", "/transform", &inline, "1.0.0").await;
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(v.get("specs").is_none(), "{out}");
+}

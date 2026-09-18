@@ -211,6 +211,9 @@ fn the_plan_records_every_decision_in_the_developers_words() {
     // And it tells the assistant what to do before handing over.
     assert!(plan.contains("optimize_cases"));
     assert!(plan.contains("validate_cases"));
+    // The documents named here are what the file's `specs` list carries,
+    // so the review page can show them beside the cases.
+    assert!(plan.contains("`specs`"), "{plan}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -563,3 +563,40 @@ fn a_sub_heading_named_in_the_pointer_is_credited_not_reported_as_a_gap() {
         "an uncited sibling is still a gap: {uncovered:?}"
     );
 }
+
+
+/// Every slice of a fan-out names the same documents; the merged file must
+/// name them too, once each, in the order they were first seen - or the
+/// review page of the merged draft would have no spec pane.
+#[tokio::test]
+async fn merge_carries_the_union_of_the_slices_specs() {
+    let dir = TempDir::new();
+    let slice_a = dir.path().join("slice-a.json");
+    let slice_b = dir.path().join("slice-b.json");
+    std::fs::write(
+        &slice_a,
+        serde_json::json!({ "specs": ["Step13.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"], "test_cases": [case_json("Case A1")] }).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        &slice_b,
+        serde_json::json!({ "specs": ["https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine", "Step14.md"], "test_cases": [case_json("Case B1")] }).to_string(),
+    )
+    .unwrap();
+    let output_path = dir.path().join("merged.json");
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let written = std::fs::read_to_string(&output_path).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&written).unwrap();
+    assert_eq!(
+        doc["specs"],
+        serde_json::json!(["Step13.md", "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine", "Step14.md"]),
+        "{written}"
+    );
+    assert_eq!(doc["test_cases"].as_array().unwrap().len(), 2, "{written}");
+}
