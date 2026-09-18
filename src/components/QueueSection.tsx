@@ -293,9 +293,11 @@ export default function QueueSection({
     const notes = loadNotes(org);
     const fills = new Map<number, string>(); // queue index -> note
     let edited = false;
+    const presentIds = new Set<number>();
     queue.forEach((tc, i) => {
       if (tc.update_id == null) return;
       const id = tc.update_id;
+      presentIds.add(id);
       const comment = (tc.comment ?? "").trim();
       const before = seen.get(id);
       if (before === undefined) {
@@ -315,6 +317,14 @@ export default function QueueSection({
       pendingNotes.current.texts.set(id, comment);
       edited = true;
     });
+    // A row that has left the queue (removed, kept-uploaded and swapped
+    // for a fresh copy, etc.) is forgotten here: if that id comes back
+    // later in this same mount, it is a first appearance again, not an
+    // edit of what it had - the stored note fills it instead of an empty
+    // comment being queued to blank the note out.
+    for (const id of seen.keys()) {
+      if (!presentIds.has(id)) seen.delete(id);
+    }
     if (edited) {
       window.clearTimeout(noteTimer.current);
       noteTimer.current = window.setTimeout(flushNotes, 600);
@@ -615,90 +625,14 @@ export default function QueueSection({
     mutationFn: async () => {
       // The buttons are disabled while a hold stands; this is the backstop.
       if (holdActive) throw new Error(HOLD_REFUSAL);
-      // Rows this submit has nothing to write for. The review gate prints
-      // "no-op - nothing will change" per row; on a queue of 81 imported
-      // cases where ten had really changed, writing anyway meant 71
-      // pointless PATCHes plus 71 x the half-second pacing gap - a minute
-      // of waiting and rate-limit budget to say nothing.
-      //
-      // The check needs the server's CURRENT values, fetched HERE at
-      // submit time: the review's cached baseline can be minutes old, and
-      // the pure-update fast path (no check-the-PBI stage) can reach this
-      // point before the review's own diff fetch has landed at all.
-      // Fails SAFE in both directions that matter: only an UPDATE can be
-      // a no-op (a create always writes), and an unreadable baseline
-      // skips nothing - "we could not check" must never read as "nothing
-      // to do".
-      const idsToCheck = queue
-        .map((tc) => tc.update_id)
-        .filter((x): x is number => x != null);
-      const freshById = new Map<number, TestCaseFull>();
-      if (idsToCheck.length > 0) {
-        try {
-          const fresh = await unwrap(
-            commands.testCasesByIds(org, idsToCheck, prefs.moduleRef, prefs.preconditionsRef),
-          );
-          for (const c of fresh) freshById.set(c.id, c);
-        } catch {
-          // fail safe: skip nothing
-        }
-      }
-      const noopNow = (tc: TestCase): boolean => {
-        if (tc.update_id == null) return false;
-        const cur = freshById.get(tc.update_id);
-        if (!cur) return false;
-        return diffCase(tc, cur, {
-          moduleRef: prefs.moduleRef,
-          preconditionsRef: prefs.preconditionsRef,
-        }).noop;
-      };
-      // Everything that actually has something to write. The skipped rows
-      // are still in the queue and still on screen - they are just not
-      // sent, and they stay there afterwards like every other row.
-      //
-      // IN THE ORDER ON SCREEN, which is the order the user chose: the
-      // upload order is the suite order, and the "Order:" bar above the
-      // queue sorts the queue itself. This used to re-sort by tester_order
-      // here, which silently overrode a queue laid out any other way -
-      // pick "Down the spec", and the cases still landed in the suite in
-      // tester order with nothing on screen to explain it.
-      // `sent` below is THIS list, and every result index and the file
-      // stamping key off it.
-      const toSend = queue.filter((tc) => !noopNow(tc));
-      const skipped = queue.filter((tc) => noopNow(tc)).length;
-      // The rows left out still hold their place in the file. The order
-      // set after the upload needs them, or one new case in a re-uploaded
-      // file is ordered as if it were the only one - to the top of the
-      // suite. `index` is the row's place on screen before the filter.
-      const orderHint: OrderHint[] = queue.flatMap((tc, index) =>
-        tc.update_id != null && noopNow(tc)
-          ? [
-              {
-                index,
-                id: tc.update_id,
-                spec_order: tc.spec_order ?? null,
-                tester_order: tc.tester_order ?? null,
-                area: tc.area ?? "",
-              },
-            ]
-          : [],
-      );
-      if (toSend.length === 0) {
-        return { results: [], sent: [], sentFor: pbiId, skipped, diffs: [] };
-      }
-      // What each sent update is about to change, from the same fresh
-      // baseline - kept for the "Copy changes" note, since after the write
-      // the server already holds the new values.
-      const diffs: (CaseDiff | null)[] = toSend.map((tc) => {
-        const cur = tc.update_id != null ? freshById.get(tc.update_id) : undefined;
-        return cur
-          ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
-          : null;
-      });
-      // The lower bound for a later "what did this upload create" check,
-      // early by the same five minutes Rust allows for clock drift.
-      const since = new Date(Date.now() - 5 * 60_000).toISOString();
-      const run = submitStarted(org, pbiId, toSend.length);
+      // Claimed BEFORE the pre-flight fetch below, not after it: a second
+      // mount whose OWN pre-flight outlasts this mount's whole upload must
+      // find the slot still taken when it gets there - claiming only after
+      // the pre-flight left a window where the slot read as free while this
+      // submit was still checking what to send, and a remount that reached
+      // its own (slower) pre-flight during that window could claim it AND
+      // resend the very creates this submit was about to make.
+      const run = submitStarted(org, pbiId, queue.length);
       if (run == null) {
         throw new Error("another upload is still running. Wait for it to finish, then try again.");
       }
@@ -707,6 +641,89 @@ export default function QueueSection({
       let unSuite: (() => void) | undefined;
       let unRunOrder: (() => void) | undefined;
       try {
+        // Rows this submit has nothing to write for. The review gate prints
+        // "no-op - nothing will change" per row; on a queue of 81 imported
+        // cases where ten had really changed, writing anyway meant 71
+        // pointless PATCHes plus 71 x the half-second pacing gap - a minute
+        // of waiting and rate-limit budget to say nothing.
+        //
+        // The check needs the server's CURRENT values, fetched HERE at
+        // submit time: the review's cached baseline can be minutes old, and
+        // the pure-update fast path (no check-the-PBI stage) can reach this
+        // point before the review's own diff fetch has landed at all.
+        // Fails SAFE in both directions that matter: only an UPDATE can be
+        // a no-op (a create always writes), and an unreadable baseline
+        // skips nothing - "we could not check" must never read as "nothing
+        // to do".
+        const idsToCheck = queue
+          .map((tc) => tc.update_id)
+          .filter((x): x is number => x != null);
+        const freshById = new Map<number, TestCaseFull>();
+        if (idsToCheck.length > 0) {
+          try {
+            const fresh = await unwrap(
+              commands.testCasesByIds(org, idsToCheck, prefs.moduleRef, prefs.preconditionsRef),
+            );
+            for (const c of fresh) freshById.set(c.id, c);
+          } catch {
+            // fail safe: skip nothing
+          }
+        }
+        const noopNow = (tc: TestCase): boolean => {
+          if (tc.update_id == null) return false;
+          const cur = freshById.get(tc.update_id);
+          if (!cur) return false;
+          return diffCase(tc, cur, {
+            moduleRef: prefs.moduleRef,
+            preconditionsRef: prefs.preconditionsRef,
+          }).noop;
+        };
+        // Everything that actually has something to write. The skipped rows
+        // are still in the queue and still on screen - they are just not
+        // sent, and they stay there afterwards like every other row.
+        //
+        // IN THE ORDER ON SCREEN, which is the order the user chose: the
+        // upload order is the suite order, and the "Order:" bar above the
+        // queue sorts the queue itself. This used to re-sort by tester_order
+        // here, which silently overrode a queue laid out any other way -
+        // pick "Down the spec", and the cases still landed in the suite in
+        // tester order with nothing on screen to explain it.
+        // `sent` below is THIS list, and every result index and the file
+        // stamping key off it.
+        const toSend = queue.filter((tc) => !noopNow(tc));
+        const skipped = queue.filter((tc) => noopNow(tc)).length;
+        // The rows left out still hold their place in the file. The order
+        // set after the upload needs them, or one new case in a re-uploaded
+        // file is ordered as if it were the only one - to the top of the
+        // suite. `index` is the row's place on screen before the filter.
+        const orderHint: OrderHint[] = queue.flatMap((tc, index) =>
+          tc.update_id != null && noopNow(tc)
+            ? [
+                {
+                  index,
+                  id: tc.update_id,
+                  spec_order: tc.spec_order ?? null,
+                  tester_order: tc.tester_order ?? null,
+                  area: tc.area ?? "",
+                },
+              ]
+            : [],
+        );
+        if (toSend.length === 0) {
+          return { results: [], sent: [], sentFor: pbiId, skipped, diffs: [] };
+        }
+        // What each sent update is about to change, from the same fresh
+        // baseline - kept for the "Copy changes" note, since after the write
+        // the server already holds the new values.
+        const diffs: (CaseDiff | null)[] = toSend.map((tc) => {
+          const cur = tc.update_id != null ? freshById.get(tc.update_id) : undefined;
+          return cur
+            ? diffCase(tc, cur, { moduleRef: prefs.moduleRef, preconditionsRef: prefs.preconditionsRef })
+            : null;
+        });
+        // The lower bound for a later "what did this upload create" check,
+        // early by the same five minutes Rust allows for clock drift.
+        const since = new Date(Date.now() - 5 * 60_000).toISOString();
         // Inside the try: a listen that rejects must still reach the
         // finally, or the phase stays on "Processing" until a restart.
         unProgress = await events.submitProgress.listen((e) => {
@@ -761,6 +778,9 @@ export default function QueueSection({
         return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
+        // Covers the whole body, including the pre-flight above and the
+        // all-no-op early return: the run is claimed before either runs, so
+        // it must be released regardless of which path leaves by.
         detach(unProgress);
         detach(unPlan);
         detach(unSuite);

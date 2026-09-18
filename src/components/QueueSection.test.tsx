@@ -3,13 +3,13 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
-import { toast } from "sonner";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { toast } from "sonner";
 import type { TestCase } from "../bindings";
 import type { WatchedFile } from "../lib/fileSync";
 import { cacheKeys, cacheWrite } from "../lib/cache";
+import { submitFinished, submitPhaseSnapshot } from "../lib/submitRun";
 import QueueSection from "./QueueSection";
 
 /** The floating copy only exists while the real row is off screen, so the
@@ -31,6 +31,12 @@ afterEach(() => {
   clearMocks();
   localStorage.clear();
   vi.clearAllMocks();
+  // A test that fails mid-submit (or forgets to finish one) must not leave
+  // the module-scope phase claimed - the next test's "no submit running"
+  // assumption would otherwise fail for a reason that has nothing to do
+  // with it.
+  const p = submitPhaseSnapshot();
+  if (p) submitFinished(p.run);
 });
 
 function makeCase(overrides: Partial<TestCase> = {}): TestCase {
@@ -53,17 +59,25 @@ function Harness({
   initial,
   watches,
   onWatchPatched,
+  pbiId = 42,
+  exposeSetQueue,
 }: {
   initial: TestCase[];
   watches?: WatchedFile[];
   onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
+  pbiId?: number;
+  /** Hands the test the setter React itself would only give a real parent
+   * screen - so a test can simulate the queue changing out from under this
+   * mount (a file sync, a kept-uploaded row) without going through UI. */
+  exposeSetQueue?: (setter: Dispatch<SetStateAction<TestCase[]>>) => void;
 }) {
   const [queue, setQueue] = useState<TestCase[]>(initial);
+  exposeSetQueue?.(setQueue);
   return (
     <QueueSection
       org="acme"
       project="Web"
-      pbiId={42}
+      pbiId={pbiId}
       queue={queue}
       setQueue={setQueue}
       watches={watches}
@@ -77,12 +91,20 @@ function renderQueue(
   extra?: {
     watches?: WatchedFile[];
     onWatchPatched?: (path: string, fields: Partial<WatchedFile>) => void;
+    pbiId?: number;
+    exposeSetQueue?: (setter: Dispatch<SetStateAction<TestCase[]>>) => void;
   },
 ) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Harness initial={initial} watches={extra?.watches} onWatchPatched={extra?.onWatchPatched} />
+      <Harness
+        initial={initial}
+        watches={extra?.watches}
+        onWatchPatched={extra?.onWatchPatched}
+        pbiId={extra?.pbiId}
+        exposeSetQueue={extra?.exposeSetQueue}
+      />
     </QueryClientProvider>,
   );
 }
@@ -1820,4 +1842,102 @@ test("a comment from the browser page lands on its own row, and only for this PB
     await saved("From PBI 7's page", "t:login works", 7);
   });
   expect(screen.queryByText("From PBI 7's page")).not.toBeInTheDocument();
+});
+
+/// Fix round 1 (F5): "seen" was only ever reset on a scope change, never
+/// pruned as rows came and went - a row that left and came back inside the
+/// SAME mount (removed, or swapped out by a kept-uploaded/file-sync
+/// update) was still "seen" with its old comment, so its empty comment on
+/// return read as an EDIT to blank, not a first appearance to fill.
+test("a row that leaves and returns is treated as new again, not edited to blank", async () => {
+  localStorage.setItem("tcm-v2-case-notes:acme", JSON.stringify({ "201": "Re-check with QA" }));
+  baseMocks();
+  let externalSetQueue: Dispatch<SetStateAction<TestCase[]>> = () => {};
+  renderQueue([makeCase({ update_id: 201, comment: "Re-check with QA" })], {
+    exposeSetQueue: (setter) => {
+      externalSetQueue = setter;
+    },
+  });
+  // First appearance: the comment already matches the note, so it is just
+  // remembered - nothing to fill, nothing to write.
+  expect(await screen.findByText("Re-check with QA")).toBeInTheDocument();
+
+  // The row leaves the queue (removed, or replaced by a fresh copy without
+  // its comment - what a re-import or the created-case flow would do)...
+  await act(async () => {
+    externalSetQueue([]);
+  });
+  // ...and returns with no comment.
+  await act(async () => {
+    externalSetQueue([makeCase({ update_id: 201, comment: "" })]);
+  });
+
+  // Filled from the stored note again - not written over with blank.
+  expect(await screen.findByText("Re-check with QA")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem("tcm-v2-case-notes:acme") ?? "{}")).toEqual({
+      "201": "Re-check with QA",
+    }),
+  );
+});
+
+/// Controller ruling (F6, upgraded to Important): the run has to be
+/// claimed BEFORE the pre-flight fetch, not after it. Otherwise a second
+/// mount whose OWN pre-flight outlasts the first mount's whole upload
+/// finds the slot free once the first finishes, and resends the same
+/// id-less creates a second time.
+test("a second submit is refused the instant it starts, before its own pre-flight ever runs", async () => {
+  let releaseFirstPreflight: (v: unknown[]) => void = () => {};
+  // Mount B's queue holds an update, so mounting it ALSO fires the
+  // diff-preview query (EDT-B) for the same ids the submit's own
+  // pre-flight would use - that automatic fetch is not what this test is
+  // about, so it is counted and excluded rather than mistaken for one.
+  let secondIdsCalls = 0;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "test_cases_by_ids") {
+      const ids = (args as { ids: number[] }).ids;
+      if (ids.includes(777)) {
+        return new Promise((r) => {
+          releaseFirstPreflight = r;
+        });
+      }
+      secondIdsCalls += 1;
+      return [];
+    }
+    return undefined;
+  });
+
+  // Mount A: a pure-update queue, so Confirm submits on the first click -
+  // and its own pre-flight never answers.
+  renderQueue([makeCase({ update_id: 777 })]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & update 1/ }));
+  await waitFor(() => expect(submitPhaseSnapshot()).not.toBeNull());
+
+  // Mount B: a separate screen, a DIFFERENT PBI - nothing about its own
+  // button is blocked by A's progress, so this is the shared run guard
+  // being tested, not the UI disabling a button. Let its own mount-time
+  // diff-preview fetch settle before touching Confirm, so only a NEW call
+  // after that point can be the submit's own pre-flight.
+  renderQueue([makeCase({ update_id: 888 })], { pbiId: 43 });
+  await waitFor(() => expect(secondIdsCalls).toBeGreaterThan(0));
+  const callsBeforeSubmit = secondIdsCalls;
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Confirm & update 1/ }));
+
+  await waitFor(() =>
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("another upload is still running")),
+  );
+  // Refused before it ever reached its OWN pre-flight - not after: no NEW
+  // call to test_cases_by_ids came from the submit attempt.
+  expect(secondIdsCalls).toBe(callsBeforeSubmit);
+
+  releaseFirstPreflight([]);
 });
