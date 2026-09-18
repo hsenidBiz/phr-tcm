@@ -858,6 +858,8 @@ export type DraftFile = {
 	/**  What to call it in the panel - the file name, not the full path. */
 	label: string,
 	comment: string,
+	/**  The file's `specs` entries, verbatim - resolved by the app. */
+	specs?: string[],
 };
 
 /**  Emitted when the whole-set comment for one file has been written. */

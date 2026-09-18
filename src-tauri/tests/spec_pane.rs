@@ -129,3 +129,19 @@ async fn a_wiki_page_renders_and_a_missing_one_is_an_error_doc() {
     assert!(offline[0].error.as_deref().unwrap_or("").contains("signed in"), "{:?}", offline[0].error);
     let _ = SpecDoc::default();
 }
+
+#[test]
+fn spec_entries_pair_each_spec_with_its_files_directory() {
+    use v2_lib::import_parser::DraftFile;
+    use v2_lib::spec_pane::spec_entries;
+    let files = vec![
+        DraftFile { path: "C:/w/one/cases.json".into(), label: "cases.json".into(), comment: String::new(), specs: vec!["A.md".into(), "https://dev.azure.com/o/p/_wiki/wikis/w/1/X".into()] },
+        DraftFile { path: "C:/w/two/more.json".into(), label: "more.json".into(), comment: String::new(), specs: vec!["B.md".into()] },
+        DraftFile { path: "C:/w/none.json".into(), label: "none.json".into(), comment: String::new(), specs: vec![] },
+    ];
+    let e = spec_entries(&files);
+    assert_eq!(e.len(), 3);
+    assert_eq!(e[0], ("A.md".to_string(), Path::new("C:/w/one").to_path_buf()));
+    assert_eq!(e[1].1, Path::new("C:/w/one").to_path_buf());
+    assert_eq!(e[2], ("B.md".to_string(), Path::new("C:/w/two").to_path_buf()));
+}

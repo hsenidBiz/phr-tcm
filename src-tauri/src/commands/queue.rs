@@ -545,7 +545,7 @@ fn render_queue_html(
 /// an empty entry means the case was typed by hand and has no file.
 #[tauri::command]
 #[specta::specta]
-pub fn view_draft_html(
+pub async fn view_draft_html(
     app: tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
@@ -553,7 +553,7 @@ pub fn view_draft_html(
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    let path_str = render_draft_html(&app, queue, subtitle, owners, files, palette)?;
+    let path_str = render_draft_html(&app, queue, subtitle, owners, files, palette).await?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -565,7 +565,7 @@ pub fn view_draft_html(
 /// pulls the new content itself; nothing here should touch the browser.
 #[tauri::command]
 #[specta::specta]
-pub fn refresh_draft_html(
+pub async fn refresh_draft_html(
     app: tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
@@ -573,10 +573,10 @@ pub fn refresh_draft_html(
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    render_draft_html(&app, queue, subtitle, owners, files, palette).map(|_| ())
+    render_draft_html(&app, queue, subtitle, owners, files, palette).await.map(|_| ())
 }
 
-fn render_draft_html(
+async fn render_draft_html(
     app: &tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
@@ -592,6 +592,15 @@ fn render_draft_html(
     let path = std::env::temp_dir()
         .join(format!("test-cases-draft-{}.html", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
+    // The specs beside the cases. Files are read here; wiki pages need the
+    // user's token - without a session they render as "not signed in".
+    let entries = crate::spec_pane::spec_entries(&files);
+    let client = if entries.iter().any(|(e, _)| e.trim_start().starts_with("http")) {
+        get_fresh_token(app).await.ok().map(ado::AdoClient::new)
+    } else {
+        None
+    };
+    let specs = crate::spec_pane::render_all(&entries, client.as_ref()).await;
     let ctx = ensure_note_server(app).map(|port| import_parser::DraftNoteCtx {
         port,
         token: note_token().to_string(),
@@ -607,7 +616,7 @@ fn render_draft_html(
         ctx.as_ref().map(import_parser::CommentCtx::Draft),
         &palette,
         tree.as_deref(),
-        &[],
+        &specs,
     )?;
     // Where an open page can pull the fresh content from, and the signal
     // that it should: the poll sees the revision move, fetches /report,

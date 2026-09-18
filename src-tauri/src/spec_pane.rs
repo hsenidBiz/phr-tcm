@@ -173,6 +173,18 @@ fn user_sentence(e: &AdoError) -> String {
     }
 }
 
+/// Every `specs` entry of every file, paired with that file's directory
+/// (relative entries resolve against it). Files with no specs add nothing.
+pub fn spec_entries(files: &[crate::import_parser::DraftFile]) -> Vec<(String, PathBuf)> {
+    files
+        .iter()
+        .flat_map(|f| {
+            let base = Path::new(&f.path).parent().map(Path::to_path_buf).unwrap_or_default();
+            f.specs.iter().map(move |s| (s.clone(), base.clone()))
+        })
+        .collect()
+}
+
 /// Every entry from every file, in order, rendered once each (the same
 /// resolved source named by two files is one tab). `entries` pairs each
 /// spec string with the directory of the file that named it.
