@@ -38,3 +38,13 @@ pub fn suite(base_url: &str, org: &str, project: &str, pbi_id: i32) -> String {
 pub fn suite_tree(base_url: &str, org: &str, project: &str) -> String {
     format!("suite-tree:{base_url}|{org}|{project}")
 }
+
+/// A fetched wiki page, for the review page's spec pane. Ten minutes: the
+/// keep-in-step refresh re-renders the page on every focus, and the wiki
+/// does not move that fast.
+pub const WIKI_PAGE_TTL_MS: u64 = 10 * 60 * 1000;
+
+/// One wiki page's content, keyed by the URL the file names.
+pub fn wiki_page(url: &str) -> String {
+    format!("wiki-page:{url}")
+}

@@ -35,7 +35,9 @@ pub mod report;
 pub mod speccov;
 pub mod state;
 pub mod steps_xml;
+pub mod spec_pane;
 pub mod test_map;
+
 pub mod transform;
 pub mod updater;
 pub mod webtheme;

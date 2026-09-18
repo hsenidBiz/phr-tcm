@@ -35,7 +35,21 @@ fn esc(text: &str) -> String {
 ///
 /// Returns an empty string for empty input so a caller can decide not to
 /// draw a panel at all.
+///
+/// Notes sit inside a page that already has an `<h1>` and `<h2>`s of its
+/// own, so a note's own headings start at `<h4>` - the outline stays sane
+/// and a note cannot impersonate a section of the report.
 pub fn to_html(src: &str) -> String {
+    render(src, 3)
+}
+
+/// The same renderer, for a document that IS the page - a spec pane tab,
+/// not a note embedded in one - so its own `# Heading` stays `<h1>`.
+pub fn to_html_standalone(src: &str) -> String {
+    render(src, 0)
+}
+
+fn render(src: &str, heading_base: u8) -> String {
     if src.trim().is_empty() {
         return String::new();
     }
@@ -63,11 +77,7 @@ pub fn to_html(src: &str) -> String {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => out.push_str("<p>"),
                 Tag::Heading { level, .. } => {
-                    // Notes sit inside a page that already has an <h1> and
-                    // <h2>s of its own, so a note's own headings start at
-                    // <h4> - the outline stays sane and a note cannot
-                    // impersonate a section of the report.
-                    out.push_str(&format!("<h{}>", heading_level(level as u8)));
+                    out.push_str(&format!("<h{}>", heading_level(level as u8, heading_base)));
                 }
                 Tag::BlockQuote(_) => out.push_str("<blockquote>"),
                 Tag::CodeBlock(_) => {
@@ -124,7 +134,7 @@ pub fn to_html(src: &str) -> String {
             Event::End(tag) => match tag {
                 TagEnd::Paragraph => out.push_str("</p>"),
                 TagEnd::Heading(level) => {
-                    out.push_str(&format!("</h{}>", heading_level(level as u8)));
+                    out.push_str(&format!("</h{}>", heading_level(level as u8, heading_base)));
                 }
                 TagEnd::BlockQuote(_) => out.push_str("</blockquote>"),
                 TagEnd::CodeBlock => {
@@ -179,10 +189,10 @@ enum LinkKind {
     Bare,
 }
 
-/// A note's `# Heading` becomes `<h4>`, and everything below it shifts to
+/// A `# Heading` becomes `<h{1 + base}>`, and everything below it shifts to
 /// match, bottoming out at `<h6>`.
-fn heading_level(level: u8) -> u8 {
-    (level + 3).min(6)
+fn heading_level(level: u8, base: u8) -> u8 {
+    (level + base).min(6)
 }
 
 /// `None` for anything that is not a plain, inert link. An allowlist, not

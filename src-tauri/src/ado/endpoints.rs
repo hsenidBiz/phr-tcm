@@ -1312,6 +1312,24 @@ fn parse_wiki_url(raw: &str) -> Option<WikiUrlTarget> {
     Some(WikiUrlTarget::Id { wiki, id: id.to_string() })
 }
 
+/// The organization and project a wiki page URL belongs to - the two path
+/// segments before `/_wiki/` - percent-decoded. None when the URL has no
+/// `/_wiki/` or fewer than two segments before it.
+pub fn wiki_url_org_project(raw: &str) -> Option<(String, String)> {
+    let raw = raw.trim();
+    if !raw.starts_with("http://") && !raw.starts_with("https://") {
+        return None;
+    }
+    let before = raw.split("/_wiki/").next()?;
+    let mut segs: Vec<&str> = before.splitn(4, '/').nth(3)?.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.len() < 2 {
+        return None;
+    }
+    let project = percent_decode(segs.pop()?);
+    let org = percent_decode(segs.pop()?);
+    Some((org, project))
+}
+
 /// Read a FILE-namespace path back as a PAGE path.
 ///
 /// ADO spells a page path as a file name by writing each space as `-` and
