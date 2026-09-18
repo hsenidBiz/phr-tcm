@@ -17,11 +17,37 @@ use super::{AdoClient, AdoError};
 /// Azure DevOps refuses a batch larger than this.
 pub const MAX_PER_BATCH: usize = 200;
 
+/// The verbs a batch item may carry. An enum, not a string: a destructive
+/// sub-request travels inside an outer POST, so neither the transport's
+/// verb allow-list nor the source scan for delete calls would ever see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum BatchMethod {
+    #[serde(rename = "PATCH")]
+    Patch,
+    #[serde(rename = "POST")]
+    Post,
+}
+
+impl BatchMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BatchMethod::Patch => "PATCH",
+            BatchMethod::Post => "POST",
+        }
+    }
+}
+
+impl std::fmt::Display for BatchMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// One request inside a batch. `uri` is relative to the organization
 /// (`/{project}/_apis/wit/...`); the body is a JSON-patch document.
 #[derive(Debug, Clone)]
 pub struct BatchRequest {
-    pub method: &'static str,
+    pub method: BatchMethod,
     pub uri: String,
     pub body: serde_json::Value,
 }
@@ -120,7 +146,7 @@ impl AdoClient {
             .iter()
             .map(|r| {
                 serde_json::json!({
-                    "method": r.method,
+                    "method": r.method.as_str(),
                     "uri": r.uri,
                     "headers": {"Content-Type": "application/json-patch+json"},
                     "body": r.body,

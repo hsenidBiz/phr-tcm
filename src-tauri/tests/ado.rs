@@ -570,35 +570,37 @@ async fn classification_paths_walk_names_not_path_field() {
     assert!(bad.get_classification_paths("o", "p", "areas").await.unwrap().is_empty());
 }
 
-/// The tool must never destroy data: no DELETE requests, ever.
+/// The tool must never destroy data: no DELETE requests, ever - except the
+/// one audited file. Every `.rs` under src/ is scanned, not a hand-kept
+/// list: seven HTTP-issuing files were missing from the old list.
 #[test]
 fn client_source_has_no_delete_calls() {
-    // Every file that builds HTTP requests or extends AdoClient — a new
-    // impl file must be added here (compile error via include_str! if one
-    // of these moves without the test following it).
-    let sources = [
-        include_str!("../src/auth.rs"),
-        include_str!("../src/ado_git.rs"),
-        include_str!("../src/ado/mod.rs"),
-        include_str!("../src/ado/transport.rs"),
-        include_str!("../src/ado/endpoints.rs"),
-        include_str!("../src/ado_testplan/mod.rs"),
-        include_str!("../src/ado_testplan/boards.rs"),
-        include_str!("../src/ado_testplan/plans.rs"),
-        include_str!("../src/ado_testplan/runs.rs"),
-        include_str!("../src/ado_testplan/history.rs"),
-        include_str!("../src/work_board/mod.rs"),
-        include_str!("../src/work_board/board.rs"),
-        include_str!("../src/work_board/detail.rs"),
-        include_str!("../src/work_board/layout.rs"),
-        include_str!("../src/run_order.rs"),
-    ];
-    for src in sources {
-        assert!(
-            !src.contains(".delete(") && !src.contains("Method::DELETE"),
-            "AdoClient must never issue DELETE requests"
-        );
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut stack = vec![root.clone()];
+    let mut scanned = 0;
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path.extension().is_some_and(|e| e == "rs") {
+                continue;
+            }
+            let rel = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+            if rel == "ado/deletion.rs" {
+                continue;
+            }
+            scanned += 1;
+            let src = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !src.contains(".delete(") && !src.contains("Method::DELETE"),
+                "{rel} must never issue a DELETE request - only ado/deletion.rs may"
+            );
+        }
     }
+    assert!(scanned > 40, "only {scanned} files scanned - is the walk looking in src/?");
 }
 
 /// `comment` and `reviewer_notes` are the app's own. They round-trip

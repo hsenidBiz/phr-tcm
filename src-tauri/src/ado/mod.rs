@@ -2,7 +2,7 @@
 //!
 //! SAFETY INVARIANT: this client exposes GET (and later POST/PATCH) only.
 //! Never add a DELETE method — enforced by tests/ado.rs, which scans every
-//! file of this module (and the other `impl AdoClient` extensions).
+//! source file under src/ except ado/deletion.rs.
 //!
 //! Layout: this file owns the client type, its constructors and the wire
 //! DTOs; `transport` owns the HTTP verbs + error mapping; `endpoints` owns

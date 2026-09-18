@@ -1,4 +1,4 @@
-use v2_lib::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchRequest};
+use v2_lib::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchMethod, BatchRequest};
 use v2_lib::ado::{AdoClient, AdoError};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -22,8 +22,8 @@ async fn a_batch_is_one_call_and_answers_per_item_in_order() {
         .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let reqs = vec![
-        BatchRequest { method: "PATCH", uri: create_uri("Web"), body: serde_json::json!([{"op": "add", "path": "/fields/System.Title", "value": "A"}]) },
-        BatchRequest { method: "PATCH", uri: update_uri(55), body: serde_json::json!([{"op": "add", "path": "/fields/System.Title", "value": "B"}]) },
+        BatchRequest { method: BatchMethod::Patch, uri: create_uri("Web"), body: serde_json::json!([{"op": "add", "path": "/fields/System.Title", "value": "A"}]) },
+        BatchRequest { method: BatchMethod::Patch, uri: update_uri(55), body: serde_json::json!([{"op": "add", "path": "/fields/System.Title", "value": "B"}]) },
     ];
     let items = client.wit_batch("my org", &reqs).await.unwrap();
     assert_eq!(items.len(), 2);
@@ -79,8 +79,8 @@ async fn a_short_answer_is_an_error_not_a_guess() {
         .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let reqs = vec![
-        BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) },
-        BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) },
+        BatchRequest { method: BatchMethod::Patch, uri: create_uri("p"), body: serde_json::json!([]) },
+        BatchRequest { method: BatchMethod::Patch, uri: create_uri("p"), body: serde_json::json!([]) },
     ];
     match client.wit_batch("o", &reqs).await {
         Err(AdoError::Http { body, .. }) => assert!(body.contains("1 of the 2"), "{body}"),
@@ -105,8 +105,8 @@ async fn a_short_answer_carries_what_ado_said() {
         .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let reqs = vec![
-        BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) },
-        BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) },
+        BatchRequest { method: BatchMethod::Patch, uri: create_uri("p"), body: serde_json::json!([]) },
+        BatchRequest { method: BatchMethod::Patch, uri: create_uri("p"), body: serde_json::json!([]) },
     ];
     match client.wit_batch("o", &reqs).await {
         Err(AdoError::Http { body, .. }) => {
@@ -130,7 +130,7 @@ async fn a_non_envelope_answer_carries_its_message() {
         .mount(&server)
         .await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let reqs = vec![BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) }];
+    let reqs = vec![BatchRequest { method: BatchMethod::Patch, uri: create_uri("p"), body: serde_json::json!([]) }];
     match client.wit_batch("o", &reqs).await {
         Err(AdoError::Http { body, .. }) => {
             assert!(body.contains("0 of the 1"), "{body}");
@@ -176,4 +176,16 @@ fn a_refusal_nested_under_value_message_is_read() {
     // The flat capital-M form too.
     let item = BatchItem { code: 400, body: serde_json::json!({"Message": "VS402: no."}) };
     assert_eq!(item.message(), "VS402: no.");
+}
+
+/// A `"DELETE"` sub-request would travel inside an outer POST, past the
+/// transport's verb allow-list and past the `.delete(` source scan. The
+/// type now only has the two verbs a batch may carry.
+#[test]
+fn a_batch_item_can_only_be_patch_or_post() {
+    assert_eq!(serde_json::to_value(BatchMethod::Patch).unwrap(), serde_json::json!("PATCH"));
+    assert_eq!(serde_json::to_value(BatchMethod::Post).unwrap(), serde_json::json!("POST"));
+    assert_eq!(BatchMethod::Patch.to_string(), "PATCH");
+    let src = include_str!("../src/ado/wit_batch.rs");
+    assert!(!src.contains("\"DELETE\""), "wit_batch.rs must not name DELETE");
 }

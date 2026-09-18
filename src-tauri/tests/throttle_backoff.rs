@@ -164,3 +164,99 @@ async fn a_shorter_delay_inside_an_existing_hold_does_not_extend_it() {
     );
     reset();
 }
+
+/// The permission answers the delete gate needs (see tests/deletion.rs).
+async fn allow_delete(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/o/_apis/projects/p"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "g" })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/o/p/_apis/wit/classificationnodes/areas"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "identifier": "a" })))
+        .mount(server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/o/_apis/security/permissionevaluationbatch"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "evaluations": [{ "value": true }, { "value": true }, { "value": true }]
+        })))
+        .mount(server)
+        .await;
+}
+
+/// A bulk delete fired every remaining id at once once ADO started to
+/// throttle: its sender read Retry-After only to label a 429.
+#[tokio::test]
+async fn a_delete_honours_the_servers_request_to_slow_down() {
+    let _g = gate().lock().unwrap_or_else(|e| e.into_inner());
+    reset();
+    let server = MockServer::start().await;
+    allow_delete(&server).await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(200).insert_header("Retry-After", "1"))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("tok".into(), server.uri());
+    let started = std::time::Instant::now();
+    let out = client.delete_test_cases_permanently("o", "p", &[1, 2]).await.unwrap();
+    assert!(out.iter().all(|o| o.deleted));
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(900),
+        "the second delete must wait out the first one's Retry-After"
+    );
+    reset();
+}
+
+/// The attachment upload built its own request and skipped the funnel:
+/// no pacing, no throttle hints.
+#[tokio::test]
+async fn the_attachment_upload_goes_through_the_pacer() {
+    let _g = gate().lock().unwrap_or_else(|e| e.into_inner());
+    reset();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/o/p/_apis/wit/attachments"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Retry-After", "1")
+                .set_body_json(serde_json::json!({ "url": "https://x/att/1" })),
+        )
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("tok".into(), server.uri());
+    assert_eq!(
+        client.upload_wi_attachment("o", "p", "a.png", vec![1, 2, 3]).await.unwrap(),
+        "https://x/att/1"
+    );
+    let started = std::time::Instant::now();
+    client.upload_wi_attachment("o", "p", "a.png", vec![1, 2, 3]).await.unwrap();
+    assert!(started.elapsed() >= std::time::Duration::from_millis(900));
+    reset();
+}
+
+/// Same for avatars: one unpaced GET per person on the board.
+#[tokio::test]
+async fn the_avatar_fetch_goes_through_the_pacer() {
+    let _g = gate().lock().unwrap_or_else(|e| e.into_inner());
+    reset();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/_apis/GraphProfile/MemberAvatars/abc"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Retry-After", "1")
+                .insert_header("Content-Type", "image/png")
+                .set_body_bytes(vec![0x89, b'P', b'N', b'G']),
+        )
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_url("tok".into(), server.uri());
+    let url = format!("{}/_apis/GraphProfile/MemberAvatars/abc", server.uri());
+    assert!(client.get_avatar_b64(&url).await.is_some());
+    let started = std::time::Instant::now();
+    assert!(client.get_avatar_b64(&url).await.is_some());
+    assert!(started.elapsed() >= std::time::Duration::from_millis(900));
+    reset();
+}

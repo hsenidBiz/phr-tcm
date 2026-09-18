@@ -213,7 +213,7 @@ async fn a_throttled_delete_is_reported_as_rate_limiting() {
     with_permission(&server, true).await;
     Mock::given(method("DELETE"))
         .and(path("/o/p/_apis/test/testcases/9"))
-        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "7"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1"))
         .mount(&server)
         .await;
 
@@ -221,7 +221,10 @@ async fn a_throttled_delete_is_reported_as_rate_limiting() {
         .delete_test_cases_permanently("o", "p", &[9])
         .await
         .unwrap();
-    assert!(matches!(out[0].error, Some(AdoError::RateLimited { retry_after_secs: 7 })));
+    // The delete now honours the hint, which is process-wide: clear it so
+    // the other tests in this binary are not held behind it.
+    v2_lib::ado::throttle::clear_backoff();
+    assert!(matches!(out[0].error, Some(AdoError::RateLimited { retry_after_secs: 1 })));
 }
 
 

@@ -246,12 +246,10 @@ impl AdoClient {
             crate::applog::warn(format!("refused to send the token to {url} for an avatar"));
             return None;
         }
+        // Through the funnel like every other request: one avatar per
+        // person on the board used to go out unpaced and unlogged.
         let resp = self
-            .http
-            .get(url)
-            .bearer_auth(&self.token)
-            .header("Accept", "image/png,image/*;q=0.8")
-            .send()
+            .send(reqwest::Method::GET, url, |r| r.header("Accept", "image/png,image/*;q=0.8"))
             .await
             .ok()?;
         if !resp.status().is_success() {

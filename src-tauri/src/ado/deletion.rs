@@ -228,6 +228,13 @@ impl AdoClient {
                 super::transport::network_error(&e)
             })?;
         let status = resp.status().as_u16();
+        // The only DELETE keeps its own sender (the transport's verb
+        // allow-list stays GET/POST/PATCH), but it honours the server's
+        // "slow down" exactly like `transport::send`: Retry-After or
+        // X-RateLimit-Delay, on any status.
+        if let Some(secs) = super::transport::server_delay(&resp) {
+            super::throttle::note_server_delay(secs);
+        }
         let retry_after = super::transport::retry_after(&resp);
         // `text()` consumes the response, so it has to happen once, here -
         // not inside one arm of the match below.

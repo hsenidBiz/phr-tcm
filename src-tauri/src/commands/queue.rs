@@ -1052,11 +1052,11 @@ fn queue_item_request(
     original_tags: Option<&str>,
     temp_id: usize,
 ) -> Result<crate::ado::wit_batch::BatchRequest, String> {
-    use crate::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchRequest};
+    use crate::ado::wit_batch::{create_uri, temp_id_op, update_uri, BatchMethod, BatchRequest};
     tc.is_valid()?;
     Ok(match tc.update_id {
         Some(existing_id) => BatchRequest {
-            method: "PATCH",
+            method: BatchMethod::Patch,
             uri: update_uri(existing_id),
             body: serde_json::Value::Array(client.update_test_case_doc(
                 tc,
@@ -1083,7 +1083,7 @@ fn queue_item_request(
                 Some(pbi_id),
             ));
             BatchRequest {
-                method: "PATCH",
+                method: BatchMethod::Patch,
                 uri: create_uri(project),
                 body: serde_json::Value::Array(doc),
             }

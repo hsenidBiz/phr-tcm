@@ -367,7 +367,7 @@ pub(crate) async fn refused(resp: reqwest::Response, err: AdoError) -> AdoError 
 /// early warning that the account is over its budget. Either one means
 /// "slow down". Absent on a healthy response, so this is `None` on the
 /// overwhelming majority of calls.
-fn server_delay(resp: &reqwest::Response) -> Option<u64> {
+pub(crate) fn server_delay(resp: &reqwest::Response) -> Option<u64> {
     let header = |name: &str| {
         resp.headers()
             .get(name)

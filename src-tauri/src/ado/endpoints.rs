@@ -1044,18 +1044,14 @@ impl AdoClient {
             project,
             urlencoding::encode(file_name)
         );
+        // Through the funnel: paced, logged, throttle hints honoured.
         let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.token)
-            .header("Content-Type", "application/octet-stream")
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| {
-                crate::applog::warn(format!("attachment upload failed to send: {e}"));
-                super::transport::network_error(&e)
-            })?;
+            .send(reqwest::Method::POST, &url, |r| {
+                r.header("Accept", "application/json")
+                    .header("Content-Type", "application/octet-stream")
+                    .body(bytes)
+            })
+            .await?;
         let data = Self::handle_json(resp).await?;
         Ok(data["url"].as_str().unwrap_or_default().to_string())
     }
