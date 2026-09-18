@@ -429,3 +429,22 @@ test("an id-stamped row claims the file's title slot before a hand-typed row can
 
   expect(ownerPaths(queue, [watch("C:/w/one.json", prev)])).toEqual(["", "C:/w/one.json"]);
 });
+
+/// Review round 2: the round 1 fix let an id-stamped row claim ANY
+/// title-keyed snapshot slot, not just one that matches it content-wise
+/// (aside from the id). Two files sharing a title but disagreeing on
+/// content should not both look like a candidate for the same id row - only
+/// the one that's actually the same case (everything but the id) is.
+test("an id-stamped row claims a file's title slot only when it is that file's case, not merely its title", () => {
+  const fileA = tc("Login", { tags: "unrelated-A" });
+  const fileB = tc("Login", { tags: "mine-B" });
+  const queue = [tc("Login", { tags: "mine-B", update_id: 5 })];
+
+  // Only B's content actually matches (aside from the id it doesn't have
+  // yet); A shares nothing but the title and must not be credited.
+  expect(ownerPaths(queue, [watch("C:/w/a.json", [fileA]), watch("C:/w/b.json", [fileB])])).toEqual([
+    "C:/w/b.json",
+  ]);
+  // Dropping A's watch must not take B's row down with it.
+  expect(withoutFileCases(queue, [fileA], [[fileB]])).toEqual(queue);
+});

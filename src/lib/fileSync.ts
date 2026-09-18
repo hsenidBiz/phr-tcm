@@ -151,18 +151,30 @@ export function fileOwnedKeys(
     list.splice(j, 1);
   });
   // An id-stamped row whose id isn't in the snapshot yet (the post-upload
-  // write-back racing a stale snapshot) claims the file's matching title
-  // slot next, before an unrelated id-less row gets to just by coming
-  // earlier in the queue - an id is exact evidence once it exists, and
-  // outranks a title match even one that hasn't caught up yet.
+  // write-back racing a stale snapshot) claims the file's matching entry
+  // next, before an unrelated id-less row gets to just by coming earlier in
+  // the queue - an id is exact evidence once it exists, and outranks a
+  // title match even one that hasn't caught up yet.
+  //
+  // Still an exact match, not a title guess: two files can share a title
+  // while disagreeing on everything else, and the id-less snapshot has no
+  // id of its own to rule the wrong one out by. So this only claims a
+  // snapshot entry that is the same case in every field EXCEPT the id -
+  // the same `sameCase` pass 1 uses, just with the id set aside first. A
+  // row that was also edited since the snapshot stays unowned, same as
+  // before this pass existed.
   queue.forEach((c, i) => {
     if (!free(i)) return;
     if (c.update_id == null) return;
     const idKey = caseKey(c);
     if (open.has(idKey)) return; // the id IS in the snapshot; the next pass handles it
-    const titleKey = caseKey({ ...c, update_id: null });
-    const claim = open.get(titleKey)?.shift();
-    if (claim) out[i] = idKey;
+    const withoutId = { ...c, update_id: null };
+    const list = open.get(caseKey(withoutId));
+    if (!list) return;
+    const j = list.findIndex((o) => sameCase(o.c, withoutId));
+    if (j === -1) return;
+    out[i] = idKey;
+    list.splice(j, 1);
   });
   // Then rows edited in the app, in order.
   queue.forEach((c, i) => {
