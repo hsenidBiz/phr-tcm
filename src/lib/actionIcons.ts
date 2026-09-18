@@ -66,6 +66,10 @@ export {
   // builds only). `Eraser` is already IconClear for something else, so
   // this gets its own glyph rather than reusing that one.
   ListX as IconClearResults,
+  // Lifting a hold the user has manually verified is safe to lift - an
+  // unlocked padlock, not a check mark, because nothing was confirmed BY
+  // this app.
+  Unlock as IconRelease,
 
   // Moving through a flow
   ChevronLeft as IconBack,

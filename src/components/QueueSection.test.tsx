@@ -1,10 +1,11 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
+import { toast } from "sonner";
 import type { TestCase } from "../bindings";
 import type { WatchedFile } from "../lib/fileSync";
 import { cacheKeys, cacheWrite } from "../lib/cache";
@@ -18,9 +19,17 @@ import QueueSection from "./QueueSection";
 vi.mock("../hooks/useOnScreen", () => ({ useOnScreen: () => [() => {}, onScreen] }));
 let onScreen = true;
 
+// Fix round 1 (C2 hold): toasts are asserted by content below - no
+// <Toaster/> is mounted in these tests, so the real module has nothing to
+// render them into.
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
+
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  vi.clearAllMocks();
 });
 
 function makeCase(overrides: Partial<TestCase> = {}): TestCase {
@@ -1422,4 +1431,136 @@ test("Check that finds an ambiguous title keeps that row held, with its own reas
   const stored = JSON.parse(localStorage.getItem("tcm-v2-upload-hold:acme/42")!);
   expect(stored.titles).toEqual(["Brand new"]);
   expect(stored.ambiguous).toEqual(["Brand new"]);
+});
+
+// ---- fix round 1 --------------------------------------------------------
+// Review found: `ReconcileAnswer.ambiguous` names a TITLE once (it comes
+// from a Rust HashSet), not once per held ROW. Rebuilding the hold straight
+// from that list dropped the second row of a repeated title, and undercounted
+// `missing` into inviting a re-upload of a case that might still be a
+// duplicate. Fixed by keeping every entry of the OLD hold whose title is in
+// the answer's ambiguous set, so multiplicity survives.
+function holdMocksMulti(onReconcile: (args: Record<string, unknown>) => unknown, titles: string[]) {
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      return titles.map((title, index) => ({
+        index,
+        title,
+        action: "unknown",
+        id: null,
+        error: "Outcome unknown (http 500). Azure DevOps may have created this case - check before uploading it again.",
+      }));
+    }
+    if (cmd === "reconcile_upload") {
+      const r = onReconcile(args as Record<string, unknown>);
+      return Array.isArray(r) ? { found: r, ambiguous: [] } : r;
+    }
+    return undefined;
+  });
+}
+
+test("an ambiguous answer for a repeated title keeps every held row, and reports none re-uploadable", async () => {
+  holdMocksMulti(() => ({ found: [], ambiguous: ["Brand new"] }), ["Brand new", "Brand new"]);
+  renderQueue([makeCase({ title: "Brand new" }), makeCase({ title: "Brand new" })]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Yes —/ }));
+  await waitFor(() =>
+    expect(screen.getAllByText("Outcome unknown - check before uploading again")).toHaveLength(2),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Check with Azure DevOps/ }));
+  await waitFor(() =>
+    expect(
+      screen.getAllByText(
+        "More than one test case with this title exists in Azure DevOps - check there before uploading again.",
+      ),
+    ).toHaveLength(2),
+  );
+  expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument();
+
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-upload-hold:acme/42")!);
+  expect(stored.titles).toEqual(["Brand new", "Brand new"]);
+  expect(stored.ambiguous).toEqual(["Brand new", "Brand new"]);
+
+  // Nothing was resolved for either row, so nothing is offered back for
+  // re-upload - the old bug undercounted this to 1.
+  expect(toast.info).toHaveBeenCalledWith("0 of 2 case(s) had been created.");
+});
+
+// ---- fix round 1: controller ruling - an ambiguous hold must not freeze
+// ---- the PBI forever. -----------------------------------------------------
+
+/** Seeds an ambiguous hold directly, bypassing the Check round trip, for
+ * tests only concerned with what the banner and its buttons do. */
+function seedAmbiguousHold(titles: string[]) {
+  localStorage.setItem(
+    "tcm-v2-upload-hold:acme/42",
+    JSON.stringify({ since: "2026-09-18T10:00:00.000Z", titles, ambiguous: titles }),
+  );
+}
+
+test("removing every held row clears a stale hold and un-refuses uploads", async () => {
+  localStorage.setItem(
+    "tcm-v2-upload-hold:acme/42",
+    JSON.stringify({ since: "2026-09-18T10:00:00.000Z", titles: ["Brand new"] }),
+  );
+  baseMocks();
+  renderQueue([makeCase({ title: "Brand new" }), makeCase({ title: "Other" })]);
+  expect(screen.getByText("Outcome unknown - check before uploading again")).toBeInTheDocument();
+
+  const held = screen.getByText("Brand new").closest("li")!;
+  fireEvent.click(within(held).getByRole("button", { name: "Remove" }));
+
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).toBeNull());
+  expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Check with Azure DevOps/ })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const yes = await screen.findByRole("button", { name: /Yes —/ });
+  expect(yes).not.toBeDisabled();
+});
+
+test("a hold still naming a row present in the queue keeps refusing, even if renamed rows elsewhere were dropped", () => {
+  seedAmbiguousHold(["Brand new"]);
+  baseMocks();
+  renderQueue([makeCase({ title: "Brand new" })]);
+  expect(screen.getByRole("button", { name: /Check with Azure DevOps/ })).toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).not.toBeNull();
+});
+
+test("Release asks for confirmation, and confirming clears the hold", async () => {
+  seedAmbiguousHold(["Brand new"]);
+  baseMocks();
+  renderQueue([makeCase({ title: "Brand new" })]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Release" }));
+  const dialog = within(screen.getByRole("dialog"));
+  expect(
+    dialog.getByText("I have checked in Azure DevOps — release these cases so they can be uploaded again?"),
+  ).toBeInTheDocument();
+  fireEvent.click(dialog.getByRole("button", { name: "Release" }));
+
+  await waitFor(() => expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).toBeNull());
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Release" })).not.toBeInTheDocument();
+});
+
+test("cancelling the release confirmation leaves the hold in place", () => {
+  seedAmbiguousHold(["Brand new"]);
+  baseMocks();
+  renderQueue([makeCase({ title: "Brand new" })]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Release" }));
+  const dialog = within(screen.getByRole("dialog"));
+  fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Release" })).toBeInTheDocument();
 });

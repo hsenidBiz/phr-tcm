@@ -50,6 +50,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import ScanProgress from "./ScanProgress";
 import { Checkbox } from "./ui/checkbox";
+import { Modal } from "./ui/modal";
 import {
   IconCollapseAll,
   IconBack,
@@ -63,6 +64,8 @@ import {
   IconShare,
   IconRename,
   IconRefresh,
+  IconRelease,
+  IconCancel,
 } from "../lib/actionIcons";
 
 const HOLD_REFUSAL =
@@ -531,7 +534,7 @@ export default function QueueSection({
   const submit = useMutation({
     mutationFn: async () => {
       // The buttons are disabled while a hold stands; this is the backstop.
-      if (loadHold(org, pbiId)) throw new Error(HOLD_REFUSAL);
+      if (holdActive) throw new Error(HOLD_REFUSAL);
       // Rows this submit has nothing to write for. The review gate prints
       // "no-op - nothing will change" per row; on a queue of 81 imported
       // cases where ten had really changed, writing anyway meant 71
@@ -743,7 +746,7 @@ export default function QueueSection({
    * case, while a hundred cases are being read. It stops only for a clash
    * nobody has been shown, so the common path never asks twice. */
   const guardedSubmit = async () => {
-    if (loadHold(org, pbiId)) {
+    if (holdActive) {
       toast.warning(HOLD_REFUSAL);
       return;
     }
@@ -769,7 +772,15 @@ export default function QueueSection({
    * tell "not found" from "ambiguous" - a title with more unclaimed matches
    * in Azure DevOps than rows being checked comes back in `ambiguous`
    * rather than `found`. Those titles stay held (a new, smaller hold); a
-   * check that fails outright keeps the whole hold as it was. */
+   * check that fails outright keeps the whole hold as it was.
+   *
+   * Fix round 1: `ambiguous` names a TITLE once (it comes from a Rust
+   * HashSet), not once per held ROW - a hold hit `titles: ["A", "A"]` still
+   * only gets `ambiguous: ["A"]` back even though both rows are ambiguous.
+   * The new hold is built by keeping every entry of the OLD `h.titles` whose
+   * trimmed text is in the answer's ambiguous set, so a repeated title keeps
+   * every one of its rows (and `missing` is counted per ROW, not per
+   * distinct title) instead of losing all but one to the rebuild. */
   const checkHold = async () => {
     const h = loadHold(org, pbiId);
     if (!h) return;
@@ -780,25 +791,23 @@ export default function QueueSection({
         toast.error(`Could not check with Azure DevOps: ${r.error} The cases stay marked - try again.`);
         return;
       }
-      const { found, ambiguous: stillAmbiguous } = r.data;
+      const { found, ambiguous } = r.data;
       const { results: createdResults, orphans } = reconciledResults(queue, heldRows(queue, h), found);
-      saveHold(
-        org,
-        pbiId,
-        stillAmbiguous.length > 0 ? { since: h.since, titles: stillAmbiguous, ambiguous: stillAmbiguous } : null,
-      );
+      const ambiguousSet = new Set(ambiguous.map((t) => t.trim()));
+      const stillHeld = h.titles.filter((t) => ambiguousSet.has(t.trim()));
+      saveHold(org, pbiId, stillHeld.length > 0 ? { since: h.since, titles: stillHeld, ambiguous: stillHeld } : null);
       if (createdResults.length > 0) {
         applyOutcome({ results: createdResults, sent: queue, sentFor: pbiId, skipped: 0, prevQueue: queue });
       }
-      const missing = h.titles.length - found.length - stillAmbiguous.length;
+      const missing = h.titles.length - found.length - stillHeld.length;
       toast.info(
         `${found.length} of ${h.titles.length} case(s) had been created` +
           (missing > 0 ? `; ${missing} had not and can be uploaded again.` : "."),
       );
-      if (stillAmbiguous.length > 0) {
+      if (stillHeld.length > 0) {
         toast.warning(
-          `${stillAmbiguous.length} case(s) still cannot be confirmed - more than one test case with ` +
-            `that title exists in Azure DevOps. They stay marked until that is resolved there.`,
+          `${stillHeld.length} case(s) still cannot be confirmed - more than one test case with that ` +
+            `title exists in Azure DevOps. Check there, then release them here.`,
           { duration: 20000 },
         );
       }
@@ -988,6 +997,15 @@ export default function QueueSection({
   const rowKeys = useMemo(() => keysFor(queue), [queue]);
   const held = useMemo(() => heldRows(queue, hold), [queue, hold]);
   const ambiguous = useMemo(() => ambiguousRows(queue, hold), [queue, hold]);
+  // Fix round 1 (controller ruling): a hold refuses uploads only while one
+  // of its rows is still actually in the queue. Removing or renaming every
+  // held row lifts the refusal - and the effect below clears the now-stale
+  // hold from storage, so a fresh restart does not resurrect it.
+  const holdActive = hold != null && held.some(Boolean);
+  useEffect(() => {
+    if (hold && !held.some(Boolean)) saveHold(org, pbiId, null);
+  }, [hold, held, org, pbiId]);
+  const [releaseConfirm, setReleaseConfirm] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
 
@@ -1525,24 +1543,74 @@ export default function QueueSection({
 
       {hold && !progress && (
         <div className="space-y-2 rounded-md border border-warning/50 bg-warning/10 p-3">
-          <p className="text-sm font-semibold text-text">
-            Outcome unknown for {hold.titles.length} case{hold.titles.length === 1 ? "" : "s"} - check
-            before uploading again.
-          </p>
-          <p className="text-xs text-muted">
-            The last upload was interrupted and Azure DevOps could not be asked what it had created.
-            Uploading again before checking could create {hold.titles.length === 1 ? "it" : "them"} twice.
-          </p>
-          <Button
-            size="sm"
-            disabled={checkingHold || !online}
-            title={online ? undefined : OFFLINE_HINT}
-            onClick={() => void checkHold()}
-          >
-            <IconRefresh aria-hidden />
-            {checkingHold ? "Checking" : "Check with Azure DevOps"}
-          </Button>
+          {hold.ambiguous && hold.ambiguous.length > 0 ? (
+            <>
+              <p className="text-sm font-semibold text-text">
+                More than one test case with these titles exists in Azure DevOps. Check there, then
+                release them here.
+              </p>
+              <p className="text-xs text-muted">
+                Azure DevOps has more matches for {hold.ambiguous.length === 1 ? "this title" : "these titles"}{" "}
+                than rows waiting on it, so this app cannot tell which one is genuinely this upload's.
+                Once you have confirmed it there, Release lets{" "}
+                {hold.ambiguous.length === 1 ? "that case" : "those cases"} be uploaded again.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-semibold text-text">
+                Outcome unknown for {hold.titles.length} case{hold.titles.length === 1 ? "" : "s"} - check
+                before uploading again.
+              </p>
+              <p className="text-xs text-muted">
+                The last upload was interrupted and Azure DevOps could not be asked what it had created.
+                Uploading again before checking could create {hold.titles.length === 1 ? "it" : "them"} twice.
+              </p>
+            </>
+          )}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={checkingHold || !online}
+              title={online ? undefined : OFFLINE_HINT}
+              onClick={() => void checkHold()}
+            >
+              <IconRefresh aria-hidden />
+              {checkingHold ? "Checking" : "Check with Azure DevOps"}
+            </Button>
+            {hold.ambiguous && hold.ambiguous.length > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setReleaseConfirm(true)}>
+                <IconRelease aria-hidden />
+                Release
+              </Button>
+            )}
+          </div>
         </div>
+      )}
+
+      {releaseConfirm && (
+        <Modal onClose={() => setReleaseConfirm(false)} className="w-full max-w-md space-y-4 p-5">
+          <h2 className="text-sm font-semibold text-text">Release held cases?</h2>
+          <p className="text-xs text-muted">
+            I have checked in Azure DevOps — release these cases so they can be uploaded again?
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setReleaseConfirm(false)}>
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                saveHold(org, pbiId, null);
+                setReleaseConfirm(false);
+              }}
+            >
+              <IconRelease aria-hidden />
+              Release
+            </Button>
+          </div>
+        </Modal>
       )}
 
       <div
@@ -1629,7 +1697,7 @@ export default function QueueSection({
               <Button
                 disabled={
                   queue.length === 0 ||
-                  hold != null ||
+                  holdActive ||
                   hasBlockers ||
                   submit.isPending ||
                   !online ||
@@ -1662,7 +1730,7 @@ export default function QueueSection({
               {hasBlockers && (
                 <span className="text-xs text-danger">Fix the flagged items first.</span>
               )}
-              {hold && (
+              {holdActive && (
                 <span className="text-xs text-warning">Check the cases marked "Outcome unknown" first.</span>
               )}
             </div>
@@ -1829,7 +1897,7 @@ export default function QueueSection({
             ) : (
               <Button
                 tabIndex={-1}
-                disabled={hold != null || hasBlockers || submit.isPending || !online}
+                disabled={holdActive || hasBlockers || submit.isPending || !online}
                 title={online ? undefined : OFFLINE_HINT}
                 onClick={() => (pureUpdates ? void guardedSubmit() : arm(true))}
               >
