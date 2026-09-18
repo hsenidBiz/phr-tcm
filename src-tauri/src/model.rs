@@ -23,6 +23,20 @@ pub struct CaseFinding {
     pub detail: String,
 }
 
+/// Where a parsed case came from: its index in the file's `test_cases`
+/// array, set only by the JSON importer. `merge_cases_into_draft` uses it to
+/// patch that case's own object instead of regenerating the array.
+/// Provenance, not content: it never crosses IPC or reaches a file, and two
+/// cases with the same fields are equal wherever they came from.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SourceIndex(pub Option<usize>);
+
+impl PartialEq for SourceIndex {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
 pub struct TestCase {
     pub title: String,
@@ -89,6 +103,10 @@ pub struct TestCase {
     /// a transform. `comment` stays the developer's.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<CaseFinding>,
+    /// See `SourceIndex`. Off the IPC boundary and out of every file.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub source: SourceIndex,
 }
 
 impl TestCase {

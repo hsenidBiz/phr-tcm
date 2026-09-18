@@ -23,7 +23,9 @@ export type StampOutcome = {
   id?: number | null;
 };
 
-export type StampedFile = { slice: TestCase[]; changed: boolean };
+/** `origins[k]` is the queue row `slice[k]` was before the submit - how the
+ * file finds its own copy of the case (`save_draft_cases`). */
+export type StampedFile = { slice: TestCase[]; origins: TestCase[]; changed: boolean };
 
 /**
  * Per owning file: the case list to write back, in queue order.
@@ -60,8 +62,9 @@ export function stampFileSlices(
   prev.forEach((tc, i) => {
     const path = owners[i];
     if (!path) return;
-    const f = files.get(path) ?? { slice: [], changed: false };
+    const f = files.get(path) ?? { slice: [], origins: [], changed: false };
     f.slice.push(post.get(i) ?? tc);
+    f.origins.push(tc);
     if (post.has(i)) f.changed = true;
     files.set(path, f);
   });

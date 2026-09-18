@@ -16,7 +16,9 @@ mod export;
 mod html;
 pub mod specs;
 
-pub use export::{export_queue_to_json, merge_cases_into_draft, queue_to_json_string, step_json};
+pub use export::{
+    apply_draft_edits, export_queue_to_json, merge_cases_into_draft, queue_to_json_string, step_json,
+};
 pub use html::{export_queue_page, export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx};
 pub(crate) use html::{esc, script_json};
 
@@ -41,6 +43,31 @@ pub(crate) const REVIEWER_NOTES_KEYS: [&str; 4] =
 /// Spellings accepted for the area path. Same reasoning as the notes: the
 /// word an assistant or an author was given is the word they write.
 pub(crate) const AREA_KEYS: [&str; 3] = ["area", "section", "group"];
+
+/// The spellings the importer accepts for each modelled field. The writer
+/// uses the same lists, so a rewrite puts a changed value back under the
+/// key the author used.
+pub(crate) const TITLE_KEYS: [&str; 3] = ["title", "name", "test_case_name"];
+pub(crate) const ID_KEYS: [&str; 3] = ["id", "test_case_id", "work_item_id"];
+pub(crate) const MODULE_KEYS: [&str; 2] = ["module", "module_value"];
+pub(crate) const PRECONDITIONS_KEYS: [&str; 2] = ["preconditions", "prerequisites"];
+pub(crate) const SPEC_ORDER_KEYS: [&str; 2] = ["spec_order", "specOrder"];
+pub(crate) const TESTER_ORDER_KEYS: [&str; 2] = ["tester_order", "testerOrder"];
+pub(crate) const STEP_ACTION_KEYS: [&str; 2] = ["action", "step"];
+pub(crate) const STEP_EXPECTED_KEYS: [&str; 3] = ["expected", "expected_result", "result"];
+
+/// The key among `keys` that `json_value` reads on this object: the first
+/// one holding a non-null, non-empty value.
+pub(crate) fn alias_in_use(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&'static str],
+) -> Option<&'static str> {
+    keys.iter().copied().find(|k| match obj.get(*k) {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    })
+}
 
 /// "Manage Events/Create " -> "Manage Events / Create": segments trimmed,
 /// empty ones dropped, one spelling of the separator. The Test map splits
@@ -351,6 +378,7 @@ pub fn parse_rows(rows: &[Row], headers: &[String]) -> Result<(Vec<TestCase>, Ve
             spec_order: None,
             tester_order: None,
             findings: vec![],
+            source: Default::default(),
         });
     }
 
@@ -414,7 +442,7 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
         };
         let raw_v = serde_json::Value::Object(obj.clone());
 
-        let title = json_value(&raw_v, &["title", "name", "test_case_name"])
+        let title = json_value(&raw_v, &TITLE_KEYS)
             .map(value_to_string)
             .unwrap_or_default()
             .trim()
@@ -431,7 +459,7 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
         }
 
         let mut update_id = None;
-        if let Some(raw_id) = json_value(&raw_v, &["id", "test_case_id", "work_item_id"]) {
+        if let Some(raw_id) = json_value(&raw_v, &ID_KEYS) {
             let s = value_to_string(raw_id);
             match work_item_id(&s) {
                 Some(id) => update_id = Some(id),
@@ -476,12 +504,12 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             automation_status = "Not Automated".into();
         }
 
-        let module_value = json_value(&raw_v, &["module", "module_value"])
+        let module_value = json_value(&raw_v, &MODULE_KEYS)
             .map(value_to_string)
             .unwrap_or_default()
             .trim()
             .to_string();
-        let preconditions = json_value(&raw_v, &["preconditions", "prerequisites"])
+        let preconditions = json_value(&raw_v, &PRECONDITIONS_KEYS)
             .map(value_to_string)
             .unwrap_or_default()
             .trim()
@@ -521,8 +549,8 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
                 }
             }
         };
-        let spec_order = read_order(&["spec_order", "specOrder"]);
-        let tester_order = read_order(&["tester_order", "testerOrder"]);
+        let spec_order = read_order(&SPEC_ORDER_KEYS);
+        let tester_order = read_order(&TESTER_ORDER_KEYS);
 
         // Findings: what the assistant found wrong while writing this case.
         // Objects carry kind/subject/title/detail; a bare string is a
@@ -575,12 +603,12 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             let (action, expected, shared) = match rs {
                 serde_json::Value::String(s) => (s.trim().to_string(), String::new(), None),
                 serde_json::Value::Object(_) => {
-                    let action = json_value(rs, &["action", "step"])
+                    let action = json_value(rs, &STEP_ACTION_KEYS)
                         .map(value_to_string)
                         .unwrap_or_default()
                         .trim()
                         .to_string();
-                    let expected = json_value(rs, &["expected", "expected_result", "result"])
+                    let expected = json_value(rs, &STEP_EXPECTED_KEYS)
                         .map(value_to_string)
                         .unwrap_or_default()
                         .trim()
@@ -664,6 +692,7 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
             spec_order,
             tester_order,
             findings,
+            source: crate::model::SourceIndex(Some(i)),
         });
     }
 

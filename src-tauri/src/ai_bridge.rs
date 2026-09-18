@@ -1951,16 +1951,39 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
     // title in 373, found only by hand).
     let mut title_slices: std::collections::BTreeMap<String, Vec<(String, String)>> =
         std::collections::BTreeMap::new();
+    // Each slice's whole-set note, under the name of the slice it came from.
+    // The response calls the slices "safe to remove", so nothing they hold
+    // may be left behind in them.
+    let mut notes: Vec<String> = Vec::new();
+    let output_dir = std::path::Path::new(&req.output_path)
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
 
     for path in &req.paths {
-        match crate::import_parser::parse_file(path) {
-            Ok(parsed) => {
+        match crate::import_parser::read_draft(path) {
+            Ok((text, parsed)) => {
                 let cases = parsed.cases;
                 let file_warnings = parsed.warnings;
+                let slice_dir = std::path::Path::new(path)
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_default();
                 for s in parsed.specs {
+                    // A relative entry names a file beside the SLICE; the
+                    // merged file may live in another folder.
+                    let s = crate::spec_pane::rebase_spec_entry(&s, &slice_dir, &output_dir);
                     if !specs.iter().any(|have| have.eq_ignore_ascii_case(&s)) {
                         specs.push(s);
                     }
+                }
+                let note = crate::import_parser::comments::general_comment(&text);
+                if !note.trim().is_empty() {
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    notes.push(format!("{name}:\n{}", note.trim()));
                 }
                 per_file.push(serde_json::json!({ "path": path, "cases": cases.len() }));
                 // Prefixed with the slice's own file name - a warning
@@ -2004,6 +2027,13 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
 
     let text = match crate::import_parser::queue_to_json_string(&merged)
         .and_then(|t| if specs.is_empty() { Ok(t) } else { crate::import_parser::specs::patch_specs(&t, &specs) })
+        .and_then(|t| {
+            if notes.is_empty() {
+                Ok(t)
+            } else {
+                crate::import_parser::comments::patch_general_comment(&t, &notes.join("\n\n"))
+            }
+        })
     {
         Ok(t) => t,
         Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),

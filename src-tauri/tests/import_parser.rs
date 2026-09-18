@@ -152,6 +152,7 @@ fn json_export_round_trips_through_the_importer() {
             spec_order: None,
             tester_order: None,
             findings: vec![],
+            source: Default::default(),
         },
         TestCase {
             title: "New one".into(),
@@ -612,6 +613,7 @@ fn html_export_carries_cases_and_search() {
         spec_order: None,
         tester_order: None,
         findings: vec![],
+        source: Default::default(),
     }];
     let path = tmp_path("report.html");
     v2_lib::import_parser::export_queue_to_html(&queue, &path, "PBI #7", None, &Default::default())
@@ -657,6 +659,7 @@ fn the_test_case_page_is_themed_and_can_be_flipped() {
         spec_order: None,
         tester_order: None,
         findings: vec![],
+        source: Default::default(),
     }];
     // Spelled out rather than `..Default::default()`: that default is the
     // LIGHT palette, so a partial dark fixture inherits #1f2530 text onto

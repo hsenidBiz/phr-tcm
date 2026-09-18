@@ -600,3 +600,72 @@ async fn merge_carries_the_union_of_the_slices_specs() {
     );
     assert_eq!(doc["test_cases"].as_array().unwrap().len(), 2, "{written}");
 }
+
+/// The merged file is what the slices become, and the response calls the
+/// slices "safe to remove". Their whole-set notes must therefore come along,
+/// each under the name of the slice it came from.
+#[tokio::test]
+async fn merge_carries_each_slices_comments_under_its_file_name() {
+    let dir = TempDir::new();
+    let write = |name: &str, doc: serde_json::Value| {
+        let p = dir.path().join(name);
+        std::fs::write(&p, doc.to_string()).unwrap();
+        p.to_string_lossy().to_string()
+    };
+    let a = write("slice-a.json", serde_json::json!({ "comments": "A needs the admin role.", "test_cases": [case_json("Case A1")] }));
+    let b = write("slice-b.json", serde_json::json!({ "test_cases": [case_json("Case B1")] }));
+    let c = write("slice-c.json", serde_json::json!({ "comments": "C is blocked on 4.2.", "test_cases": [case_json("Case C1")] }));
+    let output_path = dir.path().join("merged.json");
+    let body = serde_json::json!({ "paths": [a, b, c], "output_path": output_path.to_string_lossy() })
+        .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&output_path).unwrap()).unwrap();
+    assert_eq!(
+        doc["comments"],
+        "slice-a.json:\nA needs the admin role.\n\nslice-c.json:\nC is blocked on 4.2."
+    );
+}
+
+/// A relative spec entry names a file beside its SLICE. Copied verbatim
+/// into a merged file in another folder, it pointed somewhere else.
+#[tokio::test]
+async fn merge_rewrites_relative_specs_for_the_merged_files_folder() {
+    let dir = TempDir::new();
+    let sub = dir.path().join("sub");
+    let out_dir = dir.path().join("out");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let wiki = "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine";
+    let slice_a = sub.join("slice-a.json");
+    std::fs::write(
+        &slice_a,
+        serde_json::json!({ "specs": ["../Spec.md", wiki], "test_cases": [case_json("Case A1")] }).to_string(),
+    )
+    .unwrap();
+    let slice_b = dir.path().join("slice-b.json");
+    std::fs::write(
+        &slice_b,
+        serde_json::json!({ "specs": ["docs/Other.md"], "test_cases": [case_json("Case B1")] }).to_string(),
+    )
+    .unwrap();
+    let output_path = out_dir.join("merged.json");
+    let body = serde_json::json!({
+        "paths": [slice_a.to_string_lossy(), slice_b.to_string_lossy()],
+        "output_path": output_path.to_string_lossy(),
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/merge-cases", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&output_path).unwrap()).unwrap();
+    let specs: Vec<&str> = doc["specs"].as_array().unwrap().iter().map(|s| s.as_str().unwrap()).collect();
+    assert_eq!(specs.len(), 3, "{doc}");
+    assert_eq!(std::path::Path::new(specs[0]), std::path::Path::new("..").join("Spec.md"));
+    assert_eq!(specs[1], wiki, "a wiki URL is never rewritten");
+    assert_eq!(
+        std::path::Path::new(specs[2]),
+        std::path::Path::new("..").join("docs").join("Other.md")
+    );
+}

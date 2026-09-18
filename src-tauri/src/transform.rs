@@ -544,6 +544,7 @@ pub fn parse_ops_full(
                         tester_order: None,
                         // An inserted case starts with no findings.
                         findings: vec![],
+                        source: Default::default(),
                     });
                 }
                 if cases.is_empty() {

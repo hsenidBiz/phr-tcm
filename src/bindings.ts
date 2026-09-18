@@ -446,15 +446,17 @@ export const commands = {
 	 */
 	saveDraftComment: (path: string, id: number | null, title: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_draft_comment", { path, id, title, text })),
 	/**
-	 *  Replace a draft file's test cases with the given list - the write-back
-	 *  behind bulk edits on the queue, so the file a case came from says what
-	 *  the queue says. Everything ELSE in the file survives: the top-level
-	 *  general comments, and any key this app does not know about, stay
-	 *  exactly as written. Returns the file's new fingerprint so the caller
+	 *  Write a queue edit back into the draft file its cases came from, so the
+	 *  file says what the queue says. `cases` are the edited cases, `origins[k]`
+	 *  is the row `cases[k]` was before the edit (how the file finds its own
+	 *  copy, since a rename changes the title), and `removed` are rows the edit
+	 *  dropped. The file is patched (`apply_draft_edits`): cases it holds that
+	 *  the queue never showed, keys the app does not model, and the author's
+	 *  spellings all survive. Returns the file's new fingerprint so the caller
 	 *  can move its watch snapshot forward - the watcher stays silent about
 	 *  our own write, so nothing else would.
 	 */
-	saveDraftCases: (path: string, cases: TestCase_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("save_draft_cases", { path, cases })),
+	saveDraftCases: (path: string, cases: TestCase_Deserialize[], origins: TestCase_Deserialize[], removed: TestCase_Deserialize[]) => typedError<string, string>(__TAURI_INVOKE("save_draft_cases", { path, cases, origins, removed })),
 	/**
 	 *  Re-render the draft page WITHOUT opening a browser. This is what the
 	 *  background keep-in-step refresh calls: it used to share `view_draft_html`

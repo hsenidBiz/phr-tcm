@@ -221,3 +221,61 @@ pub async fn render_all(entries: &[(String, PathBuf)], client: Option<&AdoClient
     }
     docs
 }
+
+/// A `specs` entry written for a file in `from_dir`, rewritten so it names
+/// the same document when read by a file in `to_dir`. A merge needs this
+/// when the slices and the merged draft live in different folders. Wiki
+/// URLs, absolute paths and entries whose folder does not change come back
+/// exactly as written. An entry that cannot be expressed relatively (on
+/// another drive) comes back absolute.
+pub fn rebase_spec_entry(entry: &str, from_dir: &Path, to_dir: &Path) -> String {
+    let e = entry.trim();
+    if is_wiki_entry(e) || Path::new(e).is_absolute() {
+        return entry.to_string();
+    }
+    let from = lexical(&absolute_dir(from_dir));
+    let to = lexical(&absolute_dir(to_dir));
+    if from == to {
+        return entry.to_string();
+    }
+    let target = lexical(&from.join(e));
+    relative_to(&target, &to).unwrap_or(target).to_string_lossy().to_string()
+}
+
+fn absolute_dir(p: &Path) -> PathBuf {
+    let p = if p.as_os_str().is_empty() { Path::new(".") } else { p };
+    std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// `.` and `..` resolved by position alone; the file need not exist.
+fn lexical(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn relative_to(target: &Path, base: &Path) -> Option<PathBuf> {
+    let t: Vec<_> = target.components().collect();
+    let b: Vec<_> = base.components().collect();
+    if t.first() != b.first() {
+        return None; // another drive or root
+    }
+    let common = t.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let mut out = PathBuf::new();
+    for _ in common..b.len() {
+        out.push("..");
+    }
+    for c in &t[common..] {
+        out.push(c.as_os_str());
+    }
+    Some(out)
+}

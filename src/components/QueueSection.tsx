@@ -935,7 +935,7 @@ export default function QueueSection({
         const files = stampFileSlices(prevQueue, ownerPaths(prevQueue, known), sent, outcomes);
         for (const [path, f] of files) {
           if (!f.changed) continue;
-          const r = await commands.saveDraftCases(path, f.slice);
+          const r = await commands.saveDraftCases(path, f.slice, f.origins, []);
           if (r.status === "error") {
             toast.warning(
               `Uploaded, but ${fileName(path)} could not be updated with the new ids: ${r.error}. ` +
@@ -1077,19 +1077,30 @@ export default function QueueSection({
   ) => {
     if (watches.length === 0) return;
     const owners = ownerPaths(prev, watches);
-    const files = new Map<string, { slice: TestCase[]; touched: boolean }>();
-    prev.forEach((_, i) => {
+    // Per file: the cases as they are now, the row each one was BEFORE the
+    // edit (how the file finds its own copy - a rename changes the title),
+    // and the rows the edit removed. The file keeps everything else it holds.
+    const files = new Map<
+      string,
+      { slice: TestCase[]; origins: TestCase[]; removed: TestCase[]; touched: boolean }
+    >();
+    prev.forEach((before, i) => {
       const p = owners[i];
       if (!p) return;
-      const f = files.get(p) ?? { slice: [], touched: false };
+      const f = files.get(p) ?? { slice: [], origins: [], removed: [], touched: false };
       const out = next[i];
-      if (out) f.slice.push(out);
+      if (out) {
+        f.slice.push(out);
+        f.origins.push(before);
+      } else {
+        f.removed.push(before);
+      }
       if (changed.has(i)) f.touched = true;
       files.set(p, f);
     });
     for (const [path, f] of files) {
       if (!f.touched) continue;
-      const r = await commands.saveDraftCases(path, f.slice);
+      const r = await commands.saveDraftCases(path, f.slice, f.origins, f.removed);
       if (r.status === "error") {
         // The queue HAS changed - saying so beats pretending nothing did.
         toast.warning(

@@ -26,6 +26,7 @@ fn case(title: &str, module: &str, pre: &str, steps: Vec<Step>) -> TestCase {
         spec_order: None,
         tester_order: None,
         findings: vec![],
+        source: Default::default(),
     }
 }
 

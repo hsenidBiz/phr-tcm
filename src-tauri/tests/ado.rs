@@ -263,6 +263,7 @@ fn sample_tc() -> v2_lib::model::TestCase {
         spec_order: None,
         tester_order: None,
         findings: vec![],
+        source: Default::default(),
     }
 }
 
@@ -1386,6 +1387,7 @@ async fn the_create_document_folds_the_pbi_link_in_when_asked() {
         spec_order: None,
         tester_order: None,
         findings: vec![],
+        source: Default::default(),
     };
     let linked = client.create_test_case_doc("my org", "Web", &tc, None, "", "", None, Some(100));
     let rel = linked

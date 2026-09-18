@@ -596,6 +596,44 @@ test("single Edit save writes the change through to the owning file", async () =
   await waitFor(() => expect(patched).toEqual([{ path: "C:/drafts/a.json", stamp: "stamp-2" }]));
 });
 
+/// A rename changes the very title the file would find its copy by, so the
+/// write-back sends the row as it was before the edit alongside it.
+test("a rename write-back tells the file which case it was", async () => {
+  const a = makeCase({ title: "Original title" });
+  const saved: Array<{ titles: string[]; origins: string[]; removed: string[] }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") {
+      const p = args as { cases: TestCase[]; origins: TestCase[]; removed: TestCase[] };
+      saved.push({
+        titles: p.cases.map((c) => c.title),
+        origins: p.origins.map((c) => c.title),
+        removed: p.removed.map((c) => c.title),
+      });
+      return "stamp-2";
+    }
+    return undefined;
+  });
+  renderQueue([a], {
+    watches: [{ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [a] }],
+    onWatchPatched: () => {},
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Case title"), {
+    target: { value: "Renamed title" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  await waitFor(() => expect(saved).toHaveLength(1));
+  expect(saved[0]).toEqual({ titles: ["Renamed title"], origins: ["Original title"], removed: [] });
+});
+
 /// The last safeguard: the final Yes re-checks ADO and STOPS when a case
 /// about to be created already exists by title - 43 duplicates once went
 /// through because the per-row hint was scrollable-past.

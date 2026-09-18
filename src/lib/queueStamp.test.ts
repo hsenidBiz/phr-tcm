@@ -65,6 +65,19 @@ describe("stampFileSlices", () => {
     expect(f.slice.map((c) => c.update_id)).toEqual([9, 700]);
     expect(f.changed).toBe(true);
   });
+
+  it("pairs every written case with the queue row it came from", () => {
+    const a = tc("Created one");
+    const b = tc("Left alone", { update_id: 9 });
+    const files = stampFileSlices([a, b], ["C:/d/a.json", "C:/d/a.json"], [a], [
+      { index: 0, action: "created", id: 501 },
+    ]);
+    const f = files.get("C:/d/a.json")!;
+    // The file finds its own copy of each case by the row as it was before
+    // the upload - the id-less draft the file still holds.
+    expect(f.origins).toEqual([a, b]);
+    expect(f.slice.map((c) => c.update_id)).toEqual([501, 9]);
+  });
 });
 
 describe("noteSyncPairs", () => {
