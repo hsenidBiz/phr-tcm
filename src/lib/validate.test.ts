@@ -22,6 +22,11 @@ test("mirrors the Rust is_valid rules", () => {
   expect(validateCase({ ...ok, tags: "a, b" })).toMatch(/semicolons/);
 });
 
+test("a Shared Steps reference needs no action", () => {
+  expect(validateCase({ ...ok, steps: [{ action: "", expected: "", shared: 812 }] })).toBeNull();
+  expect(validateCase({ ...ok, steps: [{ action: "", expected: "" }] })).toMatch(/Step 1/);
+});
+
 test("duplicate titles warn only for new cases", () => {
   expect(duplicateWarning(ok, [{ id: 1, title: "t" }])).toMatch(/duplicate/);
   expect(duplicateWarning(ok, [{ id: 1, title: "other" }])).toBeNull();

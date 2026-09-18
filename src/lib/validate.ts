@@ -8,7 +8,7 @@ export function validateCase(tc: TestCase): string | null {
   if (!title) return "Title is required.";
   if (title.length > 255) return `Title is ${title.length} characters - max 255.`;
   if (tc.steps.length === 0) return "At least one step is required.";
-  const bad = tc.steps.findIndex((s) => !s.action.trim());
+  const bad = tc.steps.findIndex((s) => s.shared == null && !s.action.trim());
   if (bad >= 0) return `Step ${bad + 1} action is empty.`;
   if (!["Not Automated", "Planned"].includes(tc.automation_status))
     return `Invalid automation status: '${tc.automation_status}'`;

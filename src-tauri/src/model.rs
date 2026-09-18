@@ -110,8 +110,16 @@ impl TestCase {
         }
         for (i, step) in self.steps.iter().enumerate() {
             // A Shared Steps reference has no action of its own - its steps
-            // live in the referenced work item.
-            if step.shared.is_none() && step.action.trim().is_empty() {
+            // live in the referenced work item. Its id must be a real work
+            // item id: 0 or negative would write `<compref ref="0">`, a
+            // reference to nothing.
+            if let Some(id) = step.shared {
+                if id <= 0 {
+                    return Err(format!("Step {} has an invalid Shared Steps reference.", i + 1));
+                }
+                continue;
+            }
+            if step.action.trim().is_empty() {
                 return Err(format!("Step {} action is empty.", i + 1));
             }
         }

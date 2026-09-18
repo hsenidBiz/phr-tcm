@@ -209,6 +209,24 @@ async fn a_clean_draft_carries_no_advisories_key() {
     assert!(v.get("advisories").is_none(), "{body}");
 }
 
+/// validate_cases runs the real importer, so a case of only Shared Steps -
+/// no action anywhere - is one case with no warning, not "skipped".
+#[tokio::test]
+async fn validate_accepts_a_step_that_is_only_a_shared_reference() {
+    let draft = serde_json::json!({ "test_cases": [{
+        "title": "Reuses the login steps",
+        "automation_status": "Not Automated",
+        "steps": [{ "shared": 812 }]
+    }] })
+    .to_string();
+    let (status, body) = route(&ctx(), None, "POST", "/validate", &draft, "1.25.15").await;
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["error"], serde_json::Value::Null, "{body}");
+    assert_eq!(v["cases"], 1, "{body}");
+    assert!(!body.contains("has no steps"), "{body}");
+}
+
 /// A `Spec:` citation with neither a quote nor the fixed exemption form is
 /// a judgement call flagged as an advisory, not a warning - the same
 /// register as the both-branches check. Uses `speccov::parse_citations`
@@ -331,6 +349,7 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(body.contains("semicolon"), "tag separator rule");
     assert!(body.contains("Login") && body.contains("Payroll"), "live modules");
     assert!(body.contains("optimize_cases"), "the guide points at the optimizer");
+    assert!(body.contains("\"shared\": N"), "the guide names the Shared Steps form");
 
     // Every case gets an area path, so the Test map draws itself from
     // files assistants write - nobody edits JSON to get a tree.

@@ -857,3 +857,35 @@ test("a late backfill never swaps the case on screen once the tester has touched
   );
   expect(screen.getByText("Alpha check")).toBeInTheDocument();
 });
+
+/** Per-step marks on a shared row cannot be recorded (Task 9), so the
+ * Runner shows the reference and offers no marks for it. */
+test("a shared step shows its reference and has no Pass/Fail marks", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "run_history") return [];
+    if (cmd === "pbi_test_cases_full")
+      return [
+        {
+          ...fullCase,
+          steps: [fullCase.steps[0], { action: "", expected: "", shared: 812 }, fullCase.steps[1]],
+          step_ids: ["2", "", "3"],
+        },
+      ];
+    if (cmd === "list_test_points")
+      return [
+        {
+          point_id: 7, test_case_id: 201, test_case_name: "Valid login", config_name: "W10",
+          tester: "", last_outcome: "", last_run_id: null, last_result_id: null,
+        },
+      ];
+    if (cmd === "test_cases_by_ids")
+      return (args as { ids: number[] }).ids.map((id) => ({
+        ...fullCase, id, title: "Sign in as an admin", steps: [], step_ids: [], steps_xml: "",
+      }));
+  });
+  renderRunner();
+  expect(await screen.findByText("Valid login")).toBeInTheDocument();
+  expect(screen.getByText("Shared steps #812")).toBeInTheDocument();
+  expect(await screen.findByText(/Sign in as an admin/)).toBeInTheDocument();
+  expect(screen.getAllByTitle("Passed")).toHaveLength(2); // the two local steps only
+});

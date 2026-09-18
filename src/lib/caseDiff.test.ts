@@ -188,3 +188,24 @@ test("step-type repairs read as sentences, one per target type", () => {
     "Step 2 becomes an action step, because it has no Expected Result.",
   ]);
 });
+
+/// A shared step has no text: it is compared by reference. The stored-type
+/// check counts top-level nodes, so the steps nested in a compref (here a
+/// ValidateStep with no result) are never read as the case's own.
+test("a shared step is compared by its reference and never retyped", () => {
+  const xml =
+    `<steps id="0" last="4"><step id="2" type="ValidateStep"><parameterizedString isformatted="true">Open</parameterizedString><parameterizedString isformatted="true">Shown</parameterizedString></step>` +
+    `<compref id="3" ref="812"><step id="4" type="ValidateStep"><parameterizedString isformatted="true">Inner</parameterizedString><parameterizedString isformatted="true"></parameterizedString></step></compref></steps>`;
+  const steps = [
+    { action: "Open", expected: "Shown" },
+    { action: "", expected: "", shared: 812 },
+  ];
+  const same = diffCase(queued({ steps }), current({ steps, step_ids: ["2", ""], steps_xml: xml }));
+  expect(same.noop).toBe(true);
+
+  const other = diffCase(
+    queued({ steps: [steps[0], { action: "", expected: "", shared: 900 }] }),
+    current({ steps, step_ids: ["2", ""], steps_xml: xml }),
+  );
+  expect(other.steps.changed).toBe(1);
+});

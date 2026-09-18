@@ -109,6 +109,19 @@ fn an_invalid_case_never_becomes_a_request() {
     assert!(err.contains("Title is required"), "{err}");
 }
 
+/// Task 10's review: `build_steps_xml` would write `<compref ref="0">` for a
+/// step whose `shared` id is 0 or negative - a reference to nothing.
+/// `is_valid` refuses it, so a create with a broken shared reference never
+/// becomes a request and no `<compref ref="0">` is ever sent.
+#[test]
+fn a_create_with_a_non_positive_shared_reference_is_refused() {
+    let mut tc = case("Uses shared", None);
+    tc.steps.push(Step { shared: Some(0), ..Default::default() });
+    let err = queue_item_request(&client(), "acme", "Web", 42, &tc, None, None, "", "", None, None, 1)
+        .unwrap_err();
+    assert!(err.contains("Shared Steps"), "{err}");
+}
+
 /// A case that failed validation is never sent, so answer k belongs to
 /// `sent_idx[k]`, not to row k. Row 1 here was refused before the call; the
 /// answers must still land on rows 0, 2 and 3.

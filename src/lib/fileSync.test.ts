@@ -3,6 +3,7 @@ import type { TestCase } from "../bindings";
 import {
   caseKey,
   changedFields,
+  changedSteps,
   countBy,
   fileName,
   loadWatches,
@@ -353,4 +354,11 @@ test("an edit to a case's area is reported as a field change", () => {
     { name: "Area", old: "Manage Events / Grid", new: "Manage Events / Create" },
   ]);
   expect(changedFields(areaCase(), areaCase())).toEqual([]);
+});
+
+test("pointing a step at different Shared Steps is a step change", () => {
+  const before = tc("A", { steps: [{ action: "", expected: "", shared: 812 }] });
+  const after = tc("A", { steps: [{ action: "", expected: "", shared: 900 }] });
+  expect(changedSteps(before, after)).toHaveLength(1);
+  expect(changedSteps(before, before)).toEqual([]);
 });

@@ -2256,7 +2256,8 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         it should be.\n\n\
         ## Format\n\
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
-        `{{\"action\", \"expected\"}}`), `tags` (semicolon-separated, never commas),\n\
+        `{{\"action\", \"expected\"}}`, or `{{\"shared\": N}}` for a Shared Steps reference - keep those exactly as exported, never invent one),\n\
+        `tags` (semicolon-separated, never commas),\n\
         `automation_status` (exactly {statuses}), `module` (ONLY from the list\n\
         below), `preconditions` (state, not steps), and `comment` - the developer's own note, which round-trips\n\
         through the file and is never sent to Azure DevOps. You never write\n\
@@ -2616,9 +2617,7 @@ fn case_page(
                     "automation_status": c.automation_status,
                     "module": c.module_value,
                     "preconditions": c.preconditions,
-                    "steps": c.steps.iter().map(|s| serde_json::json!({
-                        "action": s.action, "expected": s.expected
-                    })).collect::<Vec<_>>(),
+                    "steps": c.steps.iter().map(crate::import_parser::step_json).collect::<Vec<_>>(),
                 })
             }
         })

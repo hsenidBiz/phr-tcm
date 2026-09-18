@@ -64,3 +64,16 @@ test("markup in a note cannot become live markup", () => {
   // The words survive even where the markup does not.
   expect(container.textContent).toContain("per spec");
 });
+
+test("a shared step reads as its reference across both columns", () => {
+  render(
+    <CaseStepsTable
+      steps={[
+        { action: "Open the published cycle.", expected: "The wizard opens at Step 1." },
+        { action: "", expected: "", shared: 812 },
+      ]}
+    />,
+  );
+  const cell = screen.getByText("Shared steps #812").closest("td")!;
+  expect(cell.getAttribute("colspan")).toBe("2");
+});

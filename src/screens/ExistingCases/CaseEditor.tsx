@@ -145,7 +145,7 @@ export default function CaseEditor({
         />
       )}
 
-      <StepsEditor steps={tc.steps} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
+      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
 
       <div className="flex items-center gap-3">
         <Button

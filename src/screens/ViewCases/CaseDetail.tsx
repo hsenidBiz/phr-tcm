@@ -4,6 +4,7 @@ import type { TestCaseFull } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
+import SharedStepLabel from "../../components/SharedStepLabel";
 
 /** The expanded (read-only) detail: preconditions, steps, and the personal
  * local comment - a scratchpad saved on this machine only, never written
@@ -58,8 +59,16 @@ export default function CaseDetail({
             {c.steps.map((s, i) => (
               <tr key={i} className="border-t border-border/40 align-top">
                 <td className="px-3 py-1 text-faint">{i + 1}</td>
-                <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
-                <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
+                {s.shared != null ? (
+                  <td colSpan={2} className="px-3 py-1">
+                    <SharedStepLabel id={s.shared} />
+                  </td>
+                ) : (
+                  <>
+                    <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
+                    <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>

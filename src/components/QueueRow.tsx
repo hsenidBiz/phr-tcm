@@ -205,7 +205,7 @@ export function QueueRowInner({
           {/* Shared with the watched-file change report, which
               needed the same "read the case start to finish"
               view - see CaseStepsTable. */}
-          <CaseStepsTable steps={tc.steps} preconditions={tc.preconditions} reviewerNotes={tc.reviewer_notes} />
+          <CaseStepsTable steps={tc.steps} preconditions={tc.preconditions} reviewerNotes={tc.reviewer_notes} org={org} />
         </div>
       </Collapse>
       <Collapse open={Boolean(diff && !diff.noop && diffOpen)}>

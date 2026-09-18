@@ -138,7 +138,7 @@ export default function ManualEntry({
           </div>
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted">Steps</p>
-            <StepsEditor steps={steps} onChange={setSteps} />
+            <StepsEditor steps={steps} onChange={setSteps} org={org} />
           </div>
         </div>
         <Button disabled={!title.trim() || cleanSteps.length === 0} onClick={addManual}>

@@ -1408,3 +1408,71 @@ fn the_tree_link_is_attribute_escaped() {
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("href='x&#39; onclick=&#39;y'"), "{html}");
 }
+
+/// A Shared Steps reference survives export and re-import as `"shared": N`
+/// and nothing else - no action or expected to tempt anyone to edit it.
+#[test]
+fn a_shared_step_reference_round_trips_through_json() {
+    let queue = vec![TestCase {
+        title: "Uses the shared login".into(),
+        steps: vec![
+            Step { action: "Open".into(), expected: "Shown".into(), shared: None },
+            Step { shared: Some(812), ..Default::default() },
+        ],
+        automation_status: "Planned".into(),
+        update_id: Some(77),
+        ..Default::default()
+    }];
+    let path = tmp_path("shared.json");
+    export_queue_to_json(&queue, &path).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(doc["test_cases"][0]["steps"][1], serde_json::json!({ "shared": 812 }));
+    assert!(doc["test_cases"][0]["steps"][0].get("shared").is_none());
+
+    let parsed = parse_file(&path).unwrap();
+    assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    assert_eq!(parsed.cases[0].steps, queue[0].steps);
+}
+
+/// A case made only of Shared Steps is a real case, not "no steps".
+#[test]
+fn a_case_of_only_shared_steps_is_kept() {
+    let path = tmp_path("shared-only.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({ "test_cases": [{ "title": "Only shared", "steps": [{ "shared": 812 }] }] }).to_string(),
+    )
+    .unwrap();
+    let parsed = parse_file(&path).unwrap();
+    assert_eq!(parsed.cases.len(), 1, "{:?}", parsed.warnings);
+    assert_eq!(parsed.cases[0].steps[0].shared, Some(812));
+}
+
+#[test]
+fn a_bad_shared_reference_is_skipped_with_a_warning() {
+    let path = tmp_path("shared-bad.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({ "test_cases": [{
+            "title": "T",
+            "automation_status": "Planned",
+            "steps": [
+                { "action": "Open", "expected": "" },
+                { "shared": 0 },
+                { "shared": "abc" },
+                { "shared": "905", "action": "ignored text" }
+            ]
+        }] })
+        .to_string(),
+    )
+    .unwrap();
+    let parsed = parse_file(&path).unwrap();
+    let steps = &parsed.cases[0].steps;
+    assert_eq!(steps.len(), 2, "{steps:?}");
+    assert_eq!(steps[1].shared, Some(905));
+    assert_eq!(steps[1].action, "");
+    let all = parsed.warnings.join(" | ");
+    assert!(all.contains("step 2") && all.contains("step 3") && all.contains("Shared Steps work item"), "{all}");
+    assert!(all.contains("step 4") && all.contains("ignored"), "{all}");
+}

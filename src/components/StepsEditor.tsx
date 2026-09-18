@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { IconAdd } from "../lib/actionIcons";
 import { cn } from "../lib/cn";
+import SharedStepLabel from "./SharedStepLabel";
 
 /** The step grid used by Manual Entry AND the case editor: numbered rows of
  * action/expected with reorder, remove and Add Step - one interaction model
@@ -18,9 +19,12 @@ import { cn } from "../lib/cn";
 export default function StepsEditor({
   steps,
   onChange,
+  org,
 }: {
   steps: Step[];
   onChange: (steps: Step[]) => void;
+  /** For the titles of Shared Steps rows; without it only the reference shows. */
+  org?: string;
 }) {
   const setStep = (i: number, key: "action" | "expected", value: string) =>
     onChange(steps.map((s, j) => (j === i ? { ...s, [key]: value } : s)));
@@ -102,20 +106,34 @@ export default function StepsEditor({
             <GripVertical size={14} />
           </span>
           <span className="id-mono w-5 text-right text-xs text-faint">{i + 1}</span>
-          <Input
-            aria-label={`Step ${i + 1} action`}
-            className="flex-1 px-2 py-1.5 text-xs"
-            placeholder="Action"
-            value={s.action}
-            onChange={(e) => setStep(i, "action", e.target.value)}
-          />
-          <Input
-            aria-label={`Step ${i + 1} expected`}
-            className="flex-1 px-2 py-1.5 text-xs"
-            placeholder="Expected result"
-            value={s.expected}
-            onChange={(e) => setStep(i, "expected", e.target.value)}
-          />
+          {s.shared != null ? (
+            // Locked: a Shared Steps reference is edited in its own work
+            // item. It can still be dragged, moved by keyboard and removed.
+            <div
+              aria-label={`Step ${i + 1} shared steps`}
+              title="Shared steps are edited in Azure DevOps - here they can be moved or removed."
+              className="flex-1 truncate rounded-md border border-border bg-surface-2 px-2 py-1.5"
+            >
+              <SharedStepLabel id={s.shared} org={org} />
+            </div>
+          ) : (
+            <>
+              <Input
+                aria-label={`Step ${i + 1} action`}
+                className="flex-1 px-2 py-1.5 text-xs"
+                placeholder="Action"
+                value={s.action}
+                onChange={(e) => setStep(i, "action", e.target.value)}
+              />
+              <Input
+                aria-label={`Step ${i + 1} expected`}
+                className="flex-1 px-2 py-1.5 text-xs"
+                placeholder="Expected result"
+                value={s.expected}
+                onChange={(e) => setStep(i, "expected", e.target.value)}
+              />
+            </>
+          )}
           <button
             className="px-1 text-xs text-faint hover:text-danger"
             title="Remove step"

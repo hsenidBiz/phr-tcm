@@ -10,6 +10,7 @@ import { commands, type RunAttachment, type TestCaseFull } from "../bindings";
 import AstryxIsland from "../components/AstryxIsland";
 import BugDialog from "../components/BugDialog";
 import HistoryDots from "../components/HistoryDots";
+import SharedStepLabel from "../components/SharedStepLabel";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/input";
 import { cn } from "../lib/cn";
@@ -982,34 +983,45 @@ export default function RunnerWindow() {
                 <div className="flex items-start gap-2">
                   <span className="id-mono text-xs text-faint">{i + 1}</span>
                   <div className="flex-1">
-                    <div>{step.action}</div>
-                    {step.expected && (
-                      <div className="text-xs text-muted">Expect: {step.expected}</div>
+                    {step.shared != null ? (
+                      <SharedStepLabel id={step.shared} org={session?.org} />
+                    ) : (
+                      <>
+                        <div>{step.action}</div>
+                        {step.expected && (
+                          <div className="text-xs text-muted">Expect: {step.expected}</div>
+                        )}
+                      </>
                     )}
                   </div>
-                  <div className="flex gap-1">
-                    {(["Passed", "Failed"] as const).map((o) => (
-                      <button
-                        key={o}
-                        title={o}
-                        className={cn(
-                          "pill-label rounded px-1.5 text-[10px] font-semibold",
-                          st.stepOutcomes[i] === o ? outcomeBtn[o] : "bg-surface-2 text-muted",
-                        )}
-                        onClick={() => {
-                          // Same toggle as the overall verdict: clicking the
-                          // lit mark clears it (a cleared step just is not
-                          // recorded, like one never marked).
-                          const next = { ...st.stepOutcomes };
-                          if (next[i] === o) delete next[i];
-                          else next[i] = o;
-                          patch(current.id, { stepOutcomes: next });
-                        }}
-                      >
-                        {o[0]}
-                      </button>
-                    ))}
-                  </div>
+                  {/* No per-step marks on Shared Steps: the result would need
+                      the ids of the steps inside them, which the app does
+                      not have (see build_iteration_details). */}
+                  {step.shared == null && (
+                    <div className="flex gap-1">
+                      {(["Passed", "Failed"] as const).map((o) => (
+                        <button
+                          key={o}
+                          title={o}
+                          className={cn(
+                            "pill-label rounded px-1.5 text-[10px] font-semibold",
+                            st.stepOutcomes[i] === o ? outcomeBtn[o] : "bg-surface-2 text-muted",
+                          )}
+                          onClick={() => {
+                            // Same toggle as the overall verdict: clicking the
+                            // lit mark clears it (a cleared step just is not
+                            // recorded, like one never marked).
+                            const next = { ...st.stepOutcomes };
+                            if (next[i] === o) delete next[i];
+                            else next[i] = o;
+                            patch(current.id, { stepOutcomes: next });
+                          }}
+                        >
+                          {o[0]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </li>
             ))}

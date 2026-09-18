@@ -86,7 +86,7 @@ export default function QueueCaseEditor({
         onChange={(e) => setTc((t) => ({ ...t, comment: e.target.value }))}
       />
 
-      <StepsEditor steps={tc.steps} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
+      <StepsEditor steps={tc.steps} org={org} onChange={(steps) => setTc((t) => ({ ...t, steps }))} />
 
       <div className="flex items-center gap-3">
         <Button

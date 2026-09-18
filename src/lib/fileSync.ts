@@ -8,7 +8,7 @@
 // snapshot parsed from that same file.
 
 import type { TestCase } from "../bindings";
-import type { StepDiff } from "./caseDiff";
+import { sameStep, type StepDiff } from "./caseDiff";
 
 /** Identity across re-parses. A kept work-item id is exact; without one
  * the title is the only stable handle we have, so renaming an id-less case
@@ -47,7 +47,9 @@ export function keysFor(list: TestCase[]): string[] {
 // mid-word gives the same signature as the unsplit pair, and the edit
 // reports as no change at all.
 const stepsSig = (c: TestCase) =>
-  c.steps.map((s) => `${s.action}\u0000${s.expected}`).join("\u0001");
+  c.steps
+    .map((s) => `${s.action}\u0000${s.expected}${s.shared != null ? `\u0002${s.shared}` : ""}`)
+    .join("\u0001");
 
 /** One field that differs, with both sides - the report renders the actual
  * words that changed, not just the field's name. Knowing "Title changed"
@@ -95,7 +97,7 @@ export function changedSteps(before: TestCase, after: TestCase): StepDiff[] {
     const n = after.steps[i];
     if (n && !o) out.push({ index: i, kind: "added", new: n });
     else if (!n && o) out.push({ index: i, kind: "removed", old: o });
-    else if (o && n && (o.action !== n.action || o.expected !== n.expected)) {
+    else if (o && n && !sameStep(o, n)) {
       out.push({ index: i, kind: "changed", old: o, new: n });
     }
   }

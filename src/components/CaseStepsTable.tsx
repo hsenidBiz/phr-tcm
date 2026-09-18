@@ -10,11 +10,13 @@
 
 import type { Step } from "../bindings";
 import { renderMarkdown } from "../lib/markdown";
+import SharedStepLabel from "./SharedStepLabel";
 
 export default function CaseStepsTable({
   steps,
   preconditions,
   reviewerNotes,
+  org,
 }: {
   steps: Step[];
   /** Rendered above the table when present - a step often only makes sense
@@ -30,6 +32,8 @@ export default function CaseStepsTable({
    * which is exactly who the field is written for, could not read it
    * without exporting to a browser first. */
   reviewerNotes?: string;
+  /** For the titles of Shared Steps rows; without it only the reference shows. */
+  org?: string;
 }) {
   const notes = reviewerNotes?.trim();
   return (
@@ -70,8 +74,16 @@ export default function CaseStepsTable({
             {steps.map((s, si) => (
               <tr key={si} className="border-t border-border/40 align-top">
                 <td className="px-3 py-1 text-faint">{si + 1}</td>
-                <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
-                <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
+                {s.shared != null ? (
+                  <td colSpan={2} className="px-3 py-1">
+                    <SharedStepLabel id={s.shared} org={org} />
+                  </td>
+                ) : (
+                  <>
+                    <td className="whitespace-pre-wrap px-3 py-1 text-text">{s.action}</td>
+                    <td className="whitespace-pre-wrap px-3 py-1 text-muted">{s.expected}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>

@@ -16,7 +16,7 @@ mod export;
 mod html;
 pub mod specs;
 
-pub use export::{export_queue_to_json, merge_cases_into_draft, queue_to_json_string};
+pub use export::{export_queue_to_json, merge_cases_into_draft, queue_to_json_string, step_json};
 pub use html::{export_queue_page, export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx};
 pub(crate) use html::{esc, script_json};
 
@@ -545,8 +545,8 @@ fn parse_json(path: &str) -> Result<ParsedFile, String> {
         let mut steps = vec![];
         let mut wrapped_steps = false;
         for (j, rs) in raw_steps.iter().enumerate() {
-            let (action, expected) = match rs {
-                serde_json::Value::String(s) => (s.trim().to_string(), String::new()),
+            let (action, expected, shared) = match rs {
+                serde_json::Value::String(s) => (s.trim().to_string(), String::new(), None),
                 serde_json::Value::Object(_) => {
                     let action = json_value(rs, &["action", "step"])
                         .map(value_to_string)
@@ -558,7 +558,23 @@ fn parse_json(path: &str) -> Result<ParsedFile, String> {
                         .unwrap_or_default()
                         .trim()
                         .to_string();
-                    (action, expected)
+                    // A Shared Steps reference: the id of that work item,
+                    // read with the same rule as a case id - an id that is
+                    // not a real work item id is refused, never rounded.
+                    let shared = match json_value(rs, &["shared"]) {
+                        None => None,
+                        Some(v) => match work_item_id(value_to_string(v).trim()) {
+                            Some(id) => Some(id),
+                            None => {
+                                warnings.push(format!(
+                                    "{label} ('{title}') step {}: 'shared' must be the id of a Shared Steps work item - step skipped.",
+                                    j + 1
+                                ));
+                                continue;
+                            }
+                        },
+                    };
+                    (action, expected, shared)
                 }
                 _ => {
                     warnings.push(format!(
@@ -568,6 +584,16 @@ fn parse_json(path: &str) -> Result<ParsedFile, String> {
                     continue;
                 }
             };
+            if let Some(id) = shared {
+                if !action.is_empty() || !expected.is_empty() {
+                    warnings.push(format!(
+                        "{label} ('{title}') step {}: a shared step's 'action' and 'expected' are ignored - its steps live in Shared Steps #{id}.",
+                        j + 1
+                    ));
+                }
+                steps.push(Step { shared: Some(id), ..Default::default() });
+                continue;
+            }
             if action.is_empty() {
                 if !expected.is_empty() {
                     warnings.push(format!(

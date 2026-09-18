@@ -12,7 +12,9 @@ freely but keep it valid JSON with this exact structure. Rules: keep \
 'id' unchanged so re-importing UPDATES that existing work item; set 'id' \
 to null to CREATE a new test case. 'title' is required (max 255 chars). \
 'steps' is an ordered list; every step needs a non-empty 'action', \
-'expected' may be an empty string. 'automation_status' must be exactly \
+'expected' may be an empty string - except a Shared Steps reference, written \
+{\"shared\": N}, which has neither: keep it exactly as exported and never \
+invent one. 'automation_status' must be exactly \
 'Not Automated' or 'Planned'. 'tags' is a single semicolon-separated \
 string - commas are not allowed in tags. 'module' and 'preconditions' \
 are free text and may be empty strings. Two optional fields never reach \
@@ -33,6 +35,15 @@ the app's Test map and never reaches Azure DevOps. A top-level 'specs' list (bes
 file paths (absolute, or relative to this file) or Azure DevOps wiki page URLs, as strings. The app shows them beside \
 the cases in the browser; fill it from the documents named at intake.";
 
+/// One step as the case file writes it. A Shared Steps reference is only
+/// `{"shared": N}`: its steps live in that work item and are edited there.
+pub fn step_json(s: &crate::steps_xml::Step) -> serde_json::Value {
+    match s.shared {
+        Some(id) => serde_json::json!({ "shared": id }),
+        None => serde_json::json!({ "action": s.action, "expected": s.expected }),
+    }
+}
+
 pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
     let records: Vec<serde_json::Value> = queue
         .iter()
@@ -43,9 +54,7 @@ pub fn queue_to_json_string(queue: &[TestCase]) -> Result<String, String> {
                 "automation_status": tc.automation_status,
                 "module": tc.module_value,
                 "preconditions": tc.preconditions,
-                "steps": tc.steps.iter().map(|s| serde_json::json!({
-                    "action": s.action, "expected": s.expected
-                })).collect::<Vec<_>>(),
+                "steps": tc.steps.iter().map(step_json).collect::<Vec<_>>(),
             });
             // An id only appears when there IS one. `id: null` and no `id`
             // both mean "create", so emitting the null said nothing - but a

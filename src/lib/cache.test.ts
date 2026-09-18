@@ -186,6 +186,8 @@ test("cache keys are the strings earlier versions stored", () => {
   expect(cacheKeys.suiteSeed("acme", 42)).toBe("suite-seed:acme/42");
   // NEW key: the suggested run order read from a PBI's run-order file.
   expect(cacheKeys.runOrder("acme", "Web", 42)).toBe("run-order:acme/Web/42");
+  // New key, pinned from now on.
+  expect(cacheKeys.sharedStepTitle("acme", 812)).toBe("shared-step:acme/812");
 });
 
 test("cacheRemove deletes an entry that was written", () => {
@@ -242,7 +244,7 @@ describe("one cache", () => {
     // prefixes cacheKeys owns (React Query keys are arrays - no colon).
     expect(
       offenders(
-        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe|suite-cases|suite-seed):/,
+        /cache(?:Read|Write|Entry)(?:<[^>]*>)?\(\s*[`"']|persistentQuery\(\{\s*key:\s*[`"']|[`"'](?:projects|members|wi-detail|wi-comments|plans-suites|run-history|points|board-prs|pipe|suite-cases|suite-seed|shared-step):/,
       ),
     ).toEqual([]);
   });

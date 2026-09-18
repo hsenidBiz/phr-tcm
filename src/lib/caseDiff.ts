@@ -39,13 +39,23 @@ function stepTypeFor(expected: string): "ValidateStep" | "ActionStep" {
   return expected.trim() ? "ValidateStep" : "ActionStep";
 }
 
-/** Each `<step>`'s `type` attribute in document order, from the raw Steps
- * XML the server holds. Empty when there is no XML to read - a stub, the
- * tour's sample data, or a fixture that never carried the field. */
+/** Two steps say the same thing: the same text, and the same Shared Steps
+ * reference (or neither has one). A shared step has no text, so the
+ * reference is what tells two apart. */
+export function sameStep(a: Step, b: Step): boolean {
+  return a.action === b.action && a.expected === b.expected && (a.shared ?? null) === (b.shared ?? null);
+}
+
+/** Each top-level node's `type` in document order, from the raw Steps XML
+ * the server holds - "" for a Shared Steps reference, whose nested steps
+ * are part of it and never counted. Mirrors `parse_step_types` in Rust.
+ * Empty when there is no XML to read - a stub, the tour's sample data, or
+ * a fixture that never carried the field. */
 function storedStepTypes(stepsXml: string | undefined): string[] {
   const out: string[] = [];
-  for (const m of (stepsXml ?? "").matchAll(/<step\b([^>]*)>/g)) {
-    out.push(/\btype="([^"]*)"/.exec(m[1])?.[1] ?? "");
+  const topLevel = /<compref\b[^>]*?\/>|<compref\b[^>]*>[\s\S]*?<\/compref>|<step\b([^>]*)>/g;
+  for (const m of (stepsXml ?? "").matchAll(topLevel)) {
+    out.push(m[0].startsWith("<compref") ? "" : (/\btype="([^"]*)"/.exec(m[1])?.[1] ?? ""));
   }
   return out;
 }
@@ -122,7 +132,7 @@ export function diffCase(
     const c = current.steps[i];
     if (q && !c) detail.push({ index: i, kind: "added", new: q });
     else if (!q && c) detail.push({ index: i, kind: "removed", old: c });
-    else if (q && c && (q.action !== c.action || q.expected !== c.expected)) {
+    else if (q && c && !sameStep(q, c)) {
       detail.push({ index: i, kind: "changed", old: c, new: q });
     }
   }
@@ -136,6 +146,7 @@ export function diffCase(
   const retypedDetail: CaseDiff["steps"]["retypedDetail"] = [];
   if (storedTypes.length === current.steps.length) {
     queued.steps.forEach((q, i) => {
+      if (q.shared != null) return; // a reference has no type of its own
       const to = stepTypeFor(q.expected);
       if (i < storedTypes.length && !touched.has(i) && storedTypes[i] !== to) {
         retypedDetail.push({ index: i, from: storedTypes[i], to });
