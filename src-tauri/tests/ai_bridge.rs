@@ -1478,3 +1478,29 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
     assert_eq!(v["tags"][0], "tag-349", "{out}");
     assert!(!v["note"].as_str().unwrap().contains("Showing"), "{out}");
 }
+
+/// The pane is only as good as the list that feeds it: the guide tells the
+/// assistant to copy the intake's documents into the file's `specs`.
+#[tokio::test]
+async fn the_guide_asks_for_the_specs_list() {
+    let (server, client) = ado_stub().await;
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/Web/_apis/wit/workitemtypes/Test%20Case/fields/Custom.Module"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "allowedValues": ["Login", "Payroll"]
+        })))
+        .mount(&server)
+        .await;
+
+    let (status, body) = route(&ctx(), Some(&client), "GET", "/guide", "", "1.10.3").await;
+    assert_eq!(status, 200, "{body}");
+
+    let section = body
+        .split("## specs")
+        .nth(1)
+        .and_then(|rest| rest.split("## Findings").next())
+        .expect("the guide has a specs section");
+    assert!(section.contains("\"specs\""), "{section}");
+    assert!(section.contains("wiki"), "wiki URLs are valid entries: {section}");
+    assert!(section.contains("relative"), "paths relative to the file: {section}");
+}

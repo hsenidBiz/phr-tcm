@@ -1484,6 +1484,15 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         first: `\"Manage Events / Create / Validation\"`. Reuse the same spelling\n\
         for the same place across the set, so its cases stack under one\n\
         node in the app's Test map instead of two. This is the app's own grouping path, not the work item's Area Path. Never sent to Azure DevOps. Set or move it in bulk with `transform_cases` (`set_area`, and `where.area_is` to pick an area).\n\n\
+        ## specs\n\
+        Put the documents these cases were written from in the file's\n\
+        top-level `\"specs\"` list, beside `test_cases`: each entry a path to\n\
+        a markdown file (relative to the JSON file, or absolute) or an Azure\n\
+        DevOps wiki page URL as copied from the browser. These are the\n\
+        documents named at intake. The developer reads them beside the cases\n\
+        in the browser, and every `Spec:` citation in `reviewer_notes` links\n\
+        to its heading there - so name the document in a citation the way its\n\
+        file or wiki page is named.\n\n\
         ## Findings\n\
         When something you read is WRONG - a case that contradicts its spec,\n\
         a spec that contradicts itself, code that does what neither says -\n\
