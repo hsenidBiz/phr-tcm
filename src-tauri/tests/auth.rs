@@ -82,3 +82,78 @@ fn upn_extracts_preferred_username() {
     let jwt = format!("x.{payload}.y");
     assert_eq!(upn_from_id_token(&jwt), Some("a@b.com".to_string()));
 }
+
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use v2_lib::auth::{await_redirect, read_redirect, Redirect, SIGN_IN_TIMEOUT};
+
+fn loopback() -> (TcpListener, u16) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    (l, port)
+}
+
+fn request(port: u16, raw: &str) -> String {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.write_all(raw.as_bytes()).unwrap();
+    let mut out = String::new();
+    let _ = s.read_to_string(&mut out);
+    out
+}
+
+#[test]
+fn only_a_matching_state_with_a_code_is_a_sign_in() {
+    assert_eq!(
+        read_redirect("GET /?code=abc&state=s1 HTTP/1.1\r\n", "s1"),
+        Redirect::Code("abc".into())
+    );
+    assert!(matches!(read_redirect("GET /?code=abc&state=zz HTTP/1.1", "s1"), Redirect::Refused(_)));
+    let Redirect::Refused(why) =
+        read_redirect("GET /?error=access_denied&state=s1 HTTP/1.1", "s1")
+    else {
+        panic!("a denial is not a sign-in");
+    };
+    assert!(why.contains("access_denied"), "{why}");
+    assert!(matches!(read_redirect("GET /?state=s1 HTTP/1.1", "s1"), Redirect::Refused(_)));
+    assert_eq!(read_redirect("GET /favicon.ico HTTP/1.1", "s1"), Redirect::NotTheRedirect);
+    assert_eq!(read_redirect("", "s1"), Redirect::NotTheRedirect);
+}
+
+/// A browser preconnect that never sends a request used to block the one
+/// read forever, so the real redirect behind it was never seen.
+#[test]
+fn a_silent_preconnect_does_not_block_the_real_redirect() {
+    let (l, port) = loopback();
+    let waiter = std::thread::spawn(move || {
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_millis(200))
+    });
+    let _silent = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let _ = request(port, "GET /favicon.ico HTTP/1.1\r\n\r\n");
+    let page = request(port, "GET /?code=abc&state=s1 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(waiter.join().unwrap(), Ok("abc".to_string()));
+    assert!(page.contains("You're signed in"), "{page}");
+}
+
+/// "You're signed in" used to show even for a denial or a state mismatch.
+#[test]
+fn a_denied_sign_in_shows_a_failure_page() {
+    let (l, port) = loopback();
+    let waiter = std::thread::spawn(move || {
+        await_redirect(l, "s1", Duration::from_secs(10), Duration::from_millis(200))
+    });
+    let page = request(port, "GET /?error=access_denied&state=s1 HTTP/1.1\r\n\r\n");
+    assert!(waiter.join().unwrap().is_err());
+    assert!(page.contains("Sign-in did not complete"), "{page}");
+    assert!(!page.contains("You're signed in"), "{page}");
+}
+
+/// A closed browser tab used to leave sign-in pending forever.
+#[test]
+fn nobody_coming_back_times_out_with_a_plain_sentence() {
+    let (l, _port) = loopback();
+    let started = std::time::Instant::now();
+    let out = await_redirect(l, "s1", Duration::from_millis(300), Duration::from_millis(200));
+    assert_eq!(out, Err(SIGN_IN_TIMEOUT.to_string()));
+    assert_eq!(SIGN_IN_TIMEOUT, "Sign-in timed out. Try again.");
+    assert!(started.elapsed() < Duration::from_secs(3));
+}

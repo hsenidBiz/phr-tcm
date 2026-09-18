@@ -10,6 +10,14 @@ use std::time::{Duration, Instant};
 const CLIENT_ID: &str = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"; // Azure CLI public client
 const AUTHORITY: &str = "https://login.microsoftonline.com/organizations";
 const SCOPE: &str = "499b84ac-1321-427f-aa17-267ca6975798/.default offline_access openid profile";
+const TOKEN_URL: &str = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token";
+
+/// How long the browser has to come back with the redirect.
+pub const SIGN_IN_WINDOW: Duration = Duration::from_secs(300);
+/// How long one loopback connection may take to send its request line.
+pub const LOOPBACK_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// What a sign-in nobody finished says.
+pub const SIGN_IN_TIMEOUT: &str = "Sign-in timed out. Try again.";
 
 /// Refresh this long before the access token actually expires.
 const EARLY_RENEW: Duration = Duration::from_secs(300);
@@ -106,28 +114,66 @@ pub fn refresh_params(refresh_token: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
-async fn post_token_endpoint(params: &[(&str, String)]) -> Result<TokenResponse, String> {
-    let resp = reqwest::Client::new()
-        .post(format!("{AUTHORITY}/oauth2/v2.0/token"))
+/// A transport failure as one of the no-URL sentences (`ado/transport.rs`).
+/// reqwest's Display names the login endpoint, which nobody can act on.
+fn sign_in_network_error(e: &reqwest::Error) -> String {
+    match crate::ado::network_error(e) {
+        crate::ado::AdoError::Network(m) => m,
+        other => other.to_string(),
+    }
+}
+
+async fn post_token_endpoint(url: &str, params: &[(&str, String)]) -> Result<TokenResponse, String> {
+    let resp = crate::ado::http_client()
+        .post(url)
         .form(params)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
+        .map_err(|e| {
+            crate::applog::warn(format!("token endpoint request failed: {e}"));
+            sign_in_network_error(&e)
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        crate::applog::warn(format!(
+            "token endpoint returned {status}: {}",
+            body.chars().take(600).collect::<String>()
+        ));
+        // Entra's `error` code (invalid_grant, ...) - never `error_uri` or
+        // the description, which carry URLs and trace ids.
+        let code: String = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["error"].as_str().map(str::to_string))
+            .unwrap_or_else(|| status.as_u16().to_string())
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .take(40)
+            .collect();
         return Err(format!(
-            "token endpoint returned {}: {}",
-            resp.status(),
-            resp.text().await.unwrap_or_default()
+            "Microsoft sign-in refused the request ({code}). Sign in again - Settings → Logs has the details."
         ));
     }
-    resp.json().await.map_err(|e| e.to_string())
+    resp.json().await.map_err(|e| {
+        crate::applog::warn(format!("token endpoint response could not be read: {e}"));
+        sign_in_network_error(&e)
+    })
+}
+
+/// `refresh` against a given token endpoint - the seam the no-URL tests use.
+pub async fn refresh_at(
+    token_url: &str,
+    refresh_token: &str,
+    account: Option<String>,
+) -> Result<TokenSet, String> {
+    let params = refresh_params(refresh_token);
+    let tokens = post_token_endpoint(token_url, &params).await?;
+    Ok(tokens.into_token_set(account))
 }
 
 /// Exchange a refresh token for a new token set (silent renew).
 pub async fn refresh(refresh_token: &str, account: Option<String>) -> Result<TokenSet, String> {
-    let params = refresh_params(refresh_token);
-    let tokens = post_token_endpoint(&params).await?;
-    Ok(tokens.into_token_set(account))
+    refresh_at(TOKEN_URL, refresh_token, account).await
 }
 
 async fn exchange_code(
@@ -143,52 +189,11 @@ async fn exchange_code(
         ("code_verifier", verifier.to_string()),
         ("scope", SCOPE.to_string()),
     ];
-    post_token_endpoint(&params).await
+    post_token_endpoint(TOKEN_URL, &params).await
 }
 
-/// Runs the interactive flow: opens the system browser at the authorize URL,
-/// waits for the loopback redirect, exchanges the code.
-pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, String> {
-    use std::io::{BufRead, BufReader, Write};
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    // Entra ID only allows arbitrary ports on "http://localhost" (RFC 8252
-    // loopback), NOT on the literal 127.0.0.1 - using the IP form fails with
-    // AADSTS50011 against the Azure CLI app registration. The socket still
-    // binds to 127.0.0.1; localhost resolves there for the browser redirect.
-    let redirect_uri = format!("http://localhost:{port}");
-    let (verifier, challenge) = pkce_pair();
-    let state = b64url(&rand::random::<[u8; 16]>());
-    open_url(&build_authorize_url(&challenge, &redirect_uri, &state));
-
-    // Accept exactly one connection on a blocking thread so we don't tie up tokio.
-    let expected_state = state.clone();
-    let code = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let (mut stream, _) = listener.accept().map_err(|e| e.to_string())?;
-        let mut line = String::new();
-        BufReader::new(stream.try_clone().map_err(|e| e.to_string())?)
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?;
-        // "GET /?code=...&state=... HTTP/1.1"
-        let query = line
-            .split_whitespace()
-            .nth(1)
-            .and_then(|p| p.split_once('?'))
-            .map(|(_, q)| q.to_string())
-            .ok_or("no query string in redirect")?;
-        let mut code = None;
-        let mut got_state = None;
-        for pair in query.split('&') {
-            match pair.split_once('=') {
-                Some(("code", v)) => code = Some(v.to_string()),
-                Some(("state", v)) => got_state = Some(v.to_string()),
-                _ => {}
-            }
-        }
-        // The one page a user sees outside the app - make it feel like ours.
-        let body = r##"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+/// The one page a user sees outside the app - make it feel like ours.
+const SIGNED_IN_PAGE: &str = r##"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <title>Signed in - Test Case Manager</title>
 <style>
   * { margin:0; box-sizing:border-box; }
@@ -220,16 +225,151 @@ pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, St
 </div>
 <script>setTimeout(function(){ try { window.close(); } catch(e){} }, 2500);</script>
 </body></html>"##;
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        if got_state.as_deref() != Some(expected_state.as_str()) {
-            return Err("state mismatch".into());
+
+/// Shown when the browser came back without a usable answer.
+const FAILED_PAGE: &str = r##"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign-in did not complete - Test Case Manager</title>
+<style>
+  * { margin:0; box-sizing:border-box; }
+  body { min-height:100vh; display:flex; align-items:center; justify-content:center;
+         font-family:'Segoe UI',system-ui,sans-serif; color:#f8fafc; background:#0f172a; }
+  .card { text-align:center; padding:48px 56px; border:1px solid rgba(148,163,184,.25);
+          border-radius:20px; background:rgba(30,41,59,.55); }
+  h1 { font-size:24px; font-weight:600; margin-bottom:8px; }
+  p  { color:#94a3b8; font-size:15px; line-height:1.6; }
+</style></head><body>
+<div class="card">
+  <h1>Sign-in did not complete</h1>
+  <p>Go back to <b>Test Case Manager</b> and sign in again.<br>This tab can be closed.</p>
+</div>
+</body></html>"##;
+
+/// What the loopback made of one request line.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Redirect {
+    /// The authorization code, state checked.
+    Code(String),
+    /// The browser came back, but not with a sign-in: denied, wrong state,
+    /// no code. The sentence is for the user and names no URL.
+    Refused(String),
+    /// Not the redirect at all (favicon, a preconnect that sent nothing).
+    NotTheRedirect,
+}
+
+pub fn read_redirect(request_line: &str, expected_state: &str) -> Redirect {
+    let Some(target) = request_line
+        .strip_prefix("GET ")
+        .and_then(|r| r.split_whitespace().next())
+    else {
+        return Redirect::NotTheRedirect;
+    };
+    let Some(query) = target.strip_prefix("/?") else {
+        return Redirect::NotTheRedirect;
+    };
+    let (mut code, mut state, mut error) = (None, None, None);
+    for pair in query.split('&') {
+        match pair.split_once('=') {
+            Some(("code", v)) => code = Some(v.to_string()),
+            Some(("state", v)) => state = Some(v.to_string()),
+            Some(("error", v)) => error = Some(v.to_string()),
+            _ => {}
         }
-        code.ok_or_else(|| "no authorization code in redirect".into())
+    }
+    if state.as_deref() != Some(expected_state) {
+        return Redirect::Refused("The sign-in reply did not belong to this attempt. Try again.".into());
+    }
+    if let Some(e) = error {
+        let e: String = e.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(40).collect();
+        return Redirect::Refused(format!("Sign-in was not completed ({e}). Try again."));
+    }
+    match code {
+        Some(c) if !c.is_empty() => Redirect::Code(c),
+        _ => Redirect::Refused("The sign-in reply carried no authorization code. Try again.".into()),
+    }
+}
+
+fn respond(stream: &mut std::net::TcpStream, status: &str, body: &str) {
+    use std::io::Write;
+    let _ = write!(
+        stream,
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+}
+
+/// Wait on the loopback for the browser's redirect, for at most `window`.
+///
+/// Non-blocking accept so the deadline is real (a closed browser tab used
+/// to leave sign-in pending forever, leaking a thread and a port). Each
+/// connection gets `read_timeout` to send its request line; one that sends
+/// nothing (a browser preconnect) or something else (a favicon) is dropped
+/// and the wait goes on, so it cannot hide the real redirect behind it.
+pub fn await_redirect(
+    listener: std::net::TcpListener,
+    expected_state: &str,
+    window: Duration,
+    read_timeout: Duration,
+) -> Result<String, String> {
+    use std::io::{BufRead, BufReader, ErrorKind, Read};
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + window;
+    loop {
+        if Instant::now() >= deadline {
+            return Err(SIGN_IN_TIMEOUT.into());
+        }
+        let mut stream = match listener.accept() {
+            Ok((s, _)) => s,
+            Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::Interrupted => {
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+            Err(e) => return Err(e.to_string()),
+        };
+        // An accepted socket inherits the listener's non-blocking mode on
+        // Windows; the read below must block (up to its timeout).
+        if stream.set_nonblocking(false).is_err() {
+            continue;
+        }
+        let _ = stream.set_read_timeout(Some(read_timeout));
+        let _ = stream.set_write_timeout(Some(read_timeout));
+        let Ok(reader) = stream.try_clone() else { continue };
+        let mut line = String::new();
+        if BufReader::new(reader.take(8192)).read_line(&mut line).is_err() {
+            continue; // said nothing in time: drop it, keep waiting
+        }
+        match read_redirect(&line, expected_state) {
+            Redirect::NotTheRedirect => respond(&mut stream, "404 Not Found", ""),
+            Redirect::Code(code) => {
+                respond(&mut stream, "200 OK", SIGNED_IN_PAGE);
+                return Ok(code);
+            }
+            Redirect::Refused(why) => {
+                respond(&mut stream, "200 OK", FAILED_PAGE);
+                return Err(why);
+            }
+        }
+    }
+}
+
+/// Runs the interactive flow: opens the system browser at the authorize URL,
+/// waits for the loopback redirect, exchanges the code.
+pub async fn sign_in_interactive(open_url: impl Fn(&str)) -> Result<TokenSet, String> {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    // Entra ID only allows arbitrary ports on "http://localhost" (RFC 8252
+    // loopback), NOT on the literal 127.0.0.1 - using the IP form fails with
+    // AADSTS50011 against the Azure CLI app registration. The socket still
+    // binds to 127.0.0.1; localhost resolves there for the browser redirect.
+    let redirect_uri = format!("http://localhost:{port}");
+    let (verifier, challenge) = pkce_pair();
+    let state = b64url(&rand::random::<[u8; 16]>());
+    open_url(&build_authorize_url(&challenge, &redirect_uri, &state));
+
+    let code = tokio::task::spawn_blocking(move || {
+        await_redirect(listener, &state, SIGN_IN_WINDOW, LOOPBACK_READ_TIMEOUT)
     })
     .await
     .map_err(|e| e.to_string())??;

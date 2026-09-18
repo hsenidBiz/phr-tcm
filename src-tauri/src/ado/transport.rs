@@ -60,7 +60,7 @@ pub const NET_GENERIC: &str =
 /// message text: that text is theirs to reword between versions, and a
 /// classifier that quietly stopped recognising timeouts would degrade to
 /// the generic advice with nothing failing to say so.
-pub(crate) fn network_error(e: &reqwest::Error) -> AdoError {
+pub fn network_error(e: &reqwest::Error) -> AdoError {
     AdoError::Network(
         if e.is_timeout() {
             NET_TIMEOUT
@@ -84,7 +84,7 @@ impl AdoClient {
     /// may reach it. Successful calls are `debug` (they are a firehose
     /// during a bulk create); anything that did not succeed is `warn`, so
     /// the useful lines still stand out at the default filter.
-    async fn send(
+    pub(crate) async fn send(
         &self,
         method: reqwest::Method,
         url: &str,

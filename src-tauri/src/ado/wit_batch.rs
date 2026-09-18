@@ -127,7 +127,17 @@ impl AdoClient {
                 })
             })
             .collect();
-        let data = self.post_json(url, &serde_json::Value::Array(body)).await?;
+        // Its own deadline: the server works through up to 200 creates
+        // before it answers, which can legitimately outlast HTTP_TIMEOUT.
+        let payload = serde_json::Value::Array(body);
+        let resp = self
+            .send(reqwest::Method::POST, &url, |r| {
+                r.header("Accept", "application/json")
+                    .json(&payload)
+                    .timeout(super::BATCH_TIMEOUT)
+            })
+            .await?;
+        let data = Self::handle_json(resp).await?;
         let items = data["value"].as_array().cloned().unwrap_or_default();
         if items.len() != reqs.len() {
             // A whole-batch refusal is a 200 carrying ONE error item, and

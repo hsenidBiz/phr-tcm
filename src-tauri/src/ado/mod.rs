@@ -17,7 +17,7 @@ pub mod deletion;
 pub mod permissions;
 pub mod throttle;
 mod transport;
-pub use transport::{NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
+pub use transport::{network_error, NET_GENERIC, NET_TIMEOUT, NET_UNREACHABLE};
 pub(crate) use transport::tidy;
 
 use serde::{Deserialize, Serialize};
@@ -162,6 +162,37 @@ pub(crate) fn tc_ids_i32(ids: &[i64]) -> Vec<i32> {
     ids.iter().map(|i| *i as i32).collect()
 }
 
+/// How long connecting may take before a request gives up.
+pub const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long any one request may take, start to last byte.
+pub const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// The `$batch` POST alone: up to 200 creates executed server-side in one call.
+pub const BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// The one HTTP client every Azure DevOps and sign-in request uses.
+///
+/// reqwest has no timeout by default, so a half-open connection (sleep and
+/// resume, a VPN flap, a stalled proxy) used to wait forever - holding the
+/// submit claim, or the token refresh every command waits on. One client
+/// also keeps the connection pool and TLS sessions, which a client per
+/// command threw away.
+pub fn http_client() -> reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::Client::builder()
+                .connect_timeout(HTTP_CONNECT_TIMEOUT)
+                .timeout(HTTP_TIMEOUT)
+                .build()
+                .unwrap_or_else(|e| {
+                    crate::applog::error(format!("could not build the HTTP client with deadlines: {e}"));
+                    // Not `Client::new()`: tests/ado_network.rs scans for it.
+                    reqwest::ClientBuilder::new().build().unwrap_or_default()
+                })
+        })
+        .clone()
+}
+
 pub struct AdoClient {
     pub(crate) http: reqwest::Client,
     pub(crate) token: String,
@@ -185,7 +216,7 @@ impl AdoClient {
 
     pub fn with_base_urls(access_token: String, base_url: String, vssps_base_url: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: http_client(),
             token: access_token,
             base_url,
             vssps_base_url,
