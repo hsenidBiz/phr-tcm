@@ -163,6 +163,22 @@ async fn a_sign_in_network_failure_names_no_url() {
     assert!(!err.contains("127.0.0.1") && !err.contains("http") && !err.contains("oauth2"), "{err}");
 }
 
+/// `AdoClient::with_base_urls` and sign-in's `post_token_endpoint` both pick
+/// their client off this: real Azure DevOps/Entra hosts get the shared,
+/// pooled `http_client()`; a `wiremock::MockServer` (always loopback) gets
+/// an unpooled one, so a pooled idle connection to one test's dead mock
+/// can never be handed to a different, still-running test.
+#[test]
+fn loopback_bases_are_told_apart_from_real_hosts() {
+    use v2_lib::ado::is_loopback_base;
+    assert!(is_loopback_base("http://127.0.0.1:4123"));
+    assert!(is_loopback_base("http://localhost:4123"));
+    assert!(is_loopback_base("http://[::1]:4123"));
+    assert!(!is_loopback_base("https://dev.azure.com"));
+    // A lookalike host must not be mistaken for the real loopback address.
+    assert!(!is_loopback_base("http://127.0.0.1.evil.example"));
+}
+
 /// A refused token request names the reason code, not the login URL that
 /// Entra puts in `error_uri`.
 #[tokio::test]

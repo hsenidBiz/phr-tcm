@@ -169,6 +169,15 @@ pub const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60)
 /// The `$batch` POST alone: up to 200 creates executed server-side in one call.
 pub const BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
+/// The deadline settings every ADO/sign-in HTTP client shares, so the
+/// pooled production client and the unpooled loopback-only one below
+/// cannot drift apart.
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .timeout(HTTP_TIMEOUT)
+}
+
 /// The one HTTP client every Azure DevOps and sign-in request uses.
 ///
 /// reqwest has no timeout by default, so a half-open connection (sleep and
@@ -180,9 +189,7 @@ pub fn http_client() -> reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
-                .connect_timeout(HTTP_CONNECT_TIMEOUT)
-                .timeout(HTTP_TIMEOUT)
+            client_builder()
                 .build()
                 .unwrap_or_else(|e| {
                     crate::applog::error(format!("could not build the HTTP client with deadlines: {e}"));
@@ -191,6 +198,48 @@ pub fn http_client() -> reqwest::Client {
                 })
         })
         .clone()
+}
+
+/// True when `url`'s host is loopback (127.0.0.1, localhost, ::1) - the
+/// only place a `wiremock::MockServer` ever listens. Parsed with the same
+/// `reqwest::Url` reqwest itself will connect with, so a lookalike host
+/// (`127.0.0.1.evil.example`) cannot be mistaken for the real thing.
+pub fn is_loopback_base(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        // IPv6 hosts come back bracketed ("[::1]"): strip them before
+        // comparing, rather than adding a second literal to keep in sync.
+        .is_some_and(|h| matches!(h.trim_start_matches('[').trim_end_matches(']'), "127.0.0.1" | "localhost" | "::1"))
+}
+
+/// A client for a loopback base URL: the same deadlines as `http_client()`,
+/// but no idle-connection pool.
+///
+/// `http_client()` is one process-wide, pooled client, and every test in a
+/// binary shares its keep-alive pool - while each test's `MockServer` shuts
+/// down at the end of that test. A pooled idle connection to a now-dead
+/// mock can be handed out to a different, still-running test, which then
+/// sees a phantom "connection to Azure DevOps failed". Real Azure DevOps
+/// and Entra hosts are never loopback, so this path is test-only.
+pub(crate) fn unpooled_loopback_client() -> reqwest::Client {
+    client_builder()
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap_or_else(|e| {
+            crate::applog::error(format!("could not build the loopback HTTP client: {e}"));
+            reqwest::ClientBuilder::new().build().unwrap_or_default()
+        })
+}
+
+/// The right client for a base URL: unpooled on loopback (see
+/// `unpooled_loopback_client`), the shared pooled client everywhere else.
+fn client_for(base_url: &str) -> reqwest::Client {
+    if is_loopback_base(base_url) {
+        unpooled_loopback_client()
+    } else {
+        http_client()
+    }
 }
 
 pub struct AdoClient {
@@ -216,7 +265,7 @@ impl AdoClient {
 
     pub fn with_base_urls(access_token: String, base_url: String, vssps_base_url: String) -> Self {
         Self {
-            http: http_client(),
+            http: client_for(&base_url),
             token: access_token,
             base_url,
             vssps_base_url,

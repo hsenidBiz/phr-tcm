@@ -124,7 +124,15 @@ fn sign_in_network_error(e: &reqwest::Error) -> String {
 }
 
 async fn post_token_endpoint(url: &str, params: &[(&str, String)]) -> Result<TokenResponse, String> {
-    let resp = crate::ado::http_client()
+    // Entra's real token endpoint is never loopback; only tests point this
+    // at a wiremock `MockServer`, so the same pooling hazard `ado/mod.rs`
+    // documents for `AdoClient` applies here too.
+    let client = if crate::ado::is_loopback_base(url) {
+        crate::ado::unpooled_loopback_client()
+    } else {
+        crate::ado::http_client()
+    };
+    let resp = client
         .post(url)
         .form(params)
         .send()
