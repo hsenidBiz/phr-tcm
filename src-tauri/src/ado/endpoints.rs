@@ -1476,43 +1476,6 @@ fn percent_encode_path(s: &str) -> String {
     out
 }
 
-/// The Steps XML to write, or `None` to leave the field out of the patch.
-///
-/// The problem this solves: `steps` on a loaded case is a LOSSY read.
-/// `parse_steps_xml` strips every tag, so a step whose action is
-/// `<b>Click Save</b><img src="...screenshot...">` comes back as the bare
-/// text `Click Save`. Rebuilding the field from that and PATCHing it - which
-/// is what every save used to do, unconditionally - deleted the formatting
-/// and the screenshot from Azure DevOps. Editing only the TITLE was enough
-/// to do it, and the save reported success.
-///
-/// The comparison is deliberately PARSED against PARSED. A case the user did
-/// not touch parses to exactly what it parsed to when it was loaded, so it
-/// compares equal and the field is omitted - the original XML stays in ADO,
-/// markup and all. Only a real edit to a step differs, and then the loss of
-/// markup in that one step is unavoidable: the editor is plain text, and the
-/// user is deliberately replacing what was there.
-///
-/// Without a baseline (an imported update, where the file genuinely supplies
-/// the steps) the field is written as before.
-/// The PATCH op(s) that write System.Tags on an EXISTING work item.
-///
-/// Azure DevOps treats the `add` op on this ONE field as a merge: the
-/// listed tags are appended and omitted ones stay put, so an update that
-/// dropped a tag silently kept it - both from an import file and from the
-/// editor's clear. Removal needs `replace`, but JSON Patch only replaces
-/// a path that exists, so the right op depends on what the work item
-/// currently holds:
-/// - had tags: one `replace` sets the exact final list (`""` clears);
-///   skipped entirely when nothing changed.
-/// - had none: there is nothing to remove - a plain `add` creates the
-///   field, and an empty desired list needs no op at all.
-/// - unknown (the caller could not read the current value): `add` then
-///   `replace` in the same document - the add guarantees the path exists,
-///   the replace makes the value exact. Only for a non-empty desired
-///   list: a blind clear could fail the WHOLE patch on a tagless item,
-///   and losing the title/steps update over tags that may not even exist
-///   is the worse trade.
 /// A date-time for a WIQL literal, from `YYYY-MM-DDTHH:MM:SS` optionally
 /// followed by `Z` or `.fff…Z` (what `Date.toISOString()` produces). Anything
 /// else is refused, never repaired: the value is interpolated into WIQL.
@@ -1558,6 +1521,24 @@ pub fn created_since_wiql(pbi_id: i32, since: &str) -> Option<String> {
     ))
 }
 
+/// The PATCH op(s) that write System.Tags on an EXISTING work item.
+///
+/// Azure DevOps treats the `add` op on this ONE field as a merge: the
+/// listed tags are appended and omitted ones stay put, so an update that
+/// dropped a tag silently kept it - both from an import file and from the
+/// editor's clear. Removal needs `replace`, but JSON Patch only replaces
+/// a path that exists, so the right op depends on what the work item
+/// currently holds:
+/// - had tags: one `replace` sets the exact final list (`""` clears);
+///   skipped entirely when nothing changed.
+/// - had none: there is nothing to remove - a plain `add` creates the
+///   field, and an empty desired list needs no op at all.
+/// - unknown (the caller could not read the current value): `add` then
+///   `replace` in the same document - the add guarantees the path exists,
+///   the replace makes the value exact. Only for a non-empty desired
+///   list: a blind clear could fail the WHOLE patch on a tagless item,
+///   and losing the title/steps update over tags that may not even exist
+///   is the worse trade.
 pub fn tags_write_ops(desired: &str, original: Option<&str>) -> Vec<serde_json::Value> {
     let desired = desired.trim();
     let op = |kind: &str| serde_json::json!({"op": kind, "path": "/fields/System.Tags", "value": desired});
@@ -1571,6 +1552,28 @@ pub fn tags_write_ops(desired: &str, original: Option<&str>) -> Vec<serde_json::
     }
 }
 
+/// The Steps XML to write, or `None` to leave the field out of the patch.
+///
+/// The problem this solves: `steps` on a loaded case is a LOSSY read.
+/// `parse_steps_xml` strips every tag, so a step whose action is
+/// `<b>Click Save</b><img src="...screenshot...">` comes back as the bare
+/// text `Click Save`. Rebuilding the field from that and PATCHing it - which
+/// is what every save used to do, unconditionally - deleted the formatting
+/// and the screenshot from Azure DevOps. Editing only the TITLE was enough
+/// to do it, and the save reported success.
+///
+/// The comparison is deliberately PARSED against PARSED. A case the user did
+/// not touch parses to exactly what it parsed to when it was loaded, so it
+/// compares equal and the field is omitted (or only its step types are
+/// repaired). A real edit is MERGED into the original (`merge_steps_xml`):
+/// only the steps that changed are rewritten, every other step keeps its
+/// markup and id, and Shared Steps references are kept.
+///
+/// Without a baseline (an imported create, or an update whose current XML
+/// could not be read) the field is built from the steps.
+///
+/// A shared step whose reference could not be read, with no original node
+/// to keep in its place, is refused: `ref="0"` names no work item.
 fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> Option<String> {
     // build_steps_xml(&[]) emits a single blank placeholder step, so writing
     // it would replace a real step list with one empty row. Nothing upstream
@@ -1590,7 +1593,15 @@ fn steps_patch(steps: &[crate::steps_xml::Step], original_xml: Option<&str>) -> 
             return crate::steps_xml::retype_steps_xml(xml, steps);
         }
     }
-    Some(crate::steps_xml::build_steps_xml(steps))
+    // A real edit: merge it in. With no original (or an empty or unreadable
+    // one) merge_steps_xml is the build.
+    let merged = crate::steps_xml::merge_steps_xml(original_xml.unwrap_or(""), steps);
+    if merged.is_none() {
+        crate::applog::warn(
+            "left the steps unchanged: a shared step's reference could not be read, and writing it would point at no work item",
+        );
+    }
+    merged
 }
 
 /// Text going into an HTML field value.

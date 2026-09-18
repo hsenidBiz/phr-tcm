@@ -360,3 +360,208 @@ fn shared_serialises_only_when_set() {
     let old: Step = serde_json::from_str("{\"action\":\"a\",\"expected\":\"b\"}").unwrap();
     assert_eq!(old, step("a", "b"));
 }
+
+// ------------------------------------------------------------ merge
+
+/// A merge whose every shared-step reference is writable.
+fn merge(original: &str, steps: &[Step]) -> String {
+    v2_lib::steps_xml::merge_steps_xml(original, steps).expect("every reference is writable")
+}
+
+/// A case Azure DevOps holds with formatting, a screenshot, out-of-order
+/// ids and a shared step - everything a rebuild used to destroy.
+const RICH: &str = concat!(
+    "<steps id=\"0\" last=\"9\">",
+    "<step id=\"7\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;",
+    "&lt;IMG src=\"http://ado/att/1.png\"&gt;&lt;/DIV&gt;</parameterizedString>",
+    "<parameterizedString isformatted=\"true\">Saved</parameterizedString><description/></step>",
+    "<step id=\"9\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait</parameterizedString>",
+    "<parameterizedString isformatted=\"true\"></parameterizedString></step>",
+    "<compref id=\"4\" ref=\"812\" />",
+    "<step id=\"3\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Check</parameterizedString>",
+    "<parameterizedString isformatted=\"true\">Done</parameterizedString></step>",
+    "</steps>"
+);
+
+const RICH_SAVE: &str = "<step id=\"7\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;&lt;IMG src=\"http://ado/att/1.png\"&gt;&lt;/DIV&gt;</parameterizedString><parameterizedString isformatted=\"true\">Saved</parameterizedString><description/></step>";
+const RICH_CHECK: &str = "<step id=\"3\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Check</parameterizedString><parameterizedString isformatted=\"true\">Done</parameterizedString></step>";
+const RICH_SHARED: &str = "<compref id=\"4\" ref=\"812\" />";
+
+#[test]
+fn editing_one_step_keeps_every_other_node_verbatim_and_every_id() {
+    use v2_lib::steps_xml::parse_step_ids;
+    let mut steps = parse_steps_xml(RICH);
+    steps[1].action = "Wait 5 seconds".into();
+    let merged = merge(RICH, &steps);
+    assert!(merged.contains(RICH_SAVE), "markup and screenshot survive: {merged}");
+    assert!(merged.contains(RICH_SHARED), "{merged}");
+    assert!(merged.contains(RICH_CHECK), "{merged}");
+    assert!(
+        merged.contains("<step id=\"9\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait 5 seconds</parameterizedString>"),
+        "the edited step keeps its id: {merged}"
+    );
+    assert!(merged.starts_with("<steps id=\"0\" last=\"9\">"), "{merged}");
+    assert_eq!(parse_steps_xml(&merged), steps);
+    assert_eq!(parse_step_ids(&merged), vec!["7", "9", "", "3"]);
+}
+
+#[test]
+fn an_inserted_step_gets_a_fresh_id_above_last() {
+    use v2_lib::steps_xml::parse_step_ids;
+    let mut steps = parse_steps_xml(RICH);
+    steps.insert(1, step("Enter the name", "Name shown"));
+    let merged = merge(RICH, &steps);
+    assert!(merged.contains("<step id=\"10\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Enter the name</parameterizedString>"), "{merged}");
+    assert!(merged.starts_with("<steps id=\"0\" last=\"10\">"), "{merged}");
+    assert!(merged.contains(RICH_SAVE) && merged.contains(RICH_CHECK) && merged.contains(RICH_SHARED));
+    assert_eq!(parse_step_ids(&merged), vec!["7", "10", "9", "", "3"]);
+    assert_eq!(parse_steps_xml(&merged), steps);
+}
+
+#[test]
+fn a_deleted_step_goes_and_its_id_is_not_reissued() {
+    let mut steps = parse_steps_xml(RICH);
+    steps.remove(1); // "Wait", id 9 - the highest id
+    let merged = merge(RICH, &steps);
+    assert!(!merged.contains("id=\"9\""), "{merged}");
+    assert!(merged.starts_with("<steps id=\"0\" last=\"9\">"), "last never goes down: {merged}");
+    steps.push(step("One more", ""));
+    let again = merge(RICH, &steps);
+    assert!(again.contains("<step id=\"10\""), "a new step never reuses 9: {again}");
+}
+
+#[test]
+fn reordering_moves_the_original_nodes() {
+    use v2_lib::steps_xml::parse_step_ids;
+    let old = parse_steps_xml(RICH);
+    let steps = vec![old[3].clone(), old[2].clone(), old[0].clone(), old[1].clone()];
+    let merged = merge(RICH, &steps);
+    assert!(merged.starts_with(&format!("<steps id=\"0\" last=\"9\">{RICH_CHECK}{RICH_SHARED}{RICH_SAVE}")), "{merged}");
+    assert_eq!(parse_step_ids(&merged), vec!["3", "", "7", "9"]);
+}
+
+#[test]
+fn a_shared_step_is_kept_moved_removed_or_added_by_reference() {
+    let old = parse_steps_xml(RICH);
+    // Moved to the front, and a local step edited so this is not a no-op.
+    let mut moved = vec![old[2].clone(), old[0].clone(), old[1].clone(), old[3].clone()];
+    moved[3].expected = "All done".into();
+    let merged = merge(RICH, &moved);
+    assert!(merged.starts_with(&format!("<steps id=\"0\" last=\"9\">{RICH_SHARED}{RICH_SAVE}")), "{merged}");
+
+    // Removed.
+    let without: Vec<Step> = old.iter().filter(|s| s.shared.is_none()).cloned().collect();
+    let merged = merge(RICH, &without);
+    assert!(!merged.contains("compref"), "{merged}");
+    assert_eq!(parse_steps_xml(&merged), without);
+
+    // A reference that was not in the original gets a fresh compref.
+    let mut added = old.clone();
+    added.push(shared(900));
+    let merged = merge(RICH, &added);
+    assert!(merged.contains(RICH_SHARED), "{merged}");
+    assert!(merged.contains("<compref id=\"10\" ref=\"900\" />"), "{merged}");
+    assert_eq!(parse_steps_xml(&merged), added);
+}
+
+/// The same Shared Steps inserted twice: each reference keeps its own
+/// original node, first unused first.
+#[test]
+fn repeated_references_each_keep_their_own_node() {
+    let xml = concat!(
+        "<steps id=\"0\" last=\"5\">",
+        "<compref id=\"4\" ref=\"812\" />",
+        "<step id=\"2\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait</parameterizedString><parameterizedString isformatted=\"true\"></parameterizedString></step>",
+        "<compref id=\"5\" ref=\"812\" />",
+        "</steps>"
+    );
+    let steps = vec![shared(812), step("Wait longer", ""), shared(812)];
+    let merged = merge(xml, &steps);
+    let first = merged.find("<compref id=\"4\"").expect("first kept");
+    let second = merged.find("<compref id=\"5\"").expect("second kept");
+    assert!(first < second, "{merged}");
+}
+
+/// A compref's nested child steps travel with it, byte for byte.
+#[test]
+fn a_compref_with_children_is_kept_whole() {
+    let mut steps = parse_steps_xml(WITH_SHARED);
+    steps[0].action = "Open the app".into();
+    let merged = merge(WITH_SHARED, &steps);
+    assert!(merged.contains("<compref id=\"5\" ref=\"901\"><step id=\"6\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Inner</parameterizedString>"), "{merged}");
+    assert!(merged.contains("<step id=\"2\" type=\"ValidateStep\"><parameterizedString isformatted=\"true\">Open the app</parameterizedString>"), "{merged}");
+}
+
+/// An unchanged step keeps its markup even when its type is wrong: only
+/// the attribute changes, as in retype_steps_xml.
+#[test]
+fn an_unchanged_step_with_a_wrong_type_is_retyped_in_place() {
+    let mistyped = RICH.replacen("<step id=\"7\" type=\"ValidateStep\">", "<step id=\"7\" type=\"ActionStep\">", 1);
+    let mut steps = parse_steps_xml(&mistyped);
+    steps[3].expected = "All done".into();
+    let merged = merge(&mistyped, &steps);
+    assert!(merged.contains(RICH_SAVE), "retyped, markup intact: {merged}");
+}
+
+#[test]
+fn merging_the_parsed_steps_back_changes_nothing_they_say() {
+    for xml in [RICH, WITH_SHARED] {
+        let parsed = parse_steps_xml(xml);
+        assert_eq!(parse_steps_xml(&merge(xml, &parsed)), parsed);
+    }
+}
+
+#[test]
+fn new_text_in_a_merge_is_escaped_for_both_layers() {
+    let mut steps = parse_steps_xml(RICH);
+    steps[1].action = "Run WHERE id = <cycleId>".into();
+    let merged = merge(RICH, &steps);
+    assert!(merged.contains("Run WHERE id = &amp;lt;cycleId&amp;gt;"), "{merged}");
+}
+
+#[test]
+fn with_no_usable_original_merge_is_a_build() {
+    let steps = vec![step("Open", "Shown"), shared(812)];
+    for original in ["", "   ", "<steps><step", "<steps id=\"0\" last=\"1\"/>"] {
+        assert_eq!(merge(original, &steps), build_steps_xml(&steps), "{original:?}");
+    }
+}
+
+/// A compref whose `ref` cannot be read parses as `shared: Some(0)`, and
+/// `ref="0"` must never reach Azure DevOps. Such a reference is the
+/// original node, verbatim, matched in order among the original's
+/// unreadable comprefs; when no original node can supply it, there is
+/// nothing safe to write and the merge refuses.
+#[test]
+fn an_unreadable_shared_reference_is_kept_verbatim_or_refused() {
+    use v2_lib::steps_xml::merge_steps_xml;
+    let xml = concat!(
+        "<steps id=\"0\" last=\"4\">",
+        "<compref id=\"2\" ref=\"abc\" />",
+        "<step id=\"3\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait</parameterizedString><parameterizedString isformatted=\"true\"></parameterizedString></step>",
+        "<compref id=\"4\" ref=\"\"><step id=\"5\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Inner</parameterizedString><parameterizedString isformatted=\"true\"></parameterizedString></step></compref>",
+        "</steps>"
+    );
+    let mut steps = parse_steps_xml(xml);
+    assert_eq!(steps, vec![shared(0), step("Wait", ""), shared(0)]);
+
+    // Edited, and the local step moved last: both originals kept, in order.
+    steps[1].action = "Wait longer".into();
+    let moved = vec![steps[0].clone(), steps[2].clone(), steps[1].clone()];
+    let merged = merge(xml, &moved);
+    let first = merged.find("<compref id=\"2\" ref=\"abc\" />").expect("first kept verbatim");
+    let second = merged.find("<compref id=\"4\" ref=\"\"><step id=\"5\"").expect("second kept whole");
+    assert!(first < second, "{merged}");
+    assert!(!merged.contains("ref=\"0\""), "{merged}");
+    assert!(merged.contains("<step id=\"3\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait longer"), "{merged}");
+
+    // One more unreadable reference than the original can supply: refused.
+    let mut extra = moved.clone();
+    extra.push(shared(0));
+    assert_eq!(merge_steps_xml(xml, &extra), None);
+
+    // No usable original to supply it: refused, never built as ref="0".
+    for original in ["", "<steps><step"] {
+        assert_eq!(merge_steps_xml(original, &[step("Open", ""), shared(0)]), None, "{original:?}");
+    }
+}

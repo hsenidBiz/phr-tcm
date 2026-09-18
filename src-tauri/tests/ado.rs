@@ -919,6 +919,49 @@ async fn an_edited_step_is_still_written() {
     assert!(body.contains("Click Save twice"));
 }
 
+/// The same case with a shared step after the rich one.
+const RICH_STEPS_SHARED: &str = "<steps id=\"0\" last=\"4\"><step id=\"2\" type=\"ValidateStep\">\
+<parameterizedString isformatted=\"true\">&lt;DIV&gt;&lt;B&gt;Click Save&lt;/B&gt;\
+&lt;IMG src=\"http://ado/att/1.png\"&gt;&lt;/DIV&gt;</parameterizedString>\
+<parameterizedString isformatted=\"true\">Saved</parameterizedString></step>\
+<compref id=\"3\" ref=\"812\" />\
+<step id=\"4\" type=\"ActionStep\"><parameterizedString isformatted=\"true\">Wait</parameterizedString>\
+<parameterizedString isformatted=\"true\"></parameterizedString></step></steps>";
+
+/// D1: editing one step used to rebuild the whole field - dropping the
+/// shared step and every other step's formatting. The save now merges.
+#[tokio::test]
+async fn editing_one_step_keeps_the_shared_step_and_the_other_steps_markup() {
+    let mut tc = case_from(RICH_STEPS_SHARED, "T");
+    assert_eq!(tc.steps[1].shared, Some(812));
+    tc.steps[2].action = "Wait 5 seconds".into();
+    let body = captured_patch(&tc, Some(RICH_STEPS_SHARED)).await;
+    assert!(body.contains("Microsoft.VSTS.TCM.Steps"), "{body}");
+    // The XML travels inside a JSON string, so its quotes arrive escaped.
+    assert!(body.contains("<compref id=\\\"3\\\" ref=\\\"812\\\" />"), "the shared step stays:\n{body}");
+    assert!(body.contains("IMG src="), "the untouched step keeps its screenshot:\n{body}");
+    assert!(body.contains("Wait 5 seconds"), "{body}");
+    assert!(body.contains("<step id=\\\"4\\\""), "the edited step keeps its id:\n{body}");
+}
+
+/// A shared step whose reference could not be read has no id to write:
+/// `ref="0"` would point Azure DevOps at no work item. With no original
+/// node to keep in its place, the steps are left out of the patch - the
+/// rest of the save still goes through.
+#[tokio::test]
+async fn a_shared_step_with_no_readable_reference_is_never_written_as_ref_0() {
+    let mut tc = case_from(RICH_STEPS, "T");
+    tc.steps.push(v2_lib::steps_xml::Step { shared: Some(0), ..Default::default() });
+    for baseline in [Some(RICH_STEPS), None] {
+        let body = captured_patch(&tc, baseline).await;
+        assert!(body.contains("\"T\""), "the title is still written:\n{body}");
+        assert!(
+            !body.contains("Microsoft.VSTS.TCM.Steps"),
+            "no Steps without a readable reference:\n{body}"
+        );
+    }
+}
+
 /// An imported update has no baseline - the file supplies the steps and is
 /// meant to write them, which is the queue submit path.
 #[tokio::test]
