@@ -934,3 +934,57 @@ fn insert_cases_keeps_a_shared_step_reference() {
     assert_eq!(out[0].steps.len(), 1);
     assert_eq!(out[0].steps[0].shared, Some(999));
 }
+
+// ---- review round 2: one step reader, shared by the importer and insert_cases ----
+
+/// `case_steps_of` used to be a second copy of the importer's step loop, and
+/// it had already drifted: an invalid `shared` next to a real `action` was
+/// folded to a plain action step here, while a real import warns and drops
+/// the whole step (an invalid Shared Steps reference is a hard failure, not
+/// a fallback to the text alongside it). Both paths now go through one
+/// reader, so the same steps JSON produces the same steps either way.
+#[test]
+fn insert_cases_reads_steps_exactly_as_the_importer_does() {
+    let steps_json = serde_json::json!([
+        { "shared": 0, "action": "Click X" },
+        { "step": "Type the password.", "result": "It is masked." },
+        { "action": "", "expected": "" },
+        { "shared": 42 },
+    ]);
+
+    let file = serde_json::json!({ "test_cases": [
+        { "title": "T", "steps": steps_json.clone() }
+    ]})
+    .to_string();
+    let imported = v2_lib::import_parser::parse_json_text(&file).unwrap();
+    let imported_steps = imported.cases[0].steps.clone();
+
+    let ops = insert_one(serde_json::json!({ "title": "T", "steps": steps_json })).unwrap();
+    let (out, _) = apply(vec![], &ops);
+
+    assert_eq!(
+        out[0].steps, imported_steps,
+        "insert_cases must read steps exactly as a real import does"
+    );
+    // Sanity: the equality above is not vacuous - the invalid-shared step
+    // really was dropped and the "step"/"result" aliases really were read.
+    assert_eq!(imported_steps.len(), 2, "{imported_steps:?}");
+    assert_eq!(imported_steps[0].action, "Type the password.");
+    assert_eq!(imported_steps[0].expected, "It is masked.");
+    assert_eq!(imported_steps[1].shared, Some(42));
+}
+
+/// The blank-step "dropped" echo used to test `sv["action"]` directly, so a
+/// step given under the `"step"` alias was reported dropped even though
+/// `insert_cases` kept it.
+#[test]
+fn insert_cases_does_not_echo_a_dropped_message_for_an_aliased_step() {
+    let (ops, ignored) = parse_ops_full(&serde_json::json!([{ "op": "insert_cases", "cases": [{
+        "title": "T",
+        "steps": [{ "step": "Click X", "result": "Y" }]
+    }] }]))
+    .unwrap();
+    let (out, _) = apply(vec![], &ops);
+    assert_eq!(out[0].steps.len(), 1);
+    assert!(!ignored.iter().any(|l| l.contains("has no action")), "{ignored:?}");
+}

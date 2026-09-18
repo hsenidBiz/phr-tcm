@@ -202,51 +202,124 @@ pub(crate) fn read_tags(v: &serde_json::Value) -> String {
     }
 }
 
-/// One case's `steps` list, read the way the importer reads it: `action`/
-/// `step`, `expected`/`expected_result`/`result`, and `{"shared": id}` for a
-/// Shared Steps reference (an id the importer would refuse - `0`, `-5`,
-/// non-numeric - drops that step, same as a blank action). Line breaks
-/// inside a step are flattened, as on import. Used by `insert_cases` so an
-/// AI-inserted case's steps survive the same shapes a real import accepts,
-/// instead of a copy of the reader that quietly falls out of step with it.
+/// What reading one step object (or string) produced, the way the importer
+/// reads it - see `read_step`.
+struct StepRead {
+    /// The step to keep; `None` when the importer would drop it entirely
+    /// (blank, or an unreadable `shared` reference - the latter is a hard
+    /// failure, never a fallback to whatever `action`/`expected` sat next
+    /// to it).
+    step: Option<Step>,
+    /// Whether flattening changed `action` or `expected` - the case-level
+    /// "spanned several lines" warning is one line for the whole case, so
+    /// callers OR this across every step rather than reporting it here.
+    wrapped: bool,
+    /// Phrased as "step N: ..." with no case-specific prefix, so a caller
+    /// with a `label`/`title` to prepend can build the same text
+    /// `parse_json_text` always has, and a caller with no warning channel
+    /// (`case_steps_of`) can simply discard them.
+    warnings: Vec<String>,
+}
+
+/// Read one step - object or bare string - exactly as the importer reads
+/// it: `action`/`step`, `expected`/`expected_result`/`result`, and
+/// `{"shared": id}` for a Shared Steps reference, validated the same way a
+/// case id is. `n` is the step's 1-based position, used only to phrase
+/// warnings.
+///
+/// The single definition both `parse_json_text` and `case_steps_of` call -
+/// two copies of this already drifted once (an invalid `shared` next to a
+/// real `action` was folded to a plain action step in one of them, where a
+/// real import drops the whole step), and a second copy is how that
+/// happens again.
+fn read_step(rs: &serde_json::Value, n: usize) -> StepRead {
+    let (action, expected, shared) = match rs {
+        serde_json::Value::String(s) => (s.trim().to_string(), String::new(), None),
+        serde_json::Value::Object(_) => {
+            let action = json_value(rs, &STEP_ACTION_KEYS)
+                .map(value_to_string)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let expected = json_value(rs, &STEP_EXPECTED_KEYS)
+                .map(value_to_string)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            // A Shared Steps reference: the id of that work item, read with
+            // the same rule as a case id - an id that is not a real work
+            // item id is refused, never rounded.
+            let shared = json_value(rs, &["shared"]).map(|v| work_item_id(value_to_string(v).trim()));
+            (action, expected, shared)
+        }
+        _ => {
+            return StepRead {
+                step: None,
+                wrapped: false,
+                warnings: vec![format!("step {n}: expected an object or string - step skipped.")],
+            };
+        }
+    };
+    if let Some(shared_id) = shared {
+        return match shared_id {
+            None => StepRead {
+                step: None,
+                wrapped: false,
+                warnings: vec![format!(
+                    "step {n}: 'shared' must be the id of a Shared Steps work item - step skipped."
+                )],
+            },
+            Some(id) => {
+                let mut warnings = vec![];
+                if !action.is_empty() || !expected.is_empty() {
+                    warnings.push(format!(
+                        "step {n}: a shared step's 'action' and 'expected' are ignored - its steps live in Shared Steps #{id}."
+                    ));
+                }
+                StepRead {
+                    step: Some(Step { shared: Some(id), ..Default::default() }),
+                    wrapped: false,
+                    warnings,
+                }
+            }
+        };
+    }
+    if action.is_empty() {
+        let warnings = if !expected.is_empty() {
+            vec![format!("step {n}: has an expected result but no action - step skipped.")]
+        } else {
+            vec![]
+        };
+        return StepRead { step: None, wrapped: false, warnings };
+    }
+    let (action, action_wrapped) = flatten_step_text(&action);
+    let (expected, expected_wrapped) = flatten_step_text(&expected);
+    StepRead {
+        step: Some(Step { action, expected, shared: None }),
+        wrapped: action_wrapped || expected_wrapped,
+        warnings: vec![],
+    }
+}
+
+/// One case's `steps` list, read the way the importer reads it - through
+/// `read_step`, the same reader `parse_json_text` uses, so an AI-inserted
+/// case's steps survive the same shapes a real import accepts. Warnings and
+/// the "wrapped" flag are discarded: `insert_cases` has no per-case warnings
+/// channel, only the report's `ignored` list, which is built separately.
 pub(crate) fn case_steps_of(v: &serde_json::Value) -> Vec<Step> {
     let raw_steps = match v.get("steps") {
         Some(serde_json::Value::Array(list)) => list.clone(),
         _ => vec![],
     };
-    let mut steps = vec![];
-    for rs in &raw_steps {
-        let (action, expected, shared) = match rs {
-            serde_json::Value::String(s) => (s.trim().to_string(), String::new(), None),
-            serde_json::Value::Object(_) => {
-                let action = json_value(rs, &STEP_ACTION_KEYS)
-                    .map(value_to_string)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                let expected = json_value(rs, &STEP_EXPECTED_KEYS)
-                    .map(value_to_string)
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                let shared = json_value(rs, &["shared"])
-                    .and_then(|raw| work_item_id(value_to_string(raw).trim()));
-                (action, expected, shared)
-            }
-            _ => continue,
-        };
-        if let Some(id) = shared {
-            steps.push(Step { shared: Some(id), ..Default::default() });
-            continue;
-        }
-        if action.is_empty() {
-            continue;
-        }
-        let (action, _) = flatten_step_text(&action);
-        let (expected, _) = flatten_step_text(&expected);
-        steps.push(Step { action, expected, shared: None });
-    }
-    steps
+    raw_steps.iter().enumerate().filter_map(|(j, rs)| read_step(rs, j + 1).step).collect()
+}
+
+/// Whether `case_steps_of` would keep this one step object - what
+/// `insert_cases`'s "dropped" echo needs, so it reports a step dropped only
+/// when the shared reader actually dropped it (not a second, looser guess
+/// at the same question).
+pub(crate) fn step_is_kept(rs: &serde_json::Value) -> bool {
+    read_step(rs, 0).step.is_some()
 }
 
 /// Flatten a step's internal line breaks, reporting whether any were there.
@@ -666,70 +739,16 @@ pub fn parse_json_text(content: &str) -> Result<ParsedFile, String> {
         let mut steps = vec![];
         let mut wrapped_steps = false;
         for (j, rs) in raw_steps.iter().enumerate() {
-            let (action, expected, shared) = match rs {
-                serde_json::Value::String(s) => (s.trim().to_string(), String::new(), None),
-                serde_json::Value::Object(_) => {
-                    let action = json_value(rs, &STEP_ACTION_KEYS)
-                        .map(value_to_string)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-                    let expected = json_value(rs, &STEP_EXPECTED_KEYS)
-                        .map(value_to_string)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-                    // A Shared Steps reference: the id of that work item,
-                    // read with the same rule as a case id - an id that is
-                    // not a real work item id is refused, never rounded.
-                    let shared = match json_value(rs, &["shared"]) {
-                        None => None,
-                        Some(v) => match work_item_id(value_to_string(v).trim()) {
-                            Some(id) => Some(id),
-                            None => {
-                                warnings.push(format!(
-                                    "{label} ('{title}') step {}: 'shared' must be the id of a Shared Steps work item - step skipped.",
-                                    j + 1
-                                ));
-                                continue;
-                            }
-                        },
-                    };
-                    (action, expected, shared)
-                }
-                _ => {
-                    warnings.push(format!(
-                        "{label} ('{title}') step {}: expected an object or string - step skipped.",
-                        j + 1
-                    ));
-                    continue;
-                }
-            };
-            if let Some(id) = shared {
-                if !action.is_empty() || !expected.is_empty() {
-                    warnings.push(format!(
-                        "{label} ('{title}') step {}: a shared step's 'action' and 'expected' are ignored - its steps live in Shared Steps #{id}.",
-                        j + 1
-                    ));
-                }
-                steps.push(Step { shared: Some(id), ..Default::default() });
-                continue;
+            let read = read_step(rs, j + 1);
+            for w in read.warnings {
+                warnings.push(format!("{label} ('{title}') {w}"));
             }
-            if action.is_empty() {
-                if !expected.is_empty() {
-                    warnings.push(format!(
-                        "{label} ('{title}') step {}: has an expected result but no action - step skipped.",
-                        j + 1
-                    ));
-                }
-                continue;
-            }
-            let (action, action_wrapped) = flatten_step_text(&action);
-            let (expected, expected_wrapped) = flatten_step_text(&expected);
-            if action_wrapped || expected_wrapped {
+            if read.wrapped {
                 wrapped_steps = true;
             }
-            steps.push(Step { action, expected, shared: None });
+            if let Some(step) = read.step {
+                steps.push(step);
+            }
         }
 
         if steps.is_empty() {

@@ -358,9 +358,13 @@ pub fn parse_ops_full(
                         ));
                     }
                     for (k, sv) in rv["steps"].as_array().into_iter().flatten().enumerate() {
-                        let blank = sv["action"].as_str().map_or(true, |a| a.trim().is_empty())
-                            && sv.get("shared").map_or(true, serde_json::Value::is_null);
-                        if blank {
+                        // What the reader actually kept, not a second,
+                        // looser guess at the same question - a step given
+                        // under an alias (`"step"`, `"result"`) or as a
+                        // valid `{"shared": id}` is not blank even though
+                        // it has no `action`/`shared` key by those exact
+                        // names.
+                        if !crate::import_parser::step_is_kept(sv) {
                             ignored.push(format!(
                                 "{label}: cases[{j}] step {} has no action - dropped, as the importer would.",
                                 k + 1
