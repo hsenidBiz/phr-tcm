@@ -317,7 +317,9 @@ fn no_module_keeps_a_private_cache_map() {
 
 /// A sign-in whose account cannot be named is not provably the owner, so
 /// it is treated like a different account: nothing of the previous one's
-/// is served to it.
+/// is served to it - and, symmetrically, nothing IT cached is later handed
+/// to a named account either, the same way two different named accounts
+/// never share.
 #[test]
 fn an_unnamed_account_does_not_inherit_the_cache() {
     let dir = temp_dir("claim-none");
@@ -331,10 +333,16 @@ fn an_unnamed_account_does_not_inherit_the_cache() {
     assert!(store.session_fresh::<u8>("tree", Duration::from_secs(600)).is_none());
     assert!(Store::open(Some(&dir)).get::<Vec<String>>("tags:acme/Web").is_none(), "wiped on disk too");
 
-    // The wiped cache has no owner, so the next named sign-in adopts it.
+    // A second unnamed sign-in is still not provably anyone - it wipes too.
+    store.put("still-unnamed", &1u8);
+    store.claim_for(None);
+    assert!(store.get::<u8>("still-unnamed").is_none(), "a second unnamed sign-in must wipe as well");
+
+    // A named sign-in afterwards must NOT adopt the unnamed cache as if it
+    // already belonged to that person.
     store.put("k", &1u8);
     store.claim_for(Some("first@example.com"));
-    assert_eq!(store.get::<u8>("k"), Some(1));
+    assert!(store.get::<u8>("k").is_none(), "an unnamed account's cache must not be inherited by a named one");
 }
 
 /// A late background refresh used to `put` a list that lacked the tags an

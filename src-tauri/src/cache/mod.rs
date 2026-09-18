@@ -63,6 +63,14 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Marks the cache as belonging to a sign-in that could not name its
+/// account. `owner_tag` always returns exactly 8 lowercase hex digits
+/// (`{h:08x}` of a `u32`); this is 7 characters and not hex-only, so no
+/// real account can ever collide with it. Recorded (not left as `None`)
+/// so a later NAMED sign-in takes the different-owner branch and wipes,
+/// rather than reading `None` as "unowned, adopt me".
+const UNNAMED_OWNER: &str = "unnamed";
+
 /// FNV-1a: the identity check never needs the address itself on disk.
 /// Collisions only cost a needless wipe.
 fn owner_tag(account: &str) -> String {
@@ -213,16 +221,21 @@ impl Store {
     /// with this guard, carrying migrated data) is adopted as is. `None` -
     /// an account the sign-in could not name - is not provably the owner,
     /// so it is treated like a different account: everything is dropped and
-    /// the cache is left unowned for the next named sign-in to adopt.
+    /// the cache is marked `UNNAMED_OWNER`, never left plain unowned - an
+    /// unowned cache is adopted as is by the next named sign-in, and an
+    /// unnamed one must not be mistaken for that.
     pub fn claim_for(&self, account: Option<&str>) {
         let mut inner = self.lock();
         let Some(account) = account else {
-            if inner.disk.owner.is_none() && inner.disk.entries.is_empty() && inner.session.is_empty() {
+            if inner.disk.owner.as_deref() == Some(UNNAMED_OWNER)
+                && inner.disk.entries.is_empty()
+                && inner.session.is_empty()
+            {
                 return;
             }
             inner.disk.entries.clear();
             inner.session.clear();
-            inner.disk.owner = None;
+            inner.disk.owner = Some(UNNAMED_OWNER.to_string());
             self.persist(&inner.disk);
             return;
         };
