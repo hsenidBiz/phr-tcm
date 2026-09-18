@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.14",
+    date: "2026-09-18",
+    items: [
+      "Fixed: the AI tools that rewrite a test case file (transform, optimize in place, merge) dropped the file's specs list and its whole-set comment. They now keep everything in the file except the cases they change, a merged file names every document its slices named, and the intake plan tells the assistant to list the specs.",
+    ],
+  },
+  {
     version: "1.25.13",
     date: "2026-09-18",
     items: [
