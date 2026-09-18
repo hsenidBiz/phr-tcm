@@ -54,8 +54,12 @@
       if (box.dataset.wired) return;
       box.dataset.wired = '1';
       wire(box, document.getElementById(box.dataset.status), function (text) {
-        var t = identities().cases[Number(box.dataset.case)] || {};
-        return { token: NOTE_TOKEN, kind: 'case', path: t.path, id: t.id, title: t.title, text: text };
+        var data = identities();
+        var t = data.cases[Number(box.dataset.case)] || {};
+        return {
+          token: NOTE_TOKEN, kind: 'case', path: t.path, id: t.id, title: t.title,
+          key: t.key || '', pbi_id: data.pbi, text: text
+        };
       });
     });
 

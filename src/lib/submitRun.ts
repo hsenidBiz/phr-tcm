@@ -19,8 +19,11 @@
  */
 
 import type { TestCase } from "../bindings";
+import type { WatchedFile } from "./fileSync";
 
 export type SubmitPhase = {
+  /** Which submit this is. Only the run that set the phase may clear it. */
+  run: number;
   org: string;
   pbiId: number;
   done: number;
@@ -30,6 +33,7 @@ export type SubmitPhase = {
 } | null;
 
 let phase: SubmitPhase = null;
+let nextRun = 1;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -47,9 +51,16 @@ export function submitPhaseSnapshot(): SubmitPhase {
   return phase;
 }
 
-export function submitStarted(org: string, pbiId: number, total: number): void {
-  phase = { org, pbiId, done: 0, total, title: "" };
+/** Start showing a submit and return its run id - or null when a submit is
+ * already running. Rust takes one at a time and refuses the second, so a
+ * second start used to overwrite the first's progress and then, when Rust
+ * refused, clear it while the first was still uploading. */
+export function submitStarted(org: string, pbiId: number, total: number): number | null {
+  if (phase) return null;
+  const run = nextRun++;
+  phase = { run, org, pbiId, done: 0, total, title: "" };
   emit();
+  return run;
 }
 
 export function submitProgressed(done: number, total: number, title: string): void {
@@ -58,18 +69,25 @@ export function submitProgressed(done: number, total: number, title: string): vo
   emit();
 }
 
-export function submitFinished(): void {
+/** Clear the phase - only if it is still this run's. */
+export function submitFinished(run: number): void {
+  if (!phase || phase.run !== run) return;
   phase = null;
   emit();
 }
 
 /** The mounted queue's own state setter, so a finish that lands while the
  * screen is up flows through React state exactly as it always has. Keyed
- * by scope: a submit for PBI 42 must never write PBI 7's queue. */
+ * by scope: a submit for PBI 42 must never write PBI 7's queue.
+ *
+ * `patchWatch` is the mounted screen's own watch-list update, for the same
+ * reason: the mount that STARTED a submit may be gone by the time it
+ * finishes, and its callback would update a screen nobody is looking at. */
 type QueueWriter = {
   org: string;
   pbiId: number;
   setQueue: (updater: (q: TestCase[]) => TestCase[]) => void;
+  patchWatch?: (path: string, fields: Partial<WatchedFile>) => void;
 };
 
 let writer: QueueWriter | null = null;

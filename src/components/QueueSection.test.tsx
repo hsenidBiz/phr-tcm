@@ -1,7 +1,8 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
+import { emit } from "@tauri-apps/api/event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
@@ -274,7 +275,7 @@ test("removing a row closes any open editor (indices shift)", async () => {
 test("a fresh mount shows a submit already in flight", async () => {
   const { submitStarted, submitProgressed, submitFinished } = await import("../lib/submitRun");
   baseMocks();
-  submitStarted("acme", 42, 10);
+  const run = submitStarted("acme", 42, 10)!;
   submitProgressed(3, 10, "Login works");
   try {
     renderQueue([makeCase()]);
@@ -282,7 +283,7 @@ test("a fresh mount shows a submit already in flight", async () => {
     expect(bar).toHaveAttribute("aria-valuenow", "3");
     expect(screen.getByText("3 / 10")).toBeInTheDocument();
   } finally {
-    submitFinished();
+    submitFinished(run);
   }
 });
 
@@ -298,7 +299,7 @@ test("a fresh mount shows a submit already in flight", async () => {
 test("an upload in flight shows the sweeping bar first, then the count, and no Stop", async () => {
   const { submitStarted, submitProgressed, submitFinished } = await import("../lib/submitRun");
   baseMocks();
-  submitStarted("acme", 42, 10);
+  const run = submitStarted("acme", 42, 10)!;
   try {
     renderQueue([makeCase()]);
     // Before the first batch answers: the suite is being resolved and the
@@ -316,7 +317,7 @@ test("an upload in flight shows the sweeping bar first, then the count, and no S
     expect(filled).toHaveAttribute("aria-valuenow", "3");
     expect(filled).toHaveAttribute("aria-valuemax", "10");
   } finally {
-    submitFinished();
+    submitFinished(run);
   }
 });
 
@@ -325,13 +326,13 @@ test("an upload in flight shows the sweeping bar first, then the count, and no S
 test("another PBI's submit does not show here", async () => {
   const { submitStarted, submitFinished } = await import("../lib/submitRun");
   baseMocks();
-  submitStarted("acme", 7, 5);
+  const run = submitStarted("acme", 7, 5)!;
   try {
     renderQueue([makeCase()]);
     await screen.findByText("Login works");
     expect(screen.queryByText(/Processing/)).not.toBeInTheDocument();
   } finally {
-    submitFinished();
+    submitFinished(run);
   }
 });
 
@@ -1156,9 +1157,11 @@ test("a floating copy of the main button appears once the real one scrolls away"
   expect(floating).toHaveTextContent("Review 2 test cases");
   expect(floating).toHaveAttribute("aria-hidden");
 
-  // It does exactly what the real button does.
+  // It does exactly what the real button does: the same review, with the
+  // PBI stage armed and the duplicate check already run.
   fireEvent.click(floating.querySelector("button")!);
-  expect(await screen.findByRole("button", { name: /Confirm & create 2/ })).toBeInTheDocument();
+  expect(await screen.findByText(/Check the highlighted PBI/)).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /Yes — create 2/ })).toBeInTheDocument();
 });
 
 test("the floating copy stands down when the real button is in view", async () => {
@@ -1657,4 +1660,164 @@ test("cancelling the release confirmation leaves the hold in place", () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).not.toBeNull();
   expect(screen.getByRole("button", { name: "Release" })).toBeInTheDocument();
+});
+
+/// Review finding: the X on one row only filtered the queue, while bulk
+/// remove wrote the file back. The next outside edit of that file then
+/// saw the case in both snapshots, not in the queue, and put it back.
+test("removing one row writes the owning file back, so the case cannot return", async () => {
+  const a = makeCase({ title: "From file A" });
+  const b = makeCase({ title: "Also from file A" });
+  const saved: Array<{ path: string; titles: string[] }> = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "save_draft_cases") {
+      const p = args as SentEdits;
+      saved.push({ path: p.path, titles: keptTitles(p) });
+      return "stamp-2";
+    }
+    return undefined;
+  });
+  const patched: Array<{ path: string; stamp?: string }> = [];
+  renderQueue([a, b], {
+    watches: [{ path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [a, b] }],
+    onWatchPatched: (path, fields) => patched.push({ path, stamp: fields.stamp }),
+  });
+
+  fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+
+  expect(screen.queryByText("From file A")).not.toBeInTheDocument();
+  await waitFor(() => expect(saved).toEqual([{ path: "C:/drafts/a.json", titles: ["Also from file A"] }]));
+  await waitFor(() => expect(patched).toEqual([{ path: "C:/drafts/a.json", stamp: "stamp-2" }]));
+});
+
+/// Review finding: the note filled an update case's empty comment on EVERY
+/// queue change, so clearing the comment on the card undid itself at once.
+test("a comment cleared on an update case stays cleared, and View's note follows it", async () => {
+  localStorage.setItem("tcm-v2-case-notes:acme", JSON.stringify({ "201": "Re-check with QA" }));
+  baseMocks();
+  renderQueue([makeCase({ update_id: 201 })]);
+  expect(await screen.findByText("Re-check with QA")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Comment (in-app only)"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  await waitFor(() => expect(screen.queryByText("Re-check with QA")).not.toBeInTheDocument());
+  await waitFor(
+    () => expect(JSON.parse(localStorage.getItem("tcm-v2-case-notes:acme") ?? "{}")).toEqual({}),
+    { timeout: 3000 },
+  );
+  // Still cleared once the note write has landed.
+  expect(screen.queryByText("Re-check with QA")).not.toBeInTheDocument();
+});
+
+/// ...and an edit to that comment reaches the note, so View Test Cases
+/// stops showing the old text.
+test("editing an update case's comment reaches the View Test Cases note", async () => {
+  baseMocks();
+  renderQueue([makeCase({ update_id: 201, comment: "From the file" })]);
+  await screen.findByText("From the file");
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(await screen.findByLabelText("Comment (in-app only)"), {
+    target: { value: "Re-check with QA" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to queue" }));
+
+  await waitFor(
+    () =>
+      expect(JSON.parse(localStorage.getItem("tcm-v2-case-notes:acme") ?? "{}")).toEqual({
+        "201": "Re-check with QA",
+      }),
+    { timeout: 3000 },
+  );
+});
+
+/// Review finding: a submit that finished after the user left and came back
+/// called the ORIGINAL mount's onWatchPatched - a setter on an unmounted
+/// screen, which never runs its persist step - and skipped storage because
+/// a (new) mount was registered. The new stamp was recorded nowhere.
+test("a submit that finishes after a remount moves the watch forward where it is shown now", async () => {
+  const a = makeCase({ title: "Brand new" });
+  const watch: WatchedFile = { path: "C:/drafts/a.json", stamp: "stamp-1", snapshot: [a] };
+  localStorage.setItem("tcm-v2-watch:acme/42", JSON.stringify([watch]));
+  let submitting = false;
+  let finish: (v: unknown) => void = () => {};
+  mockIPC((cmd) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    if (cmd === "submit_queue") {
+      submitting = true;
+      return new Promise((r) => {
+        finish = r;
+      });
+    }
+    if (cmd === "save_draft_cases") return "stamp-2";
+    return undefined;
+  });
+  const first: string[] = [];
+  const second: string[] = [];
+  const mountA = renderQueue([a], {
+    watches: [watch],
+    onWatchPatched: (_p, f) => first.push(f.stamp ?? ""),
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  const go = await screen.findByRole("button", { name: /Yes — create 1/ });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(submitting).toBe(true));
+
+  mountA.unmount();
+  renderQueue([a], { watches: [watch], onWatchPatched: (_p, f) => second.push(f.stamp ?? "") });
+  await act(async () => {
+    finish([{ index: 0, title: "Brand new", action: "created", id: 900, error: null }]);
+  });
+
+  await waitFor(() => expect(second).toEqual(["stamp-2"]));
+  expect(first).toEqual([]);
+  const stored = JSON.parse(localStorage.getItem("tcm-v2-watch:acme/42") as string) as WatchedFile[];
+  expect(stored[0].stamp).toBe("stamp-2");
+});
+
+/// Review finding: a comment typed in the browser went to EVERY row
+/// with that title, and to whichever PBI was on screen.
+test("a comment from the browser page lands on its own row, and only for this PBI", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "pbi_test_cases") return [];
+    return undefined;
+  }, { shouldMockEvents: true });
+  renderQueue([makeCase({ tags: "first" }), makeCase({ tags: "second" })]);
+  await screen.findAllByText("Login works");
+
+  const saved = (text: string, key: string, pbi_id: number) =>
+    emit("draft-comment-saved", { path: "", stamp: "", id: null, title: "Login works", key, pbi_id, text });
+
+  await act(async () => {
+    await saved("Only the second", "t:login works#2", 42);
+  });
+  expect(await screen.findByText("Only the second")).toBeInTheDocument();
+  expect(screen.getAllByText("Only the second")).toHaveLength(1);
+  // On the SECOND row: `li.rounded-md` is a queue row (ImportFile.test.tsx counts rows the same way).
+  const rows = document.querySelectorAll("li.rounded-md");
+  expect(rows[0].textContent).not.toContain("Only the second");
+  expect(rows[1].textContent).toContain("Only the second");
+
+  // A page left open for another PBI: nothing here moves.
+  await act(async () => {
+    await saved("From PBI 7's page", "t:login works", 7);
+  });
+  expect(screen.queryByText("From PBI 7's page")).not.toBeInTheDocument();
 });

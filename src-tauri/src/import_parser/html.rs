@@ -136,6 +136,12 @@ pub struct DraftNoteCtx {
     /// where a case was typed by hand and has no file to be written to;
     /// its comment is still kept by the app.
     pub owners: Vec<String>,
+    /// Each queued case's occurrence key in the app (`t:login#2`), aligned
+    /// with `queue`. Rides back with a comment so it lands on that row.
+    pub keys: Vec<String>,
+    /// The PBI this page is for. Rides back with a comment so a page left
+    /// open after a PBI switch cannot write into the new PBI's queue.
+    pub pbi_id: i32,
     /// The files whose whole-set comments the side panel offers. Empty
     /// means no panel - nothing was imported from a file.
     pub files: Vec<DraftFile>,
@@ -512,6 +518,7 @@ pub fn export_queue_page(
                 let slot = draft_cases.len();
                 draft_cases.push(serde_json::json!({
                     "path": owner, "id": tc.update_id, "title": tc.title,
+                    "key": d.keys.get(idx).cloned().unwrap_or_default(),
                 }));
                 let hint = if d.owners.get(idx).is_some_and(|p| !p.is_empty()) {
                     "Saved into this case in the JSON file"
@@ -539,10 +546,14 @@ pub fn export_queue_page(
     if ctx.is_some() {
         let file_paths: Vec<serde_json::Value> =
             files.iter().map(|f| serde_json::json!({ "path": f.path })).collect();
+        let pbi = match &ctx {
+            Some(CommentCtx::Draft(d)) => Some(d.pbi_id),
+            _ => None,
+        };
         parts.push(format!(
             "<script type='application/json' id='tc-data'>{}</script>",
             script_json(
-                &serde_json::json!({ "cases": draft_cases, "files": file_paths }),
+                &serde_json::json!({ "cases": draft_cases, "files": file_paths, "pbi": pbi }),
                 "{\"cases\":[],\"files\":[]}",
             )
         ));

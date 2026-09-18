@@ -38,6 +38,8 @@ fn loopback_listener_delivers_posted_notes() {
             path: String::new(),
             id: None,
             title: String::new(),
+            key: String::new(),
+            pbi_id: None,
             text: "fix step 3".into(),
         }
     );
@@ -46,6 +48,23 @@ fn loopback_listener_delivers_posted_notes() {
     post(port, "/other", r#"{"token":"secret","org":"acme","case_id":1,"text":"x"}"#);
     post(port, "/note", "not json");
     assert!(rx.recv_timeout(std::time::Duration::from_millis(300)).is_err());
+}
+
+/// A draft comment names the exact row it was typed on (its occurrence key)
+/// and the PBI the page was made for, so the app can put it on that row
+/// only - and on nothing when the page is for another PBI.
+#[test]
+fn a_draft_case_note_carries_its_row_key_and_pbi() {
+    let n = parse_note(
+        r#"{"token":"t","kind":"case","path":"","title":"Login","key":"t:login#2","pbi_id":42,"text":"x"}"#,
+    )
+    .unwrap();
+    assert_eq!(n.key, "t:login#2");
+    assert_eq!(n.pbi_id, Some(42));
+    // Absent on anything else: both default.
+    let old = parse_note(r#"{"org":"acme","case_id":42,"text":"t"}"#).unwrap();
+    assert_eq!(old.key, "");
+    assert_eq!(old.pbi_id, None);
 }
 
 /// The payload got LOOSER when draft comments arrived, and deliberately:

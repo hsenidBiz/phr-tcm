@@ -424,7 +424,7 @@ export const commands = {
 	 *  `owners` is the file each queued case came from, aligned with `queue`;
 	 *  an empty entry means the case was typed by hand and has no file.
 	 */
-	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, owners, files, palette })),
+	viewDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], keys: string[], pbiId: number, files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("view_draft_html", { queue, subtitle, owners, keys, pbiId, files, palette })),
 	/**
 	 *  The whole-set comment held in a JSON file, for prefilling the panel.
 	 *  A file that has none - or can't be read - simply has no comment.
@@ -466,7 +466,7 @@ export const commands = {
 	 *  A page already open learns about the rewrite from its revision poll and
 	 *  pulls the new content itself; nothing here should touch the browser.
 	 */
-	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, owners, files, palette })),
+	refreshDraftHtml: (queue: TestCase_Deserialize[], subtitle: string, owners: string[], keys: string[], pbiId: number, files: DraftFile[], palette: PagePalette) => typedError<null, string>(__TAURI_INVOKE("refresh_draft_html", { queue, subtitle, owners, keys, pbiId, files, palette })),
 	/**
 	 *  Re-render the queue page WITHOUT opening a browser - the queue report's
 	 *  twin of `refresh_draft_html`, for the same reason: the keep-in-step
@@ -1123,6 +1123,10 @@ export type DraftCommentSaved = {
 	/**  Identity, matching the frontend's `caseKey` rule. */
 	id: number | null,
 	title: string,
+	/**  The row's occurrence key, as the page had it (see NotePayload::key). */
+	key: string,
+	/**  The PBI the page was made for. */
+	pbi_id: number | null,
 	text: string,
 };
 

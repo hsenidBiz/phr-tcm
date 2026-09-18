@@ -112,6 +112,10 @@ pub struct DraftCommentSaved {
     /// Identity, matching the frontend's `caseKey` rule.
     pub id: Option<i32>,
     pub title: String,
+    /// The row's occurrence key, as the page had it (see NotePayload::key).
+    pub key: String,
+    /// The PBI the page was made for.
+    pub pbi_id: Option<i32>,
     pub text: String,
 }
 

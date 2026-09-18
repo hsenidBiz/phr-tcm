@@ -187,12 +187,42 @@ fn tmp(name: &str) -> String {
 }
 
 fn draft_page(queue: &[TestCase], owners: Vec<String>, files: Vec<DraftFile>) -> String {
-    let ctx = DraftNoteCtx { port: 4711, token: "secret".into(), owners, files };
+    let ctx = DraftNoteCtx { port: 4711, token: "secret".into(), owners, keys: vec![], pbi_id: 42, files };
     let path = tmp("draft.html");
     export_queue_to_html(queue, &path, "", Some(CommentCtx::Draft(&ctx)), &Default::default()).unwrap();
     let html = std::fs::read_to_string(&path).unwrap();
     let _ = std::fs::remove_file(&path);
     html
+}
+
+/// Every draft comment box knows its row's occurrence key and the page its
+/// PBI, inside the swappable #tc-data block - two cases sharing a title are
+/// two rows, and a page left open after a PBI switch must not write into
+/// the new PBI's queue.
+#[test]
+fn the_draft_page_carries_each_rows_key_and_its_pbi() {
+    let queue = vec![draft("Login", None, ""), draft("Login", None, "")];
+    let ctx = DraftNoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        owners: vec![String::new(), String::new()],
+        keys: vec!["t:login".into(), "t:login#2".into()],
+        pbi_id: 42,
+        files: vec![],
+    };
+    let path = tmp("draft-keys.html");
+    export_queue_to_html(&queue, &path, "", Some(CommentCtx::Draft(&ctx)), &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let data = html
+        .split("id='tc-data'>")
+        .nth(1)
+        .and_then(|rest| rest.split("</script>").next())
+        .expect("the page carries #tc-data");
+    let v: serde_json::Value = serde_json::from_str(data).unwrap();
+    assert_eq!(v["pbi"], 42);
+    assert_eq!(v["cases"][0]["key"], "t:login");
+    assert_eq!(v["cases"][1]["key"], "t:login#2");
 }
 
 /// The gap this feature fills: on the ADO page only a case with a work item

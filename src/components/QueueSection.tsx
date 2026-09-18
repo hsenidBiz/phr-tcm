@@ -20,7 +20,7 @@ import { diffCase, type CaseDiff } from "../lib/caseDiff";
 import { hasTesterNotes, testerNotes } from "../lib/testerNotes";
 import { exportPathFor, rememberExportPath } from "../lib/exportDir";
 import { cn } from "../lib/cn";
-import { caseKey, fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
+import { fileName, keysFor, loadWatches, ownerPaths, patchWatch, saveWatches, type WatchedFile } from "../lib/fileSync";
 import { loadDraftQueue, saveDraftQueue } from "../hooks/useQueue";
 import { keepUploaded } from "../lib/queueUploaded";
 import { summariseSubmit } from "../lib/submitSummary";
@@ -237,13 +237,17 @@ export default function QueueSection({
   // (through React state, as always). When it is NOT mounted at the finish,
   // the fallback in the mutation writes the persisted draft directly - a
   // created case left in a queue without its id is one Upload away from a
-  // duplicate work item.
+  // duplicate work item. The watch-list update is registered the same way,
+  // through a ref so the registration does not churn on every render.
+  const watchPatched = useRef(onWatchPatched);
+  watchPatched.current = onWatchPatched;
   useEffect(
     () =>
       registerQueueWriter({
         org,
         pbiId,
         setQueue: (updater) => setQueue(updater),
+        patchWatch: (path, fields) => watchPatched.current?.(path, fields),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [org, pbiId],
@@ -252,30 +256,81 @@ export default function QueueSection({
   // joined on the work item id - a case imported for update IS the case
   // the note is about.
   //
-  // File -> notes: a case imported WITH its id and a comment is a comment
-  // about a case that already lives in Azure DevOps - surface it in View
-  // Test Cases too. Fill only EMPTY slots: a note typed in View is never
-  // overwritten by a file import.
+  // File -> notes: a case imported WITH its id and a comment, whose id has
+  // no note yet, gives the note its text. A note typed in View is never
+  // overwritten by an import.
   //
-  // Notes -> file: a case imported for update WITHOUT a comment, whose id
-  // has a note, takes the note - onto the queue card, and into the file
-  // the case came from, so it travels with the file from now on. Only
-  // empty slots again: the file's own comment wins where it has one.
+  // Notes -> card: the FIRST time a row with that id appears in this queue
+  // with an empty comment, the note fills it - onto the card and into the
+  // file the case came from. Only then: once the row has been seen, the
+  // card is the user's, and a comment they cleared stays cleared.
+  //
+  // Card -> notes: a later change to that comment (the editor, the browser
+  // page, a file sync) is written to the note, debounced, so View Test
+  // Cases shows what the queue shows.
+  const noteSeen = useRef<{ scope: string; comments: Map<number, string> }>({
+    scope: "",
+    comments: new Map(),
+  });
+  const pendingNotes = useRef<{ org: string; texts: Map<number, string> }>({ org, texts: new Map() });
+  const noteTimer = useRef<number | undefined>(undefined);
+  const flushNotes = useCallback(() => {
+    window.clearTimeout(noteTimer.current);
+    noteTimer.current = undefined;
+    const p = pendingNotes.current;
+    for (const [id, text] of p.texts) saveNote(p.org, id, text);
+    p.texts.clear();
+  }, []);
+  // An edit still waiting when the screen goes is written, not dropped.
+  useEffect(() => flushNotes, [flushNotes]);
   useEffect(() => {
+    const scope = `${org}/${pbiId}`;
+    if (noteSeen.current.scope !== scope) {
+      flushNotes();
+      noteSeen.current = { scope, comments: new Map() };
+    }
+    const seen = noteSeen.current.comments;
     const notes = loadNotes(org);
     const fills = new Map<number, string>(); // queue index -> note
+    let edited = false;
     queue.forEach((tc, i) => {
       if (tc.update_id == null) return;
+      const id = tc.update_id;
       const comment = (tc.comment ?? "").trim();
-      const note = notes[String(tc.update_id)];
-      if (comment && !note) saveNote(org, tc.update_id, comment);
-      else if (!comment && note) fills.set(i, note);
+      const before = seen.get(id);
+      if (before === undefined) {
+        const note = notes[String(id)];
+        if (comment && !note) saveNote(org, id, comment);
+        if (!comment && note) {
+          fills.set(i, note);
+          seen.set(id, note.trim());
+        } else {
+          seen.set(id, comment);
+        }
+        return;
+      }
+      if (comment === before) return;
+      seen.set(id, comment);
+      pendingNotes.current.org = org;
+      pendingNotes.current.texts.set(id, comment);
+      edited = true;
     });
+    if (edited) {
+      window.clearTimeout(noteTimer.current);
+      noteTimer.current = window.setTimeout(flushNotes, 600);
+    }
     if (fills.size === 0) return;
 
-    const keys = keysFor(queue);
+    // By work item id, not position: the queue can move between this
+    // effect and the updater, and an id is exact.
+    const fillById = new Map<number, string>();
+    for (const [i, text] of fills) fillById.set(queue[i].update_id as number, text);
     setQueue((q) =>
-      q.map((c, i) => (fills.has(i) && caseKey(c) === keys[i] ? { ...c, comment: fills.get(i)! } : c)),
+      q.map((c) =>
+        c.update_id != null && fillById.has(c.update_id) && !(c.comment ?? "").trim()
+          ? { ...c, comment: fillById.get(c.update_id)! }
+          : c,
+      ),
     );
     // The file learns it too, one targeted comment patch per case (never
     // a whole-file rewrite for this), and the watch is told the stamp so
@@ -293,12 +348,14 @@ export default function QueueSection({
         const w = known.find((x) => x.path === path);
         onWatchPatched(path, {
           stamp: r.data,
-          snapshot: (w?.snapshot ?? []).map((c) => (caseKey(c) === keys[i] ? { ...c, comment: text } : c)),
+          snapshot: (w?.snapshot ?? []).map((c) =>
+            c.update_id === tc.update_id ? { ...c, comment: text } : c,
+          ),
         });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, org]);
+  }, [queue, org, pbiId]);
 
   // Final confirmation stage: the first Confirm click arms the submit and
   // spotlights the PBI chip; only the explicit second click writes.
@@ -465,6 +522,11 @@ export default function QueueSection({
         queue,
         `PBI #${pbiId}`,
         ownerPaths(queue, watches),
+        // Each row's key and this PBI ride on the page, so a comment typed
+        // there comes back to exactly that row - and to nothing when the
+        // page is for a PBI no longer on screen.
+        keysFor(queue),
+        pbiId,
         watches.map((w) => ({
           path: w.path,
           label: fileName(w.path),
@@ -505,6 +567,11 @@ export default function QueueSection({
           queue,
           `PBI #${pbiId}`,
           ownerPaths(queue, watches),
+          // Each row's key and this PBI ride on the page, so a comment typed
+          // there comes back to exactly that row - and to nothing when the
+          // page is for a PBI no longer on screen.
+          keysFor(queue),
+          pbiId,
           watches.map((w) => ({
             path: w.path,
             label: fileName(w.path),
@@ -530,14 +597,19 @@ export default function QueueSection({
   // this fires - this is only the app catching up.
   useEffect(() => {
     const un = events.draftCommentSaved.listen((e) => {
-      const { id, title, text } = e.payload;
-      const key = id != null ? `id:${id}` : `t:${title.trim().toLowerCase()}`;
-      setQueue((q) => q.map((c) => (caseKey(c) === key ? { ...c, comment: text } : c)));
+      const { key, pbi_id, text } = e.payload;
+      // A page for a PBI this screen is not showing: its rows are not here.
+      if (pbi_id !== pbiId || !key) return;
+      // The full occurrence key: two rows sharing a title are two rows.
+      setQueue((q) => {
+        const keys = keysFor(q);
+        return q.map((c, i) => (keys[i] === key ? { ...c, comment: text } : c));
+      });
     });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, [setQueue]);
+  }, [setQueue, pbiId]);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -626,35 +698,44 @@ export default function QueueSection({
       // The lower bound for a later "what did this upload create" check,
       // early by the same five minutes Rust allows for clock drift.
       const since = new Date(Date.now() - 5 * 60_000).toISOString();
-      submitStarted(org, pbiId, toSend.length);
-      const unProgress = await events.submitProgress.listen((e) => {
-        submitProgressed(e.payload.index + 1, e.payload.total, e.payload.title);
-      });
-      // Fired before the upload loop when the PBI had no test plan and one
-      // was created on the fly - surface it so plans never appear silently.
-      const unPlan = await events.planCreated.listen((e) => {
-        toast.info(
-          `This PBI had no test plan - created "${e.payload.plan_name}" first, now uploading the test cases.`,
-        );
-      });
-      // The PBI had no requirement suite and one could not be created -
-      // typically no permission on the plans for its area. The cases still
-      // upload and link to the PBI, but Run Tests will not see them until a
-      // suite exists, so this stays up long enough to be read. It used to be
-      // a warning in the log only, which is how 197 cases once landed with
-      // no suite and nobody knew.
-      const unSuite = await events.suiteNotCreated.listen((e) => {
-        toast.warning(`Uploaded, but no test suite could be created for this PBI. ${e.payload.reason}`, {
-          duration: 30000,
-        });
-      });
-      // The upload went through, but the suite's spec order or the
-      // suggested run order was not saved. The reason says which, and
-      // that Suite Management can set it.
-      const unRunOrder = await events.runOrderNotSaved.listen((e) => {
-        toast.warning(e.payload.reason);
-      });
+      const run = submitStarted(org, pbiId, toSend.length);
+      if (run == null) {
+        throw new Error("another upload is still running. Wait for it to finish, then try again.");
+      }
+      let unProgress: (() => void) | undefined;
+      let unPlan: (() => void) | undefined;
+      let unSuite: (() => void) | undefined;
+      let unRunOrder: (() => void) | undefined;
       try {
+        // Inside the try: a listen that rejects must still reach the
+        // finally, or the phase stays on "Processing" until a restart.
+        unProgress = await events.submitProgress.listen((e) => {
+          submitProgressed(e.payload.index + 1, e.payload.total, e.payload.title);
+        });
+        // Fired before the upload loop when the PBI had no test plan and one
+        // was created on the fly - surface it so plans never appear silently.
+        unPlan = await events.planCreated.listen((e) => {
+          toast.info(
+            `This PBI had no test plan - created "${e.payload.plan_name}" first, now uploading the test cases.`,
+          );
+        });
+        // The PBI had no requirement suite and one could not be created -
+        // typically no permission on the plans for its area. The cases still
+        // upload and link to the PBI, but Run Tests will not see them until a
+        // suite exists, so this stays up long enough to be read. It used to be
+        // a warning in the log only, which is how 197 cases once landed with
+        // no suite and nobody knew.
+        unSuite = await events.suiteNotCreated.listen((e) => {
+          toast.warning(`Uploaded, but no test suite could be created for this PBI. ${e.payload.reason}`, {
+            duration: 30000,
+          });
+        });
+        // The upload went through, but the suite's spec order or the
+        // suggested run order was not saved. The reason says which, and
+        // that Suite Management can set it.
+        unRunOrder = await events.runOrderNotSaved.listen((e) => {
+          toast.warning(e.payload.reason);
+        });
         const r = await commands.submitQueue(
           org,
           project,
@@ -684,7 +765,7 @@ export default function QueueSection({
         detach(unPlan);
         detach(unSuite);
         detach(unRunOrder);
-        submitFinished();
+        submitFinished(run);
       }
     },
     // Only the parts a mounted screen can show. Everything that must
@@ -952,18 +1033,13 @@ export default function QueueSection({
             );
             continue;
           }
-          // Mounted: through the owner's state, as bulk edits do. Away:
-          // straight into the persisted watch list - a state setter on an
-          // unmounted screen never runs its persist step.
-          if (queueWriterFor(org, sentFor) && onWatchPatched) {
-            onWatchPatched(path, { stamp: r.data, snapshot: f.slice });
-          } else {
-            saveWatches(
-              org,
-              sentFor,
-              patchWatch(loadWatches(org, sentFor), path, { stamp: r.data, snapshot: f.slice }),
-            );
-          }
+          // Storage always: the mount that started this submit may be gone,
+          // and a setter on an unmounted screen never runs its persist step.
+          // Then the screen showing this queue NOW, if any - not this
+          // closure's own callback, which may belong to that gone mount.
+          const fields = { stamp: r.data, snapshot: f.slice };
+          saveWatches(org, sentFor, patchWatch(loadWatches(org, sentFor), path, fields));
+          queueWriterFor(org, sentFor)?.patchWatch?.(path, fields);
         }
       }
       // And the same comment now shows on the case where it LIVES: the
@@ -1204,7 +1280,21 @@ export default function QueueSection({
   latest.current = { queue, writeBackOwned };
   const toggleEdit = useCallback((i: number) => setEditingIdx((cur) => (cur === i ? null : i)), []);
   const cancelEdit = useCallback(() => setEditingIdx(null), []);
-  const removeRow = useCallback((i: number) => setQueue((q) => q.filter((_, j) => j !== i)), [setQueue]);
+  // The owning FILE follows a single removal exactly as it follows a bulk
+  // one: otherwise the next outside save of that file sees the case in
+  // both snapshots, not in the queue, and puts it back.
+  const removeRow = useCallback(
+    (i: number) => {
+      const { queue: prev, writeBackOwned: writeBack } = latest.current;
+      setQueue((q) => q.filter((_, j) => j !== i));
+      void writeBack(
+        prev,
+        prev.map((t, j) => (j === i ? null : t)),
+        new Set([i]),
+      );
+    },
+    [setQueue],
+  );
   const saveRow = useCallback(
     (i: number, next: TestCase) => {
       const { queue: prev, writeBackOwned: writeBack } = latest.current;
@@ -1913,7 +2003,7 @@ export default function QueueSection({
                 Processing
               </Button>
             ) : !reviewing ? (
-              <Button tabIndex={-1} onClick={() => setReviewing(true)}>
+              <Button tabIndex={-1} onClick={openReview}>
                 <IconReview aria-hidden />
                 Review {queue.length} test case{queue.length === 1 ? "" : "s"}
               </Button>

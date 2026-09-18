@@ -80,6 +80,15 @@ pub struct NotePayload {
     /// Draft case comments: the title, which identifies an id-less case.
     #[serde(default)]
     pub title: String,
+    /// Draft case comments: the row's occurrence key in the app's queue
+    /// (`t:login#2`), so the app updates that row and no other same-titled
+    /// one. Empty from anything that is not a draft case comment.
+    #[serde(default)]
+    pub key: String,
+    /// Draft case comments: the PBI the page was generated for. The app
+    /// ignores a comment from a page for a PBI it is not showing.
+    #[serde(default)]
+    pub pbi_id: Option<i32>,
     pub text: String,
 }
 

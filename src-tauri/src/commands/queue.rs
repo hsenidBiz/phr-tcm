@@ -341,6 +341,8 @@ fn save_draft_case_comment(
         stamp,
         id: n.id,
         title: n.title,
+        key: n.key,
+        pbi_id: n.pbi_id,
         text: n.text,
     }
     .emit(app);
@@ -553,15 +555,18 @@ fn render_queue_html(
 /// an empty entry means the case was typed by hand and has no file.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn view_draft_html(
     app: tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
     owners: Vec<String>,
+    keys: Vec<String>,
+    pbi_id: i32,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    let path_str = render_draft_html(&app, queue, subtitle, owners, files, palette).await?;
+    let path_str = render_draft_html(&app, queue, subtitle, owners, keys, pbi_id, files, palette).await?;
     tauri_plugin_opener::open_path(&path_str, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -573,22 +578,28 @@ pub async fn view_draft_html(
 /// pulls the new content itself; nothing here should touch the browser.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn refresh_draft_html(
     app: tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
     owners: Vec<String>,
+    keys: Vec<String>,
+    pbi_id: i32,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<(), String> {
-    render_draft_html(&app, queue, subtitle, owners, files, palette).await.map(|_| ())
+    render_draft_html(&app, queue, subtitle, owners, keys, pbi_id, files, palette).await.map(|_| ())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn render_draft_html(
     app: &tauri::AppHandle,
     queue: Vec<model::TestCase>,
     subtitle: String,
     owners: Vec<String>,
+    keys: Vec<String>,
+    pbi_id: i32,
     files: Vec<import_parser::DraftFile>,
     palette: crate::webtheme::PagePalette,
 ) -> Result<String, String> {
@@ -619,6 +630,8 @@ async fn render_draft_html(
         port,
         token: note_token().to_string(),
         owners,
+        keys,
+        pbi_id,
         files,
     });
     let page_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();

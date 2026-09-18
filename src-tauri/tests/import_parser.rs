@@ -1050,7 +1050,7 @@ fn the_shell_carries_has_files_when_a_draft_file_sits_beside_the_spec_pane() {
         comment: "Spec 3.2 is ambiguous".into(),
         specs: vec!["Step13.md".into()],
     }];
-    let ctx = DraftNoteCtx { port: 4711, token: "secret".into(), owners: vec![String::new()], files };
+    let ctx = DraftNoteCtx { port: 4711, token: "secret".into(), owners: vec![String::new()], keys: vec![], pbi_id: 42, files };
     let docs = vec![SpecDoc {
         title: "Step13".into(),
         kind: "file".into(),
