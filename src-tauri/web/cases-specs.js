@@ -27,6 +27,18 @@
     return { document: doc.join(' '), section: words.slice(i).join(' ').trim() };
   }
 
+  // Where a "Spec:" citation starts inside a longer run of text, or -1 when
+  // there is none. The token must sit at the very start of the text, or be
+  // preceded by whitespace - so "Respect: none" never matches, but a note
+  // written as one paragraph ("Checks the flags.\nSpec: Step13.md 5.8")
+  // still finds the citation after the markdown renderer turns that line
+  // break into a plain space, joining both into one text node.
+  function citationStart(text) {
+    var m = /(^|\s)spec:\s/i.exec(text || '');
+    if (!m) return -1;
+    return m.index + m[1].length;
+  }
+
   function norm(s) {
     return String(s || '').toLowerCase().replace(EXT_RE, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
@@ -35,20 +47,40 @@
     return s.split(/[\\/]/).pop() || s;
   }
 
-  // The tab for a cited document: exact (case- and extension-insensitive)
-  // on title or file name, then containment either way, else -1.
+  // norm() with spaces removed too, so a citation built from a CamelCase
+  // file name ("Step13-CalculationEngine.md") still lines up with a title
+  // written with spaces ("Calculation Engine").
+  function squash(s) {
+    return norm(s).replace(/ /g, '');
+  }
+
+  // The tab for a cited document: exact (case-, extension- and
+  // space-insensitive) on title or file name, then containment either way -
+  // preferring whichever candidate's title/file name is the LONGEST match,
+  // so "CalculationEngine" picks the file tab titled "Calculation Engine"
+  // over a wiki tab merely titled "Engine" - else -1.
   function findSpecTab(docs, document) {
-    var want = norm(document);
+    var want = norm(document), wantSquashed = squash(document);
     if (!want) return -1;
     var i;
     for (i = 0; i < docs.length; i++) {
-      if (norm(docs[i].title) === want || norm(baseName(docs[i].source)) === want) return i;
-    }
-    for (i = 0; i < docs.length; i++) {
       var t = norm(docs[i].title), b = norm(baseName(docs[i].source));
-      if (t.indexOf(want) >= 0 || b.indexOf(want) >= 0 || want.indexOf(t) >= 0 || want.indexOf(b) >= 0) return i;
+      if (t === want || b === want || squash(docs[i].title) === wantSquashed || squash(baseName(docs[i].source)) === wantSquashed) return i;
     }
-    return -1;
+    var best = -1, bestLen = 0;
+    for (i = 0; i < docs.length; i++) {
+      var ts = squash(docs[i].title), bs = squash(baseName(docs[i].source));
+      var candidates = [ts, bs];
+      for (var c = 0; c < candidates.length; c++) {
+        var cand = candidates[c];
+        if (!cand) continue;
+        if ((cand.indexOf(wantSquashed) >= 0 || wantSquashed.indexOf(cand) >= 0) && cand.length > bestLen) {
+          bestLen = cand.length;
+          best = i;
+        }
+      }
+    }
+    return best;
   }
 
   function leadingNumber(s) {
@@ -86,7 +118,7 @@
     return String(text || '').toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
   }
 
-  root.tcmSpecs = { splitCitation: splitCitation, findSpecTab: findSpecTab, matchHeading: matchHeading, slug: slug };
+  root.tcmSpecs = { splitCitation: splitCitation, findSpecTab: findSpecTab, matchHeading: matchHeading, slug: slug, citationStart: citationStart };
 
   // ---- The page -------------------------------------------------------
   if (typeof document === 'undefined' || !document.getElementById) return;
@@ -154,6 +186,9 @@
   }
 
   // Heading ids for the citation links: spec-<i>-<slug>, -2, -3 on repeats.
+  // Every heading gets a stable id this way, both for jumpTo's own
+  // scrollIntoView and for a hand-written link inside a spec document that
+  // wants to target one directly.
   function anchorHeadings(pane) {
     var articles = pane.querySelectorAll('.spec-doc');
     for (var i = 0; i < articles.length; i++) {
@@ -197,6 +232,12 @@
       for (var t = 0; t < texts.length; t++) {
         var node = texts[t];
         if (node.parentNode && node.parentNode.classList && node.parentNode.classList.contains('spec-link')) continue;
+        var start = citationStart(node.nodeValue);
+        if (start < 0) continue;
+        // Prose before the citation (often the rest of the paragraph, once
+        // a soft line break has been rendered as a space) stays a plain
+        // text node; only the "Spec: ..." tail is turned into a link.
+        if (start > 0) node = node.splitText(start);
         var cite = splitCitation(node.nodeValue);
         if (!cite) continue;
         var a = document.createElement('a');

@@ -29,8 +29,9 @@ window.
   JSON's `specs` through the same read-patch-write path the general comment
   uses, so it travels with the file. A picked file under the JSON's own
   directory is stored relative; anything else absolute.
-- Only the queue, draft and share pages carry specs (they come from files);
-  View Test Cases (cases from Azure DevOps) has none and shows no pane.
+- Only the draft page (a queue assembled from files) carries specs; a
+  received share keeps none, since its paths name the sender's disk. View
+  Test Cases (cases from Azure DevOps) has none either and shows no pane.
 
 ## Resolving and rendering (Rust, when the page is written)
 
@@ -89,7 +90,7 @@ window.
 sit on `window.tcmSpecs` for tests):
 
 - `splitCitation(text)`: from a `Spec: …` line, the document (up to and
-  including the first token with a file extension, or the whole tail when
+  including the first token with a file extension, or its first word when
   none) and the section (the rest, with a trailing `> "…"` quote and a
   `- no quotable text (…)` exemption removed).
 - `findSpecTab(docs, document)`: the doc whose title or source file name

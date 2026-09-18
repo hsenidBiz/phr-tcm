@@ -386,16 +386,6 @@ pub fn save_general_comment(
     write_general_comment(&app, &path, &text)
 }
 
-/// The `specs` list held in a JSON file, for the Import File tab. A file
-/// that has none - or can't be read - simply has none.
-#[tauri::command]
-#[specta::specta]
-pub fn read_specs(path: String) -> Vec<String> {
-    std::fs::read_to_string(&path)
-        .map(|j| import_parser::specs::read_specs(&j))
-        .unwrap_or_default()
-}
-
 /// Save the `specs` list from the Import File tab's Attach control. Returns
 /// the file's new fingerprint so the caller can move its watch forward.
 #[tauri::command]
@@ -595,8 +585,14 @@ async fn render_draft_html(
     // The specs beside the cases. Files are read here; wiki pages need the
     // user's token - without a session they render as "not signed in".
     let entries = crate::spec_pane::spec_entries(&files);
-    let client = if entries.iter().any(|(e, _)| e.trim_start().starts_with("http")) {
-        get_fresh_token(app).await.ok().map(ado::AdoClient::new)
+    let client = if entries.iter().any(|(e, _)| crate::spec_pane::is_wiki_entry(e)) {
+        match get_fresh_token(app).await {
+            Ok(token) => Some(ado::AdoClient::new(token)),
+            Err(_) => {
+                crate::applog::warn("Spec pane: no sign-in token, wiki specs show as not signed in".to_string());
+                None
+            }
+        }
     } else {
         None
     };

@@ -84,7 +84,8 @@ function FileSpecs({
     });
     const list = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
     if (list.length === 0) return;
-    const added = list.map((p) => specEntryFor(watch.path, p)).filter((p) => !specs.includes(p));
+    const has = (p: string) => specs.some((s) => s.toLowerCase() === p.toLowerCase());
+    const added = list.map((p) => specEntryFor(watch.path, p)).filter((p) => !has(p));
     if (added.length > 0) save.mutate([...specs, ...added]);
   };
   const addLink = () => {
@@ -92,7 +93,7 @@ function FileSpecs({
     if (!url) return;
     setLink("");
     setLinkOpen(false);
-    if (!specs.includes(url)) save.mutate([...specs, url]);
+    if (!specs.some((s) => s.toLowerCase() === url.toLowerCase())) save.mutate([...specs, url]);
   };
   return (
     <div className="ml-4 space-y-1 text-xs">
@@ -571,10 +572,7 @@ export default function ImportFile({
         // Whatever the file already says about the set as a whole - very
         // often written by whoever generated it.
         comment: await commands.readGeneralComment(path),
-        // The parse already carries `specs` when the file has it; older
-        // callers (or a shape the parse didn't resolve) fall back to a
-        // dedicated read.
-        specs: r.data.specs ?? (await commands.readSpecs(path)),
+        specs: r.data.specs,
       };
     },
     onSuccess: (res) => {

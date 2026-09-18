@@ -14,6 +14,7 @@ type Helpers = {
   findSpecTab: (docs: Doc[], document: string) => number;
   matchHeading: (headings: string[], section: string) => number;
   slug: (text: string) => string;
+  citationStart: (text: string) => number;
 };
 let H: Helpers;
 
@@ -42,6 +43,22 @@ describe("splitCitation", () => {
     expect(H.splitCitation("  spec:   Rules.md   ")).toEqual({ document: "Rules.md", section: "" });
     expect(H.splitCitation("Code: foo()")).toBeNull();
   });
+
+  test("with no extension anywhere, the whole tail is the section - just its first word is the document", () => {
+    expect(H.splitCitation("Spec: Calculation Engine 5.8 Display Rules")).toEqual({
+      document: "Calculation",
+      section: "Engine 5.8 Display Rules",
+    });
+  });
+});
+
+describe("citationStart", () => {
+  test("finds the Spec: token preceded by start-of-text or whitespace, else -1", () => {
+    expect(H.citationStart("Spec: A.md 1")).toBe(0);
+    const text = "Checks it. Spec: A.md 1";
+    expect(H.citationStart(text)).toBe(text.indexOf("Spec:"));
+    expect(H.citationStart("Respect: none")).toBe(-1);
+  });
 });
 
 describe("findSpecTab", () => {
@@ -56,6 +73,16 @@ describe("findSpecTab", () => {
     expect(H.findSpecTab(docs, "Display-Rules")).toBe(1);
     expect(H.findSpecTab(docs, "CalculationEngine")).toBe(0);
     expect(H.findSpecTab(docs, "Nothing.md")).toBe(-1);
+  });
+
+  test("picks the longer, space-insensitive match over a shorter one contained in it", () => {
+    const camel: Doc[] = [
+      { title: "Calculation Engine", kind: "file", source: "C:/s/Rules.md" },
+      { title: "Engine", kind: "wiki", source: "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine" },
+    ];
+    expect(H.findSpecTab(camel, "Step13-CalculationEngine.md")).toBe(0);
+    expect(H.findSpecTab(camel, "Engine")).toBe(1);
+    expect(H.findSpecTab(camel, "calculationengine")).toBe(0);
   });
 });
 

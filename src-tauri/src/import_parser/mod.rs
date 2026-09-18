@@ -357,8 +357,7 @@ fn parse_json(path: &str) -> Result<ParsedFile, String> {
     let data: serde_json::Value =
         serde_json::from_str(content).map_err(|e| format!("Invalid JSON: {e}"))?;
 
-    let specs = specs::read_specs(content);
-    let ignored = specs::ignored_spec_entries(content);
+    let (specs, ignored) = specs::specs_from_value(&data);
     let mut warnings = vec![];
     if ignored > 0 {
         warnings.push(format!("specs: {ignored} entr{} ignored - each entry must be a file path or a wiki URL.", if ignored == 1 { "y" } else { "ies" }));

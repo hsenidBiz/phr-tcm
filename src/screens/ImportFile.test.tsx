@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
-import ImportFile from "./ImportFile";
+import ImportFile, { specEntryFor } from "./ImportFile";
 import { Toaster } from "sonner";
 
 afterEach(() => {
@@ -1016,7 +1016,6 @@ test("a watched file lists its specs and Attach spec writes the list back", asyn
     if (cmd === "parse_import_file")
       return { cases: [jsonCase("A")], warnings: [], specs: ["Step13.md"] };
     if (cmd === "read_general_comment") return "";
-    if (cmd === "read_specs") return ["Step13.md"];
     if (cmd === "save_specs") {
       saved = args as { path: string; specs: string[] };
       return "stamp-2";
@@ -1046,7 +1045,6 @@ test("a wiki link is added by pasting it, and an entry can be removed", async ()
     if (cmd === "parse_import_file")
       return { cases: [jsonCase("A")], warnings: [], specs: ["Step13.md"] };
     if (cmd === "read_general_comment") return "";
-    if (cmd === "read_specs") return ["Step13.md"];
     if (cmd === "save_specs") {
       saved.push((args as { specs: string[] }).specs);
       return "stamp-" + saved.length;
@@ -1071,4 +1069,25 @@ test("a wiki link is added by pasting it, and an entry can be removed", async ()
   fireEvent.click(screen.getByRole("button", { name: "Remove spec Step13.md" }));
   await waitFor(() => expect(saved).toHaveLength(2));
   expect(saved[1]).toEqual(["https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine"]);
+});
+
+// ---------------------------------------------------------------------
+// specEntryFor: a picked spec path is stored relative to the JSON file's
+// directory when it lives there (so the pair travels together), else as
+// the absolute path the picker returned.
+
+test("specEntryFor stores a spec relative to the JSON file's directory when it lives there", () => {
+  expect(specEntryFor("C:/w/cases.json", "C:/w/specs/Rules.md")).toBe("specs/Rules.md");
+});
+
+test("specEntryFor handles a backslash JSON path against a forward-slash picked file", () => {
+  expect(specEntryFor("C:\\w\\cases.json", "C:/w/specs/Rules.md")).toBe("specs/Rules.md");
+});
+
+test("specEntryFor matches the directory case-insensitively", () => {
+  expect(specEntryFor("C:/w/cases.json", "c:/W/Specs/Rules.md")).toBe("Specs/Rules.md");
+});
+
+test("specEntryFor keeps a file elsewhere as the absolute path", () => {
+  expect(specEntryFor("C:/w/cases.json", "D:/elsewhere/Rules.md")).toBe("D:/elsewhere/Rules.md");
 });

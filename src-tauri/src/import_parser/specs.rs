@@ -6,26 +6,35 @@
 
 use serde_json::Value;
 
+/// The `specs` list from an already-parsed document: the entries in order
+/// (non-blank strings only), and how many entries were dropped for not
+/// being one - for the importer's warning. A document with no `specs` key,
+/// or one that is not an array, simply has none and nothing ignored.
+pub fn specs_from_value(doc: &Value) -> (Vec<String>, usize) {
+    let entries = doc.get("specs").and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut kept = vec![];
+    let mut ignored = 0;
+    for v in &entries {
+        match v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => kept.push(s.to_string()),
+            None => ignored += 1,
+        }
+    }
+    (kept, ignored)
+}
+
 /// The list as written, in order; entries that are not non-blank strings
 /// are dropped (the importer warns about them). A file that is not an
 /// object, or does not parse, simply has none.
 pub fn read_specs(json: &str) -> Vec<String> {
-    serde_json::from_str::<Value>(json)
-        .ok()
-        .and_then(|d| d.get("specs").and_then(Value::as_array).cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from))
-        .collect()
+    let doc = serde_json::from_str::<Value>(json).unwrap_or(Value::Null);
+    specs_from_value(&doc).0
 }
 
 /// How many entries `read_specs` would drop - for the importer's warning.
 pub fn ignored_spec_entries(json: &str) -> usize {
-    serde_json::from_str::<Value>(json)
-        .ok()
-        .and_then(|d| d.get("specs").and_then(Value::as_array).cloned())
-        .map(|a| a.iter().filter(|v| v.as_str().map(|s| s.trim().is_empty()).unwrap_or(true)).count())
-        .unwrap_or(0)
+    let doc = serde_json::from_str::<Value>(json).unwrap_or(Value::Null);
+    specs_from_value(&doc).1
 }
 
 /// Replace the list, keeping every other key where it was. An empty list

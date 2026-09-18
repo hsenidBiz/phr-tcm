@@ -312,11 +312,6 @@ export const commands = {
 	 */
 	saveGeneralComment: (path: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_general_comment", { path, text })),
 	/**
-	 *  The `specs` list held in a JSON file, for the Import File tab. A file
-	 *  that has none - or can't be read - simply has none.
-	 */
-	readSpecs: (path: string) => __TAURI_INVOKE<string[]>("read_specs", { path }),
-	/**
 	 *  Save the `specs` list from the Import File tab's Attach control. Returns
 	 *  the file's new fingerprint so the caller can move its watch forward.
 	 */

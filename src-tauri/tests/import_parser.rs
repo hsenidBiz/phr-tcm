@@ -1016,3 +1016,37 @@ fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
     assert!(!plain.contains("id='tc-spec'"), "{plain}");
     assert!(!plain.contains("class='shell with-specs'"), "{plain}");
 }
+
+/// With both a file's general comments AND specs, hiding the pane must not
+/// collapse the side column out from under the general comments - so the
+/// shell carries `has-files` alongside `with-specs`.
+#[test]
+fn the_shell_carries_has_files_when_a_draft_file_sits_beside_the_spec_pane() {
+    use v2_lib::import_parser::{export_queue_page, CommentCtx, DraftFile, DraftNoteCtx};
+    use v2_lib::spec_pane::SpecDoc;
+    let queue = vec![TestCase {
+        title: "T".into(),
+        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        ..Default::default()
+    }];
+    let files = vec![DraftFile {
+        path: "C:/work/login.json".into(),
+        label: "login.json".into(),
+        comment: "Spec 3.2 is ambiguous".into(),
+        specs: vec!["Step13.md".into()],
+    }];
+    let ctx = DraftNoteCtx { port: 4711, token: "secret".into(), owners: vec![String::new()], files };
+    let docs = vec![SpecDoc {
+        title: "Step13".into(),
+        kind: "file".into(),
+        source: "C:/work/Step13.md".into(),
+        html: "<p>Body.</p>".into(),
+        error: None,
+    }];
+    let dir = std::env::temp_dir().join("tcm-v2-spec-pane-has-files-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{}.html", std::process::id())).to_string_lossy().to_string();
+    export_queue_page(&queue, &path, "", Some(CommentCtx::Draft(&ctx)), &Default::default(), None, &docs).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("<div class='shell with-specs has-files'>"), "{html}");
+}

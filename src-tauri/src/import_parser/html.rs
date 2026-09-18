@@ -183,12 +183,17 @@ pub fn export_queue_page(
     // The side column exists for a draft from files (general comments) or
     // for a page with specs; `with-specs` widens it for the pane.
     let has_side = !files.is_empty() || !specs.is_empty();
+    // `has-files` keeps the side column at its plain 320px width when specs
+    // are hidden and there are still general comments to show beside the
+    // cases - only `with-specs` alone (no files) collapses to one column.
     let shell_open = if !has_side {
         ""
-    } else if specs.is_empty() {
-        "<div class='shell'>"
     } else {
-        "<div class='shell with-specs'>"
+        match (specs.is_empty(), files.is_empty()) {
+            (true, _) => "<div class='shell'>",
+            (false, true) => "<div class='shell with-specs'>",
+            (false, false) => "<div class='shell with-specs has-files'>",
+        }
     };
     // Identity of each draft box, resolved by the app when the note lands.
     let mut draft_cases: Vec<serde_json::Value> = vec![];

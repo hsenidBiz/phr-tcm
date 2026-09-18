@@ -245,8 +245,11 @@ body:not(.findings-off) .find-wrap:not(.find-closed) { transition-delay: 0s; }
   .shell.with-specs { grid-template-columns: minmax(0, 1fr) var(--spec-w, 520px); }
   .side { position: sticky; top: 12px; max-height: calc(100vh - 24px); display: flex; flex-direction: column; gap: 16px; min-height: 0; }
   .side .aside { position: static; flex: 0 0 auto; }
+  /* Hiding the pane collapses to one column - unless there are still
+     general comments in the side column, which keep their plain width. */
+  body.spec-off .shell.with-specs:not(.has-files) { grid-template-columns: minmax(0, 1fr); }
+  body.spec-off .shell.with-specs.has-files { grid-template-columns: minmax(0, 1fr) 320px; }
 }
-body.spec-off .shell.with-specs { grid-template-columns: minmax(0, 1fr); }
 body.spec-off #tc-specs { display: none; }
 .specs { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
          background: var(--surface); border: 1px solid var(--border); border-radius: 10px;

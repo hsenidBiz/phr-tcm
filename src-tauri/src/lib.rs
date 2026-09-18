@@ -32,12 +32,11 @@ pub mod note_server;
 pub mod optimize;
 pub mod pipelines;
 pub mod report;
+pub mod spec_pane;
 pub mod speccov;
 pub mod state;
 pub mod steps_xml;
-pub mod spec_pane;
 pub mod test_map;
-
 pub mod transform;
 pub mod updater;
 pub mod webtheme;
@@ -154,7 +153,6 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::view_draft_html,
             queue::read_general_comment,
             queue::save_general_comment,
-            queue::read_specs,
             queue::save_specs,
             queue::save_draft_comment,
             queue::save_draft_cases,

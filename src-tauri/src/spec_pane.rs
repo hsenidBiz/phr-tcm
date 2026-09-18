@@ -16,13 +16,22 @@ pub enum SpecSource {
     Wiki(String),
 }
 
+/// Whether a `specs` entry names a wiki page rather than a file: an
+/// `http://` or `https://` URL, after trimming. Shared by `SpecSource::
+/// from_entry` and the render path's token-fetch gate, so the two never
+/// drift apart on what counts as "needs a sign-in token".
+pub fn is_wiki_entry(entry: &str) -> bool {
+    let e = entry.trim_start();
+    e.starts_with("http://") || e.starts_with("https://")
+}
+
 impl SpecSource {
     /// An `http(s)://` entry is a wiki page (a non-wiki URL still goes that
     /// way and fails with a clear message); anything else is a file, joined
     /// to `base_dir` when relative.
     pub fn from_entry(entry: &str, base_dir: &Path) -> SpecSource {
         let e = entry.trim();
-        if e.starts_with("http://") || e.starts_with("https://") {
+        if is_wiki_entry(e) {
             return SpecSource::Wiki(e.to_string());
         }
         let p = Path::new(e);
@@ -112,9 +121,15 @@ pub fn prepare_wiki_markdown(content: &str, page_url: &str) -> String {
         let mut built = String::new();
         while let Some(start) = rest.find("![") {
             let after = &rest[start + 2..];
+            // Malformed image (no `](`): stop rewriting here. `rest` still
+            // holds the unconsumed text, including the `![` itself, and is
+            // appended after the loop as plain text - left as written, never
+            // dropped.
             let Some(close) = after.find("](") else { break };
             let alt = &after[..close];
             let tail = &after[close + 2..];
+            // Malformed image (no closing `)`): same as above - stop here
+            // and let `rest` (including the `![`) fall through unrewritten.
             let Some(end) = tail.find(')') else { break };
             let target = tail[..end].trim();
             built.push_str(&rest[..start]);
