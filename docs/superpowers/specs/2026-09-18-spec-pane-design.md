@@ -112,7 +112,7 @@ sit on `window.tcmSpecs` for tests):
 - `WatchedFile.specs?: string[]` loaded with the general comment at import
   and on every re-parse; `DraftFile.specs` carries it to Rust; the
   QueueSection view/refresh mutations pass it.
-- Commands: `read_specs(path) -> Vec<String>`, `save_specs(app, path,
+- Commands: `save_specs(app, path,
   specs) -> String` (new fingerprint), under the same `NOTE_WRITE` lock as
   the comment saves. `view_draft_html` and `refresh_draft_html` become
   async (the wiki fetch needs the token) with unchanged parameters.
