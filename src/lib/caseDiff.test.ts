@@ -209,3 +209,22 @@ test("a shared step is compared by its reference and never retyped", () => {
   );
   expect(other.steps.changed).toBe(1);
 });
+
+/// Pins the top-level-scan behaviour itself: with the OLD `<step\b...>`-only
+/// regex, the two nested steps inside the compref would count toward
+/// storedTypes' length (3 for a 2-step case), the length guard would then
+/// disable the retype check entirely, and this ActionStep-that-should-be-a-
+/// ValidateStep would go unreported.
+test("a wrong stored type is still caught when the compref holds more than one nested step", () => {
+  const xml =
+    `<steps id="0" last="5"><step id="2" type="ActionStep"><parameterizedString isformatted="true">Open</parameterizedString><parameterizedString isformatted="true">Shown</parameterizedString></step>` +
+    `<compref id="3" ref="812"><step id="4" type="ValidateStep"><parameterizedString isformatted="true">Inner1</parameterizedString><parameterizedString isformatted="true"></parameterizedString></step>` +
+    `<step id="5" type="ValidateStep"><parameterizedString isformatted="true">Inner2</parameterizedString><parameterizedString isformatted="true"></parameterizedString></step></compref></steps>`;
+  const steps = [
+    { action: "Open", expected: "Shown" },
+    { action: "", expected: "", shared: 812 },
+  ];
+  const d = diffCase(queued({ steps }), current({ steps, step_ids: ["2", ""], steps_xml: xml }));
+  expect(d.steps.retyped).toBe(1);
+  expect(d.noop).toBe(false);
+});

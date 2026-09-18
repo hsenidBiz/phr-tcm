@@ -19,15 +19,26 @@ import type { CaseDiff, StepDiff } from "./caseDiff";
 const oneLine = (v: string) => v.replace(/\s*\n+\s*/g, " / ").trim();
 const shown = (v: string) => (oneLine(v) === "" ? "(empty)" : `"${oneLine(v)}"`);
 
+/** A Shared Steps reference has no action/expected text of its own -
+ * `shown("")` would print a bare "(empty)", which tells a tester nothing.
+ * Named by its reference instead. */
+const stepText = (s: { action: string; shared?: number | null }): string =>
+  s.shared != null ? `Shared steps #${s.shared}` : shown(s.action);
+
 function stepLines(d: StepDiff): string[] {
   const n = d.index + 1;
   if (d.kind === "added" && d.new) {
-    const out = [`  - Step ${n} added: ${shown(d.new.action)}`];
-    if (d.new.expected.trim()) out.push(`      Expected: ${shown(d.new.expected)}`);
+    const out = [`  - Step ${n} added: ${stepText(d.new)}`];
+    if (d.new.shared == null && d.new.expected.trim()) out.push(`      Expected: ${shown(d.new.expected)}`);
     return out;
   }
-  if (d.kind === "removed" && d.old) return [`  - Step ${n} removed: ${shown(d.old.action)}`];
+  if (d.kind === "removed" && d.old) return [`  - Step ${n} removed: ${stepText(d.old)}`];
   if (d.kind === "changed" && d.old && d.new) {
+    // Re-pointing a step at a different Shared Steps work item: neither
+    // side has text to diff, only the reference itself moved.
+    if (d.old.shared != null || d.new.shared != null) {
+      return [`  - Step ${n} changed: ${stepText(d.old)} -> ${stepText(d.new)}`];
+    }
     const out = [`  - Step ${n} changed`];
     if (d.old.action !== d.new.action) out.push(`      Action: ${shown(d.old.action)} -> ${shown(d.new.action)}`);
     if (d.old.expected !== d.new.expected) {

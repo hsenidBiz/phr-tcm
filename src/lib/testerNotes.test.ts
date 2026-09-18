@@ -126,6 +126,43 @@ test("multi-line values are flattened onto one line", () => {
   expect(text).toContain('      Action: "Open the page" -> "Open / the page"');
 });
 
+/// A Shared Steps reference has no action/expected text of its own -
+/// `shown("")` used to print a bare "(empty)", telling a tester nothing
+/// happened. The note must name the reference instead.
+test("an added shared step's note names it", () => {
+  const queued = tc("Login", {
+    update_id: 12,
+    steps: [
+      { action: "Open the page", expected: "Page shown" },
+      { action: "", expected: "", shared: 812 },
+    ],
+  });
+  const before = server(12, tc("Login", { steps: [{ action: "Open the page", expected: "Page shown" }] }));
+  const diff = diffCase(queued, before);
+  const text = testerNotes({ pbiId: 1, sent: [queued], results: [r(0, "updated", 12)], diffs: [diff] });
+  expect(text).toContain("  - Step 2 added: Shared steps #812");
+});
+
+/// Re-pointing a step at a different Shared Steps work item is a real
+/// change ("Step 2 changed" used to carry no detail at all).
+test("a re-pointed shared reference names both sides", () => {
+  const queued = tc("Login", {
+    update_id: 12,
+    steps: [
+      { action: "Open the page", expected: "Page shown" },
+      { action: "", expected: "", shared: 900 },
+    ],
+  });
+  const before = server(12, tc("Login", { steps: [
+    { action: "Open the page", expected: "Page shown" },
+    { action: "", expected: "", shared: 812 },
+  ] }));
+  const diff = diffCase(queued, before);
+  const text = testerNotes({ pbiId: 1, sent: [queued], results: [r(0, "updated", 12)], diffs: [diff] });
+  expect(text).toContain("Shared steps #812");
+  expect(text).toContain("Shared steps #900");
+});
+
 test("updated and new counts are both given, updates first", () => {
   const up = tc("Old one", { update_id: 1, title: "Old one, renamed" });
   const diff = diffCase(up, server(1, tc("Old one")));

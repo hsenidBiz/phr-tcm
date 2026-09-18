@@ -225,7 +225,7 @@ export function QueueRowInner({
               {/* git word-diff style: -/+ lines with only the
                   actually-changed words highlighted. */}
               {diff.steps.detail.map((d) => (
-                <StepDiffLines key={d.index} d={d} />
+                <StepDiffLines key={d.index} d={d} org={org} />
               ))}
             </div>
           )}
