@@ -49,7 +49,7 @@ impl CaseTarget {
     }
 }
 
-fn document(json: &str) -> Result<Value, String> {
+pub(crate) fn document(json: &str) -> Result<Value, String> {
     serde_json::from_str(json).map_err(|e| format!("not valid JSON: {e}"))
 }
 
@@ -66,7 +66,7 @@ fn cases_of(doc: &mut Value) -> Result<&mut Vec<Value>, String> {
 
 /// The whole document back as text, in the same pretty shape the exporter
 /// writes so a comment save and a fresh export look identical on disk.
-fn render(doc: &Value) -> Result<String, String> {
+pub(crate) fn render(doc: &Value) -> Result<String, String> {
     let mut text = serde_json::to_string_pretty(doc).map_err(|e| e.to_string())?;
     text.push('\n');
     Ok(text)

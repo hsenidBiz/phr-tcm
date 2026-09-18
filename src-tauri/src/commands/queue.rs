@@ -29,6 +29,8 @@ use crate::{ado, import_parser, model, note_server};
 pub struct ImportResult {
     pub cases: Vec<model::TestCase>,
     pub warnings: Vec<String>,
+    /// The file's `specs` list, verbatim - resolved when a page is written.
+    pub specs: Vec<String>,
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -51,8 +53,8 @@ const BATCH_SIZE: usize = crate::ado::wit_batch::MAX_PER_BATCH;
 #[tauri::command]
 #[specta::specta]
 pub fn parse_import_file(path: String) -> Result<ImportResult, String> {
-    let (cases, warnings) = import_parser::parse_file(&path)?;
-    Ok(ImportResult { cases, warnings })
+    let parsed = import_parser::parse_file(&path)?;
+    Ok(ImportResult { cases: parsed.cases, warnings: parsed.warnings, specs: parsed.specs })
 }
 
 /// One-shot content fingerprint. Used when a watch is (re)armed, to catch
@@ -181,7 +183,8 @@ pub async fn fetch_shared_queue(
     // one-time use, and burning it on a draft the importer then refused
     // left the recipient with nothing to retry and the sender having to
     // share the whole thing again.
-    let (cases, mut warnings) = parsed?;
+    let parsed = parsed?;
+    let (cases, mut warnings) = (parsed.cases, parsed.warnings);
     if let Some(w) = client.revoke_share(&share, &taken.pending_revoke).await {
         warnings.push(w);
     }
@@ -381,6 +384,29 @@ pub fn save_general_comment(
     // is not reentrant.
     let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
     write_general_comment(&app, &path, &text)
+}
+
+/// The `specs` list held in a JSON file, for the Import File tab. A file
+/// that has none - or can't be read - simply has none.
+#[tauri::command]
+#[specta::specta]
+pub fn read_specs(path: String) -> Vec<String> {
+    std::fs::read_to_string(&path)
+        .map(|j| import_parser::specs::read_specs(&j))
+        .unwrap_or_default()
+}
+
+/// Save the `specs` list from the Import File tab's Attach control. Returns
+/// the file's new fingerprint so the caller can move its watch forward.
+#[tauri::command]
+#[specta::specta]
+pub fn save_specs(app: tauri::AppHandle, path: String, specs: Vec<String>) -> Result<String, String> {
+    // Same guard as the comment saves: one read-patch-write at a time.
+    let _serialised = NOTE_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    writable(&app, &path)?;
+    let json = std::fs::read_to_string(&path).map_err(|e| format!("could not read the file: {e}"))?;
+    let patched = import_parser::specs::patch_specs(&json, &specs)?;
+    crate::filewatch::write_watched(&watch_state(&app), &path, &patched)
 }
 
 /// Save one draft case's comment into the file it came from, from the app.

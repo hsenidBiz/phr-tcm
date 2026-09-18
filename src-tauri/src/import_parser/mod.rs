@@ -14,6 +14,7 @@
 pub mod comments;
 mod export;
 mod html;
+pub mod specs;
 
 pub use export::{export_queue_to_json, merge_cases_into_draft, queue_to_json_string};
 pub use html::{export_queue_page, export_queue_to_html, CommentCtx, DraftFile, DraftNoteCtx, NoteCtx};
@@ -69,9 +70,18 @@ const REQUIRED_COLUMNS: [&str; 3] = ["TestCaseName", "StepNumber", "StepAction"]
 
 pub type Row = (u32, HashMap<String, String>);
 
-/// Parse a file into test cases. Returns (cases, warnings) or a user-facing
+/// What a file parses to: the cases, the warnings, and the `specs` list
+/// (file paths or wiki URLs the review page shows beside the cases).
+#[derive(Debug, Default)]
+pub struct ParsedFile {
+    pub cases: Vec<TestCase>,
+    pub warnings: Vec<String>,
+    pub specs: Vec<String>,
+}
+
+/// Parse a file into test cases. Returns the parsed file or a user-facing
 /// error string (bad file type / missing columns / unreadable file).
-pub fn parse_file(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
+pub fn parse_file(path: &str) -> Result<ParsedFile, String> {
     let ext = Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
@@ -341,11 +351,18 @@ pub(crate) fn value_to_string(v: &serde_json::Value) -> String {
 /// Parse the AI round-trip JSON format (wrapper {"test_cases": [...]} or a
 /// bare list). A kept `id` flags the case as an UPDATE - same contract as
 /// the TestCaseID column. Ported from v1 _parse_json.
-fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
+fn parse_json(path: &str) -> Result<ParsedFile, String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("Could not read JSON: {e}"))?;
     let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
     let data: serde_json::Value =
         serde_json::from_str(content).map_err(|e| format!("Invalid JSON: {e}"))?;
+
+    let specs = specs::read_specs(content);
+    let ignored = specs::ignored_spec_entries(content);
+    let mut warnings = vec![];
+    if ignored > 0 {
+        warnings.push(format!("specs: {ignored} entr{} ignored - each entry must be a file path or a wiki URL.", if ignored == 1 { "y" } else { "ies" }));
+    }
 
     let raw_cases = match &data {
         serde_json::Value::Object(o) => o
@@ -362,7 +379,6 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
         .ok_or("\"test_cases\" must be a list.")?
         .clone();
 
-    let mut warnings = vec![];
     let mut test_cases = vec![];
     for (i, raw) in raw_cases.iter().enumerate() {
         let label = format!("Test case {}", i + 1);
@@ -599,5 +615,5 @@ fn parse_json(path: &str) -> Result<(Vec<TestCase>, Vec<String>), String> {
         });
     }
 
-    Ok((test_cases, warnings))
+    Ok(ParsedFile { cases: test_cases, warnings, specs })
 }

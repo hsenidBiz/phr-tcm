@@ -170,7 +170,8 @@ fn json_export_round_trips_through_the_importer() {
     assert_eq!(doc["version"], 1);
     assert!(doc["instructions"].as_str().unwrap().contains("UPDATES"));
 
-    let (cases, warnings) = parse_file(&path).unwrap();
+    let parsed = parse_file(&path).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     assert_eq!(cases.len(), 2);
     assert_eq!(cases[0].update_id, Some(77));
@@ -234,7 +235,8 @@ fn findings_round_trip_with_the_case_and_bad_kinds_warn() {
     .to_string();
     let path = tmp_path("findings.json");
     std::fs::write(&path, &json).unwrap();
-    let (cases, warnings) = parse_file(&path).unwrap();
+    let parsed = parse_file(&path).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     std::fs::remove_file(&path).ok();
     assert_eq!(cases.len(), 1);
     let f = &cases[0].findings;
@@ -294,7 +296,8 @@ fn sort_orders_round_trip_and_junk_values_warn() {
     assert!(doc["test_cases"][1].get("spec_order").is_none());
     assert!(doc["test_cases"][1].get("tester_order").is_none());
 
-    let (cases, warnings) = parse_file(&path).unwrap();
+    let parsed = parse_file(&path).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(cases[0].spec_order, Some(2));
     assert_eq!(cases[0].tester_order, Some(1));
@@ -309,7 +312,8 @@ fn sort_orders_round_trip_and_junk_values_warn() {
     .to_string();
     let path2 = tmp_path("orders-junk.json");
     std::fs::write(&path2, junk).unwrap();
-    let (cases, warnings) = parse_file(&path2).unwrap();
+    let parsed = parse_file(&path2).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     assert_eq!(cases[0].spec_order, None);
     assert_eq!(cases[0].tester_order, None);
     assert_eq!(warnings.len(), 2, "{warnings:?}");
@@ -405,7 +409,8 @@ fn merging_cases_back_preserves_the_rest_of_the_file() {
     // the importer itself would refuse.
     let path = tmp_path("merged.json");
     std::fs::write(&path, &out).unwrap();
-    let (cases, warnings) = parse_file(&path).unwrap();
+    let parsed = parse_file(&path).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(cases[0].title, "Renamed by bulk edit");
 }
@@ -821,7 +826,7 @@ fn an_id_out_of_range_or_fractional_is_refused_not_rounded() {
         .unwrap();
         let out = parse_file(&path).unwrap();
         let _ = std::fs::remove_file(&path);
-        out
+        (out.cases, out.warnings)
     };
 
     for bad in ["99999999999", "2147483648", "12.7", "-5", "0", "1e40", "abc"] {
@@ -862,7 +867,8 @@ fn a_step_that_spans_lines_is_folded_and_the_author_is_told() {
         ]
     }]);
     std::fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
-    let (cases, warnings) = parse_file(&path).unwrap();
+    let parsed = parse_file(&path).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     let _ = std::fs::remove_file(&path);
 
     assert_eq!(cases[0].steps[0].action, "Open Settings then the Payments tab");
@@ -924,7 +930,8 @@ fn area_is_read_under_its_aliases_and_trimmed() {
         ]}"#,
     )
     .unwrap();
-    let (cases, warnings) = parse_file(&path).unwrap();
+    let parsed = parse_file(&path).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(cases[0].area, "Page / Section");
     assert_eq!(cases[1].area, "Page/Other");

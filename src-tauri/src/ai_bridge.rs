@@ -320,7 +320,7 @@ fn optimize_json(body: &str, target: &str) -> (u16, String) {
                 );
             }
             match crate::import_parser::parse_file(path) {
-                Ok(v) => v,
+                Ok(v) => (v.cases, v.warnings),
                 Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
             }
         }
@@ -447,7 +447,7 @@ fn transform_json(body: &str) -> (u16, String) {
                 );
             }
             match crate::import_parser::parse_file(path) {
-                Ok(v) => v,
+                Ok(v) => (v.cases, v.warnings),
                 Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
             }
         }
@@ -740,7 +740,7 @@ async fn validate_json(
                 })
                 .to_string();
             }
-            crate::import_parser::parse_file(path)
+            crate::import_parser::parse_file(path).map(|p| (p.cases, p.warnings))
         }
         None => {
             if body.trim().is_empty() {
@@ -974,7 +974,7 @@ async fn check_coverage_route(body: &str) -> (u16, String) {
             );
         }
         match crate::import_parser::parse_file(path) {
-            Ok((cases, _warnings)) => cases,
+            Ok(parsed) => parsed.cases,
             Err(e) => return (400, serde_json::json!({ "error": e }).to_string()),
         }
     } else {
@@ -1124,7 +1124,9 @@ fn merge_cases_route(body: &str, ctx: &BridgeContext) -> (u16, String) {
 
     for path in &req.paths {
         match crate::import_parser::parse_file(path) {
-            Ok((cases, file_warnings)) => {
+            Ok(parsed) => {
+                let cases = parsed.cases;
+                let file_warnings = parsed.warnings;
                 per_file.push(serde_json::json!({ "path": path, "cases": cases.len() }));
                 // Prefixed with the slice's own file name - a warning
                 // aggregated across several slices is useless if it can't
@@ -1223,7 +1225,7 @@ fn parse_cases_with_warnings(
     std::fs::write(&path, body).map_err(|_| "could not stage the draft".to_string())?;
     let parsed = crate::import_parser::parse_file(path.to_str().unwrap_or_default());
     let _ = std::fs::remove_file(&path);
-    parsed
+    parsed.map(|p| (p.cases, p.warnings))
 }
 
 /// Run a draft through the app's REAL importer to get `TestCase`s, so

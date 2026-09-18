@@ -968,7 +968,7 @@ async fn a_case_exported_and_reimported_does_not_rewrite_its_steps() {
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::write(&path, text.replace("Original title", "Renamed in the file")).unwrap();
 
-    let (mut cases, _) = v2_lib::import_parser::parse_file(path.to_str().unwrap()).unwrap();
+    let mut cases = v2_lib::import_parser::parse_file(path.to_str().unwrap()).unwrap().cases;
     let _ = std::fs::remove_file(&path);
     assert_eq!(cases.len(), 1);
     let reimported = cases.remove(0);

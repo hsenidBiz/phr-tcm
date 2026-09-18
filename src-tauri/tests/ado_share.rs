@@ -39,8 +39,8 @@ fn a_shared_draft_carries_the_app_only_fields() {
     std::fs::write(&path, &json).unwrap();
 
     // 3. What fetch_shared_queue does with the download.
-    let (cases, warnings) =
-        v2_lib::import_parser::parse_file(path.to_str().unwrap()).unwrap();
+    let parsed = v2_lib::import_parser::parse_file(path.to_str().unwrap()).unwrap();
+    let (cases, warnings) = (parsed.cases, parsed.warnings);
     let _ = std::fs::remove_file(&path);
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(cases.len(), 1);

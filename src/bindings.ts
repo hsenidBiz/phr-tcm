@@ -312,6 +312,16 @@ export const commands = {
 	 */
 	saveGeneralComment: (path: string, text: string) => typedError<string, string>(__TAURI_INVOKE("save_general_comment", { path, text })),
 	/**
+	 *  The `specs` list held in a JSON file, for the Import File tab. A file
+	 *  that has none - or can't be read - simply has none.
+	 */
+	readSpecs: (path: string) => __TAURI_INVOKE<string[]>("read_specs", { path }),
+	/**
+	 *  Save the `specs` list from the Import File tab's Attach control. Returns
+	 *  the file's new fingerprint so the caller can move its watch forward.
+	 */
+	saveSpecs: (path: string, specs: string[]) => typedError<string, string>(__TAURI_INVOKE("save_specs", { path, specs })),
+	/**
 	 *  Save one draft case's comment into the file it came from, from the app.
 	 *  Mirrors what the report page's box does, for the queue card.
 	 */
@@ -936,11 +946,15 @@ export type ImportResult = ImportResult_Serialize | ImportResult_Deserialize;
 export type ImportResult_Deserialize = {
 	cases: TestCase_Deserialize[],
 	warnings: string[],
+	/**  The file's `specs` list, verbatim - resolved when a page is written. */
+	specs: string[],
 };
 
 export type ImportResult_Serialize = {
 	cases: TestCase_Serialize[],
 	warnings: string[],
+	/**  The file's `specs` list, verbatim - resolved when a page is written. */
+	specs: string[],
 };
 
 /**
