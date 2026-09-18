@@ -157,3 +157,83 @@ fn nobody_coming_back_times_out_with_a_plain_sentence() {
     assert_eq!(SIGN_IN_TIMEOUT, "Sign-in timed out. Try again.");
     assert!(started.elapsed() < Duration::from_secs(3));
 }
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use v2_lib::auth::{store_refreshed, AuthState, TokenSet};
+use v2_lib::state::fresh_token_with;
+
+fn expiring(access: &str, refresh: &str) -> TokenSet {
+    TokenSet {
+        access_token: access.into(),
+        refresh_token: Some(refresh.into()),
+        expires_at: None, // no expiry = needs refresh
+        account: Some("a@x.com".into()),
+    }
+}
+
+fn lasting(access: &str, refresh: &str) -> TokenSet {
+    TokenSet {
+        access_token: access.into(),
+        refresh_token: Some(refresh.into()),
+        expires_at: Some(Instant::now() + Duration::from_secs(3600)),
+        account: Some("a@x.com".into()),
+    }
+}
+
+/// Near expiry every concurrent command used to refresh on its own.
+#[tokio::test]
+async fn concurrent_callers_share_one_refresh() {
+    let state = Arc::new(Mutex::new(AuthState { tokens: Some(expiring("old", "rt-1")) }));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut handles = vec![];
+    for _ in 0..5 {
+        let (state, calls) = (state.clone(), calls.clone());
+        handles.push(tokio::spawn(async move {
+            fresh_token_with(&state, move |rt, _account| {
+                let calls = calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(rt, "rt-1");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    Ok(lasting("new", "rt-2"))
+                }
+            })
+            .await
+        }));
+    }
+    for h in handles {
+        assert_eq!(h.await.unwrap().unwrap(), "new");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "one refresh for five callers");
+}
+
+/// A refresh for A that finished after B signed in used to overwrite B.
+#[tokio::test]
+async fn a_refresh_that_finishes_after_a_new_sign_in_does_not_overwrite_it() {
+    let state = Arc::new(Mutex::new(AuthState { tokens: Some(expiring("a-old", "rt-a")) }));
+    let during = state.clone();
+    let token = fresh_token_with(&state, move |_rt, _account| {
+        let during = during.clone();
+        async move {
+            during.lock().unwrap().tokens = Some(lasting("b-token", "rt-b"));
+            Ok(lasting("a-new", "rt-a2"))
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(token, "b-token", "the command acts as the account now signed in");
+    assert_eq!(state.lock().unwrap().tokens.as_ref().unwrap().access_token, "b-token");
+}
+
+#[test]
+fn refreshed_tokens_are_stored_only_over_the_session_they_came_from() {
+    let mut s = AuthState { tokens: Some(lasting("x", "rt-1")) };
+    assert!(store_refreshed(&mut s, "rt-1", lasting("y", "rt-2")));
+    assert_eq!(s.tokens.as_ref().unwrap().access_token, "y");
+    assert!(!store_refreshed(&mut s, "rt-1", lasting("z", "rt-3")), "rt-1 is no longer current");
+    assert_eq!(s.tokens.as_ref().unwrap().access_token, "y");
+    let mut signed_out = AuthState::default();
+    assert!(!store_refreshed(&mut signed_out, "rt-1", lasting("z", "rt-3")));
+    assert!(signed_out.tokens.is_none(), "a sign-out is not undone by a late refresh");
+}

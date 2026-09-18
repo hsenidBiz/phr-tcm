@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc;
-use v2_lib::note_server::{body_if_complete, parse_note, start, NotePayload};
+use v2_lib::note_server::{body_if_complete, parse_note, start, AcceptBackoff, NotePayload};
 
 fn post(port: u16, path: &str, body: &str) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -231,4 +231,16 @@ fn a_content_length_inside_a_character_does_not_panic() {
     assert_eq!(body_if_complete(whole).as_deref(), Some("é"));
     let short = "POST /note HTTP/1.1\r\nContent-Length: 5\r\n\r\nab".as_bytes();
     assert_eq!(body_if_complete(short), None, "not all here yet");
+}
+
+/// A persistent accept error (handle exhaustion) used to spin both accept
+/// loops at 100% CPU.
+#[test]
+fn accept_errors_back_off_doubling_to_five_seconds() {
+    use std::time::Duration;
+    let mut b = AcceptBackoff::default();
+    let waits: Vec<u64> = (0..8).map(|_| b.failed().as_millis() as u64).collect();
+    assert_eq!(waits, vec![100, 200, 400, 800, 1600, 3200, 5000, 5000]);
+    b.succeeded();
+    assert_eq!(b.failed(), Duration::from_millis(100), "a success resets it");
 }

@@ -210,12 +210,23 @@ impl Store {
 
     /// Hand the cache to the signed-in account. A different account than
     /// the recorded owner drops everything; an unowned cache (first launch
-    /// with this guard, carrying migrated data) is adopted as is. `None`
-    /// - no account known yet - changes nothing.
+    /// with this guard, carrying migrated data) is adopted as is. `None` -
+    /// an account the sign-in could not name - is not provably the owner,
+    /// so it is treated like a different account: everything is dropped and
+    /// the cache is left unowned for the next named sign-in to adopt.
     pub fn claim_for(&self, account: Option<&str>) {
-        let Some(account) = account else { return };
-        let tag = owner_tag(account);
         let mut inner = self.lock();
+        let Some(account) = account else {
+            if inner.disk.owner.is_none() && inner.disk.entries.is_empty() && inner.session.is_empty() {
+                return;
+            }
+            inner.disk.entries.clear();
+            inner.session.clear();
+            inner.disk.owner = None;
+            self.persist(&inner.disk);
+            return;
+        };
+        let tag = owner_tag(account);
         // Compare first, into a plain bool, so no borrow of the owner is
         // alive while the entries are cleared.
         match inner.disk.owner.as_deref().map(|owner| owner == tag) {

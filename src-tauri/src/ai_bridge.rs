@@ -3024,8 +3024,23 @@ pub async fn start_listener(
     }
 
     tauri::async_runtime::spawn(async move {
+        let mut backoff = crate::note_server::AcceptBackoff::default();
         loop {
-            let Ok((mut sock, _)) = listener.accept().await else { continue };
+            let (mut sock, _) = match listener.accept().await {
+                Ok(pair) => {
+                    backoff.succeeded();
+                    pair
+                }
+                Err(e) => {
+                    let wait = backoff.failed();
+                    crate::applog::warn(format!(
+                        "AI bridge could not accept a connection, retrying in {} ms: {e}",
+                        wait.as_millis()
+                    ));
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+            };
             let state = Arc::clone(&state);
             let make_client = make_client.clone();
             tauri::async_runtime::spawn(async move {

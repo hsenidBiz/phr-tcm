@@ -56,6 +56,18 @@ pub fn needs_refresh(expires_at: Option<Instant>, now: Instant) -> bool {
     }
 }
 
+/// Store refreshed tokens only if the session they were refreshed FROM is
+/// still the current one. A refresh for account A that finishes after the
+/// user signed in as B (or signed out) must not replace B's tokens.
+pub fn store_refreshed(state: &mut AuthState, sent_refresh_token: &str, fresh: TokenSet) -> bool {
+    let still_current =
+        state.tokens.as_ref().and_then(|t| t.refresh_token.as_deref()) == Some(sent_refresh_token);
+    if still_current {
+        state.tokens = Some(fresh);
+    }
+    still_current
+}
+
 pub fn build_authorize_url(challenge: &str, redirect_uri: &str, state: &str) -> String {
     format!(
         "{AUTHORITY}/oauth2/v2.0/authorize?client_id={CLIENT_ID}&response_type=code&redirect_uri={}&scope={}&code_challenge={challenge}&code_challenge_method=S256&state={state}",

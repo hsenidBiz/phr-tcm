@@ -100,6 +100,36 @@ pub fn reply_body(outcome: &Result<(), String>) -> String {
     }
 }
 
+/// Pause after a failed accept: 100 ms, doubling to 5 s, reset by the next
+/// success. A persistent error (handle exhaustion) used to turn the accept
+/// loops - this one and the AI bridge's - into a 100% CPU spin.
+#[derive(Debug)]
+pub struct AcceptBackoff {
+    next: std::time::Duration,
+}
+
+impl AcceptBackoff {
+    const FIRST: std::time::Duration = std::time::Duration::from_millis(100);
+    const MAX: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// How long to wait after this failure.
+    pub fn failed(&mut self) -> std::time::Duration {
+        let wait = self.next;
+        self.next = (self.next * 2).min(Self::MAX);
+        wait
+    }
+
+    pub fn succeeded(&mut self) {
+        self.next = Self::FIRST;
+    }
+}
+
+impl Default for AcceptBackoff {
+    fn default() -> Self {
+        Self { next: Self::FIRST }
+    }
+}
+
 /// Bind 127.0.0.1:0 and serve forever on a background thread, invoking
 /// `on_note` for each valid note and reporting its result back to the page.
 /// Returns the bound port.
@@ -118,8 +148,18 @@ pub fn start(
     std::thread::Builder::new()
         .name("note-server".into())
         .spawn(move || {
+            let mut backoff = AcceptBackoff::default();
             for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
+                let mut stream = match stream {
+                    Ok(s) => {
+                        backoff.succeeded();
+                        s
+                    }
+                    Err(_) => {
+                        std::thread::sleep(backoff.failed());
+                        continue;
+                    }
+                };
                 // Every connection used to be read to completion ON THIS
                 // THREAD, with no timeout. One peer that connected and then
                 // said nothing - and this port is on loopback with

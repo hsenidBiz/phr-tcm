@@ -40,38 +40,77 @@ impl Drop for SubmitGuard<'_> {
     }
 }
 
-/// Returns a valid access token, silently refreshing when it is within
-/// 5 minutes of expiry. The token itself never leaves the Rust side.
-pub(crate) async fn get_fresh_token(app: &tauri::AppHandle) -> Result<String, ado::AdoError> {
-    let (token, refresh_needed, refresh_token, account) = {
-        let state = app.state::<Mutex<auth::AuthState>>();
-        let s = state.lock().unwrap();
-        match &s.tokens {
-            None => return Err(ado::AdoError::Unauthorized),
-            Some(t) => (
-                t.access_token.clone(),
-                auth::needs_refresh(t.expires_at, Instant::now()),
-                t.refresh_token.clone(),
-                t.account.clone(),
-            ),
-        }
-    };
-    if !refresh_needed {
+/// One refresh at a time, process-wide. Near expiry every concurrent
+/// command used to send its own refresh; now the first refreshes and the
+/// rest, re-reading after the gate, find a token that no longer needs it.
+fn refresh_gate() -> &'static tokio::sync::Mutex<()> {
+    static GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+type Snapshot = (String, bool, Option<String>, Option<String>);
+
+/// (access token, needs refresh, refresh token, account). Sync, so no lock
+/// guard lives across an await.
+fn snapshot(state: &Mutex<auth::AuthState>) -> Result<Snapshot, ado::AdoError> {
+    let s = state.lock().unwrap();
+    match &s.tokens {
+        None => Err(ado::AdoError::Unauthorized),
+        Some(t) => Ok((
+            t.access_token.clone(),
+            auth::needs_refresh(t.expires_at, Instant::now()),
+            t.refresh_token.clone(),
+            t.account.clone(),
+        )),
+    }
+}
+
+/// Store a refresh result if its session is still current, and return the
+/// token the caller should use either way: the stored one.
+fn keep(state: &Mutex<auth::AuthState>, sent: &str, fresh: auth::TokenSet) -> Result<String, ado::AdoError> {
+    let mut s = state.lock().unwrap();
+    auth::store_refreshed(&mut s, sent, fresh);
+    s.tokens
+        .as_ref()
+        .map(|t| t.access_token.clone())
+        .ok_or(ado::AdoError::Unauthorized)
+}
+
+/// `get_fresh_token` with the state and the refresh call passed in - the
+/// seam tests/auth.rs drives without a Tauri app.
+pub async fn fresh_token_with<F, Fut>(
+    state: &Mutex<auth::AuthState>,
+    refresh: F,
+) -> Result<String, ado::AdoError>
+where
+    F: Fn(String, Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<auth::TokenSet, String>>,
+{
+    let (token, needed, _, _) = snapshot(state)?;
+    if !needed {
+        return Ok(token);
+    }
+    let _gate = refresh_gate().lock().await;
+    // Re-read: whoever held the gate before us may have refreshed already.
+    let (token, needed, refresh_token, account) = snapshot(state)?;
+    if !needed {
         return Ok(token);
     }
     let Some(rt) = refresh_token else {
         // No refresh token: keep using the current one until it hard-fails.
         return Ok(token);
     };
-    match auth::refresh(&rt, account).await {
-        Ok(new_tokens) => {
-            let fresh = new_tokens.access_token.clone();
-            let state = app.state::<Mutex<auth::AuthState>>();
-            state.lock().unwrap().tokens = Some(new_tokens);
-            Ok(fresh)
-        }
+    match refresh(rt.clone(), account).await {
+        Ok(new_tokens) => keep(state, &rt, new_tokens),
         // Refresh failed (revoked, offline, CAE): fall back to the existing
         // token; a hard 401 from the API will surface as Unauthorized.
         Err(_) => Ok(token),
     }
+}
+
+/// Returns a valid access token, silently refreshing when it is within
+/// 5 minutes of expiry. The token itself never leaves the Rust side.
+pub(crate) async fn get_fresh_token(app: &tauri::AppHandle) -> Result<String, ado::AdoError> {
+    let state = app.state::<Mutex<auth::AuthState>>();
+    fresh_token_with(&state, |rt, account| async move { auth::refresh(&rt, account).await }).await
 }

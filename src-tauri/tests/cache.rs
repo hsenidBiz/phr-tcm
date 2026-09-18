@@ -124,8 +124,7 @@ fn signing_in_as_someone_else_drops_the_previous_accounts_cache() {
     store.session_put("tree", 7u8);
 
     store.claim_for(Some("first@example.com"));
-    store.claim_for(None); // no account yet must not wipe anything
-    assert!(store.get::<Vec<String>>("tags:acme/Web").is_some());
+    assert!(store.get::<Vec<String>>("tags:acme/Web").is_some(), "the same account keeps its cache");
     assert_eq!(store.session_fresh::<u8>("tree", Duration::from_secs(600)), Some(7));
 
     store.claim_for(Some("second@example.com"));
@@ -314,4 +313,52 @@ fn no_module_keeps_a_private_cache_map() {
         }
     }
     assert!(offenders.is_empty(), "keep cached data in crate::cache, not a private static map: {offenders:?}");
+}
+
+/// A sign-in whose account cannot be named is not provably the owner, so
+/// it is treated like a different account: nothing of the previous one's
+/// is served to it.
+#[test]
+fn an_unnamed_account_does_not_inherit_the_cache() {
+    let dir = temp_dir("claim-none");
+    let store = Store::open(Some(&dir));
+    store.claim_for(Some("first@example.com"));
+    store.put("tags:acme/Web", &vec!["smoke".to_string()]);
+    store.session_put("tree", 7u8);
+
+    store.claim_for(None);
+    assert!(store.get::<Vec<String>>("tags:acme/Web").is_none());
+    assert!(store.session_fresh::<u8>("tree", Duration::from_secs(600)).is_none());
+    assert!(Store::open(Some(&dir)).get::<Vec<String>>("tags:acme/Web").is_none(), "wiped on disk too");
+
+    // The wiped cache has no owner, so the next named sign-in adopts it.
+    store.put("k", &1u8);
+    store.claim_for(Some("first@example.com"));
+    assert_eq!(store.get::<u8>("k"), Some(1));
+}
+
+/// A late background refresh used to `put` a list that lacked the tags an
+/// upload had just folded in - and every stale read started another one.
+#[test]
+fn a_late_tag_refresh_keeps_what_was_learned_meanwhile() {
+    use v2_lib::commands::discovery::merge_refreshed_tags;
+    let snapshot = vec!["old".to_string(), "smoke".to_string()];
+    let current = vec!["New-From-Upload".to_string(), "old".to_string(), "smoke".to_string()];
+    let fresh = vec!["regression".to_string(), "smoke".to_string()];
+    assert_eq!(
+        merge_refreshed_tags(fresh, &snapshot, &current),
+        vec!["New-From-Upload", "regression", "smoke"],
+        "the upload's tag stays; `old`, deleted in Azure DevOps, goes"
+    );
+}
+
+#[test]
+fn only_one_tag_refresh_runs_per_key() {
+    use v2_lib::commands::discovery::claim_tag_refresh;
+    let key = "tags:single-flight-test/Web";
+    let first = claim_tag_refresh(key).expect("the first stale read gets the refresh");
+    assert!(claim_tag_refresh(key).is_none(), "a second stale read must not start another");
+    assert!(claim_tag_refresh("tags:single-flight-test/Other").is_some(), "other projects are independent");
+    drop(first);
+    assert!(claim_tag_refresh(key).is_some(), "finished, so the next stale read may refresh");
 }
