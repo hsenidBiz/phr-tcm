@@ -94,6 +94,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             queue::unwatch_file,
             queue::unwatch_all_files,
             queue::submit_queue,
+            queue::reconcile_upload,
             testplan::ensure_pbi_suite,
             runs::list_test_points,
             runs::result_failure_detail,

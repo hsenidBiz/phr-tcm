@@ -37,7 +37,10 @@ pub struct ImportResult {
 pub struct SubmitItemResult {
     pub index: u32,
     pub title: String,
-    /// "created" | "updated" | "failed"
+    /// "created" | "updated" | "failed" | "unknown". "unknown": the batch
+    /// failed and Azure DevOps could not be asked whether this create
+    /// landed, or it had not finished yet. It may exist - check
+    /// (`reconcile_upload`) before uploading it again.
     pub action: String,
     pub id: Option<i32>,
     pub error: Option<String>,
@@ -680,6 +683,10 @@ pub async fn submit_queue(
         return Err("A submit is already running. Wait for it to finish.".into());
     };
 
+    // The lower bound for "what did this upload create", should a batch
+    // fail. Early by a margin: the local clock may run ahead of ADO's.
+    let upload_since = iso_utc(now_secs() - SINCE_MARGIN_SECS);
+
     // Best-effort board visibility (ported from v1 CreationWorker._ensure_suite):
     // make sure the PBI's requirement-based suite exists before creating, so
     // linked cases surface on the board's test count. Failures never block
@@ -875,11 +882,18 @@ pub async fn submit_queue(
                             }
                         }
                         // The whole call failed (network, 401, 429 past its
-                        // back-off): every case in it failed, with the reason.
+                        // back-off, timeout). The server may still have run
+                        // some of it: ask what it created before calling a
+                        // create failed - retrying a create that landed makes
+                        // a duplicate. See `resolve_failed_batch`.
                         Err(e) => {
-                            let msg = e.user_text();
-                            for &i in &sent_idx {
-                                chunk[i - chunk_start] = Some(failed_item(i, &queue[i], msg.clone()));
+                            for r in resolve_failed_batch(
+                                &client, &organization, &project, pbi_id, &upload_since, &queue, &sent_idx, &e,
+                            )
+                            .await
+                            {
+                                let i = r.index as usize;
+                                chunk[i - chunk_start] = Some(r);
                             }
                         }
                     }
@@ -902,22 +916,30 @@ pub async fn submit_queue(
                     item.title,
                     item.error.as_deref().unwrap_or("unknown error")
                 ));
+            } else if item.action == "unknown" {
+                crate::applog::warn(format!(
+                    "Submit outcome unknown for '{}': {}",
+                    item.title,
+                    item.error.as_deref().unwrap_or("no reason given")
+                ));
             }
             results.push(item);
         }
         chunk_start = end;
     }
     let failed = results.iter().filter(|r| r.action == "failed").count();
+    let unknown = results.iter().filter(|r| r.action == "unknown").count();
     crate::applog::info(format!(
-        "Submit finished: {} of {total} processed, {failed} failed",
+        "Submit finished: {} of {total} processed, {failed} failed, {unknown} unknown",
         results.len()
     ));
     // Tags carried by cases that actually landed provably exist in the
     // project now, so fold them into the cache rather than waiting for a
-    // refresh to rediscover what we just created ourselves.
+    // refresh to rediscover what we just created ourselves. "unknown" is
+    // not "landed".
     let created: Vec<String> = results
         .iter()
-        .filter(|r| r.action != "failed")
+        .filter(|r| r.action == "created" || r.action == "updated")
         .filter_map(|r| queue.get(r.index as usize))
         .flat_map(|tc| tc.tags.split(';').map(|t| t.trim().to_string()))
         .filter(|t| !t.is_empty())
@@ -1154,6 +1176,185 @@ pub fn match_reconciled(creates: &[(usize, String)], found: &[(i32, String)]) ->
         }
     }
     out
+}
+
+/// How far before the upload's start the reconcile lookup reaches.
+pub const SINCE_MARGIN_SECS: i64 = 300;
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// UTC `YYYY-MM-DDTHH:MM:SSZ` - the form `created_since_wiql` takes.
+pub fn iso_utc(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (y, m, d) = crate::applog::civil(days);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+fn unknown_item(index: usize, tc: &model::TestCase, error: &str) -> SubmitItemResult {
+    SubmitItemResult {
+        index: index as u32,
+        title: tc.title.clone(),
+        action: "unknown".into(),
+        id: None,
+        error: Some(format!(
+            "Outcome unknown ({error}). Azure DevOps may have created this case - check before uploading it again."
+        )),
+    }
+}
+
+/// The results for a batch whose call failed. `found` is what the lookup
+/// returned, or `None` when the lookup itself failed. Updates are always
+/// `failed` (a PATCH is safe to retry). A create the lookup found is
+/// `created` with that id. Any other create is `unknown` when there was no
+/// answer, or when the server may still be running the batch
+/// (`still_running`, after a timeout). Otherwise it is `failed`.
+pub fn failed_batch_results(
+    queue: &[model::TestCase],
+    sent_idx: &[usize],
+    error: &str,
+    found: Option<&[(i32, String)]>,
+    still_running: bool,
+) -> Vec<SubmitItemResult> {
+    let creates: Vec<(usize, String)> = sent_idx
+        .iter()
+        .filter(|&&i| queue[i].update_id.is_none())
+        .map(|&i| (i, queue[i].title.clone()))
+        .collect();
+    let matched: std::collections::HashMap<usize, i32> = found
+        .map(|f| match_reconciled(&creates, f))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    sent_idx
+        .iter()
+        .map(|&i| {
+            let tc = &queue[i];
+            if tc.update_id.is_some() {
+                failed_item(i, tc, error.to_string())
+            } else if let Some(&id) = matched.get(&i) {
+                SubmitItemResult {
+                    index: i as u32,
+                    title: tc.title.clone(),
+                    action: "created".into(),
+                    id: Some(id),
+                    error: None,
+                }
+            } else if found.is_none() || still_running {
+                unknown_item(i, tc, error)
+            } else {
+                failed_item(i, tc, error.to_string())
+            }
+        })
+        .collect()
+}
+
+/// A failed `$batch`, resolved: when it held creates, ask Azure DevOps what
+/// it made (one lookup) and report per case. See `failed_batch_results`.
+#[allow(clippy::too_many_arguments)]
+pub async fn resolve_failed_batch(
+    client: &ado::AdoClient,
+    organization: &str,
+    project: &str,
+    pbi_id: i32,
+    since: &str,
+    queue: &[model::TestCase],
+    sent_idx: &[usize],
+    err: &ado::AdoError,
+) -> Vec<SubmitItemResult> {
+    // `user_text`, not `to_string`: a refused batch's own sentence, not
+    // "http 0" (main's failure-list fix).
+    let msg = err.user_text();
+    let still_running = matches!(err, ado::AdoError::Network(m) if m == ado::NET_TIMEOUT);
+    let titles: Vec<String> = sent_idx
+        .iter()
+        .filter(|&&i| queue[i].update_id.is_none())
+        .map(|&i| queue[i].title.clone())
+        .collect();
+    if titles.is_empty() {
+        return failed_batch_results(queue, sent_idx, &msg, Some(&[]), false);
+    }
+    let found = match client
+        .find_created_test_cases(organization, project, pbi_id, since, &titles)
+        .await
+    {
+        Ok(f) => {
+            crate::applog::info(format!(
+                "batch failed ({msg}); {} of {} create(s) found in Azure DevOps",
+                f.len(),
+                titles.len()
+            ));
+            Some(f)
+        }
+        Err(e) => {
+            crate::applog::warn(format!(
+                "batch failed ({msg}) and the lookup of what it created failed too ({e}) - {} create(s) held as unknown",
+                titles.len()
+            ));
+            None
+        }
+    };
+    failed_batch_results(queue, sent_idx, &msg, found.as_deref(), still_running)
+}
+
+/// One create the reconcile lookup found: the title it was queued under and
+/// the work item it became.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+pub struct ReconciledCase {
+    pub title: String,
+    pub id: i32,
+}
+
+/// The lookup behind `reconcile_upload`, with the client passed in.
+/// `titles` has one entry per held row (repeats allowed); each found case
+/// is paired once (`match_reconciled`).
+pub async fn reconcile_with(
+    client: &ado::AdoClient,
+    organization: &str,
+    project: &str,
+    pbi_id: i32,
+    since: &str,
+    titles: &[String],
+) -> Result<Vec<ReconciledCase>, String> {
+    if ado::endpoints::wiql_datetime(since).is_none() {
+        return Err("The time to check from is not a valid date.".into());
+    }
+    let found = client
+        .find_created_test_cases(organization, project, pbi_id, since, titles)
+        .await
+        .map_err(|e| e.to_string())?;
+    let creates: Vec<(usize, String)> = titles.iter().cloned().enumerate().collect();
+    Ok(match_reconciled(&creates, &found)
+        .into_iter()
+        .map(|(k, id)| ReconciledCase { title: titles[k].clone(), id })
+        .collect())
+}
+
+/// Check what an interrupted upload created: the rows the queue holds as
+/// "outcome unknown" (C2). Read only.
+#[tauri::command]
+#[specta::specta]
+pub async fn reconcile_upload(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    pbi_id: i32,
+    since: String,
+    titles: Vec<String>,
+) -> Result<Vec<ReconciledCase>, String> {
+    let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
+    let client = ado::AdoClient::new(token);
+    reconcile_with(&client, &organization, &project, pbi_id, &since, &titles).await
 }
 
 fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemResult {

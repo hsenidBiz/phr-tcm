@@ -160,3 +160,191 @@ fn repeated_titles_in_a_batch_pair_in_order() {
     let found = vec![(912, "A".to_string()), (911, "B".to_string()), (910, "A".to_string())];
     assert_eq!(match_reconciled(&creates, &found), vec![(3, 910), (5, 911), (7, 912)]);
 }
+
+// ---- C1: reconcile after a failed batch -------------------------------
+
+use v2_lib::ado::endpoints::{created_since_wiql, wiql_datetime};
+use v2_lib::ado::{AdoError, NET_TIMEOUT};
+use v2_lib::commands::queue::{
+    failed_batch_results, iso_utc, reconcile_with, resolve_failed_batch, ReconciledCase,
+};
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+const SINCE: &str = "2026-09-18T10:00:00Z";
+
+#[test]
+fn upload_start_is_written_the_way_wiql_reads_it() {
+    assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
+    assert_eq!(iso_utc(1_700_000_000), "2023-11-14T22:13:20Z");
+}
+
+/// The frontend sends `Date.toISOString()`; anything that is not exactly a
+/// date-time is refused before it can reach a WIQL string.
+#[test]
+fn only_a_real_date_time_reaches_the_query() {
+    assert_eq!(wiql_datetime("2026-09-18T10:00:00.000Z").as_deref(), Some(SINCE));
+    assert_eq!(wiql_datetime("2026-09-18T10:00:00Z").as_deref(), Some(SINCE));
+    assert_eq!(wiql_datetime("2026-09-18T10:00:00").as_deref(), Some(SINCE));
+    assert_eq!(wiql_datetime("2026-09-18T10:00:00Z' OR ''='"), None);
+    assert_eq!(wiql_datetime("2026-09-18' OR 1=1 --"), None);
+    assert_eq!(wiql_datetime(""), None);
+}
+
+#[test]
+fn the_lookup_asks_for_test_cases_the_pbi_is_tested_by_created_since_the_upload() {
+    let q = created_since_wiql(42, "2026-09-18T10:00:00.000Z").unwrap();
+    assert!(q.contains("FROM WorkItemLinks"), "{q}");
+    assert!(q.contains("[Source].[System.Id] = 42"), "{q}");
+    assert!(q.contains("'Microsoft.VSTS.Common.TestedBy-Forward'"), "{q}");
+    assert!(q.contains("[Target].[System.WorkItemType] = 'Test Case'"), "{q}");
+    assert!(q.contains("[Target].[System.CreatedDate] >= '2026-09-18T10:00:00Z'"), "{q}");
+    assert!(q.contains("MODE (MustContain)"), "{q}");
+    assert_eq!(created_since_wiql(42, "yesterday"), None);
+}
+
+/// Found creates are created, with their id; creates not found failed;
+/// updates always failed (a PATCH is safe to retry). Repeated titles pair in order.
+#[test]
+fn a_lookup_that_answered_decides_each_create() {
+    let queue = vec![case("A", None), case("B", None), case("C", Some(777)), case("A", None)];
+    let found = vec![(902, "A".to_string()), (901, "A".to_string())];
+    let r = failed_batch_results(&queue, &[0, 1, 2, 3], "http 500", Some(&found), false);
+    let got: Vec<(u32, &str, Option<i32>)> = r.iter().map(|x| (x.index, x.action.as_str(), x.id)).collect();
+    assert_eq!(
+        got,
+        vec![(0, "created", Some(901)), (1, "failed", None), (2, "failed", None), (3, "created", Some(902))]
+    );
+    assert_eq!(r[1].error.as_deref(), Some("http 500"));
+}
+
+#[test]
+fn a_lookup_that_failed_leaves_the_creates_unknown() {
+    let queue = vec![case("A", None), case("C", Some(777))];
+    let r = failed_batch_results(&queue, &[0, 1], "http 500", None, false);
+    assert_eq!(r[0].action, "unknown");
+    assert!(r[0].error.as_deref().unwrap().contains("http 500"));
+    assert_eq!(r[1].action, "failed", "an update is safe to retry, so it is never unknown");
+}
+
+/// After a timeout the server may still be working through the batch:
+/// "not found yet" is not "not created".
+#[test]
+fn after_a_timeout_a_create_not_found_yet_is_unknown() {
+    let queue = vec![case("A", None), case("B", None)];
+    let found = vec![(901, "A".to_string())];
+    let r = failed_batch_results(&queue, &[0, 1], NET_TIMEOUT, Some(&found), true);
+    assert_eq!((r[0].action.as_str(), r[0].id), ("created", Some(901)));
+    assert_eq!(r[1].action, "unknown");
+}
+
+async fn mount_lookup(server: &MockServer, links: &[i64], items: serde_json::Value) {
+    let mut rels = vec![serde_json::json!({"rel": null, "source": null, "target": {"id": 42}})];
+    for id in links {
+        rels.push(serde_json::json!({
+            "rel": "Microsoft.VSTS.Common.TestedBy-Forward", "source": {"id": 42}, "target": {"id": id}
+        }));
+    }
+    Mock::given(method("POST"))
+        .and(path("/acme/Web/_apis/wit/wiql"))
+        .and(query_param("timePrecision", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "queryType": "oneHop", "workItemRelations": rels
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/acme/_apis/wit/workitems"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(items))
+        .mount(server)
+        .await;
+}
+
+fn mock_client(server: &MockServer) -> AdoClient {
+    AdoClient::with_base_urls("tok".into(), server.uri(), server.uri())
+}
+
+#[tokio::test]
+async fn the_lookup_returns_only_the_batch_titles_oldest_first() {
+    let server = MockServer::start().await;
+    mount_lookup(&server, &[903, 901, 902], serde_json::json!({"value": [
+        {"id": 903, "fields": {"System.Title": "A"}},
+        {"id": 901, "fields": {"System.Title": "A"}},
+        {"id": 902, "fields": {"System.Title": "Someone else's case"}}
+    ]}))
+    .await;
+    let found = mock_client(&server)
+        .find_created_test_cases("acme", "Web", 42, SINCE, &["A".to_string(), "B".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(found, vec![(901, "A".to_string()), (903, "A".to_string())]);
+
+    let sent = server.received_requests().await.unwrap();
+    let wiql: serde_json::Value = serde_json::from_slice(&sent[0].body).unwrap();
+    let q = wiql["query"].as_str().unwrap();
+    assert!(q.contains("[Source].[System.Id] = 42") && q.contains(SINCE), "{q}");
+}
+
+#[tokio::test]
+async fn a_failed_batch_reports_what_the_lookup_found() {
+    let server = MockServer::start().await;
+    mount_lookup(&server, &[901], serde_json::json!({"value": [{"id": 901, "fields": {"System.Title": "A"}}]})).await;
+    let queue = vec![case("A", None), case("B", None), case("C", Some(777))];
+    let err = AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0, 1, 2], &err).await;
+    let got: Vec<(&str, Option<i32>)> = r.iter().map(|x| (x.action.as_str(), x.id)).collect();
+    assert_eq!(got, vec![("created", Some(901)), ("failed", None), ("failed", None)]);
+}
+
+#[tokio::test]
+async fn a_failed_lookup_holds_the_creates_as_unknown() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/acme/Web/_apis/wit/wiql"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    let queue = vec![case("A", None), case("C", Some(777))];
+    let err = AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0, 1], &err).await;
+    assert_eq!(r[0].action, "unknown");
+    assert_eq!(r[1].action, "failed");
+}
+
+#[tokio::test]
+async fn a_failed_batch_of_updates_asks_nothing() {
+    let server = MockServer::start().await;
+    let queue = vec![case("C", Some(777))];
+    let err = AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0], &err).await;
+    assert_eq!(r[0].action, "failed");
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn check_later_pairs_titles_with_what_exists() {
+    let server = MockServer::start().await;
+    mount_lookup(&server, &[901, 903], serde_json::json!({"value": [
+        {"id": 901, "fields": {"System.Title": "A"}},
+        {"id": 903, "fields": {"System.Title": "A"}}
+    ]}))
+    .await;
+    let titles = vec!["A".to_string(), "A".to_string(), "B".to_string()];
+    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles)
+        .await
+        .unwrap();
+    assert_eq!(
+        got,
+        vec![ReconciledCase { title: "A".into(), id: 901 }, ReconciledCase { title: "A".into(), id: 903 }]
+    );
+}
+
+#[tokio::test]
+async fn check_later_refuses_a_bad_start_time_without_asking() {
+    let server = MockServer::start().await;
+    let err = reconcile_with(&mock_client(&server), "acme", "Web", 42, "not a date", &["A".to_string()])
+        .await
+        .unwrap_err();
+    assert!(!err.contains("http"), "{err}");
+    assert!(server.received_requests().await.unwrap().is_empty());
+}

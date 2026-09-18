@@ -371,6 +371,68 @@ impl AdoClient {
         Ok(cases)
     }
 
+    /// Test Cases the PBI is Tested By that were created at or after
+    /// `since` and whose title is one of `titles` (outer whitespace
+    /// ignored), as (id, title), ids ascending. What an upload whose
+    /// `$batch` failed actually created. Read only: one WIQL plus batched GETs.
+    pub async fn find_created_test_cases(
+        &self,
+        organization: &str,
+        project: &str,
+        pbi_id: i32,
+        since: &str,
+        titles: &[String],
+    ) -> Result<Vec<(i32, String)>, AdoError> {
+        let wiql = created_since_wiql(pbi_id, since).ok_or_else(|| AdoError::Http {
+            status: 0,
+            body: "the upload start time is not a date".into(),
+        })?;
+        // timePrecision: without it WIQL compares the date part only, and an
+        // upload's own start would match every case created that day.
+        let url = format!(
+            "{}/{}/{}/_apis/wit/wiql?timePrecision=true&api-version=7.1",
+            self.base_url,
+            percent_encode_segment(organization),
+            percent_encode_segment(project)
+        );
+        let body = self
+            .post_json_query(url, &serde_json::json!({ "query": wiql }))
+            .await?;
+        // The first row of a link query is the source itself, with no rel.
+        let ids: Vec<i64> = body["workItemRelations"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r["rel"].as_str().map(is_tested_by_forward).unwrap_or(false))
+            .filter_map(|r| r["target"]["id"].as_i64())
+            .collect();
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let wanted: std::collections::HashSet<&str> = titles.iter().map(|t| t.trim()).collect();
+        let mut found: Vec<(i32, String)> = vec![];
+        for chunk in ids.chunks(Self::WORKITEM_BATCH_SIZE) {
+            let ids_csv = chunk.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+            let url = format!(
+                "{}/{}/_apis/wit/workitems?ids={}&fields=System.Title&api-version=7.1",
+                self.base_url,
+                percent_encode_segment(organization),
+                ids_csv
+            );
+            let fetched = self.get_json(url).await?;
+            for w in fetched["value"].as_array().cloned().unwrap_or_default() {
+                let Some(id) = w["id"].as_i64() else { continue };
+                let title = w["fields"]["System.Title"].as_str().unwrap_or_default().to_string();
+                if wanted.contains(title.trim()) {
+                    found.push((id as i32, title));
+                }
+            }
+        }
+        found.sort_by_key(|(id, _)| *id);
+        Ok(found)
+    }
+
     /// The JSON-patch document that creates a Test Case: every field the
     /// model carries, and - when `link_pbi` is given - the TestedBy-Reverse
     /// relation to that PBI in the SAME document, so a create is one
@@ -1451,6 +1513,51 @@ fn percent_encode_path(s: &str) -> String {
 ///   list: a blind clear could fail the WHOLE patch on a tagless item,
 ///   and losing the title/steps update over tags that may not even exist
 ///   is the worse trade.
+/// A date-time for a WIQL literal, from `YYYY-MM-DDTHH:MM:SS` optionally
+/// followed by `Z` or `.fff…Z` (what `Date.toISOString()` produces). Anything
+/// else is refused, never repaired: the value is interpolated into WIQL.
+pub fn wiql_datetime(s: &str) -> Option<String> {
+    let s = s.trim();
+    let b = s.as_bytes();
+    if b.len() < 19 {
+        return None;
+    }
+    let shape = b"dddd-dd-ddTdd:dd:dd";
+    for (c, want) in b[..19].iter().zip(shape) {
+        let ok = if *want == b'd' { c.is_ascii_digit() } else { c == want };
+        if !ok {
+            return None;
+        }
+    }
+    let rest = &s[19..];
+    let tail_ok = match rest {
+        "" | "Z" => true,
+        r => {
+            r.len() > 2
+                && r.starts_with('.')
+                && r.ends_with('Z')
+                && r[1..r.len() - 1].bytes().all(|c| c.is_ascii_digit())
+        }
+    };
+    tail_ok.then(|| format!("{}Z", &s[..19]))
+}
+
+/// The link query behind upload reconciliation: Test Cases the PBI is
+/// Tested By, created at or after `since`. `None` when `since` is not a
+/// date-time. Titles are filtered after the fetch - an `IN` list of 200
+/// full titles can outgrow WIQL's query-length limit.
+pub fn created_since_wiql(pbi_id: i32, since: &str) -> Option<String> {
+    let at = wiql_datetime(since)?;
+    Some(format!(
+        "SELECT [System.Id] FROM WorkItemLinks \
+         WHERE [Source].[System.Id] = {pbi_id} \
+         AND [System.Links.LinkType] = 'Microsoft.VSTS.Common.TestedBy-Forward' \
+         AND [Target].[System.WorkItemType] = 'Test Case' \
+         AND [Target].[System.CreatedDate] >= '{at}' \
+         MODE (MustContain)"
+    ))
+}
+
 pub fn tags_write_ops(desired: &str, original: Option<&str>) -> Vec<serde_json::Value> {
     let desired = desired.trim();
     let op = |kind: &str| serde_json::json!({"op": kind, "path": "/fields/System.Tags", "value": desired});
