@@ -983,7 +983,7 @@ fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
         ..Default::default()
     }];
     let docs = vec![
-        SpecDoc { title: "Calculation Engine".into(), kind: "file".into(), source: "C:/s/Step13-CalculationEngine.md".into(), html: "<h2>5.8 Display Rules</h2><p>Shown.</p>".into(), error: None },
+        SpecDoc { title: "Calculation Engine".into(), kind: "file".into(), source: "C:/o'brien/Rules.md".into(), html: "<h2>5.8 Display Rules</h2><p>Shown.</p>".into(), error: None },
         SpecDoc { title: "Engine".into(), kind: "wiki".into(), source: "https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine".into(), html: String::new(), error: Some("Could not fetch this wiki page: not signed in.".into()) },
     ];
     let dir = std::env::temp_dir().join("tcm-v2-spec-pane-page-tests");
@@ -999,11 +999,14 @@ fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
     assert!(html.contains("<h2>5.8 Display Rules</h2>"), "the rendered document is inside: {html}");
     assert!(html.contains("<p class='spec-error'>Could not fetch this wiki page: not signed in.</p>"), "{html}");
     assert!(html.contains("<a class='spec-open' href='https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine' target='_blank' rel='noopener noreferrer'>Open in Azure DevOps</a>"), "{html}");
+    // A source with a single quote must not break out of the attribute.
+    assert!(html.contains("title='C:/o&#39;brien/Rules.md'"), "{html}");
+    assert!(!html.contains("title='C:/o'brien/Rules.md'"), "a raw quote would close the attribute early: {html}");
     let bar = html.split("<div class='searchbar'>").nth(1).unwrap().split("</div>").next().unwrap();
     assert!(bar.contains("<button id='tc-spec' type='button' aria-pressed='false'>Hide spec</button>"), "{bar}");
     // The pane's own data block, for the script (titles and sources only).
     assert!(html.contains("<script type='application/json' id='tc-specs-data'>"), "{html}");
-    assert!(html.contains("cases-specs"), "the pane script is embedded: {html}");
+    assert!(html.contains("root.tcmSpecs = {"), "the pane script is embedded: {html}");
     let _ = DraftFile { path: "x".into(), label: "x".into(), comment: String::new(), specs: vec!["a.md".into()] };
 
     let path2 = dir.join(format!("{}-without.html", std::process::id())).to_string_lossy().to_string();
@@ -1011,5 +1014,5 @@ fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
     let plain = std::fs::read_to_string(&path2).unwrap();
     assert!(!plain.contains("id='tc-specs'"), "{plain}");
     assert!(!plain.contains("id='tc-spec'"), "{plain}");
-    assert!(!plain.contains("with-specs"), "{plain}");
+    assert!(!plain.contains("class='shell with-specs'"), "{plain}");
 }

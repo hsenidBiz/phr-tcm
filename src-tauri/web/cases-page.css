@@ -238,9 +238,6 @@ body:not(.findings-off) .find-wrap:not(.find-closed) { transition-delay: 0s; }
                    word-break: break-all; margin-bottom: 5px;
                    display: flex; align-items: baseline; gap: 8px; }
 .aside .note-box { min-height: 96px; }
-/* SPEC-PANE-CSS-START - embedded only on a page that has a spec pane, so a
-   page without one never carries the "with-specs" class name in its
-   stylesheet (see export_queue_page's html_css). */
 /* The side column: general comments (drafts from files) above the spec
    pane. With specs the column is the pane's width, dragged by its grip. */
 .shell.with-specs { max-width: none; padding: 0 24px; }
@@ -281,7 +278,6 @@ body.spec-off #tc-specs { display: none; }
 #tc-spec:hover { border-color: var(--accent); }
 #tc-spec[aria-pressed='true'] { color: var(--muted); background: var(--surface-2); border-color: var(--border); }
 @media (prefers-reduced-motion: reduce) { .spec-flash { animation: none; } }
-/* SPEC-PANE-CSS-END */
 /* Print goes back to ink on paper whatever the screen was showing: a dark
    page prints as a black rectangle, or as nothing once the printer drops
    the background and leaves white text on white. */

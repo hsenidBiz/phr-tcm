@@ -98,6 +98,25 @@
   // What a swap must not lose: the active tab, each doc's scroll, the chip.
   var state = { active: 0, scroll: {}, off: recall(OFF_KEY) === '1' };
 
+  // The grip drag, and whether the three window-level listeners it needs
+  // have been registered yet. wireSpecs() re-runs on every live swap (a new
+  // .shell with a new grip element each time), but window itself survives
+  // the swap - registering these again on every re-run would pile up one
+  // more of each with no way to remove the old ones, so they go on once and
+  // read the current drag/grip/pane through these module-level variables.
+  var windowWired = false;
+  var drag = null; // { startX, startW } while a drag is in progress
+  var dragGrip = null, dragPane = null; // the grip/pane the current drag owns
+
+  function endDrag() {
+    if (!drag) return;
+    drag = null;
+    if (dragGrip) dragGrip.classList.remove('dragging');
+    if (dragPane) store(W_KEY, String(Math.round(dragPane.getBoundingClientRect().width)));
+    dragGrip = null;
+    dragPane = null;
+  }
+
   function docsMeta() {
     var el = document.getElementById('tc-specs-data');
     if (!el) return [];
@@ -234,30 +253,31 @@
     var remembered = parseInt(recall(tabKey(docs)), 10);
     activate(pane, state.active || (remembered >= 0 ? remembered : 0), docs);
 
-    var grip = pane.querySelector('.spec-grip'), drag = null;
+    // The grip element is new after every swap, so its own listeners are
+    // fine to add again each time; only the window-level ones must not be.
+    var grip = pane.querySelector('.spec-grip');
     if (grip) {
       grip.addEventListener('mousedown', function (e) {
         if (e.button !== 0) return;
         drag = { startX: e.clientX, startW: pane.getBoundingClientRect().width };
+        dragGrip = grip;
+        dragPane = pane;
         grip.classList.add('dragging');
         e.preventDefault();
       });
       grip.addEventListener('dblclick', function () { setWidth(W_DEFAULT); try { localStorage.removeItem(W_KEY); } catch (e) { /* file:// */ } });
     }
-    function endDrag() {
-      if (!drag) return;
-      drag = null;
-      if (grip) grip.classList.remove('dragging');
-      store(W_KEY, String(Math.round(pane.getBoundingClientRect().width)));
+    if (!windowWired) {
+      windowWired = true;
+      window.addEventListener('mousemove', function (e) {
+        if (!drag) return;
+        if (e.buttons === 0) { endDrag(); return; }
+        // The pane is on the right, so moving left widens it.
+        setWidth(drag.startW + (drag.startX - e.clientX));
+      });
+      window.addEventListener('mouseup', endDrag);
+      window.addEventListener('blur', endDrag);
     }
-    window.addEventListener('mousemove', function (e) {
-      if (!drag) return;
-      if (e.buttons === 0) { endDrag(); return; }
-      // The pane is on the right, so moving left widens it.
-      setWidth(drag.startW + (drag.startX - e.clientX));
-    });
-    window.addEventListener('mouseup', endDrag);
-    window.addEventListener('blur', endDrag);
 
     wireCitations(pane, docs);
   }

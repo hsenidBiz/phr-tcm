@@ -18,27 +18,6 @@ use crate::model::TestCase;
 /// come apart into floating text.
 const HTML_CSS: &str = include_str!("../../web/cases-page.css");
 
-/// `HTML_CSS` with the spec-pane rules (between the `SPEC-PANE-CSS-START`
-/// and `SPEC-PANE-CSS-END` markers) cut out when there is no pane - so a
-/// page without one never carries the `with-specs` class name anywhere in
-/// its stylesheet, matching the markup, which also never uses it.
-fn html_css(with_specs: bool) -> std::borrow::Cow<'static, str> {
-    if with_specs {
-        return std::borrow::Cow::Borrowed(HTML_CSS);
-    }
-    const START: &str = "/* SPEC-PANE-CSS-START";
-    const END: &str = "SPEC-PANE-CSS-END */";
-    match (HTML_CSS.find(START), HTML_CSS.find(END)) {
-        (Some(s), Some(e)) if e >= s => {
-            let mut out = String::with_capacity(HTML_CSS.len());
-            out.push_str(&HTML_CSS[..s]);
-            out.push_str(&HTML_CSS[e + END.len()..]);
-            std::borrow::Cow::Owned(out)
-        }
-        _ => std::borrow::Cow::Borrowed(HTML_CSS),
-    }
-}
-
 const HTML_JS: &str = include_str!("../../web/cases-page.js");
 
 /// Autosaving comment boxes in the report: debounce each textarea and POST
@@ -76,6 +55,13 @@ pub(crate) fn esc(text: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// `esc`, plus the single quote - for a value going into a `'`-quoted
+/// attribute (`esc` alone leaves a raw `'` that would close the attribute
+/// early and let the rest of the value run as markup).
+pub(crate) fn esc_attr(text: &str) -> String {
+    esc(text).replace('\'', "&#39;")
 }
 
 /// Context for comment boxes on a page of EXISTING Azure DevOps cases.
@@ -206,7 +192,6 @@ pub fn export_queue_page(
     };
     // Identity of each draft box, resolved by the app when the note lands.
     let mut draft_cases: Vec<serde_json::Value> = vec![];
-    let css = html_css(!specs.is_empty());
 
     let mut parts: Vec<String> = vec![
         "<!DOCTYPE html>".into(),
@@ -217,7 +202,7 @@ pub fn export_queue_page(
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">".into(),
         format!("<title>Test Cases ({})</title>", queue.len()),
         format!(
-            "<style>{vars}{css}</style></head><body>{switch}{shell_open}<div class='page'>",
+            "<style>{vars}{HTML_CSS}</style></head><body>{switch}{shell_open}<div class='page'>",
             vars = palette.css(),
             switch = crate::webtheme::SWITCH_HTML,
         ),
@@ -506,9 +491,9 @@ pub fn export_queue_page(
             parts.push("</div>".into());
             for (i, d) in specs.iter().enumerate() {
                 let open = if d.kind == "wiki" {
-                    format!("<a class='spec-open' href='{}' target='_blank' rel='noopener noreferrer'>Open in Azure DevOps</a>", esc(&d.source))
+                    format!("<a class='spec-open' href='{}' target='_blank' rel='noopener noreferrer'>Open in Azure DevOps</a>", esc_attr(&d.source))
                 } else {
-                    format!("<span class='spec-path' title='{}'>{}</span>", esc(&d.source), esc(&d.source))
+                    format!("<span class='spec-path' title='{}'>{}</span>", esc_attr(&d.source), esc(&d.source))
                 };
                 let body = match &d.error {
                     Some(e) => format!("<p class='spec-error'>{}</p>", esc(e)),
@@ -525,7 +510,7 @@ pub fn export_queue_page(
     }
 
     parts.push(format!("<script>{HTML_JS}</script>"));
-    parts.push(format!("<script>/* cases-specs.js */{SPECS_JS}</script>"));
+    parts.push(format!("<script>{SPECS_JS}</script>"));
     parts.push(format!("<script>{}</script>", crate::webtheme::SWITCH_JS));
     if let Some(c) = &ctx {
         let org = match c {
