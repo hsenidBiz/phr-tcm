@@ -33,7 +33,7 @@ pub struct ImportResult {
     pub specs: Vec<String>,
 }
 
-#[derive(serde::Serialize, specta::Type)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 pub struct SubmitItemResult {
     pub index: u32,
     pub title: String,
@@ -869,28 +869,8 @@ pub async fn submit_queue(
                 if !reqs.is_empty() {
                     match client.wit_batch(&organization, &reqs).await {
                         Ok(items) => {
-                            for (k, item) in items.iter().enumerate() {
-                                let i = sent_idx[k];
-                                let tc = &queue[i];
-                                let r = if !item.ok() {
-                                    failed_item(i, tc, item.message())
-                                } else if let Some(id) = item.id() {
-                                    SubmitItemResult {
-                                        index: i as u32,
-                                        title: tc.title.clone(),
-                                        action: if tc.update_id.is_some() { "updated" } else { "created" }.into(),
-                                        id: Some(id),
-                                        error: None,
-                                    }
-                                } else {
-                                    // A create with no id is not a create (see
-                                    // create_test_case): report it, never call it success.
-                                    failed_item(
-                                        i,
-                                        tc,
-                                        "Azure DevOps accepted the test case but its answer carried no work item id".into(),
-                                    )
-                                };
+                            for r in map_batch_results(&queue, &sent_idx, &items) {
+                                let i = r.index as usize;
                                 chunk[i - chunk_start] = Some(r);
                             }
                         }
@@ -1066,7 +1046,7 @@ pub async fn submit_queue(
 /// folded in, so a create is one request) or the update document, ready
 /// to send. A case that fails validation never becomes a request.
 #[allow(clippy::too_many_arguments)]
-fn queue_item_request(
+pub fn queue_item_request(
     client: &ado::AdoClient,
     organization: &str,
     project: &str,
@@ -1117,6 +1097,63 @@ fn queue_item_request(
             }
         }
     })
+}
+
+/// What each answer in a batch means for its case. `sent_idx[k]` is the
+/// queue index of the k-th request: a case that failed validation was never
+/// sent, so answer k is NOT row `chunk_start + k`. `wit_batch` guarantees
+/// exactly one item per request, in order.
+pub fn map_batch_results(
+    queue: &[model::TestCase],
+    sent_idx: &[usize],
+    items: &[crate::ado::wit_batch::BatchItem],
+) -> Vec<SubmitItemResult> {
+    sent_idx
+        .iter()
+        .zip(items)
+        .map(|(&i, item)| {
+            let tc = &queue[i];
+            if !item.ok() {
+                failed_item(i, tc, item.message())
+            } else if let Some(id) = item.id() {
+                SubmitItemResult {
+                    index: i as u32,
+                    title: tc.title.clone(),
+                    action: if tc.update_id.is_some() { "updated" } else { "created" }.into(),
+                    id: Some(id),
+                    error: None,
+                }
+            } else {
+                // A create with no id is not a create (see create_test_case):
+                // report it, never call it success.
+                failed_item(
+                    i,
+                    tc,
+                    "Azure DevOps accepted the test case but its answer carried no work item id".into(),
+                )
+            }
+        })
+        .collect()
+}
+
+/// Pair the creates of a failed batch with the Test Cases a lookup found.
+/// `creates` is (queue index, title) in queue order; `found` is (id, title).
+/// Titles match exactly, ignoring only outer whitespace. Each found case is
+/// claimed once: the server executes a batch in order, so the lowest
+/// unclaimed id with the title goes to the earliest create with it.
+pub fn match_reconciled(creates: &[(usize, String)], found: &[(i32, String)]) -> Vec<(usize, i32)> {
+    let mut pool: Vec<(i32, &str)> = found.iter().map(|(id, t)| (*id, t.trim())).collect();
+    pool.sort_by_key(|(id, _)| *id);
+    let mut claimed = vec![false; pool.len()];
+    let mut out = Vec::new();
+    for (idx, title) in creates {
+        let t = title.trim();
+        if let Some(k) = (0..pool.len()).find(|&k| !claimed[k] && pool[k].1 == t) {
+            claimed[k] = true;
+            out.push((*idx, pool[k].0));
+        }
+    }
+    out
 }
 
 fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemResult {
