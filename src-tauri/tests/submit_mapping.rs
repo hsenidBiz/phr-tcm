@@ -291,7 +291,8 @@ async fn a_failed_batch_reports_what_the_lookup_found() {
     mount_lookup(&server, &[901], serde_json::json!({"value": [{"id": 901, "fields": {"System.Title": "A"}}]})).await;
     let queue = vec![case("A", None), case("B", None), case("C", Some(777))];
     let err = AdoError::Http { status: 500, body: "boom".into() };
-    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0, 1, 2], &err).await;
+    let r =
+        resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0, 1, 2], &err, &[]).await;
     let got: Vec<(&str, Option<i32>)> = r.iter().map(|x| (x.action.as_str(), x.id)).collect();
     assert_eq!(got, vec![("created", Some(901)), ("failed", None), ("failed", None)]);
 }
@@ -306,7 +307,7 @@ async fn a_failed_lookup_holds_the_creates_as_unknown() {
         .await;
     let queue = vec![case("A", None), case("C", Some(777))];
     let err = AdoError::Http { status: 500, body: "boom".into() };
-    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0, 1], &err).await;
+    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0, 1], &err, &[]).await;
     assert_eq!(r[0].action, "unknown");
     assert_eq!(r[1].action, "failed");
 }
@@ -316,7 +317,7 @@ async fn a_failed_batch_of_updates_asks_nothing() {
     let server = MockServer::start().await;
     let queue = vec![case("C", Some(777))];
     let err = AdoError::Http { status: 500, body: "boom".into() };
-    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0], &err).await;
+    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0], &err, &[]).await;
     assert_eq!(r[0].action, "failed");
     assert!(server.received_requests().await.unwrap().is_empty());
 }
@@ -347,4 +348,67 @@ async fn check_later_refuses_a_bad_start_time_without_asking() {
         .unwrap_err();
     assert!(!err.contains("http"), "{err}");
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+// ---- fix round 1: an id already reported cannot be reused, and an ------
+// ---- ambiguous title is held rather than guessed -----------------------
+
+/// A title repeated across chunks: chunk 1's own success must not be
+/// handed to chunk 2's failed create of the same title just because the
+/// lookup (which spans the whole upload) turns it up again.
+#[test]
+fn an_id_already_reported_is_not_reused_for_another_create() {
+    let queue = vec![case("A", None)];
+    let found = vec![(901, "A".to_string())];
+    let r = failed_batch_results(&queue, &[0], "http 500", Some(&found), false);
+    assert_eq!((r[0].action.as_str(), r[0].id), ("created", Some(901)), "sanity: unfiltered, it would match");
+
+    // Same inputs, but #901 already belongs to an earlier chunk.
+    let creates = vec![(0usize, "A".to_string())];
+    let still_available: Vec<(i32, String)> =
+        found.into_iter().filter(|(id, _)| ![901].contains(id)).collect();
+    assert!(match_reconciled(&creates, &still_available).is_empty());
+}
+
+/// `resolve_failed_batch` itself must do that filtering: `already_claimed`
+/// removes chunk 1's id from what the lookup returns before matching, so
+/// chunk 2's failed "A" is reported failed, not a duplicate "created".
+#[tokio::test]
+async fn resolve_failed_batch_excludes_ids_this_upload_already_reported() {
+    let server = MockServer::start().await;
+    mount_lookup(&server, &[901], serde_json::json!({"value": [{"id": 901, "fields": {"System.Title": "A"}}]})).await;
+    let queue = vec![case("A", None)];
+    let err = AdoError::Http { status: 500, body: "boom".into() };
+    let r = resolve_failed_batch(&mock_client(&server), "acme", "Web", 42, SINCE, &queue, &[0], &err, &[901]).await;
+    assert_eq!((r[0].action.as_str(), r[0].id), ("failed", None), "#901 is already someone else's - not this row's");
+}
+
+/// More found items than creates for a title: which one is genuinely ours
+/// cannot be told apart, so none are claimed - the row is held `unknown`
+/// (something with that title exists), not guessed and not plain `failed`.
+#[test]
+fn more_found_items_than_creates_for_a_title_are_held_unknown_not_guessed() {
+    let queue = vec![case("A", None)];
+    let found = vec![(901, "A".to_string()), (902, "A".to_string())];
+    let r = failed_batch_results(&queue, &[0], "http 500", Some(&found), false);
+    assert_eq!((r[0].action.as_str(), r[0].id), ("unknown", None));
+}
+
+/// The same ambiguity at the `match_reconciled` level: two found for one
+/// create claims neither, where the old first-match behaviour would have
+/// picked the lower id and called it done.
+#[test]
+fn match_reconciled_claims_nothing_when_found_outnumbers_creates_for_a_title() {
+    let creates = vec![(0, "A".to_string())];
+    let found = vec![(901, "A".to_string()), (902, "A".to_string())];
+    assert!(match_reconciled(&creates, &found).is_empty());
+}
+
+/// Exactly one found for one create is unambiguous: still claimed.
+#[test]
+fn exactly_one_found_for_one_create_is_claimed() {
+    let queue = vec![case("A", None)];
+    let found = vec![(901, "A".to_string())];
+    let r = failed_batch_results(&queue, &[0], "http 500", Some(&found), false);
+    assert_eq!((r[0].action.as_str(), r[0].id), ("created", Some(901)));
 }

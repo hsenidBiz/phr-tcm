@@ -887,8 +887,21 @@ pub async fn submit_queue(
                         // create failed - retrying a create that landed makes
                         // a duplicate. See `resolve_failed_batch`.
                         Err(e) => {
+                            let already_claimed: Vec<i32> = results
+                                .iter()
+                                .chain(chunk.iter().flatten())
+                                .filter_map(|r| r.id)
+                                .collect();
                             for r in resolve_failed_batch(
-                                &client, &organization, &project, pbi_id, &upload_since, &queue, &sent_idx, &e,
+                                &client,
+                                &organization,
+                                &project,
+                                pbi_id,
+                                &upload_since,
+                                &queue,
+                                &sent_idx,
+                                &e,
+                                &already_claimed,
                             )
                             .await
                             {
@@ -1158,24 +1171,72 @@ pub fn map_batch_results(
         .collect()
 }
 
-/// Pair the creates of a failed batch with the Test Cases a lookup found.
-/// `creates` is (queue index, title) in queue order; `found` is (id, title).
-/// Titles match exactly, ignoring only outer whitespace. Each found case is
-/// claimed once: the server executes a batch in order, so the lowest
-/// unclaimed id with the title goes to the earliest create with it.
-pub fn match_reconciled(creates: &[(usize, String)], found: &[(i32, String)]) -> Vec<(usize, i32)> {
-    let mut pool: Vec<(i32, &str)> = found.iter().map(|(id, t)| (*id, t.trim())).collect();
-    pool.sort_by_key(|(id, _)| *id);
-    let mut claimed = vec![false; pool.len()];
+/// Shared by `match_reconciled` and `failed_batch_results`: the pairs, and
+/// the trimmed titles that were too ambiguous to pair at all (see below).
+///
+/// Titles match exactly, ignoring only outer whitespace. A title is only
+/// paired when the found items with it do not outnumber the creates with
+/// it: if they do, a colleague's case (or a resend of a title from a
+/// different chunk) may be sitting in that pool, and guessing which found
+/// row is genuinely ours risks reporting the wrong one `created` while the
+/// real create is quietly lost - so NONE of that title's creates are
+/// claimed. Otherwise the server executed a batch in order, so the lowest
+/// id with the title goes to the earliest create with it.
+fn reconcile_pairs(
+    creates: &[(usize, String)],
+    found: &[(i32, String)],
+) -> (Vec<(usize, i32)>, std::collections::HashSet<String>) {
+    use std::collections::HashMap;
+    let mut pools: HashMap<&str, Vec<i32>> = HashMap::new();
+    for (id, t) in found {
+        pools.entry(t.trim()).or_default().push(*id);
+    }
+    for ids in pools.values_mut() {
+        ids.sort();
+    }
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for (_, t) in creates {
+        *counts.entry(t.trim()).or_default() += 1;
+    }
+    let ambiguous: std::collections::HashSet<String> = pools
+        .iter()
+        .filter(|(title, ids)| ids.len() > *counts.get(**title).unwrap_or(&0))
+        .map(|(title, _)| (*title).to_string())
+        .collect();
+    let mut cursor: HashMap<&str, usize> = HashMap::new();
     let mut out = Vec::new();
     for (idx, title) in creates {
         let t = title.trim();
-        if let Some(k) = (0..pool.len()).find(|&k| !claimed[k] && pool[k].1 == t) {
-            claimed[k] = true;
-            out.push((*idx, pool[k].0));
+        if ambiguous.contains(t) {
+            continue;
+        }
+        if let Some(ids) = pools.get(t) {
+            let k = cursor.entry(t).or_insert(0);
+            if let Some(&id) = ids.get(*k) {
+                out.push((*idx, id));
+                *k += 1;
+            }
         }
     }
-    out
+    (out, ambiguous)
+}
+
+/// Pair the creates of a failed batch with the Test Cases a lookup found.
+/// `creates` is (queue index, title) in queue order; `found` is (id, title).
+/// See `reconcile_pairs` for the exactly-one-title rule this applies.
+pub fn match_reconciled(creates: &[(usize, String)], found: &[(i32, String)]) -> Vec<(usize, i32)> {
+    reconcile_pairs(creates, found).0
+}
+
+fn log_claimed(pairs: &[(usize, i32)]) {
+    if pairs.is_empty() {
+        return;
+    }
+    crate::applog::info(format!(
+        "reconcile matched {} case(s): {}",
+        pairs.len(),
+        pairs.iter().map(|(i, id)| format!("queue[{i}] -> #{id}")).collect::<Vec<_>>().join(", ")
+    ));
 }
 
 /// How far before the upload's start the reconcile lookup reaches.
@@ -1215,10 +1276,13 @@ fn unknown_item(index: usize, tc: &model::TestCase, error: &str) -> SubmitItemRe
 
 /// The results for a batch whose call failed. `found` is what the lookup
 /// returned, or `None` when the lookup itself failed. Updates are always
-/// `failed` (a PATCH is safe to retry). A create the lookup found is
-/// `created` with that id. Any other create is `unknown` when there was no
-/// answer, or when the server may still be running the batch
-/// (`still_running`, after a timeout). Otherwise it is `failed`.
+/// `failed` (a PATCH is safe to retry). A create the lookup found - and
+/// could pair unambiguously (`reconcile_pairs`) - is `created` with that
+/// id. Any other create is `unknown` when there was no answer, when the
+/// server may still be running the batch (`still_running`, after a
+/// timeout), or when its title was too ambiguous to claim (something with
+/// that title exists, so it is not a plain `failed`). Otherwise it is
+/// `failed`.
 pub fn failed_batch_results(
     queue: &[model::TestCase],
     sent_idx: &[usize],
@@ -1231,11 +1295,9 @@ pub fn failed_batch_results(
         .filter(|&&i| queue[i].update_id.is_none())
         .map(|&i| (i, queue[i].title.clone()))
         .collect();
-    let matched: std::collections::HashMap<usize, i32> = found
-        .map(|f| match_reconciled(&creates, f))
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let (pairs, ambiguous) = found.map(|f| reconcile_pairs(&creates, f)).unwrap_or_default();
+    log_claimed(&pairs);
+    let matched: std::collections::HashMap<usize, i32> = pairs.into_iter().collect();
     sent_idx
         .iter()
         .map(|&i| {
@@ -1250,7 +1312,7 @@ pub fn failed_batch_results(
                     id: Some(id),
                     error: None,
                 }
-            } else if found.is_none() || still_running {
+            } else if found.is_none() || still_running || ambiguous.contains(tc.title.trim()) {
                 unknown_item(i, tc, error)
             } else {
                 failed_item(i, tc, error.to_string())
@@ -1261,6 +1323,10 @@ pub fn failed_batch_results(
 
 /// A failed `$batch`, resolved: when it held creates, ask Azure DevOps what
 /// it made (one lookup) and report per case. See `failed_batch_results`.
+/// `already_claimed` is every work item id this upload has already reported
+/// (earlier chunks, plus this chunk's own so far) - removed from what the
+/// lookup found before matching, so a title repeated across chunks cannot
+/// pair a later chunk's failed create with an earlier chunk's own success.
 #[allow(clippy::too_many_arguments)]
 pub async fn resolve_failed_batch(
     client: &ado::AdoClient,
@@ -1271,6 +1337,7 @@ pub async fn resolve_failed_batch(
     queue: &[model::TestCase],
     sent_idx: &[usize],
     err: &ado::AdoError,
+    already_claimed: &[i32],
 ) -> Vec<SubmitItemResult> {
     // `user_text`, not `to_string`: a refused batch's own sentence, not
     // "http 0" (main's failure-list fix).
@@ -1289,6 +1356,8 @@ pub async fn resolve_failed_batch(
         .await
     {
         Ok(f) => {
+            let f: Vec<(i32, String)> =
+                f.into_iter().filter(|(id, _)| !already_claimed.contains(id)).collect();
             crate::applog::info(format!(
                 "batch failed ({msg}); {} of {} create(s) found in Azure DevOps",
                 f.len(),
@@ -1334,7 +1403,9 @@ pub async fn reconcile_with(
         .await
         .map_err(|e| e.to_string())?;
     let creates: Vec<(usize, String)> = titles.iter().cloned().enumerate().collect();
-    Ok(match_reconciled(&creates, &found)
+    let pairs = match_reconciled(&creates, &found);
+    log_claimed(&pairs);
+    Ok(pairs
         .into_iter()
         .map(|(k, id)| ReconciledCase { title: titles[k].clone(), id })
         .collect())
