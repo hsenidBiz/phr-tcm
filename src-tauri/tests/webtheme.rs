@@ -42,3 +42,11 @@ fn the_page_opens_in_the_apps_own_scheme() {
     assert_eq!(PagePalette { dark_first: true, ..PagePalette::default() }.initial_scheme(), "dark");
     assert_eq!(PagePalette::default().initial_scheme(), "light");
 }
+
+/// The pages' card shadows come from the palette, like every other colour.
+#[test]
+fn both_schemes_carry_a_shadow_variable() {
+    let css = PagePalette::default().css();
+    assert_eq!(css.matches("--shadow:").count(), 2, "{css}");
+    assert!(css.contains("color-mix(in srgb,"), "{css}");
+}

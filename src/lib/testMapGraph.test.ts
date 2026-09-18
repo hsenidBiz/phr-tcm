@@ -43,6 +43,8 @@ type Helpers = {
     labelSpace: number,
   ) => { scale: number; tx: number; ty: number };
   caseLabel: (node: Node, withTitle: boolean) => string;
+  clipLabel: (text: string, room: number, measure: (s: string) => number) => string;
+  areaLabelRoom: (scale: number, r: number) => number;
 };
 
 let G: Helpers;
@@ -319,5 +321,22 @@ describe("pathTo", () => {
     expect(G.pathTo(manage)).toEqual([manage]);
     expect(G.pathTo(cases[3]).map(label)).toEqual(["Reports", "Export"]);
     expect(G.pathTo(reports)).toEqual([reports]);
+  });
+});
+
+describe("area labels", () => {
+  const measure = (s: string) => s.length * 7;
+  test("a label that fits is kept, a long one is cut with an ellipsis, no room means no label", () => {
+    expect(G.clipLabel("Reports", 100, measure)).toBe("Reports");
+    const cut = G.clipLabel("Manage Events and Registrations", 70, measure);
+    expect(cut).toBe("Manage Ev…");
+    expect(measure(cut)).toBeLessThanOrEqual(70);
+    expect(G.clipLabel("Reports", 10, measure)).toBe("");
+    expect(G.clipLabel("Reports", 0, measure)).toBe("");
+  });
+  test("the room is the gap before the next column, so it shrinks as the map zooms out", () => {
+    expect(G.areaLabelRoom(1, 10)).toBe(G.LEVEL - 16 + 10 - 6);
+    expect(G.areaLabelRoom(0.5, 5)).toBeLessThan(G.areaLabelRoom(1, 10));
+    expect(G.areaLabelRoom(0.2, 2)).toBeGreaterThanOrEqual(0);
   });
 });

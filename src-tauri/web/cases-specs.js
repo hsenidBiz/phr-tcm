@@ -10,13 +10,19 @@
 
   // "Spec: <document> <section> [> "quote"] [- no quotable text (why)]"
   // -> { document, section }, or null when the line is not a citation.
-  function splitCitation(text) {
+  // `titles` are the spec tabs' titles: the longest one the citation starts
+  // with is the document, so "Spec: Calculation Engine 5.8" cites the tab
+  // "Calculation Engine" at "5.8" even with no extension to split on.
+  function splitCitation(text, titles) {
     var m = /^\s*spec:\s*(.*?)\s*$/i.exec(text || '');
     if (!m) return null;
     var tail = m[1];
     tail = tail.replace(/\s*>\s*".*$/, '');
     tail = tail.replace(/\s*[-–—]\s*no quotable text\s*\([^)]*\)\s*$/i, '');
-    var words = tail.split(/\s+/);
+    tail = tail.replace(/\s+/g, ' ');
+    var known = titlePrefix(tail, titles);
+    if (known) return { document: tail.slice(0, known), section: tail.slice(known).trim() };
+    var words = tail.split(' ');
     var doc = [], i = 0;
     for (; i < words.length; i++) {
       doc.push(words[i]);
@@ -25,6 +31,20 @@
     // No token carried an extension: the first word is the document.
     if (!EXT_RE.test(doc[doc.length - 1] || '')) { doc = [words[0] || '']; i = 1; }
     return { document: doc.join(' '), section: words.slice(i).join(' ').trim() };
+  }
+
+  // Length of the longest title `tail` starts with (case-insensitive, the
+  // title ending at a word boundary), or 0.
+  function titlePrefix(tail, titles) {
+    var best = 0, lower = tail.toLowerCase();
+    for (var i = 0; titles && i < titles.length; i++) {
+      var t = String(titles[i] || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!t || t.length <= best || lower.slice(0, t.length) !== t) continue;
+      var next = lower.charAt(t.length);
+      if (next && next !== ' ') continue;
+      best = t.length;
+    }
+    return best;
   }
 
   // Where a "Spec:" citation starts inside a longer run of text, or -1 when
@@ -37,6 +57,21 @@
     var m = /(^|\s)spec:\s/i.exec(text || '');
     if (!m) return -1;
     return m.index + m[1].length;
+  }
+
+  // Every citation in one run of text, as [start, end) offsets: each runs
+  // from its "Spec:" to just before the next one (trailing space dropped).
+  // A soft-wrapped note ("Spec: A.md 5.8\nSpec: B.md 2.1") renders as ONE
+  // text node, and both citations in it must become links.
+  function citationRanges(text) {
+    var s = text || '', re = /(^|\s)spec:\s/ig, starts = [], m, out = [];
+    while ((m = re.exec(s))) starts.push(m.index + m[1].length);
+    for (var i = 0; i < starts.length; i++) {
+      var end = i + 1 < starts.length ? starts[i + 1] : s.length;
+      var seg = s.substring(starts[i], end).replace(/\s+$/, '');
+      out.push({ start: starts[i], end: starts[i] + seg.length });
+    }
+    return out;
   }
 
   function norm(s) {
@@ -114,8 +149,25 @@
     return bestScore >= need ? best : -1;
   }
 
+  // A letter is anything with a case (c.toLowerCase() !== c.toUpperCase()),
+  // plus the digits - ES5, where \p{L} and the u flag do not exist and
+  // break the whole script on an older engine.
+  function isWordChar(c) {
+    return c.toLowerCase() !== c.toUpperCase() || /[0-9]/.test(c);
+  }
   function slug(text) {
-    return String(text || '').toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
+    var s = String(text || '').toLowerCase().trim(), out = '', gap = false;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charAt(i);
+      if (isWordChar(c)) {
+        if (gap && out) out += '-';
+        out += c;
+        gap = false;
+      } else {
+        gap = true;
+      }
+    }
+    return out;
   }
 
   // Scroll one container to a child, leaving every other scroll container
@@ -125,7 +177,15 @@
     container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top - (margin || 0);
   }
 
-  root.tcmSpecs = { splitCitation: splitCitation, findSpecTab: findSpecTab, matchHeading: matchHeading, slug: slug, citationStart: citationStart, scrollWithin: scrollWithin };
+  root.tcmSpecs = {
+    splitCitation: splitCitation,
+    findSpecTab: findSpecTab,
+    matchHeading: matchHeading,
+    slug: slug,
+    citationStart: citationStart,
+    citationRanges: citationRanges,
+    scrollWithin: scrollWithin
+  };
 
   // ---- The page -------------------------------------------------------
   if (typeof document === 'undefined' || !document.getElementById) return;
@@ -230,42 +290,58 @@
     h.classList.add('spec-flash');
   }
 
-  // Every "Spec:" line in a reviewer note becomes a link to its heading.
+  // Inside a link already (a markdown link, or a citation linked on an
+  // earlier run): a link there would nest, and one click would fire both.
+  function insideLink(node, stop) {
+    for (var p = node.parentNode; p && p !== stop; p = p.parentNode) {
+      if (p.nodeName === 'A') return true;
+    }
+    return false;
+  }
+
+  function linkCitation(pane, docs, titles, node) {
+    var cite = splitCitation(node.nodeValue, titles);
+    if (!cite) return;
+    var a = document.createElement('a');
+    a.className = 'spec-link';
+    a.href = '#';
+    a.textContent = node.nodeValue;
+    var tab = findSpecTab(docs, cite.document);
+    if (tab < 0) {
+      a.className += ' spec-link-dead';
+      a.title = 'No spec tab for ' + cite.document;
+      a.addEventListener('click', function (e) { e.preventDefault(); });
+    } else {
+      a.setAttribute('data-spec', String(tab));
+      a.setAttribute('data-section', cite.section);
+      a.title = 'Open ' + docs[tab].title + (cite.section ? ' at ' + cite.section : '');
+      a.addEventListener('click', function (e) {
+        e.preventDefault();
+        jumpTo(pane, docs, Number(this.getAttribute('data-spec')), this.getAttribute('data-section') || '');
+      });
+    }
+    node.parentNode.replaceChild(a, node);
+  }
+
+  // Every "Spec:" citation in a reviewer note becomes a link to its heading.
   function wireCitations(pane, docs) {
+    var titles = docs.map(function (d) { return d.title; });
     var notes = document.querySelectorAll('.rev');
     for (var i = 0; i < notes.length; i++) {
       var walker = document.createTreeWalker(notes[i], NodeFilter.SHOW_TEXT), texts = [];
       while (walker.nextNode()) texts.push(walker.currentNode);
       for (var t = 0; t < texts.length; t++) {
         var node = texts[t];
-        if (node.parentNode && node.parentNode.classList && node.parentNode.classList.contains('spec-link')) continue;
-        var start = citationStart(node.nodeValue);
-        if (start < 0) continue;
-        // Prose before the citation (often the rest of the paragraph, once
-        // a soft line break has been rendered as a space) stays a plain
-        // text node; only the "Spec: ..." tail is turned into a link.
-        if (start > 0) node = node.splitText(start);
-        var cite = splitCitation(node.nodeValue);
-        if (!cite) continue;
-        var a = document.createElement('a');
-        a.className = 'spec-link';
-        a.href = '#';
-        a.textContent = node.nodeValue;
-        var tab = findSpecTab(docs, cite.document);
-        if (tab < 0) {
-          a.className += ' spec-link-dead';
-          a.title = 'No spec tab for ' + cite.document;
-          a.addEventListener('click', function (e) { e.preventDefault(); });
-        } else {
-          a.setAttribute('data-spec', String(tab));
-          a.setAttribute('data-section', cite.section);
-          a.title = 'Open ' + docs[tab].title + (cite.section ? ' at ' + cite.section : '');
-          a.addEventListener('click', function (e) {
-            e.preventDefault();
-            jumpTo(pane, docs, Number(this.getAttribute('data-spec')), this.getAttribute('data-section') || '');
-          });
+        if (insideLink(node, notes[i])) continue;
+        var ranges = citationRanges(node.nodeValue);
+        // Last first: splitting at a later offset leaves the earlier
+        // offsets of `node` where they were. Prose around and between the
+        // citations stays plain text.
+        for (var r = ranges.length - 1; r >= 0; r--) {
+          if (ranges[r].end < node.nodeValue.length) node.splitText(ranges[r].end);
+          var part = ranges[r].start > 0 ? node.splitText(ranges[r].start) : node;
+          linkCitation(pane, docs, titles, part);
         }
-        node.parentNode.replaceChild(a, node);
       }
     }
   }

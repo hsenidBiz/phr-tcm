@@ -220,11 +220,19 @@
       ctx.fillStyle = colours.text;
       if (n.kind === 'area') {
         // Area names keep a fixed screen size: they are the map's titles.
-        // Drawn above the node, starting at its left edge, so they sit in
-        // the gap the limbs leave and never on a case row.
+        // Drawn above the node from its left edge, cut to the gap before
+        // the next column so they never run over the cases; gone entirely
+        // where case titles are (too zoomed out to read), except on hover.
+        if (titleA <= 0 && n !== hover) return;
         ctx.font = '600 13px ' + FONT;
         ctx.textBaseline = 'bottom';
-        ctx.fillText(n.name + (n.folded ? ' (' + n.count + ')' : ''), p.x - r, p.y - r - 3);
+        var name = n.name + (n.folded ? ' (' + n.count + ')' : '');
+        var shown = n === hover ? name : G.clipLabel(name, G.areaLabelRoom(scale, r), function (s) {
+          return ctx.measureText(s).width;
+        });
+        if (!shown) return;
+        ctx.globalAlpha = n === hover ? base : base * titleA;
+        ctx.fillText(shown, p.x - r, p.y - r - 3);
         return;
       }
       // Case labels sit to the right of the dot, on the case's own row, and

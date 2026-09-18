@@ -130,6 +130,17 @@ async fn a_wiki_page_renders_and_a_missing_one_is_an_error_doc() {
     let _ = SpecDoc::default();
 }
 
+/// A shell comment in a code block is not the document's title.
+#[test]
+fn a_heading_inside_a_fenced_code_block_is_not_the_title() {
+    let p = dir().join("Setup.md");
+    std::fs::write(&p, "```sh\n# install deps\nnpm i\n```\n\n~~~\n# also code\n~~~\n\n# Real Title\n").unwrap();
+    assert_eq!(render_file(&p).title, "Real Title");
+    let only_code = dir().join("OnlyCode.md");
+    std::fs::write(&only_code, "```\n# not a title\n```\n").unwrap();
+    assert_eq!(render_file(&only_code).title, "OnlyCode.md");
+}
+
 #[test]
 fn spec_entries_pair_each_spec_with_its_files_directory() {
     use v2_lib::import_parser::DraftFile;

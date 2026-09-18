@@ -8,9 +8,9 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 /* Positioned so the bookmark can sit in the card's own corner without the
    heading having to become a flex row around it. */
 .case { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-        padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(20,30,50,.05);
+        padding: 18px 22px; margin-bottom: 18px; box-shadow: var(--shadow);
         position: relative; page-break-inside: avoid; }
-.case h2 { font-size: 16px; margin: 0 0 8px; padding-right: 26px; }
+.case h2 { font-size: 16px; margin: 0 0 8px; padding-right: 26px; overflow-wrap: anywhere; }
 /* Where the review stopped: one mark per page, on the case's own heading.
    Quiet until the card is hovered, like the notes' and findings' own x's,
    so a page of twenty cases is not a page of twenty buttons - and always
@@ -71,13 +71,13 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; background: var(--surface-2); color: var(--muted); font-size: 12px;
      padding: 6px 10px; border: 1px solid var(--border); }
 td { padding: 7px 10px; border: 1px solid var(--border); vertical-align: top;
-     white-space: pre-wrap; }
+     white-space: pre-wrap; overflow-wrap: anywhere; }
 td.num { width: 34px; text-align: center; color: var(--faint); }
 .searchbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
-             display: flex; align-items: center; gap: 12px; padding: 10px 0 14px; }
+             display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 0 14px; }
 .searchbar select { font: inherit; padding: 6px 8px; border: 1px solid var(--border);
                      border-radius: 6px; background: var(--surface); color: var(--text); }
-#tc-search { flex: 1; font: inherit; font-size: 14px; padding: 9px 14px;
+#tc-search { flex: 1 1 220px; min-width: 0; font: inherit; font-size: 14px; padding: 9px 14px;
              border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
              color: inherit; outline: none; }
 #tc-search:focus { border-color: var(--accent);
@@ -114,7 +114,7 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
                  display: flex; flex-direction: column; gap: 6px; padding: 8px;
                  min-width: 190px; background: var(--surface);
                  border: 1px solid var(--border); border-radius: 10px;
-                 box-shadow: 0 6px 18px rgba(20,30,50,.18); }
+                 box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 18%, transparent); }
 .tc-menu-items > * { text-align: left; }
 /* Reviewer-notes toggle. It lives in the sticky search bar rather than
    beside a case, so it is reachable from anywhere in a long page - the
@@ -276,7 +276,7 @@ body:not(.findings-off) .find-wrap:not(.find-closed) { transition-delay: 0s; }
   .aside { position: sticky; top: 12px; }
 }
 .aside { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-         box-shadow: 0 1px 3px rgba(20,30,50,.05); }
+         box-shadow: var(--shadow); }
 .aside > summary { cursor: pointer; list-style: none; padding: 12px 16px;
                    font-size: 13px; font-weight: 600; color: var(--muted);
                    display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -294,7 +294,7 @@ body:not(.findings-off) .find-wrap:not(.find-closed) { transition-delay: 0s; }
 .shell.with-specs { max-width: none; padding: 0 24px; }
 @media (min-width: 1120px) {
   .shell.with-specs { grid-template-columns: minmax(0, 1fr) var(--spec-w, 520px); }
-  .side { position: sticky; top: 12px; max-height: calc(100vh - 24px); display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .side { position: sticky; top: 12px; max-height: calc(100vh - 24px); display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow: auto; }
   .side .aside { position: static; flex: 0 0 auto; }
   /* Hiding the pane collapses to one column - unless there are still
      general comments in the side column, which keep their plain width. */
@@ -302,9 +302,9 @@ body:not(.findings-off) .find-wrap:not(.find-closed) { transition-delay: 0s; }
   body.spec-off .shell.with-specs.has-files { grid-template-columns: minmax(0, 1fr) 320px; }
 }
 body.spec-off #tc-specs { display: none; }
-.specs { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+.specs { position: relative; flex: 1 1 auto; min-height: 240px; display: flex; flex-direction: column;
          background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-         box-shadow: 0 1px 3px rgba(20,30,50,.05); }
+         box-shadow: var(--shadow); }
 .spec-grip { position: absolute; left: -7px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; }
 .spec-grip:hover, .spec-grip.dragging { background: color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 4px; }
 .spec-tabs { display: flex; gap: 2px; overflow-x: auto; padding: 6px 8px 0; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
@@ -339,7 +339,7 @@ body.spec-off #tc-specs { display: none; }
    front of them, so they are NOT hidden like the comment boxes are - and
    a collapsed <details> would otherwise print as just its heading. */
 @media print { .rev { break-inside: avoid; }
-               .rev[open] > summary, .rev > summary { color: #444; }
+               .rev[open] > summary, .rev > summary { color: var(--muted); }
                .rev-body { display: block !important; } }
 @media print { :root, :root[data-scheme="dark"] { color-scheme: light;
                  --bg: #fff; --surface: #fff; --surface-2: #f4f6f9;

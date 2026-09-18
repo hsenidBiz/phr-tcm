@@ -62,13 +62,31 @@ fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.to_string_lossy().to_string())
 }
 
-/// The first `# ` heading's text, if the document opens with one.
+/// The first `# ` heading's text, if the document has one outside fenced
+/// code - a `# install deps` shell comment in a code block is not a title.
 fn first_heading(md: &str) -> Option<String> {
-    md.lines()
-        .map(str::trim)
-        .find(|l| l.starts_with("# "))
-        .map(|l| l.trim_start_matches('#').trim().to_string())
-        .filter(|t| !t.is_empty())
+    let mut fence: Option<&str> = None;
+    for line in md.lines().map(str::trim) {
+        if let Some(f) = fence {
+            if line.starts_with(f) {
+                fence = None;
+            }
+            continue;
+        }
+        if line.starts_with("```") {
+            fence = Some("```");
+            continue;
+        }
+        if line.starts_with("~~~") {
+            fence = Some("~~~");
+            continue;
+        }
+        if line.starts_with("# ") {
+            let t = line.trim_start_matches('#').trim();
+            return (!t.is_empty()).then(|| t.to_string());
+        }
+    }
+    None
 }
 
 pub fn render_file(path: &Path) -> SpecDoc {

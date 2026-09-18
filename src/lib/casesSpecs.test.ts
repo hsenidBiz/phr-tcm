@@ -10,12 +10,13 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 
 type Doc = { title: string; kind: string; source: string };
 type Helpers = {
-  splitCitation: (text: string) => { document: string; section: string } | null;
+  splitCitation: (text: string, titles?: string[]) => { document: string; section: string } | null;
   findSpecTab: (docs: Doc[], document: string) => number;
   matchHeading: (headings: string[], section: string) => number;
   slug: (text: string) => string;
   citationStart: (text: string) => number;
   scrollWithin: (container: Element, target: Element, margin: number) => void;
+  citationRanges: (text: string) => Array<{ start: number; end: number }>;
 };
 let H: Helpers;
 
@@ -161,5 +162,55 @@ describe("a spec citation link on the review page", () => {
     expect(top).not.toBe(0);
 
     into.mockRestore();
+  });
+});
+
+describe("splitCitation with known titles", () => {
+  test("a known multi-word title without an extension is the document, longest first", () => {
+    expect(H.splitCitation("Spec: Calculation Engine 5.8 Display Rules", ["Engine", "Calculation Engine"])).toEqual({
+      document: "Calculation Engine",
+      section: "5.8 Display Rules",
+    });
+    expect(H.splitCitation("Spec: calculation   engine 5.8", ["Calculation Engine"])).toEqual({
+      document: "calculation engine",
+      section: "5.8",
+    });
+  });
+  test("a title only counts when it ends at a word boundary", () => {
+    expect(H.splitCitation("Spec: Calculation Engine 5.8", ["Calc"])).toEqual({
+      document: "Calculation",
+      section: "Engine 5.8",
+    });
+    expect(H.splitCitation("Spec: A.md 5.8", ["A"])).toEqual({ document: "A.md", section: "5.8" });
+  });
+});
+
+describe("citationRanges", () => {
+  test("finds every citation in one run of text, each ending where the next starts", () => {
+    const t = "Checks it. Spec: A.md 5.8\nSpec: B.md 2.1 ";
+    expect(H.citationRanges(t).map((r) => t.slice(r.start, r.end))).toEqual(["Spec: A.md 5.8", "Spec: B.md 2.1"]);
+    expect(H.citationRanges("Respect: none")).toEqual([]);
+  });
+});
+
+describe("citation links in the page", () => {
+  test("every citation in a paragraph is linked, and a link is never nested in a link", () => {
+    document.body.innerHTML = `
+      <section id="tc-specs"><div class="spec-tabs">
+        <button class="spec-tab" data-spec="0">A</button><button class="spec-tab" data-spec="1">B</button></div>
+        <article class="spec-doc" data-spec="0"><h2>5.8 Rules</h2></article>
+        <article class="spec-doc" data-spec="1"><h2>2.1 Flags</h2></article>
+        <script type="application/json" id="tc-specs-data">[{"title":"A","kind":"file","source":"C:/s/A.md"},{"title":"B","kind":"file","source":"C:/s/B.md"}]</script>
+      </section>
+      <details class="rev" open><summary>Reviewer notes</summary><div class="rev-body">
+        <p id="para">Checks it. Spec: A.md 5.8 Spec: B.md 2.1</p>
+        <p><a id="md-link" href="https://example.test/">Spec: A.md 5.8</a></p>
+      </div></details>`;
+    (window as unknown as { __tcmWireSpecs: () => void }).__tcmWireSpecs();
+    const links = Array.from(document.querySelectorAll("#para a.spec-link"));
+    expect(links.map((a) => a.textContent)).toEqual(["Spec: A.md 5.8", "Spec: B.md 2.1"]);
+    expect(links.map((a) => a.getAttribute("data-spec"))).toEqual(["0", "1"]);
+    expect(document.getElementById("para")!.textContent).toBe("Checks it. Spec: A.md 5.8 Spec: B.md 2.1");
+    expect(document.querySelector("#md-link a")).toBeNull();
   });
 });

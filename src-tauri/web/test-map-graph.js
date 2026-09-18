@@ -12,6 +12,8 @@
   // Every case has its own row, so labels never collide: the only reason
   // to hide them is text too small to read. Ids from 50%, titles from 80%.
   var ID_AT = 0.5, TITLE_AT = 0.8, RAMP = 0.1;
+  // areaRadius's ceiling: the widest a child area's dot can be.
+  var MAX_AREA_R = 16;
 
   function areaRadius(count) {
     return Math.max(7, Math.min(16, 5 + 1.5 * Math.sqrt(count)));
@@ -164,6 +166,27 @@
     return id ? id + '  ' + title : title;
   }
 
+  // The screen width an area's name may take: from its left edge (the node
+  // centre minus its radius r) to just before the next column, where its
+  // cases and child areas start. Scales with the zoom, like the columns.
+  function areaLabelRoom(scale, r) {
+    return Math.max(0, (LEVEL - MAX_AREA_R) * scale + r - 6);
+  }
+
+  // `text` cut to fit `room` pixels by `measure`, with an ellipsis; '' when
+  // not even one character and the ellipsis fit.
+  function clipLabel(text, room, measure) {
+    text = String(text || '');
+    if (room <= 0) return '';
+    if (measure(text) <= room) return text;
+    var ell = '…', lo = 0, hi = text.length;
+    while (lo < hi) {
+      var mid = Math.ceil((lo + hi) / 2);
+      if (measure(text.slice(0, mid) + ell) <= room) lo = mid; else hi = mid - 1;
+    }
+    return lo === 0 ? '' : text.slice(0, lo).replace(/\s+$/, '') + ell;
+  }
+
   root.testMap = {
     ROW: ROW,
     LEVEL: LEVEL,
@@ -174,6 +197,8 @@
     labelAlpha: labelAlpha,
     fitTransform: fitTransform,
     fitWidthTransform: fitWidthTransform,
-    caseLabel: caseLabel
+    caseLabel: caseLabel,
+    areaLabelRoom: areaLabelRoom,
+    clipLabel: clipLabel
   };
 })(typeof window !== 'undefined' ? window : this);

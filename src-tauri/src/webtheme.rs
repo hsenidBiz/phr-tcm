@@ -125,13 +125,16 @@ impl ReportPalette {
     }
 
     /// The variable block for one scheme, under the given `:root` selector.
+    /// `--shadow` is the card shadow, mixed from this scheme's text colour so
+    /// no page stylesheet has to hard-code one.
     fn vars(&self, selector: &str) -> String {
         let p = self.filled();
         format!(
             "{selector} {{ color-scheme: {scheme};\n\
              --bg: {bg}; --surface: {surface}; --surface-2: {surface_2};\n\
              --text: {text}; --muted: {muted}; --faint: {faint}; --border: {border};\n\
-             --accent: {accent}; --success: {success}; --danger: {danger}; --warning: {warning}; }}",
+             --accent: {accent}; --success: {success}; --danger: {danger}; --warning: {warning};\n\
+             --shadow: 0 1px 3px color-mix(in srgb, {text} 6%, transparent); }}",
             selector = selector,
             scheme = if p.dark { "dark" } else { "light" },
             bg = p.bg,
