@@ -1505,7 +1505,17 @@ function seedAmbiguousHold(titles: string[]) {
   );
 }
 
-test("removing every held row clears a stale hold and un-refuses uploads", async () => {
+// Fix round 2 (CRITICAL): a hold is never cleared by an effect watching
+// (hold, queue). `useQueue` (src/hooks/useQueue.ts:60-93) delivers a scope
+// change one render before the reload - the new PBI's hold is already
+// visible but its queue is still the OLD PBI's (or the tour fixture's) -
+// and any effect that deleted a hold with no matching row in THAT queue
+// would delete the incoming PBI's hold before its own rows ever arrived.
+// So removing every held row leaves the hold exactly as it was in storage:
+// only Check and a confirmed Release ever clear one. `holdActive` (held
+// rows actually present) is what the refusal reads, so the hold is simply
+// inert until a same-titled row reappears.
+test("removing every held row leaves the hold stored but inert - uploads are allowed again", async () => {
   localStorage.setItem(
     "tcm-v2-upload-hold:acme/42",
     JSON.stringify({ since: "2026-09-18T10:00:00.000Z", titles: ["Brand new"] }),
@@ -1516,14 +1526,46 @@ test("removing every held row clears a stale hold and un-refuses uploads", async
 
   const held = screen.getByText("Brand new").closest("li")!;
   fireEvent.click(within(held).getByRole("button", { name: "Remove" }));
+  await waitFor(() => expect(screen.queryByText("Brand new")).not.toBeInTheDocument());
 
-  await waitFor(() => expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).toBeNull());
-  expect(screen.queryByText("Outcome unknown - check before uploading again")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Check with Azure DevOps/ })).not.toBeInTheDocument();
+  // Never auto-cleared - still exactly what Check or Release last left.
+  expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).not.toBeNull();
 
+  // But inert: no row of the queue matches it, so it does not block.
   fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
   const yes = await screen.findByRole("button", { name: /Yes —/ });
   expect(yes).not.toBeDisabled();
+});
+
+test("a PBI switch does not clear the incoming PBI's hold, even for the one render still showing the outgoing queue", () => {
+  localStorage.setItem(
+    "tcm-v2-upload-hold:acme/99",
+    JSON.stringify({ since: "2026-09-18T10:00:00.000Z", titles: ["Brand new"] }),
+  );
+  baseMocks();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  function Scoped({ pbiId, queue }: { pbiId: number; queue: TestCase[] }) {
+    return (
+      <QueryClientProvider client={qc}>
+        <QueueSection org="acme" project="Web" pbiId={pbiId} queue={queue} setQueue={() => {}} />
+      </QueryClientProvider>
+    );
+  }
+
+  const { rerender } = render(<Scoped pbiId={42} queue={[makeCase({ title: "Other" })]} />);
+  expect(screen.queryByRole("button", { name: /Check with Azure DevOps/ })).not.toBeInTheDocument();
+
+  // useQueue's transition, reproduced exactly: pbiId flips to the PBI whose
+  // hold is being tested (99) while `queue` is still what PBI 42 had -
+  // there is no row anywhere named by 99's hold yet.
+  rerender(<Scoped pbiId={99} queue={[makeCase({ title: "Other" })]} />);
+  expect(localStorage.getItem("tcm-v2-upload-hold:acme/99")).not.toBeNull();
+
+  // The reload arrives: PBI 99's own queue, which does have the held row.
+  rerender(<Scoped pbiId={99} queue={[makeCase({ title: "Brand new" })]} />);
+  expect(localStorage.getItem("tcm-v2-upload-hold:acme/99")).not.toBeNull();
+  expect(screen.getByText("Outcome unknown - check before uploading again")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Check with Azure DevOps/ })).toBeInTheDocument();
 });
 
 test("a hold still naming a row present in the queue keeps refusing, even if renamed rows elsewhere were dropped", () => {

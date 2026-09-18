@@ -20,8 +20,19 @@
  * this upload's risks clearing a hold on a case that may still be a
  * duplicate. `UploadHold.ambiguous` names which of the still-held titles are
  * stuck that way, so the row can say why (`ambiguousRows`) instead of just
- * "unknown". There is no manual way to release either kind of hold: a
- * found/ambiguous answer from Azure DevOps is the only thing that changes it.
+ * "unknown".
+ *
+ * A hold is cleared in exactly two ways: a Check (`reconcile_upload`) that
+ * comes back with an answer for a title, or the user confirming Release on
+ * an ambiguous hold once they have checked Azure DevOps themselves
+ * (QueueSection's hold banner). Nothing else ever clears one - in
+ * particular, no effect watching the live queue clears a hold whose rows
+ * are no longer present (fix round 2: `useQueue` can deliver a PBI switch's
+ * new scope a render before its own reload, so "no matching row yet" is not
+ * evidence the hold is stale - it can just be early). A hold with no
+ * matching row is simply INERT: `heldRows`/`ambiguousRows` mark nothing, so
+ * nothing is refused, but the hold itself is left exactly as it was, and it
+ * applies again the moment a same-titled row reappears.
  */
 import type { ReconciledCase, SubmitItemResult, TestCase } from "../bindings";
 

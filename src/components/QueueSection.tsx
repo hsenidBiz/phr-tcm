@@ -999,12 +999,21 @@ export default function QueueSection({
   const ambiguous = useMemo(() => ambiguousRows(queue, hold), [queue, hold]);
   // Fix round 1 (controller ruling): a hold refuses uploads only while one
   // of its rows is still actually in the queue. Removing or renaming every
-  // held row lifts the refusal - and the effect below clears the now-stale
-  // hold from storage, so a fresh restart does not resurrect it.
+  // held row lifts the refusal; the hold itself is left exactly as it was.
+  //
+  // Fix round 2 (CRITICAL): this used to also clear the hold from an effect
+  // watching (hold, queue) once no row matched it - but `useQueue`
+  // (src/hooks/useQueue.ts:60-93) delivers a PBI switch's new scope one
+  // render BEFORE its reload: `hold` already reads the new PBI (it is keyed
+  // on `pbiId` alone) while `queue` is still the OLD PBI's rows, or the
+  // tour fixture's, which can happen to pair with a real PBI. In that one
+  // render nothing in `queue` matches the new PBI's hold, so the effect
+  // deleted a hold whose rows simply had not arrived yet. There is no such
+  // effect now: a hold whose rows are absent is merely INERT (`holdActive`
+  // below is false, so nothing is blocked), and if a same-titled row comes
+  // back the hold applies again exactly as it was. Only a successful Check
+  // and a confirmed Release ever remove one.
   const holdActive = hold != null && held.some(Boolean);
-  useEffect(() => {
-    if (hold && !held.some(Boolean)) saveHold(org, pbiId, null);
-  }, [hold, held, org, pbiId]);
   const [releaseConfirm, setReleaseConfirm] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
