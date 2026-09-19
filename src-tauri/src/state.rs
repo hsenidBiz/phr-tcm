@@ -102,9 +102,11 @@ where
     };
     match refresh(rt.clone(), account).await {
         Ok(new_tokens) => keep(state, &rt, new_tokens),
-        // Refresh failed (revoked, offline, CAE): fall back to the existing
-        // token; a hard 401 from the API will surface as Unauthorized.
-        Err(_) => Ok(token),
+        // Refresh failed (revoked, offline, CAE): fall back to the token
+        // stored NOW, not the one read before the refresh - another account
+        // may have signed in (or everyone out) while it was out. A hard 401
+        // from the API will surface as Unauthorized.
+        Err(_) => snapshot(state).map(|(current, _, _, _)| current),
     }
 }
 

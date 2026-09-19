@@ -226,6 +226,49 @@ async fn a_refresh_that_finishes_after_a_new_sign_in_does_not_overwrite_it() {
     assert_eq!(state.lock().unwrap().tokens.as_ref().unwrap().access_token, "b-token");
 }
 
+/// A FAILED refresh used to return the token read before it started - A's,
+/// even though B had signed in while the refresh was out. The command must
+/// act as whoever is signed in now.
+#[tokio::test]
+async fn a_failed_refresh_returns_the_token_of_whoever_is_signed_in_now() {
+    let state = Arc::new(Mutex::new(AuthState { tokens: Some(expiring("a-old", "rt-a")) }));
+    let during = state.clone();
+    let token = fresh_token_with(&state, move |_rt, _account| {
+        let during = during.clone();
+        async move {
+            during.lock().unwrap().tokens = Some(lasting("b-token", "rt-b"));
+            Err("offline".to_string())
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(token, "b-token");
+}
+
+/// Signed out while the refresh was failing: no token to fall back on.
+#[tokio::test]
+async fn a_failed_refresh_after_a_sign_out_is_unauthorized() {
+    let state = Arc::new(Mutex::new(AuthState { tokens: Some(expiring("a-old", "rt-a")) }));
+    let during = state.clone();
+    let out = fresh_token_with(&state, move |_rt, _account| {
+        let during = during.clone();
+        async move {
+            during.lock().unwrap().tokens = None;
+            Err("offline".to_string())
+        }
+    })
+    .await;
+    assert!(matches!(out, Err(v2_lib::ado::AdoError::Unauthorized)), "{out:?}");
+}
+
+/// Nothing changed meanwhile: the existing token is still the fallback.
+#[tokio::test]
+async fn a_failed_refresh_with_no_sign_in_change_keeps_the_current_token() {
+    let state = Arc::new(Mutex::new(AuthState { tokens: Some(expiring("a-old", "rt-a")) }));
+    let token = fresh_token_with(&state, |_rt, _account| async { Err("offline".to_string()) }).await.unwrap();
+    assert_eq!(token, "a-old");
+}
+
 #[test]
 fn refreshed_tokens_are_stored_only_over_the_session_they_came_from() {
     let mut s = AuthState { tokens: Some(lasting("x", "rt-1")) };
