@@ -263,6 +263,93 @@ fn removing_the_first_of_two_same_titled_drafts_removes_the_first_entry() {
     assert_eq!(doc["test_cases"], json!([second]), "{out}");
 }
 
+// ---- final review: a write-back sends every owned row, and its before and
+// ---- after can be minutes old by the time the post-upload stamp lands. An
+// ---- UNCHANGED row still claims its entry (so later same-titled rows keep
+// ---- their positions) but must not rewrite it, nor bring back an entry the
+// ---- file has since dropped - that reverted an assistant's edits made
+// ---- during a long upload. ------------------------------------------------
+
+/// The snapshot the queue holds, and the same file after an assistant
+/// edited "Login"'s step and deleted "Gone" while the upload ran.
+fn edited_since_the_snapshot() -> (Vec<TestCase>, String) {
+    let snap = json!({ "test_cases": [
+        { "title": "Login", "steps": [{ "action": "Open.", "expected": "" }] },
+        { "title": "Gone", "steps": [{ "action": "G.", "expected": "" }] },
+        { "title": "Stamp me", "steps": [{ "action": "S.", "expected": "" }] }
+    ]})
+    .to_string();
+    let rows = parse_json_text(&snap)
+        .unwrap()
+        .cases
+        .into_iter()
+        .map(|c| TestCase { source: Default::default(), ..c })
+        .collect();
+    let now = json!({ "test_cases": [
+        { "title": "Login", "steps": [{ "action": "Open the login page.", "expected": "It opens." }] },
+        { "title": "Stamp me", "steps": [{ "action": "S.", "expected": "" }] }
+    ]})
+    .to_string();
+    (rows, now)
+}
+
+#[test]
+fn an_unchanged_row_leaves_an_external_edit_to_its_entry_alone() {
+    let (rows, now) = edited_since_the_snapshot();
+    let out = apply_draft_edits(&now, &[edit(rows[0].clone(), Some(rows[0].clone()))]).unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(doc["test_cases"][0]["steps"][0]["action"], "Open the login page.", "{out}");
+    assert_eq!(doc["test_cases"][0]["steps"][0]["expected"], "It opens.", "{out}");
+}
+
+#[test]
+fn an_unchanged_row_whose_entry_was_deleted_is_not_re_added() {
+    let (rows, now) = edited_since_the_snapshot();
+    let out = apply_draft_edits(&now, &[edit(rows[1].clone(), Some(rows[1].clone()))]).unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(titles(&doc), ["Login", "Stamp me"], "{out}");
+}
+
+/// The post-upload stamp as it is really sent: every owned row, only one of
+/// them changed (its new id). The stamp lands; the other two rows touch
+/// nothing.
+#[test]
+fn a_changed_row_still_patches_while_unchanged_rows_beside_it_do_not() {
+    let (rows, now) = edited_since_the_snapshot();
+    let stamped = TestCase { update_id: Some(501), ..rows[2].clone() };
+    let out = apply_draft_edits(
+        &now,
+        &[
+            edit(rows[0].clone(), Some(rows[0].clone())),
+            edit(rows[1].clone(), Some(rows[1].clone())),
+            edit(rows[2].clone(), Some(stamped)),
+        ],
+    )
+    .unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(titles(&doc), ["Login", "Stamp me"], "{out}");
+    assert_eq!(doc["test_cases"][0]["steps"][0]["action"], "Open the login page.", "{out}");
+    assert_eq!(doc["test_cases"][1]["id"], 501, "{out}");
+}
+
+/// An unchanged row still CLAIMS its entry: with two same-titled entries,
+/// the second row's change lands on the second entry, not the first.
+#[test]
+fn an_unchanged_row_still_claims_its_entry_so_the_next_same_titled_row_lands_on_the_next_one() {
+    let old = json!({ "test_cases": [
+        { "title": "X", "steps": [{ "action": "A.", "expected": "" }] },
+        { "title": "X", "steps": [{ "action": "B.", "expected": "" }] }
+    ]})
+    .to_string();
+    let parsed = parse_json_text(&old).unwrap().cases;
+    let row = |i: usize| TestCase { source: Default::default(), ..parsed[i].clone() };
+    let stamped = TestCase { update_id: Some(7), ..row(1) };
+    let out = apply_draft_edits(&old, &[edit(row(0), Some(row(0))), edit(row(1), Some(stamped))]).unwrap();
+    let doc: Value = serde_json::from_str(&out).unwrap();
+    assert!(doc["test_cases"][0].get("id").is_none(), "{out}");
+    assert_eq!(doc["test_cases"][1]["id"], 7, "{out}");
+}
+
 #[test]
 fn a_bare_array_keeps_its_skipped_entries_in_the_wrapper() {
     let old = r#"[{"title":"Draft","steps":[]},{"title":"Real","steps":[{"action":"Go."}]}]"#;

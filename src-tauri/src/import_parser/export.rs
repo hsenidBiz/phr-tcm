@@ -322,6 +322,14 @@ fn patch_step(raw: &Value, old: &Step, new: &Step) -> Value {
 /// `keysFor`). Found entries are patched or removed. File entries no row
 /// mentions are kept (cases an assistant added since the last sync). A row
 /// whose entry is gone from the file is appended.
+///
+/// An UNCHANGED row (`after == before`: every modelled field, steps with
+/// their Shared Steps references and the work item id included) still
+/// claims its entry, so the rows after it keep their positions, but leaves
+/// it exactly as the file has it now - and is not re-added when its entry
+/// is gone. Every owned row is sent, and for the post-upload stamp its
+/// before/after can be minutes old: replaying them reverted whatever an
+/// assistant changed in the file during the upload.
 pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, String> {
     let old_text = super::strip_bom(old_text);
     let parsed = super::parse_json_text(old_text).map(|p| p.cases).unwrap_or_default();
@@ -330,7 +338,10 @@ pub fn apply_draft_edits(old_text: &str, edits: &[DraftEdit]) -> Result<String, 
     let mut fate: Vec<Option<Option<&TestCase>>> = vec![None; parsed.len()];
     let mut unmatched: Vec<TestCase> = vec![];
     for edit in edits {
+        let unchanged = edit.after.as_ref() == Some(&edit.before);
         match (claim(&parsed, &mut claimed, &edit.before), &edit.after) {
+            // Claimed (above) but left alone / not brought back.
+            _ if unchanged => {}
             (Some(k), after) => fate[k] = Some(after.as_ref()),
             (None, Some(after)) => {
                 unmatched.push(TestCase { source: SourceIndex(None), ..after.clone() })
