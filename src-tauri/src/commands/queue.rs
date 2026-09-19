@@ -1398,7 +1398,10 @@ pub struct ReconcileAnswer {
 
 /// The lookup behind `reconcile_upload`, with the client passed in.
 /// `titles` has one entry per held row (repeats allowed); each found case
-/// is paired once (`reconcile_pairs`).
+/// is paired once (`reconcile_pairs`). `exclude_ids` - the ids the hold
+/// recorded (the PBI's cases before the upload, and every id the upload
+/// reported) plus every update id in the queue - are dropped from what the
+/// lookup found before the exactly-one rule is applied.
 pub async fn reconcile_with(
     client: &ado::AdoClient,
     organization: &str,
@@ -1406,14 +1409,21 @@ pub async fn reconcile_with(
     pbi_id: i32,
     since: &str,
     titles: &[String],
+    exclude_ids: &[i32],
 ) -> Result<ReconcileAnswer, String> {
     if ado::endpoints::wiql_datetime(since).is_none() {
         return Err("The time to check from is not a valid date.".into());
     }
-    let found = client
+    // Removed before pairing, as `resolve_failed_batch` does with the ids
+    // it already reported: an id this upload already stamped on another
+    // row, or one linked before the upload began, is never this row's.
+    let found: Vec<(i32, String)> = client
         .find_created_test_cases(organization, project, pbi_id, since, titles)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|(id, _)| !exclude_ids.contains(id))
+        .collect();
     let creates: Vec<(usize, String)> = titles.iter().cloned().enumerate().collect();
     let (pairs, ambiguous) = reconcile_pairs(&creates, &found);
     log_claimed(&pairs);
@@ -1434,10 +1444,11 @@ pub async fn reconcile_upload(
     pbi_id: i32,
     since: String,
     titles: Vec<String>,
+    exclude_ids: Vec<i32>,
 ) -> Result<ReconcileAnswer, String> {
     let token = get_fresh_token(&app).await.map_err(|e| e.to_string())?;
     let client = ado::AdoClient::new(token);
-    reconcile_with(&client, &organization, &project, pbi_id, &since, &titles).await
+    reconcile_with(&client, &organization, &project, pbi_id, &since, &titles, &exclude_ids).await
 }
 
 fn failed_item(index: usize, tc: &model::TestCase, error: String) -> SubmitItemResult {

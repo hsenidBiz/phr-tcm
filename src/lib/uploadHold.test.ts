@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "vitest";
 import type { SubmitItemResult, TestCase } from "../bindings";
 import {
   ambiguousRows,
+  checkExcludeIds,
   heldRows,
   holdFromResults,
   loadHold,
@@ -36,6 +37,7 @@ test("only unknown results become a hold, named by the SENT row's title", () => 
   expect(holdFromResults([res(0, "created", 901), res(1, "unknown"), res(2, "failed")], sent, "S")).toEqual({
     since: "S",
     titles: ["B"],
+    ids: [901],
   });
   expect(holdFromResults([res(0, "created", 901), res(2, "failed")], sent, "S")).toBeNull();
 });
@@ -43,7 +45,7 @@ test("only unknown results become a hold, named by the SENT row's title", () => 
 test("a hold survives a reload, per PBI, and reads back as the same object", () => {
   saveHold("acme", 42, { since: "S", titles: ["B"] });
   const a = loadHold("acme", 42);
-  expect(a).toEqual({ since: "S", titles: ["B"] });
+  expect(a).toEqual({ since: "S", titles: ["B"], ids: [] });
   // useSyncExternalStore needs a stable snapshot while nothing changed.
   expect(loadHold("acme", 42)).toBe(a);
   expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).not.toBeNull();
@@ -104,7 +106,36 @@ test("found cases become created results on the held rows, one row each", () => 
 
 test("a hold can name which of its titles are ambiguous, not merely unknown", () => {
   saveHold("acme", 42, { since: "S", titles: ["B"], ambiguous: ["B"] });
-  expect(loadHold("acme", 42)).toEqual({ since: "S", titles: ["B"], ambiguous: ["B"] });
+  expect(loadHold("acme", 42)).toEqual({ since: "S", titles: ["B"], ambiguous: ["B"], ids: [] });
+});
+
+// ---- final review: a Check must never claim an id that is already
+// ---- accounted for - one this upload reported, or one linked to the PBI
+// ---- before the upload began. -------------------------------------------
+
+test("the hold records the PBI's earlier cases and every id this upload reported", () => {
+  const sent = [tc("A"), tc("B"), tc("C", { update_id: 77 }), tc("D")];
+  expect(
+    holdFromResults(
+      [res(0, "created", 901), res(1, "unknown"), res(2, "updated", 77), res(3, "failed")],
+      sent,
+      "S",
+      [50, 51, 77],
+    ),
+  ).toEqual({ since: "S", titles: ["B"], ids: [50, 51, 77, 901] });
+});
+
+test("a hold stored before ids were recorded still loads, with no ids", () => {
+  localStorage.setItem("tcm-v2-upload-hold:acme/42", JSON.stringify({ since: "S", titles: ["B"] }));
+  expect(loadHold("acme", 42)).toEqual({ since: "S", titles: ["B"], ids: [] });
+  localStorage.setItem("tcm-v2-upload-hold:acme/42", JSON.stringify({ since: "S", titles: ["B"], ids: ["x"] }));
+  expect(loadHold("acme", 42)).toBeNull();
+});
+
+test("a Check excludes the hold's ids and every update id in the queue", () => {
+  const queue = [tc("A", { update_id: 901 }), tc("B"), tc("C", { update_id: 300 })];
+  expect(checkExcludeIds({ since: "S", titles: ["B"], ids: [50, 901] }, queue)).toEqual([50, 901, 300]);
+  expect(checkExcludeIds({ since: "S", titles: ["B"] }, queue)).toEqual([901, 300]);
 });
 
 test("ambiguousRows marks only the rows named by hold.ambiguous, same rule as heldRows", () => {

@@ -345,7 +345,7 @@ async fn check_later_pairs_titles_with_what_exists() {
     ]}))
     .await;
     let titles = vec!["A".to_string(), "A".to_string(), "B".to_string()];
-    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles)
+    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles, &[])
         .await
         .unwrap();
     assert_eq!(
@@ -373,7 +373,7 @@ async fn check_later_reports_an_ambiguous_title_separately_from_found() {
     ]}))
     .await;
     let titles = vec!["A".to_string()];
-    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles)
+    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles, &[])
         .await
         .unwrap();
     assert_eq!(got.found, vec![]);
@@ -383,11 +383,55 @@ async fn check_later_reports_an_ambiguous_title_separately_from_found() {
 #[tokio::test]
 async fn check_later_refuses_a_bad_start_time_without_asking() {
     let server = MockServer::start().await;
-    let err = reconcile_with(&mock_client(&server), "acme", "Web", 42, "not a date", &["A".to_string()])
+    let err = reconcile_with(&mock_client(&server), "acme", "Web", 42, "not a date", &["A".to_string()], &[])
         .await
         .unwrap_err();
     assert!(!err.contains("http"), "{err}");
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+/// An id the Check is told to exclude - one this upload already reported,
+/// or one linked to the PBI before the upload began - is never claimed,
+/// however well its title matches.
+#[tokio::test]
+async fn check_later_never_claims_an_excluded_id() {
+    let server = MockServer::start().await;
+    mount_lookup(&server, &[901, 902], serde_json::json!({"value": [
+        {"id": 901, "fields": {"System.Title": "A"}},
+        {"id": 902, "fields": {"System.Title": "B"}}
+    ]}))
+    .await;
+    let titles = vec!["A".to_string(), "B".to_string()];
+    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles, &[901])
+        .await
+        .unwrap();
+    assert_eq!(got.found, vec![ReconciledCase { title: "B".into(), id: 902 }]);
+    assert_eq!(got.ambiguous, Vec::<String>::new(), "an excluded id does not make its title ambiguous");
+}
+
+/// The final-review scenario: two "Login" creates in different chunks.
+/// Chunk 1 created #100; chunk 2 failed and its lookup failed, so its row
+/// is held unknown. A later Check finds only #100 - one match for one held
+/// row - and used to stamp the row `created #100` although its case was
+/// never created. #100 is in the hold's recorded ids, so it is excluded and
+/// the held row is not found rather than claimed.
+#[tokio::test]
+async fn check_later_does_not_hand_a_held_row_an_earlier_chunks_case() {
+    let server = MockServer::start().await;
+    mount_lookup(&server, &[100], serde_json::json!({"value": [
+        {"id": 100, "fields": {"System.Title": "Login"}}
+    ]}))
+    .await;
+    let titles = vec!["Login".to_string()];
+    let unfiltered = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles, &[])
+        .await
+        .unwrap();
+    assert_eq!(unfiltered.found, vec![ReconciledCase { title: "Login".into(), id: 100 }], "sanity: the bug");
+    let got = reconcile_with(&mock_client(&server), "acme", "Web", 42, "2026-09-18T10:00:00.000Z", &titles, &[100])
+        .await
+        .unwrap();
+    assert_eq!(got.found, vec![]);
+    assert_eq!(got.ambiguous, Vec::<String>::new());
 }
 
 // ---- fix round 1: an id already reported cannot be reused, and an ------

@@ -44,6 +44,13 @@ export type UploadHold = {
   /** Titles held because Azure DevOps has more than one matching case for
    * them, not merely because the outcome is unknown. Subset of `titles`. */
   ambiguous?: string[];
+  /** Ids a Check must never claim for a held row: the PBI's test cases
+   * that were already linked before the upload began, plus every id the
+   * upload reported as created or updated. Without them a Check could
+   * stamp a held row with a same-titled case from an earlier chunk of the
+   * same upload, or one that was there all along. Optional on input so a
+   * hold stored before this field existed still loads (as an empty list). */
+  ids?: number[];
 };
 
 const holdKey = (org: string, pbiId: number) => `tcm-v2-upload-hold:${org}/${pbiId}`;
@@ -83,11 +90,13 @@ function parseHold(raw: string): UploadHold | null {
       v.titles.length > 0 &&
       v.titles.every((t: unknown) => typeof t === "string") &&
       (v.ambiguous === undefined ||
-        (Array.isArray(v.ambiguous) && v.ambiguous.every((t: unknown) => typeof t === "string")))
+        (Array.isArray(v.ambiguous) && v.ambiguous.every((t: unknown) => typeof t === "string"))) &&
+      (v.ids === undefined || (Array.isArray(v.ids) && v.ids.every((n: unknown) => Number.isInteger(n))))
     ) {
+      const ids: number[] = v.ids ?? [];
       return v.ambiguous !== undefined
-        ? { since: v.since, titles: v.titles, ambiguous: v.ambiguous }
-        : { since: v.since, titles: v.titles };
+        ? { since: v.since, titles: v.titles, ambiguous: v.ambiguous, ids }
+        : { since: v.since, titles: v.titles, ids };
     }
   } catch {
     // not a hold
@@ -121,17 +130,32 @@ export function saveHold(org: string, pbiId: number, hold: UploadHold | null): v
 }
 
 /** The hold a finished submit leaves: every "unknown" result, named by the
- * title of the row that was SENT at its index. Null when there are none. */
+ * title of the row that was SENT at its index. Null when there are none.
+ * `preExisting` is the ids of the PBI's test cases linked before the upload
+ * began; they and every id a result reported go into `ids`. */
 export function holdFromResults(
-  results: Pick<SubmitItemResult, "index" | "action">[],
+  results: Pick<SubmitItemResult, "index" | "action" | "id">[],
   sent: TestCase[],
   since: string,
+  preExisting: number[] = [],
 ): UploadHold | null {
   const titles = results
     .filter((r) => r.action === "unknown")
     .map((r) => sent[r.index]?.title)
     .filter((t): t is string => t != null);
-  return titles.length > 0 ? { since, titles } : null;
+  if (titles.length === 0) return null;
+  const reported = results
+    .filter((r) => (r.action === "created" || r.action === "updated") && r.id != null)
+    .map((r) => r.id as number);
+  return { since, titles, ids: [...new Set([...preExisting, ...reported])] };
+}
+
+/** What a Check tells Rust to leave out before it pairs anything: the
+ * hold's recorded ids and every update id currently in the queue (a row
+ * that already carries an id is that case, so it can be no held row's). */
+export function checkExcludeIds(hold: UploadHold, queue: TestCase[]): number[] {
+  const inQueue = queue.map((tc) => tc.update_id).filter((x): x is number => x != null);
+  return [...new Set([...(hold.ids ?? []), ...inQueue])];
 }
 
 /** Which of `queue`'s create rows are named by `titles`: first come first

@@ -26,6 +26,7 @@ import { keepUploaded } from "../lib/queueUploaded";
 import { summariseSubmit } from "../lib/submitSummary";
 import {
   ambiguousRows,
+  checkExcludeIds,
   heldRows,
   holdFromResults,
   loadHold,
@@ -622,7 +623,8 @@ export default function QueueSection({
   }, [setQueue, pbiId]);
 
   const submit = useMutation({
-    mutationFn: async () => {
+    /** `preExisting`: the ids of the PBI's test cases before this upload. */
+    mutationFn: async (preExisting: number[] = []) => {
       // The buttons are disabled while a hold stands; this is the backstop.
       if (holdActive) throw new Error(HOLD_REFUSAL);
       // Claimed BEFORE the pre-flight fetch below, not after it: a second
@@ -774,7 +776,7 @@ export default function QueueSection({
         // cases in their queue to carry their new ids when the loop
         // finishes. `sent` is the FILTERED list: every result index is an
         // index into it, and keepUploaded matches on that list.
-        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue, since });
+        applyOutcome({ results: r.data, sent: toSend, sentFor: pbiId, skipped, prevQueue: queue, since, preExisting });
         return { results: r.data, sent: toSend, sentFor: pbiId, skipped, diffs };
       } finally {
         // Inside the promise for the same reason: onSettled may never run.
@@ -809,18 +811,18 @@ export default function QueueSection({
    * An unreachable ADO falls back to the cache rather than blocking: the
    * submit itself would surface the outage anyway, and refusing to open a
    * review because a check could not run helps nobody. */
-  const refreshTitles = useCallback(async (): Promise<string[]> => {
+  const refreshTitles = useCallback(async (): Promise<{ id: number; title: string }[]> => {
     setCheckingDups(true);
-    let titles = existingCases.map((t) => t.title);
+    let cases = existingCases;
     try {
       const fresh = await existing.refetch();
-      if (fresh.data) titles = fresh.data.map((t) => t.title);
+      if (fresh.data) cases = fresh.data.map((t) => ({ id: t.id, title: t.title }));
     } catch {
       // keep the cached list
     }
-    setFreshTitles(titles);
+    setFreshTitles(cases.map((t) => t.title));
     setCheckingDups(false);
-    return titles;
+    return cases;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingCases]);
 
@@ -859,8 +861,8 @@ export default function QueueSection({
       toast.warning(HOLD_REFUSAL);
       return;
     }
-    const titles = await refreshTitles();
-    const have = new Set(titles.map((t) => t.trim().toLowerCase()));
+    const onPbi = await refreshTitles();
+    const have = new Set(onPbi.map((t) => t.title.trim().toLowerCase()));
     const ok = new Set(acceptedDups.map((t) => t.trim().toLowerCase()));
     const surprises = queue.filter((tc) => {
       const key = tc.title.trim().toLowerCase();
@@ -869,7 +871,9 @@ export default function QueueSection({
     // The panel and the disabled button both read `dupsPending`, which the
     // refresh above has just updated - there is nothing else to set.
     if (surprises.length > 0) return;
-    submit.mutate();
+    // The PBI's cases as they stand before this upload: a hold it leaves
+    // records their ids, so a later Check can never claim one of them.
+    submit.mutate(onPbi.map((t) => t.id));
   };
 
   /** Ask Azure DevOps what an interrupted upload actually created. Found
@@ -895,7 +899,10 @@ export default function QueueSection({
     if (!h) return;
     setCheckingHold(true);
     try {
-      const r = await commands.reconcileUpload(org, project, pbiId, h.since, h.titles);
+      // Never claimable for a held row: what the hold recorded (the PBI's
+      // cases before the upload, the upload's own ids) and every id a row
+      // in the queue already carries.
+      const r = await commands.reconcileUpload(org, project, pbiId, h.since, h.titles, checkExcludeIds(h, queue));
       if (r.status === "error") {
         toast.error(`Could not check with Azure DevOps: ${r.error} The cases stay marked - try again.`);
         return;
@@ -904,7 +911,13 @@ export default function QueueSection({
       const { results: createdResults, orphans } = reconciledResults(queue, heldRows(queue, h), found);
       const ambiguousSet = new Set(ambiguous.map((t) => t.trim()));
       const stillHeld = h.titles.filter((t) => ambiguousSet.has(t.trim()));
-      saveHold(org, pbiId, stillHeld.length > 0 ? { since: h.since, titles: stillHeld, ambiguous: stillHeld } : null);
+      // A smaller hold keeps its ids, plus what this Check just claimed.
+      const ids = [...new Set([...(h.ids ?? []), ...found.map((f) => f.id)])];
+      saveHold(
+        org,
+        pbiId,
+        stillHeld.length > 0 ? { since: h.since, titles: stillHeld, ambiguous: stillHeld, ids } : null,
+      );
       if (createdResults.length > 0) {
         applyOutcome({ results: createdResults, sent: queue, sentFor: pbiId, skipped: 0, prevQueue: queue });
       }
@@ -939,6 +952,7 @@ export default function QueueSection({
     skipped,
     prevQueue,
     since,
+    preExisting,
   }: {
     results: SubmitItemResult[];
     sent: TestCase[];
@@ -947,13 +961,15 @@ export default function QueueSection({
     prevQueue: TestCase[];
     /** When this upload started - set by a submit, absent for a Check. */
     since?: string;
+    /** The PBI's test case ids before this upload - set by a submit. */
+    preExisting?: number[];
   }) {
     // Only what Azure DevOps confirmed counts as done. "unknown" is neither
     // done nor failed: it may exist, so it is held until someone checks.
     const ok = results.filter((r) => r.action === "created" || r.action === "updated").length;
     const failedCount = results.filter((r) => r.action === "failed").length;
     const unknownCount = results.filter((r) => r.action === "unknown").length;
-    const newHold = since ? holdFromResults(results, sent, since) : null;
+    const newHold = since ? holdFromResults(results, sent, since, preExisting) : null;
     if (newHold) saveHold(org, sentFor, newHold);
 
     // The whole calculation lives in lib/queueUploaded.ts, with the ways

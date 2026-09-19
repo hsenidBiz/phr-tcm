@@ -1454,6 +1454,58 @@ test("Check that finds the case stamps its id and lifts the hold", async () => {
   expect(localStorage.getItem("tcm-v2-upload-hold:acme/42")).toBeNull();
 });
 
+/// Final review: a Check could stamp a held row with a case this upload had
+/// already reported for another row (a title repeated across chunks), or
+/// one that was on the PBI before the upload began. The hold records both
+/// at upload time, and the Check sends them - with every update id in the
+/// queue - for Rust to exclude before its exactly-one rule.
+test("Check sends the PBI's earlier cases, the upload's own ids and the queue's update ids to exclude", async () => {
+  let asked: Record<string, unknown> | null = null;
+  mockIPC((cmd, args) => {
+    if (cmd === "plugin:event|listen") return 1;
+    if (cmd === "plugin:event|unlisten") return null;
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "list_project_tags") return [];
+    if (cmd === "test_case_field_values") return [];
+    if (cmd === "test_cases_by_ids") return [];
+    if (cmd === "pbi_test_cases") {
+      return [{ id: 50, title: "Already there", tags: "", automation_status: "Not Automated" }];
+    }
+    if (cmd === "submit_queue") {
+      return [
+        { index: 0, title: "Login", action: "created", id: 900, error: null },
+        {
+          index: 1,
+          title: "Brand new",
+          action: "unknown",
+          id: null,
+          error: "Outcome unknown (http 500). Azure DevOps may have created this case - check before uploading it again.",
+        },
+        { index: 2, title: "Existing", action: "updated", id: 77, error: null },
+      ];
+    }
+    if (cmd === "reconcile_upload") {
+      asked = args as Record<string, unknown>;
+      return { found: [], ambiguous: [] };
+    }
+    return undefined;
+  });
+  renderQueue([
+    makeCase({ title: "Login" }),
+    makeCase({ title: "Brand new" }),
+    makeCase({ title: "Existing", update_id: 77 }),
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: /Review 3 test cases/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Yes —/ }));
+  await screen.findByText("Outcome unknown - check before uploading again");
+  expect(JSON.parse(localStorage.getItem("tcm-v2-upload-hold:acme/42")!).ids).toEqual([50, 900, 77]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Check with Azure DevOps/ }));
+  await waitFor(() => expect(asked).not.toBeNull());
+  expect(asked!.titles).toEqual(["Brand new"]);
+  expect([...(asked!.excludeIds as number[])].sort((a, b) => a - b)).toEqual([50, 77, 900]);
+});
+
 test("Check that finds nothing returns the row to normal", async () => {
   holdMocks(() => []);
   renderQueue([makeCase({ title: "Brand new" })]);
