@@ -3,7 +3,7 @@
 //! the same way it would read the real home/appdata dirs.
 
 use v2_lib::ai_tools::{
-    atomic_write, claude_cli_candidates, command_dir, command_files, command_files_for, command_files_in,
+    atomic_write, atomic_write_with, claude_cli_candidates, command_dir, command_files, command_files_for, command_files_in,
     command_markdown, config_for, detect, detect_in, merge_entry, project_command_dir,
     remove_entry, resolve_db_command, tcm_server, McpServer, COMMAND_MARKER, COMMANDS,
     DB_SERVER, TCM_SERVER, TOOL_SPECS,
@@ -752,6 +752,122 @@ fn atomic_write_leaves_no_stray_temp_file() {
         .filter(|name| name.contains("tcm-tmp"))
         .collect();
     assert!(leftovers.is_empty(), "expected no leftover temp files, found: {leftovers:?}");
+}
+
+// ---- final review: on Windows the rename over a draft fails while another
+// ---- process (antivirus, an editor, the indexer) briefly holds the file.
+// ---- A sharing violation / access denied is retried with backoff; the
+// ---- temp file never outlives a failure. -----------------------------------
+
+fn temp_files_in(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.contains("tcm-tmp"))
+        .collect()
+}
+
+fn write_real(p: &std::path::Path, s: &str) -> std::io::Result<()> {
+    std::fs::write(p, s)
+}
+
+#[test]
+fn a_rename_held_by_another_process_is_retried_until_it_goes_through() {
+    let dir = TempDir::new();
+    let target = dir.path().join("draft.json");
+    std::fs::write(&target, "old").unwrap();
+    let mut attempts = 0;
+    let mut waits = vec![];
+    atomic_write_with(
+        &target,
+        "new",
+        write_real,
+        |from, to| {
+            attempts += 1;
+            if attempts <= 2 {
+                // ERROR_SHARING_VIOLATION
+                Err(std::io::Error::from_raw_os_error(32))
+            } else {
+                std::fs::rename(from, to)
+            }
+        },
+        |d| waits.push(d.as_millis()),
+    )
+    .unwrap();
+    assert_eq!(attempts, 3);
+    assert_eq!(waits, vec![50, 100]);
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+    assert!(temp_files_in(dir.path()).is_empty());
+}
+
+#[test]
+fn a_rename_that_stays_denied_gives_up_after_five_retries_and_removes_the_temp_file() {
+    let dir = TempDir::new();
+    let target = dir.path().join("draft.json");
+    std::fs::write(&target, "old").unwrap();
+    let mut attempts = 0;
+    let mut waits = vec![];
+    let err = atomic_write_with(
+        &target,
+        "new",
+        write_real,
+        |_, _| {
+            attempts += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        },
+        |d| waits.push(d.as_millis()),
+    )
+    .unwrap_err();
+    assert_eq!(attempts, 6, "the first try and five retries");
+    assert_eq!(waits, vec![50, 100, 200, 400, 800]);
+    assert!(err.contains("draft.json"), "{err}");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "old", "the draft is untouched");
+    assert!(temp_files_in(dir.path()).is_empty(), "{:?}", temp_files_in(dir.path()));
+}
+
+#[test]
+fn any_other_rename_failure_is_not_retried() {
+    let dir = TempDir::new();
+    let target = dir.path().join("draft.json");
+    let mut attempts = 0;
+    let mut waits = vec![];
+    atomic_write_with(
+        &target,
+        "new",
+        write_real,
+        |_, _| {
+            attempts += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+        },
+        |d| waits.push(d.as_millis()),
+    )
+    .unwrap_err();
+    assert_eq!(attempts, 1);
+    assert!(waits.is_empty());
+    assert!(temp_files_in(dir.path()).is_empty());
+}
+
+/// A temp write that fails part-way (a full disk) used to leave the
+/// half-written temp file behind.
+#[test]
+fn a_failed_temp_write_leaves_no_temp_file() {
+    let dir = TempDir::new();
+    let target = dir.path().join("draft.json");
+    let err = atomic_write_with(
+        &target,
+        "new",
+        |p, _| {
+            std::fs::write(p, "ne")?;
+            Err(std::io::Error::other("disk full"))
+        },
+        |_, _| panic!("nothing to rename"),
+        |_| {},
+    )
+    .unwrap_err();
+    assert!(err.contains("disk full"), "{err}");
+    assert!(temp_files_in(dir.path()).is_empty(), "{:?}", temp_files_in(dir.path()));
+    assert!(!target.exists());
 }
 
 /// The regression that broke the database server: env pairs BEFORE the

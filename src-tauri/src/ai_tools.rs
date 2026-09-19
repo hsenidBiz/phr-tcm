@@ -661,7 +661,36 @@ pub fn remove_entry(
 /// the same directory (so the final `rename` stays on one volume - atomic
 /// on NTFS), then rename it over `path`. Cleans up the temp file if the
 /// rename fails, so a crash mid-write never leaves a half-written config.
+/// A rename blocked by another process holding the file (a sharing
+/// violation on Windows) is retried with backoff first - see
+/// `atomic_write_with`.
 pub fn atomic_write(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    atomic_write_with(path, contents, |p, s| std::fs::write(p, s), |a, b| std::fs::rename(a, b), std::thread::sleep)
+}
+
+/// How long to wait before each retry of a rename another process blocked.
+pub const RENAME_RETRY_WAITS_MS: [u64; 5] = [50, 100, 200, 400, 800];
+
+/// A rename Windows refused because another process has the target open -
+/// antivirus scanning the file just written, an editor, the search indexer.
+/// Usually gone within a moment, so worth waiting out.
+fn held_by_another_process(e: &std::io::Error) -> bool {
+    // 32 = ERROR_SHARING_VIOLATION, 5 = ERROR_ACCESS_DENIED.
+    e.kind() == std::io::ErrorKind::PermissionDenied || matches!(e.raw_os_error(), Some(32) | Some(5))
+}
+
+/// `atomic_write` with the file operations and the wait passed in - the
+/// seam tests/ai_tools.rs drives. A rename that fails because another
+/// process holds the file is retried after each of `RENAME_RETRY_WAITS_MS`;
+/// any other failure, or the last retry's, removes the temp file and
+/// returns the error. So does a temp write that fails part-way.
+pub fn atomic_write_with(
+    path: &std::path::Path,
+    contents: &str,
+    write: impl FnOnce(&std::path::Path, &str) -> std::io::Result<()>,
+    mut rename: impl FnMut(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+    mut sleep: impl FnMut(std::time::Duration),
+) -> Result<(), String> {
     let parent = path.parent().ok_or_else(|| format!("{} has no parent directory", path.display()))?;
     let file_name = path
         .file_name()
@@ -669,10 +698,22 @@ pub fn atomic_write(path: &std::path::Path, contents: &str) -> Result<(), String
         .to_string_lossy();
     let tmp_path = parent.join(format!("{file_name}.tcm-tmp-{}", std::process::id()));
 
-    std::fs::write(&tmp_path, contents)
-        .map_err(|e| format!("failed to write temp file {}: {e}", tmp_path.display()))?;
+    if let Err(e) = write(&tmp_path, contents) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("failed to write temp file {}: {e}", tmp_path.display()));
+    }
 
-    if let Err(e) = std::fs::rename(&tmp_path, path) {
+    let mut result = rename(&tmp_path, path);
+    for wait in RENAME_RETRY_WAITS_MS {
+        match &result {
+            Err(e) if held_by_another_process(e) => {
+                sleep(std::time::Duration::from_millis(wait));
+                result = rename(&tmp_path, path);
+            }
+            _ => break,
+        }
+    }
+    if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(format!("failed to move temp file into place at {}: {e}", path.display()));
     }
