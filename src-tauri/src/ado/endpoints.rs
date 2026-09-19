@@ -1111,10 +1111,14 @@ impl AdoClient {
             project,
             urlencoding::encode(file_name)
         );
-        // Through the funnel: paced, logged, throttle hints honoured.
+        // Through the funnel: paced, logged, throttle hints honoured. A
+        // deadline scaled to the size: a large file on a slow link outlasts
+        // the ordinary 60 s.
+        let deadline = super::upload_timeout(bytes.len());
         let resp = self
             .send(reqwest::Method::POST, &url, |r| {
-                r.header("Accept", "application/json")
+                r.timeout(deadline)
+                    .header("Accept", "application/json")
                     .header("Content-Type", "application/octet-stream")
                     .body(bytes)
             })

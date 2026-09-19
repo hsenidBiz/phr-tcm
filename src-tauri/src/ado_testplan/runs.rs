@@ -392,7 +392,17 @@ impl AdoClient {
             run_id,
             result_id
         );
-        self.post_json(url, &body).await?;
+        // A screen recording is uncapped and base64-inflated: give it a
+        // deadline scaled to its size instead of the ordinary 60 s.
+        let deadline = crate::ado::upload_timeout(b64.len());
+        let resp = self
+            .send(reqwest::Method::POST, &url, |r| {
+                r.timeout(deadline)
+                    .header("Accept", "application/json")
+                    .json(&body)
+            })
+            .await?;
+        Self::handle_json(resp).await?;
         Ok(())
     }
 

@@ -168,6 +168,24 @@ pub const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_
 pub const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// The `$batch` POST alone: up to 200 creates executed server-side in one call.
 pub const BATCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+/// The longest any one attachment upload may take, however large.
+pub const UPLOAD_TIMEOUT_CAP: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// The slowest upload rate an attachment deadline allows for: 128 KiB/s.
+const UPLOAD_MIN_BYTES_PER_SEC: usize = 128 * 1024;
+
+/// The deadline for uploading an attachment of `bytes` bytes.
+///
+/// `HTTP_TIMEOUT` is start-to-last-byte, so a screen recording or a large
+/// "Attach file" on a slow link used to be cut off at 60 s however well it
+/// was going. One second per 128 KiB, never less than the ordinary
+/// deadline and never more than `UPLOAD_TIMEOUT_CAP`. Both upload paths
+/// call this, so their deadlines cannot drift apart.
+pub fn upload_timeout(bytes: usize) -> std::time::Duration {
+    let secs = (bytes / UPLOAD_MIN_BYTES_PER_SEC) as u64;
+    std::time::Duration::from_secs(secs)
+        .max(HTTP_TIMEOUT)
+        .min(UPLOAD_TIMEOUT_CAP)
+}
 
 /// The deadline settings every ADO/sign-in HTTP client shares, so the
 /// pooled production client and the unpooled loopback-only one below
@@ -261,6 +279,25 @@ impl AdoClient {
     pub fn with_base_url(access_token: String, base_url: String) -> Self {
         let vssps = base_url.clone();
         Self::with_base_urls(access_token, base_url, vssps)
+    }
+
+    /// A loopback test client whose ordinary per-request deadline is
+    /// `timeout` instead of `HTTP_TIMEOUT`, so a test can show a request
+    /// outlasting it without waiting a minute. Refuses a non-loopback base:
+    /// production requests always carry the real deadline.
+    pub fn with_base_url_and_timeout(
+        access_token: String,
+        base_url: String,
+        timeout: std::time::Duration,
+    ) -> Self {
+        assert!(is_loopback_base(&base_url), "a shortened deadline is for loopback tests only");
+        let mut client = Self::with_base_url(access_token, base_url);
+        client.http = client_builder()
+            .timeout(timeout)
+            .pool_max_idle_per_host(0)
+            .build()
+            .expect("loopback test client");
+        client
     }
 
     pub fn with_base_urls(access_token: String, base_url: String, vssps_base_url: String) -> Self {
