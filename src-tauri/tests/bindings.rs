@@ -19,10 +19,50 @@ fn bindings_never_expose_a_token() {
         .expect("export failed");
     let ts = std::fs::read_to_string(&path).unwrap();
     let _ = std::fs::remove_file(&path);
-    for name in ["access_token", "accessToken", "refresh_token", "refreshToken", "id_token", "idToken"] {
-        assert!(!ts.contains(name), "generated bindings must not contain a token field ({name})");
+    assert_eq!(token_names_in(&ts), Vec::<&str>::new(), "generated bindings must not contain a token field");
+}
+
+/// Every token-shaped name in `text`, compared case-insensitively - so
+/// `AccessToken` and `ACCESS_TOKEN` count as much as `accessToken`. The
+/// id-token forms need a word boundary before them (start, a
+/// non-alphanumeric, or a camel-case `Id`), because `invalidToken` and
+/// `valid_token` contain them by accident.
+fn token_names_in(text: &str) -> Vec<&'static str> {
+    let lower = text.to_lowercase();
+    let mut hits = Vec::new();
+    for name in ["access_token", "accesstoken", "refresh_token", "refreshtoken", "bearer"] {
+        if lower.contains(name) {
+            hits.push(name);
+        }
     }
-    assert!(!ts.to_lowercase().contains("bearer"), "generated bindings must not mention a bearer token");
+    for name in ["id_token", "idtoken"] {
+        // ASCII needles: a match offset in `lower` is a char boundary, and
+        // lowercasing ASCII keeps offsets, so the same offset in `text`
+        // (when it is ASCII there too) is the original letter.
+        let at_boundary = lower.match_indices(name).any(|(i, _)| {
+            let before = lower[..i].chars().next_back();
+            let camel = text.get(i..i + 1) == Some("I");
+            camel || before.is_none_or(|c| !c.is_alphanumeric())
+        });
+        if at_boundary {
+            hits.push(name);
+        }
+    }
+    hits
+}
+
+#[test]
+fn the_token_check_ignores_case_but_not_word_boundaries() {
+    assert_eq!(token_names_in("export type X = { AccessToken: string }"), vec!["accesstoken"]);
+    assert_eq!(token_names_in("ACCESS_TOKEN"), vec!["access_token"]);
+    assert_eq!(token_names_in("RefreshToken"), vec!["refreshtoken"]);
+    assert_eq!(token_names_in("Authorization: Bearer x"), vec!["bearer"]);
+    assert_eq!(token_names_in("{ idToken: string }"), vec!["idtoken"]);
+    assert_eq!(token_names_in("{ IdToken: string }"), vec!["idtoken"]);
+    assert_eq!(token_names_in("{ userIdToken: string }"), vec!["idtoken"]);
+    assert_eq!(token_names_in("{ id_token: string }"), vec!["id_token"]);
+    assert_eq!(token_names_in("{ invalidToken: boolean }"), Vec::<&str>::new());
+    assert_eq!(token_names_in("{ valid_token: boolean }"), Vec::<&str>::new());
 }
 
 #[test]
