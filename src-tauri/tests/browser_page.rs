@@ -133,6 +133,14 @@ async fn resolve_backend_asks_for_a_handle_in_our_group() {
     assert_eq!(p["objectGroup"], GROUP);
 }
 
+#[tokio::test]
+async fn backend_id_reads_the_id_and_sends_the_object_id() {
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({ "node": { "backendNodeId": 42 } })));
+    assert_eq!(page::backend_id(&mut d, &"el-7".to_string()).await.unwrap(), 42);
+    let p = &d.calls_to("DOM.describeNode")[0];
+    assert_eq!(p["objectId"], "el-7");
+}
+
 /// Releasing is housekeeping. A failure there must never fail the action.
 #[tokio::test]
 async fn release_swallows_its_own_failure() {

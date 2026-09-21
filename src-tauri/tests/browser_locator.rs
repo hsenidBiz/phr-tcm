@@ -43,6 +43,31 @@ fn an_unknown_field_is_refused() {
     assert!(serde_json::from_value::<Target>(json!({ "role": "button", "nme": "Save" })).is_err());
 }
 
+/// The error names the misspelt field, so a person editing the script by
+/// hand can see what to fix.
+#[test]
+fn an_unknown_field_error_names_the_field() {
+    let err = serde_json::from_value::<Target>(json!({ "role": "button", "nme": "Save" })).unwrap_err();
+    assert!(err.to_string().contains("nme"), "{err}");
+}
+
+/// A struct whose fields all have defaults also deserializes from a JSON
+/// array by POSITION - so without a hand-written `Deserialize`,
+/// `["button", "Save"]` would quietly become
+/// `One(LocatorStep { role: Some("button"), name: Some("Save"), .. })`.
+/// Only a string, a locator object, or a list of locator objects is a
+/// target; everything else is refused.
+#[test]
+fn only_a_string_an_object_or_a_list_of_objects_is_a_target() {
+    let refuses = |v: serde_json::Value| assert!(serde_json::from_value::<Target>(v).is_err());
+    refuses(json!(["button", "Save"]));
+    refuses(json!([["button", "Save"]]));
+    refuses(json!([{ "role": "button" }, "x"]));
+    refuses(json!(42));
+    refuses(json!(true));
+    refuses(json!(null));
+}
+
 #[test]
 fn validation_names_the_problem() {
     let ok = |v: serde_json::Value| serde_json::from_value::<Target>(v).unwrap().validate();
@@ -159,6 +184,59 @@ async fn a_chain_narrows_inside_the_previous_match() {
     ]))
     .unwrap();
     assert_eq!(resolve(&mut d, &t).await.unwrap(), vec!["row-1".to_string()]);
+    // Exactly one root at every step: deduplication never has anything to
+    // do, so it must never spend a protocol call finding that out.
+    assert!(d.calls_to("DOM.describeNode").is_empty());
+}
+
+/// Two roots that both contain the same element (nested dialogs, nested
+/// rows of the same role) must not double-count it or throw `nth` off.
+/// Root 0's css search finds backend ids [5, 6]; root 1's finds [6, 7].
+/// Backend id 6 is the same element reached two ways, so it is kept only
+/// once, in the order it was first seen.
+#[tokio::test]
+async fn a_chain_deduplicates_elements_reached_through_more_than_one_root() {
+    let mut d = ScriptedDriver::new(|method, params| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Accessibility.queryAXTree" => Ok(json!({ "nodes": [
+            { "ignored": false, "name": { "value": "A" }, "backendDOMNodeId": 100 },
+            { "ignored": false, "name": { "value": "B" }, "backendDOMNodeId": 101 }
+        ] })),
+        "DOM.resolveNode" => {
+            Ok(json!({ "object": { "objectId": format!("root-{}", params["backendNodeId"]) } }))
+        }
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == VISIBLE_JS => {
+            Ok(json!({ "result": { "value": true } }))
+        }
+        "Runtime.callFunctionOn" => {
+            assert_eq!(params["functionDeclaration"], CSS_JS);
+            let arr = if params["objectId"] == "root-100" { "arr-0" } else { "arr-1" };
+            Ok(json!({ "result": { "objectId": arr } }))
+        }
+        "Runtime.getProperties" => {
+            let props = if params["objectId"] == "arr-0" {
+                vec![json!({ "name": "0", "value": { "objectId": "h5" } }), json!({ "name": "1", "value": { "objectId": "h6" } })]
+            } else {
+                vec![json!({ "name": "0", "value": { "objectId": "h6b" } }), json!({ "name": "1", "value": { "objectId": "h7" } })]
+            };
+            Ok(json!({ "result": props }))
+        }
+        "DOM.describeNode" => {
+            let id = match params["objectId"].as_str().unwrap() {
+                "h5" => 5,
+                "h6" | "h6b" => 6,
+                "h7" => 7,
+                other => panic!("unexpected handle {other}"),
+            };
+            Ok(json!({ "node": { "backendNodeId": id } }))
+        }
+        other => panic!("unexpected {other}"),
+    });
+    let t: Target = serde_json::from_value(json!([{ "role": "dialog" }, { "css": "div" }])).unwrap();
+    assert_eq!(
+        resolve(&mut d, &t).await.unwrap(),
+        vec!["h5".to_string(), "h6".to_string(), "h7".to_string()]
+    );
 }
 
 #[tokio::test]

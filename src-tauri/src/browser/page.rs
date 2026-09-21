@@ -141,6 +141,17 @@ pub async fn resolve_backend<D: Driver>(d: &mut D, backend_node_id: i64) -> Resu
     handle_of("DOM.resolveNode", &r["object"])
 }
 
+/// The reverse of `resolve_backend`: a handle's own backend node id, so
+/// handles reached by different paths (two roots that nest) can be told
+/// apart from the same element reached twice.
+pub async fn backend_id<D: Driver>(d: &mut D, handle: &Handle) -> Result<i64, CdpError> {
+    let r = d.call("DOM.describeNode", json!({ "objectId": handle })).await?;
+    r["node"]["backendNodeId"].as_i64().ok_or_else(|| CdpError::Protocol {
+        method: "DOM.describeNode".to_string(),
+        message: "the browser described no node".to_string(),
+    })
+}
+
 /// Let go of every handle. Housekeeping: a failure here is ignored, never
 /// reported as the action's failure.
 pub async fn release<D: Driver>(d: &mut D) {

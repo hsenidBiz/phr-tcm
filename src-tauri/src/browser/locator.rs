@@ -43,18 +43,45 @@ pub struct LocatorStep {
 
 /// What an action points at. A plain string keeps the meaning it has
 /// always had, so every script saved before locators existed still runs.
-// `Chain` is declared before `One`: serde tries untagged variants in this
-// order, and a struct with every field defaulted (as `LocatorStep` is)
-// also deserializes from an empty JSON array - so `Chain` must get first
-// look at an array or `[]` would silently become `One(LocatorStep::default())`
-// instead of the empty chain the "a locator list is empty" validation
-// error expects.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 #[serde(untagged)]
 pub enum Target {
     Legacy(String),
-    Chain(Vec<LocatorStep>),
     One(LocatorStep),
+    Chain(Vec<LocatorStep>),
+}
+
+/// Hand-written rather than `#[derive(Deserialize)] #[serde(untagged)]`:
+/// serde's derived struct visitor also accepts a JSON ARRAY positionally
+/// (every `LocatorStep` field has a default), so an untagged derive would
+/// let something like `["button", "Save"]` quietly become
+/// `One(LocatorStep { role: Some("button"), name: Some("Save"), .. })` - a
+/// malformed selector accepted with a meaning nobody wrote. Deciding on
+/// the JSON shape first closes that off: an array is only ever a chain of
+/// locator objects, never a step read positionally.
+impl<'de> serde::Deserialize<'de> for Target {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(s) => Ok(Target::Legacy(s)),
+            serde_json::Value::Object(_) => {
+                serde_json::from_value::<LocatorStep>(value).map(Target::One).map_err(D::Error::custom)
+            }
+            serde_json::Value::Array(items) if items.iter().all(serde_json::Value::is_object) => items
+                .into_iter()
+                .map(serde_json::from_value::<LocatorStep>)
+                .collect::<Result<Vec<_>, _>>()
+                .map(Target::Chain)
+                .map_err(D::Error::custom),
+            _ => Err(D::Error::custom(
+                "a selector is a string, a locator object, or a list of locator objects",
+            )),
+        }
+    }
 }
 
 impl From<&str> for Target {
@@ -281,6 +308,22 @@ async fn find_in<D: Driver>(
     page::call_elements(d, root, CSS_JS, &[json!(css), json!(visible_only)]).await
 }
 
+/// Later handles that name the same backend node as an earlier one are
+/// dropped, first-seen order kept. Only needed when a step searched more
+/// than one root: nested roots (a dialog inside a dialog, nested rows of
+/// the same role) can otherwise reach the same element twice, doubling a
+/// count and pointing `nth` at the wrong match.
+async fn dedupe_by_backend<D: Driver>(d: &mut D, handles: Vec<Handle>) -> Result<Vec<Handle>, CdpError> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = vec![];
+    for handle in handles {
+        if seen.insert(page::backend_id(d, &handle).await?) {
+            out.push(handle);
+        }
+    }
+    Ok(out)
+}
+
 /// Every element the target matches right now. Empty is an answer, not an
 /// error: callers decide whether "nothing yet" means wait or fail.
 pub async fn resolve<D: Driver>(d: &mut D, target: &Target) -> Result<Vec<Handle>, CdpError> {
@@ -293,6 +336,9 @@ pub async fn resolve<D: Driver>(d: &mut D, target: &Target) -> Result<Vec<Handle
         let mut next = vec![];
         for root in &roots {
             next.extend(find_in(d, root, step).await?);
+        }
+        if roots.len() > 1 {
+            next = dedupe_by_backend(d, next).await?;
         }
         if let Some(n) = step.nth {
             next = next.into_iter().nth(n as usize).into_iter().collect();
