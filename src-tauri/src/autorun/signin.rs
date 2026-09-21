@@ -21,6 +21,14 @@ pub struct SignInOutcome {
     /// True when no form was touched: the saved session was still good.
     pub used_saved_session: bool,
     pub steps: Vec<ActionOutcome>,
+    /// True when this failed because the browser connection did, not the
+    /// page - `run_step` (via `as_action_outcome`) must not then ask a
+    /// browser that is not answering for a failure screenshot. Same
+    /// meaning as `ActionOutcome.harness`. Process-internal only: never
+    /// crosses the IPC boundary and never lands in a saved run file.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub harness: bool,
 }
 
 pub fn redact(text: &str, account: &Account) -> String {
@@ -54,8 +62,8 @@ impl Run<'_> {
         self.steps.push(out);
         ok
     }
-    fn done(self, ok: bool, detail: String, used_saved_session: bool) -> SignInOutcome {
-        SignInOutcome { ok, detail: redact(&detail, self.account), used_saved_session, steps: self.steps }
+    fn done(self, ok: bool, detail: String, used_saved_session: bool, harness: bool) -> SignInOutcome {
+        SignInOutcome { ok, detail: redact(&detail, self.account), used_saved_session, steps: self.steps, harness }
     }
 }
 
@@ -84,18 +92,41 @@ pub async fn sign_in<D: Driver>(
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };
 
     if let Err(e) = session::clear(d, &origins).await {
-        return run.done(false, clear_failed(e), false);
+        return run.done(false, clear_failed(e), false, true);
     }
 
     if let Some(saved) = load_fresh_session(root, &account.key, recipe.session_minutes, now_ms()) {
         match session::restore(d, &saved).await {
             Ok(ids) => {
                 let arrived = execute_in(d, &go, timing, &policy).await;
-                let seen = arrived.ok
-                    && expect(d, &recipe.signed_in, Check::Visible, timing.expect_ms, timing.poll_ms).await.ok;
+                // Short-circuit exactly like the plain `&&` this replaces:
+                // the marker is never even asked for once the navigate
+                // itself has already failed.
+                let marker = if arrived.ok {
+                    Some(expect(d, &recipe.signed_in, Check::Visible, timing.expect_ms, timing.poll_ms).await)
+                } else {
+                    None
+                };
+                let seen = marker.as_ref().is_some_and(|m| m.ok);
                 session::unseed(d, &ids).await;
                 if seen {
-                    return run.done(true, format!("signed in as {who} from a saved session"), true);
+                    return run.done(true, format!("signed in as {who} from a saved session"), true, false);
+                }
+                // The BROWSER, not the saved session, may be what just
+                // failed (the navigate or the marker check stopped
+                // answering) - that says nothing about whether the saved
+                // session is still good, so it must not be thrown away the
+                // way an ordinary "this session no longer works" is below.
+                let harness_failure = arrived.harness || marker.as_ref().is_some_and(|m| m.harness);
+                if harness_failure {
+                    let why = if arrived.harness { arrived.detail } else { marker.expect("checked above").detail };
+                    // Best effort, same reason as the sibling arm below:
+                    // `Network.setCookies` already put the saved session's
+                    // cookies live before this failed, and they must not be
+                    // left that way just because the browser then stopped
+                    // answering.
+                    let _ = session::clear(d, &origins).await;
+                    return run.done(false, why, false, true);
                 }
             }
             Err(e) if !e.is_transient() => {
@@ -106,19 +137,21 @@ pub async fn sign_in<D: Driver>(
                 // browser that stopped answering says nothing about whether
                 // the saved session is still good.
                 let _ = session::clear(d, &origins).await;
-                return run.done(false, format!("the browser did not answer: {e}"), false);
+                return run.done(false, format!("the browser did not answer: {e}"), false, true);
             }
             Err(_) => {}
         }
         forget_session(root, &account.key);
         if let Err(e) = session::clear(d, &origins).await {
-            return run.done(false, clear_failed(e), false);
+            return run.done(false, clear_failed(e), false, true);
         }
     }
 
     if !run.keep(execute_in(d, &go, timing, &policy).await) {
-        let why = run.steps.last().map(|s| s.detail.clone()).unwrap_or_default();
-        return run.done(false, format!("the sign-in page did not open: {why}"), false);
+        let last = run.steps.last();
+        let why = last.map(|s| s.detail.clone()).unwrap_or_default();
+        let harness_failure = last.is_some_and(|s| s.harness);
+        return run.done(false, format!("the sign-in page did not open: {why}"), false, harness_failure);
     }
     for (i, step) in for_account(&recipe.steps, account).iter().enumerate() {
         let n = i + 1;
@@ -129,7 +162,7 @@ pub async fn sign_in<D: Driver>(
                 if shown.harness {
                     let why = shown.detail.clone();
                     run.keep(shown);
-                    return run.done(false, format!("sign-in stopped at step {n}: {why}"), false);
+                    return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, true);
                 }
                 if !shown.ok {
                     run.keep(ActionOutcome::passed(format!(
@@ -143,14 +176,17 @@ pub async fn sign_in<D: Driver>(
         };
         for action in actions {
             if !run.keep(execute_in(d, action, timing, &policy).await) {
-                let why = run.steps.last().map(|s| s.detail.clone()).unwrap_or_default();
-                return run.done(false, format!("sign-in stopped at step {n}: {why}"), false);
+                let last = run.steps.last();
+                let why = last.map(|s| s.detail.clone()).unwrap_or_default();
+                let harness_failure = last.is_some_and(|s| s.harness);
+                return run.done(false, format!("sign-in stopped at step {n}: {why}"), false, harness_failure);
             }
         }
     }
 
     let marker = expect(d, &recipe.signed_in, Check::Visible, timing.nav_ms, timing.poll_ms).await;
     if !marker.ok {
+        let harness_failure = marker.harness;
         return run.done(
             false,
             format!(
@@ -159,6 +195,7 @@ pub async fn sign_in<D: Driver>(
                 account.key
             ),
             false,
+            harness_failure,
         );
     }
 
@@ -167,5 +204,5 @@ pub async fn sign_in<D: Driver>(
     if let Ok(captured) = session::capture(d, &origins, now_ms()).await {
         let _ = save_session(root, &account.key, &captured);
     }
-    run.done(true, format!("signed in as {who}"), false)
+    run.done(true, format!("signed in as {who}"), false, false)
 }

@@ -13,6 +13,7 @@ use v2_lib::autorun::runner::{as_action_outcome, policy_for, run_step};
 use v2_lib::autorun::signin::SignInOutcome;
 use v2_lib::autorun::StepScript;
 use v2_lib::browser::actions::Action;
+use v2_lib::browser::cdp::CdpError;
 
 #[test]
 fn a_project_with_no_recipe_runs_unrestricted_and_one_with_a_recipe_does_not() {
@@ -34,9 +35,22 @@ fn a_sign_in_reads_as_one_action_outcome() {
         detail: "sign-in stopped at step 2: not found".into(),
         used_saved_session: false,
         steps: vec![],
+        harness: false,
     };
     let a = as_action_outcome(&out);
     assert!(!a.ok && a.detail.contains("step 2") && a.screenshot.is_none());
+    assert!(!a.harness);
+
+    // A harness failure carries over too - `run_step` must not then ask a
+    // browser that already failed to answer for a screenshot.
+    let harness_out = SignInOutcome {
+        ok: false,
+        detail: "the browser did not answer: closed".into(),
+        used_saved_session: false,
+        steps: vec![],
+        harness: true,
+    };
+    assert!(as_action_outcome(&harness_out).harness);
 }
 
 fn step(actions: Vec<Action>) -> StepScript {
@@ -270,4 +284,38 @@ async fn a_failed_page_action_gets_a_screenshot_and_a_harness_failure_gets_none(
     assert_eq!(out2.len(), 1);
     assert!(!out2[0].ok);
     assert!(out2[0].screenshot.is_none(), "{:?}", out2[0]);
+}
+
+/// A `sign_in` that fails because the browser stopped answering (here, the
+/// very first `clear` call) must carry `harness` through
+/// `as_action_outcome`, or `run_step` tries to screenshot a browser that
+/// is not there any more.
+#[tokio::test]
+async fn a_sign_in_whose_clear_fails_gets_no_screenshot() {
+    let dir = tempfile::tempdir().unwrap();
+    save_recipe(dir.path(), "Acme", "Web", &recipe()).unwrap();
+    save_accounts(dir.path(), &[account()]).unwrap();
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Network.clearBrowserCookies" => Err(CdpError::Closed),
+        _ => Ok(json!({})),
+    });
+    let mut acc: Option<String> = None;
+    let out = run_step(
+        &mut d,
+        dir.path(),
+        "Acme",
+        "Web",
+        &step(vec![Action::SignIn { account: "admin".into() }]),
+        &quick(),
+        &mut acc,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.len(), 1);
+    assert!(!out[0].ok, "{:?}", out[0]);
+    assert!(
+        d.calls_to("Page.captureScreenshot").is_empty(),
+        "a browser that is not answering must never be asked for a screenshot: {:?}",
+        d.calls
+    );
 }

@@ -121,6 +121,10 @@ pub fn seed_script(storage: &[OriginStorage]) -> String {
         return String::new();
     }
     let data: Vec<Value> = storage.iter().map(|s| json!({ "origin": s.origin, "entries": s.entries })).collect();
+    // A raw U+2028/U+2029 inside this JSON string literal (valid JSON,
+    // valid inside the JS template literal below) relies on ES2019: before
+    // it, those two code points terminated a JS string same as a real
+    // newline would. Every browser this drives is ES2019+.
     let data = serde_json::to_string(&data).unwrap_or_else(|_| "[]".to_string());
     format!(
         "(() => {{ try {{ for (const s of {data}) {{ if (location.origin !== s.origin) continue; \

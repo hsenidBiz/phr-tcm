@@ -56,6 +56,33 @@ async fn a_fresh_saved_session_skips_the_form_entirely() {
     assert_eq!(state.clicks.load(Ordering::SeqCst), 0);
 }
 
+/// The browser, not the saved session, is what just failed here - a
+/// `Page.navigate` transport error while trying it must not throw the
+/// session file away, or the next run pays for a browser hiccup with a
+/// real sign-in it did not need.
+#[tokio::test]
+async fn a_transport_failure_while_trying_a_saved_session_keeps_the_session_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = SavedSession {
+        saved_at_ms: now_ms(),
+        cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })],
+        local_storage: vec![],
+    };
+    save_session(dir.path(), "admin", &saved).unwrap();
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Page.navigate" => Err(CdpError::Closed),
+        _ => Ok(json!({})),
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("browser"), "{}", out.detail);
+    no_password_anywhere(&out);
+    assert!(
+        session_path(dir.path(), "admin").is_file(),
+        "a browser that stopped answering says nothing about whether the saved session is still good"
+    );
+}
+
 #[tokio::test]
 async fn a_saved_session_the_application_no_longer_accepts_falls_back_to_the_recipe() {
     let dir = tempfile::tempdir().unwrap();

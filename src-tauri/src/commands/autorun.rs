@@ -21,8 +21,8 @@ struct Session {
     browser: LaunchedBrowser,
     cdp: Cdp,
     /// The account last signed in as, in THIS browser. `None` until a
-    /// sign-in succeeds, so a step run before one just runs against
-    /// whatever the browser already shows.
+    /// sign-in succeeds. Written on every sign-in; nothing reads it yet -
+    /// unattended replay (a later phase) is what will.
     account: Option<String>,
 }
 

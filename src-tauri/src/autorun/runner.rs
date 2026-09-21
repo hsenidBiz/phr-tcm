@@ -26,13 +26,17 @@ pub fn policy_for(recipe: Option<&SignInRecipe>) -> Policy {
     }
 }
 
-/// A sign-in reads as the one action outcome it stands in for.
+/// A sign-in reads as the one action outcome it stands in for. `harness`
+/// carries over too, so a `sign_in` that failed because the browser itself
+/// stopped answering does not then get asked for a screenshot below.
 pub fn as_action_outcome(out: &SignInOutcome) -> ActionOutcome {
-    if out.ok {
+    let mut outcome = if out.ok {
         ActionOutcome::passed(out.detail.clone())
     } else {
         ActionOutcome::failed(out.detail.clone())
-    }
+    };
+    outcome.harness = out.harness;
+    outcome
 }
 
 /// A picture of the page at the moment an action failed. Best effort: a
