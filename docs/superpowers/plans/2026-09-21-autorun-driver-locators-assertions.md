@@ -4232,3 +4232,31 @@ Today `get_autorun_guide` and `save_autorun_script` are in `HIDDEN_TOOLS`: never
 - [ ] **Step 5: Run**, one at a time, from `src-tauri/` with `CARGO_TARGET_DIR=target/gate`: `cargo test --test ai_tools`, `cargo test --test tcm_mcp`, `cargo test --test ai_bridge`, `cargo test --test autorun_bridge`, `cargo test --test bindings`; from the repo root: `npx vitest run src/lib/mcpTools.test.ts src/screens/AiBridge.test.tsx src/ui-consistency.test.ts`, `npx tsc --noEmit`. Then `grep -rn "HIDDEN_TOOLS" src-tauri/src src-tauri/tests src` must return nothing.
 
 - [ ] **Step 6: Commit** with a Bash heredoc, subject `feat(v2): Auto Run's assistant tools are offered in development builds only, behind one AI Bridge switch`, ending with the trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
+
+
+---
+
+## After execution: what changed from this plan, and what is left
+
+Executed 2026-09-21 on `feature/autorun-driver` by subagents, one task at a time, each reviewed, then a whole-branch review and one fix wave. The code blocks in Tasks 1 to 8 above are the plan as written; the reviews replaced several of them. The source is the truth. The differences that matter:
+
+- **Task 1:** the remembered dialog list is capped at 20.
+- **Task 2:** `call_elements` also checks `Runtime.getProperties` for a thrown exception.
+- **Task 3:** `Target` has a hand-written `Deserialize` (a derived one accepted `["button","Save"]` by position). `resolve` drops duplicates by backend node id when a step searched more than one root. `page::backend_id` exists.
+- **Task 4:** stability is judged in Rust across two looks, not with a timer in the page. The click point is clamped to the viewport. `click` re-probes just before clicking and returns `Blocked`. Mouse events carry `buttons`. `FOCUS_JS` sets date-like fields directly, refuses a disabled option, and does not clear number or email fields itself (on real Edge `select()` does select them; only `selectionStart` reads null).
+- **Task 5:** `connect` enables lifecycle events and `navigate` waits for the `load` whose `loaderId` and `frameId` match its own reply. A relative URL is resolved in the page and re-checked.
+- **Task 6:** `expect_visible` needs exactly one match, and says "is there but cannot be seen" for a hidden element.
+- **Task 7:** outcomes carry a non-serialized `harness` flag; no screenshot is asked of a dead browser and the capture has a 5 s limit; pruning is best effort. The shared `Modal` lets only the topmost modal act on Escape.
+- **Task 8:** `launch_args` gained three switches that stop Chromium throttling a background window. 18 live tests pass on real headless Edge.
+- **Final fix wave:** page-side protocol refusals in `actions.rs` are blamed on the page; `fill` checks focus just before typing; every protocol call inside a wait is bounded by that wait's deadline (`Driver::set_deadline`).
+
+**Parked, with reasons:**
+
+1. A browser that is connected but hung makes the first call of each wait time out exactly at the wait's deadline, so it is reported as `waited Nms: <target> not found` on every action instead of "the browser did not answer". Real; a consequence of bounding calls by the wait budget. Follow-up: when no look completed before the deadline, report the browser.
+2. The 250 ms per-call floor lets a long locator chain overrun its budget by up to a few seconds. Bounded; accepted.
+3. A protocol-relative `navigate` value (`//host/path`) resolves to another origin and passes the http/https check. Belongs with the origin allowlist planned for phase 3, as does `file://`.
+4. No read-back of a field's value after typing. The focus half was fixed; the value half waits.
+5. Native multiple selects are single-valued. Key presses, hover, file chooser, downloads and iframes remain out of scope, as planned.
+6. Under headless Edge `document.hasFocus()` is false and focus events are only flushed by the first `Input` dispatch, so the live focus-steal test hooks the fixture field's `select()` instead of `onfocus`. In a visible browser the production check sees a real `onfocus` steal.
+
+**What only a person can check, in the dev app:** a restored (not maximised) Edge window partly off screen; a minimised browser mid-step, including a failure screenshot; browser zoom and Windows display scaling at 125% and 150%; an action queued behind a click that navigates; Escape in every nested dialog (PR build log, Import File's stop-watching confirm, the run pane's screenshot) and in a few single dialogs; filling a field in a screen with an autofocusing dialog; loading, running and re-saving a script written before this branch.
