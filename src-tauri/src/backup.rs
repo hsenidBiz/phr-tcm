@@ -32,6 +32,15 @@ const ROOTS: [&str; 5] =
 /// balloon the backup into something no one can email or copy around.
 const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Inside an allowed root, but never exported and never imported: session
+/// files hold live cookies, and the screenshots folder is evidence for the
+/// run in front of the person, up to 200 images of it.
+pub const EXCLUDED: [&str; 2] = ["autorun/sessions", "autorun/shots"];
+
+fn excluded(rel: &str) -> bool {
+    EXCLUDED.iter().any(|x| rel == *x || rel.starts_with(&format!("{x}/")))
+}
+
 #[derive(serde::Serialize, serde::Deserialize, specta::Type, Clone, Debug)]
 pub struct BackupFile {
     /// Path relative to `app_data_dir`, forward slashes.
@@ -87,6 +96,13 @@ pub fn collect_files(data_dir: &Path) -> (Vec<(String, Vec<u8>)>, Vec<String>) {
 
 fn walk(base: &Path, p: &Path, kept: &mut Vec<(String, Vec<u8>)>, skipped: &mut Vec<String>) {
     let Ok(meta) = std::fs::metadata(p) else { return };
+    let rel = match p.strip_prefix(base) {
+        Ok(r) => r.to_string_lossy().replace('\\', "/"),
+        Err(_) => return,
+    };
+    if excluded(&rel) {
+        return;
+    }
     if meta.is_dir() {
         let Ok(entries) = std::fs::read_dir(p) else { return };
         for e in entries.flatten() {
@@ -94,10 +110,6 @@ fn walk(base: &Path, p: &Path, kept: &mut Vec<(String, Vec<u8>)>, skipped: &mut 
         }
         return;
     }
-    let rel = match p.strip_prefix(base) {
-        Ok(r) => r.to_string_lossy().replace('\\', "/"),
-        Err(_) => return,
-    };
     if meta.len() > MAX_FILE_BYTES {
         skipped.push(rel);
         return;
@@ -118,6 +130,9 @@ pub fn safe_relative_path(rel: &str) -> bool {
         .components()
         .all(|c| matches!(c, Component::Normal(_)))
     {
+        return false;
+    }
+    if excluded(rel) {
         return false;
     }
     ROOTS

@@ -147,6 +147,8 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             autorun::auto_run_list_runs,
             autorun::auto_run_new_id,
             autorun::auto_run_shot,
+            autorun::auto_run_list_accounts,
+            autorun::auto_run_save_accounts,
             queue::export_queue_html,
             discovery::list_project_tags,
             runs::result_screenshots,

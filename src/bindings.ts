@@ -278,6 +278,17 @@ export const commands = {
 	 *  read through here.
 	 */
 	autoRunShot: (name: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_shot", { name })),
+	/**
+	 *  The tester's accounts, passwords included: the Accounts dialog edits
+	 *  them in place. This is the one IPC call that carries a password, by the
+	 *  owner's decision (see `autorun::accounts`). It is never logged.
+	 */
+	autoRunListAccounts: () => typedError<Account[], string>(__TAURI_INVOKE("auto_run_list_accounts")),
+	/**
+	 *  Replace the accounts list. Returns the keys whose saved session was
+	 *  dropped, so the screen can say so.
+	 */
+	autoRunSaveAccounts: (accounts: Account[]) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -560,6 +571,15 @@ export const events = {
 };
 
 /* Types */
+export type Account = {
+	/**  What a script writes: `"account": "hr.supervisor"`. */
+	key: string,
+	/**  What a person reads in the app. */
+	label: string,
+	username: string,
+	password: string,
+};
+
 export type Action = Action_Serialize | Action_Deserialize;
 
 export type ActionOutcome = ActionOutcome_Serialize | ActionOutcome_Deserialize;

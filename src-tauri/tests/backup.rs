@@ -139,6 +139,32 @@ fn unsafe_paths_are_refused_on_import() {
     let _ = std::fs::remove_dir_all(dst);
 }
 
+/// Session files hold live cookies and the screenshots folder can hold
+/// hundreds of images. Neither belongs in an export, and neither may be
+/// written by an import.
+#[test]
+fn sessions_and_screenshots_stay_out_of_a_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let auto = dir.path().join("autorun");
+    std::fs::create_dir_all(auto.join("sessions")).unwrap();
+    std::fs::create_dir_all(auto.join("shots")).unwrap();
+    std::fs::create_dir_all(auto.join("scripts")).unwrap();
+    std::fs::write(auto.join("sessions/admin.json"), "{}").unwrap();
+    std::fs::write(auto.join("shots/shot-1-000001.jpg"), [0xFFu8, 0xD8]).unwrap();
+    std::fs::write(auto.join("scripts/case-1.json"), "{}").unwrap();
+    std::fs::write(auto.join("accounts.json"), "[]").unwrap();
+
+    let (kept, _) = v2_lib::backup::collect_files(dir.path());
+    let names: Vec<&str> = kept.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(names.contains(&"autorun/scripts/case-1.json"), "{names:?}");
+    assert!(names.contains(&"autorun/accounts.json"), "accounts travel with a backup: {names:?}");
+    assert!(!names.iter().any(|n| n.starts_with("autorun/sessions") || n.starts_with("autorun/shots")), "{names:?}");
+
+    assert!(v2_lib::backup::safe_relative_path("autorun/scripts/case-1.json"));
+    assert!(!v2_lib::backup::safe_relative_path("autorun/sessions/admin.json"));
+    assert!(!v2_lib::backup::safe_relative_path("autorun/shots/shot-1-000001.jpg"));
+}
+
 #[test]
 fn foreign_json_and_newer_formats_are_refused() {
     let d = tmpdir("foreign");

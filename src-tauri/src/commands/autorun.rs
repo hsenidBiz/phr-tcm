@@ -255,3 +255,27 @@ pub fn auto_run_list_runs(app: tauri::AppHandle) -> Vec<LocalRun> {
 pub fn auto_run_new_id() -> String {
     store::new_run_id()
 }
+
+/// The tester's accounts, passwords included: the Accounts dialog edits
+/// them in place. This is the one IPC call that carries a password, by the
+/// owner's decision (see `autorun::accounts`). It is never logged.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_list_accounts(
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::autorun::accounts::Account>, String> {
+    crate::autorun::accounts::load_accounts(&root(&app)?)
+}
+
+/// Replace the accounts list. Returns the keys whose saved session was
+/// dropped, so the screen can say so.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_save_accounts(
+    app: tauri::AppHandle,
+    accounts: Vec<crate::autorun::accounts::Account>,
+) -> Result<Vec<String>, String> {
+    let dropped = crate::autorun::accounts::save_accounts(&root(&app)?, &accounts)?;
+    crate::applog::info(format!("Auto-run accounts saved ({} account(s))", accounts.len()));
+    Ok(dropped)
+}
