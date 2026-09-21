@@ -26,6 +26,11 @@ pub const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// thousands, and only the recent ones can still matter.
 const MAX_BUFFERED_EVENTS: usize = 256;
 
+/// Dialogs remembered for the caller to read back. Bounded the same way:
+/// a page stuck in an alert loop during one long wait must not grow this
+/// forever, and only the most recent dialogs are worth reporting.
+const MAX_REMEMBERED_DIALOGS: usize = 20;
+
 /// One request on the wire.
 pub fn frame(id: u64, method: &str, params: serde_json::Value) -> String {
     serde_json::json!({ "id": id, "method": method, "params": params }).to_string()
@@ -233,6 +238,9 @@ impl<T: Transport> Cdp<T> {
         if ev.method == "Page.javascriptDialogOpening" {
             let kind = ev.params["type"].as_str().unwrap_or("dialog");
             let message = ev.params["message"].as_str().unwrap_or("");
+            if self.dialogs.len() >= MAX_REMEMBERED_DIALOGS {
+                self.dialogs.remove(0);
+            }
             self.dialogs.push(format!("{kind}: {message}"));
             // Sent without waiting: its reply carries an id nobody is
             // waiting on and falls through `read_reply` harmlessly.

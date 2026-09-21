@@ -181,6 +181,40 @@ async fn a_javascript_dialog_is_accepted_and_remembered() {
     assert!(cdp.take_dialogs().is_empty(), "taking the dialogs must empty the list");
 }
 
+/// A page stuck in an alert loop must not grow the dialog list forever:
+/// only the most recent dialogs are worth reporting, and every one of them
+/// is still accepted regardless of the cap.
+#[tokio::test]
+async fn the_dialog_list_is_capped_to_the_most_recent() {
+    let mut frames: Vec<String> = (0..25)
+        .map(|i| {
+            format!(
+                r#"{{"method":"Page.javascriptDialogOpening","params":{{"type":"alert","message":"m{i}"}}}}"#
+            )
+        })
+        .collect();
+    frames.push(r#"{"id":1,"result":{"done":true}}"#.to_string());
+    let refs: Vec<&str> = frames.iter().map(|s| s.as_str()).collect();
+    let t = FakeTransport::new(&refs);
+    let mut cdp = Cdp::over(t);
+    let got = cdp.call("Runtime.evaluate", serde_json::json!({})).await.unwrap();
+    assert_eq!(got["done"], true);
+
+    let sent: Vec<serde_json::Value> = cdp
+        .transport()
+        .sent
+        .iter()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    let handled_count = sent.iter().filter(|f| f["method"] == "Page.handleJavaScriptDialog").count();
+    assert_eq!(handled_count, 25, "every dialog must still be accepted, cap or no cap");
+
+    let dialogs = cdp.take_dialogs();
+    assert_eq!(dialogs.len(), 20);
+    assert_eq!(dialogs.first().unwrap(), "alert: m5");
+    assert_eq!(dialogs.last().unwrap(), "alert: m24");
+}
+
 #[tokio::test]
 async fn forgetting_events_drops_what_was_buffered() {
     let t = FakeTransport::new(&[
