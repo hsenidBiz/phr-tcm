@@ -115,6 +115,21 @@ fn origins_are_normalised_and_the_start_address_is_always_allowed() {
     );
 }
 
+#[test]
+fn an_allowed_origin_may_be_written_with_its_default_port() {
+    let mut v = sample();
+    v["allowed_origins"] = json!(["https://sso.example.internal:443", "http://intranet.example.internal:80"]);
+    let r = recipe(v);
+    r.validate().expect("a default port is the same origin");
+    let origins = r.origins();
+    assert!(origins.contains(&"https://sso.example.internal".to_string()), "{origins:?}");
+    assert!(origins.contains(&"http://intranet.example.internal".to_string()), "{origins:?}");
+    // A path is still refused.
+    let mut bad = sample();
+    bad["allowed_origins"] = json!(["https://sso.example.internal:443/login"]);
+    assert!(recipe(bad).validate().is_err());
+}
+
 /// A browser treats `\` as `/` in an http(s) authority, so the origin
 /// check has to end the authority there too, or an address like
 /// `https://evil.example\@hr.example.internal/` - which a browser sends

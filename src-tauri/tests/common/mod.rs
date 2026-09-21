@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use serde_json::{json, Value};
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -150,6 +151,17 @@ pub struct FakePage {
     /// Answers to "what does it say", in turn; the last repeats.
     pub texts: Vec<&'static str>,
     pub attribute: Option<&'static str>,
+    /// How many `Runtime.getProperties` / `PROBE_JS` / `READ_TEXT_JS` calls
+    /// `answer` has already replied to. `Cell`, not a plain field, so
+    /// `answer` can take `&self` - letting a test hold onto a `FakePage`
+    /// and feed it calls one at a time instead of only through `driver`,
+    /// which consumes it. `pub` like every other field here: a struct
+    /// update (`FakePage { found: 0, ..FakePage::default() }`) needs to
+    /// see every field it does not name, from every test file that uses
+    /// one.
+    pub looks: Cell<usize>,
+    pub probed: Cell<usize>,
+    pub read: Cell<usize>,
 }
 
 impl Default for FakePage {
@@ -167,59 +179,66 @@ impl Default for FakePage {
             navigate_reply: json!({ "frameId": "F", "loaderId": "L" }),
             texts: vec!["Saved"],
             attribute: None,
+            looks: Cell::new(0),
+            probed: Cell::new(0),
+            read: Cell::new(0),
         }
     }
 }
 
 impl FakePage {
-    pub fn driver(self) -> ScriptedDriver {
-        let page = self;
-        let mut looks = 0usize;
-        let mut probed = 0usize;
-        let mut read = 0usize;
-        ScriptedDriver::new(move |method, params| {
-            let f = params["functionDeclaration"].as_str().unwrap_or("");
-            Ok(match method {
-                "Runtime.evaluate" if params["expression"] == "document" => {
-                    json!({ "result": { "objectId": "doc" } })
-                }
-                "Runtime.evaluate" => json!({ "result": { "value": page.href } }),
-                "Runtime.callFunctionOn" if f == PROBE_JS => {
-                    let i = probed.min(page.probes.len() - 1);
-                    probed += 1;
-                    json!({ "result": { "value": page.probes[i] } })
-                }
-                "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": page.visible } }),
-                "Runtime.callFunctionOn" if f == HIGHLIGHT_JS => json!({ "result": { "value": true } }),
-                "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": page.fill_kind } }),
-                "Runtime.callFunctionOn" if f == HAS_FOCUS_JS => {
-                    json!({ "result": { "value": page.has_focus } })
-                }
-                "Runtime.callFunctionOn" if f == RESOLVE_URL_JS => {
-                    json!({ "result": { "value": page.resolved_url } })
-                }
-                "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
-                    json!({ "result": { "value": page.body_has_text } })
-                }
-                "Runtime.callFunctionOn" if f == READ_TEXT_JS => {
-                    let i = read.min(page.texts.len() - 1);
-                    read += 1;
-                    json!({ "result": { "value": page.texts[i] } })
-                }
-                "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": page.attribute } }),
-                // Any locator function: an array of elements.
-                "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
-                "Runtime.getProperties" => {
-                    looks += 1;
-                    let n = if looks >= page.appears_on_look { page.found } else { 0 };
-                    json!({ "result": (0..n)
-                        .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
-                        .collect::<Vec<_>>() })
-                }
-                "Page.navigate" => page.navigate_reply.clone(),
-                _ => json!({}),
-            })
+    /// One call, answered the way the page described by `self` would
+    /// answer it. `driver` is this, wrapped in a `ScriptedDriver` that owns
+    /// the page outright; a test that needs to mix real answers with a
+    /// scripted failure (a browser that goes silent partway through a
+    /// look, say) calls this directly instead, keeping its own `FakePage`
+    /// around to delegate to one call at a time.
+    pub fn answer(&self, method: &str, params: &Value) -> Result<Value, CdpError> {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Runtime.evaluate" if params["expression"] == "document" => {
+                json!({ "result": { "objectId": "doc" } })
+            }
+            "Runtime.evaluate" => json!({ "result": { "value": self.href } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => {
+                let i = self.probed.get().min(self.probes.len() - 1);
+                self.probed.set(self.probed.get() + 1);
+                json!({ "result": { "value": self.probes[i] } })
+            }
+            "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": self.visible } }),
+            "Runtime.callFunctionOn" if f == HIGHLIGHT_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": self.fill_kind } }),
+            "Runtime.callFunctionOn" if f == HAS_FOCUS_JS => {
+                json!({ "result": { "value": self.has_focus } })
+            }
+            "Runtime.callFunctionOn" if f == RESOLVE_URL_JS => {
+                json!({ "result": { "value": self.resolved_url } })
+            }
+            "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
+                json!({ "result": { "value": self.body_has_text } })
+            }
+            "Runtime.callFunctionOn" if f == READ_TEXT_JS => {
+                let i = self.read.get().min(self.texts.len() - 1);
+                self.read.set(self.read.get() + 1);
+                json!({ "result": { "value": self.texts[i] } })
+            }
+            "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": self.attribute } }),
+            // Any locator function: an array of elements.
+            "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
+            "Runtime.getProperties" => {
+                self.looks.set(self.looks.get() + 1);
+                let n = if self.looks.get() >= self.appears_on_look { self.found } else { 0 };
+                json!({ "result": (0..n)
+                    .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                    .collect::<Vec<_>>() })
+            }
+            "Page.navigate" => self.navigate_reply.clone(),
+            _ => json!({}),
         })
+    }
+
+    pub fn driver(self) -> ScriptedDriver {
+        ScriptedDriver::new(move |method, params| self.answer(method, params))
     }
 }
 

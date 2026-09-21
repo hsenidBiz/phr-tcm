@@ -207,7 +207,6 @@ pub fn read_doc(path: &Path) -> Result<BackupDoc, String> {
 pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, String> {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut restored = 0u32;
-    let mut wrote_accounts = false;
     for f in files {
         if !safe_relative_path(&f.path) {
             crate::applog::warn(format!("Backup import skipped an unsafe path: {}", f.path));
@@ -222,21 +221,22 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
         }
         std::fs::write(&target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
         restored += 1;
-        if f.path == "autorun/accounts.json" {
-            wrote_accounts = true;
+        if f.path.replace('\\', "/").eq_ignore_ascii_case("autorun/accounts.json") {
+            // `accounts::save_accounts` drops a saved session the moment the
+            // login behind it changes, so a saved session never outlives the
+            // login it was made with - through the app. A restore writes
+            // accounts.json straight to disk instead, bypassing that, so it
+            // has to make the same guarantee itself or the next run restores
+            // the OLD person's cookies under whatever account the backup's
+            // admin now is. Sessions are a cache: the cost of wiping all of
+            // them is one real sign-in, so this is best effort and its own
+            // failure is not the restore's failure. Done here, inside the
+            // loop, rather than once after it: a later entry can still fail
+            // the whole restore (the `?` above returns early), and
+            // yesterday's cookies must not survive under today's names even
+            // then.
+            let _ = std::fs::remove_dir_all(data_dir.join("autorun").join("sessions"));
         }
-    }
-    if wrote_accounts {
-        // `accounts::save_accounts` drops a saved session the moment the
-        // login behind it changes, so a saved session never outlives the
-        // login it was made with - through the app. A restore writes
-        // accounts.json straight to disk instead, bypassing that, so it
-        // has to make the same guarantee itself or the next run restores
-        // the OLD person's cookies under whatever account the backup's
-        // admin now is. Sessions are a cache: the cost of wiping all of
-        // them is one real sign-in, so this is best effort and its own
-        // failure is not the restore's failure.
-        let _ = std::fs::remove_dir_all(data_dir.join("autorun").join("sessions"));
     }
     Ok(restored)
 }

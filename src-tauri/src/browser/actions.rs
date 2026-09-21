@@ -5,7 +5,7 @@
 //! decides the verdict. An action that cannot tell what happened says so
 //! rather than guessing.
 
-use super::cdp::{CdpError, Driver};
+use super::cdp::{browser_silent, CdpError, Driver};
 use super::expect::{self, Check};
 use super::input::{self, Blocked};
 use super::locator::{resolve, Target};
@@ -94,6 +94,17 @@ impl ActionOutcome {
 /// the browser connection did.
 pub(crate) fn harness(e: CdpError) -> ActionOutcome {
     let mut out = ActionOutcome::failed(format!("the browser did not answer: {e}"));
+    out.harness = true;
+    out
+}
+
+/// A wait loop's deadline ran out and not one look ever completed. Shared
+/// by `expect`'s loop and `wait_for` below, so their wording can never
+/// drift apart; `wait_ready` (which returns a `Blocked`, not an
+/// `ActionOutcome`) builds the equivalent `Blocked::Harness` itself from
+/// the same `browser_silent` wording.
+pub(crate) fn harness_timeout(waited_ms: u64, target: &str) -> ActionOutcome {
+    let mut out = ActionOutcome::failed(browser_silent(waited_ms, target));
     out.harness = true;
     out
 }
@@ -364,21 +375,28 @@ async fn keep_waiting<D: Driver>(
     let gave_up = || {
         ActionOutcome::failed(format!("waited {timeout_ms}ms and never saw {}", target.describe()))
     };
+    // Whether any call has actually come back - a page that is merely slow
+    // to show the element is not the same failure as a browser that has
+    // stopped answering, and the two must not be reported the same way.
+    let mut looked = false;
     loop {
         page::release(d).await;
         match resolve(d, target).await {
             Ok(found) if !found.is_empty() => {
                 return ActionOutcome::passed(format!("found {}", target.describe()));
             }
-            Ok(_) => {}
-            Err(e) if e.is_transient() => {}
-            // The budget ran out inside a call rather than between two of
-            // them: this wait ending, not a browser that has died.
-            Err(CdpError::Timeout { .. }) if Instant::now() >= deadline => return gave_up(),
+            Ok(_) => looked = true,
+            // The page refusing mid-navigation is the page answering, just
+            // between two documents - it counts as a completed look.
+            Err(e) if e.is_transient() => looked = true,
+            // No new information about the page: the browser did not
+            // answer THIS call. Keep going; only the deadline decides
+            // whether that is the wait ending or the browser's silence.
+            Err(CdpError::Timeout { .. }) => {}
             Err(e) => return harness(e),
         }
         if Instant::now() >= deadline {
-            return gave_up();
+            return if looked { gave_up() } else { harness_timeout(u64::from(timeout_ms), &target.describe()) };
         }
         tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
     }

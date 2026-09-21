@@ -462,11 +462,13 @@ async fn a_wait_always_hands_its_deadline_back() {
     assert!(d.deadline_was_cleared(), "after a harness failure");
 }
 
-/// A call that times out BECAUSE the wait's own budget ran out is the
-/// wait ending, not a browser that has died. Reported as a harness
-/// failure it would both blame the wrong thing and lose the screenshot.
+/// A single call that eats the whole wait budget and then times out never
+/// let a single look complete either - the wait ending mid-call rather
+/// than between two of them does not change that. This used to be
+/// misreported with page wording ("waited 300ms: ..."); it is the
+/// browser's silence, not a slow page, and is now said that way.
 #[tokio::test]
-async fn a_timeout_once_the_budget_is_gone_is_the_wait_ending() {
+async fn a_call_that_burns_the_whole_budget_with_no_look_is_the_harness() {
     let mut d = ScriptedDriver::new(|method, _| match method {
         "Runtime.releaseObjectGroup" => Ok(json!({})),
         other => {
@@ -477,11 +479,11 @@ async fn a_timeout_once_the_budget_is_gone_is_the_wait_ending() {
         }
     });
     match wait_ready(&mut d, &css("#go"), false, &quick()).await {
-        Err(Blocked::Page(msg)) => {
-            assert!(msg.contains("waited 300ms"), "{msg}");
+        Err(Blocked::Harness(msg)) => {
+            assert!(msg.contains("browser did not answer"), "{msg}");
             assert!(msg.contains("#go"), "{msg}");
         }
-        other => panic!("expected a page failure, got {other:?}"),
+        other => panic!("expected a harness failure, got {other:?}"),
     }
     assert!(d.deadline_was_cleared());
 }
@@ -499,4 +501,58 @@ async fn a_timeout_while_the_budget_remains_is_still_the_harness() {
         other => panic!("expected a harness failure, got {other:?}"),
     }
     assert!(d.deadline_was_cleared());
+}
+
+fn timeout_of(method: &str) -> CdpError {
+    CdpError::Timeout { what: method.to_string(), ms: 50 }
+}
+
+/// Not one look completed before the deadline - every call timed out - so
+/// this is the browser's silence, not a missing element. Reporting it as
+/// "not found" would send someone looking for a selector bug that was
+/// never there.
+#[tokio::test]
+async fn a_browser_that_never_answers_is_not_reported_as_a_missing_element() {
+    let mut d = ScriptedDriver::new(|method, _| Err(timeout_of(method)));
+    match wait_ready(&mut d, &css("#save"), false, &quick()).await {
+        Err(Blocked::Harness(msg)) => {
+            assert!(msg.contains("browser did not answer"), "{msg}");
+            assert!(!msg.contains("not found"), "{msg}");
+        }
+        other => panic!("expected a harness failure, got {other:?}"),
+    }
+}
+
+/// Once one look has completed (the browser answered, even if the
+/// element was not yet ready), later silence still ends the wait with
+/// today's page wording, not a harness failure.
+#[tokio::test]
+async fn one_completed_look_keeps_the_page_wording() {
+    // Not visible, so the first look never reaches `Ready` - a completed
+    // look reporting "is not visible" - and every call after it (starting
+    // with the very next look's own first call) goes silent. A full look
+    // here is 5 calls: the loop's own `release`, then `resolve` (document,
+    // the css lookup, and getProperties), then the actionability probe.
+    let calls = AtomicUsize::new(0);
+    let mut d = ScriptedDriver::new(move |method, params| {
+        if calls.fetch_add(1, Ordering::SeqCst) >= 5 {
+            return Err(timeout_of(method));
+        }
+        match method {
+            "Runtime.releaseObjectGroup" => Ok(json!({})),
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if params["functionDeclaration"] == PROBE_JS => {
+                Ok(json!({ "result": { "value": probe(json!({ "visible": false })) } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => {
+                Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] }))
+            }
+            _ => Ok(json!({})),
+        }
+    });
+    match wait_ready(&mut d, &css("#go"), false, &quick()).await {
+        Err(Blocked::Page(msg)) => assert!(msg.starts_with("waited"), "{msg}"),
+        other => panic!("expected a page failure, got {other:?}"),
+    }
 }

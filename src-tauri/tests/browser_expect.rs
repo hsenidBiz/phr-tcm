@@ -5,11 +5,13 @@ mod common;
 
 use common::{FakePage, ScriptedDriver};
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use v2_lib::browser::actions::{execute_with, Action};
 use v2_lib::browser::cdp::CdpError;
+use v2_lib::browser::expect::{expect, Check};
+use v2_lib::browser::locator::Target;
 use v2_lib::browser::timing::Timing;
 
 fn quick() -> Timing {
@@ -18,6 +20,10 @@ fn quick() -> Timing {
 
 fn action(v: serde_json::Value) -> Action {
     serde_json::from_value(v).unwrap()
+}
+
+fn timeout_of(method: &str) -> CdpError {
+    CdpError::Timeout { what: method.to_string(), ms: 50 }
 }
 
 #[tokio::test]
@@ -206,11 +212,13 @@ async fn an_expectation_always_hands_its_deadline_back() {
     assert!(d.deadline_was_cleared(), "after a harness failure");
 }
 
-/// A call that times out because the expectation's own budget ran out is
-/// the wait ending, not a dead browser: a page failure that says what was
-/// last seen, and that still earns a screenshot.
+/// A single call that eats the whole budget and then times out never let
+/// a single look complete either - the wait ending mid-call rather than
+/// between two of them does not change that. This used to be misreported
+/// with page wording ("waited 250ms: ..."); it is the browser's silence,
+/// not a slow page, and is now said that way.
 #[tokio::test]
-async fn a_timeout_once_the_budget_is_gone_is_the_wait_ending() {
+async fn a_call_that_burns_the_whole_budget_with_no_look_is_the_harness() {
     let mut d = ScriptedDriver::new(|method, _| {
         std::thread::sleep(Duration::from_millis(350));
         Err(CdpError::Timeout { what: method.to_string(), ms: 350 })
@@ -222,9 +230,48 @@ async fn a_timeout_once_the_budget_is_gone_is_the_wait_ending() {
     )
     .await;
     assert!(!out.ok);
-    assert!(!out.harness, "the budget ran out; the browser is not to blame: {}", out.detail);
-    assert!(out.detail.contains("waited 250ms") && out.detail.contains("#toast"), "{}", out.detail);
+    assert!(out.harness, "no look ever completed: {}", out.detail);
+    assert!(out.detail.contains("browser did not answer"), "{}", out.detail);
     assert!(d.deadline_was_cleared());
+}
+
+/// Not one look completed before the deadline - every call timed out - so
+/// this is the browser's silence, not a missing element. Reporting it as
+/// "not found" would send someone looking for a selector bug that was
+/// never there.
+#[tokio::test]
+async fn a_browser_that_never_answers_is_not_reported_as_a_missing_element() {
+    let mut d = ScriptedDriver::new(|method, _| Err(timeout_of(method)));
+    let out = expect(&mut d, &Target::from("#save"), Check::Visible, 300, 50).await;
+    assert!(!out.ok);
+    assert!(out.harness, "no look completed, so this is the browser's failure");
+    assert!(out.detail.contains("browser did not answer"), "{}", out.detail);
+    assert!(!out.detail.contains("not found"), "{}", out.detail);
+}
+
+/// Once one look has completed (the browser answered, even if the
+/// element was not yet there), later silence still ends the wait with
+/// today's page wording, not a harness failure.
+#[tokio::test]
+async fn one_completed_look_keeps_the_page_wording() {
+    // Not visible, so the first look holds neither element nor visibility
+    // - a completed look reporting "is there but cannot be seen" - and
+    // every call after it (starting with the very next `look`'s own
+    // first call) goes silent. A full look here is 5 calls: the loop's
+    // own `release`, then `resolve` (document, the css lookup, and
+    // getProperties), then the visibility check.
+    let page = FakePage { visible: false, ..FakePage::default() };
+    let calls = AtomicUsize::new(0);
+    let mut d = ScriptedDriver::new(move |method, params| {
+        if calls.fetch_add(1, Ordering::SeqCst) < 5 {
+            page.answer(method, params)
+        } else {
+            Err(timeout_of(method))
+        }
+    });
+    let out = expect(&mut d, &Target::from("#never-there"), Check::Visible, 300, 50).await;
+    assert!(!out.ok && !out.harness, "{}", out.detail);
+    assert!(out.detail.starts_with("waited"), "{}", out.detail);
 }
 
 #[test]

@@ -100,6 +100,15 @@ impl CdpError {
     }
 }
 
+/// The wording every wait loop (`wait_ready`, `expect`, `wait_for`) uses
+/// when its deadline runs out and not one look ever completed - every
+/// protocol call it made either timed out or the transport itself failed.
+/// Kept here, alongside `CdpError` rather than inside any one loop, so the
+/// wording can never drift between them.
+pub(crate) fn browser_silent(waited_ms: u64, target: &str) -> String {
+    format!("the browser did not answer for {waited_ms}ms while waiting for {target}")
+}
+
 impl std::fmt::Display for CdpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

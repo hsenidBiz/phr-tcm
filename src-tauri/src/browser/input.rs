@@ -12,7 +12,7 @@
 //! Backspace, so a page that reacts to keydown (type-ahead search, some
 //! autocompletes) will not see keys.
 
-use super::cdp::{CdpError, Driver};
+use super::cdp::{browser_silent, CdpError, Driver};
 use super::locator::{resolve, Target};
 use super::page::{self, Handle};
 use super::timing::Timing;
@@ -243,34 +243,40 @@ async fn keep_looking<D: Driver>(
     timing: &Timing,
     deadline: Instant,
 ) -> Result<Ready, Blocked> {
-    let gave_up = |why: &str| {
-        Blocked::Page(format!("waited {}ms: {} {}", timing.action_ms, target.describe(), why))
-    };
+    // Whether any look has actually completed - a page that is merely slow
+    // to become usable is not the same failure as a browser that has
+    // stopped answering, and the two must not be reported the same way.
+    let mut looked = false;
     let mut prev_rect: Option<[f64; 4]> = None;
     let mut last = STILL_LOOKING.to_string();
     loop {
         page::release(d).await;
-        last = match look(d, target, need_editable, prev_rect).await {
+        match look(d, target, need_editable, prev_rect).await {
             Ok(Look::Ready(r)) => return Ok(r),
             Ok(Look::NotYet { why, rect }) => {
+                looked = true;
                 prev_rect = rect;
-                why
+                last = why;
             }
+            // The page refusing mid-navigation is the page answering, just
+            // between two documents - it counts as a completed look.
             Err(e) if e.is_transient() => {
+                looked = true;
                 prev_rect = None;
-                e.to_string()
+                last = e.to_string();
             }
-            // A call that ran out of time BECAUSE this wait's budget ran
-            // out is the wait ending, not a browser that has stopped
-            // answering: say what was last seen, and do not blame it on
-            // the harness (which would also suppress the screenshot).
-            Err(CdpError::Timeout { .. }) if Instant::now() >= deadline => {
-                return Err(gave_up(&last))
-            }
+            // No new information about the page: the browser did not
+            // answer THIS call. Keep going; only the deadline decides
+            // whether that is the wait ending or the browser's silence.
+            Err(CdpError::Timeout { .. }) => {}
             Err(e) => return Err(Blocked::Harness(e.to_string())),
-        };
+        }
         if Instant::now() >= deadline {
-            return Err(gave_up(&last));
+            return Err(if looked {
+                Blocked::Page(format!("waited {}ms: {} {}", timing.action_ms, target.describe(), last))
+            } else {
+                Blocked::Harness(browser_silent(timing.action_ms, &target.describe()))
+            });
         }
         tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
     }

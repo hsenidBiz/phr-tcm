@@ -214,6 +214,41 @@ fn a_restore_without_accounts_json_leaves_sessions_alone() {
     let _ = std::fs::remove_dir_all(&dst);
 }
 
+/// Windows reads "autorun/Accounts.json" as the same file, so the old
+/// sessions must go for that spelling too.
+#[test]
+fn accounts_json_in_any_letter_case_drops_the_old_sessions() {
+    let dst = tmpdir("restore-drops-sessions-anycase");
+    std::fs::create_dir_all(dst.join("autorun/sessions")).unwrap();
+    std::fs::write(dst.join("autorun/sessions/admin.json"), "{}").unwrap();
+
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files = vec![BackupFile { path: "autorun/Accounts.json".into(), b64: b64.encode(b"[]") }];
+    restore_files(&dst, &files).unwrap();
+
+    assert!(!dst.join("autorun/sessions").exists());
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// The logins were replaced the moment accounts.json was written. A later
+/// entry failing must not leave yesterday's cookies under today's names.
+#[test]
+fn a_restore_that_fails_after_accounts_json_has_still_dropped_the_sessions() {
+    let dst = tmpdir("restore-fails-late");
+    std::fs::create_dir_all(dst.join("autorun/sessions")).unwrap();
+    std::fs::write(dst.join("autorun/sessions/admin.json"), "{}").unwrap();
+
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files = vec![
+        BackupFile { path: "autorun/accounts.json".into(), b64: b64.encode(b"[]") },
+        BackupFile { path: "autorun/scripts/case-1.json".into(), b64: "this is not base64 !!".into() },
+    ];
+    assert!(restore_files(&dst, &files).is_err());
+
+    assert!(!dst.join("autorun/sessions").exists());
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
 #[test]
 fn foreign_json_and_newer_formats_are_refused() {
     let d = tmpdir("foreign");

@@ -158,8 +158,26 @@ pub fn origin_of(url: &str) -> Option<String> {
     Some(format!("{scheme}://{host}"))
 }
 
+/// `origin_of` alone cannot refuse a path: it stops parsing at the
+/// authority either way, so `origin_of("https://x/a")` and
+/// `origin_of("https://x")` are the same value. An origin written with its
+/// scheme's own default port (`https://x:443`) must still be accepted -
+/// `origin_of` strips that port, so the raw text is compared against the
+/// canonical origin WITH that port added back, as well as without it - and
+/// nothing may follow the authority but one optional trailing slash.
 fn is_bare_origin(s: &str) -> bool {
-    origin_of(s).is_some_and(|o| o == s.trim().trim_end_matches('/').to_ascii_lowercase())
+    let Some(canonical) = origin_of(s) else { return false };
+    let default_port = if canonical.starts_with("https://") {
+        ":443"
+    } else if canonical.starts_with("http://") {
+        ":80"
+    } else {
+        ""
+    };
+    let t = s.trim().to_ascii_lowercase();
+    [canonical.clone(), format!("{canonical}{default_port}")]
+        .iter()
+        .any(|c| t == *c || t == format!("{c}/"))
 }
 
 /// Does any string anywhere in this JSON value hold a placeholder? Used to

@@ -6,7 +6,7 @@
 //! When time runs out, the detail says what was last seen. "Expected X" is
 //! not evidence; "expected X but saw Y" is.
 
-use super::actions::{harness, ActionOutcome};
+use super::actions::{harness, harness_timeout, ActionOutcome};
 use super::cdp::{CdpError, Driver};
 use super::input::STILL_LOOKING;
 use super::locator::{resolve, Target, VISIBLE_JS};
@@ -170,23 +170,37 @@ async fn keep_looking<D: Driver>(
     poll_ms: u64,
     deadline: Instant,
 ) -> ActionOutcome {
-    let gave_up =
-        |why: &str| ActionOutcome::failed(format!("waited {timeout_ms}ms: {} {why}", target.describe()));
+    // Whether any look has actually completed - a page that is merely slow
+    // to satisfy the check is not the same failure as a browser that has
+    // stopped answering, and the two must not be reported the same way.
+    let mut looked = false;
     let mut last = STILL_LOOKING.to_string();
     loop {
         page::release(d).await;
-        last = match look(d, target, &check).await {
+        match look(d, target, &check).await {
             Ok(Ok(detail)) => return ActionOutcome::passed(detail),
-            Ok(Err(why)) => why,
-            Err(e) if e.is_transient() => e.to_string(),
-            // The budget ran out inside a call rather than between two of
-            // them. That is this wait ending, not a dead browser: report
-            // what was last seen, as a page failure.
-            Err(CdpError::Timeout { .. }) if Instant::now() >= deadline => return gave_up(&last),
+            Ok(Err(why)) => {
+                looked = true;
+                last = why;
+            }
+            // The page refusing mid-navigation is the page answering, just
+            // between two documents - it counts as a completed look.
+            Err(e) if e.is_transient() => {
+                looked = true;
+                last = e.to_string();
+            }
+            // No new information about the page: the browser did not
+            // answer THIS call. Keep going; only the deadline decides
+            // whether that is the wait ending or the browser's silence.
+            Err(CdpError::Timeout { .. }) => {}
             Err(e) => return harness(e),
-        };
+        }
         if Instant::now() >= deadline {
-            return gave_up(&last);
+            return if looked {
+                ActionOutcome::failed(format!("waited {timeout_ms}ms: {} {last}", target.describe()))
+            } else {
+                harness_timeout(timeout_ms, &target.describe())
+            };
         }
         tokio::time::sleep(Duration::from_millis(poll_ms)).await;
     }
