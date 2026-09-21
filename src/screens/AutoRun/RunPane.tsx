@@ -206,7 +206,11 @@ export default function RunPane({
         setSignIn({ state: "done", account, out: { ok: false, detail, used_saved_session: false, steps: [] } });
       }
     } finally {
-      setBusy(false);
+      // A result for a launch the pane has already moved past must not
+      // clear busy: a newer launch's own sign-in (or step) may genuinely
+      // be running right now, and this stale call finishing must not
+      // re-enable its buttons out from under it.
+      if (launchRef.current === forLaunch) setBusy(false);
     }
   };
 
