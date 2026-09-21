@@ -38,6 +38,16 @@ async fn visible_fails_with_what_it_saw() {
     assert!(!out.ok && out.detail.contains("is there but cannot be seen"), "{}", out.detail);
 }
 
+/// `expect_visible` on a locator that matches several elements must not
+/// silently pick the first one - it has to say the match is ambiguous,
+/// the same way the text and attribute checks already do.
+#[tokio::test]
+async fn visible_rejects_an_ambiguous_match() {
+    let mut d = FakePage { found: 3, ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &action(json!({ "kind": "expect_visible", "selector": { "css": "button" } })), &quick()).await;
+    assert!(!out.ok && out.detail.contains("matched 3 elements"), "{}", out.detail);
+}
+
 #[tokio::test]
 async fn hidden_holds_when_nothing_can_be_seen() {
     let mut d = FakePage { found: 0, ..FakePage::default() }.driver();

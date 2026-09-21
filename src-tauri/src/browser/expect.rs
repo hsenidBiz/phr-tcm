@@ -59,9 +59,9 @@ async fn look<D: Driver>(
     let what = target.describe();
     let handles = resolve(d, target).await?;
     Ok(match check {
-        Check::Visible => match handles.first() {
-            None => Err("is not on the page".to_string()),
-            Some(h) => {
+        Check::Visible => match only(&handles) {
+            Err(why) => Err(why),
+            Ok(h) => {
                 if visible(d, h).await? {
                     Ok(format!("{what} is visible"))
                 } else {
