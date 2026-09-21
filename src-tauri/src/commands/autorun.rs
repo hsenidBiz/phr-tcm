@@ -52,20 +52,12 @@ pub fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .join("autorun"))
 }
 
-/// Guards `store::save_run` from a run id that could escape the runs
-/// directory. `store::save_run` writes `run.id` straight into a filename
-/// with no sanitisation of its own - harmless while `store::new_run_id()`
-/// (an epoch-millis string) was the only producer, but this command is
-/// the id's first IPC-facing entry point, so a frontend value like
-/// `"../../evil"` or one containing a path separator must be rejected
-/// here rather than trusted through to a filesystem write.
-pub fn safe_run_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 200
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
+/// Guards a run id from escaping the runs directory. The rule itself lives
+/// in `store::safe_run_id` - `load_run` needs it too, and there is exactly
+/// one copy - re-exported here because this command module is the id's
+/// first IPC-facing entry point, and existing callers still import it from
+/// here.
+pub use store::safe_run_id;
 
 #[tauri::command]
 #[specta::specta]
@@ -228,7 +220,7 @@ pub fn auto_run_save_run(app: tauri::AppHandle, run: LocalRun) -> Result<(), Str
     if !safe_run_id(&run.id) {
         return Err(format!("run id {:?} is not a safe filename", run.id));
     }
-    store::save_run(&root(&app)?, &run)
+    store::save_run_guarded(&root(&app)?, &run)
 }
 
 #[tauri::command]
@@ -238,6 +230,15 @@ pub fn auto_run_list_runs(app: tauri::AppHandle) -> Vec<LocalRun> {
         Ok(r) => store::list_runs(&r),
         Err(_) => vec![],
     }
+}
+
+/// `Ok(None)` for a run id nobody has saved - the review screen uses this
+/// to load a run for the Send-to-Azure-DevOps screen without pulling every
+/// run in the list.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_run(app: tauri::AppHandle, run_id: String) -> Result<Option<LocalRun>, String> {
+    store::load_run(&root(&app)?, &run_id)
 }
 
 /// A run id the frontend can stamp on a new session.

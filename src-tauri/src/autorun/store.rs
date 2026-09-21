@@ -4,6 +4,19 @@ use super::{CaseScript, LocalRun};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// A run id is a filename component, never a path: no separators, no
+/// traversal, and short enough to be a sane file on any filesystem.
+/// `store::new_run_id()` is the only producer today, but this is the rule
+/// every id must satisfy before it reaches the filesystem, wherever it
+/// came from - an IPC command's argument, or a caller of `load_run`.
+pub fn safe_run_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 200
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// Where scripts and runs live, remembered process-wide.
 ///
 /// Commands get the path from their `AppHandle`, but the AI bridge has no
@@ -194,6 +207,45 @@ pub fn save_run(root: &Path, run: &LocalRun) -> Result<(), String> {
     std::fs::write(dir.join(format!("{}.json", run.id)), json).map_err(|e| e.to_string())
 }
 
+/// `save_run`, but refuses to overwrite a run that has already been sent
+/// to Azure DevOps (`published` set on disk) with a copy that has lost
+/// that fact (`published` unset). A stale review screen - one opened
+/// before a send and saved after - must never erase the record that the
+/// send happened. Saving the run back WITH its `published` block intact
+/// (a note edited after sending) is still allowed, and so is a run that
+/// was never published in the first place.
+pub fn save_run_guarded(root: &Path, run: &LocalRun) -> Result<(), String> {
+    if run.published.is_none() {
+        if let Ok(Some(existing)) = load_run(root, &run.id) {
+            if existing.published.is_some() {
+                return Err(
+                    "this run has already been sent to Azure DevOps and can no longer be changed"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    save_run(root, run)
+}
+
+/// `Ok(None)` for a run id nobody has saved yet. The id is checked with
+/// the same rule as a save - this is the id's read-side entry point, and
+/// a hostile or buggy value must be rejected before it ever reaches the
+/// filesystem, not just when writing.
+pub fn load_run(root: &Path, id: &str) -> Result<Option<LocalRun>, String> {
+    if !safe_run_id(id) {
+        return Err(format!("run id {id:?} is not a safe filename"));
+    }
+    let path = runs_dir(root).join(format!("{id}.json"));
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s)
+            .map(Some)
+            .map_err(|e| format!("{} is not a readable run: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Newest first. An unreadable file is skipped: one corrupt run must
 /// never hide every other run from the results view.
 pub fn list_runs(root: &Path) -> Vec<LocalRun> {
@@ -211,8 +263,10 @@ pub fn list_runs(root: &Path) -> Vec<LocalRun> {
 }
 
 /// How many failure screenshots are kept. They are evidence for the run in
-/// front of the person, not an archive.
-const MAX_SHOTS: usize = 200;
+/// front of the person, not an archive - but an unattended run of thirty
+/// cases with a picture per step passes 200 on its own, and at JPEG
+/// quality 60 a thousand pictures is on the order of 100 MB.
+const MAX_SHOTS: usize = 1000;
 
 static SHOT_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 

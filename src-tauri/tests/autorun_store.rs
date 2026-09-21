@@ -4,8 +4,8 @@
 //! and nothing here has an Azure DevOps shape.
 
 use v2_lib::autorun::store::{
-    list_runs, load_script, load_shot, new_run_id, safe_shot_name, save_run, save_script,
-    save_scripts_atomically, save_shot, save_shot_keeping, SaveScriptsError,
+    list_runs, load_run, load_script, load_shot, new_run_id, safe_shot_name, save_run,
+    save_script, save_scripts_atomically, save_shot, save_shot_keeping, SaveScriptsError,
 };
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
@@ -99,8 +99,15 @@ fn a_run_round_trips_with_the_humans_verdict() {
                     screenshot: None,
                     harness: false,
                 }],
+                screenshot: None,
             }],
+            proposed: String::new(),
+            reason: String::new(),
+            duration_ms: None,
+            account: None,
         }],
+        mode: String::new(),
+        published: None,
     };
     save_run(dir.path(), &run).unwrap();
 
@@ -121,6 +128,8 @@ fn runs_come_back_newest_first() {
                 pbi_id: 42,
                 started_at: at.to_string(),
                 cases: vec![],
+                mode: String::new(),
+                published: None,
             },
         )
         .unwrap();
@@ -141,6 +150,8 @@ fn a_corrupt_run_file_is_skipped_rather_than_fatal() {
             pbi_id: 1,
             started_at: "1".to_string(),
             cases: vec![],
+            mode: String::new(),
+            published: None,
         },
     )
     .unwrap();
@@ -369,4 +380,42 @@ fn a_bad_account_key_or_a_login_placeholder_in_a_script_is_refused() {
     assert!(placeholder.contains("sign-in recipe"), "{placeholder}");
     // An account that does not exist on THIS machine is fine to save.
     assert!(save(serde_json::json!({ "case_id": 1, "title": "t", "account": "someone.elses", "steps": step })).is_ok());
+}
+
+/// A run file saved before unattended runs existed has none of the new
+/// fields. It must still load, and a supervised run must still be written
+/// with exactly the shape it always had - no new keys appear just because
+/// the type now knows how to carry them.
+#[test]
+fn a_run_file_written_before_unattended_runs_still_loads_and_is_rewritten_unchanged() {
+    let old = serde_json::json!({
+        "id": "run-1", "pbi_id": 42, "started_at": "1700000000000",
+        "cases": [{ "case_id": 7, "title": "t", "verdict": "Passed", "note": "",
+                    "steps": [{ "step_number": 1, "outcomes": [{ "ok": true, "detail": "ok" }] }] }]
+    });
+    let run: v2_lib::autorun::LocalRun = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(run.mode, "");
+    assert!(run.published.is_none());
+    assert_eq!(run.cases[0].proposed, "");
+    assert_eq!(serde_json::to_value(&run).unwrap(), old, "a supervised run must be written exactly as before");
+}
+
+/// An unattended run's proposal travels apart from `verdict`, which stays
+/// the human's word alone - the machine never fills it in, even in a
+/// replay.
+#[test]
+fn an_unattended_run_keeps_the_proposal_apart_from_the_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    let run: v2_lib::autorun::LocalRun = serde_json::from_value(serde_json::json!({
+        "id": "run-2", "pbi_id": 42, "started_at": "1700000000000", "mode": "unattended",
+        "cases": [{ "case_id": 7, "title": "t", "verdict": "", "note": "", "proposed": "Failed",
+                    "reason": "step 2: button \"Save\" not found", "duration_ms": 8123, "account": "hr.admin",
+                    "steps": [{ "step_number": 1, "outcomes": [], "screenshot": "shot-1-000001.jpg" }] }]
+    })).unwrap();
+    save_run(dir.path(), &run).unwrap();
+    let back = load_run(dir.path(), "run-2").unwrap().unwrap();
+    assert_eq!(back, run);
+    assert_eq!(back.cases[0].verdict, "", "the machine never fills in the verdict");
+    assert!(load_run(dir.path(), "run-nope").unwrap().is_none());
+    assert!(load_run(dir.path(), "../escape").is_err());
 }

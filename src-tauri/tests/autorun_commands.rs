@@ -2,7 +2,8 @@
 //! and the failure says how to fix it rather than panicking on an
 //! absent session.
 
-use v2_lib::autorun::store::load_script;
+use v2_lib::autorun::store::{load_script, save_run, save_run_guarded};
+use v2_lib::autorun::{LocalRun, PublishedRun};
 use v2_lib::commands::autorun::{describe_session_error, import_scripts_from_path, safe_run_id};
 
 struct TempDir(std::path::PathBuf);
@@ -51,6 +52,37 @@ fn run_ids_that_could_escape_the_runs_directory_are_rejected() {
     assert!(!safe_run_id("back\\slash"));
     assert!(!safe_run_id("."));
     assert!(!safe_run_id(".."));
+}
+
+/// Once a run has been sent to Azure DevOps, a stale review screen saving
+/// an older copy of it - one that never saw the send - must never erase
+/// the record that it happened. Saving the SAME run back, `published`
+/// block and all (a note edited after sending), is still allowed.
+#[test]
+fn saving_over_a_published_run_with_an_unpublished_copy_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let published = LocalRun {
+        id: "run-3".to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![],
+        mode: String::new(),
+        published: Some(PublishedRun {
+            run_id: 555,
+            web_url: "https://dev.azure.com/org/proj/_workitems/edit/555".to_string(),
+            at: "1700000000000".to_string(),
+        }),
+    };
+    save_run(dir.path(), &published).unwrap();
+
+    let stale = LocalRun { published: None, ..published.clone() };
+    let err = save_run_guarded(dir.path(), &stale).expect_err("a stale unpublished copy was accepted");
+    assert!(err.contains("already been sent"), "{err}");
+    let reloaded = v2_lib::autorun::store::load_run(dir.path(), "run-3").unwrap().unwrap();
+    assert!(reloaded.published.is_some(), "the guard let the published record be erased");
+
+    let edited_note = LocalRun { cases: vec![], ..published.clone() };
+    assert!(save_run_guarded(dir.path(), &edited_note).is_ok());
 }
 
 /// The frontend used to read the picked file itself and hand Rust base64

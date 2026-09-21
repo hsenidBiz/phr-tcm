@@ -277,6 +277,25 @@ export const commands = {
 	autoRunImportScripts: (path: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { path })),
 	autoRunSaveRun: (run: LocalRun_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
 	autoRunListRuns: () => __TAURI_INVOKE<LocalRun_Serialize[]>("auto_run_list_runs"),
+	/**
+	 *  `Ok(None)` for a run id nobody has saved - the review screen uses this
+	 *  to load a run for the Send-to-Azure-DevOps screen without pulling every
+	 *  run in the list.
+	 */
+	autoRunLoadRun: (runId: string) => typedError<{
+	id: string,
+	pbi_id: number,
+	/**
+	 *  Epoch milliseconds as a string - specta forbids u64 across IPC,
+	 *  and the frontend formats it anyway.
+	 */
+	started_at: string,
+	cases: CaseRecord_Serialize[],
+	/**  "" for a supervised run (as always), "unattended" for a replay. */
+	mode?: string,
+	/**  Set once the run has been sent to Azure DevOps. */
+	published?: PublishedRun | null,
+} | null, string>(__TAURI_INVOKE("auto_run_load_run", { runId })),
 	/**  A run id the frontend can stamp on a new session. */
 	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
 	/**
@@ -794,14 +813,18 @@ export type CaseNoteSaved = {
 /**
  *  One case in a run. `verdict` is the HUMAN's word - "", "Passed",
  *  "Failed", "Blocked". The machine never fills it in: the action
- *  outcomes are evidence shown to the person, not a vote.
+ *  outcomes are evidence shown to the person, not a vote. `proposed` is
+ *  what the machine WOULD say, for an unattended run - a suggestion the
+ *  review screen shows, never a substitute for `verdict`.
  */
 export type CaseRecord = CaseRecord_Serialize | CaseRecord_Deserialize;
 
 /**
  *  One case in a run. `verdict` is the HUMAN's word - "", "Passed",
  *  "Failed", "Blocked". The machine never fills it in: the action
- *  outcomes are evidence shown to the person, not a vote.
+ *  outcomes are evidence shown to the person, not a vote. `proposed` is
+ *  what the machine WOULD say, for an unattended run - a suggestion the
+ *  review screen shows, never a substitute for `verdict`.
  */
 export type CaseRecord_Deserialize = {
 	case_id: number,
@@ -809,12 +832,24 @@ export type CaseRecord_Deserialize = {
 	verdict: string,
 	note: string,
 	steps: StepRecord_Deserialize[],
+	/**
+	 *  What the machine would say: "", "Passed", "Failed" or "Blocked".
+	 *  A proposal, never a verdict.
+	 */
+	proposed?: string,
+	/**  One sentence on why it proposes that. */
+	reason?: string,
+	duration_ms?: number | null,
+	/**  The account the case ran as (a key, never a login). */
+	account?: string | null,
 };
 
 /**
  *  One case in a run. `verdict` is the HUMAN's word - "", "Passed",
  *  "Failed", "Blocked". The machine never fills it in: the action
- *  outcomes are evidence shown to the person, not a vote.
+ *  outcomes are evidence shown to the person, not a vote. `proposed` is
+ *  what the machine WOULD say, for an unattended run - a suggestion the
+ *  review screen shows, never a substitute for `verdict`.
  */
 export type CaseRecord_Serialize = {
 	case_id: number,
@@ -822,6 +857,16 @@ export type CaseRecord_Serialize = {
 	verdict: string,
 	note: string,
 	steps: StepRecord_Serialize[],
+	/**
+	 *  What the machine would say: "", "Passed", "Failed" or "Blocked".
+	 *  A proposal, never a verdict.
+	 */
+	proposed?: string,
+	/**  One sentence on why it proposes that. */
+	reason?: string,
+	duration_ms?: number | null,
+	/**  The account the case ran as (a key, never a login). */
+	account?: string | null,
 };
 
 /**
@@ -1125,6 +1170,10 @@ export type LocalRun_Deserialize = {
 	 */
 	started_at: string,
 	cases: CaseRecord_Deserialize[],
+	/**  "" for a supervised run (as always), "unattended" for a replay. */
+	mode?: string,
+	/**  Set once the run has been sent to Azure DevOps. */
+	published?: PublishedRun | null,
 };
 
 export type LocalRun_Serialize = {
@@ -1136,6 +1185,10 @@ export type LocalRun_Serialize = {
 	 */
 	started_at: string,
 	cases: CaseRecord_Serialize[],
+	/**  "" for a supervised run (as always), "unattended" for a replay. */
+	mode?: string,
+	/**  Set once the run has been sent to Azure DevOps. */
+	published?: PublishedRun | null,
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -1396,6 +1449,17 @@ export type PrWorkItem = {
 export type Project = {
 	id: string,
 	name: string,
+};
+
+/**
+ *  Recorded once a run has been sent to Azure DevOps, so a stale review
+ *  screen can never erase the fact that it happened.
+ */
+export type PublishedRun = {
+	run_id: number,
+	web_url: string,
+	/**  Epoch milliseconds as a string, like `started_at`. */
+	at: string,
 };
 
 export type PullRequest = {
@@ -1660,11 +1724,15 @@ export type StepRecord = StepRecord_Serialize | StepRecord_Deserialize;
 export type StepRecord_Deserialize = {
 	step_number: number,
 	outcomes: ActionOutcome_Deserialize[],
+	/**  A picture of the page when the step ended (unattended runs only). */
+	screenshot?: string | null,
 };
 
 export type StepRecord_Serialize = {
 	step_number: number,
 	outcomes: ActionOutcome_Serialize[],
+	/**  A picture of the page when the step ended (unattended runs only). */
+	screenshot?: string | null,
 };
 
 /**  The actions that carry out one numbered step of a test case. */
