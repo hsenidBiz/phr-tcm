@@ -240,7 +240,7 @@ export const commands = {
 	 *  worked, the check did not" than from a run that stops at the first
 	 *  red.
 	 */
-	autoRunStep: (step: StepScript_Deserialize) => typedError<ActionOutcome[], string>(__TAURI_INVOKE("auto_run_step", { step })),
+	autoRunStep: (step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { step })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
@@ -268,10 +268,16 @@ export const commands = {
 	 *  just "done".
 	 */
 	autoRunImportScripts: (path: string) => typedError<number[], string>(__TAURI_INVOKE("auto_run_import_scripts", { path })),
-	autoRunSaveRun: (run: LocalRun) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
-	autoRunListRuns: () => __TAURI_INVOKE<LocalRun[]>("auto_run_list_runs"),
+	autoRunSaveRun: (run: LocalRun_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_run", { run })),
+	autoRunListRuns: () => __TAURI_INVOKE<LocalRun_Serialize[]>("auto_run_list_runs"),
 	/**  A run id the frontend can stamp on a new session. */
 	autoRunNewId: () => __TAURI_INVOKE<string>("auto_run_new_id"),
+	/**
+	 *  One failure screenshot as a data URL the webview can show. The name is
+	 *  checked in `store::load_shot`; nothing outside the shots folder can be
+	 *  read through here.
+	 */
+	autoRunShot: (name: string) => typedError<string, string>(__TAURI_INVOKE("auto_run_shot", { name })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -556,9 +562,28 @@ export const events = {
 /* Types */
 export type Action = Action_Serialize | Action_Deserialize;
 
-export type ActionOutcome = {
+export type ActionOutcome = ActionOutcome_Serialize | ActionOutcome_Deserialize;
+
+export type ActionOutcome_Deserialize = {
 	ok: boolean,
 	detail: string,
+	/**
+	 *  A file in the autorun `shots` folder, taken when the action failed.
+	 *  A name, never a path and never the image: run files stay small, and
+	 *  the webview cannot ask for anything outside that folder.
+	 */
+	screenshot?: string | null,
+};
+
+export type ActionOutcome_Serialize = {
+	ok: boolean,
+	detail: string,
+	/**
+	 *  A file in the autorun `shots` folder, taken when the action failed.
+	 *  A name, never a path and never the image: run files stay small, and
+	 *  the webview cannot ask for anything outside that folder.
+	 */
+	screenshot?: string | null,
 };
 
 export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { contains?: never; url?: never; value?: never };
@@ -712,12 +737,32 @@ export type CaseNoteSaved = {
  *  "Failed", "Blocked". The machine never fills it in: the action
  *  outcomes are evidence shown to the person, not a vote.
  */
-export type CaseRecord = {
+export type CaseRecord = CaseRecord_Serialize | CaseRecord_Deserialize;
+
+/**
+ *  One case in a run. `verdict` is the HUMAN's word - "", "Passed",
+ *  "Failed", "Blocked". The machine never fills it in: the action
+ *  outcomes are evidence shown to the person, not a vote.
+ */
+export type CaseRecord_Deserialize = {
 	case_id: number,
 	title: string,
 	verdict: string,
 	note: string,
-	steps: StepRecord[],
+	steps: StepRecord_Deserialize[],
+};
+
+/**
+ *  One case in a run. `verdict` is the HUMAN's word - "", "Passed",
+ *  "Failed", "Blocked". The machine never fills it in: the action
+ *  outcomes are evidence shown to the person, not a vote.
+ */
+export type CaseRecord_Serialize = {
+	case_id: number,
+	title: string,
+	verdict: string,
+	note: string,
+	steps: StepRecord_Serialize[],
 };
 
 /**
@@ -1000,7 +1045,9 @@ export type IterationRef = {
 	finish_date: string | null,
 };
 
-export type LocalRun = {
+export type LocalRun = LocalRun_Serialize | LocalRun_Deserialize;
+
+export type LocalRun_Deserialize = {
 	id: string,
 	pbi_id: number,
 	/**
@@ -1008,7 +1055,18 @@ export type LocalRun = {
 	 *  and the frontend formats it anyway.
 	 */
 	started_at: string,
-	cases: CaseRecord[],
+	cases: CaseRecord_Deserialize[],
+};
+
+export type LocalRun_Serialize = {
+	id: string,
+	pbi_id: number,
+	/**
+	 *  Epoch milliseconds as a string - specta forbids u64 across IPC,
+	 *  and the frontend formats it anyway.
+	 */
+	started_at: string,
+	cases: CaseRecord_Serialize[],
 };
 
 export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
@@ -1472,9 +1530,16 @@ export type Step = {
 	expected: string,
 };
 
-export type StepRecord = {
+export type StepRecord = StepRecord_Serialize | StepRecord_Deserialize;
+
+export type StepRecord_Deserialize = {
 	step_number: number,
-	outcomes: ActionOutcome[],
+	outcomes: ActionOutcome_Deserialize[],
+};
+
+export type StepRecord_Serialize = {
+	step_number: number,
+	outcomes: ActionOutcome_Serialize[],
 };
 
 /**  The actions that carry out one numbered step of a test case. */

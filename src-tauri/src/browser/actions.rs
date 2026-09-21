@@ -64,14 +64,19 @@ pub enum Action {
 pub struct ActionOutcome {
     pub ok: bool,
     pub detail: String,
+    /// A file in the autorun `shots` folder, taken when the action failed.
+    /// A name, never a path and never the image: run files stay small, and
+    /// the webview cannot ask for anything outside that folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot: Option<String>,
 }
 
 impl ActionOutcome {
     pub fn passed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: true, detail: detail.into() }
+        ActionOutcome { ok: true, detail: detail.into(), screenshot: None }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: false, detail: detail.into() }
+        ActionOutcome { ok: false, detail: detail.into(), screenshot: None }
     }
 }
 
@@ -274,7 +279,12 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOu
         Action::CheckUrl { contains } => match page::eval_value(d, "location.href").await {
             Ok(v) => {
                 let href = v.as_str().unwrap_or("");
-                ActionOutcome { ok: href.contains(contains.as_str()), detail: format!("url is {href}") }
+                let detail = format!("url is {href}");
+                if href.contains(contains.as_str()) {
+                    ActionOutcome::passed(detail)
+                } else {
+                    ActionOutcome::failed(detail)
+                }
             }
             Err(e) => harness(e),
         },

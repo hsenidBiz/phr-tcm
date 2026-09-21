@@ -222,6 +222,36 @@ test("a stored browser the picker cannot show falls back to Edge on screen and i
   await waitFor(() => expect(s.launched).toEqual(["edge"]));
 });
 
+test("a failed action offers the screenshot taken when it failed", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS };
+    if (cmd === "auto_run_new_id") return "run-1";
+    if (cmd === "auto_run_step")
+      return [
+        { ok: true, detail: "loaded https://app.example/" },
+        { ok: false, detail: 'waited 15000ms: button "Save" not found', screenshot: "shot-1-000001.jpg" },
+      ];
+    if (cmd === "auto_run_shot") {
+      expect((args as { name: string }).name).toBe("shot-1-000001.jpg");
+      return "data:image/jpeg;base64,AAAA";
+    }
+    return null;
+  });
+  renderPane([{ id: 1, title: "Valid login" }]);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  const run = await screen.findByRole("button", { name: "Run step 1" });
+  await waitFor(() => expect(run).toBeEnabled());
+  fireEvent.click(run);
+
+  expect(await screen.findByText(/button "Save" not found/)).toBeInTheDocument();
+  // Only the failed action has one.
+  expect(screen.getAllByRole("button", { name: "View screenshot" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "View screenshot" }));
+  const img = await screen.findByRole("img", { name: "Screenshot of the failed action" });
+  expect(img).toHaveAttribute("src", "data:image/jpeg;base64,AAAA");
+});
+
 test("a second Save while the first is still writing does not write twice", async () => {
   const s = mockSession();
   renderPane([{ id: 1, title: "Valid login" }]);

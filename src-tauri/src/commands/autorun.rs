@@ -9,6 +9,8 @@ use crate::autorun::{CaseScript, LocalRun, StepScript};
 use crate::browser::actions::{execute, ActionOutcome};
 use crate::browser::cdp::Cdp;
 use crate::browser::launch::{launch_in, Browser, LaunchedBrowser};
+use crate::browser::page;
+use base64::Engine;
 use std::path::PathBuf;
 use tauri::Manager;
 
@@ -110,20 +112,49 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     Ok(())
 }
 
+/// A picture of the page at the moment an action failed. Best effort: a
+/// browser that cannot take one (it has gone away) just means no picture -
+/// the failure is already reported in words.
+async fn shot_of_failure(cdp: &mut Cdp, app: &tauri::AppHandle) -> Option<String> {
+    let bytes = page::screenshot(cdp).await.ok()?;
+    let root = root(app).ok()?;
+    store::save_shot(&root, &bytes).ok()
+}
+
 /// Run one step's actions in order and report every outcome. Actions
 /// after a failure still run: the watcher learns more from "the click
 /// worked, the check did not" than from a run that stops at the first
 /// red.
 #[tauri::command]
 #[specta::specta]
-pub async fn auto_run_step(step: StepScript) -> Result<Vec<ActionOutcome>, String> {
+pub async fn auto_run_step(
+    app: tauri::AppHandle,
+    step: StepScript,
+) -> Result<Vec<ActionOutcome>, String> {
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
     let mut out = Vec::new();
     for action in &step.actions {
-        out.push(execute(&mut session.cdp, action).await);
+        let mut outcome = execute(&mut session.cdp, action).await;
+        if !outcome.ok {
+            outcome.screenshot = shot_of_failure(&mut session.cdp, &app).await;
+        }
+        out.push(outcome);
     }
     Ok(out)
+}
+
+/// One failure screenshot as a data URL the webview can show. The name is
+/// checked in `store::load_shot`; nothing outside the shots folder can be
+/// read through here.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_shot(app: tauri::AppHandle, name: String) -> Result<String, String> {
+    let bytes = store::load_shot(&root(&app)?, &name)?;
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 #[tauri::command]

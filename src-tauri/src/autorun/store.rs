@@ -194,3 +194,64 @@ pub fn list_runs(root: &Path) -> Vec<LocalRun> {
     out.sort_by(|a, b| b.started_at.cmp(&a.started_at));
     out
 }
+
+/// How many failure screenshots are kept. They are evidence for the run in
+/// front of the person, not an archive.
+const MAX_SHOTS: usize = 200;
+
+static SHOT_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn shots_dir(root: &Path) -> PathBuf {
+    root.join("shots")
+}
+
+/// `shot-<digits>-<digits>.jpg` and nothing else. The name comes back from
+/// the webview, so it is checked, not trusted.
+pub fn safe_shot_name(name: &str) -> bool {
+    let Some(middle) = name.strip_prefix("shot-").and_then(|n| n.strip_suffix(".jpg")) else {
+        return false;
+    };
+    let mut parts = middle.split('-');
+    let ok = |p: Option<&str>| p.is_some_and(|s| !s.is_empty() && s.len() <= 20 && s.bytes().all(|b| b.is_ascii_digit()));
+    ok(parts.next()) && ok(parts.next()) && parts.next().is_none()
+}
+
+pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
+    save_shot_keeping(root, bytes, MAX_SHOTS)
+}
+
+/// Save, then drop the oldest beyond `keep`. Names sort by time: epoch
+/// milliseconds, then a zero-padded counter for shots in the same
+/// millisecond.
+pub fn save_shot_keeping(root: &Path, bytes: &[u8], keep: usize) -> Result<String, String> {
+    let dir = shots_dir(root);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let seq = SHOT_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let name = format!("shot-{ms}-{seq:06}.jpg");
+    std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
+
+    let mut all: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| safe_shot_name(n))
+        .collect();
+    all.sort();
+    if all.len() > keep {
+        for old in &all[..all.len() - keep] {
+            let _ = std::fs::remove_file(dir.join(old));
+        }
+    }
+    Ok(name)
+}
+
+pub fn load_shot(root: &Path, name: &str) -> Result<Vec<u8>, String> {
+    if !safe_shot_name(name) {
+        return Err(format!("{name:?} is not a screenshot name"));
+    }
+    std::fs::read(shots_dir(root).join(name)).map_err(|e| format!("that screenshot is gone: {e}"))
+}

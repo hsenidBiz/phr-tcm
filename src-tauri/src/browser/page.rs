@@ -6,6 +6,7 @@
 //! nothing from a script is ever concatenated into JavaScript source.
 
 use super::cdp::{CdpError, Driver};
+use base64::Engine;
 use serde_json::{json, Value};
 
 /// Every handle this app creates belongs to this group.
@@ -156,4 +157,18 @@ pub async fn backend_id<D: Driver>(d: &mut D, handle: &Handle) -> Result<i64, Cd
 /// reported as the action's failure.
 pub async fn release<D: Driver>(d: &mut D) {
     let _ = d.call("Runtime.releaseObjectGroup", json!({ "objectGroup": GROUP })).await;
+}
+
+/// What the person would see right now, as JPEG bytes.
+pub async fn screenshot<D: Driver>(d: &mut D) -> Result<Vec<u8>, CdpError> {
+    let method = "Page.captureScreenshot";
+    let r = d.call(method, json!({ "format": "jpeg", "quality": 60 })).await?;
+    let data = r["data"].as_str().ok_or_else(|| CdpError::Protocol {
+        method: method.to_string(),
+        message: "the browser returned no image".to_string(),
+    })?;
+    base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| CdpError::Protocol {
+        method: method.to_string(),
+        message: format!("the image could not be decoded: {e}"),
+    })
 }

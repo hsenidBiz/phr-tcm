@@ -89,6 +89,13 @@ export default function RunPane({
   const [verdict, setVerdict] = useState("");
   const [note, setNote] = useState("");
 
+  // The failure screenshot on show, as a data URL, or null.
+  const [shot, setShot] = useState<string | null>(null);
+  const openShot = (name: string) =>
+    unwrapStr(commands.autoRunShot(name))
+      .then(setShot)
+      .catch((e) => toast.error(`Could not open the screenshot: ${e.message ?? e}`));
+
   // The browser is a real Edge/Chrome process with a temp profile directory - it
   // has to be closed on every path that ends this session, not just the
   // ones the brief spells out (Close, Save). If the person navigates away
@@ -345,6 +352,15 @@ export default function RunPane({
                   className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
                 >
                   {o.detail}
+                  {o.screenshot && (
+                    <button
+                      type="button"
+                      className="ml-2 text-muted underline hover:text-accent"
+                      onClick={() => openShot(o.screenshot!)}
+                    >
+                      View screenshot
+                    </button>
+                  )}
                 </p>
               ))}
             </li>
@@ -388,6 +404,12 @@ export default function RunPane({
           {isLast ? "Save result" : "Save and next case"}
         </Button>
       </div>
+
+      {shot && (
+        <Modal onClose={() => setShot(null)} className="max-h-[90vh] max-w-5xl overflow-auto p-3">
+          <img src={shot} alt="Screenshot of the failed action" className="max-w-full" />
+        </Modal>
+      )}
     </Modal>
   );
 }

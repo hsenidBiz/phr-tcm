@@ -148,3 +148,19 @@ async fn release_swallows_its_own_failure() {
     page::release(&mut d).await;
     assert_eq!(d.methods(), vec!["Runtime.releaseObjectGroup".to_string()]);
 }
+
+#[tokio::test]
+async fn a_screenshot_comes_back_as_jpeg_bytes() {
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({ "data": "/9j/4AAQ" })));
+    let bytes = page::screenshot(&mut d).await.unwrap();
+    assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF], "JPEG files start FF D8 FF");
+    let p = &d.calls_to("Page.captureScreenshot")[0];
+    assert_eq!(p["format"], "jpeg");
+    assert_eq!(p["quality"], 60);
+}
+
+#[tokio::test]
+async fn a_screenshot_that_is_not_base64_is_an_error() {
+    let mut d = ScriptedDriver::new(|_, _| Ok(json!({ "data": "not base64 !!" })));
+    assert!(page::screenshot(&mut d).await.is_err());
+}

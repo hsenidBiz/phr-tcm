@@ -4,8 +4,8 @@
 //! and nothing here has an Azure DevOps shape.
 
 use v2_lib::autorun::store::{
-    list_runs, load_script, new_run_id, save_run, save_script, save_scripts_atomically,
-    SaveScriptsError,
+    list_runs, load_script, load_shot, new_run_id, safe_shot_name, save_run, save_script,
+    save_scripts_atomically, save_shot, save_shot_keeping, SaveScriptsError,
 };
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
@@ -92,7 +92,11 @@ fn a_run_round_trips_with_the_humans_verdict() {
             steps: vec![StepRecord {
                 step_number: 1,
                 // Every action succeeded and the human still said Failed.
-                outcomes: vec![ActionOutcome { ok: true, detail: "clicked Sign in".to_string() }],
+                outcomes: vec![ActionOutcome {
+                    ok: true,
+                    detail: "clicked Sign in".to_string(),
+                    screenshot: None,
+                }],
             }],
         }],
     };
@@ -259,4 +263,43 @@ fn a_write_failure_for_one_entry_leaves_none_of_the_bundle_behind() {
         load_script(dir.path(), 100).unwrap().is_none(),
         "case 100 was written even though case 101 in the same bundle could not be"
     );
+}
+
+#[test]
+fn a_shot_is_saved_under_a_safe_name_and_read_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = save_shot(dir.path(), &[0xFF, 0xD8, 0xFF, 0x00]).unwrap();
+    assert!(safe_shot_name(&name), "{name}");
+    assert!(dir.path().join("shots").join(&name).is_file());
+    assert_eq!(load_shot(dir.path(), &name).unwrap(), vec![0xFF, 0xD8, 0xFF, 0x00]);
+}
+
+/// The name arrives from the webview. It must never be able to read a file
+/// outside the shots folder.
+#[test]
+fn a_shot_name_cannot_leave_the_shots_folder() {
+    for bad in ["../runs/run-1.json", "shot-1.jpg/../../x", "C:\\x.jpg", "shot-1.png", "", "shot-..jpg", "x.jpg"] {
+        assert!(!safe_shot_name(bad), "{bad:?} was accepted");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    assert!(load_shot(dir.path(), "../runs/run-1.json").is_err());
+}
+
+/// Screenshots are evidence for the run in front of the person, not an
+/// archive. Only the newest are kept, so the folder (and the app's backup
+/// of it) cannot grow without limit.
+#[test]
+fn only_the_newest_shots_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut names = vec![];
+    for i in 0..5u8 {
+        names.push(save_shot_keeping(dir.path(), &[i], 3).unwrap());
+    }
+    let mut left: Vec<String> = std::fs::read_dir(dir.path().join("shots"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    left.sort();
+    assert_eq!(left, names[2..].to_vec(), "the three newest stay");
 }
