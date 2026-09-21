@@ -9,4 +9,5 @@
 pub mod launch;
 pub mod cdp;
 pub mod page;
+pub mod locator;
 pub mod actions;
