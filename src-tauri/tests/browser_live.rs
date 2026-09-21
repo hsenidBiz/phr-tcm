@@ -12,8 +12,15 @@
 //! code, so only a real browser can say whether those beliefs were right.
 
 use serde_json::json;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
-use v2_lib::browser::actions::{execute_with, Action, ActionOutcome, HIGHLIGHT_JS};
+use v2_lib::autorun::accounts::Account;
+use v2_lib::autorun::recipe::SignInRecipe;
+use v2_lib::autorun::signin::sign_in;
+use v2_lib::browser::actions::{execute_in, execute_with, Action, ActionOutcome, HIGHLIGHT_JS, Policy};
 use v2_lib::browser::cdp::Cdp;
 use v2_lib::browser::launch::{launch_with, Browser, LaunchedBrowser};
 use v2_lib::browser::locator::{resolve, Target};
@@ -479,4 +486,310 @@ async fn navigation_waits_for_its_own_load_and_a_fragment_waits_for_nothing() {
     assert!(out.detail.starts_with("moved to "), "a fragment loads nothing: {}", out.detail);
     assert!(started.elapsed() < Duration::from_secs(5), "it waited for a load that never comes");
     must(run(&mut live, json!({ "kind": "check_url", "contains": "#bottom" })).await);
+}
+
+/// A web application small enough to read in one go. `GET /` is the home
+/// page for a browser carrying a cookie the server still honours, and the
+/// login form for anyone else. `POST /login` checks the login, sets an
+/// HttpOnly cookie, and answers with a page that stores a token in
+/// localStorage (quotes and all) and then goes home, optionally only after
+/// a "Continue here" prompt that shows up a quarter of a second late.
+struct App {
+    port: u16,
+    logins: Arc<AtomicUsize>,
+    generation: Arc<AtomicUsize>,
+    prompt: Arc<AtomicBool>,
+}
+
+const LOGIN_PAGE: &str = r#"<!doctype html><title>Login</title>
+<form method="post" action="/login">
+  <label>Username <input name="u"></label>
+  <label>Password <input name="p" type="password"></label>
+  <button>Login</button>
+</form>"#;
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            // Two hex digits must follow; anything else is a literal percent.
+            b'%' if i + 3 <= bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+                match u8::from_str_radix(hex, 16) {
+                    Ok(b) => {
+                        out.push(b);
+                        i += 2;
+                    }
+                    Err(_) => out.push(b'%'),
+                }
+            }
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn form_field(body: &str, name: &str) -> String {
+    body.split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| percent_decode(v))
+        .unwrap_or_default()
+}
+
+fn respond(stream: &mut std::net::TcpStream, extra_headers: &str, body: &str) {
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n{extra_headers}\r\n{body}",
+        body.len()
+    );
+}
+
+impl App {
+    fn start() -> App {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("no free port");
+        let port = listener.local_addr().unwrap().port();
+        let app = App {
+            port,
+            logins: Arc::new(AtomicUsize::new(0)),
+            generation: Arc::new(AtomicUsize::new(0)),
+            prompt: Arc::new(AtomicBool::new(false)),
+        };
+        let (logins, generation, prompt) = (app.logins.clone(), app.generation.clone(), app.prompt.clone());
+        // The thread ends with the test process; the listener has no other owner.
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                // Headers first, then as much body as Content-Length says.
+                let (head, body) = loop {
+                    let Ok(n) = stream.read(&mut buf) else { break (String::new(), String::new()) };
+                    if n == 0 {
+                        break (String::from_utf8_lossy(&raw).into_owned(), String::new());
+                    }
+                    raw.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&raw).into_owned();
+                    if let Some((head, rest)) = text.split_once("\r\n\r\n") {
+                        let want = head
+                            .lines()
+                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .unwrap_or(0);
+                        if rest.len() >= want {
+                            break (head.to_string(), rest.to_string());
+                        }
+                    }
+                };
+                let first = head.lines().next().unwrap_or("");
+                let cookie = head
+                    .lines()
+                    .find_map(|l| l.to_ascii_lowercase().starts_with("cookie:").then(|| l[7..].trim().to_string()))
+                    .unwrap_or_default();
+                let gen = generation.load(Ordering::SeqCst);
+                let user = cookie
+                    .split(';')
+                    .filter_map(|c| c.trim().strip_prefix("sid="))
+                    .filter_map(|v| v.rsplit_once('-'))
+                    .find(|(_, g)| *g == gen.to_string())
+                    .map(|(u, _)| u.to_string());
+
+                if first.starts_with("POST /login") {
+                    let (u, p) = (form_field(&body, "u"), form_field(&body, "p"));
+                    let good = matches!((u.as_str(), p.as_str()), ("kim", "p\"w 1") | ("lee", "s3cret"));
+                    if !good {
+                        respond(&mut stream, "", "<!doctype html><p id=\"bad\">Wrong username or password</p>");
+                        continue;
+                    }
+                    logins.fetch_add(1, Ordering::SeqCst);
+                    let go = if prompt.load(Ordering::SeqCst) {
+                        "setTimeout(() => { const b = document.createElement('button'); b.textContent = 'Continue here'; b.onclick = () => { location.href = '/'; }; document.body.append(b); }, 250);"
+                    } else {
+                        "location.replace('/');"
+                    };
+                    let page = format!(
+                        "<!doctype html><title>Signing in</title><body><script>localStorage.setItem('token', 'tok \"q\" {u}'); {go}</script></body>"
+                    );
+                    respond(&mut stream, &format!("Set-Cookie: sid={u}-{gen}; HttpOnly; Path=/; SameSite=Lax\r\n"), &page);
+                } else if first.starts_with("GET / ") {
+                    match user {
+                        Some(u) => respond(
+                            &mut stream,
+                            "",
+                            &format!("<!doctype html><title>Home</title><h1 id=\"home\">Home</h1><p id=\"who\"></p><script>document.getElementById('who').textContent = '{u} / ' + localStorage.getItem('token');</script>"),
+                        ),
+                        None => respond(&mut stream, "", LOGIN_PAGE),
+                    }
+                } else {
+                    respond(&mut stream, "", "<!doctype html><p>nothing here</p>");
+                }
+            }
+        });
+        app
+    }
+    fn base(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+    /// The same server under another ORIGIN, for the allowlist.
+    fn other_origin(&self) -> String {
+        format!("http://localhost:{}", self.port)
+    }
+}
+
+fn recipe_for(app: &App) -> SignInRecipe {
+    let r: SignInRecipe = serde_json::from_value(json!({
+        "start_url": format!("{}/", app.base()),
+        "steps": [
+            { "kind": "fill", "selector": { "role": "textbox", "name": "Username" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "input[type=password]" }, "value": "{{password}}" },
+            { "kind": "click", "selector": { "role": "button", "name": "Login" } },
+            { "kind": "when_visible", "selector": { "role": "button", "name": "Continue here" }, "within_ms": 1500,
+              "then": [ { "kind": "click", "selector": { "role": "button", "name": "Continue here" } } ] }
+        ],
+        "signed_in": { "css": "#home" }
+    }))
+    .unwrap();
+    r.validate().expect("the test wrote an invalid recipe");
+    r
+}
+
+fn kim() -> Account {
+    Account { key: "kim".into(), label: "Kim".into(), username: "kim".into(), password: "p\"w 1".into() }
+}
+
+fn lee() -> Account {
+    Account { key: "lee".into(), label: "Lee".into(), username: "lee".into(), password: "s3cret".into() }
+}
+
+async fn who(live: &mut Live) -> String {
+    page::eval_value(&mut live.cdp, "document.getElementById('who')?.textContent ?? ''")
+        .await
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn the_recipe_signs_in_through_the_real_form_and_saves_the_session() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    let out = sign_in(&mut live.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await;
+    assert!(out.ok, "{} / {:?}", out.detail, out.steps);
+    assert!(!out.used_saved_session);
+    // Both halves arrived: the HttpOnly cookie (the server greets kim) and
+    // the token with its quotes intact.
+    assert_eq!(who(&mut live).await, "kim / tok \"q\" kim");
+    assert_eq!(app.logins.load(Ordering::SeqCst), 1);
+    let saved = std::fs::read_to_string(v2_lib::autorun::accounts::session_path(root.path(), "kim")).unwrap();
+    assert!(saved.contains("sid"), "the HttpOnly cookie was not captured");
+    // The password reaches the page and nowhere else.
+    for s in &out.steps {
+        assert!(!s.detail.contains("p\"w 1"), "a step detail shows the password: {}", s.detail);
+    }
+    assert!(!saved.contains("p\\\"w 1"));
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_second_browser_is_signed_in_from_the_saved_session_without_touching_the_form() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    {
+        let mut first = open().await;
+        assert!(sign_in(&mut first.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await.ok);
+    } // the first browser and its whole profile are gone
+    let mut second = open().await;
+    let out = sign_in(&mut second.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await;
+    assert!(out.ok && out.used_saved_session, "{}", out.detail);
+    assert_eq!(who(&mut second).await, "kim / tok \"q\" kim");
+    assert_eq!(app.logins.load(Ordering::SeqCst), 1, "the form was posted a second time");
+    // The seed script is gone: a token the page removes stays removed.
+    must(run(&mut second, json!({ "kind": "navigate", "url": format!("{}/", app.base()) })).await);
+    page::eval_value(&mut second.cdp, "localStorage.removeItem('token')").await.unwrap();
+    must(run(&mut second, json!({ "kind": "navigate", "url": format!("{}/", app.base()) })).await);
+    assert_eq!(who(&mut second).await, "kim / null");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_session_the_server_no_longer_honours_falls_back_to_the_form() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    {
+        let mut first = open().await;
+        assert!(sign_in(&mut first.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await.ok);
+    }
+    app.generation.fetch_add(1, Ordering::SeqCst); // every old cookie is now worthless
+    let mut second = open().await;
+    let out = sign_in(&mut second.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await;
+    assert!(out.ok && !out.used_saved_session, "{}", out.detail);
+    assert_eq!(app.logins.load(Ordering::SeqCst), 2);
+    assert_eq!(who(&mut second).await, "kim / tok \"q\" kim");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn changing_account_in_one_browser_leaves_nothing_of_the_last_one() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    assert!(sign_in(&mut live.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await.ok);
+    let out = sign_in(&mut live.cdp, root.path(), &recipe_for(&app), &lee(), &timing()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(who(&mut live).await, "lee / tok \"q\" lee");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_prompt_that_only_sometimes_appears_is_handled_either_way() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    app.prompt.store(true, Ordering::SeqCst);
+    let mut live = open().await;
+    let with = sign_in(&mut live.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await;
+    assert!(with.ok, "{} / {:?}", with.detail, with.steps);
+    // And with no prompt (the first test) the same recipe passed too, saying so.
+    app.prompt.store(false, Ordering::SeqCst);
+    v2_lib::autorun::sessions::forget_session(root.path(), "kim");
+    let without = sign_in(&mut live.cdp, root.path(), &recipe_for(&app), &kim(), &timing()).await;
+    assert!(without.ok, "{}", without.detail);
+    assert!(without.steps.iter().any(|s| s.detail.contains("did not appear")), "{:?}", without.steps);
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_wrong_password_says_which_account_to_check() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    let mut live = open().await;
+    let mut wrong = kim();
+    wrong.password = "nope-nope".into();
+    let t = Timing { nav_ms: 2500, ..timing() };
+    let out = sign_in(&mut live.cdp, root.path(), &recipe_for(&app), &wrong, &t).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("\"kim\""), "{}", out.detail);
+    assert!(!out.detail.contains("nope-nope"));
+    assert!(!v2_lib::autorun::accounts::session_path(root.path(), "kim").exists(), "a failed sign-in saved a session");
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_navigate_outside_the_projects_origins_is_refused_before_it_happens() {
+    let app = App::start();
+    let mut live = open().await;
+    let policy = Policy::only(recipe_for(&app).origins());
+    let inside = execute_in(&mut live.cdp, &action_of(json!({ "kind": "navigate", "url": format!("{}/", app.base()) })), &timing(), &policy).await;
+    assert!(inside.ok, "{}", inside.detail);
+    let outside = execute_in(&mut live.cdp, &action_of(json!({ "kind": "navigate", "url": format!("{}/", app.other_origin()) })), &timing(), &policy).await;
+    refused(outside, "allowed origins");
+    let still = page::eval_value(&mut live.cdp, "location.origin").await.unwrap();
+    assert_eq!(still.as_str(), Some(app.base().as_str()), "the browser went there anyway");
+    // A relative address resolves first and is judged after.
+    let relative = execute_in(&mut live.cdp, &action_of(json!({ "kind": "navigate", "url": "/" })), &timing(), &policy).await;
+    assert!(relative.ok, "{}", relative.detail);
 }

@@ -3379,3 +3379,40 @@ test(v2): Auto Run sign-in, saved sessions and the origin allowlist are proven o
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
 ```
+
+## After execution: checks only a person can make
+
+Against the real application, in a development build:
+
+1. Accounts: add two accounts, close and reopen the dialog, they are still there; the passwords are masked until "Show passwords".
+2. Sign-in recipe: write the recipe for the real login page (including the "another active session" prompt as a `when_visible`), save it, reopen it.
+3. Script editor: set "Runs as" on a case; run it; the pane says who it signed in as, and the application really is signed in as that person.
+4. Run the same case again: it says "from a saved session" and is visibly faster.
+5. Two cases in one selection with different accounts: the second one is signed in as its own account, not the first's.
+6. A `sign_in` action in the middle of a case changes who is signed in.
+7. Change an account's password in Accounts to a wrong one: the run pane says to check that account, and no password appears anywhere on screen, in Settings, Logs, or in a bug report.
+8. A `navigate` to another site fails and names the origin; adding it to `allowed_origins` lets it through.
+9. Export a backup and look inside: no `autorun/sessions`, no `autorun/shots`. `autorun/accounts.json` IS there, by decision: it is the tester's own data.
+10. Give a second tester the scripts only. With their own accounts under the same keys, the scripts run unchanged.
+
+## What execution changed from this plan
+
+Task 1 (accounts store, accounts.json, backup exclusion): no deviation. The brief's code, tests and wording were used as given.
+
+Task 2 (sign-in recipe type and commands): the brief's Step 3 asked for `#[serde(untagged)]` on `RecipeStep` purely to fix specta's TypeScript export. That attribute is a serde helper attribute and is only legal on an item that derives `serde::Serialize`/`Deserialize` in the same `#[derive(...)]` list; `RecipeStep` derives neither (both are hand-written, on purpose, so a bad step name still reports the inner "unknown variant" detail instead of a generic untagged-enum failure). The attribute does not compile there, and there is no cheap substitute (`#[specta(untagged)]` is explicitly rejected by specta's own macro pointing back at `#[serde(untagged)]`, and deriving the serde traits for real would collide with the hand-written impls). Per the brief's own fallback ("if specta refuses the type, stop and report BLOCKED"), the attribute was reverted, the externally-tagged specta type was kept, and the reasoning was left as a plain comment in `recipe.rs` rather than inventing a different wire-type design unilaterally.
+
+Task 3 (origin allowlist and navigate policy): the brief's second new test assumed `FakePage`'s relative-URL resolution answers through the `href` field. Reading `tests/common/mod.rs` first (as instructed) showed the `RESOLVE_URL_JS` call answers through a separate `resolved_url` field, matching an existing test in the same file. The test was built with `resolved_url` instead of `href`; the policy code, `execute_in` signature and the other three tests were used as given.
+
+Task 4 (saved sessions, `browser/session.rs`, `autorun/sessions.rs`): no code deviation. The brief's Step 5 comment says "expected: 9 passed" but the test file it supplies defines exactly 8 tests; this is an off-by-one in the brief's own comment, not a defect, and nothing was added or skipped to chase a ninth test that does not exist in the brief.
+
+Task 5 (`signin.rs`, sign-in commands): no deviation. Everything compiled and passed as given.
+
+Task 6 (the runner, `Action::SignIn`, screenshots on failure): per the controller amendment, the step loop lives in a new pure `src-tauri/src/autorun/runner.rs` rather than inline in the Tauri command, and a failed `sign_in` now stops the rest of that step's actions (reported "not run: the sign-in before this action failed"). Three further deviations surfaced during implementation: `recipe.rs` needed no change even though the brief listed it under "Modify", because its `check()` already refused a serialized `sign_in` step before this task started; the stateful fake login app moved from `tests/autorun_signin.rs` into the shared `tests/common/mod.rs` under the names `StatefulApp`/`stateful_app` (renamed only because `App` was too generic for a file shared across every browser/autorun test, behaviour unchanged); and the two runner-focused tests the brief described for `autorun_commands.rs` were placed in the new `autorun_runner.rs` instead, as the amendment directed.
+
+Task 7 (Accounts dialog, recipe editor UI): two deviations, both explained in the task's own report. `RecipeEditor.test.tsx`'s third test clicked "Save recipe" via `fireEvent.click` right after `findByLabelText` resolved, before the recipe load query settled and while Save was still correctly disabled; the fix waits for the load to finish first, the same pattern the brief's own first test already used, with no production code change. Separately, the brief typed the parsed recipe JSON and the save mutation's argument as `SignInRecipe`, but `commands.autoRunSaveRecipe` takes the generated `SignInRecipe_Deserialize` half of that specta split type and the union does not assign to it; both were retyped to `SignInRecipe_Deserialize`, a type-only change with identical runtime behaviour.
+
+Task 8 (script editor "Runs as", run pane sign-in status): `ScriptEditor.test.tsx` did not exist yet in the repo (only sibling `AutoRun/*.test.tsx` files did), so it was created fresh with the brief's three tests plus this repo's usual test-file framing (top comment, `sonner` mock, `afterEach` cleanup) that the brief's snippet omitted. The brief's optional `eslint-disable react-hooks/exhaustive-deps` comment was left out after confirming the repo has no `react-hooks` eslint rule configured. The pre-existing step-list `<ul>` was re-indented two spaces when it was wrapped in a new `<div>`, a formatting-only change. A fix round on this task (commits `7230379..fb8d529`) made Save wait for a sign-in in flight and drop a late sign-in result, per two review findings; not a plan deviation, but the resulting behaviour is what Task 9's hand-check list assumes.
+
+Task 9 (this task, live proof against a real browser and server): implemented exactly as the brief specified; `page::eval_value`'s real signature (`eval_value<D: Driver>(d: &mut D, expression: &str)`) matched what the brief's helpers assumed, so no adjustment was needed there. All 25 tests in `browser_live.rs` (the 18 pre-existing plus the 7 new ones) passed on the first run against the real headless Edge and the hand-written HTTP test server, so no production defect surfaced and no fix commit was needed ahead of the test commit. All five gates and both secrets-sweep greps came back clean on the first pass.
+
+Deferred, non-blocking items carried across every task and still open at the end of Task 9 (none touch this plan's safety invariants): the commit-trailer attribution question from Task 1 (ruling: truthful attribution stands); `backup.rs`'s `excluded()` allocating a String per check; `navigate` computing `origin_of` twice on its refusal path; `seed_script` relying on ES2019 raw line/paragraph separators inside a string literal without a comment saying so; `redact` over-redacting a one- or two-character password; no test for the Sign-in recipe button being disabled without an organization and project; and the stale-result-drop branch in the script editor being reachable only through Close, covered only by the Close-in-flight test. None of these were touched by Task 9 and none are secrets, correctness, or safety-invariant issues.
