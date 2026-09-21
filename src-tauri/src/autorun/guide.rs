@@ -103,8 +103,12 @@ You cannot see the list of accounts. Ask the person which keys they use,
 or use the ones already present in the project's other scripts. A key is
 lowercase letters, digits, dot, underscore or hyphen.
 
-`navigate` only goes to the project's own origins (the sign-in recipe
-lists them). An address anywhere else fails and says so.
+Once this project has a sign-in recipe, `navigate` is held to its own
+origins (the recipe lists them); an address anywhere else fails and says
+so. A project with no recipe saved yet has no such restriction. This
+covers an authored `navigate` only: a link the page follows, or a
+redirect, can still leave those origins, so it is a guard against a
+mistyped address, not a sandbox.
 
 ## Selectors
 
