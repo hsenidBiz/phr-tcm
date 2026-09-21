@@ -72,25 +72,26 @@ async fn run(live: &mut Live, action: serde_json::Value) -> ActionOutcome {
 /// long varies with what else the machine is doing. Retrying beats a fixed
 /// sleep that is either slow or flaky.
 async fn open() -> Live {
-    let browser = launch_with(Browser::Edge, &["--headless=new"]).expect("Edge did not start");
+    let mut browser = launch_with(Browser::Edge, &["--headless=new"]).expect("Edge did not start");
     let mut last = String::new();
-    let mut cdp = None;
+    let mut connected = None;
     for _ in 0..60 {
         tokio::time::sleep(Duration::from_millis(250)).await;
         match Cdp::connect(browser.port).await {
             Ok(c) => {
-                cdp = Some(c);
+                connected = Some(c);
                 break;
             }
             Err(e) => last = e,
         }
     }
-    let cdp = match cdp {
-        Some(c) => c,
-        None => {
-            let _ = std::fs::remove_dir_all(&browser.profile_dir);
-            panic!("could not reach Edge on port {}: {last}", browser.port);
-        }
+    let Some(cdp) = connected else {
+        // There is no `Live` yet, so nothing would tidy up after this.
+        let port = browser.port;
+        let _ = browser.child.kill();
+        let _ = browser.child.wait();
+        let _ = std::fs::remove_dir_all(&browser.profile_dir);
+        panic!("could not reach Edge on port {port}: {last}");
     };
     let mut live = Live { browser, cdp };
     let out = run(&mut live, json!({ "kind": "navigate", "url": fixture_url() })).await;
