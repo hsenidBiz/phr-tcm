@@ -67,6 +67,12 @@ moving, enabled, and not covered by something else. Then they use the
 real mouse and keyboard. If the wait runs out, the outcome says which of
 those was the problem. You do not need a `wait_for` in front of them.
 
+One thing `fill` does not do: typing is delivered as a text commit, not
+keystroke by keystroke, so a page that reacts to keydown (type-ahead
+search, some autocompletes) will not see keys. The field still gets the
+input events it would from a person. Only clearing a field sends a real
+Backspace.
+
 Every `expect_` action looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you
@@ -109,7 +115,9 @@ of dialogs and menus in the page; they are ignored unless an entry says
 A locator must end up meaning exactly one element. If it matches several,
 the action fails and says how many: narrow it with a list, `"exact"`, or
 `"nth"` (zero-based: `{ "css": "tbody tr", "nth": 0 }` is the first row).
-Only `expect_count` and `expect_hidden` are happy with many.
+`nth` picks from THAT entry's matches across everything the previous
+entry matched, taken in page order, not from the matches inside one of
+them. Only `expect_count` and `expect_hidden` are happy with many.
 
 A misspelt field is rejected, not ignored. Each entry takes exactly one
 of `role`, `text` or `css`.

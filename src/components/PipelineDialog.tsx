@@ -560,8 +560,11 @@ export default function PipelineDialog({
   const anyFailures = builds.some((b) => failurePath(b) !== "");
 
   return (
-    // While a log is open, Escape must close the log, not this dialog too -
-    // both modals listen on window, and this one registered first.
+    // While a log is open, Escape must close the log, not this dialog too.
+    // `Modal` decides that itself: every open modal's listener fires, and
+    // only the deepest (and, at equal depth, the latest) one acts - the
+    // nested LogDialog below. The `if (!logView)` guard is belt and
+    // braces; it also covers a backdrop click, which has no such rule.
     <Modal
       onClose={() => {
         if (!logView) onClose();
