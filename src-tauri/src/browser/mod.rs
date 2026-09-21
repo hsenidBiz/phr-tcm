@@ -8,4 +8,5 @@
 
 pub mod launch;
 pub mod cdp;
+pub mod page;
 pub mod actions;
