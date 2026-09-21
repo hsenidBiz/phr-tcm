@@ -275,3 +275,93 @@ test("a second Save while the first is still writing does not write twice", asyn
   // Settle any second write that a broken guard would have let through.
   await waitFor(() => expect(s.saved).toHaveLength(1));
 });
+
+/** A session whose scripts name accounts, recording every sign-in asked for. */
+function mockSignIn(scripts: Record<number, unknown>, outcome: (key: string, nth: number) => unknown) {
+  const asked: { organization: string; project: string; accountKey: string }[] = [];
+  const forgotten: string[] = [];
+  const stepped: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "auto_run_load_script") return scripts[(args as { caseId: number }).caseId] ?? null;
+    if (cmd === "auto_run_sign_in") {
+      const a = args as { organization: string; project: string; accountKey: string };
+      asked.push(a);
+      return outcome(a.accountKey, asked.length);
+    }
+    if (cmd === "auto_run_forget_session") {
+      forgotten.push((args as { accountKey: string }).accountKey);
+      return null;
+    }
+    if (cmd === "auto_run_step") {
+      stepped.push(args);
+      return [{ ok: true, detail: "ok" }];
+    }
+    if (cmd === "auto_run_new_id") return "run-1";
+    return null;
+  });
+  return { asked, forgotten, stepped };
+}
+
+const OK = { ok: true, detail: "signed in as HR Admin from a saved session", used_saved_session: true, steps: [] };
+
+test("a case that names an account is signed in once the browser opens", async () => {
+  const s = mockSignIn({ 1: { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" } }, () => OK);
+  renderPane([{ id: 1, title: "Leave request" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  expect(await screen.findByText("signed in as HR Admin from a saved session")).toBeInTheDocument();
+  expect(s.asked).toEqual([{ organization: "acme", project: "Web", accountKey: "hr.admin" }]);
+});
+
+test("a case with no account signs nobody in", async () => {
+  const s = mockSignIn({ 1: { case_id: 1, title: "s", steps: STEPS } }, () => OK);
+  renderPane([{ id: 1, title: "Public page" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Run step 1/ }));
+  await waitFor(() => expect(s.stepped).toHaveLength(1));
+  expect(s.asked).toEqual([]);
+});
+
+test("the next case signs its own account into its own fresh browser", async () => {
+  const s = mockSignIn(
+    {
+      1: { case_id: 1, title: "a", steps: STEPS, account: "employee" },
+      2: { case_id: 2, title: "b", steps: STEPS, account: "supervisor" },
+    },
+    (key) => ({ ...OK, detail: `signed in as ${key}` }),
+  );
+  renderPane([{ id: 1, title: "Submit" }, { id: 2, title: "Approve" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  expect(await screen.findByText("signed in as employee")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  fireEvent.click(screen.getByRole("button", { name: /Save and next case/ }));
+  expect(await screen.findByText("signed in as supervisor")).toBeInTheDocument();
+  expect(s.asked.map((a) => a.accountKey)).toEqual(["employee", "supervisor"]);
+});
+
+test("a sign-in that fails is shown with its steps, and the steps can still be run", async () => {
+  const failed = {
+    ok: false,
+    detail: "sign-in stopped at step 3: button \"Login\" not found",
+    used_saved_session: false,
+    steps: [{ ok: true, detail: "loaded https://hr.example.internal/" }, { ok: false, detail: "button \"Login\" not found" }],
+  };
+  const s = mockSignIn({ 1: { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" } }, (_k, nth) => (nth === 1 ? failed : OK));
+  renderPane([{ id: 1, title: "Leave request" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  expect(await screen.findByText(/sign-in stopped at step 3/)).toBeInTheDocument();
+  expect(screen.getByText("loaded https://hr.example.internal/")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Run step 1/ })).toBeEnabled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
+  expect(await screen.findByText("signed in as HR Admin from a saved session")).toBeInTheDocument();
+  expect(s.forgotten).toEqual(["hr.admin"]);
+  expect(s.asked).toHaveLength(2);
+});
+
+test("a step is sent with the project it belongs to", async () => {
+  const s = mockSignIn({ 1: { case_id: 1, title: "s", steps: STEPS } }, () => OK);
+  renderPane([{ id: 1, title: "Public page" }]);
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Run step 1/ }));
+  await waitFor(() => expect(s.stepped).toEqual([{ organization: "acme", project: "Web", step: STEPS[0] }]));
+});

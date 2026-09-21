@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { commands, type ActionOutcome, type CaseRecord } from "../../bindings";
+import { commands, type ActionOutcome, type CaseRecord, type SignInOutcome } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Textarea } from "../../components/ui/input";
@@ -93,6 +93,17 @@ export default function RunPane({
   const [verdict, setVerdict] = useState("");
   const [note, setNote] = useState("");
 
+  /** How many browsers this pane has successfully opened. A sign-in belongs
+   * to a BROWSER, not to a case: keying it on the case would fire it at the
+   * old window in the moment between moving on and the fresh one opening. */
+  const [launches, setLaunches] = useState(0);
+  const signedFor = useRef(0);
+  const [signIn, setSignIn] = useState<{ state: "idle" | "working" | "done"; account: string; out: SignInOutcome | null }>({
+    state: "idle",
+    account: "",
+    out: null,
+  });
+
   // The failure screenshot on show, as a data URL, or null.
   const [shot, setShot] = useState<string | null>(null);
   const openShot = (name: string) =>
@@ -132,6 +143,7 @@ export default function RunPane({
         return;
       }
       setOpened(true);
+      setLaunches((n) => n + 1);
     } catch (e) {
       // The generated `typedError` wrapper rethrows when the IPC call itself
       // rejects with an Error (rather than resolving to {status: "error"}) -
@@ -164,6 +176,40 @@ export default function RunPane({
     }
   };
 
+  const signInAs = async (account: string, afresh: boolean) => {
+    setBusy(true);
+    setSignIn({ state: "working", account, out: null });
+    try {
+      if (afresh) await commands.autoRunForgetSession(account).catch(() => {});
+      const r = await commands.autoRunSignIn(org, project, account);
+      const out: SignInOutcome =
+        r.status === "error" ? { ok: false, detail: r.error, used_saved_session: false, steps: [] } : r.data;
+      setSignIn({ state: "done", account, out });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      setSignIn({ state: "done", account, out: { ok: false, detail, used_saved_session: false, steps: [] } });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Once per browser, and only once the CURRENT case's script is in hand:
+  // while the next case's script is still loading, `script.data` is
+  // undefined (a new query key has no data yet), so this waits for it.
+  const scriptAccount = script.isSuccess ? (script.data?.account ?? "") : null;
+  useEffect(() => {
+    if (!opened || launches === 0 || scriptAccount === null) return;
+    if (signedFor.current === launches) return;
+    signedFor.current = launches;
+    if (scriptAccount === "") {
+      setSignIn({ state: "idle", account: "", out: null });
+      return;
+    }
+    void signInAs(scriptAccount, false);
+    // signInAs is recreated every render; the three values below are the
+    // only things that should start a sign-in.
+  }, [opened, launches, scriptAccount]);
+
   /** The verdict in front of the person right now, as a record. */
   const currentRecord = (): CaseRecord => ({
     case_id: caseId,
@@ -187,6 +233,7 @@ export default function RunPane({
     try {
       const r = await commands.autoRunOpenBrowser(browserName);
       if (r.status === "error") throw new Error(r.error);
+      setLaunches((n) => n + 1);
     } catch (e) {
       setOpened(false);
       toast.error(
@@ -213,6 +260,7 @@ export default function RunPane({
         setResults({});
         setVerdict("");
         setNote("");
+        setSignIn({ state: "idle", account: "", out: null });
         await freshBrowser();
         return;
       }
@@ -332,45 +380,72 @@ export default function RunPane({
           </div>
         </div>
       ) : (
-        <ul className="max-h-72 space-y-2 overflow-y-auto">
-          {(script.data?.steps ?? []).map((s) => (
-            <li key={s.step_number} className="rounded-md border border-border p-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
-                <span className="text-[11px] text-faint">
-                  {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
-                </span>
-                <Button
-                  className="ml-auto"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => runStep(s.step_number)}
-                >
-                  Run step {s.step_number}
-                </Button>
-              </div>
-              {(results[s.step_number] ?? []).map((o, i) => (
-                <p
-                  key={i}
-                  className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
-                >
-                  {o.detail}
-                  {o.screenshot && (
-                    <button
-                      type="button"
-                      aria-label={`View screenshot for action ${i + 1}`}
-                      className="ml-2 text-muted underline hover:text-accent"
-                      onClick={() => openShot(o.screenshot!)}
-                    >
-                      View screenshot
-                    </button>
+        <div className="space-y-2">
+          {signIn.state !== "idle" && (
+            <div className="rounded border border-border/60 px-2 py-1 text-xs">
+              {signIn.state === "working" ? (
+                <span className="text-muted">Signing in as {signIn.account}</span>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={signIn.out?.ok ? "text-success" : "text-danger"}>{signIn.out?.detail}</span>
+                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => signInAs(signIn.account, true)}>
+                      Sign in again
+                    </Button>
+                  </div>
+                  {!signIn.out?.ok && (signIn.out?.steps.length ?? 0) > 0 && (
+                    <ul className="mt-1 space-y-0.5 text-faint">
+                      {signIn.out?.steps.map((o, i) => (
+                        <li key={i} className={o.ok ? "" : "text-danger"}>
+                          {o.detail}
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                </p>
-              ))}
-            </li>
-          ))}
-        </ul>
+                </>
+              )}
+            </div>
+          )}
+          <ul className="max-h-72 space-y-2 overflow-y-auto">
+            {(script.data?.steps ?? []).map((s) => (
+              <li key={s.step_number} className="rounded-md border border-border p-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted">Step {s.step_number}</span>
+                  <span className="text-[11px] text-faint">
+                    {s.actions.length} action{s.actions.length === 1 ? "" : "s"}
+                  </span>
+                  <Button
+                    className="ml-auto"
+                    size="sm"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => runStep(s.step_number)}
+                  >
+                    Run step {s.step_number}
+                  </Button>
+                </div>
+                {(results[s.step_number] ?? []).map((o, i) => (
+                  <p
+                    key={i}
+                    className={cn("mt-1 text-xs", o.ok ? "text-muted" : "text-danger")}
+                  >
+                    {o.detail}
+                    {o.screenshot && (
+                      <button
+                        type="button"
+                        aria-label={`View screenshot for action ${i + 1}`}
+                        className="ml-2 text-muted underline hover:text-accent"
+                        onClick={() => openShot(o.screenshot!)}
+                      >
+                        View screenshot
+                      </button>
+                    )}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="space-y-2 border-t border-border pt-3">

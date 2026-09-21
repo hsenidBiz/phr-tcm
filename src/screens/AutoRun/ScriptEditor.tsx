@@ -9,6 +9,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { commands, type StepScript } from "../../bindings";
 import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { unwrapStr } from "../../lib/ipc";
@@ -18,10 +19,10 @@ const PLACEHOLDER = `[
   {
     "step_number": 1,
     "actions": [
-      { "kind": "navigate", "url": "https://app.example/login" },
-      { "kind": "fill", "selector": { "role": "textbox", "name": "Username" }, "value": "tester" },
-      { "kind": "click", "selector": { "role": "button", "name": "Sign in" } },
-      { "kind": "expect_visible", "selector": { "role": "heading", "name": "Dashboard" } }
+      { "kind": "navigate", "url": "https://app.example/leave" },
+      { "kind": "click", "selector": { "role": "button", "name": "New request" } },
+      { "kind": "fill", "selector": { "role": "textbox", "name": "Reason" }, "value": "Family event" },
+      { "kind": "expect_visible", "selector": { "role": "heading", "name": "Leave request" } }
     ]
   }
 ]`;
@@ -44,6 +45,16 @@ export default function ScriptEditor({
     queryFn: () => unwrapStr(commands.autoRunLoadScript(caseId)),
     retry: false,
   });
+
+  const accounts = useQuery({
+    queryKey: ["autorun-accounts"],
+    queryFn: () => unwrapStr(commands.autoRunListAccounts()),
+    retry: false,
+  });
+  // null = untouched, so the saved script's account shows until the person picks.
+  const [picked, setPicked] = useState<string | null>(null);
+  const account = picked ?? existing.data?.account ?? "";
+  const known = (accounts.data ?? []).some((a) => a.key === account);
 
   const [text, setText] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
@@ -77,7 +88,12 @@ export default function ScriptEditor({
       return;
     }
     setProblem("");
-    const r = await commands.autoRunSaveScript({ case_id: caseId, title, steps: parsed });
+    const r = await commands.autoRunSaveScript({
+      case_id: caseId,
+      title,
+      steps: parsed,
+      account: account === "" ? null : account,
+    });
     if (r.status === "error") {
       toast.error(`Could not save the script: ${r.error}`);
       return;
@@ -108,16 +124,38 @@ export default function ScriptEditor({
           </ol>
         </div>
 
-        <label className="block text-xs text-muted">
-          Action script JSON
-          <Textarea
-            aria-label="Action script JSON"
-            className="mt-1 h-64 w-full font-mono text-xs"
-            placeholder={PLACEHOLDER}
-            value={value}
-            onChange={(e) => setText(e.target.value)}
-          />
-        </label>
+        <div className="space-y-2">
+          <label className="block text-xs text-muted">
+            Runs as
+            <Select
+              aria-label="Runs as"
+              className="mt-1 w-full"
+              value={account}
+              onChange={(e) => setPicked(e.target.value)}
+            >
+              <option value="">No sign-in</option>
+              {(accounts.data ?? []).map((a) => (
+                <option key={a.key} value={a.key}>
+                  {`${a.label.trim() || a.key} (${a.key})`}
+                </option>
+              ))}
+              {account !== "" && !known && (
+                <option value={account}>{`${account} (not on this machine)`}</option>
+              )}
+            </Select>
+          </label>
+
+          <label className="block text-xs text-muted">
+            Action script JSON
+            <Textarea
+              aria-label="Action script JSON"
+              className="mt-1 h-64 w-full font-mono text-xs"
+              placeholder={PLACEHOLDER}
+              value={value}
+              onChange={(e) => setText(e.target.value)}
+            />
+          </label>
+        </div>
       </div>
 
       {existing.isError && (
