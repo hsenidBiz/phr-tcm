@@ -67,23 +67,26 @@ pub const PROBE_JS: &str = r#"function() {
   };
 }"#;
 
-/// `this` is the element. Argument: the value. A native select is set
-/// directly. A date-like input does not accept typed characters at all,
-/// so it is set through its native value setter instead. Anything else
-/// is focused with its contents selected, so what is typed next replaces
-/// them.
+/// `this` is the element. Argument: the value.
 ///
-/// The last three lines are the guard for a control that does not select.
-/// Measured on Edge 153 rather than assumed: on `number`, `email` and the
-/// other types with no selection API, `select()` does NOT throw and does
-/// select the value - it is only `selectionStart` that reads back `null`,
-/// which is why the check is a null test and not a `catch`. Those types
-/// are therefore replaced correctly by the selection alone, and the
-/// native clear below never fires for them. It stays for the control
-/// where `select()` really is a no-op, because the alternative failure -
-/// typing CONCATENATED onto what was already in the field - is silent and
-/// produces a green run with the wrong data in it. Its one cost is an
-/// extra `input` event carrying an empty value.
+/// A native select is set directly. A contenteditable has its contents put
+/// in the selection. Everything else is focused and `select()`ed, so that
+/// what is typed next replaces what was there - which is exactly what a
+/// person does, and it means the page sees ONE input event carrying the
+/// new value, never an intermediate empty one a validator could react to.
+///
+/// Measured on Edge 153 rather than assumed: `select()` selects in every
+/// text-like input, `number` and `email` included. Only `selectionStart`
+/// reads back `null` there, and nothing here needs to know the difference,
+/// so there is no special case for them. `tests/browser_live.rs` counts
+/// the input events the page receives, so a special case cannot come back
+/// unnoticed.
+///
+/// A date-like input is the one exception: typing into it is locale
+/// dependent (the field wants its parts in the order the machine's locale
+/// puts them, and a script writes `2026-03-05` whatever that order is), so
+/// its value is set through the native setter and the page is told with
+/// the same two events a person's edit would raise.
 pub const FOCUS_JS: &str = r#"function(value) {
   if (this instanceof HTMLSelectElement) {
     const want = String(value).trim();
@@ -98,14 +101,10 @@ pub const FOCUS_JS: &str = r#"function(value) {
     this.dispatchEvent(new Event('change', { bubbles: true }));
     return 'select-ok';
   }
-  const setNative = (el, v) => {
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-  };
   this.focus();
   if (this instanceof HTMLInputElement && /^(date|time|month|week|datetime-local|color|range)$/.test(this.type)) {
-    setNative(this, value);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(this, value);
+    this.dispatchEvent(new Event('input', { bubbles: true }));
     this.dispatchEvent(new Event('change', { bubbles: true }));
     return 'set';
   }
@@ -117,9 +116,7 @@ pub const FOCUS_JS: &str = r#"function(value) {
     s.addRange(r);
     return 'text';
   }
-  let selectable = false;
-  try { this.select(); selectable = this.selectionStart !== null && this.selectionStart !== undefined; } catch (e) { selectable = false; }
-  if (!selectable && this.value !== '') setNative(this, '');
+  try { this.select(); } catch (e) { /* typed into as it stands */ }
   return 'text';
 }"#;
 

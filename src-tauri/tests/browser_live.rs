@@ -149,23 +149,34 @@ async fn typing_reaches_the_page_as_real_input_and_can_be_cleared() {
 #[ignore = "starts a real headless Edge"]
 async fn every_kind_of_field_is_filled_and_cleared_through_what_the_page_sees() {
     let mut live = open().await;
-    // A number field already holding 7. `select()` does nothing on these,
-    // so without the native clear this would read "742".
+    // A number field already holding 7. Its #num-log records every input
+    // event it raises, in order: filling it must produce exactly ONE,
+    // carrying the new value. A clear-then-type would read "[][42]", and
+    // that empty event is something a page's own validator reacts to.
     must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#num" }, "value": "42" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#num-echo", "equals": "42" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#num-log", "equals": "[42]" })).await);
     must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#num" }, "value": "" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#num-echo", "equals": "" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#num-log", "equals": "[42][]" })).await);
 
+    // Email is the other type whose selection cannot be read back, and it
+    // behaves the same way: one event in, one event out.
     must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#mail" }, "value": "a@b.example" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#mail-echo", "equals": "a@b.example" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#mail-log", "equals": "[a@b.example]" })).await);
     must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#mail" }, "value": "" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#mail-echo", "equals": "" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#mail-log", "equals": "[a@b.example][]" })).await);
 
-    // A date field takes no typed characters at all; it is set directly.
+    // A date field is the one kind set directly, because typing into it
+    // depends on the machine's locale. It too raises one event per fill.
     must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#due" }, "value": "2026-03-05" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#due-echo", "equals": "2026-03-05" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#due-log", "equals": "[2026-03-05]" })).await);
     must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#due" }, "value": "" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#due-echo", "equals": "" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#due-log", "equals": "[2026-03-05][]" })).await);
 
     must(run(&mut live, json!({ "kind": "fill", "selector": { "css": "#notes" }, "value": "new notes" })).await);
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#notes-echo", "equals": "new notes" })).await);
@@ -342,10 +353,17 @@ async fn the_highlight_shows_and_a_target_covered_during_it_is_refused() {
     let outlined = page::eval_value(&mut live.cdp, read).await.expect("could not read the outline");
     let outlined = outlined.as_str().unwrap_or("").to_string();
     assert!(outlined.contains("3px") && outlined.contains("solid"), "no outline: {outlined:?}");
-    // And it takes itself back off, so nothing is left marked up.
-    tokio::time::sleep(Duration::from_millis(1600)).await;
-    let after = page::eval_value(&mut live.cdp, read).await.expect("could not read the outline");
-    assert_eq!(after.as_str().unwrap_or("still there"), "");
+    // And it takes itself back off, so nothing is left marked up. Polled
+    // rather than slept through: the production timer is 1200ms, and a
+    // fixed wait just over it is a flake waiting for a loaded machine.
+    let mut after = outlined.clone();
+    let give_up = std::time::Instant::now() + Duration::from_secs(5);
+    while !after.is_empty() && std::time::Instant::now() < give_up {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let v = page::eval_value(&mut live.cdp, read).await.expect("could not read the outline");
+        after = v.as_str().unwrap_or("still there").to_string();
+    }
+    assert_eq!(after, "", "the outline was never taken back off");
 
     // #coverme covers itself the moment its style changes, which is what
     // the highlight does. A long enough pause and the cover is up before

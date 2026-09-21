@@ -314,9 +314,10 @@ async fn filling_with_nothing_clears_the_field() {
     assert_eq!(keys[1]["type"], "keyUp");
 }
 
-/// A date-like field (verified on Edge: date, time, month, week,
-/// datetime-local, color, range) does not accept typed characters, so it
-/// is set through its native value setter and never typed into.
+/// A date-like field (date, time, month, week, datetime-local, color,
+/// range) wants its parts in the order the machine's locale puts them,
+/// while a script always writes `2026-09-21`. So it is set through its
+/// native value setter and never typed into.
 #[tokio::test]
 async fn a_date_like_field_is_set_directly_not_typed() {
     let mut d = ScriptedDriver::new(|method, _| match method {

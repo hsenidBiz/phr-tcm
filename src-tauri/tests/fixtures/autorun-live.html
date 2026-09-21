@@ -34,14 +34,17 @@
   <p><label>Method Name * <input id="name" oninput="say('echo', this.value)"></label></p>
   <p id="echo"></p>
 
-  <p><label>Weight <input id="num" type="number" value="7" oninput="say('num-echo', this.value)"></label></p>
+  <p><label>Weight <input id="num" type="number" value="7" oninput="say('num-echo', this.value); note('num-log', this.value)"></label></p>
   <p id="num-echo">7</p>
+  <p id="num-log"></p>
 
-  <p><label>Contact <input id="mail" type="email" oninput="say('mail-echo', this.value)"></label></p>
+  <p><label>Contact <input id="mail" type="email" oninput="say('mail-echo', this.value); note('mail-log', this.value)"></label></p>
   <p id="mail-echo"></p>
+  <p id="mail-log"></p>
 
-  <p><label>Due <input id="due" type="date" oninput="say('due-echo', this.value)"></label></p>
+  <p><label>Due <input id="due" type="date" oninput="say('due-echo', this.value); note('due-log', this.value)"></label></p>
   <p id="due-echo"></p>
+  <p id="due-log"></p>
 
   <p><label>Notes <textarea id="notes" oninput="say('notes-echo', this.value)">old notes</textarea></label></p>
   <p id="notes-echo">old notes</p>
@@ -101,6 +104,9 @@
   let n = 0;
   function bump() { n++; document.getElementById('count').textContent = 'clicked ' + n; }
   function say(id, value) { document.getElementById(id).textContent = value; }
+  // Every input event this field raises, in order, so a test can see
+  // that a fill produced exactly one and not a clear followed by a type.
+  function note(id, value) { document.getElementById(id).textContent += '[' + value + ']'; }
 
   setTimeout(() => {
     document.getElementById('late').disabled = false;
