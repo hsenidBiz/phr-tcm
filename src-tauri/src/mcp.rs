@@ -310,20 +310,30 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
     serde_json::json!({ "tools": tools })
 }
 
+/// The call-time refusal text for a switched-off tool. A dev-only tool
+/// outside a development build has no switch to turn back on - it is
+/// simply not available; every other switched-off tool (including a
+/// dev-only one that IS off only because the person switched it off in a
+/// development build) gets the ordinary AI Bridge sentence. `dev` is
+/// explicit so both branches are testable without a release build.
+pub fn refusal_text(name: &str, dev: bool) -> String {
+    if !dev && crate::ai_tools::DEV_ONLY_TOOLS.contains(&name) {
+        format!("The `{name}` tool is not available.")
+    } else {
+        format!(
+            "The `{name}` tool is switched off in Test Case Manager. \
+             Turn it back on in the app's AI Bridge tab if you need it."
+        )
+    }
+}
+
 fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value {
     let name = params["name"].as_str().unwrap_or_default();
     let args = &params["arguments"];
     // Checked again here, not just in tools/list: a client may be working
     // from a list it cached before the tool was switched off.
     if disabled(call).iter().any(|d| d == name) {
-        let text = if crate::ai_tools::HIDDEN_TOOLS.contains(&name) {
-            format!("The `{name}` tool is not available.")
-        } else {
-            format!(
-                "The `{name}` tool is switched off in Test Case Manager. \
-                 Turn it back on in the app's AI Bridge tab if you need it."
-            )
-        };
+        let text = refusal_text(name, crate::ai_tools::dev_build());
         return serde_json::json!({
             "content": [{
                 "type": "text",

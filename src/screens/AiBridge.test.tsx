@@ -128,7 +128,7 @@ test("the how-it-works card names every MCP tool", async () => {
   // getting rid of.
   // "Find a PBI", not "Find a work item": the query filters on work item
   // type = Product Backlog Item, so it never returns a bug or a task.
-  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki"]) {
+  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
@@ -755,12 +755,43 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(within(toolSection).queryByText("Check a draft")).not.toBeInTheDocument();
   expect(within(toolSection).queryByText("Merge slice files")).not.toBeInTheDocument();
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
-  // Five rows for seven tools: the wiki search and its page reader share
-  // one switch, and so do the suite search and its case reader.
+  // Six rows for nine tools, in this development build: the wiki search
+  // and its page reader share one switch, so do the suite search and its
+  // case reader, and so do the Auto Run guide and script writer.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
   expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
-  expect(within(toolSection).getByText("5 of 5 on")).toBeInTheDocument();
+  expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
+  expect(within(toolSection).getByText("6 of 6 on")).toBeInTheDocument();
+});
+
+test("switching the Auto Run scripts row off sends both tool names in the disabled list", async () => {
+  let seen: unknown;
+  mockIPC((cmd, args) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools")
+      return [{ id: "cursor", name: "Cursor", installed: true, registered_servers: [], scope: "project" }];
+    if (cmd === "db_server_defaults") return null;
+    if (cmd === "register_ai_tool") {
+      seen = args;
+      return null;
+    }
+    return [];
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderBridge(qc);
+
+  fireEvent.click(await screen.findByLabelText("Auto Run scripts"));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Register" }));
+  await waitFor(() =>
+    expect(seen).toMatchObject({
+      id: "cursor",
+      workingDir: "D:\\repo",
+    }),
+  );
+  const disabledTools = (seen as { disabledTools: string[] }).disabledTools;
+  expect([...disabledTools].sort()).toEqual(["get_autorun_guide", "save_autorun_script"]);
 });
 
 test("the PHR-X card hides when switched off in Settings, except during the tour", async () => {

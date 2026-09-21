@@ -598,17 +598,24 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
     assert!(files[0].1.contains(COMMAND_MARKER), "still ours to remove later");
 }
 
-use v2_lib::ai_tools::{effective_disabled, CORE_TOOLS, HIDDEN_TOOLS};
+use v2_lib::ai_tools::{effective_disabled_for, CORE_TOOLS, DEV_ONLY_TOOLS};
 
-/// The policy: two tools are never offered (no way back on), and the core
-/// set can never be switched off - whatever the frontend's list says.
+/// The policy: two tools are development-build only, and the core set can
+/// never be switched off - whatever the frontend's list says, in either
+/// build kind.
 ///
-/// Validate, optimise and merge joined that set: finishing a draft is part
-/// of writing one, and an assistant that can write cases but cannot check,
-/// order or merge them hands over nothing anyone can ship.
+/// Validate, optimise and merge joined the core set: finishing a draft is
+/// part of writing one, and an assistant that can write cases but cannot
+/// check, order or merge them hands over nothing anyone can ship.
+///
+/// `dev_build()` itself is `cfg!(debug_assertions)`, which is true for
+/// this very test binary, so the release rule (`dev: false`) can only be
+/// exercised through `effective_disabled_for`'s explicit seam - never
+/// through `effective_disabled()`, which would always take this process's
+/// own (development) build kind.
 #[test]
-fn the_effective_disabled_set_hides_autorun_and_protects_the_core() {
-    assert_eq!(HIDDEN_TOOLS, ["get_autorun_guide", "save_autorun_script"]);
+fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
+    assert_eq!(DEV_ONLY_TOOLS, ["get_autorun_guide", "save_autorun_script"]);
     assert_eq!(
         CORE_TOOLS,
         [
@@ -622,15 +629,46 @@ fn the_effective_disabled_set_hides_autorun_and_protects_the_core() {
             "merge_case_files"
         ]
     );
+
+    // Release (dev: false): the dev-only tools are disabled first,
+    // always - the same rule the old always-hidden constant enforced.
+    assert_eq!(
+        effective_disabled_for(&[], false),
+        vec!["get_autorun_guide", "save_autorun_script"]
+    );
     // A core tool named in the frontend's list is dropped, not honoured.
     assert_eq!(
-        effective_disabled(&["optimize_cases".into(), "merge_case_files".into()]),
+        effective_disabled_for(&["optimize_cases".into(), "merge_case_files".into()], false),
         vec!["get_autorun_guide", "save_autorun_script"],
         "the three that finish a draft cannot be switched off"
     );
-    let got = effective_disabled(&["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()]);
-    assert_eq!(got, vec!["get_autorun_guide", "save_autorun_script", "search_wiki"], "hidden first, core dropped, no duplicates");
-    assert_eq!(effective_disabled(&[]), vec!["get_autorun_guide", "save_autorun_script"]);
+    let got = effective_disabled_for(
+        &["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()],
+        false,
+    );
+    assert_eq!(
+        got,
+        vec!["get_autorun_guide", "save_autorun_script", "search_wiki"],
+        "dev-only first, core dropped, no duplicates"
+    );
+
+    // Development (dev: true): the dev-only tools default to ON, like
+    // every other switchable tool - not added unasked.
+    assert_eq!(effective_disabled_for(&[], true), Vec::<String>::new());
+    // Named in the person's own list, they switch off like anything else.
+    assert_eq!(
+        effective_disabled_for(&["save_autorun_script".into()], true),
+        vec!["save_autorun_script"]
+    );
+    // Core tools still cannot be switched off, and duplicates still
+    // collapse, in a development build too.
+    assert_eq!(
+        effective_disabled_for(
+            &["optimize_cases".into(), "search_wiki".into(), "search_wiki".into()],
+            true
+        ),
+        vec!["search_wiki"]
+    );
 }
 
 /// A command renamed or dropped from `COMMANDS` (this branch trimmed 17

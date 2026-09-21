@@ -162,9 +162,17 @@ pub async fn route(
         ("GET", "/tags") => tags(ctx, client, target).await,
         // Both autorun routes deliberately ignore `client`: one documents
         // a format, the other writes local files. Neither reaches Azure
-        // DevOps, so neither should demand a sign-in first.
-        ("GET", "/autorun-guide") => (200, crate::autorun::guide::autorun_guide()),
-        ("POST", "/autorun-script") => save_autorun_scripts(body),
+        // DevOps, so neither should demand a sign-in first. Both are
+        // development-build only - checked before anything else, so a
+        // release build never reaches the guide or the writer.
+        ("GET", "/autorun-guide") => match autorun_route_guard(crate::ai_tools::dev_build()) {
+            Some(refused) => refused,
+            None => (200, crate::autorun::guide::autorun_guide()),
+        },
+        ("POST", "/autorun-script") => match autorun_route_guard(crate::ai_tools::dev_build()) {
+            Some(refused) => refused,
+            None => save_autorun_scripts(body),
+        },
         // The proxy asks for this before listing tools, so a toggle in the
         // app takes effect on the assistant's next tools/list.
         ("GET", "/tools") => (
@@ -210,6 +218,19 @@ fn smells_like_a_write(method: &str, target: &str) -> bool {
     ["create", "update", "delete", "edit", "write", "add-", "remove", "submit"]
         .iter()
         .any(|w| path.contains(w))
+}
+
+/// The guard both autorun routes run before doing anything else: outside
+/// a development build there is no switch that can turn them back on, so
+/// they refuse unconditionally rather than falling through to whatever
+/// `ctx.disabled_tools` says. `dev` is explicit so both branches are
+/// testable without a release build.
+pub fn autorun_route_guard(dev: bool) -> Option<(u16, String)> {
+    if dev {
+        None
+    } else {
+        Some((404, "not available in this build".to_string()))
+    }
 }
 
 /// Save one or many Auto Run action scripts, as an assistant writes them.

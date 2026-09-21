@@ -53,7 +53,16 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
   // checked, ordered into a run sheet, or merged back from its slices
   // is a set nobody can ship.
   "validate_cases", "optimize_cases", "merge_case_files"] as const;
-export const HIDDEN_TOOLS = ["get_autorun_guide", "save_autorun_script"] as const;
+
+/** Offered in a development build only: switchable there like any other
+ * tool, absent entirely (not listed, no switch, no skill file) from a
+ * release build. Mirrors `ai_tools.rs`'s `DEV_ONLY_TOOLS`. */
+export const DEV_ONLY_TOOLS = ["get_autorun_guide", "save_autorun_script"] as const;
+
+/** True in `tauri dev` and in this test suite, false in `tauri build` - a
+ * compile-time constant, read once at module load. Mirrors
+ * `Sidebar.tsx`'s `AUTO_RUN_ENABLED` and `ai_tools.rs`'s `dev_build()`. */
+export const DEV_BUILD: boolean = import.meta.env.DEV;
 
 export function isCoreTool(name: string): boolean {
   return (CORE_TOOLS as readonly string[]).includes(name);
@@ -73,6 +82,11 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // The same shape: the reader takes the plan id and suite id the search
   // returns, and has no other way to name a suite.
   ["search_test_suites", "get_suite_test_cases"],
+  // Not the same shape as the two above - each of these can be called on
+  // its own - but the guide and the writer are still one choice: a
+  // writer nobody can read the format for, or a guide nobody can act on,
+  // are each half a tool. Development builds only; see DEV_ONLY_TOOLS.
+  ["get_autorun_guide", "save_autorun_script"],
 ];
 
 /** The one human name and summary a pair shows, keyed by its first member. */
@@ -81,6 +95,10 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   search_test_suites: {
     label: "Test Suites",
     summary: "Find a test suite by plan, name or PBI, and read the cases in it.",
+  },
+  get_autorun_guide: {
+    label: "Auto Run scripts",
+    summary: "Read the script-writing guide and save browser scripts for a PBI's cases. Development builds only.",
   },
 };
 
@@ -129,15 +147,18 @@ export function toggleRow(disabled: string[], names: string[]): string[] {
 
 /** The rows the AI Bridge tab renders: the tools that can be switched.
  *
- * Neither the hidden tools nor the always-on ones appear. A row carrying no
- * switch was a control that did nothing, and they are enforced in
- * `ai_tools.rs` whatever this list shows - listing them only invited the
- * reader to look for a way to turn them off that does not exist. What is
- * left is exactly the set of choices this screen can honour.
+ * The always-on tools never appear - a row carrying no switch was a
+ * control that did nothing, and they are enforced in `ai_tools.rs`
+ * whatever this list shows. Nor do the development-build-only tools,
+ * unless this IS a development build - a switch for a tool a release
+ * build will never offer would toggle nothing. What is left is exactly
+ * the set of choices this screen can honour, for this build.
  */
 export function visibleTools(): McpToolInfo[] {
   return MCP_TOOLS.filter(
-    (t) => !(HIDDEN_TOOLS as readonly string[]).includes(t.name) && !isCoreTool(t.name),
+    (t) =>
+      !isCoreTool(t.name) &&
+      (DEV_BUILD || !(DEV_ONLY_TOOLS as readonly string[]).includes(t.name)),
   );
 }
 
@@ -151,7 +172,10 @@ export function loadDisabledTools(): string[] {
       (t) =>
         typeof t === "string" &&
         !isCoreTool(t) &&
-        !(HIDDEN_TOOLS as readonly string[]).includes(t),
+        // A list saved in a development build can name a dev-only tool.
+        // Dropped outside a development build, where it would be
+        // meaningless - there is no request it could ever be attached to.
+        (DEV_BUILD || !(DEV_ONLY_TOOLS as readonly string[]).includes(t)),
     );
     // A list saved before the pairing can name one half of a pair. Complete
     // it toward OFF: the pair is one switch now, and the alternative would

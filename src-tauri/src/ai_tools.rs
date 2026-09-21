@@ -185,23 +185,45 @@ pub const CORE_TOOLS: &[&str] = &[
     "merge_case_files",
 ];
 
-/// Tools that are never offered: not listed, not callable, no skill file,
-/// no switch to turn them on. The in-app Auto Run screen is unaffected;
-/// only the assistant's path to it is closed.
-pub const HIDDEN_TOOLS: &[&str] = &["get_autorun_guide", "save_autorun_script"];
+/// Tools offered in a development build only: listed, switchable and
+/// callable there like any other tool, but never present at all in a
+/// release build - not listed, no switch, no skill file, and a direct
+/// call is refused. The in-app Auto Run screen is unaffected; only the
+/// assistant's path to it is closed outside development.
+pub const DEV_ONLY_TOOLS: &[&str] = &["get_autorun_guide", "save_autorun_script"];
 
-/// The disabled set as it is actually applied: the hidden tools first,
-/// then whatever the frontend sent, minus the core tools and duplicates.
-/// One function, used by tools/list, the call-time refusal and the skill
-/// writer, so no path can disagree with another about what is off.
-pub fn effective_disabled(disabled: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = HIDDEN_TOOLS.iter().map(|s| s.to_string()).collect();
+/// Whether this process is a development build: `cargo test` and
+/// `tauri dev` compile with debug assertions on, `tauri build` does not.
+/// The one place that reads `cfg!(debug_assertions)`, so every other spot
+/// that needs the distinction takes a `dev: bool` instead and stays
+/// testable for both values without a release build.
+pub fn dev_build() -> bool {
+    cfg!(debug_assertions)
+}
+
+/// The disabled set as it is actually applied: in a release build the
+/// dev-only tools first, always; in a development build they are added
+/// only when `disabled` names them. Then whatever the frontend sent,
+/// minus the core tools and duplicates, either way. One function, used by
+/// tools/list, the call-time refusal and the skill writer, so no path can
+/// disagree with another about what is off.
+pub fn effective_disabled_for(disabled: &[String], dev: bool) -> Vec<String> {
+    let mut out: Vec<String> = if dev {
+        Vec::new()
+    } else {
+        DEV_ONLY_TOOLS.iter().map(|s| s.to_string()).collect()
+    };
     for d in disabled {
         if !CORE_TOOLS.contains(&d.as_str()) && !out.iter().any(|o| o == d) {
             out.push(d.clone());
         }
     }
     out
+}
+
+/// `effective_disabled_for` at this process's own build kind.
+pub fn effective_disabled(disabled: &[String]) -> Vec<String> {
+    effective_disabled_for(disabled, dev_build())
 }
 
 /// One command per thing a person reaches for by name; every other tool

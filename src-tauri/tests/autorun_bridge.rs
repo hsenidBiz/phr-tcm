@@ -4,7 +4,7 @@
 //! Neither touches Azure DevOps, so neither needs a signed-in client -
 //! the guide documents a format, and the scripts are local files.
 
-use v2_lib::ai_bridge::{route, BridgeContext};
+use v2_lib::ai_bridge::{autorun_route_guard, route, BridgeContext};
 use v2_lib::autorun::store::{load_script, set_root};
 
 struct TempDir(std::path::PathBuf);
@@ -190,4 +190,29 @@ async fn a_write_failure_mid_bundle_leaves_nothing_behind() {
         load_script(dir.path(), 11).unwrap().is_none(),
         "case 11 was written even though case 12 in the same bundle could not be"
     );
+}
+
+// ----------------------------------------------------------- the dev gate
+//
+// Both routes above run through `route()`, which reads its own build's
+// `dev_build()` - always true for this test binary, since `cargo test`
+// compiles with debug assertions on. The release rule (a release build
+// refuses outright) can only be proven through the guard's explicit
+// `dev: bool` seam, exercised directly here.
+
+/// Outside a development build, the guard refuses unconditionally with
+/// the exact sentence the two routes are meant to answer.
+#[test]
+fn the_guard_refuses_outside_a_development_build() {
+    let refused = autorun_route_guard(false);
+    let (status, body) = refused.expect("a release build must be refused");
+    assert_eq!(status, 404);
+    assert_eq!(body, "not available in this build");
+}
+
+/// Inside a development build, the guard lets the request through - the
+/// caller falls through to the route's own handling.
+#[test]
+fn the_guard_lets_a_development_build_through() {
+    assert!(autorun_route_guard(true).is_none());
 }

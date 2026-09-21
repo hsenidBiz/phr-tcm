@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test } from "vitest";
-import { CORE_TOOLS, HIDDEN_TOOLS, loadDisabledTools, MCP_TOOLS, toggleRow, toggleTool, visibleRows, visibleTools } from "./mcpTools";
+import { expect, test, vi } from "vitest";
+import { CORE_TOOLS, DEV_BUILD, DEV_ONLY_TOOLS, loadDisabledTools, MCP_TOOLS, toggleRow, toggleTool, visibleRows, visibleTools } from "./mcpTools";
 
 /**
  * The toggle list is a hand-written mirror of `mcp.rs`. If the two drift, a
@@ -38,18 +38,22 @@ test("core tools cannot be toggled", () => {
 });
 
 /// The list is the tools you can DO something about. A row with no switch
-/// was a control that did nothing, and the five it named are enforced on
-/// the Rust side whatever this list shows - so they are not offered here
-/// at all, the same way the two Auto Run tools already were not.
-test("neither core nor hidden tools are listed", () => {
+/// was a control that did nothing, and the eight core tools are enforced
+/// on the Rust side whatever this list shows - so they are never offered
+/// here, in either build kind.
+test("core tools are never listed, in either build kind", () => {
   const listed = visibleTools().map((t) => t.name);
-  for (const name of [...CORE_TOOLS, ...HIDDEN_TOOLS]) {
+  for (const name of CORE_TOOLS) {
     expect(listed).not.toContain(name);
   }
   // The switchable ones are still all there - this must not empty the list.
   expect(listed).toContain("search_wiki");
   expect(listed).toContain("get_tags");
-  expect(listed.length).toBe(MCP_TOOLS.length - CORE_TOOLS.length - HIDDEN_TOOLS.length);
+  // The two dev-only tools are part of the count only when this build
+  // offers them at all - see the DEV-stubbed tests below for both values.
+  expect(listed.length).toBe(
+    MCP_TOOLS.length - CORE_TOOLS.length - (DEV_BUILD ? 0 : DEV_ONLY_TOOLS.length),
+  );
 });
 
 test("a saved list naming a core tool is ignored on load", () => {
@@ -59,12 +63,12 @@ test("a saved list naming a core tool is ignored on load", () => {
 });
 
 /**
- * CORE_TOOLS and HIDDEN_TOOLS are each hand-written twice - once in
+ * CORE_TOOLS and DEV_ONLY_TOOLS are each hand-written twice - once in
  * `ai_tools.rs`, once here - and nothing else keeps them in sync. Read the
  * Rust consts directly and compare, so a change on one side that forgets
  * the other fails a test instead of drifting quietly.
  */
-test("the core and hidden tool lists match the Rust side", () => {
+test("the core and dev-only tool lists match the Rust side", () => {
   const rs = readFileSync(resolve(process.cwd(), "src-tauri/src/ai_tools.rs"), "utf8");
 
   const extractList = (constName: string): string[] => {
@@ -77,10 +81,10 @@ test("the core and hidden tool lists match the Rust side", () => {
   };
 
   const rsCore = extractList("CORE_TOOLS");
-  const rsHidden = extractList("HIDDEN_TOOLS");
+  const rsDevOnly = extractList("DEV_ONLY_TOOLS");
 
   expect([...rsCore].sort()).toEqual([...CORE_TOOLS].sort());
-  expect([...rsHidden].sort()).toEqual([...HIDDEN_TOOLS].sort());
+  expect([...rsDevOnly].sort()).toEqual([...DEV_ONLY_TOOLS].sort());
 });
 
 /// `get_wiki_page` reads a page that `search_wiki` found - it has no way to
@@ -134,19 +138,67 @@ test("validate, optimise and merge are always on and not listed", () => {
   }
 });
 
-/// Five rows is the whole of what this screen can still decide. The suite
-/// pair takes one switch, like the wiki pair: a reader that can never be
-/// handed a suite id is no choice at all.
-test("only the switchable tools are left, as five rows", () => {
+/// This suite (and this file's default vitest env) runs as a development
+/// build - DEV_BUILD is true unless a test stubs it otherwise - so the
+/// Auto Run pair is one of the rows here too. The suite pair takes one
+/// switch, like the wiki pair: a reader that can never be handed a suite
+/// id is no choice at all.
+test("only the switchable tools are left, as six rows in a development build", () => {
+  expect(DEV_BUILD, "this file's default env").toBe(true);
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_failures",
+    "get_autorun_guide+save_autorun_script",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
   ]);
   const suites = visibleRows().find((r) => r.key.startsWith("search_test_suites"));
   expect(suites?.label).toBe("Test Suites");
+  const autorun = visibleRows().find((r) => r.key.startsWith("get_autorun_guide"));
+  expect(autorun?.label).toBe("Auto Run scripts");
+});
+
+/// With DEV stubbed true, the Auto Run pair is offered as one row and its
+/// switch moves both tools together, the same as any other pair.
+test("with DEV stubbed true, the Auto Run scripts row carries both tools", async () => {
+  vi.stubEnv("DEV", true);
+  vi.resetModules();
+  const mod = await import("./mcpTools");
+
+  const row = mod.visibleRows().find((r) => r.label === "Auto Run scripts");
+  expect(row, "the Auto Run scripts row exists").toBeTruthy();
+  expect(row!.names).toEqual(["get_autorun_guide", "save_autorun_script"]);
+
+  const off = mod.toggleRow([], row!.names);
+  expect([...off].sort()).toEqual(["get_autorun_guide", "save_autorun_script"]);
+  expect(mod.toggleRow(off, row!.names)).toEqual([]);
+
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
+/// With DEV stubbed false, the row disappears entirely and a list saved
+/// while the app was built for development cannot carry the two names
+/// into a release build's requests, where they would be meaningless.
+test("with DEV stubbed false, no row mentions Auto Run and a saved list is stripped of it", async () => {
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const mod = await import("./mcpTools");
+
+  expect(mod.visibleRows().some((r) => r.label.includes("Auto Run"))).toBe(false);
+  expect(mod.visibleRows().flatMap((r) => r.names)).not.toContain("get_autorun_guide");
+  expect(mod.visibleRows().flatMap((r) => r.names)).not.toContain("save_autorun_script");
+
+  localStorage.setItem(
+    "tcm-v2-mcp-disabled",
+    JSON.stringify(["get_autorun_guide", "save_autorun_script", "get_tags"]),
+  );
+  expect(mod.loadDisabledTools()).toEqual(["get_tags"]);
+  localStorage.clear();
+
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 /// The screen shows names people read, not identifiers. An underscore in a

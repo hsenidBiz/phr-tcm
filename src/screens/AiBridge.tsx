@@ -20,7 +20,7 @@ import {
   loadDbConfig,
   saveDbConfig,
 } from "../lib/dbServer";
-import { loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
+import { DEV_BUILD, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
 import {
   addRepository,
@@ -905,6 +905,16 @@ export default function AiBridge() {
             from the address in your browser. Searching and reading are one switch
             because reading only works on a page the search found.
           </li>
+          {DEV_BUILD && (
+            <li>
+              <span className="font-medium text-text">Auto Run scripts</span>: reads the guide for writing an Auto Run browser
+              script, and saves the scripts you write back, one call for a whole
+              PBI&apos;s cases. Development builds only, so this row and both tools
+              are missing entirely from a release build, not just switched off. Off,
+              an assistant cannot read the guide or save a script, and Auto Run
+              stays something you drive by hand.
+            </li>
+          )}
         </ul>
         <p className="text-sm text-muted">
           Recommended flow: ask the AI to read the writing guide and some
