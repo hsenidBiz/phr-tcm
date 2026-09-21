@@ -17,8 +17,8 @@ fn quick() -> Timing {
 
 fn probe(over: Value) -> Value {
     let mut base = json!({
-        "visible": true, "enabled": true, "editable": true, "stable": true,
-        "hit": true, "x": 40.5, "y": 12.0, "covered_by": ""
+        "visible": true, "enabled": true, "editable": true, "onscreen": true,
+        "hit": true, "x": 40.5, "y": 12.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0]
     });
     for (k, v) in over.as_object().unwrap() {
         base[k] = v.clone();
@@ -51,12 +51,15 @@ fn css(sel: &str) -> Target {
     serde_json::from_value(json!({ "css": sel })).unwrap()
 }
 
+/// A ready element still needs to be SEEN holding still: the same rect on
+/// two consecutive looks.
 #[tokio::test]
 async fn a_ready_element_comes_back_with_where_to_click() {
-    let (mut d, _) = page(1, vec![probe(json!({}))]);
+    let (mut d, asked) = page(1, vec![probe(json!({})), probe(json!({}))]);
     let ready = wait_ready(&mut d, &css("#go"), false, &quick()).await.ok().unwrap();
     assert_eq!(ready.handle, "el-0");
     assert_eq!((ready.x, ready.y), (40.5, 12.0));
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
 }
 
 /// The whole point: a button that is disabled while the page loads is
@@ -65,17 +68,23 @@ async fn a_ready_element_comes_back_with_where_to_click() {
 async fn it_waits_for_a_disabled_element_to_become_enabled() {
     let (mut d, asked) = page(
         1,
-        vec![probe(json!({ "enabled": false })), probe(json!({ "enabled": false })), probe(json!({}))],
+        vec![
+            probe(json!({ "enabled": false })),
+            probe(json!({ "enabled": false })),
+            probe(json!({})),
+            probe(json!({})),
+        ],
     );
     assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
-    assert_eq!(asked.load(Ordering::SeqCst), 3);
+    // Two disabled looks, then two matching-rect looks once it is enabled.
+    assert_eq!(asked.load(Ordering::SeqCst), 4);
 }
 
 #[tokio::test]
 async fn each_reason_is_said_in_words() {
     let cases = [
         (json!({ "visible": false }), "is not visible"),
-        (json!({ "stable": false }), "is still moving"),
+        (json!({ "onscreen": false }), "is outside the visible part of the page"),
         (json!({ "enabled": false }), "is disabled"),
         (json!({ "hit": false, "covered_by": "div.overlay" }), "is covered by div.overlay"),
     ];
@@ -92,6 +101,74 @@ async fn each_reason_is_said_in_words() {
     }
 }
 
+/// The Rust-side fallback for an unnamed cause must never say "nothing":
+/// that reads as "covered by nothing", which is nonsense to a person.
+#[tokio::test]
+async fn a_covered_element_with_no_named_cause_still_gets_a_reason() {
+    let mut raw = probe(json!({ "hit": false }));
+    raw.as_object_mut().unwrap().remove("covered_by");
+    let (mut d, _) = page(1, vec![raw]);
+    match wait_ready(&mut d, &css("#go"), false, &quick()).await {
+        Err(Blocked::Page(msg)) => {
+            assert!(msg.contains("is covered by another element"), "{msg}");
+            assert!(!msg.contains("nothing"), "{msg}");
+        }
+        _ => panic!("expected a page reason"),
+    }
+}
+
+/// Two consecutive looks with the SAME rect: ready on the second.
+#[tokio::test]
+async fn readiness_needs_the_same_rect_twice_in_a_row() {
+    let rect_a = json!([0.0, 0.0, 80.0, 24.0]);
+    let (mut d, asked) =
+        page(1, vec![probe(json!({ "rect": rect_a.clone() })), probe(json!({ "rect": rect_a }))]);
+    assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+}
+
+/// Rect A, then rect B twice: ready on the third look, once B repeats.
+#[tokio::test]
+async fn a_settling_rect_change_still_reaches_ready() {
+    let rect_a = json!([0.0, 0.0, 80.0, 24.0]);
+    let rect_b = json!([5.0, 0.0, 80.0, 24.0]);
+    let (mut d, asked) = page(
+        1,
+        vec![
+            probe(json!({ "rect": rect_a })),
+            probe(json!({ "rect": rect_b.clone() })),
+            probe(json!({ "rect": rect_b })),
+        ],
+    );
+    assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
+    assert_eq!(asked.load(Ordering::SeqCst), 3);
+}
+
+/// A rect that never repeats within the action budget never counts as
+/// ready: the last reason reported is "still moving", not a false pass.
+#[tokio::test]
+async fn a_never_settling_rect_times_out_as_still_moving() {
+    let n = Arc::new(AtomicUsize::new(0));
+    let c = n.clone();
+    let mut d = ScriptedDriver::new(move |method, params| match method {
+        "Runtime.releaseObjectGroup" => Ok(json!({})),
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == PROBE_JS => {
+            let i = c.fetch_add(1, Ordering::SeqCst) as f64;
+            Ok(json!({ "result": { "value": probe(json!({ "rect": [i, 0.0, 80.0, 24.0] })) } }))
+        }
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+        "Runtime.getProperties" => {
+            Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] }))
+        }
+        other => panic!("unexpected {other}"),
+    });
+    match wait_ready(&mut d, &css("#go"), false, &quick()).await {
+        Err(Blocked::Page(msg)) => assert!(msg.contains("is still moving"), "{msg}"),
+        other => panic!("expected a still-moving timeout, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn typing_needs_something_that_takes_text() {
     let (mut d, _) = page(1, vec![probe(json!({ "editable": false }))]);
@@ -100,7 +177,8 @@ async fn typing_needs_something_that_takes_text() {
         _ => panic!("expected a page reason"),
     }
     // The same element is fine to CLICK.
-    let (mut d, _) = page(1, vec![probe(json!({ "editable": false }))]);
+    let (mut d, _) =
+        page(1, vec![probe(json!({ "editable": false })), probe(json!({ "editable": false }))]);
     assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
 }
 
@@ -160,16 +238,50 @@ async fn a_dead_browser_is_a_harness_failure_at_once() {
     assert!(d.calls.len() <= 3, "it must not keep polling a dead browser: {:?}", d.methods());
 }
 
+/// `click` re-probes the handle before it acts: the coordinate in `Ready`
+/// is stale by the time a highlight pause has run, so the fresh point is
+/// what actually gets clicked.
 #[tokio::test]
-async fn a_click_is_three_real_mouse_events_at_the_probed_point() {
-    let mut d = ScriptedDriver::new(|_, _| Ok(json!({})));
-    click(&mut d, &Ready { handle: "el".into(), x: 40.5, y: 12.0 }).await.unwrap();
+async fn a_click_re_probes_then_sends_three_real_mouse_events() {
+    let mut d = ScriptedDriver::new(|method, params| match method {
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == PROBE_JS => {
+            Ok(json!({ "result": { "value": probe(json!({ "x": 40.5, "y": 12.0 })) } }))
+        }
+        _ => Ok(json!({})),
+    });
+    click(&mut d, &Ready { handle: "el".into(), x: 999.0, y: 999.0 }).await.unwrap();
+
+    let probed = &d.calls_to("Runtime.callFunctionOn")[0];
+    assert_eq!(probed["functionDeclaration"], PROBE_JS);
+    assert_eq!(probed["objectId"], "el");
+
     let sent = d.calls_to("Input.dispatchMouseEvent");
     let kinds: Vec<&str> = sent.iter().map(|p| p["type"].as_str().unwrap()).collect();
     assert_eq!(kinds, vec!["mouseMoved", "mousePressed", "mouseReleased"]);
+    // The FRESH point from the re-probe, not the stale one in `Ready`.
     assert!(sent.iter().all(|p| p["x"] == 40.5 && p["y"] == 12.0));
+    let buttons: Vec<i64> = sent.iter().map(|p| p["buttons"].as_i64().unwrap()).collect();
+    assert_eq!(buttons, vec![0, 1, 0]);
     assert_eq!(sent[1]["button"], "left");
     assert_eq!(sent[1]["clickCount"], 1);
+}
+
+#[tokio::test]
+async fn a_click_is_refused_when_the_re_probe_finds_it_covered() {
+    let mut d = ScriptedDriver::new(|method, params| match method {
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == PROBE_JS => Ok(json!({
+            "result": { "value": probe(json!({ "hit": false, "covered_by": "div.overlay" })) }
+        })),
+        _ => Ok(json!({})),
+    });
+    match click(&mut d, &Ready { handle: "el".into(), x: 40.5, y: 12.0 }).await {
+        Err(Blocked::Page(msg)) => {
+            assert!(msg.contains("just before the click"), "{msg}");
+            assert!(msg.contains("is covered by div.overlay"), "{msg}");
+        }
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+    assert!(d.calls_to("Input.dispatchMouseEvent").is_empty());
 }
 
 /// Measured on real Edge: Input.insertText fires a genuine input event,
@@ -202,8 +314,23 @@ async fn filling_with_nothing_clears_the_field() {
     assert_eq!(keys[1]["type"], "keyUp");
 }
 
+/// A date-like field (verified on Edge: date, time, month, week,
+/// datetime-local, color, range) does not accept typed characters, so it
+/// is set through its native value setter and never typed into.
+#[tokio::test]
+async fn a_date_like_field_is_set_directly_not_typed() {
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "set" } })),
+        _ => Ok(json!({})),
+    });
+    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "2026-09-21").await.ok().unwrap();
+    assert!(d.calls_to("Input.insertText").is_empty());
+    assert!(d.calls_to("Input.dispatchKeyEvent").is_empty());
+}
+
 /// A native <select> is set in the page (typing into one does nothing),
-/// and an option that is not there is said plainly.
+/// and an option that is not there, or that cannot be picked, is said
+/// plainly.
 #[tokio::test]
 async fn a_native_select_is_chosen_not_typed() {
     let mut d = ScriptedDriver::new(|method, _| match method {
@@ -220,5 +347,42 @@ async fn a_native_select_is_chosen_not_typed() {
     match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "Nope").await {
         Err(Blocked::Page(msg)) => assert!(msg.contains("no option") && msg.contains("Nope"), "{msg}"),
         _ => panic!("expected a page reason"),
+    }
+
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "select-disabled" } })),
+        _ => Ok(json!({})),
+    });
+    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "Archived").await {
+        Err(Blocked::Page(msg)) => {
+            assert!(msg.contains("is disabled") && msg.contains("Archived"), "{msg}")
+        }
+        _ => panic!("expected a page reason"),
+    }
+}
+
+#[tokio::test]
+async fn a_page_refusal_during_fill_is_blamed_on_the_page() {
+    let mut d = ScriptedDriver::new(|_, _| {
+        Err(CdpError::Protocol {
+            method: "Runtime.callFunctionOn".into(),
+            message: "no such element".into(),
+        })
+    });
+    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "x").await {
+        Err(Blocked::Page(msg)) => {
+            assert!(msg.contains("the page refused"), "{msg}");
+            assert!(!msg.contains("browser"), "{msg}");
+        }
+        other => panic!("expected a page reason, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_dead_browser_during_fill_is_blamed_on_the_browser() {
+    let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+    match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "x").await {
+        Err(Blocked::Harness(msg)) => assert!(msg.contains("browser"), "{msg}"),
+        other => panic!("expected a harness failure, got {other:?}"),
     }
 }
