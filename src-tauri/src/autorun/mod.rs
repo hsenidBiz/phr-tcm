@@ -7,6 +7,7 @@
 
 pub mod accounts;
 pub mod guide;
+pub mod recipe;
 pub mod store;
 
 use crate::browser::actions::{Action, ActionOutcome};

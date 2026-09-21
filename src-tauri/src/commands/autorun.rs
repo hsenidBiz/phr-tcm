@@ -279,3 +279,26 @@ pub fn auto_run_save_accounts(
     crate::applog::info(format!("Auto-run accounts saved ({} account(s))", accounts.len()));
     Ok(dropped)
 }
+
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_recipe(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Option<crate::autorun::recipe::SignInRecipe>, String> {
+    crate::autorun::recipe::load_recipe(&root(&app)?, &organization, &project)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_save_recipe(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    recipe: crate::autorun::recipe::SignInRecipe,
+) -> Result<(), String> {
+    crate::autorun::recipe::save_recipe(&root(&app)?, &organization, &project, &recipe)?;
+    crate::applog::info("Auto-run sign-in recipe saved");
+    Ok(())
+}

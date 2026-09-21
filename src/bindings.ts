@@ -289,6 +289,21 @@ export const commands = {
 	 *  dropped, so the screen can say so.
 	 */
 	autoRunSaveAccounts: (accounts: Account[]) => typedError<string[], string>(__TAURI_INVOKE("auto_run_save_accounts", { accounts })),
+	autoRunLoadRecipe: (organization: string, project: string) => typedError<{
+	/**  Where a fresh browser goes first. Absolute, http or https. */
+	start_url: string,
+	steps: RecipeStep_Serialize[],
+	/**  Exactly one visible match of this means "signed in". */
+	signed_in: Target_Serialize,
+	/**
+	 *  Other origins `navigate` may go to. The start address's own origin
+	 *  is always allowed.
+	 */
+	allowed_origins: string[],
+	/**  How long a saved session is trusted. */
+	session_minutes: number,
+} | null, string>(__TAURI_INVOKE("auto_run_load_recipe", { organization, project })),
+	autoRunSaveRecipe: (organization: string, project: string, recipe: SignInRecipe_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_recipe", { organization, project, recipe })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -1382,6 +1397,12 @@ export type PullRequest = {
 	web_url: string,
 };
 
+export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
+
+export type RecipeStep_Deserialize = ({ Do: Action_Deserialize }) & { WhenVisible?: never } | ({ WhenVisible: WhenVisible_Deserialize }) & { Do?: never };
+
+export type RecipeStep_Serialize = ({ Do: Action_Serialize }) & { WhenVisible?: never } | ({ WhenVisible: WhenVisible_Serialize }) & { Do?: never };
+
 /**
  *  One test case's fate after a relink attempt - same shape as
  *  `deletion::DeleteOutcome` but named for what actually happened: a
@@ -1518,6 +1539,38 @@ export type SharedQueue_Serialize = {
 	project: string,
 	cases: TestCase_Serialize[],
 	warnings: string[],
+};
+
+export type SignInRecipe = SignInRecipe_Serialize | SignInRecipe_Deserialize;
+
+export type SignInRecipe_Deserialize = {
+	/**  Where a fresh browser goes first. Absolute, http or https. */
+	start_url: string,
+	steps: RecipeStep_Deserialize[],
+	/**  Exactly one visible match of this means "signed in". */
+	signed_in: Target_Deserialize,
+	/**
+	 *  Other origins `navigate` may go to. The start address's own origin
+	 *  is always allowed.
+	 */
+	allowed_origins?: string[],
+	/**  How long a saved session is trusted. */
+	session_minutes?: number,
+};
+
+export type SignInRecipe_Serialize = {
+	/**  Where a fresh browser goes first. Absolute, http or https. */
+	start_url: string,
+	steps: RecipeStep_Serialize[],
+	/**  Exactly one visible match of this means "signed in". */
+	signed_in: Target_Serialize,
+	/**
+	 *  Other origins `navigate` may go to. The start address's own origin
+	 *  is always allowed.
+	 */
+	allowed_origins: string[],
+	/**  How long a saved session is trusted. */
+	session_minutes: number,
 };
 
 /**
@@ -1942,6 +1995,23 @@ export type UpdateStatus = {
 export type WatchedFileChanged = {
 	path: string,
 	stamp: string,
+};
+
+/**  A prompt that may or may not appear. Recipe only. */
+export type WhenVisible = WhenVisible_Serialize | WhenVisible_Deserialize;
+
+/**  A prompt that may or may not appear. Recipe only. */
+export type WhenVisible_Deserialize = {
+	selector: Target_Deserialize,
+	within_ms: number,
+	then: Action_Deserialize[],
+};
+
+/**  A prompt that may or may not appear. Recipe only. */
+export type WhenVisible_Serialize = {
+	selector: Target_Serialize,
+	within_ms: number,
+	then: Action_Serialize[],
 };
 
 /**
