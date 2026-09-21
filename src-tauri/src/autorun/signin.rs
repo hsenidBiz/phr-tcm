@@ -8,7 +8,7 @@ use super::accounts::{find_account, Account};
 use super::recipe::{for_account, load_recipe, RecipeStep, SignInRecipe};
 use super::sessions::{forget_session, load_fresh_session, now_ms, save_session};
 use crate::browser::actions::{execute_in, Action, ActionOutcome, Policy};
-use crate::browser::cdp::Driver;
+use crate::browser::cdp::{CdpError, Driver};
 use crate::browser::expect::{expect, Check};
 use crate::browser::session;
 use crate::browser::timing::Timing;
@@ -59,6 +59,17 @@ impl Run<'_> {
     }
 }
 
+/// What a failed `session::clear` means, in words - not just "the browser
+/// did not answer". `clear` runs `Network.clearBrowserCookies` first, then
+/// `Storage.clearDataForOrigin` per origin, so a failure anywhere in it can
+/// leave some, or all, of the previous account's state still live: the
+/// person has to be told to open a fresh browser rather than trust this one.
+fn clear_failed(e: CdpError) -> String {
+    format!(
+        "the browser did not answer while the last sign-in was being cleared, so someone may still be signed in in that window - open a fresh browser before going on: {e}"
+    )
+}
+
 pub async fn sign_in<D: Driver>(
     d: &mut D,
     root: &Path,
@@ -73,7 +84,7 @@ pub async fn sign_in<D: Driver>(
     let who = if account.label.trim().is_empty() { account.key.clone() } else { account.label.clone() };
 
     if let Err(e) = session::clear(d, &origins).await {
-        return run.done(false, format!("the browser did not answer: {e}"), false);
+        return run.done(false, clear_failed(e), false);
     }
 
     if let Some(saved) = load_fresh_session(root, &account.key, recipe.session_minutes, now_ms()) {
@@ -88,13 +99,20 @@ pub async fn sign_in<D: Driver>(
                 }
             }
             Err(e) if !e.is_transient() => {
+                // Best effort: `Network.setCookies` may already have put the
+                // saved session's cookies live before this failed, and they
+                // must not be left that way just because the browser then
+                // stopped answering. The session file itself is kept - a
+                // browser that stopped answering says nothing about whether
+                // the saved session is still good.
+                let _ = session::clear(d, &origins).await;
                 return run.done(false, format!("the browser did not answer: {e}"), false);
             }
             Err(_) => {}
         }
         forget_session(root, &account.key);
         if let Err(e) = session::clear(d, &origins).await {
-            return run.done(false, format!("the browser did not answer: {e}"), false);
+            return run.done(false, clear_failed(e), false);
         }
     }
 

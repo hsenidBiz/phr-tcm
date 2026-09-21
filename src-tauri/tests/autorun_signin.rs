@@ -10,10 +10,10 @@ use v2_lib::autorun::accounts::{save_accounts, session_path, Account};
 use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
 use v2_lib::autorun::sessions::{now_ms, save_session};
 use v2_lib::autorun::signin::{prepare, redact, sign_in};
-use v2_lib::browser::cdp::Event;
+use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::{HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
-use v2_lib::browser::session::SavedSession;
+use v2_lib::browser::session::{OriginStorage, SavedSession};
 use v2_lib::browser::timing::Timing;
 
 const PASSWORD: &str = "s3cret-Value";
@@ -204,6 +204,65 @@ async fn a_recipe_that_runs_but_never_reaches_the_marker_says_so() {
     assert!(!out.ok);
     assert!(out.detail.contains("#marker") && out.detail.contains("username and password"), "{}", out.detail);
     assert!(!out.detail.contains("not-the-password"));
+}
+
+#[tokio::test]
+async fn a_browser_that_will_not_clear_cookies_says_someone_may_still_be_signed_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Network.clearBrowserCookies" => Err(CdpError::Closed),
+        _ => Ok(json!({})),
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("browser") && out.detail.contains("may still be signed in"), "{}", out.detail);
+    assert!(d.calls_to("Page.navigate").is_empty(), "nothing was cleared, so nothing should have been visited");
+    assert!(d.calls_to("Input.insertText").is_empty());
+    assert!(!session_path(dir.path(), "admin").exists());
+}
+
+#[tokio::test]
+async fn a_browser_that_clears_cookies_but_not_storage_says_someone_may_still_be_signed_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Storage.clearDataForOrigin" => Err(CdpError::Closed),
+        _ => Ok(json!({})),
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("browser") && out.detail.contains("may still be signed in"), "{}", out.detail);
+    assert!(d.calls_to("Page.navigate").is_empty());
+    assert!(d.calls_to("Input.insertText").is_empty());
+    assert!(!session_path(dir.path(), "admin").exists());
+}
+
+#[tokio::test]
+async fn a_browser_that_fails_mid_restore_is_cleared_before_giving_up_but_keeps_the_session_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let saved = SavedSession {
+        saved_at_ms: now_ms(),
+        cookies: vec![json!({ "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true })],
+        local_storage: vec![OriginStorage {
+            origin: "https://hr.example.internal".into(),
+            entries: vec![("k".into(), "v".into())],
+        }],
+    };
+    save_session(dir.path(), "admin", &saved).unwrap();
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Page.addScriptToEvaluateOnNewDocument" => Err(CdpError::Closed),
+        _ => Ok(json!({})),
+    });
+    let out = sign_in(&mut d, dir.path(), &recipe(), &account(), &quick()).await;
+    assert!(!out.ok, "{}", out.detail);
+    assert_eq!(
+        d.calls_to("Network.clearBrowserCookies").len(),
+        2,
+        "cleared once up front, once best-effort after the failed restore"
+    );
+    assert!(
+        session_path(dir.path(), "admin").is_file(),
+        "a browser that stopped answering says nothing about whether the saved session is still good"
+    );
 }
 
 #[test]
