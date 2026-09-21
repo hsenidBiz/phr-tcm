@@ -6,7 +6,7 @@
 
 use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};
-use crate::browser::actions::{execute, ActionOutcome, Evaluator};
+use crate::browser::actions::{execute, ActionOutcome};
 use crate::browser::cdp::Cdp;
 use crate::browser::launch::{launch_in, Browser, LaunchedBrowser};
 use std::path::PathBuf;
@@ -19,12 +19,6 @@ static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_
 struct Session {
     browser: LaunchedBrowser,
     cdp: Cdp,
-}
-
-impl Evaluator for Cdp {
-    async fn eval(&mut self, expression: &str) -> Result<serde_json::Value, String> {
-        Cdp::eval(self, expression).await.map_err(|e| e.to_string())
-    }
 }
 
 /// Said when a step arrives with no browser behind it. Pulled out so a

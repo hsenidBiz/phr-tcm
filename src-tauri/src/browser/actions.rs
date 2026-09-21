@@ -1,23 +1,25 @@
-//! The typed steps a script is made of, and the JavaScript each becomes.
+//! The typed steps a script is made of, and what each does to the browser.
 //!
-//! Every expression returns `{ ok, detail }`: `detail` is written for the
+//! Every action answers `{ ok, detail }`. `detail` is written for the
 //! human watching, because in this runner the person - not the machine -
 //! decides the verdict. An action that cannot tell what happened says so
 //! rather than guessing.
 
-/// How long between polls while waiting for an element.
-const POLL_MS: u64 = 200;
-/// How long the highlight stays on screen before the action fires, so a
-/// watcher can see WHERE the click is about to go.
-const HIGHLIGHT_MS: u64 = 350;
+use super::cdp::{CdpError, Driver};
+use super::input::{self, Blocked};
+use super::locator::{resolve, Target};
+use super::page;
+use super::timing::Timing;
+use serde_json::json;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
     Navigate { url: String },
-    Click { selector: String },
-    Fill { selector: String, value: String },
-    WaitFor { selector: String, timeout_ms: u32 },
+    Click { selector: Target },
+    Fill { selector: Target, value: String },
+    WaitFor { selector: Target, timeout_ms: u32 },
     CheckText { value: String },
     CheckUrl { contains: String },
 }
@@ -28,193 +30,199 @@ pub struct ActionOutcome {
     pub detail: String,
 }
 
-/// Anything that can run an expression in the page. `Cdp` is the real
-/// one; tests supply a fake, which is why the executor's rules can be
-/// pinned without starting a browser.
-pub trait Evaluator {
-    fn eval(
-        &mut self,
-        expression: &str,
-    ) -> impl std::future::Future<Output = Result<serde_json::Value, String>>;
+impl ActionOutcome {
+    pub fn passed(detail: impl Into<String>) -> Self {
+        ActionOutcome { ok: true, detail: detail.into() }
+    }
+    pub fn failed(detail: impl Into<String>) -> Self {
+        ActionOutcome { ok: false, detail: detail.into() }
+    }
 }
 
-/// A JS string literal, escaped by the JSON encoder. Scripts are
-/// authored by hand today and by an assistant later, so no value in
-/// them is trusted to be quote-free. `/` is additionally escaped so a
-/// value ending a `<script>` tag (e.g. `</script>`) cannot appear intact
-/// in the generated source - serde_json's JSON encoding does not escape
-/// the solidus on its own, since JSON itself does not require it.
-fn lit(s: &str) -> String {
-    let json = serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string());
-    json.replace('/', "\\/")
+/// A harness failure, said plainly: the app under test did nothing wrong,
+/// the browser connection did.
+pub(crate) fn harness(e: CdpError) -> ActionOutcome {
+    ActionOutcome::failed(format!("the browser did not answer: {e}"))
 }
 
-/// Prepended to every expression rather than installed as a global: a
-/// page navigation wipes globals, and the runner navigates.
-fn find_helper() -> &'static str {
-    r#"
-const __find = (sel) => {
-  if (sel.startsWith('text=')) {
-    const want = sel.slice(5).trim().toLowerCase();
-    const all = Array.from(document.querySelectorAll(
-      'button,a,[role=button],label,input,textarea,select,td,th,li,summary,h1,h2,h3,span,div'));
-    // Last match wins: the deepest element containing the words is the
-    // control itself, not the panel it sits in.
-    const hits = all.filter(e => ((e.innerText || e.value || '') + '').trim().toLowerCase().includes(want));
-    return hits.length ? hits[hits.length - 1] : null;
-  }
-  return document.querySelector(sel);
-};
-"#
+pub(crate) fn blocked(b: Blocked) -> ActionOutcome {
+    match b {
+        Blocked::Page(why) => ActionOutcome::failed(why),
+        Blocked::Harness(why) => ActionOutcome::failed(format!("the browser did not answer: {why}")),
+    }
 }
 
-fn wrap(body: &str) -> String {
-    format!("(() => {{{}{}}})()", find_helper(), body)
+fn is_page_url(url: &str) -> bool {
+    let u = url.trim().to_ascii_lowercase();
+    u.starts_with("http://") || u.starts_with("https://") || u.starts_with("file://")
 }
 
-/// Outline the element the next action will touch.
-pub fn highlight_js(selector: &str) -> String {
-    let sel = lit(selector);
-    wrap(&format!(
-        r#"
-  const el = __find({sel});
-  if (!el) return {{ ok: false, detail: "not found: " + {sel} }};
-  el.scrollIntoView({{ block: 'center', behavior: 'instant' }});
-  const prev = el.style.outline;
-  el.style.outline = '3px solid #7c5cff';
-  setTimeout(() => {{ el.style.outline = prev; }}, 1200);
-  return {{ ok: true, detail: "highlighted" }};
-"#
-    ))
-}
-
-/// The expression for one action.
-pub fn js_for(action: &Action) -> String {
-    match action {
-        Action::Navigate { url } => {
-            let u = lit(url);
-            wrap(&format!(
-                r#"
-  location.href = {u};
-  return {{ ok: true, detail: "navigating to " + {u} }};
-"#
-            ))
+impl Action {
+    /// What can be known to be wrong before a browser is involved. Run on
+    /// save, so a bad script is refused where it is written, and again on
+    /// execute, so nothing invalid reaches the page.
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Action::Navigate { url } if !is_page_url(url) => {
+                Err(format!("navigate needs an http, https or file address, not {url:?}"))
+            }
+            Action::Navigate { .. } => Ok(()),
+            Action::Click { selector }
+            | Action::Fill { selector, .. }
+            | Action::WaitFor { selector, .. } => selector.validate(),
+            Action::CheckText { value } if value.trim().is_empty() => {
+                Err("check_text has an empty value".to_string())
+            }
+            Action::CheckUrl { contains } if contains.trim().is_empty() => {
+                Err("check_url has an empty value".to_string())
+            }
+            Action::CheckText { .. } | Action::CheckUrl { .. } => Ok(()),
         }
+    }
+}
+
+/// `this` is the element about to be touched.
+pub const HIGHLIGHT_JS: &str = r#"function() {
+  const prev = this.style.outline;
+  this.style.outline = '3px solid #7c5cff';
+  setTimeout(() => { this.style.outline = prev; }, 1200);
+  return true;
+}"#;
+
+/// `this` is the document. Argument: the words to look for.
+pub const CHECK_TEXT_JS: &str = r#"function(want) {
+  const hay = (this.body ? this.body.innerText : '') || '';
+  return hay.toLowerCase().includes(String(want).toLowerCase());
+}"#;
+
+async fn point_and_pause<D: Driver>(
+    d: &mut D,
+    ready: &input::Ready,
+    timing: &Timing,
+) -> Result<(), CdpError> {
+    page::call_value(d, &ready.handle, HIGHLIGHT_JS, &[]).await?;
+    if timing.highlight_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(timing.highlight_ms)).await;
+    }
+    Ok(())
+}
+
+async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing) -> ActionOutcome {
+    // Older load events would satisfy the wait below before this page has
+    // even started.
+    d.forget_events();
+    let reply = match d.call("Page.navigate", json!({ "url": url })).await {
+        Ok(r) => r,
+        Err(e) => return harness(e),
+    };
+    if let Some(err) = reply["errorText"].as_str() {
+        return ActionOutcome::failed(format!("{url} would not load: {err}"));
+    }
+    // No loaderId means the same document (a #fragment): nothing loads.
+    if reply.get("loaderId").is_none() {
+        return ActionOutcome::passed(format!("moved to {url}"));
+    }
+    match d.wait_event("Page.loadEventFired", Duration::from_millis(timing.nav_ms)).await {
+        Ok(_) => ActionOutcome::passed(format!("loaded {url}")),
+        Err(CdpError::Timeout { .. }) => ActionOutcome::failed(format!(
+            "{url} did not finish loading within {}ms",
+            timing.nav_ms
+        )),
+        Err(e) => harness(e),
+    }
+}
+
+async fn wait_for<D: Driver>(d: &mut D, target: &Target, timeout_ms: u32, timing: &Timing) -> ActionOutcome {
+    let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
+    loop {
+        page::release(d).await;
+        match resolve(d, target).await {
+            Ok(found) if !found.is_empty() => {
+                return ActionOutcome::passed(format!("found {}", target.describe()));
+            }
+            Ok(_) => {}
+            Err(e) if e.is_transient() => {}
+            Err(e) => return harness(e),
+        }
+        if Instant::now() >= deadline {
+            return ActionOutcome::failed(format!(
+                "waited {timeout_ms}ms and never saw {}",
+                target.describe()
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
+    }
+}
+
+async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOutcome {
+    match action {
+        Action::Navigate { url } => navigate(d, url.trim(), timing).await,
         Action::Click { selector } => {
-            let sel = lit(selector);
-            wrap(&format!(
-                r#"
-  const el = __find({sel});
-  if (!el) return {{ ok: false, detail: "not found: " + {sel} }};
-  el.click();
-  return {{ ok: true, detail: "clicked " + (el.innerText || el.value || el.tagName).toString().trim().slice(0, 60) }};
-"#
-            ))
+            let ready = match input::wait_ready(d, selector, false, timing).await {
+                Ok(r) => r,
+                Err(b) => return blocked(b),
+            };
+            if let Err(e) = point_and_pause(d, &ready, timing).await {
+                return harness(e);
+            }
+            match input::click(d, &ready).await {
+                Ok(()) => ActionOutcome::passed(format!("clicked {}", selector.describe())),
+                Err(b) => blocked(b),
+            }
         }
         Action::Fill { selector, value } => {
-            let sel = lit(selector);
-            let val = lit(value);
-            wrap(&format!(
-                r#"
-  const el = __find({sel});
-  if (!el) return {{ ok: false, detail: "not found: " + {sel} }};
-  // A plain .value assignment is invisible to a controlled input - the
-  // framework's own setter has to be the one called, then told.
-  const desc = Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value');
-  if (desc && desc.set) desc.set.call(el, {val}); else el.value = {val};
-  el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-  el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-  return {{ ok: true, detail: "filled " + {sel} }};
-"#
-            ))
+            let ready = match input::wait_ready(d, selector, true, timing).await {
+                Ok(r) => r,
+                Err(b) => return blocked(b),
+            };
+            if let Err(e) = point_and_pause(d, &ready, timing).await {
+                return harness(e);
+            }
+            match input::fill(d, &ready, value).await {
+                Ok(()) => ActionOutcome::passed(format!("filled {}", selector.describe())),
+                Err(b) => blocked(b),
+            }
         }
-        Action::WaitFor { selector, .. } => {
-            let sel = lit(selector);
-            wrap(&format!(
-                r#"
-  const el = __find({sel});
-  return el ? {{ ok: true, detail: "found: " + {sel} }} : {{ ok: false, detail: "not found: " + {sel} }};
-"#
-            ))
-        }
+        Action::WaitFor { selector, timeout_ms } => wait_for(d, selector, *timeout_ms, timing).await,
         Action::CheckText { value } => {
-            let v = lit(value);
-            wrap(&format!(
-                r#"
-  const hay = (document.body ? document.body.innerText : '') || '';
-  const found = hay.toLowerCase().includes({v}.toLowerCase());
-  return {{ ok: found, detail: (found ? "page contains " : "page does NOT contain ") + {v} }};
-"#
-            ))
+            let doc = match page::document(d).await {
+                Ok(h) => h,
+                Err(e) => return harness(e),
+            };
+            match page::call_value(d, &doc, CHECK_TEXT_JS, &[json!(value)]).await {
+                Ok(v) if v.as_bool().unwrap_or(false) => {
+                    ActionOutcome::passed(format!("page contains {value}"))
+                }
+                Ok(_) => ActionOutcome::failed(format!("page does NOT contain {value}")),
+                Err(e) => harness(e),
+            }
         }
-        Action::CheckUrl { contains } => {
-            let c = lit(contains);
-            wrap(&format!(
-                r#"
-  const found = location.href.includes({c});
-  return {{ ok: found, detail: "url is " + location.href }};
-"#
-            ))
-        }
-    }
-}
-
-/// Pull `{ ok, detail }` back out of a DevTools reply.
-fn outcome_from(v: &serde_json::Value) -> ActionOutcome {
-    let value = &v["result"]["value"];
-    ActionOutcome {
-        ok: value["ok"].as_bool().unwrap_or(false),
-        detail: value["detail"].as_str().unwrap_or("no detail").to_string(),
-    }
-}
-
-/// A harness failure, said plainly: the app under test did nothing
-/// wrong, the browser connection did.
-fn harness_error(e: String) -> ActionOutcome {
-    ActionOutcome { ok: false, detail: format!("the browser did not answer: {e}") }
-}
-
-/// Run one action. Clicks and fills highlight first so the watcher can
-/// see where they landed; waiting polls instead of guessing a sleep.
-pub async fn execute<E: Evaluator>(ev: &mut E, action: &Action) -> ActionOutcome {
-    if let Action::Click { selector } | Action::Fill { selector, .. } = action {
-        match ev.eval(&highlight_js(selector)).await {
+        Action::CheckUrl { contains } => match page::eval_value(d, "location.href").await {
             Ok(v) => {
-                let out = outcome_from(&v);
-                if !out.ok {
-                    return out; // the element is not there; do not click blind
-                }
+                let href = v.as_str().unwrap_or("");
+                ActionOutcome { ok: href.contains(contains.as_str()), detail: format!("url is {href}") }
             }
-            Err(e) => return harness_error(e),
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(HIGHLIGHT_MS)).await;
+            Err(e) => harness(e),
+        },
     }
+}
 
-    if let Action::WaitFor { timeout_ms, selector } = action {
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(u64::from(*timeout_ms));
-        loop {
-            match ev.eval(&js_for(action)).await {
-                Ok(v) => {
-                    let out = outcome_from(&v);
-                    if out.ok {
-                        return out;
-                    }
-                }
-                Err(e) => return harness_error(e),
-            }
-            if std::time::Instant::now() >= deadline {
-                return ActionOutcome {
-                    ok: false,
-                    detail: format!("waited {timeout_ms}ms and never saw {selector}"),
-                };
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
-        }
-    }
+/// Run one action with the standard waits.
+pub async fn execute<D: Driver>(d: &mut D, action: &Action) -> ActionOutcome {
+    execute_with(d, action, &Timing::default()).await
+}
 
-    match ev.eval(&js_for(action)).await {
-        Ok(v) => outcome_from(&v),
-        Err(e) => harness_error(e),
+pub async fn execute_with<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOutcome {
+    if let Err(why) = action.validate() {
+        return ActionOutcome::failed(format!("this action cannot run: {why}"));
     }
+    let mut out = run(d, action, timing).await;
+    let dialogs = d.take_dialogs();
+    if !dialogs.is_empty() {
+        out.detail.push_str(&format!(
+            " (the page showed {} and it was accepted)",
+            dialogs.join("; ")
+        ));
+    }
+    out
 }

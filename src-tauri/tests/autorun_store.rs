@@ -44,8 +44,8 @@ fn script() -> CaseScript {
             step_number: 1,
             actions: vec![
                 Action::Navigate { url: "https://app.invalid/login".to_string() },
-                Action::Fill { selector: "#user".to_string(), value: "kim".to_string() },
-                Action::Click { selector: "text=Sign in".to_string() },
+                Action::Fill { selector: "#user".into(), value: "kim".to_string() },
+                Action::Click { selector: "text=Sign in".into() },
                 Action::CheckText { value: "Dashboard".to_string() },
             ],
         }],
@@ -216,6 +216,29 @@ fn a_step_with_no_actions_is_still_accepted() {
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
     assert!(load_script(dir.path(), 60).unwrap().is_some());
+}
+
+/// A locator that names nothing, or a javascript: address, is refused
+/// where the script is saved - not discovered halfway through a run.
+#[test]
+fn a_script_with_an_invalid_action_is_refused_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let script: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 501,
+        "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "check_text", "value": "ok" },
+                { "kind": "click", "selector": { "name": "Save" } }
+            ] }
+        ]
+    }))
+    .unwrap();
+    let err = v2_lib::autorun::store::save_scripts_atomically(dir.path(), &[script]).unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("case 501 step 2 action 2"), "{msg}");
+    assert!(v2_lib::autorun::store::load_script(dir.path(), 501).unwrap().is_none(), "nothing may be written");
 }
 
 /// The real atomicity claim, exercised directly against the store rather

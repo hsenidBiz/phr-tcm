@@ -119,6 +119,18 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
                 sc.case_id
             )));
         }
+        for step in &sc.steps {
+            for (i, action) in step.actions.iter().enumerate() {
+                if let Err(why) = action.validate() {
+                    return Err(SaveScriptsError::Invalid(format!(
+                        "case {} step {} action {}: {why}",
+                        sc.case_id,
+                        step.step_number,
+                        i + 1
+                    )));
+                }
+            }
+        }
         let json = serde_json::to_string_pretty(sc).map_err(|e| SaveScriptsError::Io(e.to_string()))?;
         entries.push((dir.join(format!("case-{}.json", sc.case_id)), json));
     }

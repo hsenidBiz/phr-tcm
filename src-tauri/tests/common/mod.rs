@@ -2,9 +2,13 @@
 //! its own crate, so not every file uses every helper.
 #![allow(dead_code)]
 
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::time::Duration;
+use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
+use v2_lib::browser::input::{FOCUS_JS, PROBE_JS};
+use v2_lib::browser::locator::VISIBLE_JS;
 
 type Handler =
     Box<dyn FnMut(&str, &serde_json::Value) -> Result<serde_json::Value, CdpError> + Send>;
@@ -78,5 +82,86 @@ impl Driver for ScriptedDriver {
 
     fn take_dialogs(&mut self) -> Vec<String> {
         std::mem::take(&mut self.dialogs)
+    }
+}
+
+/// The actionability probe's answer for an element that is fully ready:
+/// visible, onscreen, enabled, editable, unobstructed, and (since a
+/// `FakePage`'s single static answer repeats) holding still across the
+/// two looks `wait_ready` needs to call it ready.
+pub fn ready_probe() -> Value {
+    json!({
+        "visible": true, "onscreen": true, "enabled": true, "editable": true,
+        "hit": true, "x": 10.0, "y": 20.0, "covered_by": "", "rect": [0.0, 0.0, 80.0, 24.0]
+    })
+}
+
+/// A page described by what it would answer. Every locator finds `found`
+/// elements (none until the `appears_on_look`-th look), and each function
+/// the runner calls gets the matching field back.
+pub struct FakePage {
+    pub found: usize,
+    /// 1 = there from the first look.
+    pub appears_on_look: usize,
+    /// Answers to the actionability probe, in turn; the last repeats.
+    pub probes: Vec<Value>,
+    pub visible: bool,
+    pub fill_kind: &'static str,
+    pub body_has_text: bool,
+    pub href: &'static str,
+    pub navigate_reply: Value,
+}
+
+impl Default for FakePage {
+    fn default() -> Self {
+        FakePage {
+            found: 1,
+            appears_on_look: 1,
+            probes: vec![ready_probe()],
+            visible: true,
+            fill_kind: "text",
+            body_has_text: true,
+            href: "https://app.example/home",
+            navigate_reply: json!({ "frameId": "F", "loaderId": "L" }),
+        }
+    }
+}
+
+impl FakePage {
+    pub fn driver(self) -> ScriptedDriver {
+        let page = self;
+        let mut looks = 0usize;
+        let mut probed = 0usize;
+        ScriptedDriver::new(move |method, params| {
+            let f = params["functionDeclaration"].as_str().unwrap_or("");
+            Ok(match method {
+                "Runtime.evaluate" if params["expression"] == "document" => {
+                    json!({ "result": { "objectId": "doc" } })
+                }
+                "Runtime.evaluate" => json!({ "result": { "value": page.href } }),
+                "Runtime.callFunctionOn" if f == PROBE_JS => {
+                    let i = probed.min(page.probes.len() - 1);
+                    probed += 1;
+                    json!({ "result": { "value": page.probes[i] } })
+                }
+                "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": page.visible } }),
+                "Runtime.callFunctionOn" if f == HIGHLIGHT_JS => json!({ "result": { "value": true } }),
+                "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": page.fill_kind } }),
+                "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
+                    json!({ "result": { "value": page.body_has_text } })
+                }
+                // Any locator function: an array of elements.
+                "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
+                "Runtime.getProperties" => {
+                    looks += 1;
+                    let n = if looks >= page.appears_on_look { page.found } else { 0 };
+                    json!({ "result": (0..n)
+                        .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+                        .collect::<Vec<_>>() })
+                }
+                "Page.navigate" => page.navigate_reply.clone(),
+                _ => json!({}),
+            })
+        })
     }
 }

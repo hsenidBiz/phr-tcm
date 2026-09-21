@@ -240,13 +240,13 @@ export const commands = {
 	 *  worked, the check did not" than from a run that stops at the first
 	 *  red.
 	 */
-	autoRunStep: (step: StepScript) => typedError<ActionOutcome[], string>(__TAURI_INVOKE("auto_run_step", { step })),
+	autoRunStep: (step: StepScript_Deserialize) => typedError<ActionOutcome[], string>(__TAURI_INVOKE("auto_run_step", { step })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
-	steps: StepScript[],
+	steps: StepScript_Serialize[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
-	autoRunSaveScript: (script: CaseScript) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
+	autoRunSaveScript: (script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
 	/**
 	 *  Import a BUNDLE of scripts from one file - the shape an assistant
 	 *  writes for a whole PBI, and the shape the Auto Run screen's Import
@@ -554,12 +554,16 @@ export const events = {
 };
 
 /* Types */
-export type Action = { kind: "navigate"; url: string } | { kind: "click"; selector: string } | { kind: "fill"; selector: string; value: string } | { kind: "wait_for"; selector: string; timeout_ms: number } | { kind: "check_text"; value: string } | { kind: "check_url"; contains: string };
+export type Action = Action_Serialize | Action_Deserialize;
 
 export type ActionOutcome = {
 	ok: boolean,
 	detail: string,
 };
+
+export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { contains?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { contains?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { contains?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { contains?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { contains?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { selector?: never; timeout_ms?: never; url?: never; value?: never };
+
+export type Action_Serialize = ({ kind: "navigate"; url: string }) & { contains?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Serialize }) & { contains?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { contains?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { contains?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { contains?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { selector?: never; timeout_ms?: never; url?: never; value?: never };
 
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
@@ -720,10 +724,26 @@ export type CaseRecord = {
  *  How one test case is driven. Keyed by the Azure DevOps case id so a
  *  script and its case stay together, but the script never leaves here.
  */
-export type CaseScript = {
+export type CaseScript = CaseScript_Serialize | CaseScript_Deserialize;
+
+/**
+ *  How one test case is driven. Keyed by the Azure DevOps case id so a
+ *  script and its case stay together, but the script never leaves here.
+ */
+export type CaseScript_Deserialize = {
 	case_id: number,
 	title: string,
-	steps: StepScript[],
+	steps: StepScript_Deserialize[],
+};
+
+/**
+ *  How one test case is driven. Keyed by the Azure DevOps case id so a
+ *  script and its case stay together, but the script never leaves here.
+ */
+export type CaseScript_Serialize = {
+	case_id: number,
+	title: string,
+	steps: StepScript_Serialize[],
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */
@@ -989,6 +1009,52 @@ export type LocalRun = {
 	 */
 	started_at: string,
 	cases: CaseRecord[],
+};
+
+export type LocatorStep = LocatorStep_Serialize | LocatorStep_Deserialize;
+
+export type LocatorStep_Deserialize = {
+	/**
+	 *  An ARIA role as Chrome reports it: button, link, textbox, dialog,
+	 *  heading, checkbox, combobox, searchbox, row, cell...
+	 */
+	role?: string | null,
+	/**  The accessible name. Only with `role`. */
+	name?: string | null,
+	/**  Visible text; the deepest element carrying it wins. */
+	text?: string | null,
+	css?: string | null,
+	/**  Equal (case-sensitive) instead of contains (case-insensitive). */
+	exact?: boolean,
+	/**
+	 *  `Some(false)` also matches what cannot be seen. Absent means
+	 *  visible only.
+	 */
+	visible?: boolean | null,
+	/**  Zero-based pick from this step's matches. */
+	nth?: number | null,
+};
+
+export type LocatorStep_Serialize = {
+	/**
+	 *  An ARIA role as Chrome reports it: button, link, textbox, dialog,
+	 *  heading, checkbox, combobox, searchbox, row, cell...
+	 */
+	role?: string | null,
+	/**  The accessible name. Only with `role`. */
+	name?: string | null,
+	/**  Visible text; the deepest element carrying it wins. */
+	text?: string | null,
+	css?: string | null,
+	/**  Equal (case-sensitive) instead of contains (case-insensitive). */
+	exact?: boolean,
+	/**
+	 *  `Some(false)` also matches what cannot be seen. Absent means
+	 *  visible only.
+	 */
+	visible?: boolean | null,
+	/**  Zero-based pick from this step's matches. */
+	nth?: number | null,
 };
 
 /**  One line, as the viewer renders it. */
@@ -1412,9 +1478,18 @@ export type StepRecord = {
 };
 
 /**  The actions that carry out one numbered step of a test case. */
-export type StepScript = {
+export type StepScript = StepScript_Serialize | StepScript_Deserialize;
+
+/**  The actions that carry out one numbered step of a test case. */
+export type StepScript_Deserialize = {
 	step_number: number,
-	actions: Action[],
+	actions: Action_Deserialize[],
+};
+
+/**  The actions that carry out one numbered step of a test case. */
+export type StepScript_Serialize = {
+	step_number: number,
+	actions: Action_Serialize[],
 };
 
 export type SubmitItemResult = {
@@ -1478,6 +1553,24 @@ export type SuiteScanProgress = {
 	done: number,
 	total: number,
 };
+
+/**
+ *  What an action points at. A plain string keeps the meaning it has
+ *  always had, so every script saved before locators existed still runs.
+ */
+export type Target = Target_Serialize | Target_Deserialize;
+
+/**
+ *  What an action points at. A plain string keeps the meaning it has
+ *  always had, so every script saved before locators existed still runs.
+ */
+export type Target_Deserialize = string | LocatorStep_Deserialize | LocatorStep_Deserialize[];
+
+/**
+ *  What an action points at. A plain string keeps the meaning it has
+ *  always had, so every script saved before locators existed still runs.
+ */
+export type Target_Serialize = string | LocatorStep_Serialize | LocatorStep_Serialize[];
 
 export type TeamRef = {
 	id: string,
