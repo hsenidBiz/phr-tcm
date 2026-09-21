@@ -4185,3 +4185,50 @@ EOF
 - [ ] **Step 8: What the user still has to see for themselves**
 
 The live tests prove the driver against a fixture. They do not prove it against the real application, in a visible window, on a slow day. In the task report, list for the user: open Auto Run in the dev app, import `src-tauri/tests/fixtures/autorun-sample-scripts-pms.json`, run a case and confirm the highlight still shows before each click, the mouse visibly lands where the outline was, a deliberately wrong selector fails after about 15 s with a reason and a "View screenshot" link that opens, and an old string-selector script still runs.
+
+
+---
+
+### Task 9: Auto Run's assistant tools exist in development builds only, behind a switch in AI Bridge
+
+Added during execution at the user's request: "I also need the auto run tools available only for the dev version of the application and togglable in AI Bridge."
+
+Today `get_autorun_guide` and `save_autorun_script` are in `HIDDEN_TOOLS`: never listed, never callable, no switch, in every build. After this task they are DEVELOPMENT-ONLY tools. In a release build nothing changes (not listed, a direct call is refused with "not available", no switch is shown, the bridge routes refuse). In a development build they behave like any other switchable tool: listed and callable unless the person has switched them off in the AI Bridge tab, where they appear as ONE switch.
+
+**Files:**
+- Modify: `src-tauri/src/ai_tools.rs` (`HIDDEN_TOOLS` becomes `DEV_ONLY_TOOLS`; `dev_build()`; `effective_disabled_for`)
+- Modify: `src-tauri/src/mcp.rs` (the call-time refusal wording)
+- Modify: `src-tauri/src/ai_bridge.rs` (the two autorun routes refuse outside a development build)
+- Modify: `src/lib/mcpTools.ts` (mirror; the pair row; dev gating), `src/screens/AiBridge.tsx` only if its "How it works" text or row rendering needs it
+- Test: `src-tauri/tests/ai_tools.rs`, `src-tauri/tests/tcm_mcp.rs`, `src-tauri/tests/ai_bridge.rs` or `autorun_bridge.rs`, `src/lib/mcpTools.test.ts`, `src/screens/AiBridge.test.tsx`
+
+**Interfaces:**
+- Produces (Rust, `v2_lib::ai_tools`): `pub const DEV_ONLY_TOOLS: &[&str] = &["get_autorun_guide", "save_autorun_script"];`, `pub fn dev_build() -> bool` (`cfg!(debug_assertions)`: true for `tauri dev` and for `cargo test`, false for `tauri build`), `pub fn effective_disabled_for(disabled: &[String], dev: bool) -> Vec<String>`, and `pub fn effective_disabled(disabled: &[String]) -> Vec<String>` = `effective_disabled_for(disabled, dev_build())`. `HIDDEN_TOOLS` is removed; nothing may keep referring to it.
+- Produces (TypeScript, `src/lib/mcpTools.ts`): `export const DEV_ONLY_TOOLS = ["get_autorun_guide", "save_autorun_script"] as const;`, `export const DEV_BUILD: boolean = import.meta.env.DEV;`, the pair `["get_autorun_guide", "save_autorun_script"]` in `TOOL_PAIRS` with the row label `Auto Run scripts` and summary `Read the script-writing guide and save browser scripts for a PBI's cases. Development builds only.`. `HIDDEN_TOOLS` is removed.
+
+**Rules:**
+- `effective_disabled_for(list, false)` (release): the dev-only tools come first, always, exactly as `HIDDEN_TOOLS` did; then the person's list minus core tools and duplicates. The old behaviour, unchanged.
+- `effective_disabled_for(list, true)` (development): the dev-only tools are NOT added; they are off only when the person's list names them. Core tools still cannot be switched off.
+- They default to ON in a development build, like every other switchable tool (the saved setting is the DISABLED list).
+- `mcp.rs` call-time refusal: a dev-only tool refused in a release build says ``The `<name>` tool is not available.``; a dev-only tool switched off in a development build gets the ordinary "switched off in Test Case Manager ... AI Bridge tab" sentence.
+- `ai_bridge.rs`: `GET /autorun-guide` and `POST /autorun-script` answer 404 with `not available in this build` outside a development build, before doing anything else. Factor the decision so it can be tested for both values without a release build (for example a small function taking `dev: bool`).
+- Frontend: `visibleTools()` leaves the dev-only tools out unless `DEV_BUILD`; `loadDisabledTools()` drops dev-only names from a saved list unless `DEV_BUILD` (so a list saved in a dev build cannot carry them into a release build's requests, where they would be meaningless). In a development build the two tools show as ONE row (a pair), positioned where the first of them sits in `MCP_TOOLS`. If the AI Bridge tab has a "How it works" description per tool or per row, the Auto Run row gets one there too, in development builds only, in plain words with no em dashes.
+- The mirror test in `src/lib/mcpTools.test.ts` that compares the Rust and TypeScript lists must compare `DEV_ONLY_TOOLS` on both sides.
+- Auto Run never calls Azure DevOps; the Auto Run TAB stays a development-build tab (`AUTO_RUN_ENABLED`), unchanged.
+
+- [ ] **Step 1: Read first.** `src-tauri/src/ai_tools.rs` around `CORE_TOOLS`/`HIDDEN_TOOLS`/`effective_disabled`; every use found by `grep -rn "HIDDEN_TOOLS\|effective_disabled" src-tauri/src src-tauri/tests src`; `src-tauri/src/mcp.rs` `disabled()`, `tools_list`, `tools_call`; `src-tauri/src/ai_bridge.rs` the two autorun routes; `src/lib/mcpTools.ts` whole file; `src/screens/AiBridge.tsx` where `visibleRows()` is rendered and the "How it works" section; the existing tests named above, and `src/components/Sidebar.test.tsx` for the `vi.stubEnv("DEV", ...)` + `vi.resetModules()` pattern used to test a build flag.
+
+- [ ] **Step 2: Write the failing tests.**
+  - `tests/ai_tools.rs`: `effective_disabled_for(&[], false)` is `["get_autorun_guide", "save_autorun_script"]`; `effective_disabled_for(&[], true)` is empty; in development a list naming `save_autorun_script` disables it; in both, a core tool in the list is ignored and duplicates collapse; `DEV_ONLY_TOOLS` is exactly the two names.
+  - `tests/tcm_mcp.rs`: the tests run as a development build, so with nothing disabled the two tools ARE listed (update the counts and the verbatim order the file asserts) and `save_autorun_script` reaches the bridge rather than being refused; with the person's list naming them they are absent and a call is refused with the "switched off" sentence. Add a test of the release rule through whatever seam you introduce (the refusal text for a dev-only tool when `dev` is false contains "not available").
+  - bridge test: the route guard answers 404 "not available in this build" for `dev = false` and lets the request through for `dev = true`.
+  - `src/lib/mcpTools.test.ts`: with `DEV` stubbed true, `visibleRows()` contains one row labelled `Auto Run scripts` whose `names` are both tools, and toggling it adds and removes both; with `DEV` stubbed false, no row mentions Auto Run and `loadDisabledTools()` strips the two names from a saved list. Use `vi.stubEnv` + `vi.resetModules()` + a fresh `await import("./mcpTools")`, then `vi.unstubAllEnvs()`.
+  - `src/screens/AiBridge.test.tsx`: in a development build the `Auto Run scripts` switch is rendered and switching it off sends both names in the disabled list the screen pushes to the backend (find how the existing tests assert that for another row and mirror it).
+
+- [ ] **Step 3: Run them to see them fail**, one command at a time.
+
+- [ ] **Step 4: Implement** the rules above.
+
+- [ ] **Step 5: Run**, one at a time, from `src-tauri/` with `CARGO_TARGET_DIR=target/gate`: `cargo test --test ai_tools`, `cargo test --test tcm_mcp`, `cargo test --test ai_bridge`, `cargo test --test autorun_bridge`, `cargo test --test bindings`; from the repo root: `npx vitest run src/lib/mcpTools.test.ts src/screens/AiBridge.test.tsx src/ui-consistency.test.ts`, `npx tsc --noEmit`. Then `grep -rn "HIDDEN_TOOLS" src-tauri/src src-tauri/tests src` must return nothing.
+
+- [ ] **Step 6: Commit** with a Bash heredoc, subject `feat(v2): Auto Run's assistant tools are offered in development builds only, behind one AI Bridge switch`, ending with the trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
