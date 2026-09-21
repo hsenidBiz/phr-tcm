@@ -7,8 +7,9 @@ mod common;
 
 use common::{ready_probe, FakePage, ScriptedDriver};
 use serde_json::json;
-use v2_lib::browser::actions::{execute_with, Action};
+use v2_lib::browser::actions::{execute_with, Action, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{CdpError, Event};
+use v2_lib::browser::input::PROBE_JS;
 use v2_lib::browser::timing::Timing;
 
 fn quick() -> Timing {
@@ -200,6 +201,10 @@ async fn wait_for_gives_up_after_its_own_timeout() {
     .await;
     assert!(!out.ok);
     assert!(out.detail.contains("120ms") && out.detail.contains("#never"), "{}", out.detail);
+    // The third wait loop hands its deadline back too, or every call the
+    // next action makes is capped at the floor.
+    assert!(d.deadline_was_cleared(), "{:?}", d.deadlines.len());
+    assert!(d.deadlines.first().is_some_and(Option::is_some), "it never set one");
 }
 
 #[tokio::test]
@@ -329,6 +334,151 @@ async fn a_dialog_the_page_showed_is_mentioned() {
     let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &quick()).await;
     assert!(out.ok);
     assert!(out.detail.contains("alert: Saved!") && out.detail.contains("accepted"), "{}", out.detail);
+}
+
+/// A navigation landing between the readiness wait and the highlight
+/// yields "Cannot find context with specified id" - a refusal from the
+/// PAGE, on a browser that is alive and answering. Called a harness
+/// failure it says the wrong thing AND suppresses the screenshot, which
+/// is the one piece of evidence a person could have used.
+#[tokio::test]
+async fn a_page_refusal_during_the_highlight_is_the_pages_doing() {
+    let mut d = ScriptedDriver::new(|method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        match method {
+            "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+            "Runtime.callFunctionOn" if f == HIGHLIGHT_JS => Err(CdpError::Protocol {
+                method: "Runtime.callFunctionOn".into(),
+                message: "Cannot find context with specified id".into(),
+            }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => {
+                Ok(json!({ "result": { "value": ready_probe() } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+            "Runtime.getProperties" => {
+                Ok(json!({ "result": [ { "name": "0", "value": { "objectId": "el-0" } } ] }))
+            }
+            _ => Ok(json!({})),
+        }
+    });
+    let out = execute_with(&mut d, &Action::Click { selector: "#go".into() }, &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("the page refused"), "{}", out.detail);
+    assert!(out.detail.contains("Cannot find context"), "{}", out.detail);
+    assert!(!out.harness, "the browser answered: {}", out.detail);
+}
+
+/// The same division for the checks that ask the page directly.
+#[tokio::test]
+async fn a_page_refusal_during_a_check_is_the_pages_doing() {
+    let refusing = || {
+        ScriptedDriver::new(|_, _| {
+            Err(CdpError::Protocol {
+                method: "Runtime.evaluate".into(),
+                message: "Cannot find context with specified id".into(),
+            })
+        })
+    };
+    for action in [
+        Action::CheckText { value: "Dashboard".into() },
+        Action::CheckUrl { contains: "/home".into() },
+    ] {
+        let mut d = refusing();
+        let out = execute_with(&mut d, &action, &quick()).await;
+        assert!(!out.ok);
+        assert!(out.detail.contains("the page refused"), "{}", out.detail);
+        assert!(!out.harness, "{}", out.detail);
+    }
+}
+
+/// And a dead socket is still the harness's fault, at every one of those
+/// sites - the point of the split is that it is a split, not a rename.
+#[tokio::test]
+async fn a_closed_browser_at_those_same_sites_is_still_the_harness() {
+    for action in [
+        Action::Click { selector: "#go".into() },
+        Action::CheckText { value: "Dashboard".into() },
+        Action::CheckUrl { contains: "/home".into() },
+        Action::Navigate { url: "https://app.example/x".into() },
+    ] {
+        let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+        let out = execute_with(&mut d, &action, &quick()).await;
+        assert!(!out.ok);
+        assert!(out.harness, "{action:?} lost its harness flag: {}", out.detail);
+        assert!(out.detail.contains("browser"), "{}", out.detail);
+    }
+}
+
+/// A relative url is what `location.href = "/dashboard"` always allowed,
+/// and saving validates every action - so refusing one here refuses a
+/// whole bundle for containing a single such script. Another scheme is
+/// still refused.
+#[test]
+fn navigate_takes_a_relative_reference_but_not_another_scheme() {
+    let check = |u: &str| {
+        serde_json::from_value::<Action>(json!({ "kind": "navigate", "url": u }))
+            .unwrap()
+            .validate()
+    };
+    for u in [
+        "/dashboard",
+        "dashboard",
+        "./a/b?x=1#y",
+        "../up",
+        "https://app.example/x",
+        "http://a/",
+        "file:///C:/x.html",
+    ] {
+        assert!(check(u).is_ok(), "{u} should be accepted: {:?}", check(u));
+    }
+    for u in ["javascript:alert(1)", "data:text/html,x", "about:blank", "chrome://settings", "", "   "] {
+        let why = check(u).unwrap_err();
+        assert!(why.contains("http, https or file"), "{u}: {why}");
+    }
+}
+
+/// At run time the page resolves it, against its own address, with the
+/// script's value passed as an ARGUMENT. The resolved address is what the
+/// browser is sent to and what the outcome names.
+#[tokio::test]
+async fn a_relative_navigate_is_resolved_in_the_page() {
+    let mut d =
+        FakePage { resolved_url: "https://app.example/dashboard", ..FakePage::default() }.driver();
+    d.on_call_events.push((
+        "Page.navigate".into(),
+        Event {
+            method: "Page.lifecycleEvent".into(),
+            params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }),
+        },
+    ));
+    let out = execute_with(&mut d, &Action::Navigate { url: "/dashboard".into() }, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(d.calls_to("Page.navigate")[0]["url"], "https://app.example/dashboard");
+    assert_eq!(out.detail, "loaded https://app.example/dashboard");
+
+    let resolve = d
+        .calls
+        .iter()
+        .find(|(m, p)| m == "Runtime.callFunctionOn" && p["functionDeclaration"] == RESOLVE_URL_JS)
+        .expect("the relative url was never resolved in the page");
+    assert_eq!(resolve.1["arguments"][0]["value"], "/dashboard");
+    for (method, params) in &d.calls {
+        let source =
+            params["functionDeclaration"].as_str().or(params["expression"].as_str()).unwrap_or("");
+        assert!(!source.contains("/dashboard"), "{method} carried the url in its source");
+    }
+}
+
+/// A relative reference that resolves to something that is not a page
+/// address is refused at run time, with the same words, and nothing is
+/// navigated to.
+#[tokio::test]
+async fn a_relative_navigate_that_resolves_to_another_scheme_is_refused() {
+    let mut d = FakePage { resolved_url: "about:blank", ..FakePage::default() }.driver();
+    let out = execute_with(&mut d, &Action::Navigate { url: "blank".into() }, &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("http, https or file"), "{}", out.detail);
+    assert!(d.calls_to("Page.navigate").is_empty(), "{:?}", d.methods());
 }
 
 #[tokio::test]

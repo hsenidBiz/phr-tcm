@@ -16,11 +16,19 @@
 use futures::{SinkExt, StreamExt};
 use std::collections::VecDeque;
 use std::future::Future;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
 /// How long any single protocol call may take.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The floor under a deadline-shortened call. A browser that accepts
+/// frames and stops answering would otherwise turn a 15s click into 30s
+/// and a ten-action step into minutes, all while the session is locked,
+/// so a wait loop caps its calls at its own remaining budget - but a call
+/// made right at the edge of that budget still gets this long to answer
+/// rather than being cancelled before it can.
+pub const MIN_CALL_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Events nobody has asked for yet. Bounded: a busy page volunteers
 /// thousands, and only the recent ones can still matter.
@@ -143,6 +151,9 @@ pub struct Cdp<T: Transport = WsTransport> {
     next_id: u64,
     events: VecDeque<Event>,
     dialogs: Vec<String>,
+    /// When the wait loop that owns this connection runs out of time. See
+    /// `set_deadline`.
+    deadline: Option<Instant>,
 }
 
 impl Cdp<WsTransport> {
@@ -182,7 +193,7 @@ impl Cdp<WsTransport> {
 
 impl<T: Transport> Cdp<T> {
     pub fn over(transport: T) -> Self {
-        Cdp { transport, next_id: 1, events: VecDeque::new(), dialogs: vec![] }
+        Cdp { transport, next_id: 1, events: VecDeque::new(), dialogs: vec![], deadline: None }
     }
 
     /// For tests that need to see what was sent.
@@ -190,12 +201,32 @@ impl<T: Transport> Cdp<T> {
         &self.transport
     }
 
+    /// Cap every later `call` at this instant as well as at
+    /// `CALL_TIMEOUT`. A wait loop sets it when it starts and clears it
+    /// (`None`) before it returns, so one silent call can never outlive
+    /// the whole action's budget - and nothing after the loop inherits a
+    /// deadline that has already passed.
+    pub fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
+    }
+
+    /// `CALL_TIMEOUT`, or what is left of the current deadline if that is
+    /// sooner, never less than `MIN_CALL_TIMEOUT`.
+    fn limit_now(&self) -> Duration {
+        match self.deadline {
+            None => CALL_TIMEOUT,
+            Some(d) => {
+                CALL_TIMEOUT.min(d.saturating_duration_since(Instant::now())).max(MIN_CALL_TIMEOUT)
+            }
+        }
+    }
+
     pub async fn call(
         &mut self,
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, CdpError> {
-        self.call_within(method, params, CALL_TIMEOUT).await
+        self.call_within(method, params, self.limit_now()).await
     }
 
     pub async fn call_within(
@@ -327,6 +358,9 @@ pub trait Driver {
     ) -> impl Future<Output = Result<Event, CdpError>>;
     fn forget_events(&mut self);
     fn take_dialogs(&mut self) -> Vec<String>;
+    /// See `Cdp::set_deadline`. Every wait loop sets one and clears it on
+    /// every path out.
+    fn set_deadline(&mut self, deadline: Option<Instant>);
 }
 
 impl<T: Transport> Driver for Cdp<T> {
@@ -345,5 +379,8 @@ impl<T: Transport> Driver for Cdp<T> {
     }
     fn take_dialogs(&mut self) -> Vec<String> {
         Cdp::take_dialogs(self)
+    }
+    fn set_deadline(&mut self, deadline: Option<Instant>) {
+        Cdp::set_deadline(self, deadline)
     }
 }

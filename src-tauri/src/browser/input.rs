@@ -5,6 +5,12 @@
 //! sitting under a modal. A pass produced that way proves nothing. Here an
 //! action waits until the element could genuinely be used, then sends the
 //! same mouse and keyboard events a person's hardware would.
+//!
+//! Typing is the one place where that is not literal: text is delivered
+//! as a single text commit (`Input.insertText`, which raises `beforeinput`
+//! and `input` and NO key events), and only clearing a field sends a real
+//! Backspace, so a page that reacts to keydown (type-ahead search, some
+//! autocompletes) will not see keys.
 
 use super::cdp::{CdpError, Driver};
 use super::locator::{resolve, Target};
@@ -34,14 +40,18 @@ pub struct Ready {
 }
 
 /// `this` is the element. A synchronous, single measurement, on purpose:
-/// measured on real Edge, a minimised or occluded window throttles page
-/// timers (`setTimeout`, and `requestAnimationFrame` no better), so a
-/// probe that waited on one for a second measurement could itself take a
-/// second or more and risk the call's own 30s timeout. Whether the
-/// element is holding still is instead judged in Rust, by comparing the
-/// `rect` this returns across two polls a `poll_ms` apart. The click
-/// point is clamped to the part of the rect actually inside the
-/// viewport, and only hit-tested when some of it is on screen at all.
+/// one measurement per look keeps the probe a single cheap round trip,
+/// and lets Rust judge whether the element is holding still by comparing
+/// the `rect` this returns ACROSS looks, a `poll_ms` apart - a decision
+/// that needs more than one look anyway, so nothing is gained by waiting
+/// for a second measurement inside the page. That also sidesteps timer
+/// throttling: a minimised or occluded window can throttle `setTimeout`
+/// (and `requestAnimationFrame` no better), which would make such a wait
+/// take a second or more. `launch.rs` passes the switches that turn that
+/// throttling off for a browser this app starts, but a browser the person
+/// attached some other way could still throttle. The click point is
+/// clamped to the part of the rect actually inside the viewport, and only
+/// hit-tested when some of it is on screen at all.
 pub const PROBE_JS: &str = r#"function() {
   this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const b = this.getBoundingClientRect();
@@ -120,6 +130,17 @@ pub const FOCUS_JS: &str = r#"function(value) {
   return 'text';
 }"#;
 
+/// `this` is the element. `FOCUS_JS` focuses it in one round trip, and
+/// the text is sent in a SEPARATE one that goes wherever focus is by
+/// then - so a page that moves focus in between (an autofocusing dialog,
+/// a focus trap) would take the typing and the action would still report
+/// "filled <target>", a false pass. This is checked immediately before
+/// anything is sent.
+pub const HAS_FOCUS_JS: &str = r#"function() {
+  const a = document.activeElement;
+  return a === this || (this.isContentEditable && this.contains(a));
+}"#;
+
 /// Why a probed element cannot be used right now, from its own flags:
 /// visible, onscreen, enabled, and - only when the caller means to type
 /// into it - editable, then hit. Shared between `look` (deciding whether
@@ -191,8 +212,17 @@ async fn look<D: Driver>(
     }))
 }
 
+/// What a wait loop says it last saw when its budget ran out inside a
+/// call rather than between two of them.
+pub(crate) const STILL_LOOKING: &str = "was still being checked when the time ran out";
+
 /// Look, and keep looking, until the element can be used or the action
 /// timeout runs out. The last reason seen is the one reported.
+///
+/// The deadline is pushed down into the driver so no single protocol call
+/// can outlive this wait, and cleared on EVERY path out - which is why
+/// the loop itself is a separate function rather than an early `return`
+/// away from a `set_deadline(None)`.
 pub async fn wait_ready<D: Driver>(
     d: &mut D,
     target: &Target,
@@ -200,10 +230,27 @@ pub async fn wait_ready<D: Driver>(
     timing: &Timing,
 ) -> Result<Ready, Blocked> {
     let deadline = Instant::now() + Duration::from_millis(timing.action_ms);
+    d.set_deadline(Some(deadline));
+    let out = keep_looking(d, target, need_editable, timing, deadline).await;
+    d.set_deadline(None);
+    out
+}
+
+async fn keep_looking<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    need_editable: bool,
+    timing: &Timing,
+    deadline: Instant,
+) -> Result<Ready, Blocked> {
+    let gave_up = |why: &str| {
+        Blocked::Page(format!("waited {}ms: {} {}", timing.action_ms, target.describe(), why))
+    };
     let mut prev_rect: Option<[f64; 4]> = None;
+    let mut last = STILL_LOOKING.to_string();
     loop {
         page::release(d).await;
-        let why = match look(d, target, need_editable, prev_rect).await {
+        last = match look(d, target, need_editable, prev_rect).await {
             Ok(Look::Ready(r)) => return Ok(r),
             Ok(Look::NotYet { why, rect }) => {
                 prev_rect = rect;
@@ -213,15 +260,17 @@ pub async fn wait_ready<D: Driver>(
                 prev_rect = None;
                 e.to_string()
             }
+            // A call that ran out of time BECAUSE this wait's budget ran
+            // out is the wait ending, not a browser that has stopped
+            // answering: say what was last seen, and do not blame it on
+            // the harness (which would also suppress the screenshot).
+            Err(CdpError::Timeout { .. }) if Instant::now() >= deadline => {
+                return Err(gave_up(&last))
+            }
             Err(e) => return Err(Blocked::Harness(e.to_string())),
         };
         if Instant::now() >= deadline {
-            return Err(Blocked::Page(format!(
-                "waited {}ms: {} {}",
-                timing.action_ms,
-                target.describe(),
-                why
-            )));
+            return Err(gave_up(&last));
         }
         tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
     }
@@ -275,6 +324,15 @@ pub async fn fill<D: Driver>(d: &mut D, ready: &Ready, value: &str) -> Result<()
             return Err(Blocked::Page(format!("the option \"{value}\" is disabled")));
         }
         _ => {}
+    }
+    // Nothing is sent to a field that no longer has the focus: the text
+    // would land somewhere else and this would still say "filled".
+    let kept = page::call_value(d, &ready.handle, HAS_FOCUS_JS, &[]).await.map_err(blame)?;
+    if !kept.as_bool().unwrap_or(false) {
+        return Err(Blocked::Page(
+            "lost focus before it could be typed into - something else on the page took it"
+                .to_string(),
+        ));
     }
     if value.is_empty() {
         for kind in ["keyDown", "keyUp"] {

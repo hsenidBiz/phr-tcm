@@ -164,6 +164,21 @@ impl Target {
         }
     }
 
+    /// The same target, matching what cannot be seen as well. Only
+    /// `expect_visible` uses it, and only after a visible-only look found
+    /// nothing: without it, "is there but cannot be seen" is unreachable
+    /// for a structured target, and a hidden element reads as absent. A
+    /// legacy string has no visibility filter to relax, so it is returned
+    /// unchanged.
+    pub fn including_hidden(&self) -> Target {
+        let show_all = |s: &LocatorStep| LocatorStep { visible: Some(false), ..s.clone() };
+        match self {
+            Target::Legacy(s) => Target::Legacy(s.clone()),
+            Target::One(s) => Target::One(show_all(s)),
+            Target::Chain(v) => Target::Chain(v.iter().map(show_all).collect()),
+        }
+    }
+
     /// Innermost first, the way a person says it: `button "Add Method" in
     /// dialog "Add Rating Method"`.
     pub fn describe(&self) -> String {

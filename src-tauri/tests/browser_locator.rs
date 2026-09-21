@@ -95,6 +95,33 @@ fn a_target_describes_itself_the_way_a_person_would() {
     assert_eq!(text.describe(), r#"text "Step 1 of 6""#);
 }
 
+/// `expect_visible` needs a second look that does NOT filter by
+/// visibility, or "is there but cannot be seen" can never be true of a
+/// structured target: the locator would have dropped the hidden element
+/// before the check ran. Every step relaxes, the rest of each step is
+/// untouched, and a legacy string (which has no filter to relax) comes
+/// back exactly as it was.
+#[test]
+fn a_target_can_be_asked_again_including_what_cannot_be_seen() {
+    let one: Target = serde_json::from_value(json!({ "css": "#ghost" })).unwrap();
+    assert_eq!(one.including_hidden(), serde_json::from_value(json!({ "css": "#ghost", "visible": false })).unwrap());
+
+    let chain: Target = serde_json::from_value(json!([
+        { "role": "dialog", "name": "Add Rating Method" },
+        { "role": "button", "name": "Add Method", "exact": true, "nth": 1, "visible": true }
+    ]))
+    .unwrap();
+    let relaxed: Target = serde_json::from_value(json!([
+        { "role": "dialog", "name": "Add Rating Method", "visible": false },
+        { "role": "button", "name": "Add Method", "exact": true, "nth": 1, "visible": false }
+    ]))
+    .unwrap();
+    assert_eq!(chain.including_hidden(), relaxed);
+
+    let legacy = Target::from("text=Save");
+    assert_eq!(legacy.including_hidden(), legacy);
+}
+
 /// Measured on real Edge: a label's name arrives as "Method Name * " with
 /// the trailing space, and the protocol's own name filter is exact-only.
 #[test]

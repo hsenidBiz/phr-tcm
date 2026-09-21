@@ -8,6 +8,7 @@
 
 use super::actions::{harness, ActionOutcome};
 use super::cdp::{CdpError, Driver};
+use super::input::STILL_LOOKING;
 use super::locator::{resolve, Target, VISIBLE_JS};
 use super::page::{self, Handle};
 use serde_json::json;
@@ -33,6 +34,9 @@ pub const READ_TEXT_JS: &str = r#"function() {
 
 /// `this` is the element. Argument: the attribute name. null when absent.
 pub const READ_ATTR_JS: &str = r#"function(name) { return this.getAttribute(name); }"#;
+
+/// The honest answer when the element IS in the page and cannot be seen.
+const HIDDEN: &str = "is there but cannot be seen";
 
 fn collapse(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -60,12 +64,24 @@ async fn look<D: Driver>(
     let handles = resolve(d, target).await?;
     Ok(match check {
         Check::Visible => match only(&handles) {
+            // A locator keeps only what a person could see, so "nothing
+            // resolved" cannot on its own tell "not there" from "there
+            // but hidden" - and the honest second answer would be
+            // unreachable for every structured target. Ask once more
+            // including what cannot be seen, and report which it was.
+            Err(why) if handles.is_empty() => {
+                if resolve(d, &target.including_hidden()).await?.is_empty() {
+                    Err(why)
+                } else {
+                    Err(HIDDEN.to_string())
+                }
+            }
             Err(why) => Err(why),
             Ok(h) => {
                 if visible(d, h).await? {
                     Ok(format!("{what} is visible"))
                 } else {
-                    Err("is there but cannot be seen".to_string())
+                    Err(HIDDEN.to_string())
                 }
             }
         },
@@ -128,6 +144,10 @@ async fn look<D: Driver>(
     })
 }
 
+/// The deadline is pushed down into the driver so no single protocol call
+/// can outlive this expectation's budget, and cleared on EVERY path out -
+/// which is why the loop is a separate function rather than an early
+/// `return` away from a `set_deadline(None)`.
 pub async fn expect<D: Driver>(
     d: &mut D,
     target: &Target,
@@ -136,19 +156,37 @@ pub async fn expect<D: Driver>(
     poll_ms: u64,
 ) -> ActionOutcome {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    d.set_deadline(Some(deadline));
+    let out = keep_looking(d, target, check, timeout_ms, poll_ms, deadline).await;
+    d.set_deadline(None);
+    out
+}
+
+async fn keep_looking<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    check: Check<'_>,
+    timeout_ms: u64,
+    poll_ms: u64,
+    deadline: Instant,
+) -> ActionOutcome {
+    let gave_up =
+        |why: &str| ActionOutcome::failed(format!("waited {timeout_ms}ms: {} {why}", target.describe()));
+    let mut last = STILL_LOOKING.to_string();
     loop {
         page::release(d).await;
-        let why = match look(d, target, &check).await {
+        last = match look(d, target, &check).await {
             Ok(Ok(detail)) => return ActionOutcome::passed(detail),
             Ok(Err(why)) => why,
             Err(e) if e.is_transient() => e.to_string(),
+            // The budget ran out inside a call rather than between two of
+            // them. That is this wait ending, not a dead browser: report
+            // what was last seen, as a page failure.
+            Err(CdpError::Timeout { .. }) if Instant::now() >= deadline => return gave_up(&last),
             Err(e) => return harness(e),
         };
         if Instant::now() >= deadline {
-            return ActionOutcome::failed(format!(
-                "waited {timeout_ms}ms: {} {why}",
-                target.describe()
-            ));
+            return gave_up(&last);
         }
         tokio::time::sleep(Duration::from_millis(poll_ms)).await;
     }

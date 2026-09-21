@@ -3,8 +3,10 @@
 //! the browser volunteers.
 
 use std::collections::VecDeque;
-use std::time::Duration;
-use v2_lib::browser::cdp::{event_of, frame, reply_for, Cdp, CdpError, Transport};
+use std::time::{Duration, Instant};
+use v2_lib::browser::cdp::{
+    event_of, frame, reply_for, Cdp, CdpError, Transport, CALL_TIMEOUT, MIN_CALL_TIMEOUT,
+};
 
 #[test]
 fn a_frame_carries_its_id_method_and_params() {
@@ -128,6 +130,54 @@ async fn a_call_that_is_never_answered_times_out_and_says_what_it_was() {
     assert_eq!(err, CdpError::Timeout { what: "Runtime.evaluate".into(), ms: 50 });
     assert!(err.to_string().contains("Runtime.evaluate"), "{err}");
     assert!(!err.is_transient());
+}
+
+/// A wait loop's budget is pushed down into the client, because checking
+/// the deadline only BETWEEN calls leaves each call capped at the full
+/// 30s `CALL_TIMEOUT`: a browser that accepts frames and stops answering
+/// turns a 15s click into 30s and a ten-action step into minutes, all
+/// while the session is locked, so "Close browser" cannot act.
+#[tokio::test]
+async fn a_deadline_shortens_a_call_without_starving_it() {
+    let mut cdp = Cdp::over(FakeTransport::hanging(&[]));
+    cdp.set_deadline(Some(Instant::now() + Duration::from_millis(100)));
+    let started = Instant::now();
+    let err = cdp.call("Runtime.evaluate", serde_json::json!({})).await.unwrap_err();
+    match err {
+        CdpError::Timeout { ms, .. } => assert!(ms <= 250, "capped at the deadline, not 30s: {ms}"),
+        other => panic!("expected a timeout, got {other:?}"),
+    }
+    assert!(started.elapsed() < Duration::from_secs(1), "it waited {:?}", started.elapsed());
+
+    // The floor: a call made right at the edge of a budget still gets a
+    // moment to answer rather than being cancelled before it can.
+    cdp.set_deadline(Some(Instant::now() - Duration::from_secs(5)));
+    let err = cdp.call("Runtime.evaluate", serde_json::json!({})).await.unwrap_err();
+    assert_eq!(
+        err,
+        CdpError::Timeout {
+            what: "Runtime.evaluate".into(),
+            ms: MIN_CALL_TIMEOUT.as_millis() as u64
+        }
+    );
+}
+
+/// And with no deadline a call is back to the full `CALL_TIMEOUT` - the
+/// floor is a cap on a shortened call, never a new limit of its own.
+#[tokio::test]
+async fn clearing_the_deadline_restores_the_full_call_timeout() {
+    assert_eq!(CALL_TIMEOUT, Duration::from_secs(30));
+    let mut cdp = Cdp::over(FakeTransport::hanging(&[]));
+    cdp.set_deadline(Some(Instant::now() - Duration::from_secs(5)));
+    cdp.set_deadline(None);
+    // Observed without waiting 30s: the call is still pending long after
+    // the 250ms floor a stale deadline would have imposed.
+    let pending = tokio::time::timeout(
+        Duration::from_millis(400),
+        cdp.call("Runtime.evaluate", serde_json::json!({})),
+    )
+    .await;
+    assert!(pending.is_err(), "the call gave up early: {pending:?}");
 }
 
 #[tokio::test]

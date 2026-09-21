@@ -6,13 +6,29 @@ use common::ScriptedDriver;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use v2_lib::browser::cdp::CdpError;
-use v2_lib::browser::input::{click, fill, wait_ready, Blocked, Ready, FOCUS_JS, PROBE_JS};
+use v2_lib::browser::input::{
+    click, fill, wait_ready, Blocked, Ready, FOCUS_JS, HAS_FOCUS_JS, PROBE_JS,
+};
 use v2_lib::browser::locator::Target;
 use v2_lib::browser::timing::Timing;
 
 fn quick() -> Timing {
     Timing { action_ms: 300, expect_ms: 300, nav_ms: 300, poll_ms: 10, highlight_ms: 0 }
+}
+
+/// A field that answers both halves of a fill: `FOCUS_JS` says what kind
+/// of control it is, and the focus check says it still holds the focus
+/// when the text is about to be sent.
+fn field(kind: &'static str) -> ScriptedDriver {
+    ScriptedDriver::new(move |method, params| match method {
+        "Runtime.callFunctionOn" if params["functionDeclaration"] == HAS_FOCUS_JS => {
+            Ok(json!({ "result": { "value": true } }))
+        }
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": kind } })),
+        _ => Ok(json!({})),
+    })
 }
 
 fn probe(over: Value) -> Value {
@@ -288,10 +304,7 @@ async fn a_click_is_refused_when_the_re_probe_finds_it_covered() {
 /// which is what a framework-controlled field listens for.
 #[tokio::test]
 async fn a_fill_selects_what_is_there_and_types_over_it() {
-    let mut d = ScriptedDriver::new(|method, _| match method {
-        "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "text" } })),
-        _ => Ok(json!({})),
-    });
+    let mut d = field("text");
     fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "Custom 4-Point").await.ok().unwrap();
     let focus = &d.calls_to("Runtime.callFunctionOn")[0];
     assert_eq!(focus["functionDeclaration"], FOCUS_JS);
@@ -301,10 +314,7 @@ async fn a_fill_selects_what_is_there_and_types_over_it() {
 
 #[tokio::test]
 async fn filling_with_nothing_clears_the_field() {
-    let mut d = ScriptedDriver::new(|method, _| match method {
-        "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "text" } })),
-        _ => Ok(json!({})),
-    });
+    let mut d = field("text");
     fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "").await.ok().unwrap();
     assert!(d.calls_to("Input.insertText").is_empty());
     let keys = d.calls_to("Input.dispatchKeyEvent");
@@ -386,4 +396,107 @@ async fn a_dead_browser_during_fill_is_blamed_on_the_browser() {
         Err(Blocked::Harness(msg)) => assert!(msg.contains("browser"), "{msg}"),
         other => panic!("expected a harness failure, got {other:?}"),
     }
+}
+
+/// Focusing and typing are SEPARATE round trips, and the text goes to
+/// whatever `document.activeElement` is by the time it lands. A page that
+/// moves focus in between (an autofocusing dialog, a focus trap) would
+/// otherwise take the typing into another field while this still reported
+/// "filled" - a false pass. Nothing at all is sent.
+#[tokio::test]
+async fn nothing_is_typed_when_the_field_lost_the_focus() {
+    for value in ["Custom 4-Point", ""] {
+        let mut d = ScriptedDriver::new(|method, params| match method {
+            "Runtime.callFunctionOn" if params["functionDeclaration"] == HAS_FOCUS_JS => {
+                Ok(json!({ "result": { "value": false } }))
+            }
+            "Runtime.callFunctionOn" => Ok(json!({ "result": { "value": "text" } })),
+            _ => Ok(json!({})),
+        });
+        match fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, value).await {
+            Err(Blocked::Page(msg)) => {
+                assert!(msg.contains("lost focus before it could be typed into"), "{msg}");
+                assert!(!msg.contains('\u{2014}'), "no em dashes in what a person reads: {msg}");
+            }
+            other => panic!("expected a page reason for {value:?}, got {other:?}"),
+        }
+        assert!(d.calls_to("Input.insertText").is_empty(), "text was sent anyway");
+        assert!(d.calls_to("Input.dispatchKeyEvent").is_empty(), "keys were sent anyway");
+    }
+}
+
+/// The focus check is asked ON the element, and only after the page has
+/// said what kind of control it is.
+#[tokio::test]
+async fn the_focus_is_checked_on_the_element_just_before_typing() {
+    let mut d = field("text");
+    fill(&mut d, &Ready { handle: "el".into(), x: 0.0, y: 0.0 }, "hello").await.ok().unwrap();
+    let called: Vec<&str> = d
+        .calls_to("Runtime.callFunctionOn")
+        .iter()
+        .map(|p| if p["functionDeclaration"] == HAS_FOCUS_JS { "focus?" } else { "focus!" })
+        .collect();
+    assert_eq!(called, vec!["focus!", "focus?"]);
+    assert_eq!(d.calls_to("Runtime.callFunctionOn")[1]["objectId"], "el");
+}
+
+/// Every way out of the wait hands the deadline back. A loop that left
+/// one set would cap every later call at the floor, because the budget it
+/// named has long since passed.
+#[tokio::test]
+async fn a_wait_always_hands_its_deadline_back() {
+    let (mut d, _) = page(1, vec![probe(json!({})), probe(json!({}))]);
+    assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_ok());
+    assert!(d.deadlines.first().is_some_and(Option::is_some), "it never set one");
+    assert!(d.deadline_was_cleared(), "after success: {:?}", d.deadlines.len());
+
+    let (mut d, _) = page(0, vec![probe(json!({}))]);
+    assert!(wait_ready(&mut d, &css("#nope"), false, &quick()).await.is_err());
+    assert!(d.deadline_was_cleared(), "after a page failure");
+
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Runtime.releaseObjectGroup" => Ok(json!({})),
+        _ => Err(CdpError::Closed),
+    });
+    assert!(wait_ready(&mut d, &css("#go"), false, &quick()).await.is_err());
+    assert!(d.deadline_was_cleared(), "after a harness failure");
+}
+
+/// A call that times out BECAUSE the wait's own budget ran out is the
+/// wait ending, not a browser that has died. Reported as a harness
+/// failure it would both blame the wrong thing and lose the screenshot.
+#[tokio::test]
+async fn a_timeout_once_the_budget_is_gone_is_the_wait_ending() {
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Runtime.releaseObjectGroup" => Ok(json!({})),
+        other => {
+            // The call itself burns the whole action budget, exactly as a
+            // browser that takes frames and stops answering does.
+            std::thread::sleep(Duration::from_millis(400));
+            Err(CdpError::Timeout { what: other.to_string(), ms: 400 })
+        }
+    });
+    match wait_ready(&mut d, &css("#go"), false, &quick()).await {
+        Err(Blocked::Page(msg)) => {
+            assert!(msg.contains("waited 300ms"), "{msg}");
+            assert!(msg.contains("#go"), "{msg}");
+        }
+        other => panic!("expected a page failure, got {other:?}"),
+    }
+    assert!(d.deadline_was_cleared());
+}
+
+/// While the budget remains, a timeout is still what it always was: a
+/// browser that has stopped answering.
+#[tokio::test]
+async fn a_timeout_while_the_budget_remains_is_still_the_harness() {
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Runtime.releaseObjectGroup" => Ok(json!({})),
+        other => Err(CdpError::Timeout { what: other.to_string(), ms: 250 }),
+    });
+    match wait_ready(&mut d, &css("#go"), false, &quick()).await {
+        Err(Blocked::Harness(msg)) => assert!(msg.contains("browser"), "{msg}"),
+        other => panic!("expected a harness failure, got {other:?}"),
+    }
+    assert!(d.deadline_was_cleared());
 }

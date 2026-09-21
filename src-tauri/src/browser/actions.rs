@@ -106,9 +106,58 @@ pub(crate) fn blocked(b: Blocked) -> ActionOutcome {
     }
 }
 
+/// The same division `input::blame` draws, for the sites that produce an
+/// `ActionOutcome` directly: a refusal came from the PAGE (a navigation
+/// landing mid-action yields "Cannot find context with specified id"),
+/// anything else is the browser connection. It matters twice over -
+/// "the browser did not answer" about a browser that is alive and well is
+/// simply wrong, and `harness` also suppresses the failure screenshot.
+pub(crate) fn failed_by(e: CdpError) -> ActionOutcome {
+    match e {
+        CdpError::Protocol { message, .. } => {
+            ActionOutcome::failed(format!("the page refused: {message}"))
+        }
+        other => harness(other),
+    }
+}
+
+/// An address the browser can be sent to. `file://` is allowed on
+/// purpose: the live fixture is a local file and this tab is a
+/// development-only one. Narrowing this to an origin allowlist is planned
+/// work, not an oversight.
 fn is_page_url(url: &str) -> bool {
     let u = url.trim().to_ascii_lowercase();
     u.starts_with("http://") || u.starts_with("https://") || u.starts_with("file://")
+}
+
+/// Does this start with a URI scheme (RFC 3986: a letter, then letters,
+/// digits, `+`, `-` or `.`, then `:`)? Anything that does NOT is a
+/// relative reference, which the page resolves at run time.
+fn has_scheme(url: &str) -> bool {
+    let mut chars = url.chars();
+    if !chars.next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    for c in chars {
+        if c == ':' {
+            return true;
+        }
+        if !(c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+            return false;
+        }
+    }
+    false
+}
+
+/// What `navigate` accepts when a script is SAVED: a page address, or a
+/// relative reference like `/dashboard`. Scripts have always been able to
+/// write the latter, and because saving validates every action, refusing
+/// one here would refuse a whole bundle for containing a single such
+/// script. Anything carrying another scheme (`javascript:`, `data:`,
+/// `about:`, `chrome:`) is still refused.
+fn is_navigable(url: &str) -> bool {
+    let u = url.trim();
+    !u.is_empty() && (is_page_url(u) || !has_scheme(u))
 }
 
 impl Action {
@@ -117,7 +166,7 @@ impl Action {
     /// execute, so nothing invalid reaches the page.
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Action::Navigate { url } if !is_page_url(url) => {
+            Action::Navigate { url } if !is_navigable(url) => {
                 Err(format!("navigate needs an http, https or file address, not {url:?}"))
             }
             Action::Navigate { .. } => Ok(()),
@@ -165,6 +214,11 @@ pub const CHECK_TEXT_JS: &str = r#"function(want) {
   return hay.toLowerCase().includes(String(want).toLowerCase());
 }"#;
 
+/// `this` is the document. Argument: the relative reference. Resolved in
+/// the PAGE against its own address, with the script's value passed as an
+/// argument and never concatenated into this source.
+pub const RESOLVE_URL_JS: &str = r#"function(rel) { return new URL(rel, location.href).href; }"#;
+
 async fn point_and_pause<D: Driver>(
     d: &mut D,
     ready: &input::Ready,
@@ -177,13 +231,39 @@ async fn point_and_pause<D: Driver>(
     Ok(())
 }
 
+/// A page address as given, or a relative reference made absolute against
+/// the page's own address. What comes back has to be an address a browser
+/// can be sent to in its own right: `new URL("javascript:x", base)` keeps
+/// that scheme, so the check is applied again to the RESULT.
+async fn absolute<D: Driver>(d: &mut D, url: &str) -> Result<String, ActionOutcome> {
+    if is_page_url(url) {
+        return Ok(url.to_string());
+    }
+    let doc = page::document(d).await.map_err(failed_by)?;
+    let resolved = page::call_value(d, &doc, RESOLVE_URL_JS, &[json!(url)])
+        .await
+        .map_err(failed_by)?;
+    let resolved = resolved.as_str().unwrap_or("").to_string();
+    if !is_page_url(&resolved) {
+        return Err(ActionOutcome::failed(format!(
+            "navigate needs an http, https or file address, not {resolved:?}"
+        )));
+    }
+    Ok(resolved)
+}
+
 async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing) -> ActionOutcome {
+    let url = match absolute(d, url).await {
+        Ok(u) => u,
+        Err(out) => return out,
+    };
+    let url = url.as_str();
     // Older lifecycle events would satisfy the wait below before this
     // page has even started.
     d.forget_events();
     let reply = match d.call("Page.navigate", json!({ "url": url })).await {
         Ok(r) => r,
-        Err(e) => return harness(e),
+        Err(e) => return failed_by(e),
     };
     if let Some(err) = reply["errorText"].as_str() {
         return ActionOutcome::failed(format!("{url} would not load: {err}"));
@@ -206,7 +286,7 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing) -> ActionOut
         let ev = match d.wait_event("Page.lifecycleEvent", remaining).await {
             Ok(ev) => ev,
             Err(CdpError::Timeout { .. }) => return timed_out(),
-            Err(e) => return harness(e),
+            Err(e) => return failed_by(e),
         };
         let is_this_navigation = ev.params["loaderId"].as_str() == Some(loader_id.as_str())
             && ev.params["name"].as_str() == Some("load")
@@ -220,8 +300,28 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing) -> ActionOut
     }
 }
 
+/// The deadline is pushed down into the driver so no single protocol call
+/// can outlive this wait's budget, and cleared on EVERY path out - which
+/// is why the loop is a separate function rather than an early `return`
+/// away from a `set_deadline(None)`.
 async fn wait_for<D: Driver>(d: &mut D, target: &Target, timeout_ms: u32, timing: &Timing) -> ActionOutcome {
     let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
+    d.set_deadline(Some(deadline));
+    let out = keep_waiting(d, target, timeout_ms, timing, deadline).await;
+    d.set_deadline(None);
+    out
+}
+
+async fn keep_waiting<D: Driver>(
+    d: &mut D,
+    target: &Target,
+    timeout_ms: u32,
+    timing: &Timing,
+    deadline: Instant,
+) -> ActionOutcome {
+    let gave_up = || {
+        ActionOutcome::failed(format!("waited {timeout_ms}ms and never saw {}", target.describe()))
+    };
     loop {
         page::release(d).await;
         match resolve(d, target).await {
@@ -230,13 +330,13 @@ async fn wait_for<D: Driver>(d: &mut D, target: &Target, timeout_ms: u32, timing
             }
             Ok(_) => {}
             Err(e) if e.is_transient() => {}
+            // The budget ran out inside a call rather than between two of
+            // them: this wait ending, not a browser that has died.
+            Err(CdpError::Timeout { .. }) if Instant::now() >= deadline => return gave_up(),
             Err(e) => return harness(e),
         }
         if Instant::now() >= deadline {
-            return ActionOutcome::failed(format!(
-                "waited {timeout_ms}ms and never saw {}",
-                target.describe()
-            ));
+            return gave_up();
         }
         tokio::time::sleep(Duration::from_millis(timing.poll_ms)).await;
     }
@@ -255,7 +355,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOu
                 Err(b) => return blocked(b),
             };
             if let Err(e) = point_and_pause(d, &ready, timing).await {
-                return harness(e);
+                return failed_by(e);
             }
             match input::click(d, &ready).await {
                 Ok(()) => ActionOutcome::passed(format!("clicked {}", selector.describe())),
@@ -268,7 +368,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOu
                 Err(b) => return blocked(b),
             };
             if let Err(e) = point_and_pause(d, &ready, timing).await {
-                return harness(e);
+                return failed_by(e);
             }
             match input::fill(d, &ready, value).await {
                 Ok(()) => ActionOutcome::passed(format!("filled {}", selector.describe())),
@@ -279,14 +379,14 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOu
         Action::CheckText { value } => {
             let doc = match page::document(d).await {
                 Ok(h) => h,
-                Err(e) => return harness(e),
+                Err(e) => return failed_by(e),
             };
             match page::call_value(d, &doc, CHECK_TEXT_JS, &[json!(value)]).await {
                 Ok(v) if v.as_bool().unwrap_or(false) => {
                     ActionOutcome::passed(format!("page contains {value}"))
                 }
                 Ok(_) => ActionOutcome::failed(format!("page does NOT contain {value}")),
-                Err(e) => harness(e),
+                Err(e) => failed_by(e),
             }
         }
         Action::CheckUrl { contains } => match page::eval_value(d, "location.href").await {
@@ -299,7 +399,7 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOu
                     ActionOutcome::failed(detail)
                 }
             }
-            Err(e) => harness(e),
+            Err(e) => failed_by(e),
         },
         Action::ExpectVisible { selector, timeout_ms } => {
             expect::expect(d, selector, Check::Visible, wait(timeout_ms, timing), timing.poll_ms).await
@@ -332,6 +432,9 @@ pub async fn execute_with<D: Driver>(d: &mut D, action: &Action, timing: &Timing
         return ActionOutcome::failed(format!("this action cannot run: {why}"));
     }
     let mut out = run(d, action, timing).await;
+    // A dialog raised BETWEEN two actions is reported with the NEXT one:
+    // the client only reads frames off the socket while a call is in
+    // flight, so nothing is noticed until something asks again.
     let dialogs = d.take_dialogs();
     if !dialogs.is_empty() {
         out.detail.push_str(&format!(

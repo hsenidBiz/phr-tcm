@@ -3,9 +3,13 @@
 
 mod common;
 
-use common::FakePage;
-use serde_json::json;
+use common::{FakePage, ScriptedDriver};
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use v2_lib::browser::actions::{execute_with, Action};
+use v2_lib::browser::cdp::CdpError;
 use v2_lib::browser::timing::Timing;
 
 fn quick() -> Timing {
@@ -141,6 +145,86 @@ async fn its_own_timeout_wins_over_the_default() {
     )
     .await;
     assert!(out.detail.contains("40ms"), "{}", out.detail);
+}
+
+/// A locator keeps only what a person could see, so an element that IS in
+/// the page but hidden resolves to nothing - and "is not on the page" is
+/// then a lie that sends someone looking for a selector bug. Asked again
+/// including hidden elements, the honest answer is reachable.
+#[tokio::test]
+async fn a_hidden_element_is_not_reported_as_missing() {
+    // Answers the visible-only look with nothing and the second look with
+    // one element, the way a `display:none` element really behaves.
+    let asked_for_visible = Arc::new(AtomicBool::new(true));
+    let flag = asked_for_visible.clone();
+    let mut d = ScriptedDriver::new(move |method, params| match method {
+        "Runtime.evaluate" => Ok(json!({ "result": { "objectId": "doc" } })),
+        "Runtime.callFunctionOn" => {
+            // CSS_JS takes (selector, visibleOnly).
+            flag.store(params["arguments"][1]["value"].as_bool().unwrap_or(true), Ordering::SeqCst);
+            Ok(json!({ "result": { "objectId": "arr" } }))
+        }
+        "Runtime.getProperties" => {
+            let found: Value = if flag.load(Ordering::SeqCst) {
+                json!([])
+            } else {
+                json!([{ "name": "0", "value": { "objectId": "el-0" } }])
+            };
+            Ok(json!({ "result": found }))
+        }
+        _ => Ok(json!({})),
+    });
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_visible", "selector": { "css": "#ghost" }, "timeout_ms": 40 })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("is there but cannot be seen"), "{}", out.detail);
+    assert!(!out.detail.contains("is not on the page"), "{}", out.detail);
+}
+
+/// Every way out of the loop hands the deadline back, or the next action
+/// inherits a budget that has already run out.
+#[tokio::test]
+async fn an_expectation_always_hands_its_deadline_back() {
+    let visible = action(json!({ "kind": "expect_visible", "selector": { "css": "#toast" } }));
+
+    let mut d = FakePage::default().driver();
+    assert!(execute_with(&mut d, &visible, &quick()).await.ok);
+    assert!(d.deadlines.first().is_some_and(Option::is_some), "it never set one");
+    assert!(d.deadline_was_cleared(), "after success");
+
+    let mut d = FakePage { found: 0, ..FakePage::default() }.driver();
+    assert!(!execute_with(&mut d, &visible, &quick()).await.ok);
+    assert!(d.deadline_was_cleared(), "after a page failure");
+
+    let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+    let out = execute_with(&mut d, &visible, &quick()).await;
+    assert!(out.harness, "{}", out.detail);
+    assert!(d.deadline_was_cleared(), "after a harness failure");
+}
+
+/// A call that times out because the expectation's own budget ran out is
+/// the wait ending, not a dead browser: a page failure that says what was
+/// last seen, and that still earns a screenshot.
+#[tokio::test]
+async fn a_timeout_once_the_budget_is_gone_is_the_wait_ending() {
+    let mut d = ScriptedDriver::new(|method, _| {
+        std::thread::sleep(Duration::from_millis(350));
+        Err(CdpError::Timeout { what: method.to_string(), ms: 350 })
+    });
+    let out = execute_with(
+        &mut d,
+        &action(json!({ "kind": "expect_visible", "selector": { "css": "#toast" } })),
+        &quick(),
+    )
+    .await;
+    assert!(!out.ok);
+    assert!(!out.harness, "the budget ran out; the browser is not to blame: {}", out.detail);
+    assert!(out.detail.contains("waited 250ms") && out.detail.contains("#toast"), "{}", out.detail);
+    assert!(d.deadline_was_cleared());
 }
 
 #[test]

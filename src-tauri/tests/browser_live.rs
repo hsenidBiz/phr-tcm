@@ -191,6 +191,37 @@ async fn every_kind_of_field_is_filled_and_cleared_through_what_the_page_sees() 
     must(run(&mut live, json!({ "kind": "expect_text", "selector": "#rich-echo", "equals": "" })).await);
 }
 
+/// Focusing and typing are separate round trips, and the text goes to
+/// whatever holds the focus when it lands. #grabby hands the focus
+/// straight to #grabbed, the way an autofocusing dialog does: the fill
+/// must refuse rather than type into the other field and call it a pass.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn typing_is_refused_when_the_page_takes_the_focus_away() {
+    let mut live = open().await;
+    refused(
+        run(&mut live, json!({ "kind": "fill", "selector": { "css": "#grabby" }, "value": "Stolen" })).await,
+        "lost focus before it could be typed into",
+    );
+    // Read back through the PAGE's own oninput mirrors: neither field saw
+    // a character.
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#grabbed-echo", "equals": "" })).await);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": "#grabby-echo", "equals": "" })).await);
+}
+
+/// A relative url is resolved in the page, against the page's own
+/// address. Here that is a file name beside the fixture.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_relative_navigate_resolves_against_the_page_it_is_on() {
+    let mut live = open().await;
+    let out = run(&mut live, json!({ "kind": "navigate", "url": "autorun-live-2.html" })).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.contains("autorun-live-2.html"), "the outcome names where it went: {}", out.detail);
+    must(run(&mut live, json!({ "kind": "expect_text", "selector": { "css": "#second" }, "equals": "Second fixture" })).await);
+    must(run(&mut live, json!({ "kind": "check_url", "contains": "autorun-live-2.html" })).await);
+}
+
 #[tokio::test]
 #[ignore = "starts a real headless Edge"]
 async fn a_native_list_is_chosen_by_its_label() {
@@ -264,6 +295,17 @@ async fn expectations_wait_and_say_what_they_saw() {
     must(run(&mut live, json!({ "kind": "expect_hidden", "selector": { "css": "#spinner" } })).await);
     must(run(&mut live, json!({ "kind": "expect_count", "selector": { "css": "#spinner" }, "equals": 0 })).await);
     must(run(&mut live, json!({ "kind": "expect_contains_text", "selector": { "css": "#rows" }, "value": "two" })).await);
+    // #ghost really is in the page and really cannot be seen. A locator
+    // keeps only what is visible, so saying "is not on the page" here
+    // would send someone hunting for a selector bug that is not there.
+    refused(
+        run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#ghost" }, "timeout_ms": 500 })).await,
+        "is there but cannot be seen",
+    );
+    refused(
+        run(&mut live, json!({ "kind": "expect_visible", "selector": { "css": "#really-not-here" }, "timeout_ms": 500 })).await,
+        "is not on the page",
+    );
 
     let started = std::time::Instant::now();
     let out = run(&mut live, json!({ "kind": "expect_text", "selector": "#count", "equals": "clicked 9", "timeout_ms": 600 })).await;

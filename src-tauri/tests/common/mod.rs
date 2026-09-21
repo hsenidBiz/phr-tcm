@@ -4,11 +4,11 @@
 
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use std::time::Duration;
-use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS};
+use std::time::{Duration, Instant};
+use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
 use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
-use v2_lib::browser::input::{FOCUS_JS, PROBE_JS};
+use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 
 type Handler =
@@ -24,6 +24,10 @@ pub struct ScriptedDriver {
     /// how a test says "the load event follows Page.navigate".
     pub on_call_events: Vec<(String, Event)>,
     pub dialogs: Vec<String>,
+    /// Every value handed to `set_deadline`, in order. A wait loop must
+    /// leave `Some(&None)` here on every path out, or a later action
+    /// inherits a budget that has already run out.
+    pub deadlines: Vec<Option<Instant>>,
 }
 
 impl ScriptedDriver {
@@ -38,6 +42,7 @@ impl ScriptedDriver {
             events: VecDeque::new(),
             on_call_events: vec![],
             dialogs: vec![],
+            deadlines: vec![],
         }
     }
 
@@ -47,6 +52,12 @@ impl ScriptedDriver {
 
     pub fn calls_to(&self, method: &str) -> Vec<serde_json::Value> {
         self.calls.iter().filter(|(m, _)| m == method).map(|(_, p)| p.clone()).collect()
+    }
+
+    /// Did the wait loop that just ran hand its deadline back? Asserted on
+    /// every exit path: success, page failure and harness failure alike.
+    pub fn deadline_was_cleared(&self) -> bool {
+        matches!(self.deadlines.last(), Some(None))
     }
 }
 
@@ -84,6 +95,10 @@ impl Driver for ScriptedDriver {
     fn take_dialogs(&mut self) -> Vec<String> {
         std::mem::take(&mut self.dialogs)
     }
+
+    fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadlines.push(deadline);
+    }
 }
 
 /// The actionability probe's answer for an element that is fully ready:
@@ -108,8 +123,13 @@ pub struct FakePage {
     pub probes: Vec<Value>,
     pub visible: bool,
     pub fill_kind: &'static str,
+    /// Does the field still hold the focus when the text is about to be
+    /// sent? False is a page that moved it in between.
+    pub has_focus: bool,
     pub body_has_text: bool,
     pub href: &'static str,
+    /// What the page makes of a relative `navigate` url.
+    pub resolved_url: &'static str,
     pub navigate_reply: Value,
     /// Answers to "what does it say", in turn; the last repeats.
     pub texts: Vec<&'static str>,
@@ -124,8 +144,10 @@ impl Default for FakePage {
             probes: vec![ready_probe()],
             visible: true,
             fill_kind: "text",
+            has_focus: true,
             body_has_text: true,
             href: "https://app.example/home",
+            resolved_url: "https://app.example/dashboard",
             navigate_reply: json!({ "frameId": "F", "loaderId": "L" }),
             texts: vec!["Saved"],
             attribute: None,
@@ -154,6 +176,12 @@ impl FakePage {
                 "Runtime.callFunctionOn" if f == VISIBLE_JS => json!({ "result": { "value": page.visible } }),
                 "Runtime.callFunctionOn" if f == HIGHLIGHT_JS => json!({ "result": { "value": true } }),
                 "Runtime.callFunctionOn" if f == FOCUS_JS => json!({ "result": { "value": page.fill_kind } }),
+                "Runtime.callFunctionOn" if f == HAS_FOCUS_JS => {
+                    json!({ "result": { "value": page.has_focus } })
+                }
+                "Runtime.callFunctionOn" if f == RESOLVE_URL_JS => {
+                    json!({ "result": { "value": page.resolved_url } })
+                }
                 "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
                     json!({ "result": { "value": page.body_has_text } })
                 }

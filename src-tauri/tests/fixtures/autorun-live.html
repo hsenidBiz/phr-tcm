@@ -52,6 +52,29 @@
   <div id="rich" contenteditable oninput="say('rich-echo', this.textContent)">old rich</div>
   <p id="rich-echo">old rich</p>
 
+  <!-- Hands the focus straight on to another field the moment it gets it,
+       the way an autofocusing dialog or a focus trap does. Focusing and
+       typing are separate round trips, so without a check in between the
+       text lands in #grabbed and the fill still reports success. Both
+       mirrors must stay empty.
+
+       The `onfocus` handler is the real-browser half. It is not enough on
+       its own HERE, because these tests run headless: measured on Edge
+       153 --headless=new, `document.hasFocus()` is false, focus events
+       are not dispatched at all while that holds, and the first
+       `Input.*` dispatch flushes them - which is later than any check
+       could be. The hook on this field's own `select()` (see the script
+       below) moves the focus at the same point in the sequence, from
+       inside the focus step, which is where a focus trap moves it in a
+       browser somebody is watching. -->
+  <p><label>Grabby <input id="grabby" onfocus="document.getElementById('grabbed').focus()" oninput="say('grabby-echo', this.value)"></label></p>
+  <p id="grabby-echo"></p>
+  <p><label>Grabbed <input id="grabbed" oninput="say('grabbed-echo', this.value)"></label></p>
+  <p id="grabbed-echo"></p>
+
+  <!-- Present and unseeable: "is not on the page" would be a lie. -->
+  <p id="ghost" style="display:none">Ghost</p>
+
   <p><label>Type
     <select id="type" onchange="say('picked', this.value)">
       <option value="">Select type</option>
@@ -128,6 +151,14 @@
     document.getElementById('settler').style.left = sx + 'px';
     if (sx >= 150) clearInterval(settling);
   }, 40);
+
+  // The headless half of #grabby's focus trap: moving the focus on from
+  // inside the focus step, where a real trap's focus handler moves it.
+  const grabby = document.getElementById('grabby');
+  grabby.select = function () {
+    HTMLInputElement.prototype.select.call(this);
+    document.getElementById('grabbed').focus();
+  };
 
   // Covers itself the instant it is outlined, which is how a real page
   // puts a modal up between the highlight and the click.
