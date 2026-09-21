@@ -20,3 +20,8 @@ impl Default for Timing {
         Timing { action_ms: 15_000, expect_ms: 10_000, nav_ms: 30_000, poll_ms: 100, highlight_ms: 350 }
     }
 }
+
+/// A screenshot is best effort evidence, not part of the action's own
+/// result - it must never hold the run up waiting for a browser that is
+/// already in trouble.
+pub const SHOT_TIMEOUT_MS: u64 = 5_000;

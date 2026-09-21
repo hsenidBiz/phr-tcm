@@ -10,8 +10,10 @@ use crate::browser::actions::{execute, ActionOutcome};
 use crate::browser::cdp::Cdp;
 use crate::browser::launch::{launch_in, Browser, LaunchedBrowser};
 use crate::browser::page;
+use crate::browser::timing::SHOT_TIMEOUT_MS;
 use base64::Engine;
 use std::path::PathBuf;
+use std::time::Duration;
 use tauri::Manager;
 
 /// The one live session. A second Open replaces the first, so a stray
@@ -113,10 +115,17 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
 }
 
 /// A picture of the page at the moment an action failed. Best effort: a
-/// browser that cannot take one (it has gone away) just means no picture -
-/// the failure is already reported in words.
+/// browser that cannot take one (it has gone away, or is too busy to
+/// answer within `SHOT_TIMEOUT_MS`) just means no picture - the failure is
+/// already reported in words. Never called for a harness failure: asking a
+/// browser that has already failed to answer for a picture is exactly the
+/// stall this guards against, and dropping the in-flight call mid-timeout
+/// is safe because the client ignores a reply nobody is waiting on.
 async fn shot_of_failure(cdp: &mut Cdp, app: &tauri::AppHandle) -> Option<String> {
-    let bytes = page::screenshot(cdp).await.ok()?;
+    let bytes = tokio::time::timeout(Duration::from_millis(SHOT_TIMEOUT_MS), page::screenshot(cdp))
+        .await
+        .ok()?
+        .ok()?;
     let root = root(app).ok()?;
     store::save_shot(&root, &bytes).ok()
 }
@@ -136,7 +145,7 @@ pub async fn auto_run_step(
     let mut out = Vec::new();
     for action in &step.actions {
         let mut outcome = execute(&mut session.cdp, action).await;
-        if !outcome.ok {
+        if !outcome.ok && !outcome.harness {
             outcome.screenshot = shot_of_failure(&mut session.cdp, &app).await;
         }
         out.push(outcome);

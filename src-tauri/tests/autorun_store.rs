@@ -96,6 +96,7 @@ fn a_run_round_trips_with_the_humans_verdict() {
                     ok: true,
                     detail: "clicked Sign in".to_string(),
                     screenshot: None,
+                    harness: false,
                 }],
             }],
         }],
@@ -302,4 +303,28 @@ fn only_the_newest_shots_are_kept() {
         .collect();
     left.sort();
     assert_eq!(left, names[2..].to_vec(), "the three newest stay");
+}
+
+/// The write already landed on disk by the time pruning runs. Whatever
+/// pruning keeps or drops, the caller must still learn the name of the
+/// file that exists - losing it would mean an outcome points at a
+/// screenshot nobody can find.
+#[test]
+fn saving_still_returns_the_name_even_keeping_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = save_shot_keeping(dir.path(), &[1, 2, 3], 0).unwrap();
+    assert!(safe_shot_name(&name), "{name}");
+}
+
+/// Pruning only ever touches files that look like screenshots - anything
+/// else in the shots folder is left alone.
+#[test]
+fn a_non_screenshot_file_in_the_shots_folder_survives_pruning() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("shots")).unwrap();
+    std::fs::write(dir.path().join("shots").join("notes.txt"), b"not a screenshot").unwrap();
+    for i in 0..3u8 {
+        save_shot_keeping(dir.path(), &[i], 1).unwrap();
+    }
+    assert!(dir.path().join("shots").join("notes.txt").is_file());
 }

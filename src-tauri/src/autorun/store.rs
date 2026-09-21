@@ -223,6 +223,12 @@ pub fn save_shot(root: &Path, bytes: &[u8]) -> Result<String, String> {
 /// Save, then drop the oldest beyond `keep`. Names sort by time: epoch
 /// milliseconds, then a zero-padded counter for shots in the same
 /// millisecond.
+///
+/// Once the write above has landed, the name it returns is a screenshot
+/// that genuinely exists on disk - losing track of it because pruning
+/// afterwards hit trouble (antivirus holding a lock on a just-written file
+/// is a real event on this machine) would be worse than a folder that grows
+/// a little past `keep` until the next successful prune.
 pub fn save_shot_keeping(root: &Path, bytes: &[u8], keep: usize) -> Result<String, String> {
     let dir = shots_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -234,8 +240,16 @@ pub fn save_shot_keeping(root: &Path, bytes: &[u8], keep: usize) -> Result<Strin
     let name = format!("shot-{ms}-{seq:06}.jpg");
     std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
 
-    let mut all: Vec<String> = std::fs::read_dir(&dir)
-        .map_err(|e| e.to_string())?
+    prune_shots(&dir, keep);
+    Ok(name)
+}
+
+/// Drop the oldest shots beyond `keep`. Entirely best effort: a listing or
+/// delete failure here must never lose track of a screenshot that already
+/// made it to disk.
+fn prune_shots(dir: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut all: Vec<String> = entries
         .flatten()
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|n| safe_shot_name(n))
@@ -246,7 +260,6 @@ pub fn save_shot_keeping(root: &Path, bytes: &[u8], keep: usize) -> Result<Strin
             let _ = std::fs::remove_file(dir.join(old));
         }
     }
-    Ok(name)
 }
 
 pub fn load_shot(root: &Path, name: &str) -> Result<Vec<u8>, String> {

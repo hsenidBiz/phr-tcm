@@ -82,6 +82,7 @@ async fn a_missing_element_fails_with_the_reason_and_clicks_nothing() {
     assert!(!out.ok);
     assert!(out.detail.contains("not found") && out.detail.contains("#nope"), "{}", out.detail);
     assert!(d.calls_to("Input.dispatchMouseEvent").is_empty());
+    assert!(!out.harness, "the page answered - this is not a harness problem");
 }
 
 #[tokio::test]
@@ -140,6 +141,19 @@ async fn a_transport_error_is_reported_as_a_harness_problem() {
     let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
     assert!(!out.ok);
     assert!(out.detail.contains("browser"), "{}", out.detail);
+    assert!(out.harness, "a dropped socket is the harness's fault, not the page's");
+}
+
+/// `harness` is process-internal bookkeeping for whether to bother asking a
+/// dead browser for a screenshot - it must never appear in a serialized
+/// outcome, not on the IPC boundary and not in a saved run file.
+#[tokio::test]
+async fn a_harness_outcome_serializes_without_a_harness_key() {
+    let mut d = ScriptedDriver::new(|_, _| Err(CdpError::Closed));
+    let out = execute_with(&mut d, &Action::CheckText { value: "Dashboard".into() }, &quick()).await;
+    assert!(out.harness);
+    let v = serde_json::to_value(&out).unwrap();
+    assert!(v.get("harness").is_none(), "{v}");
 }
 
 /// Waiting polls rather than sleeping a fixed guess, and gives up with a

@@ -237,7 +237,7 @@ test("a failed action offers the screenshot taken when it failed", async () => {
     }
     return null;
   });
-  renderPane([{ id: 1, title: "Valid login" }]);
+  const onClose = renderPane([{ id: 1, title: "Valid login" }]);
 
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   const run = await screen.findByRole("button", { name: "Run step 1" });
@@ -245,11 +245,17 @@ test("a failed action offers the screenshot taken when it failed", async () => {
   fireEvent.click(run);
 
   expect(await screen.findByText(/button "Save" not found/)).toBeInTheDocument();
-  // Only the failed action has one.
-  expect(screen.getAllByRole("button", { name: "View screenshot" })).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "View screenshot" }));
+  // Only the failed action has one, and its name says which action.
+  expect(screen.getAllByRole("button", { name: /View screenshot/ })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "View screenshot for action 2" }));
   const img = await screen.findByRole("img", { name: "Screenshot of the failed action" });
   expect(img).toHaveAttribute("src", "data:image/jpeg;base64,AAAA");
+
+  // The preview is a Modal nested inside the run pane's own Modal. Escape
+  // must close only the preview - not the whole run underneath it.
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("img", { name: "Screenshot of the failed action" })).not.toBeInTheDocument();
+  expect(onClose).not.toHaveBeenCalled();
 });
 
 test("a second Save while the first is still writing does not write twice", async () => {

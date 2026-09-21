@@ -69,27 +69,40 @@ pub struct ActionOutcome {
     /// the webview cannot ask for anything outside that folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
+    /// True when the browser connection failed rather than the page, so
+    /// callers do not ask a dead browser for a picture. Process-internal
+    /// only: never crosses the IPC boundary and never lands in a saved run
+    /// file.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub harness: bool,
 }
 
 impl ActionOutcome {
     pub fn passed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: true, detail: detail.into(), screenshot: None }
+        ActionOutcome { ok: true, detail: detail.into(), screenshot: None, harness: false }
     }
     pub fn failed(detail: impl Into<String>) -> Self {
-        ActionOutcome { ok: false, detail: detail.into(), screenshot: None }
+        ActionOutcome { ok: false, detail: detail.into(), screenshot: None, harness: false }
     }
 }
 
 /// A harness failure, said plainly: the app under test did nothing wrong,
 /// the browser connection did.
 pub(crate) fn harness(e: CdpError) -> ActionOutcome {
-    ActionOutcome::failed(format!("the browser did not answer: {e}"))
+    let mut out = ActionOutcome::failed(format!("the browser did not answer: {e}"));
+    out.harness = true;
+    out
 }
 
 pub(crate) fn blocked(b: Blocked) -> ActionOutcome {
     match b {
         Blocked::Page(why) => ActionOutcome::failed(why),
-        Blocked::Harness(why) => ActionOutcome::failed(format!("the browser did not answer: {why}")),
+        Blocked::Harness(why) => {
+            let mut out = ActionOutcome::failed(format!("the browser did not answer: {why}"));
+            out.harness = true;
+            out
+        }
     }
 }
 
