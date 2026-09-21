@@ -23,6 +23,11 @@ pub struct ScriptedDriver {
     /// Events that appear once a call to the named method has been made -
     /// how a test says "the load event follows Page.navigate".
     pub on_call_events: Vec<(String, Event)>,
+    /// Events that appear after EVERY call to the named method - how a
+    /// test says "the load event follows Page.navigate" when that method
+    /// is called more than once (`on_call_events` fires once and is
+    /// consumed, which cannot express two navigations).
+    pub on_every_call_events: Vec<(String, Event)>,
     pub dialogs: Vec<String>,
     /// Every value handed to `set_deadline`, in order. A wait loop must
     /// leave `Some(&None)` here on every path out, or a later action
@@ -41,6 +46,7 @@ impl ScriptedDriver {
             handler: Box::new(handler),
             events: VecDeque::new(),
             on_call_events: vec![],
+            on_every_call_events: vec![],
             dialogs: vec![],
             deadlines: vec![],
         }
@@ -77,6 +83,11 @@ impl Driver for ScriptedDriver {
                 true
             }
         });
+        for (m, ev) in &self.on_every_call_events {
+            if m == method {
+                fired.push(ev.clone());
+            }
+        }
         self.events.extend(fired);
         (self.handler)(method, &params)
     }

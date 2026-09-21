@@ -304,6 +304,13 @@ export const commands = {
 	session_minutes: number,
 } | null, string>(__TAURI_INVOKE("auto_run_load_recipe", { organization, project })),
 	autoRunSaveRecipe: (organization: string, project: string, recipe: SignInRecipe_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_recipe", { organization, project, recipe })),
+	/**
+	 *  Sign the named account in, in the open browser. Used before a case's
+	 *  first step, and by the `sign_in` action in the middle of one.
+	 */
+	autoRunSignIn: (organization: string, project: string, accountKey: string) => typedError<SignInOutcome_Serialize, string>(__TAURI_INVOKE("auto_run_sign_in", { organization, project, accountKey })),
+	/**  Throw a saved session away, so the next sign-in goes through the form. */
+	autoRunForgetSession: (accountKey: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_forget_session", { accountKey })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -1539,6 +1546,24 @@ export type SharedQueue_Serialize = {
 	project: string,
 	cases: TestCase_Serialize[],
 	warnings: string[],
+};
+
+export type SignInOutcome = SignInOutcome_Serialize | SignInOutcome_Deserialize;
+
+export type SignInOutcome_Deserialize = {
+	ok: boolean,
+	detail: string,
+	/**  True when no form was touched: the saved session was still good. */
+	used_saved_session: boolean,
+	steps: ActionOutcome_Deserialize[],
+};
+
+export type SignInOutcome_Serialize = {
+	ok: boolean,
+	detail: string,
+	/**  True when no form was touched: the saved session was still good. */
+	used_saved_session: boolean,
+	steps: ActionOutcome_Serialize[],
 };
 
 export type SignInRecipe = SignInRecipe_Serialize | SignInRecipe_Deserialize;

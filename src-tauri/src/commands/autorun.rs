@@ -23,6 +23,10 @@ static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_
 struct Session {
     browser: LaunchedBrowser,
     cdp: Cdp,
+    /// The account last signed in as, in THIS browser. `None` until a
+    /// sign-in succeeds, so a step run before one just runs against
+    /// whatever the browser already shows.
+    account: Option<String>,
 }
 
 /// Said when a step arrives with no browser behind it. Pulled out so a
@@ -90,7 +94,7 @@ pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
             return Err(e);
         }
     };
-    *slot = Some(Session { browser, cdp });
+    *slot = Some(Session { browser, cdp, account: None });
     crate::applog::info(format!("Auto-run opened {}", which.label()));
     Ok(())
 }
@@ -300,5 +304,44 @@ pub fn auto_run_save_recipe(
 ) -> Result<(), String> {
     crate::autorun::recipe::save_recipe(&root(&app)?, &organization, &project, &recipe)?;
     crate::applog::info("Auto-run sign-in recipe saved");
+    Ok(())
+}
+
+/// Sign the named account in, in the open browser. Used before a case's
+/// first step, and by the `sign_in` action in the middle of one.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_sign_in(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    account_key: String,
+) -> Result<crate::autorun::signin::SignInOutcome, String> {
+    let root = root(&app)?;
+    let (recipe, account) = crate::autorun::signin::prepare(&root, &organization, &project, &account_key)?;
+    let mut slot = SESSION.lock().await;
+    let session = slot.as_mut().ok_or_else(describe_session_error)?;
+    let out = crate::autorun::signin::sign_in(
+        &mut session.cdp,
+        &root,
+        &recipe,
+        &account,
+        &crate::browser::timing::Timing::default(),
+    )
+    .await;
+    session.account = out.ok.then(|| account.key.clone());
+    crate::applog::info(format!(
+        "Auto-run sign-in as {}: {}",
+        account.key,
+        if out.ok { "ok" } else { "failed" }
+    ));
+    Ok(out)
+}
+
+/// Throw a saved session away, so the next sign-in goes through the form.
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_forget_session(app: tauri::AppHandle, account_key: String) -> Result<(), String> {
+    crate::autorun::sessions::forget_session(&root(&app)?, &account_key);
     Ok(())
 }
