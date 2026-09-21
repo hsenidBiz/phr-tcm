@@ -6,6 +6,7 @@
 //! the same shape `/begin` already uses for its plan-file sink.
 
 use v2_lib::autorun::guide::{autorun_guide, ACTION_KINDS};
+use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::autorun::store::{configured_root, set_root};
 use v2_lib::browser::actions::Action;
 
@@ -237,4 +238,29 @@ fn the_editors_placeholder_is_a_script_the_runner_accepts() {
                 .unwrap_or_else(|why| panic!("the editor's example would be refused: {why}"));
         }
     }
+}
+
+/// Same drift guard, for the sign-in recipe editor's placeholder: the
+/// example a person copies into the recipe box has to be a recipe
+/// `SignInRecipe::validate` actually accepts, not just valid JSON.
+#[test]
+fn the_recipe_editors_placeholder_is_a_recipe_the_app_accepts() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/screens/AutoRun/RecipeEditor.tsx");
+    let source = std::fs::read_to_string(path).expect("RecipeEditor.tsx missing");
+    let after = source
+        .split_once("const PLACEHOLDER = ")
+        .expect("RecipeEditor.tsx no longer declares PLACEHOLDER")
+        .1;
+    let body = after
+        .split_once('`')
+        .expect("PLACEHOLDER is not a template literal")
+        .1
+        .split_once('`')
+        .expect("PLACEHOLDER's template literal is never closed")
+        .0;
+    let recipe: SignInRecipe =
+        serde_json::from_str(body).expect("the recipe editor's example is not a valid recipe");
+    recipe
+        .validate()
+        .unwrap_or_else(|why| panic!("the recipe editor's example would be refused: {why}"));
 }

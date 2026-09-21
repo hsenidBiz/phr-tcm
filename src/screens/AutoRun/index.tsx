@@ -17,10 +17,12 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { IconEdit, IconImport } from "../../lib/actionIcons";
+import { IconAccounts, IconEdit, IconImport, IconRecipe } from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
+import AccountsDialog from "./AccountsDialog";
 import PastRuns from "./PastRuns";
+import RecipeEditor from "./RecipeEditor";
 import RunPane from "./RunPane";
 import ScriptEditor from "./ScriptEditor";
 
@@ -60,6 +62,8 @@ export default function AutoRun({
   });
 
   const [editing, setEditing] = useState<number | null>(null);
+  const [accountsOpen, setAccountsOpen] = useState(false);
+  const [recipeOpen, setRecipeOpen] = useState(false);
   const queryClient = useQueryClient();
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
@@ -220,6 +224,20 @@ export default function AutoRun({
         <span className="text-xs text-faint">
           One JSON file can carry every case in this PBI.
         </span>
+        <Button size="sm" variant="outline" onClick={() => setAccountsOpen(true)}>
+          <IconAccounts aria-hidden />
+          Accounts
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!org || !project}
+          title={!org || !project ? "Pick an organization and project first" : undefined}
+          onClick={() => setRecipeOpen(true)}
+        >
+          <IconRecipe aria-hidden />
+          Sign-in recipe
+        </Button>
         <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-muted">
           <Checkbox
             checked={grouped}
@@ -308,6 +326,11 @@ export default function AutoRun({
       )}
 
       <PastRuns />
+
+      {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
+      {recipeOpen && (
+        <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />
+      )}
 
       {editing != null &&
         (() => {

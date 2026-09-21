@@ -45,6 +45,8 @@ function mockList(cases: ReturnType<typeof caseRow>[], scripted: number[]) {
       return scripted.includes(id) ? { case_id: id, title: "s", steps: STEPS } : null;
     }
     if (cmd === "auto_run_list_runs") return [];
+    if (cmd === "auto_run_list_accounts") return [];
+    if (cmd === "auto_run_load_recipe") return null;
     return null;
   });
 }
@@ -57,6 +59,22 @@ function renderScreen() {
     </QueryClientProvider>,
   );
 }
+
+test("the Accounts and Sign-in recipe buttons open their own dialogs", async () => {
+  mockList([caseRow(1, "Login - valid credentials")], [1]);
+  renderScreen();
+  await screen.findByText("Login - valid credentials");
+
+  fireEvent.click(screen.getByRole("button", { name: "Accounts" }));
+  expect(await screen.findByRole("heading", { name: "Accounts" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "Accounts" })).not.toBeInTheDocument(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Sign-in recipe" }));
+  expect(await screen.findByRole("heading", { name: "Sign-in recipe" })).toBeInTheDocument();
+});
 
 test("Group by title folds cases sharing a prefix into one heading", async () => {
   mockList(
