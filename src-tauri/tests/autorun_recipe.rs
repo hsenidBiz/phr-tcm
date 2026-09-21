@@ -88,6 +88,14 @@ fn validation_covers_the_address_the_steps_and_the_origins() {
     assert!(bad(&|v| v["allowed_origins"] = json!(["not an origin"])).contains("not an origin"));
     assert!(bad(&|v| v["allowed_origins"] = json!(["https://x.example/path"])).contains("https://x.example/path"));
     assert!(bad(&|v| v["session_minutes"] = json!(0)).contains("session_minutes"));
+    // A backslash or hidden whitespace inside the start address or an
+    // allowed origin cannot be read as an origin at all (see
+    // `origin_of_ends_the_authority_at_a_backslash_like_a_browser_does`
+    // and `origin_of_refuses_an_address_with_hidden_characters_inside`),
+    // so both fail validation with a sensible message rather than being
+    // silently accepted.
+    assert!(bad(&|v| v["start_url"] = json!("https://hr.example.internal/\tlogin")).contains("start address"));
+    assert!(bad(&|v| v["allowed_origins"] = json!(["https://hr.example\t.internal"])).contains("not an origin"));
 }
 
 #[test]
@@ -105,6 +113,36 @@ fn origins_are_normalised_and_the_start_address_is_always_allowed() {
         recipe(v).origins(),
         vec!["https://hr.example.internal".to_string(), "https://sso.example.internal".to_string()]
     );
+}
+
+/// A browser treats `\` as `/` in an http(s) authority, so the origin
+/// check has to end the authority there too, or an address like
+/// `https://evil.example\@hr.example.internal/` - which a browser sends
+/// to `evil.example`, path `/@hr.example.internal/` - would be read by
+/// this function as the allowed origin `hr.example.internal` and let
+/// through what the browser actually sends somewhere else entirely.
+#[test]
+fn origin_of_ends_the_authority_at_a_backslash_like_a_browser_does() {
+    assert_eq!(
+        origin_of("https://evil.example\\@hr.example.internal/").as_deref(),
+        Some("https://evil.example")
+    );
+    assert_eq!(
+        origin_of("https://hr.example.internal\\@evil.example/").as_deref(),
+        Some("https://hr.example.internal"),
+        "that is where a browser actually goes"
+    );
+}
+
+/// Browsers silently strip a tab, CR or LF from inside an address before
+/// using it, and other control characters and whitespace inside an
+/// address mean the address does not read the way it is written either.
+/// Refusing to name an origin for any of these is the fail-closed answer.
+#[test]
+fn origin_of_refuses_an_address_with_hidden_characters_inside() {
+    assert_eq!(origin_of("https://hr.example.internal/\tlogin"), None);
+    assert_eq!(origin_of("https://hr.example.internal/\nlogin"), None);
+    assert_eq!(origin_of("https://hr.example.internal/ login"), None);
 }
 
 #[test]

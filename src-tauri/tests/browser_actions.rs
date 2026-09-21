@@ -540,6 +540,41 @@ async fn a_relative_address_is_checked_after_it_is_resolved() {
     assert!(d.calls_to("Page.navigate").is_empty());
 }
 
+/// The browser treats `\` in an http(s) authority as `/`, so it sends this
+/// address to `evil.example` (path `/@hr.example.internal/`), not to
+/// `hr.example.internal`. The check has to agree with the browser about
+/// where the address goes, or the allowlist is not a boundary at all.
+#[tokio::test]
+async fn navigate_via_a_backslash_authority_trick_is_refused() {
+    let mut d = FakePage::default().driver();
+    let out = execute_in(
+        &mut d,
+        &Action::Navigate { url: "https://evil.example\\@hr.example.internal/".into() },
+        &quick(),
+        &only(&["https://hr.example.internal"]),
+    )
+    .await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(d.calls_to("Page.navigate").is_empty());
+}
+
+/// A tab hidden inside the address is silently stripped by a real
+/// browser, so the checked address and the loaded one would disagree;
+/// refusing it is the fail-closed answer.
+#[tokio::test]
+async fn navigate_with_an_embedded_control_character_is_refused() {
+    let mut d = FakePage::default().driver();
+    let out = execute_in(
+        &mut d,
+        &Action::Navigate { url: "https://hr.example.internal/\tlogin".into() },
+        &quick(),
+        &only(&["https://hr.example.internal"]),
+    )
+    .await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(d.calls_to("Page.navigate").is_empty());
+}
+
 #[tokio::test]
 async fn with_no_policy_everything_works_as_before() {
     let mut d = FakePage::default().driver();

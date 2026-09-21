@@ -280,10 +280,17 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Pol
         Err(out) => return out,
     };
     if !policy.allows(&url) {
-        let origin = crate::autorun::recipe::origin_of(&url).unwrap_or_else(|| url.clone());
-        return ActionOutcome::failed(format!(
-            "{origin} is not one of this project's allowed origins - add it to the sign-in recipe if the test really goes there"
-        ));
+        // `origin_of` returning `None` here (rather than an origin outside
+        // the list) means the address itself cannot be trusted to go
+        // where it reads as - naming a made-up origin for it would be
+        // worse than not naming one.
+        let detail = match crate::autorun::recipe::origin_of(&url) {
+            Some(origin) => format!(
+                "{origin} is not one of this project's allowed origins - add it to the sign-in recipe if the test really goes there"
+            ),
+            None => "this address is not one that can be checked against this project's allowed origins - it does not read as a usable http, https or file address".to_string(),
+        };
+        return ActionOutcome::failed(detail);
     }
     let url = url.as_str();
     // Older lifecycle events would satisfy the wait below before this

@@ -113,8 +113,24 @@ pub struct SignInRecipe {
 
 /// `scheme://host[:port]`, lowercased, user info dropped. Every file
 /// address is the one origin `file://`. Anything else has no origin here.
+///
+/// Two things a browser does that this has to match, or the check and the
+/// browser disagree about where an address goes:
+/// - A browser treats `\` the same as `/` inside an http(s) authority, so
+///   the authority ends at the first of `/`, `\`, `?` or `#` - not just
+///   `/`, `?` or `#`. Ending it at `/` alone lets `evil.example\@allowed/`
+///   read back as the origin `allowed` while a browser sends it to
+///   `evil.example`.
+/// - A browser silently strips a tab, CR or LF from inside an address
+///   before using it, so such an address never means what it reads as
+///   here. Any other control character or whitespace inside it is the
+///   same problem. Refusing to name an origin for any of these - `None`,
+///   even though the text looks parseable - is the fail-closed answer.
 pub fn origin_of(url: &str) -> Option<String> {
     let u = url.trim();
+    if u.chars().any(|c| c.is_ascii_control() || c.is_ascii_whitespace()) {
+        return None;
+    }
     let lower = u.to_ascii_lowercase();
     if lower.starts_with("file://") {
         return Some("file://".to_string());
@@ -127,7 +143,7 @@ pub fn origin_of(url: &str) -> Option<String> {
         return None;
     };
     let rest = &u[scheme.len() + 3..];
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = rest.split(['/', '\\', '?', '#']).next().unwrap_or("");
     let host = authority.rsplit('@').next().unwrap_or("");
     if host.is_empty() {
         return None;
