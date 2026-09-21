@@ -115,6 +115,9 @@ pub async fn call_elements<D: Driver>(
     let props = d
         .call("Runtime.getProperties", json!({ "objectId": array, "ownProperties": true }))
         .await?;
+    if let Some(e) = thrown("Runtime.getProperties", &props) {
+        return Err(e);
+    }
     let mut indexed: Vec<(usize, Handle)> = props["result"]
         .as_array()
         .into_iter()

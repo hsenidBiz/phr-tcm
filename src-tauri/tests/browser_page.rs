@@ -81,6 +81,49 @@ async fn call_elements_turns_an_array_into_handles_in_index_order() {
     assert_eq!(d.calls_to("Runtime.getProperties")[0]["objectId"], "arr");
 }
 
+/// `Runtime.getProperties` can throw too (a throwing getter on the array).
+/// That must surface as an error, not as "the array had no properties" -
+/// which would read as "nothing matched".
+#[tokio::test]
+async fn call_elements_reports_a_thrown_get_properties() {
+    let mut d = ScriptedDriver::new(|method, _| match method {
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+        "Runtime.getProperties" => Ok(json!({
+            "result": [],
+            "exceptionDetails": { "text": "Uncaught", "exception": { "description": "TypeError: boom" } }
+        })),
+        other => panic!("unexpected {other}"),
+    });
+    let err = page::call_elements(&mut d, &"doc".to_string(), "function() { return []; }", &[])
+        .await
+        .unwrap_err();
+    match err {
+        CdpError::Protocol { message, .. } => assert!(message.contains("boom"), "{message}"),
+        other => panic!("expected a protocol error, got {other:?}"),
+    }
+}
+
+/// Property names "0".."11" sort lexically as "0","1","10","11","2",... -
+/// only a numeric sort puts "10" and "11" after "9".
+#[tokio::test]
+async fn call_elements_sorts_numerically_not_lexically() {
+    let mut props: Vec<serde_json::Value> = (0..12)
+        .rev()
+        .map(|i| json!({ "name": i.to_string(), "value": { "objectId": format!("el-{i}") } }))
+        .collect();
+    props.push(json!({ "name": "length", "value": { "type": "number", "value": 12 } }));
+    let mut d = ScriptedDriver::new(move |method, _| match method {
+        "Runtime.callFunctionOn" => Ok(json!({ "result": { "objectId": "arr" } })),
+        "Runtime.getProperties" => Ok(json!({ "result": props.clone() })),
+        other => panic!("unexpected {other}"),
+    });
+    let got = page::call_elements(&mut d, &"doc".to_string(), "function() { return []; }", &[])
+        .await
+        .unwrap();
+    let want: Vec<String> = (0..12).map(|i| format!("el-{i}")).collect();
+    assert_eq!(got, want);
+}
+
 #[tokio::test]
 async fn resolve_backend_asks_for_a_handle_in_our_group() {
     let mut d = ScriptedDriver::new(|_, _| Ok(json!({ "object": { "objectId": "el-7" } })));
