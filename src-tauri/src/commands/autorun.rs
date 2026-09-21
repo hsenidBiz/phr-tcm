@@ -6,14 +6,11 @@
 
 use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};
-use crate::browser::actions::{execute, ActionOutcome};
+use crate::browser::actions::ActionOutcome;
 use crate::browser::cdp::Cdp;
 use crate::browser::launch::{launch_in, Browser, LaunchedBrowser};
-use crate::browser::page;
-use crate::browser::timing::SHOT_TIMEOUT_MS;
 use base64::Engine;
 use std::path::PathBuf;
-use std::time::Duration;
 use tauri::Manager;
 
 /// The one live session. A second Open replaces the first, so a stray
@@ -118,43 +115,33 @@ pub async fn auto_run_close_browser() -> Result<(), String> {
     Ok(())
 }
 
-/// A picture of the page at the moment an action failed. Best effort: a
-/// browser that cannot take one (it has gone away, or is too busy to
-/// answer within `SHOT_TIMEOUT_MS`) just means no picture - the failure is
-/// already reported in words. Never called for a harness failure: asking a
-/// browser that has already failed to answer for a picture is exactly the
-/// stall this guards against, and dropping the in-flight call mid-timeout
-/// is safe because the client ignores a reply nobody is waiting on.
-async fn shot_of_failure(cdp: &mut Cdp, app: &tauri::AppHandle) -> Option<String> {
-    let bytes = tokio::time::timeout(Duration::from_millis(SHOT_TIMEOUT_MS), page::screenshot(cdp))
-        .await
-        .ok()?
-        .ok()?;
-    let root = root(app).ok()?;
-    store::save_shot(&root, &bytes).ok()
-}
-
-/// Run one step's actions in order and report every outcome. Actions
-/// after a failure still run: the watcher learns more from "the click
-/// worked, the check did not" than from a run that stops at the first
-/// red.
+/// Run one step's actions in order and report every outcome. Actions after
+/// an ordinary failure still run: the watcher learns more from "the click
+/// worked, the check did not" than from a run that stops at the first red.
+/// A failed `sign_in` is the exception - see `autorun::runner::run_step`,
+/// which does the actual work; this command is just the IPC-facing shell
+/// around it.
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_step(
     app: tauri::AppHandle,
+    organization: String,
+    project: String,
     step: StepScript,
 ) -> Result<Vec<ActionOutcome>, String> {
+    let root = root(&app)?;
     let mut slot = SESSION.lock().await;
     let session = slot.as_mut().ok_or_else(describe_session_error)?;
-    let mut out = Vec::new();
-    for action in &step.actions {
-        let mut outcome = execute(&mut session.cdp, action).await;
-        if !outcome.ok && !outcome.harness {
-            outcome.screenshot = shot_of_failure(&mut session.cdp, &app).await;
-        }
-        out.push(outcome);
-    }
-    Ok(out)
+    crate::autorun::runner::run_step(
+        &mut session.cdp,
+        &root,
+        &organization,
+        &project,
+        &step,
+        &crate::browser::timing::Timing::default(),
+        &mut session.account,
+    )
+    .await
 }
 
 /// One failure screenshot as a data URL the webview can show. The name is

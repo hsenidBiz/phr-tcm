@@ -235,15 +235,22 @@ export const commands = {
 	autoRunOpenBrowser: (browserName: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_open_browser", { browserName })),
 	autoRunCloseBrowser: () => typedError<null, string>(__TAURI_INVOKE("auto_run_close_browser")),
 	/**
-	 *  Run one step's actions in order and report every outcome. Actions
-	 *  after a failure still run: the watcher learns more from "the click
-	 *  worked, the check did not" than from a run that stops at the first
-	 *  red.
+	 *  Run one step's actions in order and report every outcome. Actions after
+	 *  an ordinary failure still run: the watcher learns more from "the click
+	 *  worked, the check did not" than from a run that stops at the first red.
+	 *  A failed `sign_in` is the exception - see `autorun::runner::run_step`,
+	 *  which does the actual work; this command is just the IPC-facing shell
+	 *  around it.
 	 */
-	autoRunStep: (step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { step })),
+	autoRunStep: (organization: string, project: string, step: StepScript_Deserialize) => typedError<ActionOutcome_Serialize[], string>(__TAURI_INVOKE("auto_run_step", { organization, project, step })),
 	autoRunLoadScript: (caseId: number) => typedError<{
 	case_id: number,
 	title: string,
+	/**
+	 *  The account this case runs as: a key from the tester's own accounts
+	 *  list, never a login. Absent means the script signs nobody in.
+	 */
+	account?: string | null,
 	steps: StepScript_Serialize[],
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
@@ -628,9 +635,19 @@ export type ActionOutcome_Serialize = {
 	screenshot?: string | null,
 };
 
-export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { contains?: never; url?: never; value?: never };
+export type Action_Deserialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Deserialize }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Deserialize; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Deserialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Deserialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Deserialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Deserialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Deserialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Deserialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; url?: never; value?: never } | 
+/**
+ *  Change who is signed in. Carried out by the runner (it needs the
+ *  tester's accounts and the project's recipe), not by this driver.
+ */
+({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never };
 
-export type Action_Serialize = ({ kind: "navigate"; url: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Serialize }) & { contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { contains?: never; equals?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { contains?: never; url?: never; value?: never };
+export type Action_Serialize = ({ kind: "navigate"; url: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; value?: never } | ({ kind: "click"; selector: Target_Serialize }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "fill"; selector: Target_Serialize; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; timeout_ms?: never; url?: never } | ({ kind: "wait_for"; selector: Target_Serialize; timeout_ms: number }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "check_text"; value: string }) & { account?: never; contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never } | ({ kind: "check_url"; contains: string }) & { account?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never } | ({ kind: "expect_visible"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_hidden"; selector: Target_Serialize; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_text"; selector: Target_Serialize; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_contains_text"; selector: Target_Serialize; value: string; timeout_ms?: number | null }) & { account?: never; contains?: never; equals?: never; name?: never; url?: never } | ({ kind: "expect_count"; selector: Target_Serialize; equals: number; timeout_ms?: number | null }) & { account?: never; contains?: never; name?: never; url?: never; value?: never } | ({ kind: "expect_attribute"; selector: Target_Serialize; name: string; equals: string; timeout_ms?: number | null }) & { account?: never; contains?: never; url?: never; value?: never } | 
+/**
+ *  Change who is signed in. Carried out by the runner (it needs the
+ *  tester's accounts and the project's recipe), not by this driver.
+ */
+({ kind: "sign_in"; account: string }) & { contains?: never; equals?: never; name?: never; selector?: never; timeout_ms?: never; url?: never; value?: never };
 
 export type AdoError = { kind: "Unauthorized" } | { kind: "RateLimited"; detail: {
 	retry_after_secs: number,
@@ -820,6 +837,11 @@ export type CaseScript = CaseScript_Serialize | CaseScript_Deserialize;
 export type CaseScript_Deserialize = {
 	case_id: number,
 	title: string,
+	/**
+	 *  The account this case runs as: a key from the tester's own accounts
+	 *  list, never a login. Absent means the script signs nobody in.
+	 */
+	account?: string | null,
 	steps: StepScript_Deserialize[],
 };
 
@@ -830,6 +852,11 @@ export type CaseScript_Deserialize = {
 export type CaseScript_Serialize = {
 	case_id: number,
 	title: string,
+	/**
+	 *  The account this case runs as: a key from the tester's own accounts
+	 *  list, never a login. Absent means the script signs nobody in.
+	 */
+	account?: string | null,
 	steps: StepScript_Serialize[],
 };
 

@@ -40,6 +40,7 @@ fn script() -> CaseScript {
     CaseScript {
         case_id: 201,
         title: "Valid login".to_string(),
+        account: None,
         steps: vec![StepScript {
             step_number: 1,
             actions: vec![
@@ -153,6 +154,7 @@ fn one_step_script(case_id: i32, title: &str) -> CaseScript {
     CaseScript {
         case_id,
         title: title.to_string(),
+        account: None,
         steps: vec![StepScript {
             step_number: 1,
             actions: vec![Action::CheckText { value: "ok".to_string() }],
@@ -203,7 +205,7 @@ fn a_duplicate_case_id_within_one_bundle_is_rejected() {
 #[test]
 fn a_script_with_no_steps_is_rejected() {
     let dir = TempDir::new();
-    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), steps: vec![] }];
+    let bundle = vec![CaseScript { case_id: 9, title: "Empty".to_string(), account: None, steps: vec![] }];
     let err = save_scripts_atomically(dir.path(), &bundle).expect_err("empty steps were accepted");
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
@@ -217,6 +219,7 @@ fn a_step_with_no_actions_is_still_accepted() {
     let bundle = vec![CaseScript {
         case_id: 60,
         title: "Manual step included".to_string(),
+        account: None,
         steps: vec![StepScript { step_number: 1, actions: vec![] }],
     }];
     save_scripts_atomically(dir.path(), &bundle).unwrap();
@@ -327,4 +330,43 @@ fn a_non_screenshot_file_in_the_shots_folder_survives_pruning() {
         save_shot_keeping(dir.path(), &[i], 1).unwrap();
     }
     assert!(dir.path().join("shots").join("notes.txt").is_file());
+}
+
+/// A script names its account by key, and one that names none still writes
+/// and reads back exactly as it always did.
+#[test]
+fn a_script_may_name_an_account_and_one_without_is_written_as_before() {
+    let with: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 7, "title": "t", "account": "hr.supervisor",
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "sign_in", "account": "emp" }] }]
+    })).unwrap();
+    assert_eq!(with.account.as_deref(), Some("hr.supervisor"));
+    let without: v2_lib::autorun::CaseScript = serde_json::from_value(serde_json::json!({
+        "case_id": 8, "title": "t", "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }]
+    })).unwrap();
+    assert_eq!(without.account, None);
+    assert!(serde_json::to_value(&without).unwrap().get("account").is_none());
+}
+
+/// Saving checks the FORM of an account key (and refuses a login typed
+/// straight into a script), but never whether the account exists - that is
+/// checked only when the script actually runs.
+#[test]
+fn a_bad_account_key_or_a_login_placeholder_in_a_script_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let save = |v: serde_json::Value| {
+        let sc: v2_lib::autorun::CaseScript = serde_json::from_value(v).unwrap();
+        v2_lib::autorun::store::save_scripts_atomically(dir.path(), &[sc]).map_err(|e| e.to_string())
+    };
+    let step = serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }]);
+    let bad_key = save(serde_json::json!({ "case_id": 1, "title": "t", "account": "HR Admin", "steps": step })).unwrap_err();
+    assert!(bad_key.contains("case 1") && bad_key.contains("HR Admin"), "{bad_key}");
+    let bad_action = save(serde_json::json!({ "case_id": 1, "title": "t", "steps": [{ "step_number": 2, "actions": [
+        { "kind": "sign_in", "account": "Nope Nope" }] }] })).unwrap_err();
+    assert!(bad_action.contains("case 1 step 2 action 1"), "{bad_action}");
+    let placeholder = save(serde_json::json!({ "case_id": 1, "title": "t", "steps": [{ "step_number": 1, "actions": [
+        { "kind": "fill", "selector": "#p", "value": "{{password}}" }] }] })).unwrap_err();
+    assert!(placeholder.contains("sign-in recipe"), "{placeholder}");
+    // An account that does not exist on THIS machine is fine to save.
+    assert!(save(serde_json::json!({ "case_id": 1, "title": "t", "account": "someone.elses", "steps": step })).is_ok());
 }

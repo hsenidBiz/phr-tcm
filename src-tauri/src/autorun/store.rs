@@ -119,8 +119,23 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
                 sc.case_id
             )));
         }
+        if let Some(key) = &sc.account {
+            if !crate::autorun::accounts::valid_key(key) {
+                return Err(SaveScriptsError::Invalid(format!(
+                    "case {}: \"{key}\" is not a usable account key",
+                    sc.case_id
+                )));
+            }
+        }
         for step in &sc.steps {
             for (i, action) in step.actions.iter().enumerate() {
+                let text = serde_json::to_string(action).unwrap_or_default();
+                if crate::autorun::recipe::has_placeholder(&text) {
+                    return Err(SaveScriptsError::Invalid(format!(
+                        "case {} step {} action {}: {{{{username}}}} and {{{{password}}}} belong in the project's sign-in recipe, not in a script",
+                        sc.case_id, step.step_number, i + 1
+                    )));
+                }
                 if let Err(why) = action.validate() {
                     return Err(SaveScriptsError::Invalid(format!(
                         "case {} step {} action {}: {why}",

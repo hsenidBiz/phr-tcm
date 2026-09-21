@@ -332,6 +332,8 @@ export default function AutoRun({
           if (picked.length === 0) return null;
           return (
             <RunPane
+              org={org}
+              project={project}
               pbiId={pbi.id}
               cases={picked}
               onClose={() => {

@@ -35,6 +35,7 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
         Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
         Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
+        Action::SignIn { account: "a".into() },
     ];
     let emitted: Vec<String> = samples
         .iter()
@@ -158,6 +159,18 @@ fn the_guide_names_the_save_payloads_fields() {
         g.to_lowercase().contains("timeout_ms"),
         "the guide never calls out timeout_ms as required"
     );
+}
+
+/// A script never carries a login - the guide has to say so outright, not
+/// just imply it by omission.
+#[test]
+fn the_guide_keeps_logins_out_of_scripts() {
+    let g = autorun_guide();
+    for term in ["\"account\"", "sign_in", "sign-in recipe"] {
+        assert!(g.contains(term), "the guide never mentions {term}");
+    }
+    assert!(g.contains("Never put a username or a password in a script"), "the rule must be stated outright");
+    assert!(!g.contains("REPLACE_ME"), "the old example typed a login into a script");
 }
 
 #[test]

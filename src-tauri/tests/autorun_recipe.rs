@@ -174,3 +174,13 @@ fn a_recipe_is_saved_per_project() {
     assert!(save_recipe(dir.path(), "Acme", "Web", &broken).is_err());
     assert_eq!(load_recipe(dir.path(), "Acme", "Web").unwrap(), Some(r));
 }
+
+/// A recipe cannot name `sign_in` as one of its own steps - it IS the
+/// sign-in, so a step that tries to change account mid-recipe makes no
+/// sense.
+#[test]
+fn a_recipe_may_not_contain_sign_in() {
+    let mut v = sample();
+    v["steps"][2] = json!({ "kind": "sign_in", "account": "admin" });
+    assert!(recipe(v).validate().unwrap_err().contains("sign_in"));
+}

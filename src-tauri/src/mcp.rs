@@ -223,11 +223,11 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "save_autorun_script",
-            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, steps: [{ step_number, actions }] }. All or nothing: one bad action, locator or case id rejects the whole batch, and the message names the case, step and action, rather than leaving half the cases updated. Call get_autorun_guide first for the action vocabulary.",
+            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), steps: [{ step_number, actions }] }. All or nothing: one bad action, locator or case id rejects the whole batch, and the message names the case, step and action, rather than leaving half the cases updated. Call get_autorun_guide first for the action vocabulary.",
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
-                    "description": "One entry per test case: { case_id, title, steps }",
+                    "description": "One entry per test case: { case_id, title, account?, steps }",
                     "items": { "type": "object" },
                 },
             }), &["scripts"]),

@@ -51,7 +51,7 @@ function renderPane(cases: { id: number; title: string }[], onClose = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <RunPane pbiId={42} cases={cases} onClose={onClose} />
+      <RunPane org="acme" project="Web" pbiId={42} cases={cases} onClose={onClose} />
     </QueryClientProvider>,
   );
   return onClose;

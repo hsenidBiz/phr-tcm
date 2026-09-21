@@ -590,3 +590,18 @@ async fn with_no_policy_everything_works_as_before() {
             .await;
     assert!(out.ok, "{}", out.detail);
 }
+
+/// `sign_in` is validated by the ordinary rules (a usable account key), but
+/// carried out by the runner, which alone has the accounts, the recipe and
+/// the disk. This driver must never be touched for it.
+#[tokio::test]
+async fn sign_in_is_validated_here_but_carried_out_by_the_runner() {
+    let bad: Action = serde_json::from_value(json!({ "kind": "sign_in", "account": "Not A Key" })).unwrap();
+    assert!(bad.validate().is_err());
+    let good: Action = serde_json::from_value(json!({ "kind": "sign_in", "account": "hr.supervisor" })).unwrap();
+    assert!(good.validate().is_ok());
+    let mut d = FakePage::default().driver();
+    let out = execute_with(&mut d, &good, &quick()).await;
+    assert!(!out.ok && out.detail.contains("runner"), "{}", out.detail);
+    assert!(d.calls.is_empty(), "the driver must not touch the browser for it");
+}

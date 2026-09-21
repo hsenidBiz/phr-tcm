@@ -58,6 +58,9 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u32>,
     },
+    /// Change who is signed in. Carried out by the runner (it needs the
+    /// tester's accounts and the project's recipe), not by this driver.
+    SignIn { account: String },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -218,6 +221,10 @@ impl Action {
                 Err("check_url has an empty value".to_string())
             }
             Action::CheckText { .. } | Action::CheckUrl { .. } => Ok(()),
+            Action::SignIn { account } if !crate::autorun::accounts::valid_key(account) => {
+                Err(format!("sign_in names \"{account}\", which is not a usable account key"))
+            }
+            Action::SignIn { .. } => Ok(()),
         }
     }
 }
@@ -454,6 +461,10 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Po
         Action::ExpectAttribute { selector, name, equals, timeout_ms } => {
             expect::expect(d, selector, Check::Attribute { name, equals }, wait(timeout_ms, timing), timing.poll_ms).await
         }
+        // The runner intercepts `sign_in` before it ever reaches this
+        // executor (it alone has the tester's accounts and the project's
+        // recipe). Reaching here means a caller forgot to.
+        Action::SignIn { .. } => ActionOutcome::failed("sign_in is carried out by the runner"),
     }
 }
 

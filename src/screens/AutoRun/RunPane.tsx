@@ -31,10 +31,14 @@ const verdictTone: Record<string, string> = {
 };
 
 export default function RunPane({
+  org,
+  project,
   pbiId,
   cases,
   onClose,
 }: {
+  org: string;
+  project: string;
   pbiId: number;
   /** The selection, run one after another in this order. One case is a
    * selection of one - there is no separate single-case path. */
@@ -145,7 +149,7 @@ export default function RunPane({
     if (!step) return;
     setBusy(true);
     try {
-      const r = await commands.autoRunStep(step);
+      const r = await commands.autoRunStep(org, project, step);
       if (r.status === "error") {
         toast.error(r.error);
         return;

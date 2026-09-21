@@ -4,12 +4,17 @@
 
 use serde_json::{json, Value};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use v2_lib::autorun::accounts::Account;
+use v2_lib::autorun::recipe::SignInRecipe;
 use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
 use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, HAS_FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
+use v2_lib::browser::timing::Timing;
 
 type Handler =
     Box<dyn FnMut(&str, &serde_json::Value) -> Result<serde_json::Value, CdpError> + Send>;
@@ -216,4 +221,121 @@ impl FakePage {
             })
         })
     }
+}
+
+/// The password `stateful_app`'s account signs in with. Used by both
+/// `autorun_signin.rs` and `autorun_runner.rs` - one stateful fake, never
+/// copied.
+pub const PASSWORD: &str = "s3cret-Value";
+
+pub fn quick() -> Timing {
+    Timing { action_ms: 400, expect_ms: 150, nav_ms: 300, poll_ms: 10, highlight_ms: 0 }
+}
+
+pub fn account() -> Account {
+    Account { key: "admin".into(), label: "Administrator".into(), username: "kim".into(), password: PASSWORD.into() }
+}
+
+/// The recipe `stateful_app` answers to: fill username, fill password,
+/// click go, and an optional "another session" prompt that never appears
+/// against this fake.
+pub fn recipe() -> SignInRecipe {
+    serde_json::from_value(json!({
+        "start_url": "https://hr.example.internal/",
+        "steps": [
+            { "kind": "fill", "selector": { "css": "#user" }, "value": "{{username}}" },
+            { "kind": "fill", "selector": { "css": "#pass" }, "value": "{{password}}" },
+            { "kind": "click", "selector": { "css": "#go" } },
+            { "kind": "when_visible", "selector": { "css": "#other-session" }, "within_ms": 60,
+              "then": [ { "kind": "click", "selector": { "css": "#other-session" } } ] }
+        ],
+        "signed_in": { "css": "#marker" }
+    }))
+    .unwrap()
+}
+
+/// A page with a login form. `#marker` exists only once `signed_in` is
+/// set, which happens when the password has been typed and `#go` clicked,
+/// or from the start when `cookie_is_good` and cookies were restored.
+pub struct StatefulApp {
+    pub signed_in: Arc<AtomicBool>,
+    pub typed_password: Arc<AtomicBool>,
+    pub restored: Arc<AtomicBool>,
+    pub clicks: Arc<AtomicUsize>,
+}
+
+pub fn stateful_app(cookie_is_good: bool, broken_selector: Option<&'static str>) -> (ScriptedDriver, StatefulApp) {
+    let state = StatefulApp {
+        signed_in: Arc::new(AtomicBool::new(false)),
+        typed_password: Arc::new(AtomicBool::new(false)),
+        restored: Arc::new(AtomicBool::new(false)),
+        clicks: Arc::new(AtomicUsize::new(0)),
+    };
+    let (signed_in, typed, restored, clicks) =
+        (state.signed_in.clone(), state.typed_password.clone(), state.restored.clone(), state.clicks.clone());
+    let mut last_selector = String::new();
+    let ready = json!({ "visible": true, "onscreen": true, "enabled": true, "editable": true, "hit": true,
+        "x": 5.0, "y": 5.0, "covered_by": "", "rect": [0.0, 0.0, 10.0, 10.0] });
+    let mut d = ScriptedDriver::new(move |method, params| {
+        let f = params["functionDeclaration"].as_str().unwrap_or("");
+        Ok(match method {
+            "Network.setCookies" => {
+                restored.store(true, Ordering::SeqCst);
+                json!({})
+            }
+            "Network.clearBrowserCookies" => {
+                signed_in.store(false, Ordering::SeqCst);
+                restored.store(false, Ordering::SeqCst);
+                json!({})
+            }
+            "Page.navigate" => {
+                if cookie_is_good && restored.load(Ordering::SeqCst) {
+                    signed_in.store(true, Ordering::SeqCst);
+                }
+                json!({ "frameId": "F", "loaderId": "L" })
+            }
+            "Network.getAllCookies" => json!({ "cookies": [
+                { "name": "sid", "value": "abc", "domain": "hr.example.internal", "path": "/", "session": true }
+            ] }),
+            "Runtime.evaluate" if params["expression"] == "document" => json!({ "result": { "objectId": "doc" } }),
+            "Runtime.evaluate" => json!({ "result": { "value": { "origin": "https://hr.example.internal", "entries": [] } } }),
+            "Runtime.callFunctionOn" if f == PROBE_JS => json!({ "result": { "value": ready } }),
+            "Runtime.callFunctionOn" if f == VISIBLE_JS || f == HAS_FOCUS_JS => json!({ "result": { "value": true } }),
+            "Runtime.callFunctionOn" if params["arguments"][0]["value"].is_string() && params["objectId"] == "doc" => {
+                last_selector = params["arguments"][0]["value"].as_str().unwrap().to_string();
+                json!({ "result": { "objectId": "arr" } })
+            }
+            "Runtime.callFunctionOn" => json!({ "result": { "value": "text" } }),
+            "Runtime.getProperties" => {
+                let there = match last_selector.as_str() {
+                    "#marker" => signed_in.load(Ordering::SeqCst),
+                    "#other-session" => false,
+                    s if Some(s) == broken_selector => false,
+                    _ => true,
+                };
+                json!({ "result": if there { vec![json!({ "name": "0", "value": { "objectId": "el" } })] } else { vec![] } })
+            }
+            "Input.insertText" => {
+                if params["text"] == PASSWORD {
+                    typed.store(true, Ordering::SeqCst);
+                }
+                json!({})
+            }
+            "Input.dispatchMouseEvent" => {
+                if params["type"] == "mouseReleased" {
+                    clicks.fetch_add(1, Ordering::SeqCst);
+                    if typed.load(Ordering::SeqCst) {
+                        signed_in.store(true, Ordering::SeqCst);
+                    }
+                }
+                json!({})
+            }
+            _ => json!({}),
+        })
+    });
+    d.on_every_call_events.push((
+        "Page.navigate".into(),
+        Event { method: "Page.lifecycleEvent".into(), params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }) },
+    ));
+    (d, state)
 }

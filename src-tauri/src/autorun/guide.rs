@@ -27,6 +27,7 @@ pub const ACTION_KINDS: &[&str] = &[
     "expect_contains_text",
     "expect_count",
     "expect_attribute",
+    "sign_in",
 ];
 
 /// The guide body. Static: it documents a format, not live org data, so
@@ -56,6 +57,7 @@ list of `actions`, run in order:
 - `{ "kind": "expect_contains_text", "selector": ..., "value": "..." }`
 - `{ "kind": "expect_count", "selector": ..., "equals": 3 }`
 - `{ "kind": "expect_attribute", "selector": ..., "name": "aria-checked", "equals": "true" }`
+- `{ "kind": "sign_in", "account": "hr.supervisor" }` - change who is signed in, in the middle of a case
 - `{ "kind": "check_text", "value": "..." }`  - is this text anywhere on the page, right now?
 - `{ "kind": "check_url", "contains": "..." }` - is this in the address, right now?
 
@@ -80,6 +82,29 @@ where on the page the words were. Text is compared with runs of
 whitespace collapsed, and case matters.
 
 Never add a fixed pause. There is no action for one, on purpose.
+
+## Who the case runs as
+
+Never put a username or a password in a script. Logins belong to the
+person running the script: each tester keeps their own accounts in the
+app, and the project has one sign-in recipe that knows how to use them.
+
+A script says only WHICH account, by its key:
+
+    { "case_id": 501, "title": "...", "account": "hr.admin", "steps": [ ... ] }
+
+The app signs that account in before step 1, from a saved session when
+it has one. If a case changes hands ("the employee submits, then the
+supervisor approves"), use `sign_in` at the point where the person
+changes. Do not write the login page's fields into a script at all: no
+`fill` on a username or password, no click on a Login button.
+
+You cannot see the list of accounts. Ask the person which keys they use,
+or use the ones already present in the project's other scripts. A key is
+lowercase letters, digits, dot, underscore or hyphen.
+
+`navigate` only goes to the project's own origins (the sign-in recipe
+lists them). An address anywhere else fails and says so.
 
 ## Selectors
 
@@ -189,19 +214,15 @@ than a green tick that means nothing.
 
 ## A worked example
 
-For a case whose step 1 is "Sign in as a manager" (expected: "The
-dashboard is shown") and step 2 is "Open the objectives group" (expected:
-"The group is listed"):
+For a case that runs as the "manager" account, whose step 1 is "Open the
+dashboard" (expected: "The dashboard is shown") and step 2 is "Open the
+objectives group" (expected: "The group is listed"):
 
 [
   {
     "step_number": 1,
     "actions": [
-      { "kind": "navigate", "url": "https://app.example/login" },
-      { "kind": "wait_for", "selector": "#username", "timeout_ms": 5000 },
-      { "kind": "fill", "selector": "#username", "value": "manager@example" },
-      { "kind": "fill", "selector": "#password", "value": "REPLACE_ME" },
-      { "kind": "click", "selector": { "role": "button", "name": "Sign in" } },
+      { "kind": "navigate", "url": "https://app.example/dashboard" },
       { "kind": "expect_visible", "selector": { "role": "heading", "name": "Dashboard" } }
     ]
   },
@@ -220,7 +241,8 @@ dashboard is shown") and step 2 is "Open the objectives group" (expected:
 a LIST of scripts, one entry per case, so a whole PBI can be saved in one
 call. Every field below is required; there are no defaults, including
 `wait_for`'s `timeout_ms` - leave it out and the save is rejected, not
-defaulted to something reasonable.
+defaulted to something reasonable. `account` is the one field that is
+optional - leave it out for a case that signs nobody in.
 
 For the case above (id 501, say):
 
@@ -228,16 +250,13 @@ For the case above (id 501, say):
   "scripts": [
     {
       "case_id": 501,
-      "title": "Sign in as a manager",
+      "title": "Open the dashboard",
+      "account": "manager",
       "steps": [
         {
           "step_number": 1,
           "actions": [
-            { "kind": "navigate", "url": "https://app.example/login" },
-            { "kind": "wait_for", "selector": "#username", "timeout_ms": 5000 },
-            { "kind": "fill", "selector": "#username", "value": "manager@example" },
-            { "kind": "fill", "selector": "#password", "value": "REPLACE_ME" },
-            { "kind": "click", "selector": { "role": "button", "name": "Sign in" } },
+            { "kind": "navigate", "url": "https://app.example/dashboard" },
             { "kind": "expect_visible", "selector": { "role": "heading", "name": "Dashboard" } }
           ]
         },

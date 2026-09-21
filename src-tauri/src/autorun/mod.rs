@@ -8,6 +8,7 @@
 pub mod accounts;
 pub mod guide;
 pub mod recipe;
+pub mod runner;
 pub mod sessions;
 pub mod signin;
 pub mod store;
@@ -27,6 +28,10 @@ pub struct StepScript {
 pub struct CaseScript {
     pub case_id: i32,
     pub title: String,
+    /// The account this case runs as: a key from the tester's own accounts
+    /// list, never a login. Absent means the script signs nobody in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
     pub steps: Vec<StepScript>,
 }
 
