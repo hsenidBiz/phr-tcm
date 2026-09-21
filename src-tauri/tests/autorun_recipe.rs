@@ -134,6 +134,20 @@ fn origin_of_ends_the_authority_at_a_backslash_like_a_browser_does() {
     );
 }
 
+/// An explicit default port is the same origin as none, exactly as a
+/// browser treats it - but a non-default port is still its own origin.
+#[test]
+fn origin_of_drops_only_the_schemes_own_default_port() {
+    assert_eq!(origin_of("https://host:443/x"), origin_of("https://host/x"));
+    assert_eq!(origin_of("https://host/x").as_deref(), Some("https://host"));
+    assert_eq!(origin_of("http://host:80/x"), origin_of("http://host/x"));
+    assert_eq!(origin_of("http://host/x").as_deref(), Some("http://host"));
+    assert_eq!(origin_of("https://host:8443/x").as_deref(), Some("https://host:8443"));
+    // The other scheme's default port is not dropped.
+    assert_eq!(origin_of("http://host:443/x").as_deref(), Some("http://host:443"));
+    assert_eq!(origin_of("https://host:80/x").as_deref(), Some("https://host:80"));
+}
+
 /// Browsers silently strip a tab, CR or LF from inside an address before
 /// using it, and other control characters and whitespace inside an
 /// address mean the address does not read the way it is written either.
@@ -161,18 +175,56 @@ fn placeholders_are_filled_in_for_one_account_everywhere_they_appear() {
 #[test]
 fn a_recipe_is_saved_per_project() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(project_slug("Acme Corp", "Web/Portal"), "acme-corp__web-portal");
+    let slug = project_slug("Acme Corp", "Web/Portal");
+    // The readable part is unchanged; an 8-hex-digit hash is appended so
+    // two projects that read the same never share a file (see
+    // `two_look_alike_names_never_share_a_slug`).
+    assert!(slug.starts_with("acme-corp__web-portal-"), "{slug}");
+    assert_eq!(slug.len(), "acme-corp__web-portal-".len() + 8, "{slug}");
     assert!(load_recipe(dir.path(), "Acme", "Web").unwrap().is_none());
     let r = recipe(sample());
     save_recipe(dir.path(), "Acme", "Web", &r).unwrap();
     assert_eq!(load_recipe(dir.path(), "Acme", "Web").unwrap(), Some(r.clone()));
     assert!(load_recipe(dir.path(), "Acme", "Other").unwrap().is_none());
-    assert!(dir.path().join("projects").join("acme__web.json").is_file());
+    assert!(dir.path().join("projects").join(format!("{}.json", project_slug("Acme", "Web"))).is_file());
     // An invalid recipe is refused and the saved one stays.
     let mut broken = r.clone();
     broken.steps.clear();
     assert!(save_recipe(dir.path(), "Acme", "Web", &broken).is_err());
     assert_eq!(load_recipe(dir.path(), "Acme", "Web").unwrap(), Some(r));
+}
+
+/// `PHR Cloud`, `PHR-Cloud` and `PHR_Cloud` all read the same
+/// (`phr-cloud`) once punctuation is folded to a hyphen - the whole point
+/// of the appended hash is that they must not overwrite one another.
+#[test]
+fn two_look_alike_names_never_share_a_slug() {
+    let a = project_slug("PHR Cloud", "X");
+    let b = project_slug("PHR-Cloud", "X");
+    let c = project_slug("PHR_Cloud", "X");
+    assert_ne!(a, b);
+    assert_ne!(b, c);
+    assert_ne!(a, c);
+}
+
+/// Azure DevOps names are case-insensitive, so the same project under a
+/// different case must still land in the one file it already has.
+#[test]
+fn the_same_name_in_different_case_gives_the_same_slug() {
+    assert_eq!(project_slug("Acme", "Web"), project_slug("ACME", "WEB"));
+    assert_eq!(project_slug("Acme", "Web"), project_slug("acme", "web"));
+}
+
+/// A name with no ASCII alphanumerics (here, entirely non-ASCII) must
+/// still save and load - it reads as "x" but the hash keeps it distinct.
+#[test]
+fn a_non_ascii_name_saves_and_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = recipe(sample());
+    save_recipe(dir.path(), "日本語", "組織", &r).unwrap();
+    assert_eq!(load_recipe(dir.path(), "日本語", "組織").unwrap(), Some(r));
+    let slug = project_slug("日本語", "組織");
+    assert!(slug.starts_with("x__x-"), "{slug}");
 }
 
 /// A recipe cannot name `sign_in` as one of its own steps - it IS the
@@ -183,4 +235,37 @@ fn a_recipe_may_not_contain_sign_in() {
     let mut v = sample();
     v["steps"][2] = json!({ "kind": "sign_in", "account": "admin" });
     assert!(recipe(v).validate().unwrap_err().contains("sign_in"));
+}
+
+/// A placeholder is only ever filled in for a fill's own VALUE - anywhere
+/// else it is left literal, which is a recipe that looks right and does
+/// nothing. Save must refuse it there instead.
+#[test]
+fn a_placeholder_is_refused_anywhere_but_a_fills_value() {
+    // In a navigate url.
+    let mut v = sample();
+    v["steps"][2] = json!({ "kind": "navigate", "url": "https://hr.example.internal/{{username}}" });
+    let err = recipe(v).validate().unwrap_err();
+    assert!(err.contains("step 3") && err.contains("belongs only in a fill's value"), "{err}");
+
+    // In a fill's own selector - its VALUE is the one place this is fine.
+    let mut v = sample();
+    v["steps"][0]["selector"] = json!({ "css": "#{{username}}" });
+    let err = recipe(v).validate().unwrap_err();
+    assert!(err.contains("step 1") && err.contains("belongs only in a fill's value"), "{err}");
+
+    // In an expectation.
+    let mut v = sample();
+    v["steps"][2] = json!({ "kind": "check_text", "value": "welcome {{username}}" });
+    let err = recipe(v).validate().unwrap_err();
+    assert!(err.contains("step 3") && err.contains("belongs only in a fill's value"), "{err}");
+
+    // Inside a when_visible's own `then` actions too.
+    let mut v = sample();
+    v["steps"][3]["then"][0] = json!({ "kind": "click", "selector": { "css": "#{{password}}" } });
+    let err = recipe(v).validate().unwrap_err();
+    assert!(err.contains("step 4") && err.contains("belongs only in a fill's value"), "{err}");
+
+    // A fill's VALUE is exactly where a placeholder belongs.
+    assert!(recipe(sample()).validate().is_ok());
 }

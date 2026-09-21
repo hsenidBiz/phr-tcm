@@ -148,18 +148,49 @@ pub fn origin_of(url: &str) -> Option<String> {
     if host.is_empty() {
         return None;
     }
-    Some(format!("{scheme}://{}", host.to_ascii_lowercase()))
+    let host = host.to_ascii_lowercase();
+    // An explicit default port is the same origin as no port at all, the
+    // way a browser treats it: `https://host:443/x` and `https://host/x`
+    // must agree, or a policy written as one and a script's `navigate`
+    // written as the other would disagree about whether they match.
+    let default_port = if scheme == "https" { ":443" } else { ":80" };
+    let host = host.strip_suffix(default_port).unwrap_or(&host);
+    Some(format!("{scheme}://{host}"))
 }
 
 fn is_bare_origin(s: &str) -> bool {
     origin_of(s).is_some_and(|o| o == s.trim().trim_end_matches('/').to_ascii_lowercase())
 }
 
+/// Does any string anywhere in this JSON value hold a placeholder? Used to
+/// scan a whole action (or a fill's selector alone) at once rather than
+/// hand-checking each field of every action variant.
+fn has_placeholder_anywhere(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::String(s) => has_placeholder(s),
+        serde_json::Value::Array(a) => a.iter().any(has_placeholder_anywhere),
+        serde_json::Value::Object(o) => o.values().any(has_placeholder_anywhere),
+        _ => false,
+    }
+}
+
 fn check(action: &Action) -> Result<(), String> {
-    if serde_json::to_value(action).ok().and_then(|v| v["kind"].as_str().map(str::to_string)).as_deref()
-        == Some("sign_in")
-    {
+    let v = serde_json::to_value(action).ok();
+    let kind = v.as_ref().and_then(|v| v["kind"].as_str()).map(str::to_string);
+    if kind.as_deref() == Some("sign_in") {
         return Err("a recipe cannot contain sign_in - it IS the sign-in".to_string());
+    }
+    // `{{username}}`/`{{password}}` are filled in only for a fill's own
+    // VALUE (see `fill_in`); anywhere else - a navigate url, a locator, an
+    // expectation, even a fill's own selector - the placeholder is left
+    // literal, which is a recipe that looks right and does nothing.
+    if let Some(v) = &v {
+        let scanned = if kind.as_deref() == Some("fill") { v.get("selector") } else { Some(v) };
+        if scanned.is_some_and(has_placeholder_anywhere) {
+            return Err(
+                "a placeholder ({{username}} or {{password}}) belongs only in a fill's value".to_string(),
+            );
+        }
     }
     action.validate()
 }
@@ -202,7 +233,10 @@ impl SignInRecipe {
         Ok(())
     }
 
-    /// Everywhere `navigate` may go: the start address first.
+    /// Everywhere `navigate` may go: the start address first. Every entry
+    /// is re-derived through `origin_of` rather than trusted as written -
+    /// `load_recipe` relies on that, since it does not itself validate a
+    /// hand-edited recipe file before handing it to a run.
     pub fn origins(&self) -> Vec<String> {
         let mut out: Vec<String> = vec![];
         let all = origin_of(&self.start_url).into_iter().chain(self.allowed_origins.iter().filter_map(|o| origin_of(o)));
@@ -251,12 +285,39 @@ fn slug_part(s: &str) -> String {
             out.push('-');
         }
     }
-    out.trim_matches('-').to_string()
+    let out = out.trim_matches('-').to_string();
+    // A name with no ASCII alphanumerics (all-symbols, or entirely
+    // non-ASCII) would otherwise slug to "", and two such names would
+    // collide on the same file - the trailing hash in `project_slug` is
+    // what actually keeps them apart, this is just a readable stand-in.
+    if out.is_empty() {
+        "x".to_string()
+    } else {
+        out
+    }
 }
 
-/// `acme-corp__web-portal`: safe as a file name, readable in a folder.
+/// 32-bit FNV-1a, written inline rather than pulling in a crate or using
+/// `std::hash::DefaultHasher` (not stable across Rust releases, so a slug
+/// computed by one toolchain could stop matching one computed by another).
+fn fnv1a(s: &str) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in s.bytes() {
+        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+/// `acme-corp__web-portal-1a2b3c4d`: safe as a file name, readable in a
+/// folder. The readable parts alone are not enough to tell two projects
+/// apart - `PHR Cloud`, `PHR-Cloud` and `PHR_Cloud` all read as
+/// `phr-cloud` - so the trailing 8 hex digits are a stable hash of the
+/// raw names, lower-cased first because Azure DevOps names are
+/// case-insensitive and this slug must not change under a mere case
+/// difference.
 pub fn project_slug(org: &str, project: &str) -> String {
-    format!("{}__{}", slug_part(org), slug_part(project))
+    let hash = fnv1a(&format!("{}\n{}", org.trim().to_lowercase(), project.trim().to_lowercase()));
+    format!("{}__{}-{hash:08x}", slug_part(org), slug_part(project))
 }
 
 fn recipe_path(root: &Path, org: &str, project: &str) -> PathBuf {
@@ -276,7 +337,10 @@ pub fn load_recipe(root: &Path, org: &str, project: &str) -> Result<Option<SignI
 
 pub fn save_recipe(root: &Path, org: &str, project: &str, recipe: &SignInRecipe) -> Result<(), String> {
     recipe.validate()?;
-    if slug_part(org).is_empty() || slug_part(project).is_empty() {
+    // `slug_part` never reads as empty any more (a name with no ASCII
+    // alphanumerics becomes "x"), so the real refusal - nothing was typed
+    // at all - has to be checked on the raw names instead.
+    if org.trim().is_empty() || project.trim().is_empty() {
         return Err("pick an organization and a project first".to_string());
     }
     let path = recipe_path(root, org, project);
