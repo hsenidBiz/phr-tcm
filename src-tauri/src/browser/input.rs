@@ -71,9 +71,19 @@ pub const PROBE_JS: &str = r#"function() {
 /// directly. A date-like input does not accept typed characters at all,
 /// so it is set through its native value setter instead. Anything else
 /// is focused with its contents selected, so what is typed next replaces
-/// them - except where `select()` is a documented no-op (number, email
-/// and friends), where the value is cleared through the same native
-/// setter so typing does not concatenate onto what was already there.
+/// them.
+///
+/// The last three lines are the guard for a control that does not select.
+/// Measured on Edge 153 rather than assumed: on `number`, `email` and the
+/// other types with no selection API, `select()` does NOT throw and does
+/// select the value - it is only `selectionStart` that reads back `null`,
+/// which is why the check is a null test and not a `catch`. Those types
+/// are therefore replaced correctly by the selection alone, and the
+/// native clear below never fires for them. It stays for the control
+/// where `select()` really is a no-op, because the alternative failure -
+/// typing CONCATENATED onto what was already in the field - is silent and
+/// produces a green run with the wrong data in it. Its one cost is an
+/// extra `input` event carrying an empty value.
 pub const FOCUS_JS: &str = r#"function(value) {
   if (this instanceof HTMLSelectElement) {
     const want = String(value).trim();
