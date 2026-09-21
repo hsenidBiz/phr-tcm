@@ -2,7 +2,9 @@
 //! frame we send, and telling OUR reply apart from the flood of events
 //! the browser volunteers.
 
-use v2_lib::browser::cdp::{frame, reply_for};
+use std::collections::VecDeque;
+use std::time::Duration;
+use v2_lib::browser::cdp::{event_of, frame, reply_for, Cdp, CdpError, Transport};
 
 #[test]
 fn a_frame_carries_its_id_method_and_params() {
@@ -38,6 +40,158 @@ fn a_protocol_error_is_an_error_with_its_message() {
         .unwrap()
         .unwrap_err();
     assert!(got.contains("No node found"), "got: {got}");
+}
+
+/// Stands in for the socket: hands back canned frames in order and keeps
+/// what was sent. When it runs dry it either reports the socket closed or,
+/// for the timeout test, never answers at all.
+struct FakeTransport {
+    incoming: VecDeque<String>,
+    sent: Vec<String>,
+    hang_when_empty: bool,
+}
+
+impl FakeTransport {
+    fn new(frames: &[&str]) -> Self {
+        FakeTransport {
+            incoming: frames.iter().map(|f| f.to_string()).collect(),
+            sent: vec![],
+            hang_when_empty: false,
+        }
+    }
+    fn hanging(frames: &[&str]) -> Self {
+        FakeTransport { hang_when_empty: true, ..FakeTransport::new(frames) }
+    }
+}
+
+impl Transport for FakeTransport {
+    async fn send(&mut self, text: String) -> Result<(), String> {
+        self.sent.push(text);
+        Ok(())
+    }
+    async fn recv(&mut self) -> Option<Result<String, String>> {
+        match self.incoming.pop_front() {
+            Some(f) => Some(Ok(f)),
+            None if self.hang_when_empty => {
+                std::future::pending::<()>().await;
+                None
+            }
+            None => None,
+        }
+    }
+}
+
+#[test]
+fn an_event_is_a_frame_with_a_method_and_no_id() {
+    let ev = event_of(r#"{"method":"Page.loadEventFired","params":{"timestamp":1}}"#).unwrap();
+    assert_eq!(ev.method, "Page.loadEventFired");
+    assert_eq!(ev.params["timestamp"], 1);
+    assert!(event_of(r#"{"id":3,"result":{}}"#).is_none());
+    assert!(event_of("not json").is_none());
+}
+
+/// Events that arrive while a call is waiting are kept, not thrown away:
+/// the load event for a navigation usually lands before anyone asks for it.
+#[tokio::test]
+async fn a_call_skips_events_and_keeps_them_for_later() {
+    let t = FakeTransport::new(&[
+        r#"{"method":"Page.loadEventFired","params":{"timestamp":1}}"#,
+        r#"{"id":1,"result":{"ok":true}}"#,
+    ]);
+    let mut cdp = Cdp::over(t);
+    let got = cdp.call("Page.enable", serde_json::json!({})).await.unwrap();
+    assert_eq!(got["ok"], true);
+    let ev = cdp.wait_event("Page.loadEventFired", Duration::from_millis(50)).await.unwrap();
+    assert_eq!(ev.params["timestamp"], 1);
+}
+
+#[tokio::test]
+async fn wait_event_reads_the_socket_when_nothing_is_buffered() {
+    let t = FakeTransport::new(&[
+        r#"{"method":"Network.dataReceived","params":{}}"#,
+        r#"{"method":"Page.loadEventFired","params":{"timestamp":2}}"#,
+    ]);
+    let mut cdp = Cdp::over(t);
+    let ev = cdp.wait_event("Page.loadEventFired", Duration::from_millis(200)).await.unwrap();
+    assert_eq!(ev.params["timestamp"], 2);
+}
+
+/// The old client waited forever. A browser that has stopped answering is
+/// a harness failure with a name and a number, not a frozen screen.
+#[tokio::test]
+async fn a_call_that_is_never_answered_times_out_and_says_what_it_was() {
+    let mut cdp = Cdp::over(FakeTransport::hanging(&[]));
+    let err = cdp
+        .call_within("Runtime.evaluate", serde_json::json!({}), Duration::from_millis(50))
+        .await
+        .unwrap_err();
+    assert_eq!(err, CdpError::Timeout { what: "Runtime.evaluate".into(), ms: 50 });
+    assert!(err.to_string().contains("Runtime.evaluate"), "{err}");
+    assert!(!err.is_transient());
+}
+
+#[tokio::test]
+async fn a_closed_socket_is_its_own_error() {
+    let mut cdp = Cdp::over(FakeTransport::new(&[]));
+    let err = cdp.call("Page.enable", serde_json::json!({})).await.unwrap_err();
+    assert_eq!(err, CdpError::Closed);
+    assert!(err.to_string().contains("browser"), "{err}");
+}
+
+/// A refusal names the method. It is also the one kind worth retrying: a
+/// page between two documents refuses calls for a moment.
+#[tokio::test]
+async fn a_protocol_error_names_the_method_and_is_transient() {
+    let t = FakeTransport::new(&[r#"{"id":1,"error":{"code":-32000,"message":"No node found"}}"#]);
+    let mut cdp = Cdp::over(t);
+    let err = cdp.call("DOM.resolveNode", serde_json::json!({})).await.unwrap_err();
+    assert_eq!(
+        err,
+        CdpError::Protocol { method: "DOM.resolveNode".into(), message: "No node found".into() }
+    );
+    assert!(err.is_transient());
+}
+
+/// Measured on real Edge: an alert() leaves every later call pending until
+/// the dialog is handled. The client accepts it at once and remembers what
+/// it said, so the run carries on and the person is told.
+#[tokio::test]
+async fn a_javascript_dialog_is_accepted_and_remembered() {
+    let t = FakeTransport::new(&[
+        r#"{"method":"Page.javascriptDialogOpening","params":{"type":"alert","message":"Saved!"}}"#,
+        r#"{"id":1,"result":{"done":true}}"#,
+    ]);
+    let mut cdp = Cdp::over(t);
+    let got = cdp.call("Runtime.evaluate", serde_json::json!({})).await.unwrap();
+    assert_eq!(got["done"], true);
+
+    let sent: Vec<serde_json::Value> = cdp
+        .transport()
+        .sent
+        .iter()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    let handled = sent
+        .iter()
+        .find(|f| f["method"] == "Page.handleJavaScriptDialog")
+        .expect("the dialog was never handled");
+    assert_eq!(handled["params"]["accept"], true);
+
+    assert_eq!(cdp.take_dialogs(), vec!["alert: Saved!".to_string()]);
+    assert!(cdp.take_dialogs().is_empty(), "taking the dialogs must empty the list");
+}
+
+#[tokio::test]
+async fn forgetting_events_drops_what_was_buffered() {
+    let t = FakeTransport::new(&[
+        r#"{"method":"Page.loadEventFired","params":{}}"#,
+        r#"{"id":1,"result":{}}"#,
+    ]);
+    let mut cdp = Cdp::over(t);
+    cdp.call("Page.enable", serde_json::json!({})).await.unwrap();
+    cdp.forget_events();
+    let err = cdp.wait_event("Page.loadEventFired", Duration::from_millis(20)).await.unwrap_err();
+    assert_eq!(err, CdpError::Closed, "the fake socket is empty, so this reads as closed");
 }
 
 #[tokio::test]

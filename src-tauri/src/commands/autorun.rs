@@ -23,7 +23,7 @@ struct Session {
 
 impl Evaluator for Cdp {
     async fn eval(&mut self, expression: &str) -> Result<serde_json::Value, String> {
-        Cdp::eval(self, expression).await
+        Cdp::eval(self, expression).await.map_err(|e| e.to_string())
     }
 }
 
