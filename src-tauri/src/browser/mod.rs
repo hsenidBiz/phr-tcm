@@ -19,6 +19,7 @@ pub mod launch;
 pub mod cdp;
 pub mod timing;
 pub mod page;
+pub mod session;
 pub mod locator;
 pub mod input;
 pub mod expect;
