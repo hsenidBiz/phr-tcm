@@ -37,8 +37,22 @@ const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 /// run in front of the person, up to 200 images of it.
 pub const EXCLUDED: [&str; 2] = ["autorun/sessions", "autorun/shots"];
 
+/// `rel` normalised to forward slashes, so an entry written as
+/// `autorun/sessions\admin.json` (Windows splits a path on both
+/// separators, so it still passes the component check in
+/// `safe_relative_path`) is still caught. The comparison is ASCII
+/// case-insensitive too - Windows' file system is, so `AUTORUN/Sessions`
+/// and `autorun/sessions` are the same folder on disk whatever an entry's
+/// path happens to spell it as. `.get()` rather than slicing avoids a
+/// panic if `x.len()` does not land on a char boundary of `rel`.
 fn excluded(rel: &str) -> bool {
-    EXCLUDED.iter().any(|x| rel == *x || rel.starts_with(&format!("{x}/")))
+    let rel = rel.replace('\\', "/");
+    EXCLUDED.iter().any(|x| {
+        rel.eq_ignore_ascii_case(x)
+            || rel
+                .get(..x.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(x) && rel.as_bytes().get(x.len()) == Some(&b'/'))
+    })
 }
 
 #[derive(serde::Serialize, serde::Deserialize, specta::Type, Clone, Debug)]
@@ -193,6 +207,7 @@ pub fn read_doc(path: &Path) -> Result<BackupDoc, String> {
 pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, String> {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut restored = 0u32;
+    let mut wrote_accounts = false;
     for f in files {
         if !safe_relative_path(&f.path) {
             crate::applog::warn(format!("Backup import skipped an unsafe path: {}", f.path));
@@ -207,6 +222,21 @@ pub fn restore_files(data_dir: &Path, files: &[BackupFile]) -> Result<u32, Strin
         }
         std::fs::write(&target, bytes).map_err(|e| format!("could not restore {}: {e}", f.path))?;
         restored += 1;
+        if f.path == "autorun/accounts.json" {
+            wrote_accounts = true;
+        }
+    }
+    if wrote_accounts {
+        // `accounts::save_accounts` drops a saved session the moment the
+        // login behind it changes, so a saved session never outlives the
+        // login it was made with - through the app. A restore writes
+        // accounts.json straight to disk instead, bypassing that, so it
+        // has to make the same guarantee itself or the next run restores
+        // the OLD person's cookies under whatever account the backup's
+        // admin now is. Sessions are a cache: the cost of wiping all of
+        // them is one real sign-in, so this is best effort and its own
+        // failure is not the restore's failure.
+        let _ = std::fs::remove_dir_all(data_dir.join("autorun").join("sessions"));
     }
     Ok(restored)
 }

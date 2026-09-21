@@ -163,6 +163,55 @@ fn sessions_and_screenshots_stay_out_of_a_backup() {
     assert!(v2_lib::backup::safe_relative_path("autorun/scripts/case-1.json"));
     assert!(!v2_lib::backup::safe_relative_path("autorun/sessions/admin.json"));
     assert!(!v2_lib::backup::safe_relative_path("autorun/shots/shot-1-000001.jpg"));
+
+    // Windows splits a path on `\` just as it does `/`, so an entry
+    // spelled with backslashes still names the excluded folder.
+    assert!(!v2_lib::backup::safe_relative_path("autorun/sessions\\admin.json"));
+    assert!(!v2_lib::backup::safe_relative_path("autorun\\shots\\x.jpg"));
+    // The Windows file system is case-insensitive: `autorun/Sessions` IS
+    // `autorun/sessions` on disk, whatever case a backup entry spells it in.
+    assert!(!v2_lib::backup::safe_relative_path("AutoRun/Sessions/admin.json"));
+    assert!(!v2_lib::backup::safe_relative_path("autorun/SESSIONS/admin.json"));
+}
+
+/// `save_accounts` drops a saved session the moment the login behind it
+/// changes; a backup restore writes `autorun/accounts.json` straight to
+/// disk and must make the same guarantee, or the next run restores the
+/// OLD person's cookies under whatever account the backup's admin now is.
+#[test]
+fn restoring_accounts_json_drops_the_old_sessions() {
+    let dst = tmpdir("restore-drops-sessions");
+    std::fs::create_dir_all(dst.join("autorun/sessions")).unwrap();
+    std::fs::write(dst.join("autorun/sessions/admin.json"), "{}").unwrap();
+
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files = vec![BackupFile { path: "autorun/accounts.json".into(), b64: b64.encode(b"[]") }];
+    restore_files(&dst, &files).unwrap();
+
+    assert!(
+        !dst.join("autorun/sessions").exists(),
+        "a restore that writes accounts.json must drop the old sessions folder"
+    );
+    let _ = std::fs::remove_dir_all(&dst);
+}
+
+/// A backup with no accounts.json in it must leave saved sessions alone -
+/// there is no new login for them to disagree with.
+#[test]
+fn a_restore_without_accounts_json_leaves_sessions_alone() {
+    let dst = tmpdir("restore-keeps-sessions");
+    std::fs::create_dir_all(dst.join("autorun/sessions")).unwrap();
+    std::fs::write(dst.join("autorun/sessions/admin.json"), "{}").unwrap();
+
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let files = vec![BackupFile { path: "autorun/scripts/case-1.json".into(), b64: b64.encode(b"{}") }];
+    restore_files(&dst, &files).unwrap();
+
+    assert!(
+        dst.join("autorun/sessions/admin.json").is_file(),
+        "sessions must be left alone when the backup carries no accounts.json"
+    );
+    let _ = std::fs::remove_dir_all(&dst);
 }
 
 #[test]
