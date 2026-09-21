@@ -121,10 +121,32 @@ pub(crate) fn failed_by(e: CdpError) -> ActionOutcome {
     }
 }
 
+/// Where an authored `navigate` may go. `None` is no restriction, which is
+/// what a project with no sign-in recipe gets.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Policy {
+    pub allowed_origins: Option<Vec<String>>,
+}
+
+impl Policy {
+    pub fn open() -> Self {
+        Policy { allowed_origins: None }
+    }
+    pub fn only(origins: Vec<String>) -> Self {
+        Policy { allowed_origins: Some(origins.into_iter().map(|o| o.to_ascii_lowercase()).collect()) }
+    }
+    pub fn allows(&self, url: &str) -> bool {
+        match &self.allowed_origins {
+            None => true,
+            Some(list) => crate::autorun::recipe::origin_of(url).is_some_and(|o| list.contains(&o)),
+        }
+    }
+}
+
 /// An address the browser can be sent to. `file://` is allowed on
 /// purpose: the live fixture is a local file and this tab is a
-/// development-only one. Narrowing this to an origin allowlist is planned
-/// work, not an oversight.
+/// development-only one. Which of these an authored `navigate` may
+/// actually use is `Policy`'s job, not this function's.
 fn is_page_url(url: &str) -> bool {
     let u = url.trim().to_ascii_lowercase();
     u.starts_with("http://") || u.starts_with("https://") || u.starts_with("file://")
@@ -252,11 +274,17 @@ async fn absolute<D: Driver>(d: &mut D, url: &str) -> Result<String, ActionOutco
     Ok(resolved)
 }
 
-async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing) -> ActionOutcome {
+async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing, policy: &Policy) -> ActionOutcome {
     let url = match absolute(d, url).await {
         Ok(u) => u,
         Err(out) => return out,
     };
+    if !policy.allows(&url) {
+        let origin = crate::autorun::recipe::origin_of(&url).unwrap_or_else(|| url.clone());
+        return ActionOutcome::failed(format!(
+            "{origin} is not one of this project's allowed origins - add it to the sign-in recipe if the test really goes there"
+        ));
+    }
     let url = url.as_str();
     // Older lifecycle events would satisfy the wait below before this
     // page has even started.
@@ -346,9 +374,9 @@ fn wait(own: &Option<u32>, timing: &Timing) -> u64 {
     own.map(u64::from).unwrap_or(timing.expect_ms)
 }
 
-async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOutcome {
+async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing, policy: &Policy) -> ActionOutcome {
     match action {
-        Action::Navigate { url } => navigate(d, url.trim(), timing).await,
+        Action::Navigate { url } => navigate(d, url.trim(), timing, policy).await,
         Action::Click { selector } => {
             let ready = match input::wait_ready(d, selector, false, timing).await {
                 Ok(r) => r,
@@ -428,10 +456,19 @@ pub async fn execute<D: Driver>(d: &mut D, action: &Action) -> ActionOutcome {
 }
 
 pub async fn execute_with<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOutcome {
+    execute_in(d, action, timing, &Policy::open()).await
+}
+
+pub async fn execute_in<D: Driver>(
+    d: &mut D,
+    action: &Action,
+    timing: &Timing,
+    policy: &Policy,
+) -> ActionOutcome {
     if let Err(why) = action.validate() {
         return ActionOutcome::failed(format!("this action cannot run: {why}"));
     }
-    let mut out = run(d, action, timing).await;
+    let mut out = run(d, action, timing, policy).await;
     // A dialog raised BETWEEN two actions is reported with the NEXT one:
     // the client only reads frames off the socket while a call is in
     // flight, so nothing is noticed until something asks again.

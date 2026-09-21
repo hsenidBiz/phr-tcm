@@ -7,7 +7,7 @@ mod common;
 
 use common::{ready_probe, FakePage, ScriptedDriver};
 use serde_json::json;
-use v2_lib::browser::actions::{execute_with, Action, HIGHLIGHT_JS, RESOLVE_URL_JS};
+use v2_lib::browser::actions::{execute_in, execute_with, Action, Policy, HIGHLIGHT_JS, RESOLVE_URL_JS};
 use v2_lib::browser::cdp::{CdpError, Event};
 use v2_lib::browser::input::PROBE_JS;
 use v2_lib::browser::timing::Timing;
@@ -488,4 +488,70 @@ async fn an_invalid_action_fails_without_touching_the_browser() {
     let out = execute_with(&mut d, &a, &quick()).await;
     assert!(!out.ok && out.detail.contains("role, text or css"), "{}", out.detail);
     assert!(d.calls.is_empty());
+}
+
+fn only(origins: &[&str]) -> Policy {
+    Policy::only(origins.iter().map(|s| s.to_string()).collect())
+}
+
+#[test]
+fn a_policy_judges_an_address_by_its_origin() {
+    let p = only(&["https://hr.example.internal", "http://127.0.0.1:8080"]);
+    assert!(p.allows("https://HR.example.internal/a/b?c=1"));
+    assert!(p.allows("http://127.0.0.1:8080/x"));
+    assert!(!p.allows("http://127.0.0.1:9090/x"), "the port is part of the origin");
+    assert!(!p.allows("https://evil.example/"));
+    assert!(!p.allows("file:///C:/x.html"), "file addresses need file:// in the list");
+    assert!(only(&["file://"]).allows("file:///C:/x.html"));
+    assert!(Policy::open().allows("https://anywhere.example/"));
+}
+
+#[tokio::test]
+async fn navigate_outside_the_allowed_origins_is_refused_before_the_browser_is_asked() {
+    let mut d = FakePage::default().driver();
+    let out = execute_in(
+        &mut d,
+        &Action::Navigate { url: "https://evil.example/x".into() },
+        &quick(),
+        &only(&["https://hr.example.internal"]),
+    )
+    .await;
+    assert!(!out.ok && !out.harness);
+    assert!(out.detail.contains("https://evil.example") && out.detail.contains("allowed origins"), "{}", out.detail);
+    assert!(d.calls_to("Page.navigate").is_empty());
+}
+
+/// A relative or protocol-relative address is judged by where it GOES.
+/// FakePage answers the resolve call with its `resolved_url` field (see
+/// `tests/common/mod.rs`), not `href`, which is what `location.href`
+/// answers with for `check_url` - the brief's test used `href` for both.
+#[tokio::test]
+async fn a_relative_address_is_checked_after_it_is_resolved() {
+    let mut d =
+        FakePage { resolved_url: "https://evil.example/landing", ..FakePage::default() }.driver();
+    let out = execute_in(
+        &mut d,
+        &Action::Navigate { url: "//evil.example/landing".into() },
+        &quick(),
+        &only(&["https://hr.example.internal"]),
+    )
+    .await;
+    assert!(!out.ok, "{}", out.detail);
+    assert!(d.calls_to("Page.navigate").is_empty());
+}
+
+#[tokio::test]
+async fn with_no_policy_everything_works_as_before() {
+    let mut d = FakePage::default().driver();
+    d.on_call_events.push((
+        "Page.navigate".into(),
+        Event {
+            method: "Page.lifecycleEvent".into(),
+            params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }),
+        },
+    ));
+    let out =
+        execute_in(&mut d, &Action::Navigate { url: "https://anywhere.example/".into() }, &quick(), &Policy::open())
+            .await;
+    assert!(out.ok, "{}", out.detail);
 }
