@@ -17,41 +17,50 @@ pub fn has_placeholder(s: &str) -> bool {
     s.contains(USERNAME) || s.contains(PASSWORD)
 }
 
+// `WhenVisible`'s `kind` field: always this one variant, serialized (via
+// `rename_all`) as `"when_visible"`, so the field is self-validating by
+// construction rather than needing a hand-written check.
+//
+// Why a whole type for one literal: `#[serde(tag = "kind", rename =
+// "when_visible")]` directly on `WhenVisible` - the container attribute
+// serde itself supports for internally-tagged plain structs, not only enum
+// variants - serializes correctly (`{"kind":"when_visible", ...}`,
+// confirmed with a scratch test) but breaks specta's TypeScript export:
+// renaming the container makes specta register two type entries under the
+// identical name `"when_visible"` and refuse with "Detected multiple types
+// with the same name". Without the rename, the tag serializes as the Rust
+// type's own name, `"WhenVisible"` (wrong case). A field with its own
+// small literal type sidesteps both: nothing about `WhenVisible` itself is
+// renamed, so there is nothing for specta to collide with.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum WhenVisibleKind {
+    WhenVisible,
+}
+
 /// A prompt that may or may not appear. Recipe only.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
 pub struct WhenVisible {
+    pub kind: WhenVisibleKind,
     pub selector: Target,
     pub within_ms: u32,
     pub then: Vec<Action>,
 }
 
-// NOTE (not a doc comment - kept out of the generated bindings): specta's
-// TypeScript for this is the externally-tagged `{ Do: Action } | {
-// WhenVisible: WhenVisible }`, not the actual wire shape the hand-written
-// impls below read and write. `#[serde(untagged)]` would fix that, but
-// rustc refuses it here ("cannot find attribute `serde` in this scope"):
-// the attribute is only legal alongside a real `#[derive(serde::Serialize
-// | Deserialize)]`, and this enum deliberately has neither, because a
-// derived untagged Deserialize would lose the inner "unknown variant"
-// detail `a_bad_step_says_what_is_wrong_with_it` checks for. Left as a
-// known limitation; see the Task 2 report.
-#[derive(Debug, Clone, PartialEq, specta::Type)]
+// Serialized untagged - a plain action object, or `WhenVisible`'s own
+// `{ "kind": "when_visible", ... }` - so the JSON on disk never wraps a
+// step in `{ "Do": ... }` or `{ "WhenVisible": ... }`. `serde::Serialize`
+// is derived (needed to legally write `#[serde(untagged)]` at all: that
+// attribute is only recognised alongside a real `#[derive(Serialize |
+// Deserialize)]`) but `Deserialize` stays hand-written below, because a
+// derived untagged `Deserialize` would lose the inner "unknown variant"
+// detail `a_bad_step_says_what_is_wrong_with_it` checks for - see `Target`
+// in `browser::locator` for the same split.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type)]
+#[serde(untagged)]
 pub enum RecipeStep {
     Do(Action),
     WhenVisible(WhenVisible),
-}
-
-impl serde::Serialize for RecipeStep {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            RecipeStep::Do(a) => a.serialize(s),
-            RecipeStep::WhenVisible(w) => {
-                let mut v = serde_json::to_value(w).map_err(serde::ser::Error::custom)?;
-                v["kind"] = serde_json::json!("when_visible");
-                v.serialize(s)
-            }
-        }
-    }
 }
 
 /// By hand, through a `Value`, so the error for a bad step is the inner
@@ -64,14 +73,14 @@ impl<'de> serde::Deserialize<'de> for RecipeStep {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
             struct Raw {
-                #[allow(dead_code)]
-                kind: String,
+                kind: WhenVisibleKind,
                 selector: Target,
                 within_ms: u32,
                 then: Vec<Action>,
             }
             let raw: Raw = serde_json::from_value(v).map_err(D::Error::custom)?;
             return Ok(RecipeStep::WhenVisible(WhenVisible {
+                kind: raw.kind,
                 selector: raw.selector,
                 within_ms: raw.within_ms,
                 then: raw.then,
@@ -208,6 +217,7 @@ pub fn for_account(steps: &[RecipeStep], account: &Account) -> Vec<RecipeStep> {
         .map(|s| match s {
             RecipeStep::Do(a) => RecipeStep::Do(fill_in(a, account)),
             RecipeStep::WhenVisible(w) => RecipeStep::WhenVisible(WhenVisible {
+                kind: w.kind,
                 selector: w.selector.clone(),
                 within_ms: w.within_ms,
                 then: w.then.iter().map(|a| fill_in(a, account)).collect(),

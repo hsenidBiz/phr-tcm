@@ -1399,9 +1399,9 @@ export type PullRequest = {
 
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;
 
-export type RecipeStep_Deserialize = ({ Do: Action_Deserialize }) & { WhenVisible?: never } | ({ WhenVisible: WhenVisible_Deserialize }) & { Do?: never };
+export type RecipeStep_Deserialize = Action_Deserialize | WhenVisible_Deserialize;
 
-export type RecipeStep_Serialize = ({ Do: Action_Serialize }) & { WhenVisible?: never } | ({ WhenVisible: WhenVisible_Serialize }) & { Do?: never };
+export type RecipeStep_Serialize = Action_Serialize | WhenVisible_Serialize;
 
 /**
  *  One test case's fate after a relink attempt - same shape as
@@ -2000,8 +2000,11 @@ export type WatchedFileChanged = {
 /**  A prompt that may or may not appear. Recipe only. */
 export type WhenVisible = WhenVisible_Serialize | WhenVisible_Deserialize;
 
+export type WhenVisibleKind = "when_visible";
+
 /**  A prompt that may or may not appear. Recipe only. */
 export type WhenVisible_Deserialize = {
+	kind: WhenVisibleKind,
 	selector: Target_Deserialize,
 	within_ms: number,
 	then: Action_Deserialize[],
@@ -2009,6 +2012,7 @@ export type WhenVisible_Deserialize = {
 
 /**  A prompt that may or may not appear. Recipe only. */
 export type WhenVisible_Serialize = {
+	kind: WhenVisibleKind,
 	selector: Target_Serialize,
 	within_ms: number,
 	then: Action_Serialize[],

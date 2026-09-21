@@ -40,6 +40,25 @@ fn a_recipe_parses_with_defaults_and_round_trips() {
 }
 
 #[test]
+fn a_step_serializes_with_no_do_or_when_visible_wrapper() {
+    let r = recipe(sample());
+    // steps[0] is a plain fill action: its JSON is the action's own JSON,
+    // not `{ "Do": { "kind": "fill", ... } }`.
+    let action_json = serde_json::to_value(&r.steps[0]).unwrap();
+    assert_eq!(action_json, json!({
+        "kind": "fill",
+        "selector": { "role": "textbox", "name": "Username" },
+        "value": "{{username}}"
+    }));
+    // steps[3] is a when_visible step: its JSON carries "kind" itself, not
+    // `{ "WhenVisible": { "selector": ..., ... } }`.
+    let when_visible_json = serde_json::to_value(&r.steps[3]).unwrap();
+    assert_eq!(when_visible_json["kind"], "when_visible");
+    assert!(when_visible_json.get("WhenVisible").is_none());
+    assert!(when_visible_json.get("Do").is_none());
+}
+
+#[test]
 fn a_bad_step_says_what_is_wrong_with_it() {
     let mut v = sample();
     v["steps"][2] = json!({ "kind": "clik", "selector": "#go" });
