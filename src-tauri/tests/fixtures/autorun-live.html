@@ -1,0 +1,134 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Auto Run live fixture</title>
+<!--
+  One page holding every situation the driver has only ever met in a fake:
+  hidden twins of a button and of a dialog, a control that is disabled and
+  covered for the first 700 ms, fields of each kind that report what they
+  really received, a native list, an alert, a target that never stops
+  moving, one that settles, one taller than the viewport, one that covers
+  itself the moment it is outlined, nested list items, and a sub-frame.
+
+  Everything a test reads back is written by the PAGE's own handlers, so a
+  test can never pass on what Rust believes it sent.
+-->
+<style>
+  #overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 5; }
+  #cover { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 9; }
+  #mover, #settler { position: relative; left: 0; }
+  /* Taller than any window and pinned, so scrollIntoView cannot bring its
+     middle into view: the click point has to be clamped to the part that
+     is actually on screen. A narrow strip on the right so it covers
+     nothing else. */
+  #tall { position: fixed; right: 0; top: 0; width: 60px; height: 3000px; background: #eeeeee; z-index: 1; }
+</style>
+<main>
+  <h1>Fixture</h1>
+  <p id="count">clicked 0</p>
+  <div id="spinner">Loading</div>
+
+  <button id="save" data-state="ready" onclick="bump()">Save changes</button>
+  <button style="display:none" onclick="bump()">Save changes</button>
+  <button id="late" disabled onclick="bump()">Late button</button>
+
+  <p><label>Method Name * <input id="name" oninput="say('echo', this.value)"></label></p>
+  <p id="echo"></p>
+
+  <p><label>Weight <input id="num" type="number" value="7" oninput="say('num-echo', this.value)"></label></p>
+  <p id="num-echo">7</p>
+
+  <p><label>Contact <input id="mail" type="email" oninput="say('mail-echo', this.value)"></label></p>
+  <p id="mail-echo"></p>
+
+  <p><label>Due <input id="due" type="date" oninput="say('due-echo', this.value)"></label></p>
+  <p id="due-echo"></p>
+
+  <p><label>Notes <textarea id="notes" oninput="say('notes-echo', this.value)">old notes</textarea></label></p>
+  <p id="notes-echo">old notes</p>
+
+  <div id="rich" contenteditable oninput="say('rich-echo', this.textContent)">old rich</div>
+  <p id="rich-echo">old rich</p>
+
+  <p><label>Type
+    <select id="type" onchange="say('picked', this.value)">
+      <option value="">Select type</option>
+      <option value="n">Numeric</option>
+      <option value="t">Text</option>
+      <option value="d" disabled>Disabled Choice</option>
+    </select>
+  </label></p>
+  <p id="picked"></p>
+
+  <div role="dialog" aria-label="Add Rating Method">
+    <button onclick="say('which', 'dialog button')">Add Method</button>
+  </div>
+  <div role="dialog" aria-label="Add Rating Method" style="display:none">
+    <button>Add Method</button>
+  </div>
+  <button onclick="say('which', 'page button')">Add Method</button>
+  <p id="which"></p>
+
+  <button id="alerter" onclick="alert('Saved!'); bump()">Alert me</button>
+
+  <ul id="rows"><li>one</li><li>two</li><li>three</li></ul>
+
+  <!-- Two list items that NEST: a step that matches both, followed by a
+       step that finds one button, must not count that button twice. -->
+  <ul id="nested">
+    <li>outer item
+      <ul><li>inner item <button onclick="say('which', 'nested button')">Nested Go</button></li></ul>
+    </li>
+  </ul>
+
+  <div id="deep-outer">Wrapper <span id="deep-inner">Unique Deep Words</span></div>
+  <div style="display:none">Unique Deep Words</div>
+  <p id="exacty">Exactly This</p>
+  <p id="exacty2">Exactly This And More</p>
+
+  <p><button id="mover" onclick="bump()">Moving target</button></p>
+  <p><button id="settler" onclick="say('which', 'settled')">Settling target</button></p>
+  <p><button id="coverme" onclick="bump()">Cover me</button></p>
+
+  <!-- A sub-frame loads too, so a navigation has to tell its own load
+       apart from this one. -->
+  <iframe id="frame" title="inner frame" srcdoc="<p>inner frame body</p>"></iframe>
+
+  <h2 id="bottom">Bottom</h2>
+  <div id="tall" onclick="say('which', 'tall')">Tall block</div>
+</main>
+<div id="overlay"></div>
+<script>
+  let n = 0;
+  function bump() { n++; document.getElementById('count').textContent = 'clicked ' + n; }
+  function say(id, value) { document.getElementById(id).textContent = value; }
+
+  setTimeout(() => {
+    document.getElementById('late').disabled = false;
+    document.getElementById('overlay').remove();
+    document.getElementById('spinner').remove();
+  }, 700);
+
+  // Never holds still: every look must see a different rectangle.
+  let mx = 0;
+  setInterval(() => {
+    mx = (mx + 3) % 200;
+    document.getElementById('mover').style.left = mx + 'px';
+  }, 40);
+
+  // Moves for about 1.2 s, then stops for good.
+  let sx = 0;
+  const settling = setInterval(() => {
+    sx += 5;
+    document.getElementById('settler').style.left = sx + 'px';
+    if (sx >= 150) clearInterval(settling);
+  }, 40);
+
+  // Covers itself the instant it is outlined, which is how a real page
+  // puts a modal up between the highlight and the click.
+  new MutationObserver(() => {
+    if (document.getElementById('cover')) return;
+    const c = document.createElement('div');
+    c.id = 'cover';
+    document.body.appendChild(c);
+  }).observe(document.getElementById('coverme'), { attributes: true, attributeFilter: ['style'] });
+</script>
