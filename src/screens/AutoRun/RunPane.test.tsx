@@ -6,7 +6,7 @@
 
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import RunPane from "./RunPane";
 
@@ -364,4 +364,72 @@ test("a step is sent with the project it belongs to", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   fireEvent.click(await screen.findByRole("button", { name: /Run step 1/ }));
   await waitFor(() => expect(s.stepped).toEqual([{ organization: "acme", project: "Web", step: STEPS[0] }]));
+});
+
+test("a verdict waits for the case's own sign-in to finish; Close stays available regardless", async () => {
+  let resolveSignIn: (out: unknown) => void = () => {};
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" };
+    if (cmd === "auto_run_sign_in") {
+      // Never resolves until the test says so - the Rust side takes one
+      // SESSION mutex per browser, so this stands in for a slow sign-in
+      // without the test racing real IPC timing.
+      return new Promise((resolve) => {
+        resolveSignIn = resolve;
+      });
+    }
+    if (cmd === "auto_run_new_id") return "run-1";
+    return null;
+  });
+  renderPane([{ id: 1, title: "Leave request" }]);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await screen.findByText("Signing in as hr.admin");
+
+  // A verdict can be picked while the sign-in is still running - only
+  // banking it is blocked.
+  fireEvent.click(screen.getByRole("button", { name: "Passed" }));
+  expect(screen.getByRole("button", { name: /Save result/ })).toBeDisabled();
+  // Walking away from a slow sign-in must still work: the Rust-side mutex
+  // makes it safe, and a person must never be stuck waiting on it.
+  expect(screen.getByRole("button", { name: /Close/ })).toBeEnabled();
+
+  await act(async () => {
+    resolveSignIn({ ok: true, detail: "signed in as HR Admin from a saved session", used_saved_session: true, steps: [] });
+    await Promise.resolve();
+  });
+  expect(await screen.findByText("signed in as HR Admin from a saved session")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Save result/ })).toBeEnabled();
+});
+
+test("closing while a sign-in is in flight does not break when the result lands afterward", async () => {
+  let resolveSignIn: (out: unknown) => void = () => {};
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_load_script") return { case_id: 1, title: "s", steps: STEPS, account: "hr.admin" };
+    if (cmd === "auto_run_sign_in") {
+      return new Promise((resolve) => {
+        resolveSignIn = resolve;
+      });
+    }
+    if (cmd === "auto_run_new_id") return "run-1";
+    if (cmd === "auto_run_save_run") return null;
+    return null;
+  });
+  const onClose = renderPane([{ id: 1, title: "Leave request" }]);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
+  await screen.findByText("Signing in as hr.admin");
+
+  fireEvent.click(screen.getByRole("button", { name: /Close/ }));
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+  // The sign-in was still in flight when Close was pressed (the Rust mutex
+  // queued the browser close behind it) - its result landing afterward
+  // must not throw or update state outside of React's control.
+  await act(async () => {
+    resolveSignIn({ ok: true, detail: "signed in as HR Admin from a saved session", used_saved_session: true, steps: [] });
+    await Promise.resolve();
+  });
+  expect(consoleError).not.toHaveBeenCalled();
 });

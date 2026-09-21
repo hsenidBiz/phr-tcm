@@ -98,6 +98,13 @@ export default function RunPane({
    * old window in the moment between moving on and the fresh one opening. */
   const [launches, setLaunches] = useState(0);
   const signedFor = useRef(0);
+  // Mirrors `launches` for `signInAs` to read AFTER its await, when the
+  // closure's own `launches` is frozen at whatever it was when that call
+  // started - see the comment in `signInAs`.
+  const launchRef = useRef(0);
+  useEffect(() => {
+    launchRef.current = launches;
+  }, [launches]);
   const [signIn, setSignIn] = useState<{ state: "idle" | "working" | "done"; account: string; out: SignInOutcome | null }>({
     state: "idle",
     account: "",
@@ -177,6 +184,14 @@ export default function RunPane({
   };
 
   const signInAs = async (account: string, afresh: boolean) => {
+    // The Rust side takes one SESSION mutex per browser command, so this
+    // result cannot land ON TOP of a browser close - it just queues behind
+    // one. What it CAN do is land AFTER the pane has already moved on to
+    // the next case's fresh browser (a new `launches`): `forLaunch` is
+    // this render's value, frozen for the life of this call; `launchRef`
+    // is mutable, so comparing them after the await tells whether this
+    // result is still for the browser the person is looking at.
+    const forLaunch = launches;
     setBusy(true);
     setSignIn({ state: "working", account, out: null });
     try {
@@ -184,10 +199,12 @@ export default function RunPane({
       const r = await commands.autoRunSignIn(org, project, account);
       const out: SignInOutcome =
         r.status === "error" ? { ok: false, detail: r.error, used_saved_session: false, steps: [] } : r.data;
-      setSignIn({ state: "done", account, out });
+      if (launchRef.current === forLaunch) setSignIn({ state: "done", account, out });
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
-      setSignIn({ state: "done", account, out: { ok: false, detail, used_saved_session: false, steps: [] } });
+      if (launchRef.current === forLaunch) {
+        setSignIn({ state: "done", account, out: { ok: false, detail, used_saved_session: false, steps: [] } });
+      }
     } finally {
       setBusy(false);
     }
@@ -196,9 +213,12 @@ export default function RunPane({
   // Once per browser, and only once the CURRENT case's script is in hand:
   // while the next case's script is still loading, `script.data` is
   // undefined (a new query key has no data yet), so this waits for it.
+  // Also waits out `busy`: without it, this rests on effect timing alone
+  // to never overlap a browser command already in flight (a step, another
+  // sign-in) - an explicit guard instead of a lucky race.
   const scriptAccount = script.isSuccess ? (script.data?.account ?? "") : null;
   useEffect(() => {
-    if (!opened || launches === 0 || scriptAccount === null) return;
+    if (!opened || launches === 0 || scriptAccount === null || busy) return;
     if (signedFor.current === launches) return;
     signedFor.current = launches;
     if (scriptAccount === "") {
@@ -206,9 +226,9 @@ export default function RunPane({
       return;
     }
     void signInAs(scriptAccount, false);
-    // signInAs is recreated every render; the three values below are the
-    // only things that should start a sign-in.
-  }, [opened, launches, scriptAccount]);
+    // signInAs is recreated every render; the values below are the only
+    // things that should start a sign-in.
+  }, [opened, launches, scriptAccount, busy]);
 
   /** The verdict in front of the person right now, as a record. */
   const currentRecord = (): CaseRecord => ({
@@ -479,7 +499,14 @@ export default function RunPane({
           <IconCancel aria-hidden />
           Close
         </Button>
-        <Button size="sm" disabled={!verdict || saving} onClick={save}>
+        <Button
+          size="sm"
+          // Not the whole `busy` flag - Close must stay available while a
+          // sign-in runs, the mutex makes that safe. Blocked here so a
+          // verdict is never banked before its own case finished signing in.
+          disabled={!verdict || saving || signIn.state === "working"}
+          onClick={save}
+        >
           <IconConfirm aria-hidden />
           {isLast ? "Save result" : "Save and next case"}
         </Button>
