@@ -147,8 +147,12 @@ pub struct Cdp<T: Transport = WsTransport> {
 
 impl Cdp<WsTransport> {
     /// Ask the browser which socket its page is on, open it, and switch on
-    /// page events (loads and dialogs). Nothing else needs enabling: the
-    /// accessibility and DOM calls this app uses work without it.
+    /// page events (dialogs) and lifecycle events. A lifecycle event
+    /// carries the `frameId` and `loaderId` a plain `Page.loadEventFired`
+    /// does not, which is what lets a navigation tell its OWN load apart
+    /// from one still in flight from an earlier navigation or from a
+    /// sub-frame. Nothing else needs enabling: the accessibility and DOM
+    /// calls this app uses work without it.
     pub async fn connect(port: u16) -> Result<Cdp<WsTransport>, String> {
         let url = format!("http://127.0.0.1:{port}/json/list");
         let body = reqwest::get(&url)
@@ -169,6 +173,9 @@ impl Cdp<WsTransport> {
             .map_err(|e| format!("could not open the DevTools socket: {e}"))?;
         let mut cdp = Cdp::over(WsTransport { socket });
         cdp.call("Page.enable", serde_json::json!({})).await.map_err(|e| e.to_string())?;
+        cdp.call("Page.setLifecycleEventsEnabled", serde_json::json!({ "enabled": true }))
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(cdp)
     }
 }

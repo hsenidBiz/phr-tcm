@@ -157,6 +157,24 @@ async fn wait_for_polls_until_it_appears() {
     assert_eq!(d.calls_to("Runtime.getProperties").len(), 3);
 }
 
+/// `wait_for` calls `resolve` directly rather than going through
+/// `wait_ready`, so a structured locator needs its own coverage alongside
+/// the legacy-string case above.
+#[tokio::test]
+async fn wait_for_polls_until_a_structured_locator_appears() {
+    let mut d = FakePage { appears_on_look: 3, ..FakePage::default() }.driver();
+    let selector: v2_lib::browser::locator::Target =
+        serde_json::from_value(json!({ "css": "#late" })).unwrap();
+    let out = execute_with(
+        &mut d,
+        &Action::WaitFor { selector, timeout_ms: 2000 },
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert_eq!(d.calls_to("Runtime.getProperties").len(), 3);
+}
+
 #[tokio::test]
 async fn wait_for_gives_up_after_its_own_timeout() {
     let mut d = FakePage { found: 0, ..FakePage::default() }.driver();
@@ -173,16 +191,77 @@ async fn wait_for_gives_up_after_its_own_timeout() {
 #[tokio::test]
 async fn navigate_waits_for_the_page_to_load() {
     let mut d = FakePage::default().driver();
+    // FakePage's default navigate reply is { frameId: "F", loaderId: "L" }.
     d.on_call_events.push((
         "Page.navigate".into(),
-        Event { method: "Page.loadEventFired".into(), params: json!({}) },
+        Event {
+            method: "Page.lifecycleEvent".into(),
+            params: json!({ "frameId": "F", "loaderId": "L", "name": "load" }),
+        },
     ));
-    // A stale load event from earlier must not satisfy this navigation.
-    d.events.push_back(Event { method: "Page.loadEventFired".into(), params: json!({ "stale": true }) });
+    // A stale lifecycle event from an earlier navigation must not satisfy
+    // this one.
+    d.events.push_back(Event {
+        method: "Page.lifecycleEvent".into(),
+        params: json!({ "frameId": "F", "loaderId": "OLD", "name": "load" }),
+    });
     let out = execute_with(&mut d, &Action::Navigate { url: "https://app.example/login".into() }, &quick()).await;
     assert!(out.ok, "{}", out.detail);
     assert_eq!(d.calls_to("Page.navigate")[0]["url"], "https://app.example/login");
     assert!(d.events.is_empty(), "the navigation's own load event should have been consumed");
+}
+
+/// A load still in flight from an EARLIER navigation, or from a sub-frame
+/// of this one, must not satisfy the wait; only the reply's own loader id,
+/// under a `"load"` lifecycle event, does.
+#[tokio::test]
+async fn navigate_skips_a_sub_frames_load_and_an_earlier_lifecycle_stage() {
+    let mut d = FakePage::default().driver();
+    for (loader, name) in [("OTHER", "load"), ("L", "DOMContentLoaded"), ("L", "load")] {
+        d.on_call_events.push((
+            "Page.navigate".into(),
+            Event {
+                method: "Page.lifecycleEvent".into(),
+                params: json!({ "frameId": "F", "loaderId": loader, "name": name }),
+            },
+        ));
+    }
+    let out = execute_with(&mut d, &Action::Navigate { url: "https://app.example/login".into() }, &quick()).await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(d.events.is_empty(), "all three lifecycle events should have been consumed");
+}
+
+/// A sub-frame's own load can arrive again and again; without the loader
+/// id filter it would satisfy the wait and report a page that never
+/// actually finished loading.
+#[tokio::test]
+async fn navigate_gives_up_when_only_a_sub_frames_load_arrives() {
+    let mut d = FakePage::default().driver();
+    d.on_call_events.push((
+        "Page.navigate".into(),
+        Event {
+            method: "Page.lifecycleEvent".into(),
+            params: json!({ "frameId": "F", "loaderId": "OTHER", "name": "load" }),
+        },
+    ));
+    let out = execute_with(&mut d, &Action::Navigate { url: "https://app.example/login".into() }, &quick()).await;
+    assert!(!out.ok);
+    assert!(out.detail.contains("did not finish loading"), "{}", out.detail);
+}
+
+/// A same-document navigation (a #fragment) returns no `loaderId` and
+/// fires no lifecycle event at all - waiting for one would just time out.
+#[tokio::test]
+async fn navigate_within_the_same_document_does_not_wait_for_a_load() {
+    let mut d = FakePage { navigate_reply: json!({ "frameId": "F" }), ..FakePage::default() }.driver();
+    let out = execute_with(
+        &mut d,
+        &Action::Navigate { url: "https://app.example/login#section".into() },
+        &quick(),
+    )
+    .await;
+    assert!(out.ok, "{}", out.detail);
+    assert!(out.detail.starts_with("moved to"), "{}", out.detail);
 }
 
 #[tokio::test]

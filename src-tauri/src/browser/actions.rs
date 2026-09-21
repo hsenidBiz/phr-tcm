@@ -108,8 +108,8 @@ async fn point_and_pause<D: Driver>(
 }
 
 async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing) -> ActionOutcome {
-    // Older load events would satisfy the wait below before this page has
-    // even started.
+    // Older lifecycle events would satisfy the wait below before this
+    // page has even started.
     d.forget_events();
     let reply = match d.call("Page.navigate", json!({ "url": url })).await {
         Ok(r) => r,
@@ -119,16 +119,34 @@ async fn navigate<D: Driver>(d: &mut D, url: &str, timing: &Timing) -> ActionOut
         return ActionOutcome::failed(format!("{url} would not load: {err}"));
     }
     // No loaderId means the same document (a #fragment): nothing loads.
-    if reply.get("loaderId").is_none() {
+    let Some(loader_id) = reply["loaderId"].as_str().map(str::to_string) else {
         return ActionOutcome::passed(format!("moved to {url}"));
-    }
-    match d.wait_event("Page.loadEventFired", Duration::from_millis(timing.nav_ms)).await {
-        Ok(_) => ActionOutcome::passed(format!("loaded {url}")),
-        Err(CdpError::Timeout { .. }) => ActionOutcome::failed(format!(
-            "{url} did not finish loading within {}ms",
-            timing.nav_ms
-        )),
-        Err(e) => harness(e),
+    };
+    let frame_id = reply["frameId"].as_str().map(str::to_string);
+    let deadline = Instant::now() + Duration::from_millis(timing.nav_ms);
+    let timed_out = || {
+        ActionOutcome::failed(format!("{url} did not finish loading within {}ms", timing.nav_ms))
+    };
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        // The `frameId`/`loaderId` filter can only be applied here: the
+        // driver hands back events by method name alone, so a lifecycle
+        // event for a stale navigation or a sub-frame is still received
+        // and has to be told apart from this navigation's own "load".
+        let ev = match d.wait_event("Page.lifecycleEvent", remaining).await {
+            Ok(ev) => ev,
+            Err(CdpError::Timeout { .. }) => return timed_out(),
+            Err(e) => return harness(e),
+        };
+        let is_this_navigation = ev.params["loaderId"].as_str() == Some(loader_id.as_str())
+            && ev.params["name"].as_str() == Some("load")
+            && frame_id.as_deref().map_or(true, |f| ev.params["frameId"].as_str() == Some(f));
+        if is_this_navigation {
+            return ActionOutcome::passed(format!("loaded {url}"));
+        }
+        if Instant::now() >= deadline {
+            return timed_out();
+        }
     }
 }
 
