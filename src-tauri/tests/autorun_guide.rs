@@ -188,3 +188,40 @@ fn the_shipped_sample_bundle_parses_as_real_scripts() {
     assert!(!v.is_empty(), "expected at least one sample");
     assert!(v.iter().all(|c| !c.steps.is_empty()), "a sample has no steps");
 }
+
+/// The example in the editor's empty box is the first thing a person
+/// copies, so it has to be a script the runner would actually accept -
+/// not the pre-locator selectors it used to show. Read out of the TSX
+/// rather than duplicated here, because a duplicate is exactly how the
+/// two drift apart again.
+#[test]
+fn the_editors_placeholder_is_a_script_the_runner_accepts() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/screens/AutoRun/ScriptEditor.tsx");
+    let source = std::fs::read_to_string(path).expect("ScriptEditor.tsx missing");
+    let after = source
+        .split_once("const PLACEHOLDER = ")
+        .expect("ScriptEditor.tsx no longer declares PLACEHOLDER")
+        .1;
+    let body = after
+        .split_once('`')
+        .expect("PLACEHOLDER is not a template literal")
+        .1
+        .split_once('`')
+        .expect("PLACEHOLDER's template literal is never closed")
+        .0;
+    let steps: Vec<v2_lib::autorun::StepScript> =
+        serde_json::from_str(body).expect("the editor's example is not a valid script");
+    assert!(!steps.is_empty(), "the example has no steps");
+    // Being accepted is not enough: the pre-locator selectors it used to
+    // show would still be accepted. It has to TEACH the current format.
+    assert!(body.contains("\"role\""), "the example never points at an element by role and name");
+    assert!(body.contains("\"expect_"), "the example never shows an expectation");
+    for step in &steps {
+        assert!(!step.actions.is_empty(), "step {} has no actions", step.step_number);
+        for action in &step.actions {
+            action
+                .validate()
+                .unwrap_or_else(|why| panic!("the editor's example would be refused: {why}"));
+        }
+    }
+}

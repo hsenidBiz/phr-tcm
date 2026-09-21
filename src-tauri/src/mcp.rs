@@ -218,12 +218,12 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "get_autorun_guide",
-            "description": "How to write an Auto Run action script: the browser actions the runner understands, the selector forms, and - the part that matters - which source is allowed to decide what. Read this before writing a script. You may read the application's source for SELECTORS, but every assertion comes from the test case's own expected result, never from what the code happens to do.",
+            "description": "How to write an Auto Run action script: the browser actions and expectations the runner understands, how to point at an element by its role and name, and - the part that matters - which source is allowed to decide what. Read this before writing a script. You may read the application's source for SELECTORS, but every assertion comes from the test case's own expected result, never from what the code happens to do.",
             "inputSchema": schema(serde_json::json!({}), &[]),
         },
         {
             "name": "save_autorun_script",
-            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, steps: [{ step_number, actions }] }. All or nothing: one bad action kind rejects the whole batch rather than leaving half the cases updated. Call get_autorun_guide first for the action vocabulary.",
+            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, steps: [{ step_number, actions }] }. All or nothing: one bad action, locator or case id rejects the whole batch, and the message names the case, step and action, rather than leaving half the cases updated. Call get_autorun_guide first for the action vocabulary.",
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",

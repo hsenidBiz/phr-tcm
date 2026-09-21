@@ -19,10 +19,9 @@ const PLACEHOLDER = `[
     "step_number": 1,
     "actions": [
       { "kind": "navigate", "url": "https://app.example/login" },
-      { "kind": "wait_for", "selector": "#user", "timeout_ms": 5000 },
-      { "kind": "fill", "selector": "#user", "value": "tester" },
-      { "kind": "click", "selector": "text=Sign in" },
-      { "kind": "check_text", "value": "Dashboard" }
+      { "kind": "fill", "selector": { "role": "textbox", "name": "Username" }, "value": "tester" },
+      { "kind": "click", "selector": { "role": "button", "name": "Sign in" } },
+      { "kind": "expect_visible", "selector": { "role": "heading", "name": "Dashboard" } }
     ]
   }
 ]`;
