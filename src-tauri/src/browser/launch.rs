@@ -75,6 +75,14 @@ pub fn edge_candidates(program_files: &str, program_files_x86: &str) -> Vec<Path
 /// The arguments the run needs: a debugging port to drive it through, a
 /// throwaway profile so no cookie or extension from yesterday leaks into
 /// today's result, and NOTHING that hides the window.
+///
+/// The three `--disable-*` switches keep the APPLICATION UNDER TEST running
+/// at full speed when its window is minimised or another window covers it.
+/// Chromium otherwise throttles that page's timers to once a minute and
+/// stops painting it, so the app's own debounces, toasts and animations
+/// crawl, and a run that was fine while somebody watched it fails the
+/// moment the window is put in the background. They do not hide the window
+/// and they do not change what the page does - only when it gets to do it.
 pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
     vec![
         format!("--remote-debugging-port={port}"),
@@ -82,8 +90,21 @@ pub fn launch_args(port: u16, profile_dir: &Path) -> Vec<String> {
         "--no-first-run".to_string(),
         "--no-default-browser-check".to_string(),
         "--disable-popup-blocking".to_string(),
+        "--disable-background-timer-throttling".to_string(),
+        "--disable-backgrounding-occluded-windows".to_string(),
+        "--disable-renderer-backgrounding".to_string(),
         "about:blank".to_string(),
     ]
+}
+
+/// `launch_args` plus extra switches, kept in front of the start page
+/// (Chromium treats everything after the first non-switch as a URL).
+pub fn args_with(port: u16, profile_dir: &Path, extra: &[&str]) -> Vec<String> {
+    let mut args = launch_args(port, profile_dir);
+    let start_page = args.pop();
+    args.extend(extra.iter().map(|s| s.to_string()));
+    args.extend(start_page);
+    args
 }
 
 /// Ask the OS for a port, then let it go: the browser binds it a moment
@@ -115,6 +136,12 @@ pub fn launch() -> Result<LaunchedBrowser, String> {
 /// Start the chosen browser. The error names the browser the person
 /// asked for, so "not found" is actionable rather than a mystery.
 pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
+    launch_with(which, &[])
+}
+
+/// The same, with extra switches. The app never passes any: the window is
+/// always visible. The live tests pass `--headless=new`.
+pub fn launch_with(which: Browser, extra_args: &[&str]) -> Result<LaunchedBrowser, String> {
     let candidates = browser_candidates(
         which,
         &env_or("ProgramFiles", r"C:\Program Files"),
@@ -133,7 +160,7 @@ pub fn launch_in(which: Browser) -> Result<LaunchedBrowser, String> {
     std::fs::create_dir_all(&profile_dir).map_err(|e| e.to_string())?;
 
     let child = Command::new(exe)
-        .args(launch_args(port, &profile_dir))
+        .args(args_with(port, &profile_dir, extra_args))
         // Never the app's own cwd: a browser that inherits the install's
         // `current\` pins it, and the next update cannot rename it. See
         // `leave_install_dir` in lib.rs for the update that taught us this.

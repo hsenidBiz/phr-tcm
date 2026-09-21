@@ -3,7 +3,7 @@
 //! - are unit tested here; actually starting a browser is an ignored
 //! test, like the updater's live download check.
 
-use v2_lib::browser::launch::{edge_candidates, free_port, launch_args};
+use v2_lib::browser::launch::{args_with, edge_candidates, free_port, launch_args};
 use std::path::{Path, PathBuf};
 
 /// Both Program Files roots are searched, 64-bit first: an Edge in
@@ -33,6 +33,36 @@ fn the_launch_is_debuggable_isolated_and_never_headless() {
         !args.iter().any(|a| a.contains("headless")),
         "the run must be watchable: {args:?}"
     );
+}
+
+/// Chromium throttles a minimised or covered window's timers to once a
+/// minute and stops painting it. The app under test is what suffers: its
+/// debounces and toasts crawl, and a run that passed while somebody
+/// watched fails the moment the window goes behind another. These three
+/// switches are the only thing that keeps a background run honest, so
+/// they are pinned here rather than left to whoever edits the list next.
+#[test]
+fn the_page_under_test_is_never_throttled_for_being_in_the_background() {
+    let args = launch_args(9555, Path::new(r"C:\tmp\p"));
+    for flag in [
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+    ] {
+        assert!(args.contains(&flag.to_string()), "{flag} is missing from {args:?}");
+    }
+}
+
+/// Extra switches are for the live tests only (they run headless so they
+/// do not take over the desktop). The app's own arguments must stay
+/// exactly as they were, with the start page last.
+#[test]
+fn extra_switches_go_before_the_start_page() {
+    let dir = PathBuf::from("C:/tmp/p");
+    let args = args_with(9222, &dir, &["--headless=new"]);
+    assert_eq!(args.last().map(String::as_str), Some("about:blank"));
+    assert!(args.contains(&"--headless=new".to_string()));
+    assert_eq!(args_with(9222, &dir, &[]), launch_args(9222, &dir));
 }
 
 /// A port nobody else holds, so two runs (or a stale browser) cannot
