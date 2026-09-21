@@ -19,6 +19,21 @@ fn a_key_is_short_lowercase_and_safe_as_a_file_name() {
     }
 }
 
+/// A Windows device name is not a usable file name, whatever comes after a
+/// dot - `sessions/con.json` and `sessions/con.x.json` are both `\\.\CON`.
+#[test]
+fn a_windows_device_name_is_not_a_usable_key() {
+    for bad in [
+        "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9", "con.x", "com1.json", "nul.txt",
+    ] {
+        assert!(!valid_key(bad), "{bad:?} was accepted");
+    }
+    // Close but not actually a device name.
+    for ok in ["console", "com10", "lpt0", "conx"] {
+        assert!(valid_key(ok), "{ok:?} was refused");
+    }
+}
+
 #[test]
 fn validation_names_the_problem() {
     assert!(validate_accounts(&[account("admin", "a", "p")]).is_ok());
@@ -81,4 +96,32 @@ fn a_changed_or_removed_account_loses_its_saved_session() {
     assert!(session_path(dir.path(), "admin").is_file());
     assert!(!session_path(dir.path(), "emp").exists());
     assert!(!session_path(dir.path(), "sup").exists());
+}
+
+/// `before` (the accounts list `save_accounts` compares against) comes
+/// straight off disk with no validation. A hand-edited `accounts.json`
+/// naming a key like `../../x` must not let the "this login changed, drop
+/// its session" cleanup turn into a delete of a file outside `sessions/`.
+#[test]
+fn save_accounts_never_deletes_through_an_unvalidated_key_read_from_disk() {
+    let base = tempfile::tempdir().unwrap();
+    let dir = base.path().join("data");
+    std::fs::create_dir_all(&dir).unwrap();
+    let bad_key = "../../x";
+    std::fs::write(
+        dir.join("accounts.json"),
+        serde_json::to_string(&[account(bad_key, "kim", "p1")]).unwrap(),
+    )
+    .unwrap();
+    // session_path(dir, "../../x") = dir/sessions/../../x.json = base/x.json:
+    // outside `dir` entirely, which is exactly what the guard must refuse to touch.
+    let escape_target = session_path(&dir, bad_key);
+    std::fs::write(&escape_target, "{}").unwrap();
+    assert!(escape_target.exists());
+
+    save_accounts(&dir, &[account("admin", "kim", "p1")]).unwrap();
+    assert!(
+        escape_target.exists(),
+        "save_accounts deleted a file outside its own folder through an unvalidated key"
+    );
 }

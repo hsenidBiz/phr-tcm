@@ -43,7 +43,27 @@ pub fn valid_key(key: &str) -> bool {
     if !(first.is_ascii_lowercase() || first.is_ascii_digit()) || key.len() > 64 {
         return false;
     }
-    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+    if !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-')) {
+        return false;
+    }
+    !is_windows_device_name(key)
+}
+
+/// Windows reserves these as device names: a "file" by one of them (or by
+/// one of them followed by a dot and anything, `con.x`) does not behave as
+/// a regular file, so `sessions/con.json` would silently fail to save.
+/// Every char a valid key can otherwise contain is already lowercase ASCII,
+/// so no case-folding is needed here.
+fn is_windows_device_name(key: &str) -> bool {
+    let stem = key.split('.').next().unwrap_or(key);
+    matches!(
+        stem,
+        "con" | "prn"
+            | "aux"
+            | "nul"
+            | "com1" | "com2" | "com3" | "com4" | "com5" | "com6" | "com7" | "com8" | "com9"
+            | "lpt1" | "lpt2" | "lpt3" | "lpt4" | "lpt5" | "lpt6" | "lpt7" | "lpt8" | "lpt9"
+    )
 }
 
 pub fn validate_accounts(accounts: &[Account]) -> Result<(), String> {
@@ -106,6 +126,12 @@ pub fn save_accounts(root: &Path, accounts: &[Account]) -> Result<Vec<String>, S
 
     let mut dropped = vec![];
     for old in &before {
+        // `before` came straight off disk, unvalidated - a hand-edited
+        // accounts.json could carry a key like `../../x` that `session_path`
+        // would turn into a delete path outside `sessions/` entirely.
+        if !valid_key(&old.key) {
+            continue;
+        }
         let same_login = accounts
             .iter()
             .any(|a| a.key == old.key && a.username == old.username && a.password == old.password);
