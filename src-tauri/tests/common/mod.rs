@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use v2_lib::browser::actions::{CHECK_TEXT_JS, HIGHLIGHT_JS};
 use v2_lib::browser::cdp::{CdpError, Driver, Event};
+use v2_lib::browser::expect::{READ_ATTR_JS, READ_TEXT_JS};
 use v2_lib::browser::input::{FOCUS_JS, PROBE_JS};
 use v2_lib::browser::locator::VISIBLE_JS;
 
@@ -110,6 +111,9 @@ pub struct FakePage {
     pub body_has_text: bool,
     pub href: &'static str,
     pub navigate_reply: Value,
+    /// Answers to "what does it say", in turn; the last repeats.
+    pub texts: Vec<&'static str>,
+    pub attribute: Option<&'static str>,
 }
 
 impl Default for FakePage {
@@ -123,6 +127,8 @@ impl Default for FakePage {
             body_has_text: true,
             href: "https://app.example/home",
             navigate_reply: json!({ "frameId": "F", "loaderId": "L" }),
+            texts: vec!["Saved"],
+            attribute: None,
         }
     }
 }
@@ -132,6 +138,7 @@ impl FakePage {
         let page = self;
         let mut looks = 0usize;
         let mut probed = 0usize;
+        let mut read = 0usize;
         ScriptedDriver::new(move |method, params| {
             let f = params["functionDeclaration"].as_str().unwrap_or("");
             Ok(match method {
@@ -150,6 +157,12 @@ impl FakePage {
                 "Runtime.callFunctionOn" if f == CHECK_TEXT_JS => {
                     json!({ "result": { "value": page.body_has_text } })
                 }
+                "Runtime.callFunctionOn" if f == READ_TEXT_JS => {
+                    let i = read.min(page.texts.len() - 1);
+                    read += 1;
+                    json!({ "result": { "value": page.texts[i] } })
+                }
+                "Runtime.callFunctionOn" if f == READ_ATTR_JS => json!({ "result": { "value": page.attribute } }),
                 // Any locator function: an array of elements.
                 "Runtime.callFunctionOn" => json!({ "result": { "objectId": "arr" } }),
                 "Runtime.getProperties" => {

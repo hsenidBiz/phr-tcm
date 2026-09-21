@@ -12,4 +12,5 @@ pub mod timing;
 pub mod page;
 pub mod locator;
 pub mod input;
+pub mod expect;
 pub mod actions;

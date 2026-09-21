@@ -29,6 +29,12 @@ fn the_guide_names_every_action_the_executor_can_run() {
         Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
         Action::CheckText { value: "v".into() },
         Action::CheckUrl { contains: "c".into() },
+        Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
+        Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: "v".into(), timeout_ms: None },
+        Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
+        Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
+        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
     ];
     let emitted: Vec<String> = samples
         .iter()
@@ -39,6 +45,26 @@ fn the_guide_names_every_action_the_executor_can_run() {
         ACTION_KINDS.to_vec(),
         "ACTION_KINDS has drifted from what serde emits"
     );
+}
+
+/// The guide has to teach locators, or an assistant keeps writing the
+/// fragile string form. And it must never suggest a fixed pause.
+#[test]
+fn the_guide_teaches_locators_and_forbids_pauses() {
+    let g = autorun_guide();
+    for term in ["\"role\"", "\"name\"", "\"exact\"", "\"nth\"", "\"visible\": false", "accessible name"] {
+        assert!(g.contains(term), "the guide never mentions {term}");
+    }
+    assert!(g.contains("Never add a fixed pause"), "the guide must rule out sleeps");
+    assert!(!g.contains('\u{2014}'), "no em dashes in text an assistant reads");
+    // Every example that uses a locator must validate, not just parse.
+    let example = first_balanced(&g, g.find("## A worked example").unwrap(), '[', ']');
+    let steps: Vec<v2_lib::autorun::StepScript> = serde_json::from_str(example).unwrap();
+    for s in &steps {
+        for a in &s.actions {
+            a.validate().unwrap_or_else(|e| panic!("the worked example has an invalid action: {e}"));
+        }
+    }
 }
 
 /// The assistant can read code, so the guide has to say what code is and

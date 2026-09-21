@@ -6,6 +6,7 @@
 //! rather than guessing.
 
 use super::cdp::{CdpError, Driver};
+use super::expect::{self, Check};
 use super::input::{self, Blocked};
 use super::locator::{resolve, Target};
 use super::page;
@@ -22,6 +23,41 @@ pub enum Action {
     WaitFor { selector: Target, timeout_ms: u32 },
     CheckText { value: String },
     CheckUrl { contains: String },
+    ExpectVisible {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    ExpectHidden {
+        selector: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    ExpectText {
+        selector: Target,
+        equals: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    ExpectContainsText {
+        selector: Target,
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    ExpectCount {
+        selector: Target,
+        equals: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
+    ExpectAttribute {
+        selector: Target,
+        name: String,
+        equals: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -69,7 +105,23 @@ impl Action {
             Action::Navigate { .. } => Ok(()),
             Action::Click { selector }
             | Action::Fill { selector, .. }
-            | Action::WaitFor { selector, .. } => selector.validate(),
+            | Action::WaitFor { selector, .. }
+            | Action::ExpectVisible { selector, .. }
+            | Action::ExpectHidden { selector, .. }
+            | Action::ExpectText { selector, .. }
+            | Action::ExpectCount { selector, .. } => selector.validate(),
+            Action::ExpectContainsText { selector, value, .. } => {
+                if value.trim().is_empty() {
+                    return Err("expect_contains_text has an empty value - everything contains nothing".to_string());
+                }
+                selector.validate()
+            }
+            Action::ExpectAttribute { selector, name, .. } => {
+                if name.trim().is_empty() {
+                    return Err("expect_attribute has an empty name".to_string());
+                }
+                selector.validate()
+            }
             Action::CheckText { value } if value.trim().is_empty() => {
                 Err("check_text has an empty value".to_string())
             }
@@ -172,6 +224,10 @@ async fn wait_for<D: Driver>(d: &mut D, target: &Target, timeout_ms: u32, timing
     }
 }
 
+fn wait(own: &Option<u32>, timing: &Timing) -> u64 {
+    own.map(u64::from).unwrap_or(timing.expect_ms)
+}
+
 async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOutcome {
     match action {
         Action::Navigate { url } => navigate(d, url.trim(), timing).await,
@@ -222,6 +278,24 @@ async fn run<D: Driver>(d: &mut D, action: &Action, timing: &Timing) -> ActionOu
             }
             Err(e) => harness(e),
         },
+        Action::ExpectVisible { selector, timeout_ms } => {
+            expect::expect(d, selector, Check::Visible, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectHidden { selector, timeout_ms } => {
+            expect::expect(d, selector, Check::Hidden, wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectText { selector, equals, timeout_ms } => {
+            expect::expect(d, selector, Check::Text(equals), wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectContainsText { selector, value, timeout_ms } => {
+            expect::expect(d, selector, Check::ContainsText(value), wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectCount { selector, equals, timeout_ms } => {
+            expect::expect(d, selector, Check::Count(*equals), wait(timeout_ms, timing), timing.poll_ms).await
+        }
+        Action::ExpectAttribute { selector, name, equals, timeout_ms } => {
+            expect::expect(d, selector, Check::Attribute { name, equals }, wait(timeout_ms, timing), timing.poll_ms).await
+        }
     }
 }
 
