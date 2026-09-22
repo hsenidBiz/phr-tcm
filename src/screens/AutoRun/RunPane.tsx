@@ -16,19 +16,12 @@ import { Select } from "../../components/ui/select";
 import { cn } from "../../lib/cn";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
-
-const VERDICTS = ["Passed", "Failed", "Blocked"] as const;
+import { VERDICTS, verdictTone } from "./verdicts";
 
 const BROWSERS = [
   { value: "edge", label: "Microsoft Edge" },
   { value: "chrome", label: "Google Chrome" },
 ];
-
-const verdictTone: Record<string, string> = {
-  Passed: "bg-success/20 text-success",
-  Failed: "bg-danger/20 text-danger",
-  Blocked: "bg-warning/20 text-warning",
-};
 
 export default function RunPane({
   org,

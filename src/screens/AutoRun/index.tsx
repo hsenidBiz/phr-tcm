@@ -25,6 +25,7 @@ import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
 import ReplayPane from "./ReplayPane";
 import RunPane from "./RunPane";
+import RunReview from "./RunReview";
 import ScriptEditor from "./ScriptEditor";
 
 // How many imported case ids the success toast spells out before it falls
@@ -114,6 +115,10 @@ export default function AutoRun({
    * the same sticky bar), but they are different flows with different
    * dialogs. */
   const [replaying, setReplaying] = useState<number[] | null>(null);
+  /** The run id under review, or null while no review dialog is open. An
+   * unattended run opens straight into this once it finishes - see
+   * ReplayPane's `onFinished` below. */
+  const [reviewing, setReviewing] = useState<string | null>(null);
   /** Ticked cases, by id. A bulk run is these, in list order. */
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [grouped, setGrouped] = useState(
@@ -335,7 +340,7 @@ export default function AutoRun({
         <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
       )}
 
-      <PastRuns />
+      <PastRuns onReview={setReviewing} />
 
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && (
@@ -393,18 +398,32 @@ export default function AutoRun({
               pbiId={pbi.id}
               cases={picked}
               onClose={() => setReplaying(null)}
-              onFinished={() => {
+              onFinished={(runId) => {
                 setReplaying(null);
                 // Same reasoning as the supervised pane's onClose - the
                 // selection has been run, so leaving it ticked invites a
                 // second run of cases that were just decided.
                 setSelected(new Set());
                 void queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
-                toast.success("Unattended run finished. Review it under Past runs.");
+                // Straight into its review rather than a toast pointing at
+                // Past runs - every case is still unconfirmed at this point,
+                // so there is nothing useful to do with this run BUT review it.
+                setReviewing(runId);
               }}
             />
           );
         })()}
+
+      {reviewing != null && (
+        <RunReview
+          org={org}
+          project={project}
+          pbiTitle={pbi.title}
+          runId={reviewing}
+          stepIds={Object.fromEntries(rows.map((c) => [c.id, c.step_ids]))}
+          onClose={() => setReviewing(null)}
+        />
+      )}
     </div>
   );
 }

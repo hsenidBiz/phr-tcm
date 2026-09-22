@@ -633,6 +633,180 @@ test("past runs list newest first with their verdicts", async () => {
   expect(screen.getByText("wrong name")).toBeInTheDocument();
 });
 
+/// Past runs are grouped one block per run, each labelled with the mode it
+/// ran in - the word a person needs before deciding whether "Review" even
+/// makes sense for it.
+test("runs are grouped by run, each labelled with its mode", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs")
+      return [
+        {
+          id: "run-unattended",
+          pbi_id: 42,
+          started_at: "1786000300000",
+          mode: "unattended",
+          cases: [{ case_id: 202, title: "Locked account", verdict: "Passed", note: "", steps: [] }],
+        },
+        {
+          id: "run-supervised",
+          pbi_id: 42,
+          started_at: "1786000100000",
+          cases: [{ case_id: 201, title: "Valid login", verdict: "Failed", note: "wrong name", steps: [] }],
+        },
+      ];
+  });
+  renderAutoRun();
+
+  expect(await screen.findByText("unattended")).toBeInTheDocument();
+  expect(screen.getByText("supervised")).toBeInTheDocument();
+});
+
+/// A supervised run was decided by the person watching it live - there is
+/// no proposal to review again, so it must never offer the button, whether
+/// or not every case ended up with a verdict.
+test("a supervised run shows no Review button", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs")
+      return [
+        {
+          id: "run-supervised",
+          pbi_id: 42,
+          started_at: "1786000100000",
+          cases: [{ case_id: 201, title: "Valid login", verdict: "", note: "", steps: [] }],
+        },
+      ];
+  });
+  renderAutoRun();
+
+  await screen.findByText("Valid login");
+  expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
+});
+
+/// An unattended run with a still-unconfirmed case shows a count next to
+/// the button, and pressing it opens that run's review dialog directly -
+/// this is the same `reviewing` state a finished unattended run lands on
+/// by itself.
+test("an unattended run with unconfirmed cases offers Review, and pressing it opens that run's review", async () => {
+  const unattendedRun = {
+    id: "run-unattended",
+    pbi_id: 42,
+    started_at: "1786000300000",
+    mode: "unattended",
+    cases: [
+      {
+        case_id: 202,
+        title: "Locked account",
+        verdict: "",
+        note: "",
+        proposed: "Passed",
+        reason: "every action of 1 step passed",
+        steps: [],
+      },
+    ],
+  };
+  mockIPC((cmd, args) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs") return [unattendedRun];
+    if (cmd === "auto_run_load_run") {
+      const a = args as { runId: string };
+      return a.runId === unattendedRun.id ? unattendedRun : null;
+    }
+  });
+  renderAutoRun();
+
+  expect(await screen.findByText("1 to review")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Review" }));
+
+  expect(await screen.findByText(/proposed: passed/i)).toBeInTheDocument();
+});
+
+/// Once every case has a verdict, the button still offers a way back in -
+/// reviewing again is how a person catches their own mistake before Send.
+test("a fully confirmed unattended run offers Open review instead", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs")
+      return [
+        {
+          id: "run-unattended",
+          pbi_id: 42,
+          started_at: "1786000300000",
+          mode: "unattended",
+          cases: [{ case_id: 202, title: "Locked account", verdict: "Passed", note: "", steps: [] }],
+        },
+      ];
+  });
+  renderAutoRun();
+
+  expect(await screen.findByRole("button", { name: "Open review" })).toBeInTheDocument();
+  expect(screen.queryByText(/to review/)).not.toBeInTheDocument();
+});
+
+/// Once sent, a run is done - no button back into an edit screen that
+/// would no longer be allowed to change anything.
+test("a sent run shows Sent instead of a review button", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs")
+      return [
+        {
+          id: "run-sent",
+          pbi_id: 42,
+          started_at: "1786000300000",
+          mode: "unattended",
+          cases: [{ case_id: 202, title: "Locked account", verdict: "Passed", note: "", steps: [] }],
+          published: {
+            run_id: 5,
+            web_url: "https://dev.azure.com/acme/_testManagement/runs/5",
+            at: "1786000400000",
+          },
+        },
+      ];
+  });
+  renderAutoRun();
+
+  expect(await screen.findByText("Sent")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /review/i })).not.toBeInTheDocument();
+});
+
+/// The regrouping must not have dropped anything the flat list used to
+/// show - id, title, verdict tone and note all still render on the row.
+test("the old flat row content still renders inside its run's group", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "list_test_case_fields") return [];
+    if (cmd === "pbi_test_cases_full") return cases;
+    if (cmd === "auto_run_load_script") return null;
+    if (cmd === "auto_run_list_runs")
+      return [
+        {
+          id: "run-1",
+          pbi_id: 42,
+          started_at: "1786000100000",
+          cases: [{ case_id: 201, title: "Valid login", verdict: "Failed", note: "wrong name", steps: [] }],
+        },
+      ];
+  });
+  renderAutoRun();
+
+  const row = (await screen.findByText("Valid login")).closest("li");
+  if (!row) throw new Error("row for the case not found");
+  expect(within(row).getByText("#201")).toBeInTheDocument();
+  expect(within(row).getByText("Failed")).toBeInTheDocument();
+  expect(within(row).getByText("wrong name")).toBeInTheDocument();
+});
+
 test("no past runs says so rather than showing an empty box", async () => {
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];
