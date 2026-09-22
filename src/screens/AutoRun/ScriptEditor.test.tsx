@@ -69,6 +69,23 @@ test("choosing No sign-in writes a script with no account", async () => {
   await waitFor(() => expect(saved).toEqual([{ case_id: 7, title: "t", steps: ONE_STEP, account: null }]));
 });
 
+test("a repaired script shows how many times and, when known, why", async () => {
+  mountWith(
+    { case_id: 7, title: "t", steps: ONE_STEP, repairs: 2, last_repair: "the locator moved after a redesign" },
+    ACCOUNTS,
+    [],
+  );
+  await screen.findByText(
+    "Repaired 2 of 3 times by an assistant since you last saved. Last reason: the locator moved after a redesign",
+  );
+});
+
+test("a script with no repairs shows no warning line", async () => {
+  mountWith({ case_id: 7, title: "t", steps: ONE_STEP }, ACCOUNTS, []);
+  await screen.findByRole("combobox", { name: "Runs as" });
+  expect(screen.queryByText(/Repaired/)).toBeNull();
+});
+
 test("the Checks line shows checked, explained and NOT CHECKED", async () => {
   const script = {
     case_id: 7,

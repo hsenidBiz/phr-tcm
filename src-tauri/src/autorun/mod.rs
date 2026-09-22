@@ -53,6 +53,13 @@ pub struct CaseScript {
     /// last saved it from the editor. Absent when 0.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub repairs: u32,
+    /// The `why` of the most recent repair, so a person opening the editor
+    /// can see what an assistant changed without having to find the applog
+    /// line. Set alongside `repairs` on a repair, cleared to `None` by the
+    /// editor's own save - together with `repairs`, so a person saving
+    /// from the app always starts from a clean slate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_repair: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, specta::Type)]

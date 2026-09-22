@@ -364,6 +364,38 @@ async fn autorun_probe(body: &str) -> (u16, String) {
     }
 }
 
+/// The applog line for a tried action: its kind, what it points at (a
+/// locator's own words, or a navigate's url / a check_url's address), and
+/// whether it worked. Pure and separate from the route so it can be
+/// tested without a browser. A `fill`'s VALUE is never in it - only its
+/// selector, the same as every other selector-carrying kind.
+pub fn describe_try(action: &crate::browser::actions::Action, ok: bool) -> String {
+    use crate::browser::actions::Action;
+    let kind = serde_json::to_value(action)
+        .ok()
+        .and_then(|v| v["kind"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    let what = match action {
+        Action::Navigate { url } => url.clone(),
+        Action::CheckUrl { contains } => contains.clone(),
+        Action::CheckText { .. } | Action::SignIn { .. } => String::new(),
+        Action::Click { selector }
+        | Action::Fill { selector, .. }
+        | Action::WaitFor { selector, .. }
+        | Action::ExpectVisible { selector, .. }
+        | Action::ExpectHidden { selector, .. }
+        | Action::ExpectText { selector, .. }
+        | Action::ExpectContainsText { selector, .. }
+        | Action::ExpectCount { selector, .. }
+        | Action::ExpectAttribute { selector, .. } => selector.describe(),
+    };
+    let target = if what.is_empty() { String::new() } else { format!(" {what}") };
+    format!(
+        "AI tried {kind}{target} in the supervised browser: {}",
+        if ok { "ok" } else { "failed" }
+    )
+}
+
 /// Run ONE action against the open page, so an assistant can find out
 /// whether a repair works before it writes the repair down.
 async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
@@ -411,7 +443,7 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     // SAVED, not here: a tried `fill` is not on its way into a file, and
     // it types the literal text it was given rather than standing in for
     // anything a recipe would have substituted.
-    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action], unchecked: None };
+    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action.clone()], unchecked: None };
     let outcomes = match crate::autorun::runner::run_step(
         &mut session.cdp,
         &root,
@@ -429,6 +461,10 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     let Some(outcome) = outcomes.first() else {
         return (500, "the action produced no outcome".to_string());
     };
+    // Shown to a person reading Settings -> Logs, never returned to the
+    // assistant - and never a `fill`'s VALUE, which `describe_try` never
+    // even looks at.
+    crate::applog::info(describe_try(&action, outcome.ok));
     let mut text =
         format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
     if let Some(shot) = &outcome.screenshot {
@@ -686,6 +722,7 @@ async fn save_autorun_scripts(
                     }
                 }
                 script.repairs = old.repairs;
+                script.last_repair = old.last_repair.clone();
                 lines.push(format!("case {} (unchanged)", script.case_id));
             }
             Some(old) => {
@@ -695,6 +732,18 @@ async fn save_autorun_scripts(
                 match crate::autorun::edits::next_repairs(&old) {
                     Ok(n) => script.repairs = n,
                     Err(why) => return (400, why),
+                }
+                // `check_edits` above only returns Ok when a real change
+                // was fully declared, so `declared` is always Some here -
+                // there is no path where a script actually differs from
+                // disk and this branch is reached with nothing declared.
+                if let Some(e) = declared {
+                    let why = e.why.trim();
+                    crate::applog::info(format!(
+                        "AI repaired case {} steps {:?}: {why}",
+                        script.case_id, e.steps
+                    ));
+                    script.last_repair = Some(why.to_string());
                 }
                 lines.push(format!(
                     "case {} (repaired, {} of {} used)",
@@ -714,6 +763,7 @@ async fn save_autorun_scripts(
                     );
                 }
                 script.repairs = 0;
+                script.last_repair = None;
                 lines.push(format!("case {} (new)", script.case_id));
             }
         }

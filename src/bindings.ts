@@ -259,6 +259,14 @@ export const commands = {
 	 *  last saved it from the editor. Absent when 0.
 	 */
 	repairs?: number,
+	/**
+	 *  The `why` of the most recent repair, so a person opening the editor
+	 *  can see what an assistant changed without having to find the applog
+	 *  line. Set alongside `repairs` on a repair, cleared to `None` by the
+	 *  editor's own save - together with `repairs`, so a person saving
+	 *  from the app always starts from a clean slate.
+	 */
+	last_repair?: string | null,
 } | null, string>(__TAURI_INVOKE("auto_run_load_script", { caseId })),
 	autoRunSaveScript: (script: CaseScript_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_script", { script })),
 	/**
@@ -911,6 +919,14 @@ export type CaseScript_Deserialize = {
 	 *  last saved it from the editor. Absent when 0.
 	 */
 	repairs?: number,
+	/**
+	 *  The `why` of the most recent repair, so a person opening the editor
+	 *  can see what an assistant changed without having to find the applog
+	 *  line. Set alongside `repairs` on a repair, cleared to `None` by the
+	 *  editor's own save - together with `repairs`, so a person saving
+	 *  from the app always starts from a clean slate.
+	 */
+	last_repair?: string | null,
 };
 
 /**
@@ -931,6 +947,14 @@ export type CaseScript_Serialize = {
 	 *  last saved it from the editor. Absent when 0.
 	 */
 	repairs?: number,
+	/**
+	 *  The `why` of the most recent repair, so a person opening the editor
+	 *  can see what an assistant changed without having to find the applog
+	 *  line. Set alongside `repairs` on a repair, cleared to `None` by the
+	 *  editor's own save - together with `repairs`, so a person saving
+	 *  from the app always starts from a clean slate.
+	 */
+	last_repair?: string | null,
 };
 
 /**  Who the current token belongs to, by the id ADO stamps on `createdBy`. */

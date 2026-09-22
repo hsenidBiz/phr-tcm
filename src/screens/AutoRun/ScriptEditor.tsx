@@ -160,6 +160,13 @@ export default function ScriptEditor({
             </Select>
           </label>
 
+          {existing.data && (existing.data.repairs ?? 0) > 0 && (
+            <p className="text-xs text-warning">
+              Repaired {existing.data.repairs} of 3 times by an assistant since you last saved.
+              {existing.data.last_repair && ` Last reason: ${existing.data.last_repair}`}
+            </p>
+          )}
+
           <label className="block text-xs text-muted">
             Action script JSON
             <Textarea

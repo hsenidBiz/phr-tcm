@@ -9,12 +9,12 @@
 //! check the script against. Driving the browser never does.
 
 use v2_lib::ado::AdoClient;
-use v2_lib::ai_bridge::{autorun_guard_for, autorun_route_guard, route, BridgeContext};
+use v2_lib::ai_bridge::{autorun_guard_for, autorun_route_guard, describe_try, route, BridgeContext};
 use v2_lib::autorun::guide::autorun_guide;
 use v2_lib::autorun::quirks::load_quirks;
 use v2_lib::autorun::store::{load_script, save_run, save_scripts_atomically, set_root};
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord};
-use v2_lib::browser::actions::ActionOutcome;
+use v2_lib::browser::actions::{Action, ActionOutcome};
 use v2_lib::steps_xml::{build_steps_xml, Step};
 use wiremock::matchers::{method as wm_method, path as wm_path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -455,6 +455,49 @@ async fn an_edit_must_be_declared_and_a_check_may_not_go() {
     assert_eq!(status, 400, "{out}");
     assert!(out.contains("an assertion is never removed"), "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1, "still one repair in");
+}
+
+/// A repair's `why` is persisted on the script itself, not just in the
+/// applog, so a person opening the editor can see it without hunting
+/// through Settings -> Logs. An unchanged re-send keeps the last repair's
+/// reason exactly as it was.
+#[tokio::test]
+async fn a_repairs_reason_is_persisted_and_survives_an_unchanged_resend() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().last_repair, None, "a new script has no repair yet");
+
+    let declared = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(
+        load_script(dir.path(), 7).unwrap().unwrap().last_repair.as_deref(),
+        Some("the toast has no id, only a class")
+    );
+
+    // Re-sending the same script unchanged keeps the reason exactly as it
+    // was - it did not repair anything this time.
+    let resend = case_7(".toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &resend, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(
+        load_script(dir.path(), 7).unwrap().unwrap().last_repair.as_deref(),
+        Some("the toast has no id, only a class")
+    );
 }
 
 /// Three repairs without a person looking is the cap. Saving the script

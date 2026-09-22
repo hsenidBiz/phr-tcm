@@ -215,6 +215,7 @@ fn describe_failures_renders_the_exact_block_for_a_failed_case_with_a_script_and
             },
         ],
         repairs: 1,
+        last_repair: None,
     }];
 
     let expected = [
@@ -303,6 +304,7 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
             unchecked: None,
         }],
         repairs: 0,
+        last_repair: None,
     }];
 
     let out = describe_failures(&run, &scripts);
@@ -387,6 +389,7 @@ fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
         account: None,
         steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None }],
         repairs: 0,
+        last_repair: None,
     }];
     let out = describe_failures(&run, &scripts);
     assert!(out
