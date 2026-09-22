@@ -829,3 +829,51 @@ async fn a_reply_that_names_the_suite_is_not_followed_by_a_listing() {
     assert_eq!(outcome.suite.plan_name, "Gamma Guardians_Stories_26R2_SP03");
     server.verify().await;
 }
+
+/// The team scopes are read several at a time, not one after another:
+/// eight teams that each take 300 ms answer well under the 2.4 s a serial
+/// walk would need, and the covering team still wins, whichever request
+/// finished first.
+#[tokio::test]
+async fn the_team_scopes_are_read_several_at_a_time() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
+        .mount(&server)
+        .await;
+    let ids: Vec<String> = (0..8).map(|i| format!("0000000{i}-0000-0000-0000-000000000000")).collect();
+    let teams: Vec<(&str, &str)> = ids.iter().map(|id| (id.as_str(), "team")).collect();
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(teams_reply(&teams)))
+        .mount(&server)
+        .await;
+    for (i, id) in ids.iter().enumerate() {
+        // Only the last team covers the area, so an early finisher cannot
+        // win by finishing first.
+        let value = if i == 7 { "HRM\\Gamma Guardians" } else { "HRM\\Elsewhere" };
+        Mock::given(method("GET"))
+            .and(path(format!("/{ORG}/{PROJECT_ID}/{id}/_apis/work/teamsettings/teamfieldvalues")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(scope_reply(value, true))
+                    .set_delay(std::time::Duration::from_millis(300)),
+            )
+            .mount(&server)
+            .await;
+    }
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let started = std::time::Instant::now();
+    let team = client
+        .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians\\Sub")
+        .await
+        .unwrap();
+    let took = started.elapsed();
+    assert_eq!(team, ids[7]);
+    assert!(
+        took < std::time::Duration::from_millis(1500),
+        "eight 300 ms reads took {took:?} - they ran one after another"
+    );
+}

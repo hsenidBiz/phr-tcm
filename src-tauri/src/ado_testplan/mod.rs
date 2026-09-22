@@ -24,7 +24,7 @@ use serde::Serialize;
 
 /// How many per-plan suite requests run concurrently while scanning. These
 /// are cheap GETs; the write budget (2/s) is unaffected.
-const SUITE_SCAN_CONCURRENCY: usize = 8;
+pub(crate) const SUITE_SCAN_CONCURRENCY: usize = 8;
 
 /// Hard stop for any continuation-token loop.
 ///

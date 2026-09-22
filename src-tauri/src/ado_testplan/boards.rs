@@ -19,9 +19,10 @@
 //!
 //! Only GET and POST leave this file, like everywhere else in the client.
 
+use futures::stream::{self, StreamExt};
 use serde_json::json;
 
-use super::EnsuredSuite;
+use super::{EnsuredSuite, SUITE_SCAN_CONCURRENCY};
 use crate::ado::endpoints::percent_encode_segment;
 use crate::ado::{tidy, AdoClient, AdoError};
 use crate::cache::{self, keys};
@@ -226,18 +227,36 @@ impl AdoClient {
             }
             Err(e) => return Err(e),
         };
-        let mut best: Option<(usize, String)> = None;
-        for team in &teams {
-            let values = match self.get_team_scope(org, project_id, &team.id).await {
-                Ok((_field, values)) => values,
-                Err(e) => {
-                    crate::applog::warn(format!(
+        // One scope request per team, SUITE_SCAN_CONCURRENCY at a time, the
+        // way the plan scan reads suites: read one after another, the fifty
+        // teams of a large project took eight seconds before the route was
+        // even asked. Answers are put back in team order so the tie-break
+        // below (first team wins at equal depth) does not depend on which
+        // request finished first.
+        let mut scopes: Vec<Option<Vec<(String, bool)>>> = teams.iter().map(|_| None).collect();
+        {
+            let futs: Vec<_> = teams
+                .iter()
+                .enumerate()
+                .map(|(i, team)| {
+                    let fut = self.get_team_scope(org, project_id, &team.id);
+                    async move { (i, fut.await) }
+                })
+                .collect();
+            let mut in_flight = stream::iter(futs).buffer_unordered(SUITE_SCAN_CONCURRENCY);
+            while let Some((i, res)) = in_flight.next().await {
+                match res {
+                    Ok((_field, values)) => scopes[i] = Some(values),
+                    Err(e) => crate::applog::warn(format!(
                         "boards suite route: could not read the area scope of team {} ({}): {e} - skipping it",
-                        team.name, team.id
-                    ));
-                    continue;
+                        teams[i].name, teams[i].id
+                    )),
                 }
-            };
+            }
+        }
+        let mut best: Option<(usize, String)> = None;
+        for (team, values) in teams.iter().zip(scopes) {
+            let Some(values) = values else { continue };
             for (value, include_children) in values {
                 if !covers(&value, include_children, area_path) {
                     continue;
