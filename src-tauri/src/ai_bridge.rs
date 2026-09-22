@@ -671,6 +671,13 @@ async fn save_autorun_scripts(
     if scripts.is_empty() {
         return (400, "no scripts in the bundle".to_string());
     }
+    // Capped before any lookup - disk or Azure DevOps - runs at all: the
+    // floor's own lookup sends every id in the bundle through
+    // `get_test_cases_by_ids` in one call, and `/test-cases` already caps
+    // ITS ids list at the same number for the same reason.
+    if scripts.len() > MAX_CASE_IDS {
+        return (400, format!("a bundle can carry at most {MAX_CASE_IDS} scripts"));
+    }
     // A declaration for a case this bundle is not saving changes nothing
     // and declares nothing - but it would still file its quirk, and it
     // usually means the wrong case id was typed into one of the two
@@ -784,8 +791,11 @@ async fn save_autorun_scripts(
     // is judged against what its test case says should happen, never
     // against what the application happens to do.
     let Some(client) = client else {
+        // 503, like every other route that needs a signed-in client - not
+        // 400: nothing about the bundle itself is wrong, the app just has
+        // nowhere to check it against yet.
         return (
-            400,
+            503,
             "sign in to Test Case Manager first - a script is checked against its test case before it is saved"
                 .to_string(),
         );
