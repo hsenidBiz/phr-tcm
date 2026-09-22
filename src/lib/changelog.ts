@@ -13,6 +13,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.25.15",
+    date: "2026-09-22",
+    items: [
+      "Fixed: when Azure DevOps refused a whole upload, every case in it failed with \"http 0\" and no reason. The failure list now shows the sentence Azure DevOps sent, and Settings → Logs has its full answer.",
+    ],
+  },
+  {
     version: "1.25.14",
     date: "2026-09-18",
     items: [
