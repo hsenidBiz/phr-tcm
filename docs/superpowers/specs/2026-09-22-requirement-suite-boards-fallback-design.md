@@ -246,3 +246,34 @@ what Azure DevOps answered."
   ("Sample - Boards route capture (delete me)").
 - #138416: 931 cases, at the 1000-link limit.
 - Access level check: Organization settings → Users → the account → Access level.
+
+## 7. Result (2026-09-22, this machine)
+
+The §4.1 capture was not needed: the controller names its own missing
+parameters. Three probes from the dev panel against PBI #147044 (case #157957,
+uploaded with `boards-route-probe-sample.json`):
+
+1. `{"requirementId","testCaseIds":"[...]"}` → 500, "a null entry for parameter
+   'planId' of non-nullable type 'System.Int32' for method
+   'AddWitTestCasesToRequirementSuite(Int32, Int32, Int32)'".
+2. `{"planId":0,"requirementId","testCaseId"}` → 500, the same for `suiteId`.
+3. `{"planId":0,"suiteId":0,"requirementId":147044,"testCaseId":157957}` → **200**
+   `{"requirementId":147044,"testPlanId":157958,"testPoints":[…],"testSuiteId":157960}`.
+
+So the route takes three integers; `planId` and `suiteId` sent as 0 make the
+team's current-sprint plan and the requirement suite server-side (plan 157958
+"Gamma Guardians_Stories_26R2_SP03…", suite 157960), exactly what the watched
+Boards save produced. The reply also carries `testSuiteId`, so the plan's
+suites need not be listed (the listing stays as the fallback for a reply
+without it). Which of `requirementId` / `testCaseId` is the third parameter is
+not known; both are sent and the unread one is ignored. A wrong body answers
+500, not 400, so the log and the probe show the body of any non-2xx reply.
+
+Implemented in `src-tauri/src/ado_testplan/boards.rs` (route, ids, fallback),
+`commands/queue.rs` (the upload tries the route once after the batch when the
+documented create answered 403; on failure the original sentence gains one
+line), `commands/misc.rs` + the dev panel (the probe). Tests:
+`src-tauri/tests/ado_boards.rs`. Not done: §4.6's two submit-level tests
+(`submit_queue` takes an AppHandle); the changelog line goes with the next
+version bump. Stubs to delete in Azure DevOps: #157941, #157953, #157957.
+

@@ -5,9 +5,10 @@
 //!
 //! Everything here is wiremock: the route, the two ids its URL needs, and
 //! the fallback that strings them together and ends with the suite the
-//! plan holds. The body's field names are UNCONFIRMED until the probe
-//! answers 200 - these tests pin the shape the code sends, so the day the
-//! probe names a different field there is exactly one place to change.
+//! plan holds. The body was confirmed by the probe on 2026-09-22 (a 200
+//! that made plan 157958 and suite 157960); these tests pin the shape the
+//! code sends, so the day the controller changes there is one place to
+//! change.
 
 use v2_lib::ado::{AdoClient, AdoError};
 use v2_lib::ado_testplan::boards::{
@@ -66,11 +67,9 @@ async fn mount_team_scope(server: &MockServer, team_id: &str, value: &str, inclu
         .await;
 }
 
-/// The controller's sibling call sends `{"userStoryIds":"[145386]"}` - JSON
-/// whose array values are JSON strings (design §4.1). The first real call
-/// answered with the controller's own signature instead: three integers,
-/// `planId` named, so the body is those three, and one case id stands for
-/// the upload.
+/// The controller names its own parameters when one is missing: the first
+/// probe named `planId`, the second `suiteId`; the third probe, with both
+/// sent as 0, answered 200. One case id stands for the upload.
 #[test]
 fn the_body_is_the_three_integers_the_controller_named() {
     assert_eq!(
@@ -98,17 +97,19 @@ async fn boards_route_posts_the_body_and_reads_the_plan_id() {
             "requirementId": PBI,
             "testPlanId": 157942,
             "testPoints": [],
+            "testSuiteId": 157944,
         })))
         .expect(1)
         .mount(&server)
         .await;
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
-    let plan_id = client
+    let (plan_id, suite_id) = client
         .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, 0, PBI, &[157941])
         .await
         .unwrap();
     assert_eq!(plan_id, 157942);
+    assert_eq!(suite_id, Some(157944), "the reply names the suite outright (seen 2026-09-22)");
     server.verify().await;
 }
 
@@ -415,9 +416,10 @@ async fn the_two_spellings_of_an_area_share_one_cached_team() {
     server.verify().await;
 }
 
-/// The whole fallback, end to end: the two ids, the route, and then the
-/// suite the named plan holds - because the reply carries the plan id and
-/// not the suite id.
+/// The whole fallback, end to end, for a reply that names only the plan:
+/// the two ids, the route, and then the suite the named plan holds. (The
+/// reply seen on 2026-09-22 names the suite too; the sibling test below
+/// covers that, and this one is the path a reply that stopped would take.)
 #[tokio::test]
 async fn the_fallback_ends_with_the_suite_the_plan_holds() {
     let server = MockServer::start().await;
@@ -769,4 +771,61 @@ async fn a_team_list_the_account_cannot_read_falls_back_to_the_default_team() {
         AdoError::Http { status, .. } => assert_eq!(status, 500),
         other => panic!("expected the 500 to stop it, got {other:?}"),
     }
+}
+
+/// The reply seen on 2026-09-22 names the suite too (`testSuiteId`), so
+/// the plan's suites are not listed at all.
+#[tokio::test]
+async fn a_reply_that_names_the_suite_is_not_followed_by_a_listing() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(teams_reply(&[(GAMMA_ID, "Gamma Guardians")])),
+        )
+        .mount(&server)
+        .await;
+    mount_team_scope(&server, GAMMA_ID, "HRM\\Gamma Guardians", true).await;
+    Mock::given(method("POST"))
+        .and(path(route_path()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "requirementId": PBI,
+            "testPlanId": 157958,
+            "testPoints": [{"outcome": "Active", "testCaseId": 157957, "testPointId": 251866}],
+            "testSuiteId": 157960,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/{PROJECT}/_apis/testplan/Plans/157958/suites")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+        .expect(0)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/{PROJECT}/_apis/testplan/plans/157958")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 157958,
+            "name": "Gamma Guardians_Stories_26R2_SP03",
+            "areaPath": "HRM\\Gamma Guardians",
+            "rootSuite": {"id": 157959},
+        })))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let outcome = client
+        .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", 0, &[157957])
+        .await
+        .unwrap();
+    assert_eq!(outcome.suite.plan_id, 157958);
+    assert_eq!(outcome.suite.suite_id, 157960);
+    assert_eq!(outcome.suite.plan_name, "Gamma Guardians_Stories_26R2_SP03");
+    server.verify().await;
 }

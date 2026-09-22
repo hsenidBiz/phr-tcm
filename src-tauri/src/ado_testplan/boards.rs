@@ -32,23 +32,19 @@ use crate::cache::{self, keys};
 /// change.
 pub const BOARDS_ROUTE_VERSION: &str = "5";
 
-/// The Boards "Add Test" body as far as it is known.
+/// The Boards "Add Test" body, CONFIRMED on 2026-09-22 (PBI #147044): a
+/// 200 that created plan 157958 and suite 157960.
 ///
-/// The first probe (2026-09-22, PBI #147044) answered 500 with the
-/// controller's own signature: `AddWitTestCasesToRequirementSuite(Int32,
-/// Int32, Int32)` and "a null entry for parameter 'planId'". So the route
-/// takes three integers - a plan, the requirement, one test case - not a
-/// list; the suite pulls in every Tested-By case of the requirement by
-/// itself, which is why one id is enough. The second probe, sent with
-/// `planId: 0`, was answered with "a null entry for parameter 'suiteId'":
-/// so `planId` and `suiteId` are two of the three, and the third is one
-/// of the two names below (`requirementId` is what the reply uses;
-/// `testCaseId` is the natural other). An unknown field is ignored, a
-/// missing one is named, so both are sent and the next probe settles it.
-/// Both ids are sent as 0: the watched save produced a NEW plan (design
-/// §2.3), so the portal either creates plan and suite in a call nobody
-/// saw, or sends 0 and lets the server make them - which is what a 200
-/// here would prove. Design §4.1.
+/// It took three probes. The controller answers a wrong body with a 500
+/// naming the first null parameter of its own signature,
+/// `AddWitTestCasesToRequirementSuite(Int32, Int32, Int32)`: the first
+/// named `planId`, the second `suiteId`. Sent as 0, both are made by the
+/// server - the team's current-sprint plan and the requirement suite -
+/// which is what the watched Boards save produced (design §2.3). The
+/// third integer is one of the two names below; both are sent and the
+/// one the controller does not read is ignored. One case id is enough:
+/// the suite pulls in every case linked to the requirement by itself.
+/// Design §4.1, §4.5.
 pub fn boards_body(plan_id: i32, pbi_id: i32, case_id: i32) -> serde_json::Value {
     json!({
         "planId": plan_id,
@@ -283,8 +279,9 @@ impl AdoClient {
     /// controller (`_api`, not `_apis`) - see this file's header. Adds
     /// `case_ids` to the PBI's requirement suite, creating the team's
     /// current-sprint plan and the suite when they do not exist. Returns
-    /// the plan id the reply names; the suite id is NOT in the reply and
-    /// is found by listing that plan's suites.
+    /// the plan id the reply names and, when the reply carries
+    /// `testSuiteId` (it did on 2026-09-22), the suite id too; without it
+    /// the caller lists that plan's suites.
     pub async fn boards_add_to_requirement_suite(
         &self,
         org: &str,
@@ -293,7 +290,7 @@ impl AdoClient {
         plan_id: i32,
         pbi_id: i32,
         case_ids: &[i32],
-    ) -> Result<i32, AdoError> {
+    ) -> Result<(i32, Option<i32>), AdoError> {
         // One id is all the controller takes; the suite it makes pulls in
         // every case linked to the requirement, so the first stands for
         // all of them.
@@ -325,13 +322,15 @@ impl AdoClient {
         };
         let raw: String = data.to_string().chars().take(2000).collect();
         crate::applog::info(format!("boards suite route answered: {raw}"));
-        data["testPlanId"]
+        let plan = data["testPlanId"]
             .as_i64()
             .map(|plan| plan as i32)
             .ok_or_else(|| AdoError::Http {
                 status: 0,
                 body: format!("the Boards route answered without a testPlanId: {raw}"),
-            })
+            })?;
+        let suite = data["testSuiteId"].as_i64().map(|s| s as i32).filter(|s| *s > 0);
+        Ok((plan, suite))
     }
 
     /// The whole fallback: resolve the two ids, take the route, then find
@@ -355,28 +354,34 @@ impl AdoClient {
         }
         let project_id = self.project_id(org, project).await?;
         let team_id = self.team_for_area(org, project, &project_id, area_path).await?;
-        let plan_id = self
+        let (plan_id, named_suite) = self
             .boards_add_to_requirement_suite(org, &project_id, &team_id, plan_id, pbi_id, case_ids)
             .await?;
-        let suite = self
-            .find_requirement_suite(org, project, plan_id, pbi_id)
-            .await?
-            .ok_or_else(|| AdoError::Http {
-                status: 0,
-                body: format!(
-                    "the Boards route named plan {plan_id} but that plan has no requirement suite for #{pbi_id}"
-                ),
-            })?;
+        // The reply names the suite outright; listing the plan is only for
+        // a reply that has stopped doing so.
+        let suite_id = match named_suite {
+            Some(id) => id,
+            None => {
+                self.find_requirement_suite(org, project, plan_id, pbi_id)
+                    .await?
+                    .ok_or_else(|| AdoError::Http {
+                        status: 0,
+                        body: format!(
+                            "the Boards route named plan {plan_id} but that plan has no requirement suite for #{pbi_id}"
+                        ),
+                    })?
+                    .id
+            }
+        };
         let plan = self.get_test_plan(org, project, plan_id).await?;
         crate::applog::info(format!(
-            "requirement suite for #{pbi_id} created through the Boards route: plan {plan_id}, suite {}",
-            suite.id
+            "requirement suite for #{pbi_id} created through the Boards route: plan {plan_id}, suite {suite_id}"
         ));
         Ok(BoardsOutcome {
             suite: EnsuredSuite {
                 plan_id,
                 plan_name: plan.name,
-                suite_id: suite.id,
+                suite_id,
                 // `created_plan` is the app's own "no plan existed, so one
                 // was made under this area" flag, which drives a sentence
                 // about the plan scan. The Boards route is a different
