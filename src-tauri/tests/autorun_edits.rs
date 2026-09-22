@@ -6,6 +6,7 @@ use serde_json::json;
 use v2_lib::autorun::edits::{check_edits, next_repairs, Edit};
 use v2_lib::autorun::CaseScript;
 
+
 fn script(json: serde_json::Value) -> CaseScript {
     serde_json::from_value(json).unwrap()
 }
@@ -74,6 +75,97 @@ fn a_declared_step_that_did_not_change_is_refused() {
     let declared = edit(&[1], "thought I changed this");
     let err = check_edits(&sc, &sc, Some(&declared)).unwrap_err();
     assert_eq!(err, "step 1 was declared but not changed");
+}
+
+#[test]
+fn several_declared_but_unchanged_steps_are_named_in_one_sentence_sorted() {
+    let sc = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": "#a" }] },
+            { "step_number": 4, "actions": [{ "kind": "click", "selector": "#b" }] }
+        ]
+    }));
+    let declared = edit(&[4, 2], "thought I changed both of these");
+    let err = check_edits(&sc, &sc, Some(&declared)).unwrap_err();
+    assert_eq!(err, "steps 2, 4 were declared but not changed");
+}
+
+#[test]
+fn a_duplicate_step_number_in_new_is_refused_before_anything_else_is_compared() {
+    // A weakened copy of step 3 sits first, an untouched copy sits last. A
+    // map keyed by step_number would silently keep only the last (unchanged)
+    // entry and let the gate wave the weakened one through, even though the
+    // runner still executes both entries in the Vec - so this is refused
+    // outright, with no declaration needed to trigger it.
+    let old = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 3, "actions": [
+                { "kind": "check_text", "value": "Saved" },
+                { "kind": "expect_visible", "selector": "#a" }
+            ] }
+        ]
+    }));
+    let new = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 3, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+            { "step_number": 3, "actions": [
+                { "kind": "check_text", "value": "Saved" },
+                { "kind": "expect_visible", "selector": "#a" }
+            ] }
+        ]
+    }));
+    let err = check_edits(&old, &new, None).unwrap_err();
+    assert_eq!(err, "step 3 appears more than once in the script");
+}
+
+#[test]
+fn a_duplicate_step_number_in_old_is_refused_too() {
+    let old = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }] },
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#b" }] }
+        ]
+    }));
+    let new = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }] }
+        ]
+    }));
+    let err = check_edits(&old, &new, None).unwrap_err();
+    assert_eq!(err, "step 1 appears more than once in the script");
+}
+
+#[test]
+fn a_repair_cannot_change_which_case_a_script_belongs_to() {
+    let old = script(json!({ "case_id": 1, "title": "t", "steps": [] }));
+    let new = script(json!({ "case_id": 2, "title": "t", "steps": [] }));
+    let err = check_edits(&old, &new, None).unwrap_err();
+    assert_eq!(err, "a repair cannot change which test case a script belongs to");
+}
+
+#[test]
+fn a_declaration_naming_the_wrong_case_is_refused() {
+    let old = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#a" }] }
+        ]
+    }));
+    let new = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "click", "selector": "#b" }] }
+        ]
+    }));
+    let declared = edit(&[1], "fixed a locator");
+    let declared = Edit { case_id: 99, ..declared };
+    let err = check_edits(&old, &new, Some(&declared)).unwrap_err();
+    assert_eq!(err, "the declaration names case 99 but this script is case 1");
 }
 
 #[test]

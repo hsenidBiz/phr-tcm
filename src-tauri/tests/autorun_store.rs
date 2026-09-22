@@ -228,6 +228,32 @@ fn a_script_with_no_steps_is_rejected() {
     assert!(matches!(err, SaveScriptsError::Invalid(_)));
 }
 
+/// Two entries for the same step number within one script is the same
+/// ambiguity as a duplicate case id, one level down - a reader (or the
+/// `autorun::edits` gate, which builds a map keyed by step_number) cannot
+/// tell which of the two is the real step, so no path may save either.
+#[test]
+fn a_duplicate_step_number_within_one_script_is_rejected() {
+    let dir = TempDir::new();
+    let bundle = vec![CaseScript {
+        case_id: 70,
+        title: "Duplicate step".to_string(),
+        account: None,
+        steps: vec![
+            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "a".to_string() }], unchecked: None },
+            StepScript { step_number: 1, actions: vec![Action::CheckText { value: "b".to_string() }], unchecked: None },
+        ],
+        repairs: 0,
+    }];
+    let err = save_scripts_atomically(dir.path(), &bundle).expect_err("duplicate step number was accepted");
+    assert!(matches!(err, SaveScriptsError::Invalid(_)));
+    assert_eq!(err.to_string(), "case 70: step 1 appears more than once");
+    assert!(
+        load_script(dir.path(), 70).unwrap().is_none(),
+        "a script with a duplicate step number wrote something anyway"
+    );
+}
+
 /// A step with no ACTIONS is a different thing entirely - the guide tells
 /// an assistant to leave a step like this for a manual check rather than
 /// invent a check that proves nothing. That must keep saving cleanly.

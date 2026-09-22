@@ -132,6 +132,17 @@ pub fn save_scripts_atomically(root: &Path, scripts: &[CaseScript]) -> Result<()
                 sc.case_id
             )));
         }
+        {
+            let mut seen_steps = std::collections::HashSet::new();
+            for step in &sc.steps {
+                if !seen_steps.insert(step.step_number) {
+                    return Err(SaveScriptsError::Invalid(format!(
+                        "case {}: step {} appears more than once",
+                        sc.case_id, step.step_number
+                    )));
+                }
+            }
+        }
         if let Some(key) = &sc.account {
             if !crate::autorun::accounts::valid_key(key) {
                 return Err(SaveScriptsError::Invalid(format!(

@@ -56,8 +56,58 @@ fn undeclared_sentence(nums: &BTreeSet<i32>) -> String {
     )
 }
 
+/// Rule 2's sentence, for one or several declared-but-unchanged steps
+/// together, sorted ascending.
+fn declared_but_unchanged_sentence(nums: &BTreeSet<i32>) -> String {
+    let list = nums.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
+    if nums.len() == 1 {
+        format!("step {list} was declared but not changed")
+    } else {
+        format!("steps {list} were declared but not changed")
+    }
+}
+
+/// The lowest step number that appears more than once in a script's steps,
+/// if any. A duplicate step number is what let a weakened copy hide behind
+/// an untouched one in the `BTreeMap` this module used to build straight
+/// from `old.steps` / `new.steps` - the map keeps only the last entry, but
+/// the runner still executes every entry in the `Vec`.
+fn duplicate_step_number(steps: &[StepScript]) -> Option<i32> {
+    let mut seen = std::collections::HashSet::new();
+    let mut dupes = BTreeSet::new();
+    for s in steps {
+        if !seen.insert(s.step_number) {
+            dupes.insert(s.step_number);
+        }
+    }
+    dupes.into_iter().next()
+}
+
 /// Refuses an undeclared or weakening change. `old` is the script on disk.
 pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) -> Result<(), String> {
+    // A duplicated step number defeats every check below it (the map built
+    // from the Vec would silently keep only one of the two entries while
+    // the runner executes both), so it is refused before anything else is
+    // even compared.
+    if let Some(n) = duplicate_step_number(&old.steps).or_else(|| duplicate_step_number(&new.steps)) {
+        return Err(format!("step {n} appears more than once in the script"));
+    }
+
+    // A repair never moves a script to a different case - that is what
+    // `case_id` on disk means, and an assistant editing the wrong file is
+    // exactly the mistake this whole module exists to catch.
+    if old.case_id != new.case_id {
+        return Err("a repair cannot change which test case a script belongs to".to_string());
+    }
+    if let Some(e) = declared {
+        if e.case_id != old.case_id {
+            return Err(format!(
+                "the declaration names case {} but this script is case {}",
+                e.case_id, old.case_id
+            ));
+        }
+    }
+
     // Rule 7: a declaration with no reason is refused before anything else
     // about it is even looked at.
     if let Some(e) = declared {
@@ -108,8 +158,9 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
 
     // Rule 2: a declaration that names a step nothing happened to is the
     // same blast-radius hazard from the other side.
-    if let Some(&n) = declared_steps.difference(&changed).next() {
-        return Err(format!("step {n} was declared but not changed"));
+    let over_declared: BTreeSet<i32> = declared_steps.difference(&changed).copied().collect();
+    if !over_declared.is_empty() {
+        return Err(declared_but_unchanged_sentence(&over_declared));
     }
 
     // Rule 3: a repair never removes or weakens an assertion, declared or
