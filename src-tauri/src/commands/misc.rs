@@ -260,6 +260,7 @@ pub async fn dev_probe_boards_suite(
     project: String,
     pbi_id: i32,
     case_id: i32,
+    plan_id: i32,
 ) -> Result<String, String> {
     // A shipped build has no business calling an undocumented endpoint on
     // purpose, and the dev panel that calls this is compiled out of one
@@ -277,7 +278,7 @@ pub async fn dev_probe_boards_suite(
         .await
         .map_err(|e| format!("could not read the area path of #{pbi_id}: {e}"))?;
     let out = client
-        .boards_fallback(&organization, &project, pbi_id, &area, &[case_id])
+        .boards_fallback(&organization, &project, pbi_id, &area, plan_id, &[case_id])
         .await;
     let report = crate::ado_testplan::boards::probe_report(&out);
     crate::applog::info(format!("boards suite route probe: {report}"));

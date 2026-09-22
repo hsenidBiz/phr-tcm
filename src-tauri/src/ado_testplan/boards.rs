@@ -34,19 +34,23 @@ pub const BOARDS_ROUTE_VERSION: &str = "5";
 
 /// The Boards "Add Test" body as far as it is known.
 ///
-/// UNCONFIRMED: the request body itself was never observed (the page
-/// blocks cross-origin reads of its script bundles), so the field names
-/// here are inferred from the sibling call the same controller DID make -
-/// `GetWitTestsForKanbanBoard` with `{"userStoryIds":"[145386]"}`, JSON
-/// whose array values are JSON strings. The shape follows that
-/// convention; a 400 naming a field is how a wrong guess announces
-/// itself, and `boards_add_to_requirement_suite` keeps that body in the
-/// log for exactly that reason. Design §4.1.
-pub fn boards_body(pbi_id: i32, case_ids: &[i32]) -> serde_json::Value {
-    let ids: Vec<String> = case_ids.iter().map(|id| id.to_string()).collect();
+/// The first probe (2026-09-22, PBI #147044) answered 500 with the
+/// controller's own signature: `AddWitTestCasesToRequirementSuite(Int32,
+/// Int32, Int32)` and "a null entry for parameter 'planId'". So the route
+/// takes three integers - a plan, the requirement, one test case - not a
+/// list; the suite pulls in every Tested-By case of the requirement by
+/// itself, which is why one id is enough. `planId` is confirmed by name;
+/// `requirementId` is the name the reply uses; `testCaseId` is the
+/// natural third and is UNCONFIRMED until a probe answers 200. A wrong
+/// name comes back the same way: a 500 naming the first null parameter.
+/// A `plan_id` of 0 asks the server to make the team's sprint plan, which
+/// is what the watched save produced (design §2.3); whether 0 is accepted
+/// is the second thing the probe settles. Design §4.1.
+pub fn boards_body(plan_id: i32, pbi_id: i32, case_id: i32) -> serde_json::Value {
     json!({
+        "planId": plan_id,
         "requirementId": pbi_id,
-        "testCaseIds": format!("[{}]", ids.join(",")),
+        "testCaseId": case_id,
     })
 }
 
@@ -282,12 +286,16 @@ impl AdoClient {
         org: &str,
         project_id: &str,
         team_id: &str,
+        plan_id: i32,
         pbi_id: i32,
         case_ids: &[i32],
     ) -> Result<i32, AdoError> {
-        if case_ids.is_empty() {
+        // One id is all the controller takes; the suite it makes pulls in
+        // every case linked to the requirement, so the first stands for
+        // all of them.
+        let Some(&case_id) = case_ids.first() else {
             return Err(no_case_ids());
-        }
+        };
         let url = format!(
             "{}/{}/{}/_api/_testManagement/AddWitTestCasesToRequirementSuite?teamId={}&__v={}",
             self.base_url,
@@ -296,7 +304,7 @@ impl AdoClient {
             team_id,
             BOARDS_ROUTE_VERSION
         );
-        let body = boards_body(pbi_id, case_ids);
+        let body = boards_body(plan_id, pbi_id, case_id);
         crate::applog::info(format!("boards suite route: POST {} body {}", tidy(&url), body));
         // A 401/403/404 body is already logged by the transport's
         // `refused()`. Every other status keeps its body in `AdoError::Http`
@@ -332,6 +340,7 @@ impl AdoClient {
         project: &str,
         pbi_id: i32,
         area_path: &str,
+        plan_id: i32,
         case_ids: &[i32],
     ) -> Result<BoardsOutcome, AdoError> {
         // Checked before anything is resolved: with nothing uploaded there
@@ -343,7 +352,7 @@ impl AdoClient {
         let project_id = self.project_id(org, project).await?;
         let team_id = self.team_for_area(org, project, &project_id, area_path).await?;
         let plan_id = self
-            .boards_add_to_requirement_suite(org, &project_id, &team_id, pbi_id, case_ids)
+            .boards_add_to_requirement_suite(org, &project_id, &team_id, plan_id, pbi_id, case_ids)
             .await?;
         let suite = self
             .find_requirement_suite(org, project, plan_id, pbi_id)

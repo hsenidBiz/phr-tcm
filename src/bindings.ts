@@ -167,7 +167,7 @@ export const commands = {
 	 *  already exists, one report. `probe_report` says what the answer means
 	 *  for the next edit.
 	 */
-	devProbeBoardsSuite: (organization: string, project: string, pbiId: number, caseId: number) => typedError<string, string>(__TAURI_INVOKE("dev_probe_boards_suite", { organization, project, pbiId, caseId })),
+	devProbeBoardsSuite: (organization: string, project: string, pbiId: number, caseId: number, planId: number) => typedError<string, string>(__TAURI_INVOKE("dev_probe_boards_suite", { organization, project, pbiId, caseId, planId })),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
 	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**

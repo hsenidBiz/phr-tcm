@@ -935,7 +935,7 @@ pub async fn submit_queue(
                 Ok(token) => {
                     let client = ado::AdoClient::new(token);
                     client
-                        .boards_fallback(&organization, &project, pbi_id, &pbi_area, &ids)
+                        .boards_fallback(&organization, &project, pbi_id, &pbi_area, 0, &ids)
                         .await
                         .map(|out| (client.base_url.clone(), out))
                         .map_err(|e| {

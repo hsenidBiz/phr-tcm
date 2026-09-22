@@ -74,6 +74,10 @@ export default function DevPanel({
   // a case id that already exists on it - not necessarily what is open.
   const [probePbi, setProbePbi] = useState("");
   const [probeCase, setProbeCase] = useState("");
+  // 0 asks the server to make the team's sprint plan itself, which is what
+  // the watched Boards save produced; an existing plan id is the other
+  // thing worth trying when 0 is refused.
+  const [probePlan, setProbePlan] = useState("0");
   const [probing, setProbing] = useState(false);
   const [probeReport, setProbeReport] = useState("");
 
@@ -86,6 +90,7 @@ export default function DevPanel({
         project,
         Number(probePbi),
         Number(probeCase),
+        Number(probePlan || "0"),
       );
       setProbeReport(r.status === "ok" ? r.data : r.error);
     } finally {
@@ -302,6 +307,14 @@ export default function DevPanel({
                 aria-label="Test case id to add"
                 value={probeCase}
                 onChange={(e) => setProbeCase(e.target.value.replace(/\D/g, ""))}
+              />
+              <Input
+                className="w-20 px-2 py-1 text-xs"
+                inputMode="numeric"
+                placeholder="Plan id (0)"
+                aria-label="Test plan id, 0 to let the server choose"
+                value={probePlan}
+                onChange={(e) => setProbePlan(e.target.value.replace(/\D/g, ""))}
               />
               <Button
                 size="sm"

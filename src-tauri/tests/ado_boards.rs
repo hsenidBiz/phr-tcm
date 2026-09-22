@@ -67,17 +67,19 @@ async fn mount_team_scope(server: &MockServer, team_id: &str, value: &str, inclu
 }
 
 /// The controller's sibling call sends `{"userStoryIds":"[145386]"}` - JSON
-/// whose array values are JSON strings (design §4.1). The add call is
-/// built the same way, with the field names still unconfirmed.
+/// whose array values are JSON strings (design §4.1). The first real call
+/// answered with the controller's own signature instead: three integers,
+/// `planId` named, so the body is those three, and one case id stands for
+/// the upload.
 #[test]
-fn the_body_follows_the_controllers_convention() {
+fn the_body_is_the_three_integers_the_controller_named() {
     assert_eq!(
-        boards_body(PBI, &[157941, 157801]),
-        serde_json::json!({"requirementId": 145386, "testCaseIds": "[157941,157801]"})
+        boards_body(0, PBI, 157941),
+        serde_json::json!({"planId": 0, "requirementId": 145386, "testCaseId": 157941})
     );
     assert_eq!(
-        boards_body(PBI, &[157941]),
-        serde_json::json!({"requirementId": 145386, "testCaseIds": "[157941]"})
+        boards_body(157942, PBI, 157801),
+        serde_json::json!({"planId": 157942, "requirementId": 145386, "testCaseId": 157801})
     );
     // The version the route was watched at. It is a constant so a bump
     // shows up as one edit with the date beside it.
@@ -91,7 +93,7 @@ async fn boards_route_posts_the_body_and_reads_the_plan_id() {
         .and(path(route_path()))
         .and(query_param("teamId", GAMMA_ID))
         .and(query_param("__v", "5"))
-        .and(body_json(boards_body(PBI, &[157941])))
+        .and(body_json(boards_body(0, PBI, 157941)))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "requirementId": PBI,
             "testPlanId": 157942,
@@ -103,7 +105,7 @@ async fn boards_route_posts_the_body_and_reads_the_plan_id() {
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let plan_id = client
-        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, PBI, &[157941])
+        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, 0, PBI, &[157941])
         .await
         .unwrap();
     assert_eq!(plan_id, 157942);
@@ -124,7 +126,7 @@ async fn boards_route_without_a_plan_id_is_an_error_not_a_guess() {
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let err = client
-        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, PBI, &[157941])
+        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, 0, PBI, &[157941])
         .await
         .unwrap_err();
     match err {
@@ -150,7 +152,7 @@ async fn boards_route_refusals_come_back_as_the_usual_variants() {
         .await;
     let client = AdoClient::with_base_urls("tok".into(), forbidding.uri(), forbidding.uri());
     let err = client
-        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, PBI, &[157941])
+        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, 0, PBI, &[157941])
         .await
         .unwrap_err();
     assert!(matches!(err, AdoError::Forbidden), "got {err:?}");
@@ -165,7 +167,7 @@ async fn boards_route_refusals_come_back_as_the_usual_variants() {
         .await;
     let client = AdoClient::with_base_urls("tok".into(), complaining.uri(), complaining.uri());
     let err = client
-        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, PBI, &[157941])
+        .boards_add_to_requirement_suite(ORG, PROJECT_ID, GAMMA_ID, 0, PBI, &[157941])
         .await
         .unwrap_err();
     match err {
@@ -436,7 +438,7 @@ async fn the_fallback_ends_with_the_suite_the_plan_holds() {
         .and(path(route_path()))
         .and(query_param("teamId", GAMMA_ID))
         .and(query_param("__v", "5"))
-        .and(body_json(boards_body(PBI, &[157941, 157801])))
+        .and(body_json(boards_body(0, PBI, 157941)))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "requirementId": PBI,
             "testPlanId": 157942,
@@ -472,7 +474,7 @@ async fn the_fallback_ends_with_the_suite_the_plan_holds() {
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let outcome = client
-        .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", &[157941, 157801])
+        .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", 0, &[157941, 157801])
         .await
         .unwrap();
     assert_eq!(
@@ -512,7 +514,7 @@ async fn the_fallback_refuses_an_empty_id_list_before_any_request() {
     let server = MockServer::start().await;
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let err = client
-        .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", &[])
+        .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", 0, &[])
         .await
         .unwrap_err();
     match err {
@@ -559,7 +561,7 @@ async fn the_fallback_says_when_the_named_plan_has_no_suite() {
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let err = client
-        .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", &[157941])
+        .boards_fallback(ORG, PROJECT, PBI, "HRM\\Gamma Guardians", 0, &[157941])
         .await
         .unwrap_err();
     match err {
