@@ -50,9 +50,10 @@ pub enum PublishResult {
 pub const MAX_PICTURES_PER_CASE: usize = 5;
 
 /// The comment a result gets: the person's own note first (if any), then
-/// what the machine proposed and why. The note is never the part that gets
-/// cut when the whole is too long - `update_run_results` caps a comment at
-/// 1000 characters, but relying on that would let it truncate mid-note.
+/// what the machine proposed and why. `update_run_results` caps a comment
+/// at 1000 characters: the reason is cut first when the whole is too
+/// long, and the note is cut too, but only once the note on its own
+/// (together with the lead) already exceeds that cap.
 pub fn comment_for(case: &CaseRecord) -> String {
     let account_part = match &case.account {
         Some(a) if !a.is_empty() => format!(" as {a}"),
@@ -158,20 +159,27 @@ pub fn pictures_for(case: &CaseRecord) -> Vec<(i32, String)> {
     out
 }
 
-/// The three refusals a send can give without asking Azure DevOps
-/// anything: no run file (or one that cannot be read), already sent, or
-/// nothing confirmed to send. `None` for a run that has at least one
-/// confirmed verdict and has not been sent - i.e. worth going on to ask
-/// Azure DevOps about.
+/// The four refusals a send can give without asking Azure DevOps
+/// anything: the run's file could not be read, no run file at all,
+/// already sent, or nothing confirmed to send. `None` for a run that has
+/// at least one confirmed verdict and has not been sent - i.e. worth
+/// going on to ask Azure DevOps about.
+///
+/// Takes `store::load_run`'s own `Result` rather than collapsing it to an
+/// `Option` first - a run whose file exists but cannot be READ (corrupt
+/// JSON, a partial write) is a different problem than one that was never
+/// saved, and the person should be told which.
 ///
 /// Pulled out as its own pure function so BOTH the command (which must
 /// refuse before it even asks for a fresh token - Rule 1 says a refusal
 /// makes no request at all) and `publish_run` (which stays the authority:
 /// it re-checks with its own freshly-loaded run rather than trusting the
 /// command's earlier read) can give the identical wording.
-pub fn refuse_locally(run: Option<&LocalRun>) -> Option<String> {
-    let Some(run) = run else {
-        return Some("this run is no longer on this machine".to_string());
+pub fn refuse_locally(run: Result<Option<&LocalRun>, &str>) -> Option<String> {
+    let run = match run {
+        Err(e) => return Some(format!("this run's file could not be read: {e}")),
+        Ok(None) => return Some("this run is no longer on this machine".to_string()),
+        Ok(Some(run)) => run,
     };
     if let Some(p) = &run.published {
         return Some(format!("this run was already sent to Azure DevOps: {}", p.web_url));
@@ -203,13 +211,29 @@ pub async fn publish_run(
     run_id: &str,
     cases: &[PublishCase],
 ) -> Result<PublishResult, AdoError> {
-    let loaded: Option<LocalRun> = store::load_run(root, run_id).ok().flatten();
-    if let Some(why) = refuse_locally(loaded.as_ref()) {
+    let loaded: Result<Option<LocalRun>, String> = store::load_run(root, run_id);
+    if let Some(why) = refuse_locally(loaded.as_ref().map(|o| o.as_ref()).map_err(String::as_str)) {
         return Ok(PublishResult::Refused { why });
     }
     // refuse_locally returned None, which only happens for a run that was
     // actually loaded - the expect documents that, it can never fire.
-    let mut run = loaded.expect("refuse_locally returned None only for a run that was loaded");
+    let mut run =
+        loaded.ok().flatten().expect("refuse_locally returned None only for a run that was loaded");
+
+    // Defence in depth: `run_id` is the filename `load_run` just read
+    // from, but the file's OWN `id` field is what everything downstream
+    // (the guarded save, in particular) trusts. The two should always
+    // agree - nothing writes a run file under any other name - but if
+    // they ever do not, refusing beats silently writing back under the
+    // wrong id.
+    if run.id != run_id {
+        return Ok(PublishResult::Refused {
+            why: format!(
+                "this run's file disagrees with its own id ({:?} inside, {run_id:?} expected) and cannot be sent",
+                run.id
+            ),
+        });
+    }
 
     let confirmed: Vec<&CaseRecord> = run
         .cases
@@ -248,6 +272,28 @@ pub async fn publish_run(
     ));
     let mut problems: Vec<String> = Vec::new();
     let mut sent: Vec<i32> = Vec::new();
+
+    // Mark the run as sent right away, before anything else that could go
+    // wrong - the orphan window (a crash between the run existing in
+    // Azure DevOps and this machine remembering that) shrinks from "the
+    // rest of this function" to this one `fs::write`. The end of the
+    // function writes `published` again, to refresh `at` once the real
+    // work is done; that second write is redundant with this one only
+    // when nothing below it changes `run` in a way that matters, which is
+    // exactly the case here.
+    run.published = Some(PublishedRun {
+        run_id: created.run_id,
+        web_url: created.web_url.clone(),
+        at: super::sessions::now_ms().to_string(),
+    });
+    if let Err(e) = store::save_run_guarded(root, &run) {
+        crate::applog::warn(format!("auto-run publish: run {} could not be marked as sent: {e}", created.run_id));
+        problems.push(format!(
+            "this machine could not record that the run was sent - do not send it again: {}",
+            created.web_url
+        ));
+    }
+
     let results = match client.get_run_results(organization, project, created.run_id).await {
         Ok(r) => r,
         Err(e) => {
@@ -316,12 +362,16 @@ pub async fn publish_run(
         problems.push("the run was left In Progress in Azure DevOps - complete it there".into());
     }
 
+    // Rewrites `published.at` with the time the run actually finished,
+    // now that the real work is done - `save_run_guarded` is fine here
+    // (rather than the plain `save_run` above): this writer only ever
+    // SETS `published`, which the guard always allows.
     run.published = Some(PublishedRun {
         run_id: created.run_id,
         web_url: created.web_url.clone(),
         at: super::sessions::now_ms().to_string(),
     });
-    if let Err(e) = store::save_run(root, &run) {
+    if let Err(e) = store::save_run_guarded(root, &run) {
         crate::applog::warn(format!("auto-run publish: run {} could not be marked as sent: {e}", created.run_id));
         problems.push(format!(
             "this machine could not record that the run was sent - do not send it again: {}",

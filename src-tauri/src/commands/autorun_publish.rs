@@ -24,8 +24,8 @@ pub async fn auto_run_publish(
     // `publish_run` re-checks this itself once the send actually proceeds -
     // that check, on its own freshly-loaded copy of the run, stays the
     // authority; this is only what lets the command answer "no" for free.
-    let loaded = crate::autorun::store::load_run(&root, &run_id).ok().flatten();
-    if let Some(why) = refuse_locally(loaded.as_ref()) {
+    let loaded = crate::autorun::store::load_run(&root, &run_id);
+    if let Some(why) = refuse_locally(loaded.as_ref().map(|o| o.as_ref()).map_err(String::as_str)) {
         return Ok(PublishResult::Refused { why });
     }
 

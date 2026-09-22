@@ -108,13 +108,25 @@ fn pictures_are_the_failures_then_the_last_step_without_repeats_and_capped() {
 }
 
 #[test]
-fn refuse_locally_covers_the_three_answers_and_lets_a_sendable_run_through() {
+fn refuse_locally_covers_the_four_answers_and_lets_a_sendable_run_through() {
     let dir = tempfile::tempdir().unwrap();
     let run = reviewed_run(dir.path());
 
     assert_eq!(
-        refuse_locally(None),
+        refuse_locally(Ok(None)),
         Some("this run is no longer on this machine".to_string())
+    );
+
+    // A run whose file exists but could not be READ (corrupt JSON, a
+    // partial write) is a different problem than one that was never
+    // saved, and must say so rather than being collapsed into "no longer
+    // on this machine" the way a caller's `.ok().flatten()` used to do.
+    assert_eq!(
+        refuse_locally(Err("run-9.json is not a readable run: EOF while parsing")),
+        Some(
+            "this run's file could not be read: run-9.json is not a readable run: EOF while parsing"
+                .to_string()
+        )
     );
 
     let mut published_run = run.clone();
@@ -124,7 +136,7 @@ fn refuse_locally_covers_the_three_answers_and_lets_a_sendable_run_through() {
         at: "1700000000000".into(),
     });
     assert_eq!(
-        refuse_locally(Some(&published_run)),
+        refuse_locally(Ok(Some(&published_run))),
         Some("this run was already sent to Azure DevOps: https://x/run/900".to_string())
     );
 
@@ -133,13 +145,13 @@ fn refuse_locally_covers_the_three_answers_and_lets_a_sendable_run_through() {
         c.verdict = String::new();
     }
     assert_eq!(
-        refuse_locally(Some(&blank_run)),
+        refuse_locally(Ok(Some(&blank_run))),
         Some("confirm at least one verdict before sending".to_string())
     );
 
     // A run with at least one confirmed verdict and not yet sent is worth
     // going on with - `refuse_locally` has nothing to say about it.
-    assert_eq!(refuse_locally(Some(&run)), None);
+    assert_eq!(refuse_locally(Ok(Some(&run))), None);
 }
 
 // ---------------------------------------------------------------------
@@ -345,6 +357,35 @@ async fn a_missing_run_file_is_refused() {
         .unwrap();
     assert!(matches!(result, PublishResult::Refused { .. }));
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+/// A run file whose own `id` field disagrees with the filename it was
+/// loaded from (a corrupted or hand-edited file, never something the app
+/// itself writes) must be refused rather than sent, and written back,
+/// under the wrong id.
+#[tokio::test]
+async fn a_run_whose_file_disagrees_with_its_own_id_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = reviewed_run(dir.path());
+    // Copy the same content (`id: "run-5"`) under a DIFFERENT filename.
+    let json = std::fs::read_to_string(dir.path().join("runs").join("run-5.json")).unwrap();
+    std::fs::write(dir.path().join("runs").join("run-6.json"), json).unwrap();
+
+    let server = MockServer::start().await;
+    let client = AdoClient::with_base_url("t".into(), server.uri());
+    let result = publish_run(&client, dir.path(), "org", "proj", &suite(), "Auto Run", "run-6", &publish_cases())
+        .await
+        .unwrap();
+    match result {
+        PublishResult::Refused { why } => {
+            assert!(why.contains("run-5") && why.contains("run-6"), "{why}");
+        }
+        other => panic!("expected Refused, got {other:?}"),
+    }
+    assert!(server.received_requests().await.unwrap().is_empty(), "a mismatched id must make no request at all");
+    // Neither file was touched.
+    assert_eq!(store::load_run(dir.path(), "run-5").unwrap().unwrap().id, "run-5");
+    assert_eq!(store::load_run(dir.path(), "run-6").unwrap().unwrap().id, "run-5");
 }
 
 #[tokio::test]
