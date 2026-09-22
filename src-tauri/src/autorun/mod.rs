@@ -1,12 +1,14 @@
 //! The supervised runner's own data: the action script for a case, and
 //! the record of a run.
 //!
-//! Both live on THIS machine only. Nothing here is sent to Azure DevOps
-//! - the results view in the app is the whole audience while the feature
-//! earns trust.
+//! Both live on THIS machine only. Driving the browser and recording what
+//! happened (`runner`, `replay`, the `commands/autorun*.rs` IPC surface)
+//! never reach Azure DevOps. The one door out is `publish`, used only when
+//! a person has reviewed a run and presses Send.
 
 pub mod accounts;
 pub mod guide;
+pub mod publish;
 pub mod recipe;
 pub mod replay;
 pub mod runner;

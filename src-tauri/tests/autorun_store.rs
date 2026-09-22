@@ -1,7 +1,10 @@
 //! Scripts and results live on THIS machine and nowhere else. These
 //! tests pin the round trip and the two rules that matter: a run always
 //! records the verdict the human gave (never one the machine inferred),
-//! and nothing here has an Azure DevOps shape.
+//! and nothing here carries a plan, suite or test-point id. The one
+//! exception is `published` (a run id and web url, set only after a
+//! person presses Send in `autorun::publish`) - proof of where a run
+//! landed, never a foothold for driving Azure DevOps from here.
 
 use v2_lib::autorun::store::{
     list_runs, load_run, load_script, load_shot, new_run_id, safe_shot_name, save_run,

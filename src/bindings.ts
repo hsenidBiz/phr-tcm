@@ -66,7 +66,9 @@ export const commands = {
 	 *  the same result row again. Per-step marks and attachments are additive
 	 *  and best-effort exactly as in the batch flow; a failure there never
 	 *  loses the recorded outcome, and the returned list names what did not
-	 *  attach.
+	 *  attach. See `record_point_outcome` for the body - this command is just
+	 *  the token + client wiring around it, shared with Auto Run's publish
+	 *  step (`autorun::publish`), which is the only other caller.
 	 */
 	recordResult: (organization: string, project: string, runId: number, resultId: number, outcome: PointOutcome) => typedError<string[], AdoError>(__TAURI_INVOKE("record_result", { organization, project, runId, resultId, outcome })),
 	/**
@@ -344,6 +346,7 @@ export const commands = {
 	autoRunReplay: (organization: string, project: string, pbiId: number, cases: ReplayCase[], browserName: string, watch: boolean) => typedError<LocalRun_Serialize, string>(__TAURI_INVOKE("auto_run_replay", { organization, project, pbiId, cases, browserName, watch })),
 	/**  Ask the unattended run in progress to stop after the step it is on. */
 	autoRunReplayCancel: () => __TAURI_INVOKE<void>("auto_run_replay_cancel"),
+	autoRunPublish: (organization: string, project: string, pbiId: number, runId: string, runName: string, cases: PublishCase[]) => typedError<PublishResult, AdoError>(__TAURI_INVOKE("auto_run_publish", { organization, project, pbiId, runId, runName, cases })),
 	exportQueueHtml: (path: string, queue: TestCase_Deserialize[], subtitle: string) => typedError<null, string>(__TAURI_INVOKE("export_queue_html", { path, queue, subtitle })),
 	/**
 	 *  The project's tag names, served from the shared reference cache.
@@ -1460,6 +1463,31 @@ export type Project = {
 };
 
 /**
+ *  What the screen knows about a case that the run file does not: the
+ *  case's real Azure DevOps step ids, in document order.
+ */
+export type PublishCase = {
+	case_id: number,
+	step_ids: string[],
+};
+
+export type PublishReport = {
+	run_id: number,
+	web_url: string,
+	/**  Case ids whose outcome was recorded. */
+	sent: number[],
+	/**  Never attempted, and why. */
+	skipped: SkippedCase[],
+	/**  Attempted and not (fully) done, in words. */
+	problems: string[],
+};
+
+/**  A refusal is an answer, not an error: nothing was sent and this is why. */
+export type PublishResult = {
+	status: "sent",
+} & PublishReport | { status: "refused"; why: string };
+
+/**
  *  Recorded once a run has been sent to Azure DevOps, so a stale review
  *  screen can never erase the fact that it happened.
  */
@@ -1725,6 +1753,11 @@ export type SignInRecipe_Serialize = {
 	allowed_origins: string[],
 	/**  How long a saved session is trusted. */
 	session_minutes: number,
+};
+
+export type SkippedCase = {
+	case_id: number,
+	why: string,
 };
 
 /**

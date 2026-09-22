@@ -1,8 +1,10 @@
 //! The supervised runner's IPC surface.
 //!
-//! NOTHING here calls Azure DevOps. The browser session lives for as
-//! long as the screen keeps it open; steps run against it one at a time,
-//! driven by the human clicking through.
+//! NOTHING here calls Azure DevOps - sending a reviewed run there is
+//! `commands::autorun_publish`, a separate command reached only by the
+//! Send button. The browser session lives for as long as the screen keeps
+//! it open; steps run against it one at a time, driven by the human
+//! clicking through.
 
 use crate::autorun::store;
 use crate::autorun::{CaseScript, LocalRun, StepScript};

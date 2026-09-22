@@ -112,7 +112,9 @@ pub async fn start_test_run(
 /// the same result row again. Per-step marks and attachments are additive
 /// and best-effort exactly as in the batch flow; a failure there never
 /// loses the recorded outcome, and the returned list names what did not
-/// attach.
+/// attach. See `record_point_outcome` for the body - this command is just
+/// the token + client wiring around it, shared with Auto Run's publish
+/// step (`autorun::publish`), which is the only other caller.
 #[tauri::command]
 #[specta::specta]
 pub async fn record_result(
@@ -125,10 +127,26 @@ pub async fn record_result(
 ) -> Result<Vec<String>, ado::AdoError> {
     let token = get_fresh_token(&app).await?;
     let client = ado::AdoClient::new(token);
+    record_point_outcome(&client, &organization, &project, run_id, result_id, &outcome).await
+}
+
+/// The write behind `record_result`, and behind every result Auto Run's
+/// publish step records: an already-built client, one result row, one
+/// outcome. Per-step marks and attachments are additive and best-effort -
+/// a failure there never loses the recorded outcome, and the returned list
+/// names what did not attach.
+pub async fn record_point_outcome(
+    client: &ado::AdoClient,
+    organization: &str,
+    project: &str,
+    run_id: i32,
+    result_id: i32,
+    outcome: &PointOutcome,
+) -> Result<Vec<String>, ado::AdoError> {
     client
         .update_run_results(
-            &organization,
-            &project,
+            organization,
+            project,
             run_id,
             &[ado_testplan::OutcomeUpdate {
                 id: result_id,
@@ -145,7 +163,7 @@ pub async fn record_result(
         if let Some(details) = ado_testplan::build_iteration_details(ids, step_ocs, &outcome.outcome)
         {
             if let Err(e) = client
-                .update_result_steps(&organization, &project, run_id, result_id, details)
+                .update_result_steps(organization, project, run_id, result_id, details)
                 .await
             {
                 crate::applog::warn(format!(
@@ -160,8 +178,8 @@ pub async fn record_result(
         for att in files {
             if let Err(e) = client
                 .add_result_attachment(
-                    &organization,
-                    &project,
+                    organization,
+                    project,
                     run_id,
                     result_id,
                     &att.b64,
