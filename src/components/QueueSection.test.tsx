@@ -810,6 +810,82 @@ test("a mixed queue still gets the check-the-PBI stage", async () => {
   expect(await screen.findByRole("button", { name: /Yes —/ })).toBeInTheDocument();
 });
 
+/// The chip glows to say "about to create on this PBI" - once the create
+/// has actually happened there is nothing left to warn about. A mixed
+/// upload (some rows new, some updates) used to leave the chip glowing
+/// forever after a successful submit, because onSuccess cleared reviewing
+/// but never disarmed.
+test("the PBI stops glowing once a mixed upload has succeeded", async () => {
+  const glows: boolean[] = [];
+  const onGlow = (e: Event) => glows.push((e as CustomEvent<boolean>).detail);
+  window.addEventListener("tcm-pbi-glow", onGlow);
+  try {
+    mockIPC((cmd) => {
+      if (cmd === "plugin:event|listen") return 1;
+      if (cmd === "plugin:event|unlisten") return null;
+      if (cmd === "list_test_case_fields") return [];
+      if (cmd === "list_project_tags") return [];
+      if (cmd === "test_case_field_values") return [];
+      if (cmd === "pbi_test_cases") return [];
+      if (cmd === "submit_queue") {
+        return [
+          { index: 0, title: "Login works", action: "updated", id: 777, error: null },
+          { index: 1, title: "Brand new", action: "created", id: 900, error: null },
+        ];
+      }
+      return undefined;
+    });
+    renderQueue([makeCase({ update_id: 777 }), makeCase({ title: "Brand new" })]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
+    // Armed while reviewing a queue that creates anything.
+    await waitFor(() => expect(glows[glows.length - 1]).toBe(true));
+
+    const go = await screen.findByRole("button", { name: /Yes —/ });
+    await waitFor(() => expect(go).toBeEnabled());
+    fireEvent.click(go);
+
+    // The upload went through - the chip stops glowing, it does not stay
+    // lit until the component happens to unmount.
+    await screen.findByRole("button", { name: "Clear results" });
+    await waitFor(() => expect(glows[glows.length - 1]).toBe(false));
+  } finally {
+    window.removeEventListener("tcm-pbi-glow", onGlow);
+  }
+});
+
+/// Backing out at the duplicate gate ("Stop - take me back") is also a way
+/// of abandoning the armed confirmation, not just Back - it must disarm
+/// the same way.
+test("stopping at the duplicate gate also stops the glow", async () => {
+  const glows: boolean[] = [];
+  const onGlow = (e: Event) => glows.push((e as CustomEvent<boolean>).detail);
+  window.addEventListener("tcm-pbi-glow", onGlow);
+  try {
+    mockIPC((cmd) => {
+      if (cmd === "plugin:event|listen") return 1;
+      if (cmd === "plugin:event|unlisten") return null;
+      if (cmd === "list_test_case_fields") return [];
+      if (cmd === "list_project_tags") return [];
+      if (cmd === "test_case_field_values") return [];
+      if (cmd === "pbi_test_cases") {
+        return [{ id: 201, title: "Login works", tags: "", automation_status: "Planned" }];
+      }
+      return undefined;
+    });
+    renderQueue([makeCase()]); // a CREATE row whose title already exists
+
+    fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+    await waitFor(() => expect(glows[glows.length - 1]).toBe(true));
+    expect(await screen.findByText(/Stopped: 1 case/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop — take me back" }));
+    await waitFor(() => expect(glows[glows.length - 1]).toBe(false));
+  } finally {
+    window.removeEventListener("tcm-pbi-glow", onGlow);
+  }
+});
+
 test("a floating copy of the main button appears once the real one scrolls away", async () => {
   onScreen = false;
   mockIPC((cmd) => {

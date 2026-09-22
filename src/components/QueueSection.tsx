@@ -629,6 +629,9 @@ export default function QueueSection({
       setChangeNotes(
         hasTesterNotes(results, diffs) ? testerNotes({ pbiId: sentFor, sent, results, diffs }) : null,
       );
+      // The glow says "about to create on this PBI" - once the write has
+      // gone through there is nothing left to warn about.
+      arm(false);
       setReviewing(false);
     },
     onError: (e) => toast.error(`Submit failed: ${e.message}`),
@@ -1421,7 +1424,15 @@ export default function QueueSection({
                   duplicates - and cleaning those up needs delete permission.
                 </p>
                 <div className="flex items-center gap-2">
-                  <Button size="sm" onClick={() => setReviewing(false)}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      // Backing out here abandons the armed confirmation
+                      // too - the chip must stop glowing, same as Back.
+                      arm(false);
+                      setReviewing(false);
+                    }}
+                  >
                     <IconBack aria-hidden />
                     Stop — take me back
                   </Button>
