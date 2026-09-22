@@ -420,6 +420,15 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     if let Err(why) = action.validate() {
         return (400, why);
     }
+    // `validate()` allows `file://` (a saved script may need it for the
+    // live fixture, a development-only tab) but a TRIED action runs
+    // against whatever page the person actually has open - sending their
+    // browser to a local file is never something a rehearsal should do.
+    if let crate::browser::actions::Action::Navigate { url } = &action {
+        if url.trim().to_ascii_lowercase().starts_with("file:") {
+            return (400, "a tried navigate goes to http or https only".to_string());
+        }
+    }
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }

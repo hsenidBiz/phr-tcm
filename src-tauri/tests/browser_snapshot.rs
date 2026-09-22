@@ -125,6 +125,22 @@ fn a_name_with_quotes_and_a_backslash_still_yields_a_parseable_locator() {
     assert!(target.describe().contains(raw_name), "{}", target.describe());
 }
 
+/// The printed name is truncated at 80 characters with `...`, but the
+/// locator on the end of the line is built from the FULL sanitized name -
+/// otherwise a locator copied off a snapshot line for a long-named
+/// control would only ever match the truncated prefix, not the control's
+/// real accessible name.
+#[test]
+fn a_long_name_is_truncated_on_the_line_but_the_locator_keeps_it_whole() {
+    let long_name = "x".repeat(100);
+    let nodes = vec![node("1", "button", &long_name, &[])];
+    let out = render(&nodes, DEFAULT_LIMIT);
+    assert!(out.contains("..."), "the printed name must still be truncated: {out}");
+    let suffix = out.splitn(2, " -> ").nth(1).expect("a locator suffix");
+    let target: Target = serde_json::from_str(suffix).expect("valid JSON a Target can be read back from");
+    assert_eq!(target.describe(), format!("button \"{long_name}\""));
+}
+
 // --- render: rule 5, the line cap ----------------------------------------
 
 #[test]

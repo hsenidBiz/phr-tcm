@@ -362,7 +362,9 @@ async fn an_unchecked_step_with_a_reason_passes_the_floor() {
 
 /// The floor needs the test case, and the test case comes from Azure
 /// DevOps - so with nobody signed in there is nothing to check against
-/// and the save is refused before a single byte is written.
+/// and the save is refused before a single byte is written. 503, like
+/// every other route that needs a signed-in client: nothing about the
+/// bundle is wrong, the app just cannot check it yet.
 #[tokio::test]
 async fn saving_without_signing_in_is_refused_before_anything_is_written() {
     let dir = TempDir::new();
@@ -371,10 +373,37 @@ async fn saving_without_signing_in_is_refused_before_anything_is_written() {
 
     let body = case_7("#toast", "Saved").to_string();
     let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!(status, 400, "{out}");
+    assert_eq!(status, 503, "{out}");
     assert!(out.contains("sign in to Test Case Manager first"), "{out}");
     assert!(out.contains("checked against its test case"), "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_none(), "a script was written anyway");
+}
+
+/// A bundle bigger than the same cap `/test-cases` already applies to its
+/// own `ids` list is refused before the floor even looks anything up -
+/// disk or Azure DevOps.
+#[tokio::test]
+async fn a_bundle_over_the_case_cap_is_refused_before_any_lookup() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let too_many: Vec<serde_json::Value> = (1..=201)
+        .map(|id| {
+            serde_json::json!({
+                "case_id": id,
+                "title": "t",
+                "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "ok" }] }]
+            })
+        })
+        .collect();
+    let body = serde_json::Value::Array(too_many).to_string();
+    // No client at all - if this reached the floor's lookup it would 503
+    // instead, so a 400 here proves the cap runs first.
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "a bundle can carry at most 200 scripts");
+    assert!(load_script(dir.path(), 1).unwrap().is_none(), "a script was written anyway");
 }
 
 /// A case id the organization does not know is a mistake worth naming -
@@ -1010,6 +1039,46 @@ async fn try_refuses_a_sign_in_and_an_invalid_action() {
     assert!(out.contains("teleport"), "{out}");
 }
 
+/// The applog line for a tried action never carries a `fill`'s VALUE -
+/// only its selector, the same as every other selector-carrying kind.
+/// Pure, so this is provable without a browser at all.
+#[test]
+fn describe_try_never_carries_a_fills_value() {
+    let action = Action::Fill { selector: "#password".into(), value: "hunter2".to_string() };
+    let out = describe_try(&action, true);
+    assert!(!out.contains("hunter2"), "{out}");
+    assert_eq!(out, "AI tried fill #password in the supervised browser: ok");
+}
+
+#[test]
+fn describe_try_names_the_kind_the_target_and_whether_it_worked() {
+    let navigate = Action::Navigate { url: "https://app.example/ratings".to_string() };
+    assert_eq!(
+        describe_try(&navigate, true),
+        "AI tried navigate https://app.example/ratings in the supervised browser: ok"
+    );
+
+    let click = Action::Click { selector: serde_json::from_value(serde_json::json!({ "role": "button", "name": "Save" })).unwrap() };
+    assert_eq!(
+        describe_try(&click, false),
+        "AI tried click button \"Save\" in the supervised browser: failed"
+    );
+}
+
+/// A saved script may navigate to `file://` (the live fixture is a local
+/// file), but a TRIED action runs against the person's real, open browser
+/// - sending it to a local file is never something a rehearsal should do,
+/// however the case is written or trimmed.
+#[tokio::test]
+async fn try_refuses_a_file_navigate() {
+    for url in ["file:///etc/passwd", "  FILE://C:/secrets.txt"] {
+        let body = serde_json::json!({ "action": { "kind": "navigate", "url": url } }).to_string();
+        let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &body, "1.0.0").await;
+        assert_eq!(status, 400, "{out}");
+        assert_eq!(out, "a tried navigate goes to http or https only");
+    }
+}
+
 // --------------------------------------------------------- the read routes
 
 fn failed_run(id: &str, case_id: i32) -> LocalRun {
@@ -1141,7 +1210,9 @@ async fn the_route_appends_the_projects_quirks() {
     assert_eq!(status, 200);
     assert!(body.starts_with(&autorun_guide()), "the guide's own text must survive unchanged");
     assert!(
-        body.contains("## Known quirks of this application\n\n- the grid paginates at 25 rows"),
+        body.contains(
+            "## Known quirks of this application\n\n- the grid paginates at 25 rows (recorded by the assistant)"
+        ),
         "the recorded quirk never reached the guide: {body}"
     );
 }

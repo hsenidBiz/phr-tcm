@@ -128,7 +128,13 @@ fn locator_suffix(role: &str, name: &str) -> String {
 
 fn format_line(node: &AxNode, depth: usize) -> String {
     let indent = " ".repeat(depth.min(12));
-    let name = truncate_name(&sanitize(&node.name));
+    // The printed name is capped for readability, but the locator on the
+    // end of the line has to reach the element by its REAL name - a
+    // locator built from the truncated prefix would only ever match a
+    // control whose accessible name happens to start with those same 80
+    // characters, which is not what this line is actually called.
+    let full_name = sanitize(&node.name);
+    let name = truncate_name(&full_name);
     let mut line = format!("{indent}{} \"{name}\"", node.role);
     // A password never leaves this module: the name check runs here too,
     // not only in `parse_nodes`, so a hand-built node reaches the same
@@ -145,7 +151,7 @@ fn format_line(node: &AxNode, depth: usize) -> String {
     if node.disabled {
         line.push_str(" (disabled)");
     }
-    line.push_str(&locator_suffix(&node.role, &name));
+    line.push_str(&locator_suffix(&node.role, &full_name));
     line
 }
 
