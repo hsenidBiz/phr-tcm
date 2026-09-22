@@ -567,6 +567,85 @@ test("an act stop swallows clicks in four pieces; every other stop in one", asyn
   await waitFor(() => expect(swallows()).toHaveLength(1));
 });
 
+/// Field report: on a screen where the ringed section is taller than the
+/// window, the four-rect hole swallowed nothing above or below it - the
+/// content column behind the overlay stayed fully clickable, with `<main>`
+/// still un-inert. `scrollIntoView({block:"center"})` is exactly what hands
+/// the tour a rect like this: it centres what it can, which for a section
+/// taller than the viewport means `rect.top < 0` and `rect.bottom >
+/// innerHeight`. The fix clamps the ring into the viewport before cutting
+/// the four pieces, and falls back to the ordinary full sheet once the
+/// clamped hole would still be more than half the screen.
+test("a normal-sized ring cuts four rects clamped to the anchor", async () => {
+  addAnchor("theme");
+  const el = document.querySelector('[data-tour="theme"]') as HTMLElement;
+  vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+    top: 300,
+    left: 400,
+    right: 600,
+    bottom: 340,
+    width: 200,
+    height: 40,
+    x: 400,
+    y: 300,
+    toJSON: () => ({}),
+  } as DOMRect);
+
+  render(
+    <UiTour
+      steps={THEME_STEPS}
+      at={SETTINGS_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(swallows()).toHaveLength(4));
+  const [above, below, leftOf, rightOf] = swallows();
+  // pad(6) around the anchor, well inside a 1024x768 jsdom viewport - the
+  // clamp changes nothing here, which is the point: an in-bounds anchor
+  // keeps behaving exactly as before.
+  expect(above.style.height).toBe("294px");
+  expect(below.style.top).toBe("346px");
+  expect(leftOf.style.width).toBe("394px");
+  expect(leftOf.style.height).toBe("52px");
+  expect(rightOf.style.left).toBe("606px");
+});
+
+test("an anchor taller than the viewport falls back to one full sheet, not an unbounded hole", async () => {
+  addAnchor("theme");
+  const el = document.querySelector('[data-tour="theme"]') as HTMLElement;
+  // What scrollIntoView({block:"center"}) hands a section taller than the
+  // window: centred, so it overhangs both edges.
+  vi.spyOn(el, "getBoundingClientRect").mockReturnValue({
+    top: -200,
+    left: 100,
+    right: 900,
+    bottom: 1000,
+    width: 800,
+    height: 1200,
+    x: 100,
+    y: -200,
+    toJSON: () => ({}),
+  } as DOMRect);
+
+  render(
+    <UiTour
+      steps={THEME_STEPS}
+      at={SETTINGS_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(swallows()).toHaveLength(1));
+  const [sheet] = swallows();
+  expect(sheet.style.top).toBe("0px");
+  expect(sheet.style.left).toBe("0px");
+  expect(sheet.style.right).toBe("0px");
+  expect(sheet.style.bottom).toBe("0px");
+});
+
 test("while waiting for a click nothing is swallowed at all", () => {
   addAnchor("settings");
   render(

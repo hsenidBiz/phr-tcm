@@ -256,11 +256,26 @@ export default function UiTour({
     ? []
     : rect && step.act
       ? (() => {
-          const top = Math.max(0, rect.top - pad);
-          const bottom = Math.max(0, rect.bottom + pad);
-          const left = Math.max(0, rect.left - pad);
-          const right = Math.max(0, rect.right + pad);
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          // Clamp the ring into the viewport BEFORE cutting the four
+          // pieces from it. An anchor taller or wider than the window -
+          // what `scrollIntoView({block:"center"})` gives a section that
+          // does not fit - would otherwise push `bottom`/`right` past the
+          // edge of the screen, leaving the hole unbounded on that side.
+          const top = Math.min(Math.max(0, rect.top - pad), vh);
+          const bottom = Math.min(Math.max(0, rect.bottom + pad), vh);
+          const left = Math.min(Math.max(0, rect.left - pad), vw);
+          const right = Math.min(Math.max(0, rect.right + pad), vw);
           const height = Math.max(0, bottom - top);
+          const width = Math.max(0, right - left);
+          // Even clamped, a hole this big is not a ring around a control
+          // any more - it is most of the screen, with `<main>` un-inert
+          // behind it. The plain full-viewport sheet (same as every other
+          // stop) is the safe fallback.
+          if (width * height > (vw * vh) / 2) {
+            return [{ top: 0, left: 0, right: 0, bottom: 0 }];
+          }
           return [
             { top: 0, left: 0, right: 0, height: top },
             { top: bottom, left: 0, right: 0, bottom: 0 },
