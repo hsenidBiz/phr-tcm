@@ -1,7 +1,5 @@
 //! The expected-result floor: every way an Auto Run script falls short of
-//! its test case's expected results. Pure - no browser, no filesystem, so
-//! it can be checked on save, on repair, and by the assistant, with the
-//! same answer every time.
+//! its test case's expected results. Pure - no browser, no filesystem.
 
 use super::CaseScript;
 use crate::steps_xml::Step;
@@ -28,40 +26,54 @@ fn truncated(s: &str) -> String {
 }
 
 /// Every way this script falls short of its case. Empty means it holds.
+/// Rules 1-2 are driven by the CASE (only speak about a step position it
+/// has an opinion on). Rules 3-4 are driven by the SCRIPT: a step with
+/// `unchecked` set is judged wherever it sits, including step 0 and any
+/// step past the case's count, where "no case step there" is rule 4.
 pub fn check_floor(script: &CaseScript, expected: &[Expected]) -> Vec<String> {
     let mut out: Vec<(i32, String)> = Vec::new();
+
     for e in expected {
         let want = e.expected.trim();
         let n = e.step_number;
+        if want.is_empty() {
+            continue;
+        }
         match script.steps.iter().find(|s| s.step_number == n) {
             None => {
-                if !want.is_empty() {
-                    out.push((n, format!("step {n} expects \"{}\" but the script has no step {n}", truncated(want))));
-                }
+                out.push((n, format!("step {n} expects \"{}\" but the script has no step {n}", truncated(want))));
             }
             Some(step) => {
                 let has_check = step.actions.iter().any(|a| a.is_check());
-                match (step.unchecked.is_some(), has_check, want.is_empty()) {
-                    (true, true, _) => {
-                        out.push((n, format!("step {n} says it is unchecked but has a check - drop one or the other")));
-                    }
-                    (true, false, true) => {
-                        out.push((n, format!("step {n} says it is unchecked but the case expects nothing there")));
-                    }
-                    (false, false, false) => {
-                        out.push((
-                            n,
-                            format!(
-                                "step {n} expects \"{}\" but the script checks nothing there - add an expect_ action, or say why in \"unchecked\"",
-                                truncated(want)
-                            ),
-                        ));
-                    }
-                    _ => {}
+                if step.unchecked.is_none() && !has_check {
+                    out.push((
+                        n,
+                        format!(
+                            "step {n} expects \"{}\" but the script checks nothing there - add an expect_ action, or say why in \"unchecked\"",
+                            truncated(want)
+                        ),
+                    ));
                 }
             }
         }
     }
+
+    for step in &script.steps {
+        if step.unchecked.is_none() {
+            continue;
+        }
+        let n = step.step_number;
+        let has_check = step.actions.iter().any(|a| a.is_check());
+        if has_check {
+            out.push((n, format!("step {n} says it is unchecked but has a check - drop one or the other")));
+            continue;
+        }
+        let want_here = expected.iter().find(|e| e.step_number == n).is_some_and(|e| !e.expected.trim().is_empty());
+        if !want_here {
+            out.push((n, format!("step {n} says it is unchecked but the case expects nothing there")));
+        }
+    }
+
     out.sort();
     out.dedup();
     out.into_iter().map(|(_, s)| s).collect()

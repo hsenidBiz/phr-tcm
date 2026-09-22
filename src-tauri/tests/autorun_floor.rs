@@ -88,6 +88,53 @@ fn a_script_step_marked_unchecked_when_the_case_expects_nothing_is_reported() {
 }
 
 #[test]
+fn a_step_with_no_case_step_but_a_check_and_unchecked_is_a_contradiction() {
+    // Rule 3 applies wherever an unchecked step sits, even step 0 (sign-in)
+    // or a step number the case has nothing to say about at all.
+    let sc = script(serde_json::json!([
+        { "step_number": 0, "actions": [{ "kind": "check_text", "value": "Signed in" }], "unchecked": "not sure why" }
+    ]));
+    let out = check_floor(&sc, &case(&[]));
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0], "step 0 says it is unchecked but has a check - drop one or the other");
+}
+
+#[test]
+fn a_step_beyond_the_case_marked_unchecked_expects_nothing_there() {
+    // Rule 4 applies to a script step past the case's count too: no case
+    // step at that number IS "the case expects nothing there".
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] },
+        { "step_number": 2, "actions": [{ "kind": "check_text", "value": "Gone" }] },
+        { "step_number": 5, "actions": [{ "kind": "click", "selector": "#teardown" }], "unchecked": "teardown, not part of the case" }
+    ]));
+    let out = check_floor(&sc, &case(&["A toast says Saved", "The row is gone"]));
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!(out[0], "step 5 says it is unchecked but the case expects nothing there");
+}
+
+#[test]
+fn check_floor_ignores_a_whitespace_only_expected_result() {
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#x" }] }
+    ]));
+    let out = check_floor(&sc, &case(&["   \t  "]));
+    assert!(out.is_empty(), "{out:?}");
+}
+
+#[test]
+fn check_floor_truncates_a_multi_byte_expected_result_without_panicking() {
+    let long_expected: String = std::iter::repeat('\u{00e9}').take(80).collect();
+    let sc = script(serde_json::json!([
+        { "step_number": 1, "actions": [{ "kind": "click", "selector": "#x" }] }
+    ]));
+    let out = check_floor(&sc, &case(&[&long_expected]));
+    assert_eq!(out.len(), 1, "{out:?}");
+    let quoted = out[0].split('"').nth(1).expect("a quoted sentence");
+    assert_eq!(quoted.chars().count(), 60);
+}
+
+#[test]
 fn the_sign_in_step_and_steps_beyond_the_case_are_ignored() {
     let sc = script(serde_json::json!([
         { "step_number": 0, "actions": [{ "kind": "click", "selector": "#signin" }] },
