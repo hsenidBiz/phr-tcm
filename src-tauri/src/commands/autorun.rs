@@ -317,6 +317,29 @@ pub fn auto_run_save_recipe(
     Ok(())
 }
 
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_load_quirks(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+) -> Result<Vec<crate::autorun::quirks::Quirk>, String> {
+    crate::autorun::quirks::load_quirks(&root(&app)?, &organization, &project)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn auto_run_save_quirks(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    quirks: Vec<crate::autorun::quirks::Quirk>,
+) -> Result<(), String> {
+    crate::autorun::quirks::save_quirks(&root(&app)?, &organization, &project, &quirks)?;
+    crate::applog::info("Auto-run project quirks saved");
+    Ok(())
+}
+
 /// Sign the named account in, in the open browser. Used before a case's
 /// first step, and by the `sign_in` action in the middle of one.
 #[tauri::command]

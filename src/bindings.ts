@@ -337,6 +337,8 @@ export const commands = {
 	session_minutes: number,
 } | null, string>(__TAURI_INVOKE("auto_run_load_recipe", { organization, project })),
 	autoRunSaveRecipe: (organization: string, project: string, recipe: SignInRecipe_Deserialize) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_recipe", { organization, project, recipe })),
+	autoRunLoadQuirks: (organization: string, project: string) => typedError<Quirk[], string>(__TAURI_INVOKE("auto_run_load_quirks", { organization, project })),
+	autoRunSaveQuirks: (organization: string, project: string, quirks: Quirk[]) => typedError<null, string>(__TAURI_INVOKE("auto_run_save_quirks", { organization, project, quirks })),
 	/**
 	 *  Sign the named account in, in the open browser. Used before a case's
 	 *  first step, and by the `sign_in` action in the middle of one.
@@ -1544,6 +1546,14 @@ export type PullRequest = {
 	my_vote: number,
 	reviewers: PrReviewer[],
 	web_url: string,
+};
+
+export type Quirk = {
+	text: string,
+	/**  "person" or "assistant" */
+	by: string,
+	/**  Epoch milliseconds as a string. */
+	at: string,
 };
 
 export type RecipeStep = RecipeStep_Serialize | RecipeStep_Deserialize;

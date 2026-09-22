@@ -11,6 +11,7 @@ pub mod edits;
 pub mod floor;
 pub mod guide;
 pub mod publish;
+pub mod quirks;
 pub mod recipe;
 pub mod replay;
 pub mod runner;

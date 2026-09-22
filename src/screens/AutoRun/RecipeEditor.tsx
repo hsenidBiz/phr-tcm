@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { commands, type SignInRecipe_Deserialize } from "../../bindings";
+import { commands, type Quirk, type SignInRecipe_Deserialize } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
@@ -26,6 +26,30 @@ const PLACEHOLDER = `{
   "session_minutes": 480
 }`;
 
+/**
+ * The quirks box's current lines, matched back against what was loaded so
+ * an unchanged line keeps its original author and timestamp. A line that
+ * matches nothing on the loaded list is new, written by the person editing
+ * this dialog right now.
+ */
+function linesToQuirks(text: string, loaded: Quirk[]): Quirk[] {
+  const pool = [...loaded];
+  const now = String(Date.now());
+  const out: Quirk[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    const i = pool.findIndex((q) => q.text === line);
+    if (i >= 0) {
+      out.push(pool[i]);
+      pool.splice(i, 1);
+    } else {
+      out.push({ text: line, by: "person", at: now });
+    }
+  }
+  return out;
+}
+
 export default function RecipeEditor({ org, project, onClose }: { org: string; project: string; onClose: () => void }) {
   const qc = useQueryClient();
   const existing = useQuery({
@@ -33,15 +57,30 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
     queryFn: () => unwrapStr(commands.autoRunLoadRecipe(org, project)),
     retry: false,
   });
+  const existingQuirks = useQuery({
+    queryKey: ["autorun-quirks", org, project],
+    queryFn: () => unwrapStr(commands.autoRunLoadQuirks(org, project)),
+    retry: false,
+  });
   const [text, setText] = useState<string | null>(null);
+  const [quirksText, setQuirksText] = useState<string | null>(null);
   const [problem, setProblem] = useState("");
   const value = text ?? (existing.data ? JSON.stringify(existing.data, null, 2) : "");
-  const blocked = existing.isLoading || existing.isError;
+  const quirksValue = quirksText ?? (existingQuirks.data ?? []).map((q) => q.text).join("\n");
+  const blocked = existing.isLoading || existing.isError || existingQuirks.isLoading || existingQuirks.isError;
 
   const save = useMutation({
-    mutationFn: (recipe: SignInRecipe_Deserialize) => unwrapStr(commands.autoRunSaveRecipe(org, project, recipe)),
+    mutationFn: async (recipe: SignInRecipe_Deserialize) => {
+      // The recipe is saved first; a refusal here (a bad selector, a
+      // missing address) must leave the quirks box exactly as typed and
+      // never write it - saving a fact about the app is not consolation
+      // for a recipe that did not actually save.
+      await unwrapStr(commands.autoRunSaveRecipe(org, project, recipe));
+      await unwrapStr(commands.autoRunSaveQuirks(org, project, linesToQuirks(quirksValue, existingQuirks.data ?? [])));
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
+      qc.invalidateQueries({ queryKey: ["autorun-quirks", org, project] });
       toast.success("Sign-in recipe saved.");
       onClose();
     },
@@ -64,7 +103,7 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
   };
 
   return (
-    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-3 p-5">
+    <Modal onClose={onClose} className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-3 overflow-y-auto p-5">
       <div>
         <h2 className="text-sm font-semibold text-text">Sign-in recipe</h2>
         <p className="mt-1 text-xs text-muted">
@@ -78,6 +117,16 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
       {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}
       <Textarea aria-label="Sign-in recipe JSON" className="min-h-[22rem] flex-1 font-mono text-xs"
         placeholder={PLACEHOLDER} value={value} onChange={(e) => setText(e.target.value)} />
+      <div>
+        <h3 className="text-sm font-semibold text-text">Known quirks</h3>
+        <p className="mt-1 text-xs text-muted">
+          One per line: something learned about this application that the next script - written by a
+          person or an assistant - should not have to rediscover.
+        </p>
+      </div>
+      {existingQuirks.isError && <p className="text-xs text-danger">{existingQuirks.error.message}</p>}
+      <Textarea aria-label="Known quirks" className="min-h-[8rem] font-mono text-xs"
+        value={quirksValue} onChange={(e) => setQuirksText(e.target.value)} />
       {problem && <p className="text-xs text-danger">{problem}</p>}
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onClose}>

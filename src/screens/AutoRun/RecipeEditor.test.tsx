@@ -19,10 +19,17 @@ const RECIPE = {
   session_minutes: 480,
 };
 
-function mount(existing: unknown, onSave: (args: unknown) => unknown = () => null) {
+function mount(
+  existing: unknown,
+  onSave: (args: unknown) => unknown = () => null,
+  existingQuirks: unknown = [],
+  onSaveQuirks: (args: unknown) => unknown = () => null,
+) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_load_recipe") return existing;
     if (cmd === "auto_run_save_recipe") return onSave(args);
+    if (cmd === "auto_run_load_quirks") return existingQuirks;
+    if (cmd === "auto_run_save_quirks") return onSaveQuirks(args);
     return null;
   });
   const onClose = vi.fn();
@@ -64,4 +71,49 @@ test("what the app refuses is shown in its own words", async () => {
   await waitFor(() => expect(JSON.parse(box.value)).toEqual(RECIPE));
   fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
   expect(await screen.findByText(/step 1: a locator needs/)).toBeInTheDocument();
+});
+
+test("the quirks box loads existing lines", async () => {
+  const quirks = [
+    { text: "the grid paginates at 50 rows", by: "person", at: "1000" },
+    { text: "dates render as dd/mm", by: "assistant", at: "2000" },
+  ];
+  mount(RECIPE, () => null, quirks);
+  const box = (await screen.findByLabelText("Known quirks")) as HTMLTextAreaElement;
+  await waitFor(() => expect(box.value).toBe("the grid paginates at 50 rows\ndates render as dd/mm"));
+});
+
+test("an unchanged line keeps its author and a new line is saved as the person", async () => {
+  const existingQuirks = [{ text: "dates render as dd/mm", by: "assistant", at: "2000" }];
+  const calls: unknown[] = [];
+  mount(RECIPE, () => null, existingQuirks, (a) => { calls.push(a); return null; });
+  const recipeBox = (await screen.findByLabelText("Sign-in recipe JSON")) as HTMLTextAreaElement;
+  await waitFor(() => expect(JSON.parse(recipeBox.value)).toEqual(RECIPE));
+  const quirksBox = (await screen.findByLabelText("Known quirks")) as HTMLTextAreaElement;
+  await waitFor(() => expect(quirksBox.value).toBe("dates render as dd/mm"));
+  fireEvent.change(quirksBox, { target: { value: "dates render as dd/mm\nthe grid paginates at 50 rows" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(calls.length).toBe(1));
+  const call = calls[0] as { organization: string; project: string; quirks: { text: string; by: string; at: string }[] };
+  expect(call.organization).toBe("acme");
+  expect(call.project).toBe("Web");
+  expect(call.quirks).toEqual([
+    { text: "dates render as dd/mm", by: "assistant", at: "2000" },
+    { text: "the grid paginates at 50 rows", by: "person", at: expect.any(String) },
+  ]);
+});
+
+test("when the recipe save is refused, the quirks are not saved", async () => {
+  const quirksCalls: unknown[] = [];
+  mount(
+    RECIPE,
+    () => { throw new Error("step 1: a locator needs one of role, text or css"); },
+    [],
+    (a) => { quirksCalls.push(a); return null; },
+  );
+  const box = (await screen.findByLabelText("Sign-in recipe JSON")) as HTMLTextAreaElement;
+  await waitFor(() => expect(JSON.parse(box.value)).toEqual(RECIPE));
+  fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
+  expect(await screen.findByText(/step 1: a locator needs/)).toBeInTheDocument();
+  expect(quirksCalls).toEqual([]);
 });
