@@ -324,19 +324,50 @@ pub fn save_shot_keeping(root: &Path, bytes: &[u8], keep: usize) -> Result<Strin
     let name = format!("shot-{ms}-{seq:06}.jpg");
     std::fs::write(dir.join(&name), bytes).map_err(|e| e.to_string())?;
 
-    prune_shots(&dir, keep);
+    prune_shots(root, &dir, keep);
     Ok(name)
 }
 
-/// Drop the oldest shots beyond `keep`. Entirely best effort: a listing or
-/// delete failure here must never lose track of a screenshot that already
-/// made it to disk.
-fn prune_shots(dir: &Path, keep: usize) {
+/// Every shot name referenced by a run that has NOT been sent to Azure
+/// DevOps yet - pictures a person has not had the chance to review and
+/// confirm are evidence, not disposable, no matter how old. A run once it
+/// is `published` no longer protects its shots: they already made it into
+/// the record Azure DevOps holds (or the problem list says they did not),
+/// so keeping them here is no longer the only copy that matters.
+fn shots_of_unpublished_runs(root: &Path) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for run in list_runs(root) {
+        if run.published.is_some() {
+            continue;
+        }
+        for case in &run.cases {
+            for step in &case.steps {
+                if let Some(name) = &step.screenshot {
+                    out.insert(name.clone());
+                }
+                for outcome in &step.outcomes {
+                    if let Some(name) = &outcome.screenshot {
+                        out.insert(name.clone());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Drop the oldest shots beyond `keep`, never one still referenced by an
+/// unpublished run's own steps - `keep` is the budget for everything
+/// else. Entirely best effort: a listing or delete failure here must
+/// never lose track of a screenshot that already made it to disk.
+fn prune_shots(root: &Path, dir: &Path, keep: usize) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let protected = shots_of_unpublished_runs(root);
     let mut all: Vec<String> = entries
         .flatten()
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|n| safe_shot_name(n))
+        .filter(|n| !protected.contains(n))
         .collect();
     all.sort();
     if all.len() > keep {

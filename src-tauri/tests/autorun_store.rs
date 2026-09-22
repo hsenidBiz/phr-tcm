@@ -10,7 +10,7 @@ use v2_lib::autorun::store::{
     list_runs, load_run, load_script, load_shot, new_run_id, safe_shot_name, save_run,
     save_script, save_scripts_atomically, save_shot, save_shot_keeping, SaveScriptsError,
 };
-use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord, StepScript};
+use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, PublishedRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
 
 struct TempDir(std::path::PathBuf);
@@ -331,6 +331,58 @@ fn saving_still_returns_the_name_even_keeping_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let name = save_shot_keeping(dir.path(), &[1, 2, 3], 0).unwrap();
     assert!(safe_shot_name(&name), "{name}");
+}
+
+/// A shot referenced by an unpublished run's own steps must survive
+/// pruning even when it is the oldest thing in the folder - it is
+/// evidence for a run nobody has sent yet, not disposable. Once that run
+/// IS published, its pictures are no longer protected and the next prune
+/// is free to drop them like any other old shot.
+#[test]
+fn an_unpublished_runs_own_shots_survive_pruning_and_are_freed_once_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let shot_a = save_shot_keeping(root, b"A", 2).unwrap();
+    let mut run = LocalRun {
+        id: "run-1".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        mode: "unattended".into(),
+        published: None,
+        cases: vec![CaseRecord {
+            case_id: 1,
+            title: "t".into(),
+            verdict: "".into(),
+            note: "".into(),
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot_a.clone()) }],
+            proposed: "".into(),
+            reason: "".into(),
+            duration_ms: None,
+            account: None,
+        }],
+    };
+    save_run(root, &run).unwrap();
+
+    // More new shots than `keep` - without the guard, shot A (the oldest
+    // file in the folder) would be pruned away first.
+    for i in 0..5u8 {
+        save_shot_keeping(root, &[i], 2).unwrap();
+    }
+    assert!(
+        root.join("shots").join(&shot_a).is_file(),
+        "an unpublished run's own picture must never be pruned"
+    );
+
+    // Once the run is sent, its picture is no longer protected.
+    run.published = Some(PublishedRun { run_id: 1, web_url: "https://x/run/1".into(), at: "1".into() });
+    save_run(root, &run).unwrap();
+    for i in 5..8u8 {
+        save_shot_keeping(root, &[i], 2).unwrap();
+    }
+    assert!(
+        !root.join("shots").join(&shot_a).is_file(),
+        "a sent run's picture is no longer protected and should have been pruned"
+    );
 }
 
 /// Pruning only ever touches files that look like screenshots - anything
