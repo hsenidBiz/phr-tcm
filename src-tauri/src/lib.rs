@@ -14,6 +14,7 @@ pub mod bugreport;
 pub mod ai_bridge;
 pub mod ai_tools;
 pub mod assigned_watch;
+pub mod db;
 pub mod db_defaults;
 pub mod audio;
 pub mod auth;
