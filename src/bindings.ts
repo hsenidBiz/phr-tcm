@@ -154,6 +154,20 @@ export const commands = {
 	 *  The frontend reloads afterwards so every screen re-reads its state.
 	 */
 	importAppBackup: (path: string) => typedError<BackupImportResult, string>(__TAURI_INVOKE("import_app_backup", { path })),
+	/**
+	 *  Take the Boards fallback route once, by hand, and say what it
+	 *  answered. Development builds only.
+	 * 
+	 *  The route's request body was never observed - the page blocks
+	 *  cross-origin reads of its script bundles - so its field names are
+	 *  inferred from a sibling call (design §4.1). Until this has answered
+	 *  200 once, against a PBI that has no requirement suite yet, the
+	 *  fallback in `submit_queue` is an educated guess. This is how the guess
+	 *  gets checked without uploading anything: one PBI, one test case that
+	 *  already exists, one report. `probe_report` says what the answer means
+	 *  for the next edit.
+	 */
+	devProbeBoardsSuite: (organization: string, project: string, pbiId: number, caseId: number) => typedError<string, string>(__TAURI_INVOKE("dev_probe_boards_suite", { organization, project, pbiId, caseId })),
 	listTestCaseFields: (organization: string, project: string) => typedError<FieldRef[], AdoError>(__TAURI_INVOKE("list_test_case_fields", { organization, project })),
 	pbiTestCasesFull: (organization: string, pbiId: number, moduleRef: string | null, preconditionsRef: string | null) => typedError<TestCaseFull[], AdoError>(__TAURI_INVOKE("pbi_test_cases_full", { organization, pbiId, moduleRef, preconditionsRef })),
 	/**

@@ -10,7 +10,9 @@
 //! probe names a different field there is exactly one place to change.
 
 use v2_lib::ado::{AdoClient, AdoError};
-use v2_lib::ado_testplan::boards::{boards_body, BoardsOutcome, BOARDS_ROUTE_VERSION};
+use v2_lib::ado_testplan::boards::{
+    boards_body, probe_report, BoardsOutcome, BOARDS_ROUTE_VERSION,
+};
 use v2_lib::ado_testplan::EnsuredSuite;
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -567,4 +569,55 @@ async fn the_fallback_says_when_the_named_plan_has_no_suite() {
         }
         other => panic!("expected the missing-suite error, got {other:?}"),
     }
+}
+
+/// What the development-build probe writes back. The route's body is a
+/// guess until this has been run once against a real PBI (design §4.1),
+/// so the report's whole job is to say which of the four answers came
+/// back and what it means for the next edit: wire it, rename a field,
+/// stop, or read the error as it is.
+#[test]
+fn probe_report_reads_the_four_answers() {
+    let landed = Ok(BoardsOutcome {
+        suite: EnsuredSuite {
+            plan_id: 157942,
+            plan_name: "Gamma Guardians_Stories_26R2_SP04".into(),
+            suite_id: 157944,
+            created_plan: false,
+        },
+        project_id: PROJECT_ID.into(),
+        team_id: GAMMA_ID.into(),
+    });
+    assert_eq!(
+        probe_report(&landed),
+        format!(
+            "200: plan 157942 \"Gamma Guardians_Stories_26R2_SP04\", suite 157944, \
+             project id {PROJECT_ID}, team id {GAMMA_ID} - wire it"
+        )
+    );
+
+    // The useful failure: a 400 names the field the guessed body got
+    // wrong, so the body is carried into the report rather than left in
+    // the log. Capped at what `refused()` keeps, because a controller
+    // that answers with a page of HTML should not fill the panel.
+    let long = "x".repeat(900);
+    let wrong_field = probe_report(&Err(AdoError::Http { status: 400, body: long }));
+    assert_eq!(
+        wrong_field,
+        format!(
+            "400: the body's field names are wrong - Azure DevOps said: {}",
+            "x".repeat(600)
+        )
+    );
+
+    // The design's one unverified assumption: a bearer token needs no
+    // anti-forgery header. A 403 is that assumption failing.
+    assert_eq!(
+        probe_report(&Err(AdoError::Forbidden)),
+        "403: the route refused a bearer token - the design stops here (§4.1 assumption)"
+    );
+
+    // Anything else is repeated as it is - there is nothing to read into
+    // a token that expired or a host that never answered.
+    assert_eq!(probe_report(&Err(AdoError::Unauthorized)), "unauthorized");
 }

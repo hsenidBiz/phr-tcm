@@ -228,6 +228,51 @@ pub fn prepare_bug_report(
     })
 }
 
+/// Take the Boards fallback route once, by hand, and say what it
+/// answered. Development builds only.
+///
+/// The route's request body was never observed - the page blocks
+/// cross-origin reads of its script bundles - so its field names are
+/// inferred from a sibling call (design §4.1). Until this has answered
+/// 200 once, against a PBI that has no requirement suite yet, the
+/// fallback in `submit_queue` is an educated guess. This is how the guess
+/// gets checked without uploading anything: one PBI, one test case that
+/// already exists, one report. `probe_report` says what the answer means
+/// for the next edit.
+#[tauri::command]
+#[specta::specta]
+pub async fn dev_probe_boards_suite(
+    app: tauri::AppHandle,
+    organization: String,
+    project: String,
+    pbi_id: i32,
+    case_id: i32,
+) -> Result<String, String> {
+    // A shipped build has no business calling an undocumented endpoint on
+    // purpose, and the dev panel that calls this is compiled out of one
+    // anyway - this is the second lock on the same door.
+    if !crate::ai_tools::dev_build() {
+        return Err("The Boards suite route probe runs only in a development build.".into());
+    }
+    let token = crate::state::get_fresh_token(&app)
+        .await
+        .map_err(|e| e.to_string())?;
+    let client = crate::ado::AdoClient::new(token);
+    // The same area the upload would pass: it is what picks the team the
+    // route runs as, so probing with anything else would probe a
+    // different call.
+    let (area, _iteration) = client
+        .get_work_item_paths(&organization, &project, pbi_id)
+        .await
+        .map_err(|e| format!("could not read the area path of #{pbi_id}: {e}"))?;
+    let out = client
+        .boards_fallback(&organization, &project, pbi_id, &area, &[case_id])
+        .await;
+    let report = crate::ado_testplan::boards::probe_report(&out);
+    crate::applog::info(format!("boards suite route probe: {report}"));
+    Ok(report)
+}
+
 /// Export everything the app remembers on this machine - the webview's
 /// `tcm-v2-*` localStorage (handed in by the frontend, which is the only
 /// side that can read it) plus the disk stores under `app_data_dir` - into

@@ -60,6 +60,37 @@ pub struct BoardsOutcome {
     pub team_id: String,
 }
 
+/// What the development-build probe says back after taking the route
+/// once by hand (design §4.5).
+///
+/// The body above is a guess until this has answered 200, so each answer
+/// is reported as the next edit it asks for rather than as a bare status:
+/// 200 means wire it, 400 names the field to rename in `boards_body`, 403
+/// is the design's one assumption failing, and anything else is repeated
+/// as it stands, because there is nothing to read into a token that
+/// expired or a host that never answered.
+pub fn probe_report(out: &Result<BoardsOutcome, AdoError>) -> String {
+    match out {
+        Ok(out) => format!(
+            "200: plan {} \"{}\", suite {}, project id {}, team id {} - wire it",
+            out.suite.plan_id, out.suite.plan_name, out.suite.suite_id, out.project_id, out.team_id
+        ),
+        // A 400 is the useful failure: its body names the field this
+        // request got wrong. Kept in the report rather than left in the
+        // log, trimmed to what `refused()` keeps of every other refusal so
+        // a page of controller HTML cannot fill the panel.
+        Err(AdoError::Http { status: 400, body }) => {
+            let said: String = body.chars().take(600).collect();
+            format!("400: the body's field names are wrong - Azure DevOps said: {said}")
+        }
+        Err(AdoError::Forbidden) => {
+            "403: the route refused a bearer token - the design stops here (§4.1 assumption)"
+                .to_string()
+        }
+        Err(e) => format!("{e}"),
+    }
+}
+
 /// The project's GUID and its default team's GUID - both read from the one
 /// projects call, because the fallback needs the second only when no
 /// team's area covers the PBI and a second request for it would be a

@@ -2,9 +2,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Bug, ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import type { PbiHit } from "../bindings";
+import { commands, type PbiHit } from "../bindings";
 import { START_TOUR_EVENT } from "../tour/tourState";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { SHOW_CHANGELOG_EVENT } from "../lib/changelog";
 import { setPbiGlow } from "../lib/pbiGlow";
 import { clearSuiteSeed } from "../lib/suiteSeed";
@@ -67,6 +68,30 @@ export default function DevPanel({
   // Which failure the once/always buttons will arm. Separate from what IS
   // armed: picking a kind must not fire anything by itself.
   const [faultId, setFaultId] = useState<FaultId>("timeout");
+
+  // The Boards suite route probe. Typed rather than taken from the
+  // selection, because the PBI it needs is one that has NO suite yet and
+  // a case id that already exists on it - not necessarily what is open.
+  const [probePbi, setProbePbi] = useState("");
+  const [probeCase, setProbeCase] = useState("");
+  const [probing, setProbing] = useState(false);
+  const [probeReport, setProbeReport] = useState("");
+
+  const runProbe = async () => {
+    setProbing(true);
+    setProbeReport("");
+    try {
+      const r = await commands.devProbeBoardsSuite(
+        org,
+        project,
+        Number(probePbi),
+        Number(probeCase),
+      );
+      setProbeReport(r.status === "ok" ? r.data : r.error);
+    } finally {
+      setProbing(false);
+    }
+  };
 
   const [pos, setPos] = useState<{ x: number; y: number } | null>(loadPos);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -249,6 +274,48 @@ export default function DevPanel({
                 {fault.updateBlocked ? "Update check blocked" : "Block update check"}
               </Button>
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <p className="font-semibold text-text">Boards suite route probe</p>
+            <p className="text-muted">
+              Takes the internal Boards route once, for a PBI that has no
+              test suite yet and one test case id that is already linked to
+              it. Nothing is uploaded. The answer says whether the upload's
+              fallback is live; Settings, Logs has the request and the
+              reply in full.
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Input
+                className="w-20 px-2 py-1 text-xs"
+                inputMode="numeric"
+                placeholder="PBI id"
+                aria-label="PBI id to probe"
+                value={probePbi}
+                onChange={(e) => setProbePbi(e.target.value.replace(/\D/g, ""))}
+              />
+              <Input
+                className="w-20 px-2 py-1 text-xs"
+                inputMode="numeric"
+                placeholder="Case id"
+                aria-label="Test case id to add"
+                value={probeCase}
+                onChange={(e) => setProbeCase(e.target.value.replace(/\D/g, ""))}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={probing || !org || !project || !probePbi || !probeCase}
+                onClick={runProbe}
+              >
+                {probing ? "Probing" : "Probe"}
+              </Button>
+            </div>
+            {probeReport && (
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-surface-2 p-2 text-muted">
+                {probeReport}
+              </pre>
+            )}
           </div>
 
           <div className="space-y-0.5 text-muted">

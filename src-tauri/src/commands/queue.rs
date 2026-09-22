@@ -656,6 +656,9 @@ pub async fn submit_queue(
     // created cases (unset picker = "Same as PBI").
     let mut pbi_area = String::new();
     let mut pbi_iteration = String::new();
+    // A suite refusal that is worth a second route, held until the batch
+    // has run. See where it is read, after the loop.
+    let mut suite_pending: Option<String> = None;
     // The Steps field as Azure DevOps currently holds it, for every row that
     // is an UPDATE. See `steps_patch`: without it, a case exported to JSON,
     // retitled and re-imported writes its steps back from the plain-text
@@ -742,7 +745,18 @@ pub async fn submit_queue(
                             other => format!("{other}"),
                         };
                         crate::applog::warn(format!("no requirement suite for #{pbi_id}: {reason}"));
-                        let _ = crate::events::SuiteNotCreated { reason }.emit(&app);
+                        // A 403 here is the access level, not the request:
+                        // the same account creates the suite fine from
+                        // Boards, so there is a second route worth taking.
+                        // It adds EXISTING work items to a suite, so it
+                        // needs ids this upload has not created yet - which
+                        // is why the sentence waits for the batch instead
+                        // of going to the screen now.
+                        if matches!(&e, ado::AdoError::Http { status: 403, .. }) {
+                            suite_pending = Some(reason);
+                        } else {
+                            let _ = crate::events::SuiteNotCreated { reason }.emit(&app);
+                        }
                     }
                 }
                 pbi_area = area;
@@ -750,7 +764,11 @@ pub async fn submit_queue(
             }
         }
     }
-    let effective_area = area_path.filter(|s| !s.is_empty()).unwrap_or(pbi_area);
+    // Cloned, not moved: the PBI's own area is what picks the team the
+    // Boards fallback runs as, and that happens after the batch.
+    let effective_area = area_path
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| pbi_area.clone());
     let effective_iteration = iteration_path
         .filter(|s| !s.is_empty())
         .unwrap_or(pbi_iteration);
@@ -893,6 +911,63 @@ pub async fn submit_queue(
             &crate::cache::keys::tags(&organization, &project),
             |tags| crate::commands::discovery::add_new_tags(tags, &created),
         );
+    }
+    // The suite refusal held back above. The Boards route adds work items
+    // that already exist, so only now is there anything to add.
+    if let Some(sentence) = suite_pending {
+        // Only rows that landed: a failed row's id is either missing or
+        // not a case Azure DevOps has.
+        let ids: Vec<i32> = results
+            .iter()
+            .filter(|r| r.action != "failed")
+            .filter_map(|r| r.id)
+            .collect();
+        if ids.is_empty() {
+            // Nothing landed, so there is nothing to put in a suite and no
+            // route to try. The refusal is the whole story, as it was
+            // before this fallback existed.
+            let _ = crate::events::SuiteNotCreated { reason: sentence }.emit(&app);
+        } else {
+            let attempt = match get_fresh_token(&app).await {
+                Ok(token) => {
+                    let client = ado::AdoClient::new(token);
+                    client
+                        .boards_fallback(&organization, &project, pbi_id, &pbi_area, &ids)
+                        .await
+                        .map(|out| (client.base_url.clone(), out))
+                }
+                Err(e) => Err(e),
+            };
+            match attempt {
+                // `boards_fallback` has already logged the plan and the
+                // suite it ended on. Nothing is emitted: a suite that was
+                // FOUND says nothing today either, and `PlanCreated` is the
+                // documented create's own event - the plan this route made
+                // is the team's sprint plan, which the log names.
+                Ok((base_url, out)) => crate::ado_testplan::remember_suite(
+                    &base_url,
+                    &organization,
+                    &project,
+                    pbi_id,
+                    &out.suite,
+                ),
+                // Tried once and never again: a fallback that retries is a
+                // fallback nobody can diagnose. The first sentence stands
+                // word for word - it is still the true reason - with one
+                // line saying the second route did not work either.
+                Err(e) => {
+                    crate::applog::warn(format!(
+                        "the Boards route did not create a suite for #{pbi_id} either: {e}"
+                    ));
+                    let _ = crate::events::SuiteNotCreated {
+                        reason: format!(
+                            "{sentence} The Boards route did not work either - Settings, Logs has what it said."
+                        ),
+                    }
+                    .emit(&app);
+                }
+            }
+        }
     }
     Ok(results)
 }
