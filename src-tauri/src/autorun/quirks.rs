@@ -123,14 +123,18 @@ pub fn add_quirk(
 }
 
 /// A Markdown section for an assistant's guide: the running list, or
-/// nothing at all when there is nothing to say yet.
+/// nothing at all when there is nothing to say yet. Each line is
+/// attributed - `by` is never shown as-is (a raw "person" or "assistant"
+/// reads oddly mid-sentence), so an assistant reading its own guide can
+/// tell which quirks it recorded itself and which a person already knew.
 pub fn quirks_section(quirks: &[Quirk]) -> String {
     if quirks.is_empty() {
         return String::new();
     }
     let mut out = String::from("## Known quirks of this application\n\n");
     for q in quirks {
-        out.push_str(&format!("- {}\n", q.text));
+        let attribution = if q.by == "assistant" { "recorded by the assistant" } else { "recorded by you" };
+        out.push_str(&format!("- {} ({attribution})\n", q.text));
     }
     out
 }

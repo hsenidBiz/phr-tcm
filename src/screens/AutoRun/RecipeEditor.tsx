@@ -81,6 +81,10 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
   const blocked = existing.isLoading || existing.isError || existingQuirks.isLoading || existingQuirks.isError;
   const recipeEmpty = value.trim() === "";
   const quirksEmpty = quirksValue.trim() === "";
+  // Clearing every line out of a box that used to have quirks in it is a
+  // real save (an empty list), not nothing to do - so an empty quirks box
+  // must not block Save just because the recipe box is empty too.
+  const quirksWereLoaded = (existingQuirks.data ?? []).length > 0;
 
   // `recipe` is `null` for a project with no recipe yet, whose box is left
   // empty on purpose - that box saves only the quirks, never an
@@ -157,7 +161,11 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
           <IconCancel aria-hidden />
           Cancel
         </Button>
-        <Button size="sm" disabled={blocked || save.isPending || (recipeEmpty && quirksEmpty)} onClick={submit}>
+        <Button
+          size="sm"
+          disabled={blocked || save.isPending || (recipeEmpty && quirksEmpty && !quirksWereLoaded)}
+          onClick={submit}
+        >
           <IconConfirm aria-hidden />
           {save.isPending ? "Saving" : recipeEmpty ? "Save quirks" : "Save recipe"}
         </Button>

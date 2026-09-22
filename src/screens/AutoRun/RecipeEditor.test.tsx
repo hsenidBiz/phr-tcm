@@ -134,6 +134,24 @@ test("two identical lines in the quirks box save as one", async () => {
   expect(call.quirks[0].text).toBe("the grid paginates at 50 rows");
 });
 
+test("clearing an already-saved quirks list is still a save, not a disabled button", async () => {
+  const existingQuirks = [{ text: "the grid paginates at 50 rows", by: "person", at: "1000" }];
+  const quirksCalls: unknown[] = [];
+  mount(null, () => null, existingQuirks, (a) => {
+    quirksCalls.push(a);
+    return null;
+  });
+  const quirksBox = (await screen.findByLabelText("Known quirks")) as HTMLTextAreaElement;
+  await waitFor(() => expect(quirksBox.value).toBe("the grid paginates at 50 rows"));
+  fireEvent.change(quirksBox, { target: { value: "" } });
+  const button = screen.getByRole("button", { name: "Save quirks" });
+  expect(button).toBeEnabled();
+  fireEvent.click(button);
+  await waitFor(() => expect(quirksCalls.length).toBe(1));
+  const call = quirksCalls[0] as { quirks: unknown[] };
+  expect(call.quirks).toEqual([]);
+});
+
 test("an empty recipe box still saves the quirks, and does not call auto_run_save_recipe", async () => {
   const recipeCalls: unknown[] = [];
   const quirksCalls: unknown[] = [];

@@ -119,11 +119,15 @@ fn a_refusal_leaves_the_earlier_save_in_place() {
     assert_eq!(load_quirks(dir.path(), "Acme", "Web").unwrap(), vec![quirk("good", "person", "1")]);
 }
 
+/// Behaviour change: each quirk line is now attributed, `(recorded by
+/// you)` for a person and `(recorded by the assistant)` for an assistant
+/// - so an assistant reading its own guide can tell its own past
+/// discoveries from a person's.
 #[test]
 fn the_section_text_is_empty_for_no_quirks_and_a_bulleted_list_otherwise() {
     assert_eq!(quirks_section(&[]), "");
     let text = quirks_section(&[quirk("the search box debounces 400ms", "person", "1"), quirk("dates render as dd/mm", "assistant", "2")]);
     assert!(text.starts_with("## Known quirks of this application\n\n"), "{text}");
-    assert!(text.contains("- the search box debounces 400ms\n"), "{text}");
-    assert!(text.contains("- dates render as dd/mm\n"), "{text}");
+    assert!(text.contains("- the search box debounces 400ms (recorded by you)\n"), "{text}");
+    assert!(text.contains("- dates render as dd/mm (recorded by the assistant)\n"), "{text}");
 }
