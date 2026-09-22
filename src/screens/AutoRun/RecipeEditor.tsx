@@ -69,8 +69,10 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
         <h2 className="text-sm font-semibold text-text">Sign-in recipe</h2>
         <p className="mt-1 text-xs text-muted">
           How to sign in to this project's application, once, for every script. Use {"{{username}}"} and{" "}
-          {"{{password}}"} where the account's login goes. "signed_in" is something only a signed-in page shows.
-          "when_visible" handles a prompt that may or may not appear.
+          {"{{password}}"} where the account's login goes. Use {"{{password}}"} only on a real password
+          field (type=password): the browser masks it there, and the run's pictures would show it
+          anywhere else. "signed_in" is something only a signed-in page shows. "when_visible" handles a
+          prompt that may or may not appear.
         </p>
       </div>
       {existing.isError && <p className="text-xs text-danger">{existing.error.message}</p>}

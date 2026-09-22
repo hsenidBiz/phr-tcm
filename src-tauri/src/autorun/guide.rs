@@ -36,14 +36,20 @@ pub const ACTION_KINDS: &[&str] = &[
 pub fn autorun_guide() -> String {
     r##"# Writing an Auto Run action script
 
-An action script drives ONE test case through a real, visible browser
-while a person watches. You write the actions; the person watching
-decides the verdict. Nothing you write is ever sent to Azure DevOps.
+An action script drives ONE test case through a real, visible browser -
+either while a person watches and decides the verdict, or unattended,
+where the machine only proposes one. Nothing a script or a run does ever
+reaches Azure DevOps by itself; a person reviewing a finished run and
+pressing Send is the one door out.
 
 ## The actions
 
 Each step of the test case becomes one entry with a `step_number` and a
-list of `actions`, run in order:
+list of `actions`, run in order. `step_number` is the position of the
+step IN THE TEST CASE - 1 for the first step, 2 for the second, and so
+on - because per-step results are matched back to the case's own steps by
+that position. A script numbered 10, 20, 30 records no per-step results
+at all.
 
 - `{ "kind": "navigate", "url": "https://..." }` - waits for the page to load
 - `{ "kind": "click", "selector": ... }`
