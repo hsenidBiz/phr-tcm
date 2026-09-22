@@ -21,13 +21,15 @@ use std::time::Duration;
 use v2_lib::autorun::accounts::{save_accounts, Account};
 use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
 use v2_lib::autorun::replay::{run_selection, Browsers, SIGN_IN_STEP};
+use v2_lib::autorun::runner::run_step;
 use v2_lib::autorun::signin::sign_in;
-use v2_lib::autorun::{sessions, store, CaseScript, LocalRun};
+use v2_lib::autorun::{sessions, store, CaseScript, LocalRun, StepScript};
 use v2_lib::browser::actions::{execute_in, execute_with, Action, ActionOutcome, HIGHLIGHT_JS, Policy};
 use v2_lib::browser::cdp::Cdp;
 use v2_lib::browser::launch::{background_args, launch_with, Browser, LaunchedBrowser};
 use v2_lib::browser::locator::{resolve, Target};
 use v2_lib::browser::page;
+use v2_lib::browser::snapshot::{probe, snapshot, DEFAULT_LIMIT};
 use v2_lib::browser::timing::Timing;
 use v2_lib::events::ReplayProgress;
 
@@ -73,6 +75,10 @@ fn timing() -> Timing {
 
 fn action_of(value: serde_json::Value) -> Action {
     serde_json::from_value(value).expect("the test wrote an invalid action")
+}
+
+fn action_target(value: serde_json::Value) -> Target {
+    serde_json::from_value(value).expect("the test wrote an invalid locator")
 }
 
 async fn run_with(live: &mut Live, action: serde_json::Value, timing: &Timing) -> ActionOutcome {
@@ -494,6 +500,98 @@ async fn navigation_waits_for_its_own_load_and_a_fragment_waits_for_nothing() {
     assert!(out.detail.starts_with("moved to "), "a fragment loads nothing: {}", out.detail);
     assert!(started.elapsed() < Duration::from_secs(5), "it waited for a load that never comes");
     must(run(&mut live, json!({ "kind": "check_url", "contains": "#bottom" })).await);
+}
+
+/// The accessibility-tree snapshot an assistant reads instead of a
+/// screenshot: it names real elements, in a shape a locator can be parsed
+/// back out of, and it never prints a password's value.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn the_snapshot_names_what_a_locator_can_reach() {
+    let mut live = open().await;
+    let text = snapshot(&mut live.cdp, DEFAULT_LIMIT).await.expect("the snapshot call failed");
+
+    // The visible "Save changes" button, not its display:none twin - if
+    // the hidden one were counted too the probe below would answer
+    // "matches: 2".
+    let line = text
+        .lines()
+        .find(|l| l.contains("button") && l.contains("\"Save changes\""))
+        .unwrap_or_else(|| panic!("no line named the Save changes button:\n{text}"));
+    let arrow = line.rfind(" -> ").expect("the line has no locator suffix");
+    let suffix = &line[arrow + 4..];
+    let value: serde_json::Value =
+        serde_json::from_str(suffix).unwrap_or_else(|e| panic!("the locator suffix is not valid JSON ({e}): {suffix}"));
+    let target: Target =
+        serde_json::from_value(value).unwrap_or_else(|e| panic!("the locator does not parse as a Target ({e}): {suffix}"));
+    target.validate().expect("the locator does not validate");
+    let probed = probe(&mut live.cdp, &target).await.expect("probe failed");
+    assert!(probed.starts_with("matches: 1"), "expected exactly one match: {probed}");
+
+    // The password field is named, but never its value.
+    assert!(text.to_lowercase().contains("password"), "no password field in the snapshot:\n{text}");
+    assert!(!text.contains("s3cret"), "the password value leaked into the snapshot: {text}");
+}
+
+/// `probe` answers how many elements a locator reaches right now, prints
+/// one line per match (up to 10), and tells the caller how to narrow it
+/// down when there is more than one.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_probe_counts_what_the_page_shows_and_says_how_to_narrow() {
+    let mut live = open().await;
+    // Ambiguous on its own: a dialog button and a page button, both named
+    // "Add Method" and both visible.
+    let target = action_target(json!({ "role": "button", "name": "Add Method", "exact": true }));
+    let out = probe(&mut live.cdp, &target).await.expect("probe failed");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "matches: 2", "{out}");
+    assert_eq!(lines.len(), 4, "expected the header, two match lines and the narrow sentence: {out}");
+    assert!(lines.last().unwrap().contains("narrow the locator"), "{out}");
+
+    let narrowed = action_target(json!({ "role": "button", "name": "Add Method", "exact": true, "nth": 1 }));
+    let out2 = probe(&mut live.cdp, &narrowed).await.expect("probe failed");
+    assert!(out2.starts_with("matches: 1"), "{out2}");
+}
+
+/// `run_step` is what an assistant's "try one action" tool ultimately
+/// calls. Its effect has to land on the real page (read back through the
+/// page's own mirror, never through what Rust believes it sent), and a
+/// filled value must never come back out through the outcome's `detail`.
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_tried_action_really_happens_in_the_page() {
+    let mut live = open().await;
+    let root = tempfile::tempdir().unwrap();
+    let mut account: Option<String> = None;
+
+    let click_step = StepScript {
+        step_number: 1,
+        actions: vec![action_of(json!({ "kind": "click", "selector": { "css": "#save" } }))],
+        unchecked: None,
+    };
+    let outcomes = run_step(&mut live.cdp, root.path(), "org", "proj", &click_step, &timing(), &mut account)
+        .await
+        .expect("run_step failed");
+    assert_eq!(outcomes.len(), 1);
+    must(outcomes.into_iter().next().unwrap());
+    let mirror = page::eval_value(&mut live.cdp, "document.getElementById('count').textContent").await.unwrap();
+    assert_eq!(mirror.as_str(), Some("clicked 1"), "the click did not really reach the page");
+
+    let fill_step = StepScript {
+        step_number: 2,
+        actions: vec![action_of(json!({ "kind": "fill", "selector": { "css": "#name" }, "value": "hello" }))],
+        unchecked: None,
+    };
+    let out = run_step(&mut live.cdp, root.path(), "org", "proj", &fill_step, &timing(), &mut account)
+        .await
+        .expect("run_step failed");
+    assert_eq!(out.len(), 1);
+    let outcome = &out[0];
+    assert!(outcome.ok, "{}", outcome.detail);
+    let echo = page::eval_value(&mut live.cdp, "document.getElementById('echo').textContent").await.unwrap();
+    assert_eq!(echo.as_str(), Some("hello"), "the fill did not really reach the page");
+    assert!(!outcome.detail.contains("hello"), "the outcome detail leaked the filled value: {}", outcome.detail);
 }
 
 /// A web application small enough to read in one go. `GET /` is the home

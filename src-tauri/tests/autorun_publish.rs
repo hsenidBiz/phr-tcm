@@ -366,7 +366,7 @@ async fn a_missing_run_file_is_refused() {
 #[tokio::test]
 async fn a_run_whose_file_disagrees_with_its_own_id_is_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let run = reviewed_run(dir.path());
+    let _run = reviewed_run(dir.path());
     // Copy the same content (`id: "run-5"`) under a DIFFERENT filename.
     let json = std::fs::read_to_string(dir.path().join("runs").join("run-5.json")).unwrap();
     std::fs::write(dir.path().join("runs").join("run-6.json"), json).unwrap();
