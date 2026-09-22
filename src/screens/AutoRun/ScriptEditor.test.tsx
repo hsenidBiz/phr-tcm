@@ -12,7 +12,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function mountWith(script: unknown, accounts: unknown[], saved: unknown[]) {
+function mountWith(
+  script: unknown,
+  accounts: unknown[],
+  saved: unknown[],
+  steps: { action: string; expected: string }[] = [],
+) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_load_script") return script;
     if (cmd === "auto_run_list_accounts") return accounts;
@@ -24,7 +29,7 @@ function mountWith(script: unknown, accounts: unknown[], saved: unknown[]) {
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ScriptEditor caseId={7} title="t" steps={[]} onClose={vi.fn()} />
+      <ScriptEditor caseId={7} title="t" steps={steps} onClose={vi.fn()} />
     </QueryClientProvider>,
   );
 }
@@ -62,4 +67,36 @@ test("choosing No sign-in writes a script with no account", async () => {
   fireEvent.click(await screen.findByRole("option", { name: "No sign-in" }));
   fireEvent.click(screen.getByRole("button", { name: "Save script" }));
   await waitFor(() => expect(saved).toEqual([{ case_id: 7, title: "t", steps: ONE_STEP, account: null }]));
+});
+
+test("the Checks line shows checked, explained and NOT CHECKED", async () => {
+  const script = {
+    case_id: 7,
+    title: "t",
+    steps: [
+      {
+        step_number: 1,
+        actions: [{ kind: "expect_visible", selector: { role: "heading", name: "Dashboard" } }],
+      },
+      {
+        step_number: 2,
+        actions: [{ kind: "click", selector: "#open" }],
+        unchecked: "the PDF cannot be read from the accessibility tree",
+      },
+    ],
+  };
+  const caseSteps = [
+    { action: "Open the dashboard", expected: "The dashboard is shown" },
+    { action: "Open the PDF", expected: "The PDF opens" },
+    { action: "Do something unwritten", expected: "" },
+    { action: "Do the third thing", expected: "Something happens" },
+  ];
+  mountWith(script, ACCOUNTS, [], caseSteps);
+  await screen.findByText("Step 1: checked");
+  expect(
+    screen.getByText("Step 2: not checked - the PDF cannot be read from the accessibility tree"),
+  ).toBeTruthy();
+  expect(screen.getByText("Step 4: NOT CHECKED")).toBeTruthy();
+  // Step 3 has no expected result, so it never becomes part of the floor.
+  expect(screen.queryByText(/Step 3:/)).toBeNull();
 });

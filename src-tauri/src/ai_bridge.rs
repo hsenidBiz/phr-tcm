@@ -173,7 +173,7 @@ pub async fn route(
         // document a format, drive the browser the person opened, or read
         // files this machine already wrote - so none of them needs a
         // signed-in client. All were let through by the guard above.
-        ("GET", "/autorun-guide") => (200, crate::autorun::guide::autorun_guide()),
+        ("GET", "/autorun-guide") => (200, autorun_guide_with_quirks(ctx)),
         ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
         ("GET", "/autorun-page") => autorun_page(target).await,
         ("POST", "/autorun-probe") => autorun_probe(body).await,
@@ -276,6 +276,29 @@ fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
         503,
         "the app could not set up its data directory this session - restart the app".to_string(),
     ))
+}
+
+/// The guide's own text, plus this project's recorded quirks when it has
+/// any. The constant (`autorun::guide::autorun_guide`) only says such a
+/// section exists; this reads what `record_autorun_quirk` has actually
+/// written, so the guide can never go stale on a live project's quirks
+/// the way it would if they were baked into the Markdown by hand.
+fn autorun_guide_with_quirks(ctx: &BridgeContext) -> String {
+    let base = crate::autorun::guide::autorun_guide();
+    if ctx.project.trim().is_empty() {
+        return base;
+    }
+    let Some(root) = crate::autorun::store::configured_root() else {
+        return base;
+    };
+    let quirks =
+        crate::autorun::quirks::load_quirks(&root, &ctx.org, &ctx.project).unwrap_or_default();
+    let section = crate::autorun::quirks::quirks_section(&quirks);
+    if section.is_empty() {
+        base
+    } else {
+        format!("{base}\n{section}")
+    }
 }
 
 /// The page in the browser the person opened, as text: Chrome's own

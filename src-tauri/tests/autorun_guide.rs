@@ -174,6 +174,44 @@ fn the_guide_keeps_logins_out_of_scripts() {
     assert!(!g.contains("REPLACE_ME"), "the old example typed a login into a script");
 }
 
+/// The floor, the declared-edit gate and the page-seeing tools all have to
+/// be taught by name and by their real wording - an assistant that never
+/// reads the exact sentences cannot recognise a `STOP` line for what it
+/// is, or word an `edits` declaration the gate will actually accept.
+#[test]
+fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
+    let g = autorun_guide();
+    for term in [
+        "get_autorun_page",
+        "probe_autorun_locator",
+        "try_autorun_action",
+        "get_autorun_failures",
+        "record_autorun_quirk",
+        "unchecked",
+        "edits",
+        "STOP",
+        "never removed",
+    ] {
+        assert!(g.contains(term), "the guide never mentions `{term}`");
+    }
+
+    // The declared-edit example - the one shape that carries both a
+    // script and its "edits" alongside it - has to parse as exactly what
+    // save_autorun_script reads for a repair, not just as some JSON.
+    #[derive(serde::Deserialize)]
+    struct SaveWithEdits {
+        scripts: Vec<v2_lib::autorun::CaseScript>,
+        edits: Vec<v2_lib::autorun::edits::Edit>,
+    }
+    let example =
+        first_balanced(&g, g.find("## Repairing a script that failed").unwrap(), '{', '}');
+    let payload: SaveWithEdits =
+        serde_json::from_str(example).expect("the declared-edit example is not a valid payload");
+    assert_eq!(payload.scripts.len(), 1, "expected one script in the declared-edit example");
+    assert_eq!(payload.edits.len(), 1, "expected one edit in the declared-edit example");
+    assert!(!payload.edits[0].why.is_empty(), "the example edit has no reason");
+}
+
 #[test]
 fn the_root_round_trips_for_callers_without_an_app_handle() {
     let dir = std::env::temp_dir().join("tcm-autorun-guide-test");

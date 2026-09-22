@@ -10,6 +10,7 @@
 
 use v2_lib::ado::AdoClient;
 use v2_lib::ai_bridge::{autorun_guard_for, autorun_route_guard, route, BridgeContext};
+use v2_lib::autorun::guide::autorun_guide;
 use v2_lib::autorun::quirks::load_quirks;
 use v2_lib::autorun::store::{load_script, save_run, save_scripts_atomically, set_root};
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord};
@@ -955,6 +956,32 @@ async fn a_quirk_can_be_recorded_on_its_own() {
     let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &empty, "1.0.0").await;
     assert_eq!(status, 400, "{out}");
     assert!(!out.is_empty());
+}
+
+/// The guide's constant only says a quirks section exists - the route is
+/// what actually appends the real one, read fresh from what this project
+/// has recorded. With nothing recorded, the route adds nothing at all.
+#[tokio::test]
+async fn the_route_appends_the_projects_quirks() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let (status, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    assert_eq!(body, autorun_guide(), "an empty quirks list must add nothing");
+
+    let saved = serde_json::json!({ "text": "the grid paginates at 25 rows" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &saved, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    let (status, body) = route(&ctx(), None, "GET", "/autorun-guide", "", "1.0.0").await;
+    assert_eq!(status, 200);
+    assert!(body.starts_with(&autorun_guide()), "the guide's own text must survive unchanged");
+    assert!(
+        body.contains("## Known quirks of this application\n\n- the grid paginates at 25 rows"),
+        "the recorded quirk never reached the guide: {body}"
+    );
 }
 
 // ----------------------------------------------------------- the dev gate

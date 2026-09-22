@@ -33,6 +33,13 @@ pub const ACTION_KINDS: &[&str] = &[
 /// The guide body. Static: it documents a format, not live org data, so
 /// unlike the test-case writing guide it needs no Azure DevOps client and
 /// works before anyone has signed in.
+///
+/// This is the constant an assistant gets from `get_autorun_guide` and
+/// `GET /autorun-guide`. The route (`ai_bridge::autorun_guide_with_quirks`)
+/// appends a real `## Known quirks of this application` section when the
+/// project has any on file - this constant only mentions that it will, so
+/// a person editing this Markdown by hand can never also go stale on a
+/// live project's quirks.
 pub fn autorun_guide() -> String {
     r##"# Writing an Auto Run action script
 
@@ -45,7 +52,8 @@ pressing Send is the one door out.
 ## The actions
 
 Each step of the test case becomes one entry with a `step_number` and a
-list of `actions`, run in order. `step_number` is the position of the
+list of `actions`, run in order: `{ "step_number": 1, "actions": [ ... ], "unchecked": "<why, optional>" }`.
+`step_number` is the position of the
 step IN THE TEST CASE - 1 for the first step, 2 for the second, and so
 on - because per-step results are matched back to the case's own steps by
 that position. A script numbered 10, 20, 30 records no per-step results
@@ -81,6 +89,10 @@ search, some autocompletes) will not see keys. The field still gets the
 input events it would from a person. Only clearing a field sends a real
 Backspace.
 
+A step may carry `"unchecked": "<why>"` when its expected result
+genuinely cannot be checked (a PDF preview, an email). Use it rarely, say
+why in one sentence, and never to skip a check you could write.
+
 Every `expect_` action looks again until it holds, for up to 10 seconds
 (add `"timeout_ms"` to change that), and a failure says what it actually
 saw. Prefer them to `check_text`, which looks once and cannot tell you
@@ -115,6 +127,26 @@ so. A project with no recipe saved yet has no such restriction. This
 covers an authored `navigate` only: a link the page follows, or a
 redirect, can still leave those origins, so it is a guard against a
 mistyped address, not a sandbox.
+
+## Every expected result is checked
+
+Every step whose test case has a non-empty expected result must be
+checked by the script - an `expect_` or `check_` action, or a step
+marked `"unchecked"` with a one-sentence reason. `save_autorun_script`
+enforces this against the real, live test case every time it is called,
+not just the first time a script is written.
+
+The save refuses with one of two sentences when a step falls short:
+
+- `step N expects "..." but the script has no step N` - the case has a step the script never wrote
+- `step N expects "..." but the script checks nothing there - add an expect_ action, or say why in "unchecked"` - the step exists but asserts nothing and gives no reason
+
+Some steps are not machine-checkable - "the layout looks correct", "the
+report reads sensibly". Do not invent an expectation that only appears
+to cover them: leave the step with its navigation actions, mark it
+`"unchecked": "<why>"`, and say so in your reply. The person is
+watching; an honest gap is worth more than a green tick that means
+nothing.
 
 ## Selectors
 
@@ -170,6 +202,25 @@ If you can read the application's source, USE IT to find selectors. That
 is what source access is for: the real label of a field or id of a button
 beats a guess every time. Read the component, take it, move on.
 
+## Seeing the page
+
+Three tools let you look before you write, against the browser the
+person has open on the Auto Run tab:
+
+- `get_autorun_page` shows what the accessibility tree calls things, one
+  element per line, with the locator that reaches it on the end of the
+  line.
+- `probe_autorun_locator` says how many elements a locator matches right
+  now, before it goes into a script.
+- `try_autorun_action` runs one action in that same browser and says what
+  happened - a rehearsal, not a run; nothing is recorded.
+
+The person opens the browser and signs in - you cannot do either. You
+never navigate away from where they are unless the case's own step says
+to. A `fill` you try really types into the application, so use test
+data, not the real thing. Never try `sign_in`: the person signs in,
+always.
+
 ## Three things that make a source-derived selector wrong
 
 Reading the source is right, but the id you find is not always the id
@@ -213,14 +264,6 @@ This is the important part, and the one that goes wrong quietly.
 
 If you find yourself writing an assertion because "that is what the code
 does", stop. You are about to automate the bug.
-
-## Steps you cannot automate
-
-Some steps are not machine-checkable - "the layout looks correct", "the
-report reads sensibly". Do not invent an expectation that only appears to
-cover them. Leave the step with its navigation actions and no check, and
-say so in your reply. The person is watching; an honest gap is worth more
-than a green tick that means nothing.
 
 ## A worked example
 
@@ -298,14 +341,84 @@ editor. If the person watching says the badge has not changed, tell them
 to navigate away from Auto Run and back rather than just switching
 windows.
 
-## When a script is already failing
+## Repairing a script that failed
 
-The runner reports each action's outcome in plain words, e.g.
-"waited 15000ms: button "Save" is covered by div.modal-backdrop" or
-"expected text "Saved" but saw "Saving..."". That names the problem
-directly - read the source again for the right locator and save a
-corrected script. A failed action also keeps a screenshot the person can
-open. Do not weaken a check to make a run go green.
+Read `get_autorun_failures` first - it names each failing step, shows
+each failed action as its own JSON, says what the page actually did, and
+points at the picture when there is one. Fix what it describes, not what
+you assume broke.
+
+Three of its lines are final, and mean the script must not be touched at
+all:
+
+- `STOP: the sign-in failed - fix the account or the recipe in the app, not the script`
+- `STOP: the browser stopped answering - rerun before changing anything`
+- `STOP: the person marked this case Blocked - a missing precondition is not a script defect`
+
+None of those three is a script defect.
+
+Saving a change to a script that already exists is a repair, and it
+needs a declaration alongside the plain "scripts" list "Saving it" above
+showed you - that bare shape is only for a case with no script yet:
+
+{
+  "scripts": [
+    {
+      "case_id": 501,
+      "title": "Open the dashboard",
+      "account": "manager",
+      "steps": [
+        {
+          "step_number": 1,
+          "actions": [
+            { "kind": "navigate", "url": "https://app.example/dashboard" },
+            { "kind": "expect_visible", "selector": { "role": "heading", "name": "Dashboard" } }
+          ]
+        },
+        {
+          "step_number": 2,
+          "actions": [
+            { "kind": "click", "selector": { "role": "link", "name": "Objectives" } },
+            { "kind": "expect_visible", "selector": { "role": "heading", "name": "Objectives" } }
+          ]
+        }
+      ]
+    }
+  ],
+  "edits": [
+    {
+      "case_id": 501,
+      "steps": [2],
+      "why": "the old text=Objectives selector matched a second element after a redesign; the real link has role link and accessible name Objectives",
+      "quirk": "the sidebar links only get an accessible name after the sidebar finishes loading"
+    }
+  ]
+}
+
+`edits` is one entry per case you are changing: the `case_id`, every
+step number whose actions were added, removed or changed, and one
+sentence of `why`. Three refusals come back from this gate:
+
+- a step you changed but left out of `edits` - `step N was changed but not declared`, naming every such step
+- a step named in `edits` that you did not actually touch - `step N was declared but not changed`
+- fewer checks in a changed step than the old one had - `an assertion is never removed or weakened by a repair`
+
+A repair changes the locator, the waiting, or the navigation. It never
+changes what is asserted.
+
+A script may be repaired this way three times before a person has to
+open it in the app and save it there; the next attempt is refused with
+"this script has been repaired 3 times without a person looking at it",
+and the count starts again once they do.
+
+An edit's own `quirk` is one sentence about the APPLICATION, not about
+this particular script - something the next repair, yours or someone
+else's, would otherwise have to rediscover. It is recorded exactly like
+`record_autorun_quirk`, which also works on its own, outside a repair.
+
+When this project has recorded quirks, this guide ends with a
+`## Known quirks of this application` section listing them, filed one at
+a time with `record_autorun_quirk` or as an edit's own `quirk`.
 "##
     .to_string()
 }

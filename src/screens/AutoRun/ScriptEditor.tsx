@@ -14,6 +14,8 @@ import { Textarea } from "../../components/ui/input";
 import { Modal } from "../../components/ui/modal";
 import { unwrapStr } from "../../lib/ipc";
 import { IconCancel, IconConfirm } from "../../lib/actionIcons";
+import { cn } from "../../lib/cn";
+import { floorOf } from "./floor";
 
 const PLACEHOLDER = `[
   {
@@ -60,6 +62,19 @@ export default function ScriptEditor({
   const [problem, setProblem] = useState("");
   const value =
     text ?? (existing.data ? JSON.stringify(existing.data.steps, null, 2) : "");
+
+  // The "Checks" line reads the box as it stands right now, not the last
+  // saved script - so a person sees a step go from NOT CHECKED to checked
+  // as they type, before they ever press Save. Invalid JSON reads as no
+  // script at all rather than throwing mid-render.
+  let scriptForChecks: StepScript[] = [];
+  try {
+    const parsed: unknown = JSON.parse(value || "[]");
+    if (Array.isArray(parsed)) scriptForChecks = parsed as StepScript[];
+  } catch {
+    // Left as [] - every step shows NOT CHECKED until the JSON is valid again.
+  }
+  const checks = floorOf(steps, scriptForChecks);
 
   // A save while the existing script hasn't resolved yet (still loading, or
   // failed to load) would write an empty `steps: []` over whatever is
@@ -155,6 +170,24 @@ export default function ScriptEditor({
               onChange={(e) => setText(e.target.value)}
             />
           </label>
+
+          {checks.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted">Checks</span>
+              <ul className="space-y-0.5 text-xs">
+                {checks.map(({ step_number, state }) => (
+                  <li
+                    key={step_number}
+                    className={cn(state.kind === "unchecked" ? "text-warning" : "text-muted")}
+                  >
+                    {state.kind === "checked" && `Step ${step_number}: checked`}
+                    {state.kind === "explained" && `Step ${step_number}: not checked - ${state.reason}`}
+                    {state.kind === "unchecked" && `Step ${step_number}: NOT CHECKED`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 

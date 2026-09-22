@@ -225,6 +225,38 @@ test("the steps unfold, the sign-in is named, and a picture can be opened", asyn
   expect(img).toHaveAttribute("src", "data:image/png;base64,shot-201-2.png");
 });
 
+test("a step the script never checked says why, read from the script itself", async () => {
+  renderReview(RUN, {
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_load_script") {
+        const caseId = (args as { caseId: number }).caseId;
+        if (caseId !== 201) return null;
+        return {
+          case_id: 201,
+          title: "Valid login",
+          steps: [
+            {
+              step_number: 2,
+              actions: [{ kind: "click", selector: "#save" }],
+              unchecked: "the PDF cannot be read from the accessibility tree",
+            },
+          ],
+        };
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: failed/i);
+
+  fireEvent.click(within(caseCard(201)).getByRole("button", { name: "Show steps" }));
+
+  expect(
+    await screen.findByText("not checked: the PDF cannot be read from the accessibility tree"),
+  ).toBeInTheDocument();
+  // Case 202 has no script loaded at all (mocked to null) - no reason to show.
+  expect(within(caseCard(202)).queryByText(/not checked:/)).not.toBeInTheDocument();
+});
+
 test("a run that was sent is read only", async () => {
   const sent = {
     ...RUN,

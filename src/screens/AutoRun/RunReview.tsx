@@ -8,7 +8,7 @@
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { commands, type LocalRun_Serialize, type PublishResult } from "../../bindings";
@@ -103,6 +103,23 @@ export default function RunReview(props: {
       const b = baseline[c.case_id];
       return !b || b.verdict !== c.verdict || b.note !== c.note;
     });
+
+  // One script lookup per case, so a step can say WHY it was never checked
+  // - the run only recorded outcomes, not the script's own `unchecked`
+  // reasons. Same query key `index.tsx`'s own script lookup uses, so a
+  // script the person just saved from the editor is not fetched twice.
+  const scripts = useQueries({
+    queries: (run?.cases ?? []).map((c) => ({
+      queryKey: ["autorun-script", c.case_id],
+      queryFn: () => unwrapStr(commands.autoRunLoadScript(c.case_id)),
+      retry: false,
+    })),
+  });
+  const unchecked = (caseId: number, stepNumber: number): string | null => {
+    const i = (run?.cases ?? []).findIndex((c) => c.case_id === caseId);
+    const script = i >= 0 ? scripts[i]?.data : null;
+    return script?.steps.find((s) => s.step_number === stepNumber)?.unchecked?.trim() || null;
+  };
 
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const toggleExpanded = (caseId: number) =>
@@ -386,6 +403,11 @@ export default function RunReview(props: {
                           )}
                         </p>
                       ))}
+                      {unchecked(c.case_id, s.step_number) && (
+                        <p className="mt-1 text-muted">
+                          not checked: {unchecked(c.case_id, s.step_number)}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>
