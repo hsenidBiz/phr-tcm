@@ -609,6 +609,7 @@ export const events = {
 	draftGeneralCommentSaved: makeEvent<DraftGeneralCommentSaved>("draft-general-comment-saved"),
 	intakeOutputPath: makeEvent<IntakeOutputPath>("intake-output-path"),
 	planCreated: makeEvent<PlanCreated>("plan-created"),
+	replayProgress: makeEvent<ReplayProgress>("replay-progress"),
 	slowdownRequested: makeEvent<SlowdownRequested>("slowdown-requested"),
 	submitProgress: makeEvent<SubmitProgress>("submit-progress"),
 	suiteNotCreated: makeEvent<SuiteNotCreated>("suite-not-created"),
@@ -1515,6 +1516,23 @@ export type RelinkOutcome = {
 	 *  frontend's describeAdoError can lift Azure DevOps' own sentence.
 	 */
 	error: AdoError | null,
+};
+
+/**
+ *  Emitted as an unattended run moves: once when a case's browser is
+ *  opening, once per step as it starts, once when the case is done.
+ */
+export type ReplayProgress = {
+	run_id: string,
+	index: number,
+	total: number,
+	case_id: number,
+	title: string,
+	/**  "opening", "signing_in", "step" or "done" */
+	phase: string,
+	step_number: number,
+	steps: number,
+	proposed: string,
 };
 
 export type RepoRef = {

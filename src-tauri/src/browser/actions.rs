@@ -238,6 +238,21 @@ impl Action {
             Action::SignIn { .. } => Ok(()),
         }
     }
+
+    /// Does this action JUDGE the page (rather than drive it or wait for it)?
+    pub fn is_check(&self) -> bool {
+        matches!(
+            self,
+            Action::CheckText { .. }
+                | Action::CheckUrl { .. }
+                | Action::ExpectVisible { .. }
+                | Action::ExpectHidden { .. }
+                | Action::ExpectText { .. }
+                | Action::ExpectContainsText { .. }
+                | Action::ExpectCount { .. }
+                | Action::ExpectAttribute { .. }
+        )
+    }
 }
 
 /// `this` is the element about to be touched.

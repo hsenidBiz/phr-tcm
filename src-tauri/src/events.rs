@@ -133,3 +133,19 @@ pub struct SlowdownRequested {
     pub secs: u32,
 }
 
+/// Emitted as an unattended run moves: once when a case's browser is
+/// opening, once per step as it starts, once when the case is done.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, specta::Type, tauri_specta::Event)]
+pub struct ReplayProgress {
+    pub run_id: String,
+    pub index: u32,
+    pub total: u32,
+    pub case_id: i32,
+    pub title: String,
+    /// "opening", "signing_in", "step" or "done"
+    pub phase: String,
+    pub step_number: i32,
+    pub steps: u32,
+    pub proposed: String,
+}
+

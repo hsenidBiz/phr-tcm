@@ -605,3 +605,47 @@ async fn sign_in_is_validated_here_but_carried_out_by_the_runner() {
     assert!(!out.ok && out.detail.contains("runner"), "{}", out.detail);
     assert!(d.calls.is_empty(), "the driver must not touch the browser for it");
 }
+
+/// `is_check` is what `replay::propose` uses to tell a script that JUDGES
+/// something from one that only drives or waits - `wait_for` waits, it
+/// does not judge, so it must read as false alongside the ordinary
+/// actions. One sample of every kind the executor understands, the same
+/// list `autorun_guide.rs`'s drift test builds.
+#[test]
+fn only_checks_and_expectations_are_checks() {
+    use v2_lib::autorun::guide::ACTION_KINDS;
+
+    let samples = vec![
+        Action::Navigate { url: "u".into() },
+        Action::Click { selector: "s".into() },
+        Action::Fill { selector: "s".into(), value: "v".into() },
+        Action::WaitFor { selector: "s".into(), timeout_ms: 1 },
+        Action::CheckText { value: "v".into() },
+        Action::CheckUrl { contains: "c".into() },
+        Action::ExpectVisible { selector: "s".into(), timeout_ms: None },
+        Action::ExpectHidden { selector: "s".into(), timeout_ms: None },
+        Action::ExpectText { selector: "s".into(), equals: "v".into(), timeout_ms: None },
+        Action::ExpectContainsText { selector: "s".into(), value: "v".into(), timeout_ms: None },
+        Action::ExpectCount { selector: "s".into(), equals: 1, timeout_ms: None },
+        Action::ExpectAttribute { selector: "s".into(), name: "n".into(), equals: "v".into(), timeout_ms: None },
+        Action::SignIn { account: "a".into() },
+    ];
+    assert_eq!(samples.len(), ACTION_KINDS.len(), "this list has drifted from ACTION_KINDS");
+
+    let is_a_check = |kind: &str| {
+        matches!(
+            kind,
+            "check_text"
+                | "check_url"
+                | "expect_visible"
+                | "expect_hidden"
+                | "expect_text"
+                | "expect_contains_text"
+                | "expect_count"
+                | "expect_attribute"
+        )
+    };
+    for (action, kind) in samples.iter().zip(ACTION_KINDS.iter()) {
+        assert_eq!(action.is_check(), is_a_check(kind), "`{kind}` disagreed with is_check()");
+    }
+}

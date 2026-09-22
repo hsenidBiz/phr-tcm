@@ -39,13 +39,14 @@ pub fn as_action_outcome(out: &SignInOutcome) -> ActionOutcome {
     outcome
 }
 
-/// A picture of the page at the moment an action failed. Best effort: a
+/// A picture of the page at the moment an action failed, or (from the
+/// replay engine) at the moment an executed step ended. Best effort: a
 /// browser that cannot take one (it has gone away, or is too busy to
 /// answer within `SHOT_TIMEOUT_MS`) just means no picture - the failure is
 /// already reported in words. Never called for a harness failure (asking a
 /// browser that has already failed to answer for a picture is exactly the
 /// stall this guards against) and never for an action that was never run.
-async fn shot_of_failure<D: Driver>(d: &mut D, root: &Path) -> Option<String> {
+pub(crate) async fn picture<D: Driver>(d: &mut D, root: &Path) -> Option<String> {
     let bytes = tokio::time::timeout(Duration::from_millis(SHOT_TIMEOUT_MS), page::screenshot(d))
         .await
         .ok()?
@@ -99,7 +100,7 @@ pub async fn run_step<D: Driver>(
             other => execute_in(d, other, timing, &policy).await,
         };
         if !outcome.ok && !outcome.harness {
-            outcome.screenshot = shot_of_failure(d, root).await;
+            outcome.screenshot = picture(d, root).await;
         }
         out.push(outcome);
     }
