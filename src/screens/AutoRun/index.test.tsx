@@ -8,12 +8,16 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import { toast } from "sonner";
 import AutoRun from "./index";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() } }));
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 const pbi = { id: 42, title: "Login work", state: "Active", work_item_type: "Product Backlog Item" };
@@ -35,8 +39,15 @@ function caseRow(id: number, title: string) {
 const STEPS = [{ step_number: 1, actions: [{ kind: "check_text", value: "ok" }] }];
 
 /** `scripted` names the case ids that have a saved script; every other
- * case answers null the way an unscripted one does. */
-function mockList(cases: ReturnType<typeof caseRow>[], scripted: number[]) {
+ * case answers null the way an unscripted one does. `runs` defaults to
+ * none on this machine, and `onCommand` lets a test observe or answer a
+ * call the shared handler does not know about (Clear scripts/results). */
+function mockList(
+  cases: ReturnType<typeof caseRow>[],
+  scripted: number[],
+  runs: unknown[] = [],
+  onCommand?: (cmd: string, args: unknown) => unknown,
+) {
   mockIPC((cmd, args) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
@@ -44,9 +55,10 @@ function mockList(cases: ReturnType<typeof caseRow>[], scripted: number[]) {
       const id = (args as { caseId?: number; case_id?: number }).caseId ?? (args as { case_id: number }).case_id;
       return scripted.includes(id) ? { case_id: id, title: "s", steps: STEPS } : null;
     }
-    if (cmd === "auto_run_list_runs") return [];
+    if (cmd === "auto_run_list_runs") return runs;
     if (cmd === "auto_run_list_accounts") return [];
     if (cmd === "auto_run_load_recipe") return null;
+    if (onCommand) return onCommand(cmd, args);
     return null;
   });
 }
@@ -261,4 +273,78 @@ test("with cases ticked the bar offers both a supervised and an unattended run",
   expect(await screen.findByRole("button", { name: "Run 2 selected" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Run 2 unattended" }));
   expect(await screen.findByRole("heading", { name: "Unattended run" })).toBeInTheDocument();
+});
+
+// ---- Clear scripts / Clear results (development build only) ------------
+
+test("Clear scripts and Clear results are disabled when there is nothing to clear", async () => {
+  // No case has a script, and no run exists on this machine.
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], []);
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  expect(screen.getByRole("button", { name: "Clear scripts" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Clear results" })).toBeDisabled();
+});
+
+test("Clear scripts opens its confirm with the exact sentence; Cancel calls nothing", async () => {
+  let calls = 0;
+  mockList([caseRow(1, "Alpha check"), caseRow(2, "Beta check")], [1], [], (cmd) => {
+    if (cmd === "auto_run_clear_scripts") calls += 1;
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear scripts" }));
+  expect(
+    await screen.findByText(
+      "This removes the scripts of the 2 cases listed for this PBI from this machine. Nothing in Azure DevOps changes.",
+    ),
+  ).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Clear 2 scripts" })).not.toBeInTheDocument(),
+  );
+  expect(calls).toBe(0);
+});
+
+test("confirming Clear scripts calls the command, toasts the count and refreshes the script badges", async () => {
+  mockList([caseRow(1, "Alpha check")], [1], [], (cmd, args) => {
+    if (cmd === "auto_run_clear_scripts") {
+      expect((args as { caseIds: number[] }).caseIds).toEqual([1]);
+      return 1;
+    }
+    return null;
+  });
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear scripts" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Clear 1 script" }));
+
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 script removed."));
+  expect(screen.queryByText(/This removes the scripts of/)).not.toBeInTheDocument();
+});
+
+test("Clear results opens its confirm with the exact sentence and, once confirmed, toasts the count", async () => {
+  mockList(
+    [caseRow(1, "Alpha check")],
+    [1],
+    [{ id: "run-1", pbi_id: 42, started_at: "1", cases: [], mode: "unattended", published: null }],
+    (cmd) => (cmd === "auto_run_clear_runs" ? 1 : null),
+  );
+  renderScreen();
+  await screen.findByText("Alpha check");
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear results" }));
+  expect(
+    await screen.findByText(
+      "This removes every Auto Run result and picture on this machine, including runs already sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.",
+    ),
+  ).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Clear 1 run" }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("1 run removed."));
 });

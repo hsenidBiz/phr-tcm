@@ -18,9 +18,19 @@ import { usePersistedStringSet } from "../../lib/collapsedGroups";
 import { Button } from "../../components/ui/button";
 import { useFieldRefs } from "../../hooks/useFieldRefs";
 import { unwrap, unwrapStr } from "../../lib/ipc";
-import { IconAccounts, IconEdit, IconImport, IconRecipe, IconUnattended } from "../../lib/actionIcons";
+import {
+  IconAccounts,
+  IconCancel,
+  IconClearResults,
+  IconClearScripts,
+  IconEdit,
+  IconImport,
+  IconRecipe,
+  IconUnattended,
+} from "../../lib/actionIcons";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
+import { Modal } from "../../components/ui/modal";
 import AccountsDialog from "./AccountsDialog";
 import PastRuns from "./PastRuns";
 import RecipeEditor from "./RecipeEditor";
@@ -67,6 +77,18 @@ export default function AutoRun({
   const [editing, setEditing] = useState<number | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
+  const [clearScriptsOpen, setClearScriptsOpen] = useState(false);
+  const [clearRunsOpen, setClearRunsOpen] = useState(false);
+  /** How many runs `PastRuns` is currently showing, reported up through
+   * `onCount` rather than a second `useQuery(["autorun-runs"])` here - a
+   * duplicate subscriber to the SAME key shifted this screen's own render
+   * timing enough to occasionally paint a run's case title (in Past runs)
+   * and the matching case row at the same instant, which is exactly what
+   * `AutoRun.test.tsx`'s "past runs list newest first" caught: a case
+   * titled the same as a run's only case suddenly matched
+   * `findByText` twice. One subscriber, fed back up, avoids the whole
+   * class of race. */
+  const [runCount, setRunCount] = useState(0);
   const queryClient = useQueryClient();
 
   /** One file, many cases - the shape `save_autorun_script` writes, so an
@@ -139,6 +161,33 @@ export default function AutoRun({
   /** Only scripted cases can be run, so only they can be ticked. */
   const runnableIn = (indices: number[]) =>
     indices.filter(hasScript).map((i) => rows[i].id);
+
+  /** Development-only housekeeping: wipe the saved scripts for every case
+   * currently listed for this PBI. A missing script for one of them is not
+   * an error - `store::clear_scripts` skips it - so this always hands over
+   * the full list rather than just the ones the badges say are scripted. */
+  const clearScripts = useMutation({
+    mutationFn: () => unwrapStr(commands.autoRunClearScripts(rows.map((c) => c.id))),
+    onSuccess: async (removed) => {
+      setClearScriptsOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["autorun-script"] });
+      toast.success(`${removed} script${removed === 1 ? "" : "s"} removed.`);
+    },
+    onError: (e) => toast.error(`Could not clear scripts: ${e.message}`),
+  });
+
+  /** Development-only housekeeping: wipe every saved run and screenshot on
+   * this machine, including runs already sent to Azure DevOps - the
+   * confirm dialog says so before this ever runs. */
+  const clearRuns = useMutation({
+    mutationFn: () => unwrapStr(commands.autoRunClearRuns()),
+    onSuccess: async (removed) => {
+      setClearRunsOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      toast.success(`${removed} run${removed === 1 ? "" : "s"} removed.`);
+    },
+    onError: (e) => toast.error(`Could not clear runs: ${e.message}`),
+  });
 
   const toggleOne = (id: number) =>
     setSelected((prev) => {
@@ -250,6 +299,30 @@ export default function AutoRun({
           <IconRecipe aria-hidden />
           Sign-in recipe
         </Button>
+        {/* Development-only housekeeping - the whole Auto Run tab only
+            ships in dev builds (see `AUTO_RUN_ENABLED` in Sidebar.tsx), so
+            no further gating belongs here. Disabled rather than hidden:
+            a button that vanishes the moment it would do nothing invites
+            "where did it go", where greyed-out with nothing to do reads as
+            exactly that. */}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!rows.some((_, i) => hasScript(i))}
+          onClick={() => setClearScriptsOpen(true)}
+        >
+          <IconClearScripts aria-hidden />
+          Clear scripts
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={runCount === 0}
+          onClick={() => setClearRunsOpen(true)}
+        >
+          <IconClearResults aria-hidden />
+          Clear results
+        </Button>
         <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-muted">
           <Checkbox
             checked={grouped}
@@ -341,11 +414,79 @@ export default function AutoRun({
         <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
       )}
 
-      <PastRuns pbiId={pbi.id} onReview={setReviewing} />
+      <PastRuns pbiId={pbi.id} onReview={setReviewing} onCount={setRunCount} />
 
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && (
         <RecipeEditor org={org} project={project} onClose={() => setRecipeOpen(false)} />
+      )}
+
+      {clearScriptsOpen && (
+        <Modal
+          onClose={() => setClearScriptsOpen(false)}
+          className="flex w-full max-w-md flex-col gap-4 p-5"
+        >
+          <h2 className="text-sm font-semibold text-text">Clear scripts?</h2>
+          <p className="text-xs text-muted">
+            This removes the scripts of the {rows.length} case{rows.length === 1 ? "" : "s"} listed
+            for this PBI from this machine. Nothing in Azure DevOps changes.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={clearScripts.isPending}
+              onClick={() => setClearScriptsOpen(false)}
+            >
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={clearScripts.isPending}
+              onClick={() => clearScripts.mutate()}
+            >
+              <IconClearScripts aria-hidden />
+              {clearScripts.isPending
+                ? "Clearing"
+                : `Clear ${rows.length} script${rows.length === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {clearRunsOpen && (
+        <Modal
+          onClose={() => setClearRunsOpen(false)}
+          className="flex w-full max-w-md flex-col gap-4 p-5"
+        >
+          <h2 className="text-sm font-semibold text-text">Clear results?</h2>
+          <p className="text-xs text-muted">
+            This removes every Auto Run result and picture on this machine, including runs already
+            sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={clearRuns.isPending}
+              onClick={() => setClearRunsOpen(false)}
+            >
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={clearRuns.isPending}
+              onClick={() => clearRuns.mutate()}
+            >
+              <IconClearResults aria-hidden />
+              {clearRuns.isPending ? "Clearing" : `Clear ${runCount} run${runCount === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+        </Modal>
       )}
 
       {editing != null &&

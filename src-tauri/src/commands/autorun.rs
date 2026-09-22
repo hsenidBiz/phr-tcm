@@ -388,3 +388,55 @@ pub fn auto_run_forget_session(app: tauri::AppHandle, account_key: String) -> Re
     crate::autorun::sessions::forget_session(&root(&app)?, &account_key);
     Ok(())
 }
+
+/// Both `auto_run_clear_scripts` and `auto_run_clear_runs` refuse while a
+/// run is going - an unattended run reads scripts as it goes, and a
+/// supervised session writes them (Script) and reads them back (Run) - so
+/// "clear" during either would race a job already using the very files it
+/// is about to remove. The sentences match the ones `auto_run_open_browser`
+/// and `auto_run_replay` already use for the same two exclusions, so a
+/// person who has seen one has seen both.
+///
+/// `pub` rather than crate-private so a test can exercise the guard
+/// directly - it takes no `AppHandle`, and building a real supervised
+/// browser session just to see this message would be much more test than
+/// the message deserves.
+pub async fn refuse_while_a_run_is_going() -> Result<(), String> {
+    if crate::commands::autorun_replay::replay_is_running() {
+        return Err("an unattended run is going - wait for it, or stop it first".to_string());
+    }
+    if supervised_session_is_open().await {
+        return Err("close the supervised browser first".to_string());
+    }
+    Ok(())
+}
+
+/// Remove the named cases' scripts from this machine, for the "Clear
+/// scripts" button on the (development-only) Auto Run toolbar. Nothing in
+/// Azure DevOps is touched - scripts never lived there.
+///
+/// Returns `u32`, not the `usize` `store::clear_scripts` itself returns -
+/// specta refuses to export `usize` to TypeScript at all ("BigInt-style
+/// types... to avoid precision loss"), and a count of files removed from a
+/// handful of cases never comes close to needing 64 bits.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_clear_scripts(app: tauri::AppHandle, case_ids: Vec<i32>) -> Result<u32, String> {
+    refuse_while_a_run_is_going().await?;
+    let removed = store::clear_scripts(&root(&app)?, &case_ids)?;
+    Ok(removed as u32)
+}
+
+/// Remove every saved run and screenshot from this machine, for the
+/// "Clear results" button on the (development-only) Auto Run toolbar.
+/// Runs already sent to Azure DevOps are removed too - the record there
+/// is the durable one, and the confirm the screen shows says so.
+///
+/// Returns `u32` for the same reason `auto_run_clear_scripts` does.
+#[tauri::command]
+#[specta::specta]
+pub async fn auto_run_clear_runs(app: tauri::AppHandle) -> Result<u32, String> {
+    refuse_while_a_run_is_going().await?;
+    let removed = store::clear_runs(&root(&app)?)?;
+    Ok(removed as u32)
+}

@@ -369,6 +369,26 @@ export const commands = {
 	/**  Throw a saved session away, so the next sign-in goes through the form. */
 	autoRunForgetSession: (accountKey: string) => typedError<null, string>(__TAURI_INVOKE("auto_run_forget_session", { accountKey })),
 	/**
+	 *  Remove the named cases' scripts from this machine, for the "Clear
+	 *  scripts" button on the (development-only) Auto Run toolbar. Nothing in
+	 *  Azure DevOps is touched - scripts never lived there.
+	 * 
+	 *  Returns `u32`, not the `usize` `store::clear_scripts` itself returns -
+	 *  specta refuses to export `usize` to TypeScript at all ("BigInt-style
+	 *  types... to avoid precision loss"), and a count of files removed from a
+	 *  handful of cases never comes close to needing 64 bits.
+	 */
+	autoRunClearScripts: (caseIds: number[]) => typedError<number, string>(__TAURI_INVOKE("auto_run_clear_scripts", { caseIds })),
+	/**
+	 *  Remove every saved run and screenshot from this machine, for the
+	 *  "Clear results" button on the (development-only) Auto Run toolbar.
+	 *  Runs already sent to Azure DevOps are removed too - the record there
+	 *  is the durable one, and the confirm the screen shows says so.
+	 * 
+	 *  Returns `u32` for the same reason `auto_run_clear_scripts` does.
+	 */
+	autoRunClearRuns: () => typedError<number, string>(__TAURI_INVOKE("auto_run_clear_runs")),
+	/**
 	 *  Run the selection unattended and return the finished run. Progress
 	 *  arrives as `ReplayProgress` events while this is pending.
 	 */

@@ -7,8 +7,9 @@
 //! landed, never a foothold for driving Azure DevOps from here.
 
 use v2_lib::autorun::store::{
-    list_runs, load_run, load_script, load_shot, new_run_id, safe_shot_name, save_run,
-    save_script, save_scripts_atomically, save_shot, save_shot_keeping, SaveScriptsError,
+    clear_runs, clear_scripts, list_runs, load_run, load_script, load_shot, new_run_id,
+    safe_shot_name, save_run, save_script, save_scripts_atomically, save_shot, save_shot_keeping,
+    SaveScriptsError,
 };
 use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, PublishedRun, StepRecord, StepScript};
 use v2_lib::browser::actions::{Action, ActionOutcome};
@@ -541,4 +542,84 @@ fn an_unattended_run_keeps_the_proposal_apart_from_the_verdict() {
     assert_eq!(back.cases[0].verdict, "", "the machine never fills in the verdict");
     assert!(load_run(dir.path(), "run-nope").unwrap().is_none());
     assert!(load_run(dir.path(), "../escape").is_err());
+}
+
+// ---- Clearing scripts and results (dev-only Auto Run toolbar) ----------
+
+/// Only the named cases' scripts are removed; everything else on disk is
+/// left alone, and asking to clear an id nobody scripted is not an error -
+/// it simply does not add to the count.
+#[test]
+fn clear_scripts_removes_only_the_named_ids_and_a_missing_one_is_fine() {
+    let dir = TempDir::new();
+    save_script(dir.path(), &one_step_script(1, "One")).unwrap();
+    save_script(dir.path(), &one_step_script(2, "Two")).unwrap();
+    save_script(dir.path(), &one_step_script(3, "Three")).unwrap();
+
+    let removed = clear_scripts(dir.path(), &[1, 3, 999]).unwrap();
+    assert_eq!(removed, 2, "999 has no script on disk - it does not count, and is not an error");
+    assert!(load_script(dir.path(), 1).unwrap().is_none());
+    assert!(load_script(dir.path(), 2).unwrap().is_some(), "case 2 was not named - it must survive");
+    assert!(load_script(dir.path(), 3).unwrap().is_none());
+}
+
+/// An empty root - nothing has ever been scripted or run - clears nothing
+/// and is not an error either way.
+#[test]
+fn clear_scripts_and_clear_runs_on_an_empty_root_return_zero() {
+    let dir = TempDir::new();
+    assert_eq!(clear_scripts(dir.path(), &[1, 2, 3]).unwrap(), 0);
+    assert_eq!(clear_runs(dir.path()).unwrap(), 0);
+}
+
+/// Every run is removed, including one already sent to Azure DevOps - the
+/// record there is the durable one, which is exactly why the confirm the
+/// screen shows before calling this says so. Every screenshot goes with
+/// them, and the count returned is runs, never shots (one run's evidence
+/// can be many pictures).
+#[test]
+fn clear_runs_removes_every_run_and_shot_published_or_not() {
+    let dir = TempDir::new();
+    let root = dir.path();
+    let shot = save_shot_keeping(root, b"A", 10).unwrap();
+    let unpublished = LocalRun {
+        id: "run-1".into(),
+        pbi_id: 1,
+        started_at: "1".into(),
+        mode: "unattended".into(),
+        published: None,
+        cases: vec![CaseRecord {
+            case_id: 1,
+            title: "t".into(),
+            verdict: "".into(),
+            note: "".into(),
+            steps: vec![StepRecord { step_number: 1, outcomes: vec![], screenshot: Some(shot.clone()) }],
+            proposed: "".into(),
+            reason: "".into(),
+            duration_ms: None,
+            account: None,
+        }],
+    };
+    save_run(root, &unpublished).unwrap();
+    let published = LocalRun {
+        id: "run-2".into(),
+        pbi_id: 1,
+        started_at: "2".into(),
+        mode: "unattended".into(),
+        published: Some(PublishedRun {
+            run_id: 42,
+            web_url: "https://dev.azure.com/org/proj/_workitems/edit/42".into(),
+            at: "2".into(),
+        }),
+        cases: vec![],
+    };
+    save_run(root, &published).unwrap();
+
+    let removed = clear_runs(root).unwrap();
+    assert_eq!(removed, 2, "both runs count toward the total, published or not");
+    assert!(list_runs(root).is_empty());
+    assert!(
+        !root.join("shots").join(&shot).is_file(),
+        "every screenshot is removed along with the runs, even one an unpublished run still referenced"
+    );
 }

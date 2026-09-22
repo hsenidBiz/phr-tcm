@@ -3,6 +3,7 @@
 // Send; until then, nothing here has reached Azure DevOps at all.
 
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { commands } from "../../bindings";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -28,6 +29,7 @@ function when(startedAt: string): string {
 export default function PastRuns({
   pbiId,
   onReview,
+  onCount,
 }: {
   /** The PBI currently selected on the Auto Run screen. A run reviewed
    * here is sent with THIS PBI's title and step ids (see `RunReview`), so
@@ -36,12 +38,28 @@ export default function PastRuns({
    * name with every `step_ids` empty, silently. */
   pbiId: number | null;
   onReview: (runId: string) => void;
+  /** How many runs this machine has, reported to the parent so ITS "Clear
+   * results" button knows whether there is anything to clear - without a
+   * second `useQuery(["autorun-runs"])` up there duplicating this one. A
+   * second subscriber to the same key shifted render timing enough to
+   * occasionally paint a run's case title here and the matching case row
+   * above at the same instant, which a legacy test (`AutoRun.test.tsx`)
+   * caught as two elements answering to one `findByText`. */
+  onCount?: (count: number) => void;
 }) {
   const runs = useQuery({
     queryKey: ["autorun-runs"],
     queryFn: () => commands.autoRunListRuns(),
     retry: false,
   });
+
+  useEffect(() => {
+    onCount?.(runs.data?.length ?? 0);
+    // onCount is a state setter passed fresh every render; only the COUNT
+    // itself should re-trigger this effect, or every parent re-render
+    // would run it again for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runs.data?.length]);
 
   return (
     <div className="space-y-2">

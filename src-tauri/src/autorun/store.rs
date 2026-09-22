@@ -402,3 +402,65 @@ pub fn load_shot(root: &Path, name: &str) -> Result<Vec<u8>, String> {
     }
     std::fs::read(shots_dir(root).join(name)).map_err(|e| format!("that screenshot is gone: {e}"))
 }
+
+/// Delete the named cases' scripts from this machine. A case with no
+/// script file is not an error - the whole point of "clear scripts" is
+/// that a case nobody has scripted yet is left exactly as it was. Returns
+/// how many files were actually removed, so the caller can report a
+/// truthful count rather than just "done".
+///
+/// Any other I/O error stops the sweep and is returned as-is, naming the
+/// first case that failed - the same shape every other store function
+/// here uses, and there is no atomicity to preserve across independent
+/// per-case files the way there is for a script bundle.
+pub fn clear_scripts(root: &Path, case_ids: &[i32]) -> Result<usize, String> {
+    let dir = scripts_dir(root);
+    let mut removed = 0usize;
+    for id in case_ids {
+        let path = dir.join(format!("case-{id}.json"));
+        match std::fs::remove_file(&path) {
+            Ok(()) => removed += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
+        }
+    }
+    Ok(removed)
+}
+
+/// Delete every saved run, and every screenshot with it - including runs
+/// that were already sent to Azure DevOps. The record Azure DevOps holds
+/// is the durable one; the confirm the screen shows before calling this
+/// says so. Returns the number of RUN files removed (not shots - a single
+/// run's evidence can be many pictures, and that count would not mean
+/// anything to the person reading the toast).
+///
+/// An empty or missing root removes nothing and returns 0, the same as
+/// `list_runs` reads nothing back from one.
+pub fn clear_runs(root: &Path) -> Result<usize, String> {
+    let mut removed = 0usize;
+    if let Ok(entries) = std::fs::read_dir(runs_dir(root)) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|x| x == "json") {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => removed += 1,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
+                }
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(shots_dir(root)) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("could not remove {}: {e}", path.display())),
+                }
+            }
+        }
+    }
+    Ok(removed)
+}

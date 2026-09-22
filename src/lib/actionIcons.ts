@@ -57,6 +57,12 @@ export {
   EyeOff as IconStopWatching,
   Square as IconStop,
   Unplug as IconUnregister,
+  // Wiping saved script FILES for a PBI's cases (Auto Run, dev builds only).
+  FileX2 as IconClearScripts,
+  // Wiping the saved run RECORDS and their screenshots (Auto Run, dev
+  // builds only). `Eraser` is already IconClear for something else, so
+  // this gets its own glyph rather than reusing that one.
+  ListX as IconClearResults,
 
   // Moving through a flow
   ChevronLeft as IconBack,

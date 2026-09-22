@@ -4,7 +4,9 @@
 
 use v2_lib::autorun::store::{load_run, load_script, save_run, save_run_guarded};
 use v2_lib::autorun::{LocalRun, PublishedRun};
-use v2_lib::commands::autorun::{describe_session_error, import_scripts_from_path, safe_run_id};
+use v2_lib::commands::autorun::{
+    describe_session_error, import_scripts_from_path, refuse_while_a_run_is_going, safe_run_id,
+};
 use v2_lib::commands::autorun_replay::{replay_is_running, replay_timing, OneAtATime};
 
 struct TempDir(std::path::PathBuf);
@@ -203,4 +205,23 @@ fn nobody_is_watching_a_background_run_so_it_does_not_pause_to_point() {
     assert_eq!(replay_timing(false).highlight_ms, 0);
     assert!(replay_timing(true).highlight_ms > 0);
     assert_eq!(replay_timing(false).action_ms, v2_lib::browser::timing::Timing::default().action_ms);
+}
+
+// ---- Clearing scripts and results (dev-only Auto Run toolbar) ----------
+
+/// `auto_run_clear_scripts` and `auto_run_clear_runs` share this guard
+/// with `auto_run_open_browser`'s own refusal while an unattended run is
+/// going: a run in progress reads scripts and writes runs, so clearing
+/// either while one is live would race the very files it is using. The
+/// sentence must read exactly the same wherever a person sees it - this
+/// pins it to `auto_run_open_browser`'s own wording rather than letting
+/// the two drift apart.
+#[tokio::test]
+async fn clearing_is_refused_while_an_unattended_run_is_going_with_open_browsers_own_sentence() {
+    assert!(refuse_while_a_run_is_going().await.is_ok(), "nothing is running yet");
+    let claim = OneAtATime::claim().expect("nothing is running");
+    let err = refuse_while_a_run_is_going().await.expect_err("a run is going");
+    assert_eq!(err, "an unattended run is going - wait for it, or stop it first");
+    drop(claim);
+    assert!(refuse_while_a_run_is_going().await.is_ok(), "the claim was freed - clearing is allowed again");
 }
