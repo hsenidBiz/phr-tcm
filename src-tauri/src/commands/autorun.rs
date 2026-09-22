@@ -19,13 +19,26 @@ use tauri::Manager;
 /// browser can never leave the screen permanently stuck.
 static SESSION: tokio::sync::Mutex<Option<Session>> = tokio::sync::Mutex::const_new(None);
 
-struct Session {
-    browser: LaunchedBrowser,
-    cdp: Cdp,
+pub(crate) struct Session {
+    pub(crate) browser: LaunchedBrowser,
+    pub(crate) cdp: Cdp,
     /// The account last signed in as, in THIS browser. `None` until a
     /// sign-in succeeds. Written on every sign-in; nothing reads it yet -
     /// unattended replay (a later phase) is what will.
-    account: Option<String>,
+    pub(crate) account: Option<String>,
+}
+
+/// The supervised session, for the bridge's page tools. Whoever locks it
+/// holds the browser: keep the critical section to one protocol job.
+///
+/// Not called yet - the bridge's page tools (reading the page, probing a
+/// locator) are a later task. `allow(dead_code)` rather than leaving it
+/// out: the accessor is this task's deliverable, and adding it back
+/// un-reviewed alongside its first caller is how a later diff quietly
+/// grows past what that task was meant to touch.
+#[allow(dead_code)]
+pub(crate) fn supervised() -> &'static tokio::sync::Mutex<Option<Session>> {
+    &SESSION
 }
 
 /// Said when a step arrives with no browser behind it. Pulled out so a
