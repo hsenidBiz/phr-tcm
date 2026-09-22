@@ -93,26 +93,38 @@ pub async fn run_case<D: Driver>(
     let mut steps: Vec<StepRecord> = Vec::with_capacity(script.steps.len() + 1);
     let mut signed_in = None;
     let mut account = None;
+    let mut stopped = false;
 
-    if let Some(key) = &script.account {
-        on_step(SIGN_IN_STEP);
-        let out = match signin::prepare(root, organization, project, key) {
-            Err(why) => vec![ActionOutcome::failed(why)],
-            Ok((recipe, who)) => {
-                let signed = signin::sign_in(d, root, &recipe, &who, timing).await;
-                let mut all = signed.steps.clone();
-                all.push(as_action_outcome(&signed));
-                all
-            }
-        };
-        let ok = out.last().is_some_and(|o| o.ok);
-        signed_in = Some(ok);
-        steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None });
+    // Why the rest of the case is not being run, once something decided
+    // that. Checked here too, before the sign-in - a stop asked for while
+    // this case was still only "opening" must leave it completely
+    // untouched, not just cut short after already having signed in.
+    let mut skip: Option<&'static str> = if cancel.load(Ordering::SeqCst) {
+        stopped = true;
+        Some(AFTER_STOP)
+    } else {
+        None
+    };
+
+    if skip.is_none() {
+        if let Some(key) = &script.account {
+            on_step(SIGN_IN_STEP);
+            let out = match signin::prepare(root, organization, project, key) {
+                Err(why) => vec![ActionOutcome::failed(why)],
+                Ok((recipe, who)) => {
+                    let signed = signin::sign_in(d, root, &recipe, &who, timing).await;
+                    let mut all = signed.steps.clone();
+                    all.push(as_action_outcome(&signed));
+                    all
+                }
+            };
+            let ok = out.last().is_some_and(|o| o.ok);
+            signed_in = Some(ok);
+            steps.push(StepRecord { step_number: SIGN_IN_STEP, outcomes: out, screenshot: None });
+        }
+        skip = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
     }
 
-    // Why the rest of the case is not being run, once something decided that.
-    let mut skip: Option<&'static str> = (signed_in == Some(false)).then_some(AFTER_FAILED_SIGN_IN);
-    let mut stopped = false;
     for step in &script.steps {
         if skip.is_none() && cancel.load(Ordering::SeqCst) {
             skip = Some(AFTER_STOP);

@@ -61,9 +61,22 @@ pub fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// here.
 pub use store::safe_run_id;
 
+/// Whether the one supervised session is currently open. Peeked by
+/// `auto_run_replay` (F7): an unattended run and a supervised session
+/// must never be open at once, and this is the mutex side of that
+/// exclusion - the other direction (`auto_run_open_browser` refusing
+/// while an unattended run is going) uses the pure, AppHandle-free
+/// `autorun_replay::replay_is_running` instead.
+pub(crate) async fn supervised_session_is_open() -> bool {
+    SESSION.lock().await.is_some()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn auto_run_open_browser(browser_name: String) -> Result<(), String> {
+    if crate::commands::autorun_replay::replay_is_running() {
+        return Err("an unattended run is going - wait for it, or stop it first".to_string());
+    }
     let mut slot = SESSION.lock().await;
     if let Some(old) = slot.take() {
         close_session(old);

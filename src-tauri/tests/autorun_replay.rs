@@ -426,6 +426,55 @@ async fn stopping_leaves_out_what_never_started_and_marks_what_did() {
     assert_eq!(browsers.opened, 1);
 }
 
+/// A stop asked for before a case's own sign-in must never let that
+/// sign-in run anyway - the case is left completely untouched, not just
+/// cut short after touching the browser once.
+#[tokio::test]
+async fn stopping_before_a_cases_sign_in_leaves_it_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    save_recipe(root, "Acme", "Web", &common::recipe()).unwrap();
+    save_accounts(root, &[common::account()]).unwrap();
+    let case = script(
+        1,
+        Some("admin"),
+        serde_json::json!([{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "yes" }] }]),
+    );
+    store::save_script(root, &case).unwrap();
+    let (d, _state) = common::stateful_app(false, None);
+    let mut browsers = FakeBrowsers { queue: [Some(d)].into(), opened: 0, closed: 0, returned: vec![] };
+    let mut run = new_run("run-x");
+    let cases = vec![(1, "case 1".to_string())];
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root, "Acme", "Web", &mut run, &cases, &quick(), &cancel, &mut |e: ReplayProgress| {
+        if e.phase == "opening" {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    })
+    .await
+    .unwrap();
+
+    let rec = &run.cases[0];
+    assert!(
+        rec.steps.iter().all(|s| s.step_number != SIGN_IN_STEP),
+        "no sign-in step should ever be recorded: {:?}",
+        rec.steps
+    );
+    assert!(
+        rec.steps.iter().all(|s| s.outcomes.iter().all(|o| o.detail == "not run: the run was stopped")),
+        "{:?}",
+        rec.steps
+    );
+    assert_eq!(rec.proposed, "");
+    assert_eq!(rec.reason, "stopped before it finished");
+    let d = &browsers.returned[0];
+    assert!(
+        d.calls_to("Page.navigate").is_empty(),
+        "cancelling before the sign-in must mean no navigation at all: {:?}",
+        d.calls
+    );
+}
+
 #[tokio::test]
 async fn a_case_with_no_script_is_recorded_as_such() {
     let dir = tempfile::tempdir().unwrap();

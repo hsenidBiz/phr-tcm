@@ -40,6 +40,15 @@ impl Drop for OneAtATime {
     }
 }
 
+/// Whether an unattended run is going right now. `auto_run_open_browser`
+/// checks this before it will open a supervised browser (F7): the two
+/// kinds of session must never run at once, and this is the pure half of
+/// that check - testable without an `AppHandle`, unlike the SESSION side
+/// of the exclusion (see `auto_run_replay` below).
+pub fn replay_is_running() -> bool {
+    RUNNING.load(Ordering::SeqCst)
+}
+
 /// The default timing, minus the point-and-pause highlight when nobody is
 /// watching: a background browser has no screen for it to be seen on, and
 /// waiting `highlight_ms` before every action would only slow the run down.
@@ -123,6 +132,9 @@ pub async fn auto_run_replay(
     let _claim = OneAtATime::claim().ok_or_else(|| {
         "an unattended run is already going - wait for it, or stop it first".to_string()
     })?;
+    if super::autorun::supervised_session_is_open().await {
+        return Err("close the supervised browser first".to_string());
+    }
     CANCEL.store(false, Ordering::SeqCst);
 
     let root = super::autorun::root(&app)?;

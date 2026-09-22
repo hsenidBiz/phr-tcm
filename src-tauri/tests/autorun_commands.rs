@@ -5,7 +5,7 @@
 use v2_lib::autorun::store::{load_run, load_script, save_run, save_run_guarded};
 use v2_lib::autorun::{LocalRun, PublishedRun};
 use v2_lib::commands::autorun::{describe_session_error, import_scripts_from_path, safe_run_id};
-use v2_lib::commands::autorun_replay::{replay_timing, OneAtATime};
+use v2_lib::commands::autorun_replay::{replay_is_running, replay_timing, OneAtATime};
 
 struct TempDir(std::path::PathBuf);
 
@@ -180,12 +180,19 @@ fn importing_a_utf8_file_with_a_bom_keeps_non_ascii_text_intact() {
 // ---- Unattended replay's IPC shell --------------------------------------
 
 /// Only one unattended run may be going at a time; the second caller is
-/// refused until the first one's claim is dropped.
+/// refused until the first one's claim is dropped. `replay_is_running`
+/// (what `auto_run_open_browser` will check, per F7) has to track the
+/// exact same state - asserted in the SAME test, not a separate one,
+/// because both touch the one process-wide `RUNNING` flag and cargo runs
+/// tests in this binary in parallel by default.
 #[test]
 fn only_one_unattended_run_at_a_time_and_the_claim_is_given_back() {
+    assert!(!replay_is_running(), "nothing is running yet");
     let first = OneAtATime::claim().expect("nothing is running");
+    assert!(replay_is_running());
     assert!(OneAtATime::claim().is_none(), "a second run must be refused while the first is going");
     drop(first);
+    assert!(!replay_is_running(), "a finished run must free the slot");
     assert!(OneAtATime::claim().is_some(), "a finished run must free the slot");
 }
 
