@@ -94,9 +94,23 @@ the fallback runs only after that API answers 403.
 
 ### 4.1 Capture first (five minutes, on the other machine)
 The request BODY was not observed (the tool records replies only, and the page
-blocks cross-origin reads of its script bundles). Before coding:
-1. Chrome → the Gamma Guardians board → any PBI card that has no suite → "…" →
-   Add Test → fill Steps + Module → Save, with DevTools' Network tab open.
+blocks cross-origin reads of its script bundles). A second watched save on
+2026-09-22 (#157953, a stub) added two facts:
+- **Boards only makes this call when the PBI has NO requirement suite yet.**
+  With suite 157944 in place the save fired only `GetWitTestsForKanbanBoard`;
+  a requirement suite picks up new Tested-By cases by itself. The app's
+  fallback fires under the same condition (§4.4 already guarantees that: it
+  runs only after the public create was needed and refused).
+- The controller's body convention, from the sibling call it did make:
+  `POST …/_api/_testManagement/GetWitTestsForKanbanBoard?teamId=…&__v=5` with
+  `Content-Type: application/json` and body `{"userStoryIds":"[145386]"}` -
+  JSON whose array values are JSON **strings**. Expect the add call to follow
+  suit (something like `{"requirementId":145386,"testCaseIds":"[157941]"}`);
+  the field names are the unknown, and a 400 from a wrong name says so.
+So the capture needs a PBI that has no suite yet. Before coding:
+1. Chrome → the Gamma Guardians board → a PBI card that has no suite (and on
+   which a test case is genuinely wanted) → "…" → Add Test → fill Steps +
+   Module → Save, with DevTools' Network tab open.
 2. Open the `AddWitTestCasesToRequirementSuite` request → **Payload** and
    **Headers**. Record: the JSON body (expected shape: the requirement id and
    the test case id(s); note the exact field names), `Content-Type`, and any
@@ -227,7 +241,8 @@ what Azure DevOps answered."
 ## 6. Reference facts
 - Org/project: PeoplesHR / HRM, project id `73d6b311-d948-40cc-8c86-fc600c1edb87`,
   Gamma Guardians team id `71215fd9-79d5-4742-8756-01821a02e014`.
-- #145386's suite now: plan 157942, suite 157944, 136 cases (69 + 66 uploaded
-  today + the sample #157941, which duplicates #157801 and can be deleted in ADO).
+- #145386's suite now: plan 157942, suite 157944; 69 + 66 uploaded today plus
+  two stubs to delete in ADO: #157941 (duplicates #157801) and #157953
+  ("Sample - Boards route capture (delete me)").
 - #138416: 931 cases, at the 1000-link limit.
 - Access level check: Organization settings → Users → the account → Access level.
