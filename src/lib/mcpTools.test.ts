@@ -148,7 +148,7 @@ test("only the switchable tools are left, as six rows in a development build", (
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_failures",
-    "get_autorun_guide+save_autorun_script",
+    "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+get_autorun_failures+record_autorun_quirk",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
@@ -159,19 +159,27 @@ test("only the switchable tools are left, as six rows in a development build", (
   expect(autorun?.label).toBe("Auto Run scripts");
 });
 
-/// With DEV stubbed true, the Auto Run pair is offered as one row and its
-/// switch moves both tools together, the same as any other pair.
-test("with DEV stubbed true, the Auto Run scripts row carries both tools", async () => {
+/// With DEV stubbed true, the Auto Run group is offered as one row and its
+/// switch moves every tool in it together, the same as any other pair.
+test("with DEV stubbed true, the Auto Run scripts row carries all seven tools", async () => {
   vi.stubEnv("DEV", true);
   vi.resetModules();
   const mod = await import("./mcpTools");
 
   const row = mod.visibleRows().find((r) => r.label === "Auto Run scripts");
   expect(row, "the Auto Run scripts row exists").toBeTruthy();
-  expect(row!.names).toEqual(["get_autorun_guide", "save_autorun_script"]);
+  expect(row!.names).toEqual([
+    "get_autorun_guide",
+    "save_autorun_script",
+    "get_autorun_page",
+    "probe_autorun_locator",
+    "try_autorun_action",
+    "get_autorun_failures",
+    "record_autorun_quirk",
+  ]);
 
   const off = mod.toggleRow([], row!.names);
-  expect([...off].sort()).toEqual(["get_autorun_guide", "save_autorun_script"]);
+  expect([...off].sort()).toEqual([...row!.names].sort());
   expect(mod.toggleRow(off, row!.names)).toEqual([]);
 
   vi.unstubAllEnvs();
@@ -187,12 +195,13 @@ test("with DEV stubbed false, no row mentions Auto Run and a saved list is strip
   const mod = await import("./mcpTools");
 
   expect(mod.visibleRows().some((r) => r.label.includes("Auto Run"))).toBe(false);
-  expect(mod.visibleRows().flatMap((r) => r.names)).not.toContain("get_autorun_guide");
-  expect(mod.visibleRows().flatMap((r) => r.names)).not.toContain("save_autorun_script");
+  for (const name of mod.DEV_ONLY_TOOLS) {
+    expect(mod.visibleRows().flatMap((r) => r.names)).not.toContain(name);
+  }
 
   localStorage.setItem(
     "tcm-v2-mcp-disabled",
-    JSON.stringify(["get_autorun_guide", "save_autorun_script", "get_tags"]),
+    JSON.stringify([...mod.DEV_ONLY_TOOLS, "get_tags"]),
   );
   expect(mod.loadDisabledTools()).toEqual(["get_tags"]);
   localStorage.clear();

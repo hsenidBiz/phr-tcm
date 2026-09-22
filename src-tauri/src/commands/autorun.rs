@@ -28,15 +28,10 @@ pub(crate) struct Session {
     pub(crate) account: Option<String>,
 }
 
-/// The supervised session, for the bridge's page tools. Whoever locks it
-/// holds the browser: keep the critical section to one protocol job.
-///
-/// Not called yet - the bridge's page tools (reading the page, probing a
-/// locator) are a later task. `allow(dead_code)` rather than leaving it
-/// out: the accessor is this task's deliverable, and adding it back
-/// un-reviewed alongside its first caller is how a later diff quietly
-/// grows past what that task was meant to touch.
-#[allow(dead_code)]
+/// The supervised session, for the bridge's page routes. Whoever locks
+/// it holds the browser: keep the critical section to one protocol job.
+/// `ai_bridge`'s `/autorun-page`, `/autorun-probe` and `/autorun-try`
+/// are its callers - the person's own browser, borrowed for one job.
 pub(crate) fn supervised() -> &'static tokio::sync::Mutex<Option<Session>> {
     &SESSION
 }

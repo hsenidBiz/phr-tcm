@@ -126,6 +126,13 @@ pub async fn route(
     version: &str,
 ) -> (u16, String) {
     let path = target.split_once('?').map(|(p, _)| p).unwrap_or(target);
+    // Every Auto Run route is development-build only, and the check runs
+    // ONCE here, by path, before the router's match - so a route added
+    // later is covered by the shape of its name rather than by somebody
+    // remembering to repeat the guard on its own arm.
+    if let Some(refused) = autorun_guard_for(path, crate::ai_tools::dev_build()) {
+        return refused;
+    }
     match (method, path) {
         ("GET", "/ping") => (
             200,
@@ -160,19 +167,19 @@ pub async fn route(
             None => (503, "sign in to Test Case Manager first".into()),
         },
         ("GET", "/tags") => tags(ctx, client, target).await,
-        // Both autorun routes deliberately ignore `client`: one documents
-        // a format, the other writes local files. Neither reaches Azure
-        // DevOps, so neither should demand a sign-in first. Both are
-        // development-build only - checked before anything else, so a
-        // release build never reaches the guide or the writer.
-        ("GET", "/autorun-guide") => match autorun_route_guard(crate::ai_tools::dev_build()) {
-            Some(refused) => refused,
-            None => (200, crate::autorun::guide::autorun_guide()),
-        },
-        ("POST", "/autorun-script") => match autorun_route_guard(crate::ai_tools::dev_build()) {
-            Some(refused) => refused,
-            None => save_autorun_scripts(body),
-        },
+        // The Auto Run routes. Only ONE of them reaches Azure DevOps, and
+        // only to read: the save route looks the test cases up so the
+        // floor has something to check the script against. The rest
+        // document a format, drive the browser the person opened, or read
+        // files this machine already wrote - so none of them needs a
+        // signed-in client. All were let through by the guard above.
+        ("GET", "/autorun-guide") => (200, crate::autorun::guide::autorun_guide()),
+        ("POST", "/autorun-script") => save_autorun_scripts(ctx, client, body).await,
+        ("GET", "/autorun-page") => autorun_page(target).await,
+        ("POST", "/autorun-probe") => autorun_probe(body).await,
+        ("POST", "/autorun-try") => autorun_try(ctx, body).await,
+        ("GET", "/autorun-failures") => autorun_failures(target),
+        ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
         // The proxy asks for this before listing tools, so a toggle in the
         // app takes effect on the assistant's next tools/list.
         ("GET", "/tools") => (
@@ -233,6 +240,229 @@ pub fn autorun_route_guard(dev: bool) -> Option<(u16, String)> {
     }
 }
 
+/// The same guard, applied by PATH rather than by arm. `route` calls this
+/// once, before its match, so every `/autorun-` route is covered by the
+/// shape of its name - a route added later cannot be left ungated by
+/// forgetting to repeat the check. `dev` is explicit for the same reason
+/// `autorun_route_guard`'s is: both branches stay testable.
+pub fn autorun_guard_for(path: &str, dev: bool) -> Option<(u16, String)> {
+    if path.starts_with("/autorun-") {
+        autorun_route_guard(dev)
+    } else {
+        None
+    }
+}
+
+/// Said when a page route arrives with no browser behind it. The person
+/// opens one; an assistant cannot, and telling it which button to name
+/// is the difference between a dead end and a sentence it can pass on.
+const NO_SUPERVISED_BROWSER: &str =
+    "no supervised browser is open - the person opens one with Open browser on the Auto Run tab";
+
+/// What every page route checks before it reaches for the browser at all:
+/// an unattended run owns the browser while it is going, and the two
+/// kinds of session are never open at once.
+fn unattended_run_is_using_the_browser() -> Option<(u16, String)> {
+    if crate::commands::autorun_replay::replay_is_running() {
+        Some((409, "an unattended run is going - wait for it".to_string()))
+    } else {
+        None
+    }
+}
+
+/// Where scripts, runs and quirks live, or the refusal to guess.
+fn autorun_root() -> Result<std::path::PathBuf, (u16, String)> {
+    crate::autorun::store::configured_root().ok_or((
+        503,
+        "the app could not set up its data directory this session - restart the app".to_string(),
+    ))
+}
+
+/// The page in the browser the person opened, as text: Chrome's own
+/// accessibility tree with a locator on every line.
+async fn autorun_page(target: &str) -> (u16, String) {
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let limit = q(target, "limit")
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(crate::browser::snapshot::DEFAULT_LIMIT);
+    // The lock is held for exactly one protocol job - whoever holds it
+    // holds the browser, and the person may be using it.
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let Some(session) = slot.as_mut() else {
+        return (409, NO_SUPERVISED_BROWSER.to_string());
+    };
+    match crate::browser::snapshot::snapshot(&mut session.cdp, limit).await {
+        Ok(text) => (200, text),
+        Err(e) => (503, format!("the browser did not answer: {e}")),
+    }
+}
+
+/// One named field out of a small JSON body, or a refusal that says what
+/// the body should have carried.
+fn body_field(body: &str, key: &str, shape: &str) -> Result<serde_json::Value, (u16, String)> {
+    let v: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| (400, format!("that is not readable JSON: {e}. Expected {shape}.")))?;
+    match v.get(key) {
+        Some(found) if !found.is_null() => Ok(found.clone()),
+        _ => Err((400, format!("this call needs a \"{key}\". Expected {shape}."))),
+    }
+}
+
+/// What a locator matches on the open page right now.
+async fn autorun_probe(body: &str) -> (u16, String) {
+    let selector = match body_field(body, "selector", "{ \"selector\": <a script's target> }") {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let target: crate::browser::locator::Target = match serde_json::from_value(selector) {
+        Ok(t) => t,
+        Err(e) => return (400, format!("that is not a locator: {e}")),
+    };
+    if let Err(why) = target.validate() {
+        return (400, why);
+    }
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let Some(session) = slot.as_mut() else {
+        return (409, NO_SUPERVISED_BROWSER.to_string());
+    };
+    match crate::browser::snapshot::probe(&mut session.cdp, &target).await {
+        Ok(text) => (200, text),
+        Err(e) => (503, format!("the browser did not answer: {e}")),
+    }
+}
+
+/// Run ONE action against the open page, so an assistant can find out
+/// whether a repair works before it writes the repair down.
+async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let raw = match body_field(body, "action", "{ \"action\": <one script action> }") {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let action: crate::browser::actions::Action = match serde_json::from_value(raw) {
+        Ok(a) => a,
+        Err(e) => {
+            return (
+                400,
+                format!("that is not an action: {e} - call get_autorun_guide for the vocabulary."),
+            )
+        }
+    };
+    // Signing in needs the tester's own accounts and the project's
+    // recipe. It is theirs to drive, and a script never carries a login.
+    if matches!(action, crate::browser::actions::Action::SignIn { .. }) {
+        return (400, "sign_in is not a thing an assistant does - the person signs in".to_string());
+    }
+    if let Err(why) = action.validate() {
+        return (400, why);
+    }
+    if let Some(busy) = unattended_run_is_using_the_browser() {
+        return busy;
+    }
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let Some(session) = slot.as_mut() else {
+        return (409, NO_SUPERVISED_BROWSER.to_string());
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    // A step of one, numbered 0 - it belongs to no case, and nothing
+    // records it. `run_step` is still what carries it out, so a tried
+    // action behaves exactly as it will inside a script.
+    let step = crate::autorun::StepScript { step_number: 0, actions: vec![action], unchecked: None };
+    let outcomes = match crate::autorun::runner::run_step(
+        &mut session.cdp,
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &step,
+        &crate::browser::timing::Timing::default(),
+        &mut session.account,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(why) => return (500, why),
+    };
+    let Some(outcome) = outcomes.first() else {
+        return (500, "the action produced no outcome".to_string());
+    };
+    let mut text =
+        format!("{}: {}", if outcome.ok { "ok" } else { "failed" }, outcome.detail);
+    if let Some(shot) = &outcome.screenshot {
+        text.push_str(&format!(" (picture: {shot})"));
+    }
+    (200, text)
+}
+
+/// A run's failed cases, as text an assistant can act on - and, when it
+/// must not touch the script at all, the reason why.
+fn autorun_failures(target: &str) -> (u16, String) {
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    let case_id = q(target, "case_id").and_then(|s| s.trim().parse::<i32>().ok());
+    let run = match q(target, "run_id") {
+        Some(id) => match crate::autorun::store::load_run(&root, &id) {
+            Ok(Some(run)) => run,
+            Ok(None) => return (404, format!("no run {id}")),
+            Err(e) => return (400, e),
+        },
+        None => match crate::autorun::failures::latest_run(&root, case_id) {
+            Some(run) => run,
+            None => {
+                return match case_id {
+                    Some(id) => (404, format!("no run on this machine has case {id}")),
+                    None => (404, "no run on this machine yet".to_string()),
+                }
+            }
+        },
+    };
+    // The scripts are what turn "action 2 failed" into the action's own
+    // JSON. A case with no script on disk is reported as such rather than
+    // dropped, so this gathers whatever is there and lets the describer
+    // say what is missing.
+    let scripts: Vec<crate::autorun::CaseScript> = run
+        .cases
+        .iter()
+        .filter_map(|c| crate::autorun::store::load_script(&root, c.case_id).ok().flatten())
+        .collect();
+    (200, crate::autorun::failures::describe_failures(&run, &scripts))
+}
+
+/// Record something learned about the application, attributed, so the
+/// next script does not rediscover the same surprise.
+fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    let text = match body_field(body, "text", "{ \"text\": \"one line about this application\" }") {
+        Ok(serde_json::Value::String(s)) => s,
+        Ok(_) => return (400, "\"text\" is one line of text".to_string()),
+        Err(refused) => return refused,
+    };
+    let root = match autorun_root() {
+        Ok(r) => r,
+        Err(refused) => return refused,
+    };
+    match crate::autorun::quirks::add_quirk(
+        &root,
+        &ctx.org,
+        &ctx.project,
+        &text,
+        "assistant",
+        crate::autorun::sessions::now_ms(),
+    ) {
+        Ok(true) => (200, "recorded".to_string()),
+        Ok(false) => (200, "already known".to_string()),
+        Err(why) => (400, why),
+    }
+}
+
 /// Save one or many Auto Run action scripts, as an assistant writes them.
 ///
 /// A BUNDLE by design: the body is an array, so a whole PBI's worth of
@@ -246,55 +476,233 @@ pub fn autorun_route_guard(dev: bool) -> Option<(u16, String)> {
 /// 30 can never leave the other 29 half-applied. An unknown action `kind`
 /// fails here rather than mid-run, with the browser already open in front
 /// of them.
-fn save_autorun_scripts(body: &str) -> (u16, String) {
-    let scripts: Vec<crate::autorun::CaseScript> = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                400,
-                format!(
-                    "that is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps: [{{ step_number, actions }}] }} - call get_autorun_guide for the format."
-                ),
+/// The body keys `save_autorun_script` reads. Anything else is named
+/// back rather than dropped - a misspelled "edits" that was silently
+/// ignored would let an undeclared repair through as if it were a new
+/// script.
+const SAVE_BODY_KEYS: [&str; 2] = ["scripts", "edits"];
+
+struct SaveRequest {
+    scripts: Vec<crate::autorun::CaseScript>,
+    edits: Vec<crate::autorun::edits::Edit>,
+}
+
+fn bad_scripts(e: serde_json::Error) -> String {
+    format!(
+        "that is not a list of action scripts: {e}. Expected an array of {{ case_id, title, steps: [{{ step_number, actions }}] }} - call get_autorun_guide for the format."
+    )
+}
+
+/// Either shape: the bare array a new bundle has always been, or the
+/// object that carries the declarations a repair needs alongside it.
+fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
+    let v: serde_json::Value = serde_json::from_str(body).map_err(bad_scripts)?;
+    let map = match v {
+        serde_json::Value::Array(_) => {
+            return Ok(SaveRequest {
+                scripts: serde_json::from_value(v).map_err(bad_scripts)?,
+                edits: vec![],
+            })
+        }
+        serde_json::Value::Object(map) => map,
+        _ => {
+            return Err(
+                "that is not a list of action scripts. Send the array, or { \"scripts\": [...], \"edits\": [...] }."
+                    .to_string(),
             )
         }
+    };
+    let unknown: Vec<String> = map
+        .keys()
+        .filter(|k| !SAVE_BODY_KEYS.contains(&k.as_str()))
+        .map(|k| format!("\"{k}\""))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "this body carries {} save_autorun_script does not read: {}. It reads \"scripts\" and \"edits\".",
+            if unknown.len() == 1 { "a key" } else { "keys" },
+            unknown.join(", ")
+        ));
+    }
+    let scripts_value = map.get("scripts").cloned().ok_or_else(|| {
+        "this body has no \"scripts\". Send { \"scripts\": [...], \"edits\": [...] }.".to_string()
+    })?;
+    let edits = match map.get("edits") {
+        None => vec![],
+        Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
+            format!(
+                "that is not a list of declared edits: {e}. Each is {{ case_id, steps: [number], why, quirk (optional) }}."
+            )
+        })?,
+    };
+    Ok(SaveRequest { scripts: serde_json::from_value(scripts_value).map_err(bad_scripts)?, edits })
+}
+
+/// Save one or many Auto Run action scripts, as an assistant writes them.
+///
+/// A BUNDLE by design: the body is an array, so a whole PBI's worth of
+/// cases lands in one call - and the same shape is what the Auto Run
+/// screen's Import button reads from a file. One case is a bundle of one.
+///
+/// ALL OR NOTHING, for real. Every gate below runs for every script
+/// before a single byte is written: the body parses, each change to a
+/// script that already exists is declared and takes a repair off the
+/// cap, and each script meets its test case's expected results. Only
+/// then does `store::save_scripts_atomically` run - and it validates and
+/// serialises every entry before writing any of them, so a bad case id
+/// or a filesystem error on entry 16 of 30 can never leave the other 29
+/// half-applied. An unknown action `kind` fails here rather than
+/// mid-run, with the browser already open in front of them.
+///
+/// `repairs` NEVER comes from the body. It is the count of changes made
+/// without a person looking, and a sender that could set it could also
+/// set it back to zero, which is the whole of what the cap prevents.
+async fn save_autorun_scripts(
+    ctx: &BridgeContext,
+    client: Option<&crate::ado::AdoClient>,
+    body: &str,
+) -> (u16, String) {
+    let SaveRequest { scripts, edits } = match parse_save_request(body) {
+        Ok(r) => r,
+        Err(e) => return (400, e),
     };
     if scripts.is_empty() {
         return (400, "no scripts in the bundle".to_string());
     }
-
-    let Some(root) = crate::autorun::store::configured_root() else {
+    let root = match autorun_root() {
         // `set_root` runs exactly once, during app setup, and only when
-        // `app_data_dir()` resolves - so `None` here is not something
-        // this process will ever recover from on its own; "try again"
-        // would never help. Refuse rather than invent a path: a script
-        // written somewhere the app does not read would look saved and
-        // never appear.
+        // `app_data_dir()` resolves - so a missing root is not something
+        // this process will ever recover from on its own. Refuse rather
+        // than invent a path: a script written somewhere the app does
+        // not read would look saved and never appear.
+        Err(refused) => return refused,
+        Ok(r) => r,
+    };
+
+    // Gate 1: what this bundle does to the scripts already on disk.
+    let mut prepared: Vec<crate::autorun::CaseScript> = Vec::with_capacity(scripts.len());
+    let mut lines: Vec<String> = Vec::with_capacity(scripts.len());
+    for sent in &scripts {
+        let existing = match crate::autorun::store::load_script(&root, sent.case_id) {
+            Ok(v) => v,
+            Err(e) => return (500, e),
+        };
+        let declared = edits.iter().find(|e| e.case_id == sent.case_id);
+        let mut script = sent.clone();
+        match existing {
+            Some(old) => {
+                if let Err(why) = crate::autorun::edits::check_edits(&old, sent, declared) {
+                    return (400, why);
+                }
+                match crate::autorun::edits::next_repairs(&old) {
+                    Ok(n) => script.repairs = n,
+                    Err(why) => return (400, why),
+                }
+                lines.push(format!(
+                    "case {} (repaired, {} of {} used)",
+                    script.case_id,
+                    script.repairs,
+                    crate::autorun::edits::MAX_REPAIRS
+                ));
+            }
+            None => {
+                if declared.is_some() {
+                    return (
+                        400,
+                        format!(
+                            "case {} has no script yet - \"edits\" is for changing one that exists",
+                            sent.case_id
+                        ),
+                    );
+                }
+                script.repairs = 0;
+                lines.push(format!("case {} (new)", script.case_id));
+            }
+        }
+        prepared.push(script);
+    }
+
+    // Gate 2: the expected-result floor. This is the one place the save
+    // route reaches Azure DevOps, and only to READ the cases - a script
+    // is judged against what its test case says should happen, never
+    // against what the application happens to do.
+    let Some(client) = client else {
         return (
-            503,
-            "the app could not set up its data directory this session - restart the app"
+            400,
+            "sign in to Test Case Manager first - a script is checked against its test case before it is saved"
                 .to_string(),
         );
     };
-
-    match crate::autorun::store::save_scripts_atomically(&root, &scripts) {
-        Ok(()) => {
-            let saved: Vec<String> = scripts.iter().map(|sc| sc.case_id.to_string()).collect();
-            crate::applog::info(format!("AI saved {} auto-run script(s)", saved.len()));
-            (
-                200,
-                serde_json::json!({
-                    "saved": saved.len(),
-                    "case_ids": saved,
-                    "note": "Open Auto Run in the app - these cases now show a Run button.",
-                })
-                .to_string(),
+    let ids: Vec<i32> = prepared.iter().map(|s| s.case_id).collect();
+    let cases = match client
+        .get_test_cases_by_ids(
+            &ctx.org,
+            &ids,
+            ctx.module_ref.as_deref(),
+            ctx.preconditions_ref.as_deref(),
+        )
+        .await
+    {
+        Ok(cases) => cases,
+        // Azure DevOps refuses the whole batch when any id is not a work
+        // item, so it cannot say which - the ids are named back instead.
+        Err(crate::ado::AdoError::NotFound) => {
+            return (
+                400,
+                format!(
+                    "Azure DevOps has no work item for at least one of {} - a script is saved against a real test case",
+                    ids.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(", ")
+                ),
             )
         }
-        Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => (400, e),
-        Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
-            (500, format!("could not save the bundle: {e}"))
+        Err(e) => return (502, format!("Azure DevOps error: {e:?}")),
+    };
+    for script in &prepared {
+        let Some(case) = cases.iter().find(|c| c.id == script.case_id) else {
+            return (
+                400,
+                format!("case {} is not a test case in this organization", script.case_id),
+            );
+        };
+        let shortfalls =
+            crate::autorun::floor::check_floor(script, &crate::autorun::floor::expected_of(&case.steps));
+        if !shortfalls.is_empty() {
+            return (400, format!("case {}: {}", script.case_id, shortfalls.join("; ")));
         }
     }
+
+    // Everything has passed; now the disk.
+    match crate::autorun::store::save_scripts_atomically(&root, &prepared) {
+        Ok(()) => {}
+        Err(crate::autorun::store::SaveScriptsError::Invalid(e)) => return (400, e),
+        Err(crate::autorun::store::SaveScriptsError::Io(e)) => {
+            return (500, format!("could not save the bundle: {e}"))
+        }
+    }
+    crate::applog::info(format!("AI saved {} auto-run script(s)", prepared.len()));
+
+    let mut report = vec![format!("saved {} script(s): {}", prepared.len(), lines.join(", "))];
+    // The quirks come last, after the scripts are safely down: a quirk
+    // the list will not take (too long, or the fortieth) is worth saying
+    // so about, but it is not worth losing a good repair over.
+    for edit in &edits {
+        let Some(text) = edit.quirk.as_deref().filter(|t| !t.trim().is_empty()) else {
+            continue;
+        };
+        match crate::autorun::quirks::add_quirk(
+            &root,
+            &ctx.org,
+            &ctx.project,
+            text,
+            "assistant",
+            crate::autorun::sessions::now_ms(),
+        ) {
+            Ok(true) => report.push(format!("quirk recorded: {}", text.trim())),
+            Ok(false) => report.push(format!("quirk already known: {}", text.trim())),
+            Err(why) => report.push(format!("quirk not recorded: {why}")),
+        }
+    }
+    (200, report.join("\n"))
 }
 
 /// Reorganise a draft into a run sheet: navigation spelled out as steps,

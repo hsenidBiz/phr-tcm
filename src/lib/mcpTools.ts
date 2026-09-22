@@ -34,6 +34,31 @@ export const MCP_TOOLS: McpToolInfo[] = [
     label: "Save Auto Run scripts",
     summary: "Save browser scripts for a PBI's cases - one call covers the whole set.",
   },
+  {
+    name: "get_autorun_page",
+    label: "See the open page",
+    summary: "Read the page in the browser you opened, one element per line with its locator.",
+  },
+  {
+    name: "probe_autorun_locator",
+    label: "Try a locator",
+    summary: "What a locator matches on the open page right now, and whether it is visible.",
+  },
+  {
+    name: "try_autorun_action",
+    label: "Try an action",
+    summary: "Carry out one script action against the open page, without recording anything.",
+  },
+  {
+    name: "get_autorun_failures",
+    label: "Auto Run failures",
+    summary: "What failed in a run on this machine, and when the script must be left alone.",
+  },
+  {
+    name: "record_autorun_quirk",
+    label: "Record a quirk",
+    summary: "One line about how this application behaves, kept for the next script.",
+  },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
@@ -57,7 +82,15 @@ export const CORE_TOOLS = ["begin_test_case_writing", "get_writing_guide", "get_
 /** Offered in a development build only: switchable there like any other
  * tool, absent entirely (not listed, no switch, no skill file) from a
  * release build. Mirrors `ai_tools.rs`'s `DEV_ONLY_TOOLS`. */
-export const DEV_ONLY_TOOLS = ["get_autorun_guide", "save_autorun_script"] as const;
+export const DEV_ONLY_TOOLS = [
+  "get_autorun_guide",
+  "save_autorun_script",
+  "get_autorun_page",
+  "probe_autorun_locator",
+  "try_autorun_action",
+  "get_autorun_failures",
+  "record_autorun_quirk",
+] as const;
 
 /** True in `tauri dev` and in this test suite, false in `tauri build` - a
  * compile-time constant, read once at module load. Mirrors
@@ -83,10 +116,20 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
   // returns, and has no other way to name a suite.
   ["search_test_suites", "get_suite_test_cases"],
   // Not the same shape as the two above - each of these can be called on
-  // its own - but the guide and the writer are still one choice: a
-  // writer nobody can read the format for, or a guide nobody can act on,
-  // are each half a tool. Development builds only; see DEV_ONLY_TOOLS.
-  ["get_autorun_guide", "save_autorun_script"],
+  // its own - but authoring an Auto Run script is ONE job, and these are
+  // its steps: read the format, look at the page, try a locator or an
+  // action, read what a run did, save the result and record what you
+  // learned. Half of them switched on is half a job, so they move
+  // together. Development builds only; see DEV_ONLY_TOOLS.
+  [
+    "get_autorun_guide",
+    "save_autorun_script",
+    "get_autorun_page",
+    "probe_autorun_locator",
+    "try_autorun_action",
+    "get_autorun_failures",
+    "record_autorun_quirk",
+  ],
 ];
 
 /** The one human name and summary a pair shows, keyed by its first member. */
@@ -98,7 +141,8 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
   },
   get_autorun_guide: {
     label: "Auto Run scripts",
-    summary: "Read the script-writing guide and save browser scripts for a PBI's cases. Development builds only.",
+    summary:
+      "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts. Development builds only.",
   },
 };
 

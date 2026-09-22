@@ -46,7 +46,7 @@ fn tools_list_names_every_tool() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // This test binary is a development build (cargo test compiles with
-    // debug assertions on), so with nothing disabled the two dev-only
+    // debug assertions on), so with nothing disabled the seven dev-only
     // autorun tools are listed like any other switchable tool - between
     // merge_case_files and optimize_cases, where they sit in the source.
     assert_eq!(
@@ -62,6 +62,11 @@ fn tools_list_names_every_tool() {
             "merge_case_files",
             "get_autorun_guide",
             "save_autorun_script",
+            "get_autorun_page",
+            "probe_autorun_locator",
+            "try_autorun_action",
+            "get_autorun_failures",
+            "record_autorun_quirk",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -243,10 +248,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 17 in this development build: nothing is disabled by an unreachable
-    // bridge, including the two dev-only tools, which default to ON here
+    // 22 in this development build: nothing is disabled by an unreachable
+    // bridge, including the seven dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 17, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 22, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name
@@ -369,7 +374,7 @@ fn a_failed_tool_call_says_which_kind_of_failure_it_was() {
 }
 
 /// Round 8 follow-up, revised for Task 9: the core tools still cannot be
-/// switched off, and in this development build the two autorun tools are
+/// switched off, and in this development build the autorun tools are
 /// ordinary switchable tools - listed and callable when nothing has named
 /// them, absent and refused once the person's own list does.
 #[test]
@@ -386,29 +391,39 @@ fn core_tools_survive_a_disabled_list_and_autorun_tools_are_switchable_in_a_dev_
     let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"begin_test_case_writing") && names.contains(&"transform_cases"), "{names:?}");
     assert!(
-        names.contains(&"get_autorun_guide") && names.contains(&"save_autorun_script"),
-        "neither was named as disabled, and this is a development build: {names:?}"
+        names.contains(&"get_autorun_guide")
+            && names.contains(&"save_autorun_script")
+            && names.contains(&"get_autorun_page"),
+        "none was named as disabled, and this is a development build: {names:?}"
     );
 
     // A call reaches the bridge rather than being refused - the stub
     // answers every non-/tools call with "{}", which the dispatcher wraps
     // as an ordinary (non-error) text result.
-    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"save_autorun_script","arguments":{"scripts":[]}}}"#;
-    let resp = handle_message(req, "1.0.0", &call).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_ne!(v["result"]["isError"], serde_json::json!(true), "a dev-build autorun call must reach the bridge, not be refused");
-    assert_eq!(v["result"]["content"][0]["text"], "{}");
+    for req in [
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"save_autorun_script","arguments":{"scripts":[]}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_autorun_page","arguments":{}}}"#,
+    ] {
+        let resp = handle_message(req, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_ne!(v["result"]["isError"], serde_json::json!(true), "a dev-build autorun call must reach the bridge, not be refused");
+        assert_eq!(v["result"]["content"][0]["text"], "{}");
+    }
 }
 
-/// Switched off by name, in a development build, the two autorun tools
+/// Switched off by name, in a development build, the autorun tools
 /// disappear from the list and a call gets the ORDINARY "switched off"
 /// sentence - not "not available", which would claim there is no switch
-/// when there plainly is one right here.
+/// when there plainly is one right here. They move as one row in the app,
+/// so the list the bridge reports names all seven together.
 #[test]
 fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordinary_way() {
     let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
         if path == "/tools" {
-            return Ok((200, r#"{"disabled":["get_autorun_guide","save_autorun_script"]}"#.into()));
+            return Ok((
+                200,
+                r#"{"disabled":["get_autorun_guide","save_autorun_script","get_autorun_page","probe_autorun_locator","try_autorun_action","get_autorun_failures","record_autorun_quirk"]}"#.into(),
+            ));
         }
         Ok((200, "{}".into()))
     };
@@ -416,15 +431,19 @@ fn autorun_tools_named_disabled_in_a_dev_build_are_absent_and_refused_the_ordina
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
     let names: Vec<&str> = v["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert!(!names.contains(&"get_autorun_guide") && !names.contains(&"save_autorun_script"), "{names:?}");
+    assert!(names.iter().all(|n| !n.contains("autorun")), "{names:?}");
 
-    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"save_autorun_script","arguments":{"scripts":[]}}}"#;
-    let resp = handle_message(req, "1.0.0", &call).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(v["result"]["isError"], true);
-    let text = v["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.contains("switched off"), "off by the person's own choice, in a dev build: {text}");
-    assert!(!text.contains("not available"), "{text}");
+    for name in ["save_autorun_script", "get_autorun_page"] {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"{name}","arguments":{{}}}}}}"#
+        );
+        let resp = handle_message(&req, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{name}");
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("switched off"), "off by the person's own choice, in a dev build: {text}");
+        assert!(!text.contains("not available"), "{text}");
+    }
 }
 
 /// The release rule cannot be exercised through `handle_message` at all -

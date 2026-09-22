@@ -1,11 +1,22 @@
-//! The two bridge routes an AI assistant reaches through the MCP proxy:
-//! read the action-script format, and save scripts back.
+//! The bridge routes an AI assistant reaches through the MCP proxy: read
+//! the action-script format, look at the page in the browser the person
+//! opened, try a locator or a single action, read a run's failures,
+//! record a quirk - and save scripts back under the expected-result
+//! floor, the declared-edit gate and the repair cap.
 //!
-//! Neither touches Azure DevOps, so neither needs a signed-in client -
-//! the guide documents a format, and the scripts are local files.
+//! Only one of these routes reaches Azure DevOps, and only to read: the
+//! save route looks the test cases up so the floor has something to
+//! check the script against. Driving the browser never does.
 
-use v2_lib::ai_bridge::{autorun_route_guard, route, BridgeContext};
-use v2_lib::autorun::store::{load_script, set_root};
+use v2_lib::ado::AdoClient;
+use v2_lib::ai_bridge::{autorun_guard_for, autorun_route_guard, route, BridgeContext};
+use v2_lib::autorun::quirks::load_quirks;
+use v2_lib::autorun::store::{load_script, save_run, save_scripts_atomically, set_root};
+use v2_lib::autorun::{CaseRecord, CaseScript, LocalRun, StepRecord};
+use v2_lib::browser::actions::ActionOutcome;
+use v2_lib::steps_xml::{build_steps_xml, Step};
+use wiremock::matchers::{method as wm_method, path as wm_path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct TempDir(std::path::PathBuf);
 
@@ -33,14 +44,70 @@ impl Drop for TempDir {
     }
 }
 
+/// A real organization and project: the save route looks its cases up
+/// under `ctx.org`, and a quirk is filed under the pair.
 fn ctx() -> BridgeContext {
-    BridgeContext::default()
+    BridgeContext { org: "acme".into(), project: "Web".into(), ..BridgeContext::default() }
 }
 
 /// The store root is process-wide state, and cargo runs tests in
 /// parallel - every test that sets it holds this lock so one test's root
 /// cannot swap out from under another mid-save.
 static ROOT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A signed-in client standing in for Azure DevOps. Each entry is a case
+/// id, its title, and one expected result per step - all the floor reads.
+/// The work-items-by-ids call is the ONLY request the save route makes.
+async fn client_with_cases(cases: &[(i32, &str, &[&str])]) -> (MockServer, AdoClient) {
+    let server = MockServer::start().await;
+    let value: Vec<serde_json::Value> = cases
+        .iter()
+        .map(|(id, title, expected)| {
+            let steps: Vec<Step> = expected
+                .iter()
+                .enumerate()
+                .map(|(i, e)| Step { action: format!("Step {}", i + 1), expected: (*e).to_string() })
+                .collect();
+            serde_json::json!({
+                "id": id,
+                "fields": {
+                    "System.Title": title,
+                    "Microsoft.VSTS.TCM.Steps": build_steps_xml(&steps),
+                }
+            })
+        })
+        .collect();
+    Mock::given(wm_method("GET"))
+        .and(wm_path("/acme/_apis/wit/workitems"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": value })),
+        )
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    (server, client)
+}
+
+/// Case 7 as every save test below writes it: a navigation step with
+/// nothing to assert, then a step that clicks Save and checks the toast.
+fn case_7(selector: &str, value: &str) -> serde_json::Value {
+    serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#save" },
+                { "kind": "expect_contains_text", "selector": selector, "value": value }
+            ]}
+        ]
+    }])
+}
+
+/// The declaration that goes with a change to case 7's step 2.
+fn edit_step_2(why: &str) -> serde_json::Value {
+    serde_json::json!({ "case_id": 7, "steps": [2], "why": why })
+}
 
 /// The guide is format documentation, not org data - it must answer
 /// before anyone signs in, or an assistant cannot even learn the shape.
@@ -58,6 +125,8 @@ async fn a_bundle_saves_every_case_it_carries() {
     let dir = TempDir::new();
     let _root = ROOT_LOCK.lock().unwrap();
     set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(201, "Valid login", &[""]), (202, "Locked account", &[""])]).await;
 
     let body = serde_json::json!([
         {
@@ -73,7 +142,8 @@ async fn a_bundle_saves_every_case_it_carries() {
     ])
     .to_string();
 
-    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert!(out.contains("201") && out.contains("202"), "reply names neither case: {out}");
 
@@ -91,6 +161,7 @@ async fn a_single_script_is_just_a_bundle_of_one() {
     let dir = TempDir::new();
     let _root = ROOT_LOCK.lock().unwrap();
     set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[(7, "Only one", &[""])]).await;
     let body = serde_json::json!([{
         "case_id": 7,
         "title": "Only one",
@@ -98,14 +169,16 @@ async fn a_single_script_is_just_a_bundle_of_one() {
     }])
     .to_string();
 
-    let (status, _) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
-    assert_eq!(status, 200);
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
     assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().title, "Only one");
 }
 
 /// An unknown action kind must be refused at the door. Saving it would
 /// hand the tester a script that dies mid-run, in front of them, with
-/// the browser already open.
+/// the browser already open. Parsing is the FIRST gate, before the
+/// sign-in check, which is why this one needs no client.
 #[tokio::test]
 async fn an_unknown_action_kind_is_refused_and_nothing_is_written() {
     let dir = TempDir::new();
@@ -135,13 +208,13 @@ async fn malformed_json_is_a_400_that_says_why() {
 }
 
 /// This is a PARSE-gate test, not an atomicity test: `"kind": "nope"` is
-/// an action tag serde does not know, so `serde_json::from_str::<Vec
-/// <CaseScript>>` fails on the whole body before the write loop ever
-/// starts - the good case was never going to be written regardless of
-/// whether that loop is atomic. It would pass even if
-/// `store::save_scripts_atomically` wrote every entry it reached with no
-/// rollback at all. See `a_write_failure_mid_bundle_leaves_nothing_behind`
-/// below for a test that actually exercises atomicity.
+/// an action tag serde does not know, so the whole body fails to read
+/// before the write loop ever starts - the good case was never going to
+/// be written regardless of whether that loop is atomic. It would pass
+/// even if `store::save_scripts_atomically` wrote every entry it reached
+/// with no rollback at all. See
+/// `a_write_failure_mid_bundle_leaves_nothing_behind` below for a test
+/// that actually exercises atomicity.
 #[tokio::test]
 async fn a_bundle_that_fails_to_parse_writes_nothing() {
     let dir = TempDir::new();
@@ -171,6 +244,8 @@ async fn a_write_failure_mid_bundle_leaves_nothing_behind() {
     let dir = TempDir::new();
     let _root = ROOT_LOCK.lock().unwrap();
     set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(11, "Fine", &[""]), (12, "Blocked", &[""])]).await;
 
     // Occupy case 12's target filename with a directory before the save
     // is even attempted, so its write is doomed from the start.
@@ -184,7 +259,8 @@ async fn a_write_failure_mid_bundle_leaves_nothing_behind() {
     ])
     .to_string();
 
-    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
     assert_eq!(status, 500, "{out}");
     assert!(
         load_script(dir.path(), 11).unwrap().is_none(),
@@ -192,16 +268,523 @@ async fn a_write_failure_mid_bundle_leaves_nothing_behind() {
     );
 }
 
+// --------------------------------------------------- the floor on a save
+
+/// A brand new script declares nothing - there is no earlier version to
+/// declare a change to - but it still has to check what its case says it
+/// should, or say why it does not.
+#[tokio::test]
+async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let checks_nothing = serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
+        ]
+    }])
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &checks_nothing, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("step 2 expects"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_none(), "a script below the floor was written");
+
+    let body = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (new)");
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.repairs, 0, "a new script has taken no repairs");
+}
+
+/// Saying WHY a step cannot be checked is the other way past the floor -
+/// it leaves the gap visible in the file instead of silently absent.
+#[tokio::test]
+async fn an_unchecked_step_with_a_reason_passes_the_floor() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let body = serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            {
+                "step_number": 2,
+                "actions": [{ "kind": "click", "selector": "#save" }],
+                "unchecked": "the toast vanishes too fast to read"
+            }
+        ]
+    }])
+    .to_string();
+
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let saved = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(saved.steps[1].unchecked.as_deref(), Some("the toast vanishes too fast to read"));
+}
+
+/// The floor needs the test case, and the test case comes from Azure
+/// DevOps - so with nobody signed in there is nothing to check against
+/// and the save is refused before a single byte is written.
+#[tokio::test]
+async fn saving_without_signing_in_is_refused_before_anything_is_written() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let body = case_7("#toast", "Saved").to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("sign in to Test Case Manager first"), "{out}");
+    assert!(out.contains("checked against its test case"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_none(), "a script was written anyway");
+}
+
+/// A case id the organization does not know is a mistake worth naming -
+/// a script saved against it would never be runnable.
+#[tokio::test]
+async fn a_case_the_organization_does_not_have_is_named() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    // The lookup answers with nothing at all for case 7.
+    let (_server, client) = client_with_cases(&[]).await;
+
+    let body = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "case 7 is not a test case in this organization");
+    assert!(load_script(dir.path(), 7).unwrap().is_none());
+}
+
+// ------------------------------------------ the declared-edit gate on a save
+
+/// Changing a script that already exists is a REPAIR: every step touched
+/// has to be named, an assertion may never go, and the count of repairs
+/// taken since a person last saved it goes up by one.
+#[tokio::test]
+async fn an_edit_must_be_declared_and_a_check_may_not_go() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    // Step 2's locator moved, and nothing said so.
+    let undeclared = serde_json::json!({ "scripts": case_7(".toast", "Saved") }).to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &undeclared, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("step 2 was changed but not declared"), "{out}");
+    assert_eq!(
+        load_script(dir.path(), 7).unwrap().unwrap().repairs,
+        0,
+        "a refused repair must not have counted"
+    );
+
+    // The same change, declared.
+    let declared = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
+
+    // Declared or not, the check itself may never be dropped.
+    let weakened = serde_json::json!({
+        "scripts": [{
+            "case_id": 7,
+            "title": "Save a rating",
+            "steps": [
+                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+                { "step_number": 2, "actions": [{ "kind": "click", "selector": "#save" }] }
+            ]
+        }],
+        "edits": [edit_step_2("the toast never appears in my run")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &weakened, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("an assertion is never removed"), "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1, "still one repair in");
+}
+
+/// Three repairs without a person looking is the cap. Saving the script
+/// from the app's own editor (which writes `repairs: 0`) is what starts
+/// the count again.
+#[tokio::test]
+async fn the_fourth_repair_is_refused_until_a_person_saves() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &case_7("#toast", "v0").to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+
+    for (n, value) in [(1u32, "v1"), (2, "v2"), (3, "v3")] {
+        let body = serde_json::json!({
+            "scripts": case_7("#toast", value),
+            "edits": [edit_step_2("the toast wording changed again")],
+        })
+        .to_string();
+        let (status, out) =
+            route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+        assert_eq!(status, 200, "repair {n}: {out}");
+        assert!(out.contains(&format!("repaired, {n} of 3 used")), "repair {n}: {out}");
+        assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, n);
+    }
+
+    let fourth = serde_json::json!({
+        "scripts": case_7("#toast", "v4"),
+        "edits": [edit_step_2("one more try")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &fourth, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("repaired 3 times without a person looking at it"), "{out}");
+    let on_disk = load_script(dir.path(), 7).unwrap().unwrap();
+    assert_eq!(on_disk.repairs, 3, "the refused fourth repair changed nothing");
+    assert_eq!(on_disk.steps[1].actions.len(), 2);
+
+    // What the app's editor does when the person saves: the same script,
+    // written straight to the store with the count back at zero.
+    let reset = CaseScript { repairs: 0, ..on_disk };
+    save_scripts_atomically(dir.path(), &[reset]).unwrap();
+
+    let again = serde_json::json!({
+        "scripts": case_7("#toast", "v5"),
+        "edits": [edit_step_2("the toast wording changed once more")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &again, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("repaired, 1 of 3 used"), "{out}");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
+}
+
+/// What an assistant learned while repairing is worth more than the
+/// repair: it travels with the declaration and lands in the project's
+/// quirks, attributed, so the next script does not rediscover it.
+#[tokio::test]
+async fn a_quirk_travels_with_the_edit() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &case_7("#toast", "Saved").to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+
+    let body = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [{
+            "case_id": 7,
+            "steps": [2],
+            "why": "the toast has no id, only a class",
+            "quirk": "the toast is rendered into a portal at the end of the body",
+        }],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(
+        out.contains("quirk recorded: the toast is rendered into a portal at the end of the body"),
+        "{out}"
+    );
+
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(quirks.len(), 1);
+    assert_eq!(quirks[0].text, "the toast is rendered into a portal at the end of the body");
+    assert_eq!(quirks[0].by, "assistant");
+
+    // The same quirk a second time is not written twice, and the report
+    // says so rather than pretending something new was learned.
+    let repeat = serde_json::json!({
+        "scripts": case_7("#toast", "Saved"),
+        "edits": [{
+            "case_id": 7,
+            "steps": [2],
+            "why": "the id came back",
+            "quirk": "The toast is rendered into a portal at the end of the body",
+        }],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &repeat, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("quirk already known:"), "{out}");
+    assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), 1);
+}
+
+/// A declaration for a case with no script on disk is a mistake, not a
+/// no-op: the assistant thinks it is repairing something that is not
+/// there.
+#[tokio::test]
+async fn declaring_an_edit_for_a_case_with_no_script_is_refused() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let body = serde_json::json!({
+        "scripts": case_7("#toast", "Saved"),
+        "edits": [edit_step_2("fixing the locator")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "case 7 has no script yet - \"edits\" is for changing one that exists");
+    assert!(load_script(dir.path(), 7).unwrap().is_none());
+}
+
+/// A body key nobody reads is named back, not dropped in silence - the
+/// same rule `transform_cases` follows. A misspelled "edits" that was
+/// quietly ignored would save an undeclared repair.
+#[tokio::test]
+async fn unknown_body_keys_are_named_not_ignored() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let body = serde_json::json!({
+        "scripts": case_7("#toast", "Saved"),
+        "edit": [edit_step_2("misspelled")],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("\"edit\""), "the key is not named: {out}");
+    assert!(out.contains("scripts") && out.contains("edits"), "{out}");
+    assert!(load_script(dir.path(), 7).unwrap().is_none());
+}
+
+// ------------------------------------------------------- the page routes
+
+/// Every route that touches the browser needs one the PERSON opened.
+/// These tests open none, so the session slot is empty and all three
+/// answer the same way - which is exactly what an assistant sees when it
+/// reaches for the page before anyone has opened a browser.
+#[tokio::test]
+async fn page_routes_need_the_supervised_browser() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let expected = "no supervised browser is open - the person opens one with Open browser on the Auto Run tab";
+
+    let (status, out) = route(&ctx(), None, "GET", "/autorun-page", "", "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert_eq!(out, expected);
+
+    let probe = serde_json::json!({ "selector": "#save" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-probe", &probe, "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert_eq!(out, expected);
+
+    let try_body =
+        serde_json::json!({ "action": { "kind": "click", "selector": "#save" } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &try_body, "1.0.0").await;
+    assert_eq!(status, 409, "{out}");
+    assert_eq!(out, expected);
+}
+
+/// A locator that could never match anything is refused before the
+/// browser is asked - the same sentence `Target::validate` gives a script
+/// at save time.
+#[tokio::test]
+async fn probe_refuses_a_locator_that_cannot_be_read() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let body = serde_json::json!({ "selector": "" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-probe", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "a selector is empty");
+
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-probe", "{}", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("selector"), "{out}");
+}
+
+/// Signing in is the person's job: it needs their accounts and the
+/// project's recipe, and no assistant ever drives it. An action the
+/// runner could not carry out is refused before the browser is asked too.
+#[tokio::test]
+async fn try_refuses_a_sign_in_and_an_invalid_action() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let sign_in =
+        serde_json::json!({ "action": { "kind": "sign_in", "account": "tester" } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &sign_in, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "sign_in is not a thing an assistant does - the person signs in");
+
+    let bad_url =
+        serde_json::json!({ "action": { "kind": "navigate", "url": "javascript:alert(1)" } })
+            .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &bad_url, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("navigate needs an http"), "{out}");
+
+    let unknown = serde_json::json!({ "action": { "kind": "teleport" } }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-try", &unknown, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("teleport"), "{out}");
+}
+
+// --------------------------------------------------------- the read routes
+
+fn failed_run(id: &str, case_id: i32) -> LocalRun {
+    LocalRun {
+        id: id.to_string(),
+        pbi_id: 42,
+        started_at: "1700000000000".to_string(),
+        cases: vec![CaseRecord {
+            case_id,
+            title: "Save a rating".to_string(),
+            verdict: "Failed".to_string(),
+            note: String::new(),
+            steps: vec![StepRecord {
+                step_number: 2,
+                outcomes: vec![ActionOutcome::failed("nothing on the page answers to #toast")],
+                screenshot: None,
+            }],
+            proposed: String::new(),
+            reason: String::new(),
+            duration_ms: None,
+            account: None,
+        }],
+        mode: String::new(),
+        published: None,
+    }
+}
+
+/// An assistant asks by case and gets the newest run that holds it; a
+/// case nobody has ever run is a 404 that says so rather than an empty
+/// report that reads like "nothing failed".
+#[tokio::test]
+async fn failures_are_read_from_the_latest_run() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    save_run(dir.path(), &failed_run("run-1700000000000", 7)).unwrap();
+
+    let (status, out) =
+        route(&ctx(), None, "GET", "/autorun-failures?case_id=7", "", "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("## Case 7"), "{out}");
+    assert!(out.contains("nothing on the page answers to #toast"), "{out}");
+
+    let (status, out) =
+        route(&ctx(), None, "GET", "/autorun-failures?case_id=999", "", "1.0.0").await;
+    assert_eq!(status, 404, "{out}");
+    assert_eq!(out, "no run on this machine has case 999");
+
+    let (status, out) = route(
+        &ctx(),
+        None,
+        "GET",
+        "/autorun-failures?run_id=run-1700000000000",
+        "",
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    assert!(out.contains("## Case 7"), "{out}");
+
+    let (status, out) =
+        route(&ctx(), None, "GET", "/autorun-failures?run_id=run-9", "", "1.0.0").await;
+    assert_eq!(status, 404, "{out}");
+    assert_eq!(out, "no run run-9");
+}
+
+/// A quirk can be recorded on its own, not only alongside a repair - and
+/// one already on the list is not written twice.
+#[tokio::test]
+async fn a_quirk_can_be_recorded_on_its_own() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let body = serde_json::json!({ "text": "the grid paginates at 25 rows" }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out, "recorded");
+
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out, "already known");
+
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(quirks.len(), 1);
+    assert_eq!(quirks[0].by, "assistant");
+
+    let empty = serde_json::json!({ "text": "   " }).to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-quirk", &empty, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(!out.is_empty());
+}
+
 // ----------------------------------------------------------- the dev gate
 //
-// Both routes above run through `route()`, which reads its own build's
+// Every route above runs through `route()`, which reads its own build's
 // `dev_build()` - always true for this test binary, since `cargo test`
 // compiles with debug assertions on. The release rule (a release build
 // refuses outright) can only be proven through the guard's explicit
 // `dev: bool` seam, exercised directly here.
 
 /// Outside a development build, the guard refuses unconditionally with
-/// the exact sentence the two routes are meant to answer.
+/// the exact sentence the autorun routes are meant to answer.
 #[test]
 fn the_guard_refuses_outside_a_development_build() {
     let refused = autorun_route_guard(false);
@@ -215,4 +798,31 @@ fn the_guard_refuses_outside_a_development_build() {
 #[test]
 fn the_guard_lets_a_development_build_through() {
     assert!(autorun_route_guard(true).is_none());
+}
+
+/// The guard is applied by PATH, once, before the router's match - so a
+/// route added later is covered by the shape of its name rather than by
+/// somebody remembering to repeat the check. Every Auto Run route is
+/// refused outside a development build; nothing else is touched.
+#[test]
+fn the_guard_still_holds_for_every_new_route() {
+    let autorun = [
+        "/autorun-guide",
+        "/autorun-script",
+        "/autorun-page",
+        "/autorun-probe",
+        "/autorun-try",
+        "/autorun-failures",
+        "/autorun-quirk",
+    ];
+    for path in autorun {
+        let (status, body) =
+            autorun_guard_for(path, false).unwrap_or_else(|| panic!("{path} was not refused"));
+        assert_eq!(status, 404, "{path}");
+        assert_eq!(body, "not available in this build", "{path}");
+        assert!(autorun_guard_for(path, true).is_none(), "{path} refused in a dev build");
+    }
+    for path in ["/ping", "/guide", "/test-cases", "/tools"] {
+        assert!(autorun_guard_for(path, false).is_none(), "{path} is not an Auto Run route");
+    }
 }

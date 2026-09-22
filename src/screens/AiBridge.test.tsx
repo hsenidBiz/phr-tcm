@@ -755,9 +755,9 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(within(toolSection).queryByText("Check a draft")).not.toBeInTheDocument();
   expect(within(toolSection).queryByText("Merge slice files")).not.toBeInTheDocument();
   expect(screen.queryByText("always on")).not.toBeInTheDocument();
-  // Six rows for nine tools, in this development build: the wiki search
-  // and its page reader share one switch, so do the suite search and its
-  // case reader, and so do the Auto Run guide and script writer.
+  // Six rows for fourteen tools, in this development build: the wiki
+  // search and its page reader share one switch, so do the suite search
+  // and its case reader, and so do the seven Auto Run tools.
   expect(screen.getByLabelText("Project tags")).toBeInTheDocument();
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
   expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
@@ -765,7 +765,7 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(within(toolSection).getByText("6 of 6 on")).toBeInTheDocument();
 });
 
-test("switching the Auto Run scripts row off sends both tool names in the disabled list", async () => {
+test("switching the Auto Run scripts row off sends every tool name in the disabled list", async () => {
   let seen: unknown;
   mockIPC((cmd, args) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -791,7 +791,15 @@ test("switching the Auto Run scripts row off sends both tool names in the disabl
     }),
   );
   const disabledTools = (seen as { disabledTools: string[] }).disabledTools;
-  expect([...disabledTools].sort()).toEqual(["get_autorun_guide", "save_autorun_script"]);
+  expect([...disabledTools].sort()).toEqual([
+    "get_autorun_failures",
+    "get_autorun_guide",
+    "get_autorun_page",
+    "probe_autorun_locator",
+    "record_autorun_quirk",
+    "save_autorun_script",
+    "try_autorun_action",
+  ]);
 });
 
 test("the PHR-X card hides when switched off in Settings, except during the tour", async () => {

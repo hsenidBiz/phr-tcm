@@ -223,14 +223,61 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
         },
         {
             "name": "save_autorun_script",
-            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), steps: [{ step_number, actions }] }. All or nothing: one bad action, locator or case id rejects the whole batch, and the message names the case, step and action, rather than leaving half the cases updated. Call get_autorun_guide first for the action vocabulary.",
+            "description": "Save action scripts so the app can drive those test cases through a real browser. Takes a LIST, so one call can cover a whole PBI. Each entry is { case_id, title, account (optional: the KEY of the account the case runs as, never a username or password), steps: [{ step_number, actions }] }. Every script is checked against its OWN test case before anything is written: a step whose expected result nothing asserts is refused unless that step says why in `unchecked`. CHANGING a script that already exists is a repair and needs `edits` - one entry per case, { case_id, steps: [every step number you changed], why, quirk (optional: something you learned about the application) }. An assertion is never removed or weakened by a repair, and a script takes three repairs before a person has to open it in the app and save it there. All or nothing: one bad action, locator, case id or undeclared change rejects the whole batch. Call get_autorun_guide first for the action vocabulary.",
             "inputSchema": schema(serde_json::json!({
                 "scripts": {
                     "type": "array",
                     "description": "One entry per test case: { case_id, title, account?, steps }",
                     "items": { "type": "object" },
                 },
+                "edits": {
+                    "type": "array",
+                    "description": "Only when a script already exists: one entry per case you are changing, { case_id, steps, why, quirk? }",
+                    "items": { "type": "object" },
+                },
             }), &["scripts"]),
+        },
+        {
+            "name": "get_autorun_page",
+            "description": "Read the page in the browser the person opened on the Auto Run tab, as text: Chrome's own accessibility tree, one element per line, with the locator that reaches it on the end of each line. This is how you see a page before writing or repairing a script - what a password field holds is never shown. Needs a supervised browser to be open.",
+            "inputSchema": schema(serde_json::json!({
+                "limit": { "type": "number", "description": "How many lines before the snapshot stops (default 300). Raise it for a long page, or probe one locator instead of reading the whole tree." },
+            }), &[]),
+        },
+        {
+            "name": "probe_autorun_locator",
+            "description": "Ask the open browser what a locator matches RIGHT NOW: how many elements, and for each one its tag, its text, whether it is visible and where it sits. Use it before putting a locator in a script - one that matches three things is a script that clicks the wrong one. Needs a supervised browser to be open.",
+            "inputSchema": schema(serde_json::json!({
+                "selector": {
+                    "type": ["object", "string"],
+                    "description": "A script target: a CSS selector string, or the role-and-accessible-name object a snapshot line ends with.",
+                },
+            }), &["selector"]),
+        },
+        {
+            "name": "try_autorun_action",
+            "description": "Carry out ONE script action against the open browser, so you can find out whether a repair works before you write it down. Answers ok or failed with what the page did, and the picture taken if it failed. Nothing is recorded - this is a rehearsal, not a run. `sign_in` is refused: the person signs in. Needs a supervised browser to be open.",
+            "inputSchema": schema(serde_json::json!({
+                "action": {
+                    "type": "object",
+                    "description": "One action in the script vocabulary, e.g. { \"kind\": \"click\", \"selector\": ... } - call get_autorun_guide for all of them.",
+                },
+            }), &["action"]),
+        },
+        {
+            "name": "get_autorun_failures",
+            "description": "What failed in an Auto Run run on THIS machine, as text you can act on: which step, which action (its own JSON), what the page said, and the picture. It also says when you must not touch the script at all - a sign-in that failed, a browser that stopped answering, or a case the person marked Blocked are not script defects. Read this before repairing anything.",
+            "inputSchema": schema(serde_json::json!({
+                "case_id": { "type": "number", "description": "The newest run that holds this test case." },
+                "run_id": { "type": "string", "description": "One run by its id instead. With neither, the newest run on this machine." },
+            }), &[]),
+        },
+        {
+            "name": "record_autorun_quirk",
+            "description": "Record one line about how this application behaves, so the next script - yours or the person's - does not rediscover it the hard way. Saved against the current project and attributed to the assistant; a line already on the list is not written twice. A quirk can also travel with a repair, as an edit's `quirk`.",
+            "inputSchema": schema(serde_json::json!({
+                "text": { "type": "string", "description": "One line, at most 300 characters, e.g. \"the results grid paginates at 25 rows\"." },
+            }), &["text"]),
         },
         {
             "name": "optimize_cases",
@@ -448,14 +495,50 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // Value::String, not a Value::Array. `.to_string()` on that
             // would re-quote and escape it into a JSON string literal
             // instead of forwarding the array text, so it is unwrapped
-            // first.
-            let body = match args.get("scripts") {
-                Some(serde_json::Value::String(s)) => s.clone(),
-                Some(v) => v.to_string(),
-                None => args.to_string(),
+            // first. `edits` travels the same way, and when it is present
+            // the body has to be the object shape that carries both.
+            let json_text = |key: &str| match args.get(key) {
+                Some(serde_json::Value::String(s)) => Some(s.clone()),
+                Some(v) => Some(v.to_string()),
+                None => None,
+            };
+            let body = match (json_text("scripts"), json_text("edits")) {
+                (Some(scripts), None) => scripts,
+                (Some(scripts), Some(edits)) => {
+                    format!("{{\"scripts\":{scripts},\"edits\":{edits}}}")
+                }
+                (None, _) => args.to_string(),
             };
             call("POST", "/autorun-script", &body)
         }
+        "get_autorun_page" => {
+            let target = match args["limit"].as_u64() {
+                Some(n) => format!("/autorun-page?limit={n}"),
+                None => "/autorun-page".to_string(),
+            };
+            call("GET", &target, "")
+        }
+        // The bridge reads one named field out of the body, so forwarding
+        // the raw arguments object is structurally unable to drop it -
+        // the same pattern as `check_spec_coverage`.
+        "probe_autorun_locator" => call("POST", "/autorun-probe", &args.to_string()),
+        "try_autorun_action" => call("POST", "/autorun-try", &args.to_string()),
+        "get_autorun_failures" => {
+            let mut params: Vec<String> = vec![];
+            if let Some(id) = args["case_id"].as_i64() {
+                params.push(format!("case_id={id}"));
+            }
+            if let Some(id) = args["run_id"].as_str().filter(|s| !s.trim().is_empty()) {
+                params.push(format!("run_id={}", percent_encode(id.trim())));
+            }
+            let target = if params.is_empty() {
+                "/autorun-failures".to_string()
+            } else {
+                format!("/autorun-failures?{}", params.join("&"))
+            };
+            call("GET", &target, "")
+        }
+        "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

@@ -190,7 +190,15 @@ pub const CORE_TOOLS: &[&str] = &[
 /// release build - not listed, no switch, no skill file, and a direct
 /// call is refused. The in-app Auto Run screen is unaffected; only the
 /// assistant's path to it is closed outside development.
-pub const DEV_ONLY_TOOLS: &[&str] = &["get_autorun_guide", "save_autorun_script"];
+pub const DEV_ONLY_TOOLS: &[&str] = &[
+    "get_autorun_guide",
+    "save_autorun_script",
+    "get_autorun_page",
+    "probe_autorun_locator",
+    "try_autorun_action",
+    "get_autorun_failures",
+    "record_autorun_quirk",
+];
 
 /// Whether this process is a development build: `cargo test` and
 /// `tauri dev` compile with debug assertions on, `tauri build` does not.

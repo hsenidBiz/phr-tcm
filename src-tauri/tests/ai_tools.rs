@@ -600,9 +600,9 @@ fn the_repo_commands_land_under_the_repos_dot_claude() {
 
 use v2_lib::ai_tools::{effective_disabled_for, CORE_TOOLS, DEV_ONLY_TOOLS};
 
-/// The policy: two tools are development-build only, and the core set can
-/// never be switched off - whatever the frontend's list says, in either
-/// build kind.
+/// The policy: the seven Auto Run tools are development-build only, and
+/// the core set can never be switched off - whatever the frontend's list
+/// says, in either build kind.
 ///
 /// Validate, optimise and merge joined the core set: finishing a draft is
 /// part of writing one, and an assistant that can write cases but cannot
@@ -615,7 +615,18 @@ use v2_lib::ai_tools::{effective_disabled_for, CORE_TOOLS, DEV_ONLY_TOOLS};
 /// own (development) build kind.
 #[test]
 fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
-    assert_eq!(DEV_ONLY_TOOLS, ["get_autorun_guide", "save_autorun_script"]);
+    assert_eq!(
+        DEV_ONLY_TOOLS,
+        [
+            "get_autorun_guide",
+            "save_autorun_script",
+            "get_autorun_page",
+            "probe_autorun_locator",
+            "try_autorun_action",
+            "get_autorun_failures",
+            "record_autorun_quirk"
+        ]
+    );
     assert_eq!(
         CORE_TOOLS,
         [
@@ -632,25 +643,20 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
 
     // Release (dev: false): the dev-only tools are disabled first,
     // always - the same rule the old always-hidden constant enforced.
-    assert_eq!(
-        effective_disabled_for(&[], false),
-        vec!["get_autorun_guide", "save_autorun_script"]
-    );
+    assert_eq!(effective_disabled_for(&[], false), DEV_ONLY_TOOLS.to_vec());
     // A core tool named in the frontend's list is dropped, not honoured.
     assert_eq!(
         effective_disabled_for(&["optimize_cases".into(), "merge_case_files".into()], false),
-        vec!["get_autorun_guide", "save_autorun_script"],
+        DEV_ONLY_TOOLS.to_vec(),
         "the three that finish a draft cannot be switched off"
     );
     let got = effective_disabled_for(
         &["begin_test_case_writing".into(), "search_wiki".into(), "get_autorun_guide".into()],
         false,
     );
-    assert_eq!(
-        got,
-        vec!["get_autorun_guide", "save_autorun_script", "search_wiki"],
-        "dev-only first, core dropped, no duplicates"
-    );
+    let mut expected: Vec<&str> = DEV_ONLY_TOOLS.to_vec();
+    expected.push("search_wiki");
+    assert_eq!(got, expected, "dev-only first, core dropped, no duplicates");
 
     // Development (dev: true): the dev-only tools default to ON, like
     // every other switchable tool - not added unasked.

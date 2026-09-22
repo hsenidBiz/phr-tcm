@@ -907,12 +907,16 @@ export default function AiBridge() {
           </li>
           {DEV_BUILD && (
             <li>
-              <span className="font-medium text-text">Auto Run scripts</span>: reads the guide for writing an Auto Run browser
-              script, and saves the scripts you write back, one call for a whole
-              PBI&apos;s cases. Development builds only, so this row and both tools
-              are missing entirely from a release build, not just switched off. Off,
-              an assistant cannot read the guide or save a script, and Auto Run
-              stays something you drive by hand.
+              <span className="font-medium text-text">Auto Run scripts</span>: everything an assistant needs to write one
+              browser script and keep it working. It reads the script guide, looks
+              at the page in the browser you opened, tries a locator or a single
+              action there, reads what failed in a run, saves the scripts back one
+              call for a whole PBI&apos;s cases, and notes what it learned about your
+              application. It never signs in, never removes a check you had, and
+              a script it has repaired three times comes back to you. Development
+              builds only, so this row and all seven tools are missing entirely
+              from a release build, not just switched off. Off, Auto Run stays
+              something you drive by hand.
             </li>
           )}
         </ul>
