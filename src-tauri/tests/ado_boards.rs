@@ -75,11 +75,11 @@ async fn mount_team_scope(server: &MockServer, team_id: &str, value: &str, inclu
 fn the_body_is_the_three_integers_the_controller_named() {
     assert_eq!(
         boards_body(0, PBI, 157941),
-        serde_json::json!({"planId": 0, "requirementId": 145386, "testCaseId": 157941})
+        serde_json::json!({"planId": 0, "suiteId": 0, "requirementId": 145386, "testCaseId": 157941})
     );
     assert_eq!(
         boards_body(157942, PBI, 157801),
-        serde_json::json!({"planId": 157942, "requirementId": 145386, "testCaseId": 157801})
+        serde_json::json!({"planId": 157942, "suiteId": 0, "requirementId": 145386, "testCaseId": 157801})
     );
     // The version the route was watched at. It is a constant so a bump
     // shows up as one edit with the date beside it.

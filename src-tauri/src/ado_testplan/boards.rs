@@ -39,16 +39,20 @@ pub const BOARDS_ROUTE_VERSION: &str = "5";
 /// Int32, Int32)` and "a null entry for parameter 'planId'". So the route
 /// takes three integers - a plan, the requirement, one test case - not a
 /// list; the suite pulls in every Tested-By case of the requirement by
-/// itself, which is why one id is enough. `planId` is confirmed by name;
-/// `requirementId` is the name the reply uses; `testCaseId` is the
-/// natural third and is UNCONFIRMED until a probe answers 200. A wrong
-/// name comes back the same way: a 500 naming the first null parameter.
-/// A `plan_id` of 0 asks the server to make the team's sprint plan, which
-/// is what the watched save produced (design §2.3); whether 0 is accepted
-/// is the second thing the probe settles. Design §4.1.
+/// itself, which is why one id is enough. The second probe, sent with
+/// `planId: 0`, was answered with "a null entry for parameter 'suiteId'":
+/// so `planId` and `suiteId` are two of the three, and the third is one
+/// of the two names below (`requirementId` is what the reply uses;
+/// `testCaseId` is the natural other). An unknown field is ignored, a
+/// missing one is named, so both are sent and the next probe settles it.
+/// Both ids are sent as 0: the watched save produced a NEW plan (design
+/// §2.3), so the portal either creates plan and suite in a call nobody
+/// saw, or sends 0 and lets the server make them - which is what a 200
+/// here would prove. Design §4.1.
 pub fn boards_body(plan_id: i32, pbi_id: i32, case_id: i32) -> serde_json::Value {
     json!({
         "planId": plan_id,
+        "suiteId": 0,
         "requirementId": pbi_id,
         "testCaseId": case_id,
     })
