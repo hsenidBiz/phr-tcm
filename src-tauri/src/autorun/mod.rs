@@ -8,6 +8,7 @@
 
 pub mod accounts;
 pub mod edits;
+pub mod failures;
 pub mod floor;
 pub mod guide;
 pub mod publish;
