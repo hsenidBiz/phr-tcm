@@ -134,9 +134,34 @@ the board's test count.
   allowed module values, the tags in use and the writing style test cases
   follow: short active sentences, exact values, no em dashes.
 - A badge beside the tab title shows whether the bridge is running.
-- An optional company database server registers alongside the bridge.
-  Change the default connection in the app and the registered tool
-  configs update with you.
+- An optional company database server registers alongside the bridge, so
+  an assistant can check real data instead of guessing. Change the
+  default connection in the app and the registered tool configs update
+  with you. Two tools: `db_lookup` finds the tables and columns behind a
+  topic (or lists one named table's full column list), and `db_query`
+  runs a single SQL statement and reads back the result.
+- The app runs `sqlcmd` itself to reach the database - it is not bundled,
+  so the app looks for it on PATH, in the ODBC 17/18 client tools
+  folders, and in `C:\Program Files\sqlcmd`, and says so plainly when
+  none of those has it.
+- Reading and writing are two separate switches on the AI Bridge tab.
+  "Company database (read)" turns the two tools on at all - SELECT only.
+  The create/update/delete switch is off by default, greyed out unless
+  the chosen connection is the Dev - dev login one, and a write still
+  needs both: that switch on AND that connection, or it is refused.
+- Every statement is classified before it is allowed anywhere near
+  sqlcmd. DROP, TRUNCATE, ALTER, CREATE, EXEC, a backup or a restore, and
+  anything that reaches another server or process (OPENROWSET,
+  OPENQUERY, OPENDATASOURCE) are refused outright, on every connection,
+  no exceptions. A result is capped at 200 rows and 60,000 characters,
+  and a statement gets 30 seconds before it is stopped.
+- Every statement the assistant sends is logged - whether it ran or was
+  refused, a write kept whole and a read shortened - and never with
+  credentials. What logging cannot hide: while `sqlcmd` is running, the
+  connection's password is one of its own command-line arguments, so it
+  is readable from this machine's process list for that moment. Worth
+  knowing if you ever type your own database password into this form
+  rather than using a connection the app shipped with.
 
 ### Work Manager
 - A To Do, In Progress and Done board of your work items, or a team's,
