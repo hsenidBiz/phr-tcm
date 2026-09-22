@@ -311,7 +311,8 @@ pub fn export_queue_page(
         // whether the reviewer is at the top of the page or the bottom.
         "<div id='tc-stale' role='status'><span>The test cases have changed since this page was opened.</span><button type='button' id='tc-stale-go'>Refresh</button></div>".into(),
         "<div class='searchbar'>".into(),
-        "<input id='tc-search' type='search' placeholder='Search title, ID, tags, steps, prerequisites...' aria-label='Search test cases'>".into(),
+        "<select id='tc-field' aria-label='Search in'><option value='all'>All fields</option><option value='title'>Title</option><option value='id'>ID</option><option value='pre'>Prerequisites</option><option value='steps'>Steps</option><option value='tags'>Tags</option><option value='module'>Module</option></select>".into(),
+        "<input id='tc-search' type='search' placeholder='Search test cases' aria-label='Search test cases'>".into(),
         // Back to where the review stopped. Outside the menu, because it is
         // the one control a reviewer reaches for repeatedly - and hidden
         // until a case is marked, since a button that scrolls nowhere is
@@ -362,7 +363,7 @@ pub fn export_queue_page(
         // search filter hides some: "case 7" has to mean the same thing
         // before and after someone types in the box.
         parts.push(format!(
-            "<h2><span class='seq'>{}</span>{op}{wid}{}{MARK_BUTTON}</h2>",
+            "<h2><span class='seq'>{}</span>{op}{wid}<span class='title'>{}</span>{MARK_BUTTON}</h2>",
             idx + 1,
             esc(&tc.title)
         ));
@@ -390,7 +391,7 @@ pub fn export_queue_page(
             .split(';')
             .map(str::trim)
             .filter(|t| !t.is_empty())
-            .map(|t| format!("<span class='chip'>{}</span>", esc(t)))
+            .map(|t| format!("<span class='chip tag'>{}</span>", esc(t)))
             .collect();
         if !tags.is_empty() {
             rows.push(format!(
@@ -482,7 +483,7 @@ pub fn export_queue_page(
             parts.push("<table><tr><th>#</th><th>Action</th><th>Expected result</th></tr>".into());
             for (i, step) in tc.steps.iter().enumerate() {
                 parts.push(format!(
-                    "<tr><td class='num'>{}</td><td>{}</td><td>{}</td></tr>",
+                    "<tr><td class='num'>{}</td><td class='action'>{}</td><td class='expected'>{}</td></tr>",
                     i + 1,
                     esc(&step.action),
                     esc(&step.expected)

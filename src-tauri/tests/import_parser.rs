@@ -625,6 +625,17 @@ fn html_export_carries_cases_and_search() {
     assert!(html.contains("None")); // empty prerequisites block still shown
     assert!(html.contains("PBI #7")); // subtitle
     assert!(!html.contains("class='note-box'")); // no note ctx -> no comment boxes
+
+    // The search field selector: All fields / Title / ID / Prerequisites /
+    // Steps / Tags / Module.
+    assert!(html.contains("<select id='tc-field' aria-label='Search in'>"));
+    assert!(html.contains("<option value='title'>Title</option>"));
+    assert!(html.contains("<option value='pre'>Prerequisites</option>"));
+    assert!(html.contains("placeholder='Search test cases'"));
+    assert!(html.contains("<span class='title'>"));
+    assert!(html.contains("<td class='action'>"));
+    assert!(html.contains("<td class='expected'>"));
+    assert!(html.contains("<span class='chip tag'>")); // this fixture carries tags
 }
 
 /// The page opens in a browser, so it wears the app's theme - and carries

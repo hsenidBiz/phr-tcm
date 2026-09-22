@@ -7,16 +7,40 @@
     var input = document.getElementById('tc-search');
     var count = document.getElementById('tc-count');
     var noMatch = document.getElementById('tc-no-match');
+    var field = document.getElementById('tc-field');
     if (!input || !count) return function () {};
     var cards = Array.prototype.slice.call(document.querySelectorAll('.case'));
-    var texts = cards.map(function (c) { return c.textContent.toLowerCase(); });
+    // Per card, one lower-cased haystack per field, so a search can be
+    // narrowed to just the title, ID, prerequisites, steps, tags or module
+    // instead of the whole card's text.
+    function fieldsOf(card) {
+      var text = function (sel) {
+        return Array.prototype.map.call(card.querySelectorAll(sel), function (e) { return e.textContent; }).join(' ');
+      };
+      var pre = card.querySelector('.pre');
+      return {
+        all: card.textContent.toLowerCase(),
+        title: text('.title').toLowerCase(),
+        // Both the bare key and the #-prefixed work item id, so "157957"
+        // and "#157957" both match.
+        id: ((card.getAttribute('data-key') || '') + ' ' + text('.wid')).toLowerCase(),
+        pre: (pre ? pre.textContent.replace(/^\s*Prerequisites:\s*/, '') : '').toLowerCase(),
+        steps: text('.action, .expected').toLowerCase(),
+        tags: text('.chip.tag').toLowerCase(),
+        module: text('.chip.module').toLowerCase()
+      };
+    }
+    var fields = cards.map(fieldsOf);
     var total = cards.length;
 
     function apply() {
+      // A missing select (an older cached page, or a page without one)
+      // searches every field, same as before this field selector existed.
+      var key = field && fields.length && field.value in fields[0] ? field.value : 'all';
       var words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
       var shown = 0;
-      texts.forEach(function (t, i) {
-        var hit = words.every(function (w) { return t.indexOf(w) !== -1; });
+      fields.forEach(function (f, i) {
+        var hit = words.every(function (w) { return f[key].indexOf(w) !== -1; });
         cards[i].classList.toggle('hidden', !hit);
         if (hit) shown++;
       });
@@ -32,6 +56,10 @@
       input.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') { input.value = ''; apply(); }
       });
+    }
+    if (field && !field.dataset.wired) {
+      field.dataset.wired = '1';
+      field.addEventListener('change', apply);
     }
     apply();
     return apply;
@@ -184,6 +212,9 @@
     });
   }
   window.__tcmWireMarks = wireMarks;
+  // Test-only: re-wires the search filter against whatever cards are
+  // currently in the document, exactly as a live swap does.
+  window.__tcmWireSearch = function () { applyFilter = wireSearch(); };
   // Test-only: the in-memory write-through cache now genuinely outlives a
   // storage read that comes back null (that is the fix), which on a real
   // page is exactly right - it lasts for the page's own lifetime. A test
@@ -255,6 +286,8 @@
       // What the reviewer would lose to a reload, carried across by hand.
       var input = document.getElementById('tc-search');
       var q = input ? input.value : '';
+      var sel = document.getElementById('tc-field');
+      var f = sel ? sel.value : '';
       var y = window.scrollY;
       var openTitles = {};
       Array.prototype.forEach.call(document.querySelectorAll('.case details[open]'), function (d) {
@@ -268,6 +301,8 @@
       // Restore: filter text, expanded sections, notes state, scroll.
       var input2 = document.getElementById('tc-search');
       if (input2) input2.value = q;
+      var sel2 = document.getElementById('tc-field');
+      if (sel2 && f) sel2.value = f;
       Array.prototype.forEach.call(document.querySelectorAll('.case details'), function (d) {
         var caseEl = d.closest('.case');
         var t = caseEl && caseEl.querySelector('summary');

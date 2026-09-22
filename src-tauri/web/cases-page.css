@@ -75,6 +75,8 @@ td { padding: 7px 10px; border: 1px solid var(--border); vertical-align: top;
 td.num { width: 34px; text-align: center; color: var(--faint); }
 .searchbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
              display: flex; align-items: center; gap: 12px; padding: 10px 0 14px; }
+.searchbar select { font: inherit; padding: 6px 8px; border: 1px solid var(--border);
+                     border-radius: 6px; background: var(--surface); color: var(--text); }
 #tc-search { flex: 1; font: inherit; font-size: 14px; padding: 9px 14px;
              border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
              color: inherit; outline: none; }
