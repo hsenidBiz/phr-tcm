@@ -497,15 +497,29 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             // instead of forwarding the array text, so it is unwrapped
             // first. `edits` travels the same way, and when it is present
             // the body has to be the object shape that carries both.
-            let json_text = |key: &str| match args.get(key) {
-                Some(serde_json::Value::String(s)) => Some(s.clone()),
-                Some(v) => Some(v.to_string()),
+            //
+            // Built with `json!` rather than by pasting text together: a
+            // `scripts` string that is not valid JSON would otherwise be
+            // spliced in raw and turn the whole body into something the
+            // route cannot even parse, so the real complaint ("this is
+            // not a list of scripts") would be replaced by a syntax
+            // error pointing at nothing.
+            let value_of = |key: &str| match args.get(key) {
+                Some(serde_json::Value::String(s)) => Some(
+                    serde_json::from_str::<serde_json::Value>(s)
+                        .unwrap_or_else(|_| serde_json::Value::String(s.clone())),
+                ),
+                Some(v) => Some(v.clone()),
                 None => None,
             };
-            let body = match (json_text("scripts"), json_text("edits")) {
-                (Some(scripts), None) => scripts,
+            let body = match (value_of("scripts"), value_of("edits")) {
+                // Nothing to declare: the bare array, exactly as before.
+                // An unparseable string is forwarded as it was written so
+                // the route's own message names what is wrong with it.
+                (Some(serde_json::Value::String(s)), None) => s,
+                (Some(scripts), None) => scripts.to_string(),
                 (Some(scripts), Some(edits)) => {
-                    format!("{{\"scripts\":{scripts},\"edits\":{edits}}}")
+                    serde_json::json!({ "scripts": scripts, "edits": edits }).to_string()
                 }
                 (None, _) => args.to_string(),
             };

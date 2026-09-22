@@ -100,6 +100,67 @@ fn tools_call_proxies_to_the_bridge_and_wraps_text() {
     assert_eq!(last.1, "/test-cases?pbi=42&limit=3&offset=0");
 }
 
+/// `save_autorun_script` forwards ONE body, and what that body looks like
+/// depends on whether the call declares any edits: the bare array a new
+/// bundle has always sent, or the object that carries the declarations
+/// alongside it. A caller that wrapped its payload in a JSON string (the
+/// pattern every sibling tool on this server uses) gets the same result
+/// either way - the point of building the body with `json!` rather than
+/// by pasting text together.
+#[test]
+fn save_autorun_script_sends_the_array_alone_and_the_object_when_edits_come_too() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "saved 1 script(s): case 7 (new)".to_string()))
+    };
+    let scripts = serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [{ "step_number": 1, "actions": [{ "kind": "check_text", "value": "Saved" }] }]
+    }]);
+    let edits = serde_json::json!([{ "case_id": 7, "steps": [1], "why": "the toast moved" }]);
+
+    // No edits: the array itself, which is what the route has always taken.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": { "name": "save_autorun_script", "arguments": { "scripts": scripts } },
+    });
+    handle_message(&req.to_string(), "1.10.3", &call).unwrap();
+    let (method, path, body) = calls.borrow().last().unwrap().clone();
+    assert_eq!((method.as_str(), path.as_str()), ("POST", "/autorun-script"));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap(), scripts);
+
+    // With edits: an object carrying both, each parsed back as JSON.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {
+            "name": "save_autorun_script",
+            "arguments": { "scripts": scripts, "edits": edits },
+        },
+    });
+    handle_message(&req.to_string(), "1.10.3", &call).unwrap();
+    let body = calls.borrow().last().unwrap().2.clone();
+    let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(sent.is_object(), "an edits call has to send the object shape: {body}");
+    assert_eq!(sent["scripts"], scripts);
+    assert_eq!(sent["edits"], edits);
+
+    // The same call with both payloads as JSON STRINGS lands identically.
+    let req = serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {
+            "name": "save_autorun_script",
+            "arguments": { "scripts": scripts.to_string(), "edits": edits.to_string() },
+        },
+    });
+    handle_message(&req.to_string(), "1.10.3", &call).unwrap();
+    let body = calls.borrow().last().unwrap().2.clone();
+    let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(sent["scripts"], scripts, "{body}");
+    assert_eq!(sent["edits"], edits, "{body}");
+}
+
 /// get_test_cases reads cases by their own ids too, with or without a PBI:
 /// an assistant holding "#151331" must not need to know which PBI it is on.
 #[test]

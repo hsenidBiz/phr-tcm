@@ -296,13 +296,36 @@ async fn a_new_script_needs_no_declaration_but_must_meet_the_floor() {
     assert!(out.contains("step 2 expects"), "{out}");
     assert!(load_script(dir.path(), 7).unwrap().is_none(), "a script below the floor was written");
 
-    let body = case_7("#toast", "Saved").to_string();
+    // `repairs` is never the sender's to set: a bundle claiming 99 lands
+    // as a new script at 0, and a declared repair lands at one more than
+    // the file had - not at whatever the body asked for. A sender that
+    // could write this field could also write it back to zero, which is
+    // the whole of what the cap prevents.
+    let mut body = case_7("#toast", "Saved");
+    body[0]["repairs"] = serde_json::json!(99);
     let (status, out) =
-        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body.to_string(), "1.0.0").await;
     assert_eq!(status, 200, "{out}");
     assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (new)");
     let saved = load_script(dir.path(), 7).unwrap().unwrap();
     assert_eq!(saved.repairs, 0, "a new script has taken no repairs");
+
+    let mut repaired = case_7(".toast", "Saved");
+    repaired[0]["repairs"] = serde_json::json!(99);
+    let declared = serde_json::json!({
+        "scripts": repaired,
+        "edits": [edit_step_2("the toast has no id, only a class")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out, "saved 1 script(s): case 7 (repaired, 1 of 3 used)");
+    assert_eq!(
+        load_script(dir.path(), 7).unwrap().unwrap().repairs,
+        1,
+        "the count came from the file, not the body"
+    );
 }
 
 /// Saying WHY a step cannot be checked is the other way past the floor -
@@ -562,6 +585,148 @@ async fn a_quirk_travels_with_the_edit() {
     assert_eq!(load_quirks(dir.path(), "acme", "Web").unwrap().len(), 1);
 }
 
+/// Case 9, the second case of the two-case bundle below. Its expected
+/// result is checked, so it clears the floor on its own.
+fn case_9(value: &str) -> serde_json::Value {
+    serde_json::json!({
+        "case_id": 9,
+        "title": "Delete a rating",
+        "steps": [
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] },
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#delete" },
+                { "kind": "expect_contains_text", "selector": "#toast", "value": value }
+            ]}
+        ]
+    })
+}
+
+/// Saving a whole PBI again after fixing ONE case sends every other case
+/// back exactly as it was. That is not a repair of those cases, so it
+/// costs nothing from their count and can never run into the cap - which
+/// would otherwise lock a bundle after three fixes to any case in it.
+#[tokio::test]
+async fn an_unchanged_script_costs_no_repair() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) = client_with_cases(&[
+        (7, "Save a rating", &["", "A toast says Saved"]),
+        (9, "Delete a rating", &["", "A toast says Deleted"]),
+    ])
+    .await;
+
+    let both = |seven: &str, nine: &str| {
+        serde_json::json!([case_7("#toast", seven)[0].clone(), case_9(nine)])
+    };
+    let (status, out) = route(
+        &ctx(),
+        Some(&client),
+        "POST",
+        "/autorun-script",
+        &both("Saved", "Deleted").to_string(),
+        "1.0.0",
+    )
+    .await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out, "saved 2 script(s): case 7 (new), case 9 (new)");
+
+    // Case 7 is repaired; case 9 comes back word for word.
+    let body = serde_json::json!({
+        "scripts": both("Saved!", "Deleted"),
+        "edits": [edit_step_2("the toast gained an exclamation mark")],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(
+        out,
+        "saved 2 script(s): case 7 (repaired, 1 of 3 used), case 9 (unchanged)"
+    );
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 1);
+    assert_eq!(load_script(dir.path(), 9).unwrap().unwrap().repairs, 0, "case 9 paid nothing");
+
+    // Declaring an edit for a case nothing happened to is still refused -
+    // that is rule 2, and skipping the gate must not skip it too.
+    let over_declared = serde_json::json!({
+        "scripts": both("Saved!", "Deleted"),
+        "edits": [{ "case_id": 9, "steps": [2], "why": "I thought I changed this" }],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &over_declared, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("declared but not changed"), "{out}");
+
+    // Case 7 all the way to the cap, then four identical re-sends of it.
+    for value in ["Saved!!", "Saved!!!"] {
+        let body = serde_json::json!({
+            "scripts": case_7("#toast", value),
+            "edits": [edit_step_2("the toast wording moved again")],
+        })
+        .to_string();
+        let (status, out) =
+            route(&ctx(), Some(&client), "POST", "/autorun-script", &body, "1.0.0").await;
+        assert_eq!(status, 200, "{out}");
+    }
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 3, "at the cap");
+
+    for round in 1..=4 {
+        let (status, out) = route(
+            &ctx(),
+            Some(&client),
+            "POST",
+            "/autorun-script",
+            &case_7("#toast", "Saved!!!").to_string(),
+            "1.0.0",
+        )
+        .await;
+        assert_eq!(status, 200, "re-send {round}: {out}");
+        assert_eq!(out, "saved 1 script(s): case 7 (unchanged)", "re-send {round}");
+        assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 3, "re-send {round}");
+    }
+}
+
+/// A declaration naming a case the bundle is not saving usually means a
+/// case id was typed wrong into one of the two lists. Ignoring it would
+/// still file its quirk while changing nothing, so it is named back and
+/// the whole call is refused.
+#[tokio::test]
+async fn an_edit_for_a_case_outside_the_bundle_is_refused() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+
+    let body = serde_json::json!({
+        "scripts": case_7("#toast", "Saved"),
+        "edits": [{
+            "case_id": 11,
+            "steps": [2],
+            "why": "fixing the locator",
+            "quirk": "the toast is rendered into a portal",
+        }],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &body, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "edits names case 11, which is not in this bundle");
+    assert!(load_script(dir.path(), 7).unwrap().is_none());
+    assert!(load_quirks(dir.path(), "acme", "Web").unwrap().is_empty(), "a stray edit filed a quirk");
+
+    let two = serde_json::json!({
+        "scripts": case_7("#toast", "Saved"),
+        "edits": [
+            { "case_id": 13, "steps": [2], "why": "one" },
+            { "case_id": 11, "steps": [2], "why": "two" },
+        ],
+    })
+    .to_string();
+    let (status, out) = route(&ctx(), None, "POST", "/autorun-script", &two, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "edits names cases 11, 13, which are not in this bundle");
+}
+
 /// A declaration for a case with no script on disk is a mistake, not a
 /// no-op: the assistant thinks it is repairing something that is not
 /// there.
@@ -746,6 +911,23 @@ async fn failures_are_read_from_the_latest_run() {
         route(&ctx(), None, "GET", "/autorun-failures?run_id=run-9", "", "1.0.0").await;
     assert_eq!(status, 404, "{out}");
     assert_eq!(out, "no run run-9");
+
+    // A case_id that was sent but is not a number is a mistake worth
+    // naming: read as "no case given" it would answer about the newest
+    // run instead, which is a different question with a plausible answer.
+    let (status, out) =
+        route(&ctx(), None, "GET", "/autorun-failures?case_id=seven", "", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "case_id must be a number");
+
+    // A run file that cannot be read is not a run that is not there, and
+    // the store's own message for it names the file's path - which is
+    // nothing the reader can act on.
+    std::fs::write(dir.path().join("runs").join("run-bad.json"), "{ not a run").unwrap();
+    let (status, out) =
+        route(&ctx(), None, "GET", "/autorun-failures?run_id=run-bad", "", "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "the run file could not be read");
 }
 
 /// A quirk can be recorded on its own, not only alongside a repair - and

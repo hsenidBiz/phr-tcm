@@ -284,10 +284,14 @@ async fn autorun_page(target: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
+    // Capped as well as defaulted: a snapshot is text an assistant has to
+    // read, and a limit of a million turns "see the page" into a reply
+    // nothing can use. Ten times the default is already a very long page.
     let limit = q(target, "limit")
         .and_then(|s| s.trim().parse::<usize>().ok())
         .filter(|n| *n > 0)
-        .unwrap_or(crate::browser::snapshot::DEFAULT_LIMIT);
+        .unwrap_or(crate::browser::snapshot::DEFAULT_LIMIT)
+        .min(crate::browser::snapshot::DEFAULT_LIMIT * 10);
     // The lock is held for exactly one protocol job - whoever holds it
     // holds the browser, and the person may be using it.
     let mut slot = crate::commands::autorun::supervised().lock().await;
@@ -364,17 +368,26 @@ async fn autorun_try(ctx: &BridgeContext, body: &str) -> (u16, String) {
     if let Some(busy) = unattended_run_is_using_the_browser() {
         return busy;
     }
-    let mut slot = crate::commands::autorun::supervised().lock().await;
-    let Some(session) = slot.as_mut() else {
-        return (409, NO_SUPERVISED_BROWSER.to_string());
-    };
+    // Everything that can fail without the browser is settled BEFORE the
+    // lock: whoever holds it holds the browser the person is using, and
+    // a session held open to look up a path is a session held for no
+    // reason.
     let root = match autorun_root() {
         Ok(r) => r,
         Err(refused) => return refused,
     };
+    let mut slot = crate::commands::autorun::supervised().lock().await;
+    let Some(session) = slot.as_mut() else {
+        return (409, NO_SUPERVISED_BROWSER.to_string());
+    };
     // A step of one, numbered 0 - it belongs to no case, and nothing
     // records it. `run_step` is still what carries it out, so a tried
     // action behaves exactly as it will inside a script.
+    //
+    // `{{username}}` and `{{password}}` are refused where a script is
+    // SAVED, not here: a tried `fill` is not on its way into a file, and
+    // it types the literal text it was given rather than standing in for
+    // anything a recipe would have substituted.
     let step = crate::autorun::StepScript { step_number: 0, actions: vec![action], unchecked: None };
     let outcomes = match crate::autorun::runner::run_step(
         &mut session.cdp,
@@ -408,12 +421,23 @@ fn autorun_failures(target: &str) -> (u16, String) {
         Ok(r) => r,
         Err(refused) => return refused,
     };
-    let case_id = q(target, "case_id").and_then(|s| s.trim().parse::<i32>().ok());
+    // A `case_id` that was sent but is not a number is a mistake worth
+    // naming: read as "no case given" it would quietly answer about the
+    // newest run instead, which is a different question.
+    let case_id = match q(target, "case_id") {
+        None => None,
+        Some(raw) => match raw.trim().parse::<i32>() {
+            Ok(id) => Some(id),
+            Err(_) => return (400, "case_id must be a number".to_string()),
+        },
+    };
     let run = match q(target, "run_id") {
         Some(id) => match crate::autorun::store::load_run(&root, &id) {
             Ok(Some(run)) => run,
             Ok(None) => return (404, format!("no run {id}")),
-            Err(e) => return (400, e),
+            // The store's own message names the file's path, and a path
+            // is nothing the reader can act on.
+            Err(_) => return (400, "the run file could not be read".to_string()),
         },
         None => match crate::autorun::failures::latest_run(&root, case_id) {
             Some(run) => run,
@@ -463,19 +487,6 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
     }
 }
 
-/// Save one or many Auto Run action scripts, as an assistant writes them.
-///
-/// A BUNDLE by design: the body is an array, so a whole PBI's worth of
-/// cases lands in one call - and the same shape is what the Auto Run
-/// screen's Import button reads from a file. One case is a bundle of one.
-///
-/// ALL OR NOTHING, for real: parsing is one gate, but
-/// `store::save_scripts_atomically` is the one that actually makes the
-/// claim true - it validates and serialises every entry before a single
-/// file is written, so a bad case id or a filesystem error on entry 16 of
-/// 30 can never leave the other 29 half-applied. An unknown action `kind`
-/// fails here rather than mid-run, with the browser already open in front
-/// of them.
 /// The body keys `save_autorun_script` reads. Anything else is named
 /// back rather than dropped - a misspelled "edits" that was silently
 /// ignored would let an undeclared repair through as if it were a new
@@ -538,6 +549,26 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
     Ok(SaveRequest { scripts: serde_json::from_value(scripts_value).map_err(bad_scripts)?, edits })
 }
 
+/// Is the script sent word for word the one already on disk?
+///
+/// Compared the way the declared-edit gate compares steps - by
+/// `step_signature`, so JSON formatting does not count as a change -
+/// plus the two fields outside the steps a save can carry, `title` and
+/// `account`. Positional rather than keyed by step number, so a bundle
+/// that merely REORDERS the same steps counts as a change and goes
+/// through the gate rather than around it. `repairs` is deliberately
+/// not compared: it is never the sender's to set.
+fn unchanged_script(old: &crate::autorun::CaseScript, sent: &crate::autorun::CaseScript) -> bool {
+    old.title == sent.title
+        && old.account == sent.account
+        && old.steps.len() == sent.steps.len()
+        && old.steps.iter().zip(&sent.steps).all(|(a, b)| {
+            a.step_number == b.step_number
+                && crate::autorun::edits::step_signature(a)
+                    == crate::autorun::edits::step_signature(b)
+        })
+}
+
 /// Save one or many Auto Run action scripts, as an assistant writes them.
 ///
 /// A BUNDLE by design: the body is an array, so a whole PBI's worth of
@@ -556,7 +587,10 @@ fn parse_save_request(body: &str) -> Result<SaveRequest, String> {
 ///
 /// `repairs` NEVER comes from the body. It is the count of changes made
 /// without a person looking, and a sender that could set it could also
-/// set it back to zero, which is the whole of what the cap prevents.
+/// set it back to zero, which is the whole of what the cap prevents. A
+/// script that comes back word for word unchanged costs nothing from
+/// that count: re-saving a whole PBI after fixing one case is exactly
+/// that, for every other case in the bundle.
 async fn save_autorun_scripts(
     ctx: &BridgeContext,
     client: Option<&crate::ado::AdoClient>,
@@ -568,6 +602,31 @@ async fn save_autorun_scripts(
     };
     if scripts.is_empty() {
         return (400, "no scripts in the bundle".to_string());
+    }
+    // A declaration for a case this bundle is not saving changes nothing
+    // and declares nothing - but it would still file its quirk, and it
+    // usually means the wrong case id was typed into one of the two
+    // lists. Named back before anything is read or written.
+    let stray: Vec<String> = {
+        let mut ids: Vec<i32> = edits
+            .iter()
+            .map(|e| e.case_id)
+            .filter(|id| !scripts.iter().any(|s| s.case_id == *id))
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.into_iter().map(|id| id.to_string()).collect()
+    };
+    if !stray.is_empty() {
+        return (
+            400,
+            format!(
+                "edits names {} {}, which {} not in this bundle",
+                if stray.len() == 1 { "case" } else { "cases" },
+                stray.join(", "),
+                if stray.len() == 1 { "is" } else { "are" }
+            ),
+        );
     }
     let root = match autorun_root() {
         // `set_root` runs exactly once, during app setup, and only when
@@ -590,6 +649,22 @@ async fn save_autorun_scripts(
         let declared = edits.iter().find(|e| e.case_id == sent.case_id);
         let mut script = sent.clone();
         match existing {
+            // A re-send that changes nothing is not a repair. The count
+            // is of changes made without a person looking, so an
+            // identical bundle - which is what saving a whole PBI again
+            // after fixing one case IS, for every other case in it -
+            // must neither raise it nor run into the cap. A declaration
+            // for such a case is still refused, by `check_edits`' own
+            // rule 2: it names a step nothing happened to.
+            Some(old) if unchanged_script(&old, sent) => {
+                if declared.is_some() {
+                    if let Err(why) = crate::autorun::edits::check_edits(&old, sent, declared) {
+                        return (400, why);
+                    }
+                }
+                script.repairs = old.repairs;
+                lines.push(format!("case {} (unchanged)", script.case_id));
+            }
             Some(old) => {
                 if let Err(why) = crate::autorun::edits::check_edits(&old, sent, declared) {
                     return (400, why);
