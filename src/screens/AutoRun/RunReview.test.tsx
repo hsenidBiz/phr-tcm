@@ -69,6 +69,10 @@ function renderReview(
   overrides: {
     onClose?: () => void;
     pbiTitle?: string;
+    /** The PBI currently selected on the Auto Run screen - defaults to
+     * the fixture run's own `pbi_id` (42), so existing tests keep
+     * exercising the same-PBI path unless they say otherwise. */
+    pbiId?: number;
     runId?: string;
     stepIds?: Record<number, string[]>;
     /** Extra command handling for tests that need `auto_run_save_run` or
@@ -92,6 +96,7 @@ function renderReview(
         org="acme"
         project="Web"
         pbiTitle={overrides.pbiTitle ?? "Login flow"}
+        pbiId={overrides.pbiId ?? 42}
         runId={overrides.runId ?? "run-1"}
         stepIds={overrides.stepIds ?? {}}
         onClose={onClose}
@@ -173,7 +178,7 @@ test("saving writes the verdicts and notes and leaves the proposal alone", async
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <RunReview org="acme" project="Web" pbiTitle="Login flow" runId="run-1" stepIds={{}} onClose={() => {}} />
+      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} onClose={() => {}} />
     </QueryClientProvider>,
   );
   await screen.findByText(/proposed: failed/i);
@@ -244,6 +249,44 @@ test("a run that is gone says so", async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
+test("a run that fails to load shows the error, not Loading forever", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "auto_run_load_run") throw "the disk is unreadable";
+    return null;
+  });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onClose = vi.fn();
+  render(
+    <QueryClientProvider client={qc}>
+      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} onClose={onClose} />
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByText(/the disk is unreadable/i)).toBeInTheDocument();
+  expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("a run reviewed for a different PBI cannot be sent from here", async () => {
+  const publishCalls: unknown[] = [];
+  renderReview(SEND_RUN, {
+    pbiId: 99,
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_publish") {
+        publishCalls.push(args);
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: passed/i);
+
+  const sendButton = screen.getByRole("button", { name: "Send to Azure DevOps" });
+  expect(sendButton).toBeDisabled();
+  expect(sendButton).toHaveAttribute("title", "this run is for PBI #42 - select that PBI to send it");
+  expect(publishCalls).toHaveLength(0);
+});
+
 test("a save the app refuses is shown and the dialog stays open", async () => {
   mockIPC((cmd) => {
     if (cmd === "auto_run_load_run") return RUN;
@@ -253,7 +296,7 @@ test("a save the app refuses is shown and the dialog stays open", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <RunReview org="acme" project="Web" pbiTitle="Login flow" runId="run-1" stepIds={{}} onClose={() => {}} />
+      <RunReview org="acme" project="Web" pbiTitle="Login flow" pbiId={42} runId="run-1" stepIds={{}} onClose={() => {}} />
     </QueryClientProvider>,
   );
   render(<Toaster />);
@@ -438,4 +481,29 @@ test("a failed send can be tried again", async () => {
   expect(await screen.findByText(/boom/i)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send to Azure DevOps" })).not.toBeDisabled();
   expect(within(caseCard(1)).getByRole("button", { name: "Passed" })).not.toBeDisabled();
+});
+
+/** A run with exactly one confirmed case and one unconfirmed one - the
+ * shape that reads wrong ("1 confirmed results", "1 unconfirmed cases are
+ * left out") if the sentence never branches on the count. */
+const ONE_EACH_RUN = {
+  id: "run-10",
+  pbi_id: 42,
+  started_at: "1786000500000",
+  mode: "unattended",
+  cases: [
+    { case_id: 1, title: "Case A", verdict: "Passed", note: "", proposed: "Passed", reason: "ok", steps: [] },
+    { case_id: 2, title: "Case B", verdict: "", note: "", proposed: "", reason: "", steps: [] },
+  ],
+};
+
+test("the confirmation text reads correctly for one", async () => {
+  renderReview(ONE_EACH_RUN, { runId: "run-10" });
+  await screen.findByText(/proposed: passed/i);
+
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+
+  expect(await screen.findByText(/1 confirmed result\b/)).toBeInTheDocument();
+  expect(screen.queryByText(/1 confirmed results/)).not.toBeInTheDocument();
+  expect(await screen.findByText(/1 unconfirmed case is left out/)).toBeInTheDocument();
 });

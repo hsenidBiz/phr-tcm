@@ -1,9 +1,10 @@
-// Supervised auto-run: the app drives a real Edge window through a
-// case's steps while a person watches and decides the verdict.
+// Supervised and unattended auto-run: the app drives a real Edge window
+// through a case's steps, either with a person watching and deciding the
+// verdict, or unattended with the machine proposing one.
 //
-// LOCAL ONLY. Nothing on this screen writes to Azure DevOps - the case
-// list is read from it, and the results stay in this app until the
-// feature has earned more trust than that.
+// Nothing a script or a run does reaches Azure DevOps by itself. A
+// person reviewing a finished run and pressing Send (`RunReview`) is the
+// one door out - see `autorun::publish` on the Rust side.
 
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -340,7 +341,7 @@ export default function AutoRun({
         <ul className="space-y-1">{rows.map((_, i) => row(i))}</ul>
       )}
 
-      <PastRuns onReview={setReviewing} />
+      <PastRuns pbiId={pbi.id} onReview={setReviewing} />
 
       {accountsOpen && <AccountsDialog onClose={() => setAccountsOpen(false)} />}
       {recipeOpen && (
@@ -425,6 +426,7 @@ export default function AutoRun({
           org={org}
           project={project}
           pbiTitle={pbi.title}
+          pbiId={pbi.id}
           runId={reviewing}
           stepIds={Object.fromEntries(rows.map((c) => [c.id, c.step_ids]))}
           onClose={() => setReviewing(null)}

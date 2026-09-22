@@ -42,10 +42,22 @@ function proposalLine(c: { proposed?: string; reason?: string }): string {
   return `Nothing proposed${reason ? ` - ${reason}` : ""}`;
 }
 
+/** What both the disabled Send button's title and a refused send say when
+ * this run belongs to a different PBI than the one now selected. */
+function mismatchSentence(runPbiId: number): string {
+  return `this run is for PBI #${runPbiId} - select that PBI to send it`;
+}
+
 export default function RunReview(props: {
   org: string;
   project: string;
   pbiTitle: string;
+  /** The PBI currently selected on the Auto Run screen. `run.pbi_id` is
+   * always what actually gets sent (see `doSend` below); this is only
+   * used to catch a run reviewed under a DIFFERENT PBI than the one now
+   * selected - sending it would use this PBI's title and step ids, which
+   * belong to the wrong PBI entirely. */
+  pbiId: number;
   runId: string;
   /** The case's real Azure DevOps step ids, aligned with its script steps.
    * Only the Send button reads this, to build what `auto_run_publish`
@@ -174,9 +186,19 @@ export default function RunReview(props: {
    * toast, and it does not go away just because the person tries again. */
   const [sendRefusal, setSendRefusal] = useState<string | null>(null);
 
+  const pbiMismatch = (r: LocalRun_Serialize) => r.pbi_id !== props.pbiId;
+
   const doSend = async () => {
     if (!run) return;
     setConfirming(false);
+    // Defence in depth: the Send button is disabled for a mismatched PBI
+    // (see `sendDisabled` below), but this is the one place that actually
+    // reaches Azure DevOps, so it refuses on its own too rather than
+    // trusting the button was never somehow pressed anyway.
+    if (pbiMismatch(run)) {
+      setSendRefusal(mismatchSentence(run.pbi_id));
+      return;
+    }
     setSending(true);
     setSendRefusal(null);
     try {
@@ -227,6 +249,22 @@ export default function RunReview(props: {
     );
   }
 
+  if (query.isError) {
+    return (
+      <Modal onClose={onClose} className="w-full max-w-md space-y-3 p-4">
+        <p className="text-sm text-danger">
+          {query.error instanceof Error ? query.error.message : String(query.error)}
+        </p>
+        <div className="flex justify-end">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <IconCancel aria-hidden />
+            Close
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+
   if (!run) {
     return (
       <Modal onClose={onClose} className="w-full max-w-md space-y-3 p-4">
@@ -238,8 +276,9 @@ export default function RunReview(props: {
   const readOnly = Boolean(run.published);
   const confirmed = run.cases.filter((c) => c.verdict).length;
   const unconfirmed = run.cases.length - confirmed;
-  const sendDisabled = dirty || confirmed === 0 || sending;
-  const sendTitle = dirty ? "Save the review first" : undefined;
+  const mismatch = pbiMismatch(run);
+  const sendDisabled = dirty || confirmed === 0 || sending || mismatch;
+  const sendTitle = mismatch ? mismatchSentence(run.pbi_id) : dirty ? "Save the review first" : undefined;
 
   return (
     <Modal onClose={onClose} className="w-full max-w-3xl space-y-3 p-4">
@@ -442,8 +481,9 @@ export default function RunReview(props: {
         <Modal onClose={() => setConfirming(false)} className="w-full max-w-md space-y-3 p-4">
           <p className="text-sm text-text">
             This creates one test run in Azure DevOps for "{props.pbiTitle}" with {confirmed} confirmed
-            results. {unconfirmed} unconfirmed cases are left out. Nothing in Azure DevOps is deleted
-            or overwritten; the run cannot be taken back from here.
+            result{confirmed === 1 ? "" : "s"}. {unconfirmed} unconfirmed case
+            {unconfirmed === 1 ? " is" : "s are"} left out. Nothing in Azure DevOps is deleted or
+            overwritten; the run cannot be taken back from here.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>

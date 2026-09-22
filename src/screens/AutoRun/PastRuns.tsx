@@ -1,6 +1,6 @@
-// Everything this machine has run. Read straight off disk - these
-// results exist nowhere else, which is the whole arrangement while the
-// feature earns trust.
+// Everything this machine has run. Read straight off disk - a run only
+// exists in Azure DevOps too once a person has reviewed it and pressed
+// Send; until then, nothing here has reached Azure DevOps at all.
 
 import { useQuery } from "@tanstack/react-query";
 import { commands } from "../../bindings";
@@ -25,7 +25,18 @@ function when(startedAt: string): string {
   return new Date(n).toLocaleString();
 }
 
-export default function PastRuns({ onReview }: { onReview: (runId: string) => void }) {
+export default function PastRuns({
+  pbiId,
+  onReview,
+}: {
+  /** The PBI currently selected on the Auto Run screen. A run reviewed
+   * here is sent with THIS PBI's title and step ids (see `RunReview`), so
+   * a run saved under a different PBI must never be offered for review
+   * while some other PBI is selected - it would be sent under the wrong
+   * name with every `step_ids` empty, silently. */
+  pbiId: number | null;
+  onReview: (runId: string) => void;
+}) {
   const runs = useQuery({
     queryKey: ["autorun-runs"],
     queryFn: () => commands.autoRunListRuns(),
@@ -42,6 +53,7 @@ export default function PastRuns({ onReview }: { onReview: (runId: string) => vo
         {(runs.data ?? []).map((run) => {
           const unattended = run.mode === "unattended";
           const unconfirmed = run.cases.filter((c) => !c.verdict).length;
+          const otherPbi = pbiId != null && run.pbi_id !== pbiId;
           return (
             <div key={run.id} className="space-y-1 rounded-md border border-border bg-surface p-2">
               <div className="flex items-center justify-between gap-2">
@@ -54,6 +66,8 @@ export default function PastRuns({ onReview }: { onReview: (runId: string) => vo
                     real time, so there is nothing here to propose again. */}
                 {run.published ? (
                   <span className="text-xs font-medium text-faint">Sent</span>
+                ) : unattended && otherPbi ? (
+                  <span className="text-xs font-medium text-faint">for PBI #{run.pbi_id}</span>
                 ) : unattended ? (
                   <div className="flex items-center gap-2">
                     {unconfirmed > 0 && (
