@@ -157,3 +157,23 @@ fn the_failure_text_prefers_what_ado_said() {
     assert_eq!(AdoError::Unauthorized.user_text(), "unauthorized");
     assert_eq!(AdoError::Network("x".into()).user_text(), "network: x");
 }
+
+/// A whole-batch refusal nests its sentence one level down, with a capital
+/// M: `{"count":1,"value":{"Message":"TF237201: ..."}}`. That is the shape
+/// the 1000-link limit came back in (2026-09-22), and reading only
+/// `message` showed "Azure DevOps returned HTTP 500" instead of it.
+#[test]
+fn a_refusal_nested_under_value_message_is_read() {
+    use v2_lib::ado::wit_batch::BatchItem;
+    let item = BatchItem {
+        code: 500,
+        body: serde_json::json!({"count": 1, "value": {"Message": "TF237201: Cannot add a new link because one of the work items being linked will exceed the 1000 link limit. "}}),
+    };
+    assert_eq!(
+        item.message(),
+        "TF237201: Cannot add a new link because one of the work items being linked will exceed the 1000 link limit."
+    );
+    // The flat capital-M form too.
+    let item = BatchItem { code: 400, body: serde_json::json!({"Message": "VS402: no."}) };
+    assert_eq!(item.message(), "VS402: no.");
+}

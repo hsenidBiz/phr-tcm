@@ -48,10 +48,18 @@ impl BatchItem {
     /// What went wrong, in ADO's words where it gave any - the `message`
     /// of an error body is where "Rule Error for field ..." lives.
     pub fn message(&self) -> String {
-        if let Some(m) = self.body["message"].as_str() {
-            if !m.trim().is_empty() {
-                return m.to_string();
-            }
+        // Two spellings, two depths: an item refusal is `{"message": ..}`;
+        // a refusal of the batch as a whole is `{"count": 1, "value":
+        // {"Message": ..}}` - the 1000-link limit came back that way and
+        // read as "HTTP 500" until the nested, capitalised form was tried.
+        let candidates = [
+            &self.body["message"],
+            &self.body["Message"],
+            &self.body["value"]["Message"],
+            &self.body["value"]["message"],
+        ];
+        if let Some(m) = candidates.iter().filter_map(|v| v.as_str()).find(|m| !m.trim().is_empty()) {
+            return m.trim().to_string();
         }
         if let serde_json::Value::String(s) = &self.body {
             if !s.trim().is_empty() && !s.starts_with('<') {
