@@ -2,7 +2,7 @@
 //! and the failure says how to fix it rather than panicking on an
 //! absent session.
 
-use v2_lib::autorun::store::{load_script, save_run, save_run_guarded};
+use v2_lib::autorun::store::{load_run, load_script, save_run, save_run_guarded};
 use v2_lib::autorun::{LocalRun, PublishedRun};
 use v2_lib::commands::autorun::{describe_session_error, import_scripts_from_path, safe_run_id};
 
@@ -78,11 +78,61 @@ fn saving_over_a_published_run_with_an_unpublished_copy_is_refused() {
     let stale = LocalRun { published: None, ..published.clone() };
     let err = save_run_guarded(dir.path(), &stale).expect_err("a stale unpublished copy was accepted");
     assert!(err.contains("already been sent"), "{err}");
-    let reloaded = v2_lib::autorun::store::load_run(dir.path(), "run-3").unwrap().unwrap();
+    let reloaded = load_run(dir.path(), "run-3").unwrap().unwrap();
     assert!(reloaded.published.is_some(), "the guard let the published record be erased");
 
     let edited_note = LocalRun { cases: vec![], ..published.clone() };
     assert!(save_run_guarded(dir.path(), &edited_note).is_ok());
+}
+
+/// A run file that exists but cannot be parsed (corrupt JSON, a partial
+/// write) must never be treated as "no existing run" - that would let the
+/// guard fail open and silently overwrite whatever was really on disk,
+/// published or not. The guarded save refuses instead, and the garbage
+/// file itself is left exactly as it was.
+#[test]
+fn a_run_file_that_cannot_be_read_is_never_overwritten_by_a_guarded_save() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("runs")).unwrap();
+    std::fs::write(dir.path().join("runs").join("run-x.json"), "{ not json").unwrap();
+
+    let run = LocalRun {
+        id: "run-x".to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![],
+        mode: String::new(),
+        published: None,
+    };
+    let err = save_run_guarded(dir.path(), &run).expect_err("a corrupt existing file was overwritten");
+    assert!(err.contains("could not be read"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("runs").join("run-x.json")).unwrap(),
+        "{ not json",
+        "the guarded save must not touch the file it could not read"
+    );
+}
+
+/// `save_run_guarded` is a second IPC-adjacent write path into the runs
+/// directory, same as `save_run` behind the command - it must apply the
+/// same id rule itself rather than relying on a caller to have checked
+/// first.
+#[test]
+fn save_run_guarded_rejects_an_unsafe_run_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = LocalRun {
+        id: "../escape".to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![],
+        mode: String::new(),
+        published: None,
+    };
+    assert!(save_run_guarded(dir.path(), &run).is_err());
+    assert!(
+        std::fs::read_dir(dir.path()).map(|mut d| d.next().is_none()).unwrap_or(true),
+        "an unsafe id must write nothing"
+    );
 }
 
 /// The frontend used to read the picked file itself and hand Rust base64

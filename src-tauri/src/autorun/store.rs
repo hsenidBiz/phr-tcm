@@ -214,14 +214,29 @@ pub fn save_run(root: &Path, run: &LocalRun) -> Result<(), String> {
 /// send happened. Saving the run back WITH its `published` block intact
 /// (a note edited after sending) is still allowed, and so is a run that
 /// was never published in the first place.
+///
+/// A run file that exists but cannot be READ (corrupt JSON, a partial
+/// write) must refuse too, rather than being treated as "nothing to
+/// guard against" - failing open here would let exactly the corruption
+/// this guard exists for slip an unpublished copy over a published run
+/// whose file merely could not be parsed this time.
 pub fn save_run_guarded(root: &Path, run: &LocalRun) -> Result<(), String> {
+    if !safe_run_id(&run.id) {
+        return Err(format!("run id {:?} is not a safe filename", run.id));
+    }
     if run.published.is_none() {
-        if let Ok(Some(existing)) = load_run(root, &run.id) {
-            if existing.published.is_some() {
+        match load_run(root, &run.id) {
+            Ok(Some(existing)) if existing.published.is_some() => {
                 return Err(
                     "this run has already been sent to Azure DevOps and can no longer be changed"
                         .to_string(),
                 );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!(
+                    "this run's file on disk could not be read, so it was not overwritten: {e}"
+                ));
             }
         }
     }
