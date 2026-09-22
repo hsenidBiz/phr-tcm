@@ -14,6 +14,7 @@
 use serde_json::json;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,6 +31,20 @@ use v2_lib::browser::page;
 use v2_lib::browser::timing::Timing;
 use v2_lib::events::ReplayProgress;
 
+/// Windows holds a just-exited browser's profile files open for a moment;
+/// a few retries is the difference between a clean temp folder and one
+/// left behind per test. Shared by every place a browser's profile is
+/// torn down: `Live`'s own `Drop`, `LiveBrowsers::close`, and
+/// `LiveBrowsers`'s own `Drop`.
+fn remove_profile_dir(dir: &Path) {
+    for _ in 0..20 {
+        if std::fs::remove_dir_all(dir).is_ok() || !dir.exists() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 struct Live {
     browser: LaunchedBrowser,
     cdp: Cdp,
@@ -39,17 +54,7 @@ impl Drop for Live {
     fn drop(&mut self) {
         let _ = self.browser.child.kill();
         let _ = self.browser.child.wait();
-        // Windows holds the profile's files open for a moment after the
-        // browser goes. A few retries is the difference between a clean
-        // temp folder and one left behind per test.
-        for _ in 0..20 {
-            if std::fs::remove_dir_all(&self.browser.profile_dir).is_ok()
-                || !self.browser.profile_dir.exists()
-            {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
+        remove_profile_dir(&self.browser.profile_dir);
     }
 }
 
@@ -636,12 +641,12 @@ impl App {
                         ),
                         None => respond(&mut stream, "", LOGIN_PAGE),
                     }
-                } else if first.starts_with("GET /leave") {
+                } else if first.starts_with("GET /leave ") {
                     match user {
                         Some(_) => respond(&mut stream, "", LEAVE_PAGE),
                         None => respond(&mut stream, "", LOGIN_PAGE),
                     }
-                } else if first.starts_with("GET /broken") {
+                } else if first.starts_with("GET /broken ") {
                     match user {
                         Some(_) => respond(&mut stream, "", BROKEN_PAGE),
                         None => respond(&mut stream, "", LOGIN_PAGE),
@@ -853,12 +858,7 @@ impl Browsers for LiveBrowsers {
         if let Some(mut b) = self.current.take() {
             let _ = b.child.kill();
             let _ = b.child.wait();
-            for _ in 0..20 {
-                if std::fs::remove_dir_all(&b.profile_dir).is_ok() || !b.profile_dir.exists() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            remove_profile_dir(&b.profile_dir);
         }
     }
 }
@@ -871,7 +871,7 @@ impl Drop for LiveBrowsers {
         if let Some(mut b) = self.current.take() {
             let _ = b.child.kill();
             let _ = b.child.wait();
-            let _ = std::fs::remove_dir_all(&b.profile_dir);
+            remove_profile_dir(&b.profile_dir);
         }
     }
 }
