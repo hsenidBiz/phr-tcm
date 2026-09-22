@@ -312,7 +312,12 @@ export default function QueueSection({
   // warning by itself, and an acceptance stays attached to the title it
   // was given for.
   useEffect(() => {
-    if (queue.length === 0) setReviewing(false);
+    // Remove all stays enabled during review, so this is a real exit from
+    // the armed confirmation too - the chip must stop glowing with it.
+    if (queue.length === 0) {
+      arm(false);
+      setReviewing(false);
+    }
   }, [queue.length]);
 
   const existing = useQuery({

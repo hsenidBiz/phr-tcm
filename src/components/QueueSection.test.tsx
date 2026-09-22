@@ -886,6 +886,29 @@ test("stopping at the duplicate gate also stops the glow", async () => {
   }
 });
 
+/// "Remove all" stays enabled during review (it is only gated on an empty
+/// queue or a submit in flight), so emptying the queue while armed is
+/// reachable - and the effect that leaves review mode on an empty queue
+/// must disarm the same way every other exit does.
+test("emptying the queue during review also stops the glow", async () => {
+  const glows: boolean[] = [];
+  const onGlow = (e: Event) => glows.push((e as CustomEvent<boolean>).detail);
+  window.addEventListener("tcm-pbi-glow", onGlow);
+  try {
+    baseMocks();
+    renderQueue([makeCase({ update_id: 777 }), makeCase({ title: "Brand new" })]);
+
+    fireEvent.click(screen.getByRole("button", { name: /Review 2 test cases/ }));
+    // Armed while reviewing a queue that creates anything.
+    await waitFor(() => expect(glows[glows.length - 1]).toBe(true));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove all" }));
+    await waitFor(() => expect(glows[glows.length - 1]).toBe(false));
+  } finally {
+    window.removeEventListener("tcm-pbi-glow", onGlow);
+  }
+});
+
 test("a floating copy of the main button appears once the real one scrolls away", async () => {
   onScreen = false;
   mockIPC((cmd) => {
