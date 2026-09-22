@@ -33,13 +33,7 @@ impl FakeRunner {
 }
 
 impl Runner for FakeRunner {
-    async fn run(
-        &self,
-        exe: &Path,
-        args: &[String],
-        _stdin: &str,
-        timeout: Duration,
-    ) -> Result<Output, String> {
+    async fn run(&self, exe: &Path, args: &[String], timeout: Duration) -> Result<Output, String> {
         self.calls.lock().unwrap().push((exe.to_path_buf(), args.to_vec(), timeout));
         Ok(Output {
             status: self.status,
@@ -199,11 +193,27 @@ fn the_argument_list_is_separate_strings_with_nothing_quoted_or_escaped() {
     assert!(args.contains(&"-W".to_string()), "{args:?}");
     // Headers are kept: they are what names the columns in the answer.
     assert!(!args.iter().any(|a| a == "-h" || a == "-h-1"), "{args:?}");
-    // Nothing was merged into a single command line.
-    assert!(args.iter().all(|a| !a.contains(" -")), "{args:?}");
+    // Every flag is an element of its own, exactly once: nothing was glued
+    // into a command line that something downstream could re-split.
+    for flag in ["-S", "-d", "-U", "-P", "-C", "-s", "-W", "-y", "-Y", "-t", "-b", "-Q"] {
+        assert_eq!(args.iter().filter(|a| a.as_str() == flag).count(), 1, "{flag} in {args:?}");
+    }
 
     let plain = Connection { trust_cert: false, ..c.clone() };
     assert!(!sqlcmd_args(&plain, "SELECT 1").contains(&"-C".to_string()));
+}
+
+#[tokio::test]
+async fn a_statement_that_starts_with_a_dash_still_arrives_as_the_query() {
+    // A leading comment is the ordinary way to label a query, and it makes
+    // the `-Q` value start with a dash. It is its own argument, so sqlcmd
+    // reads it as the query and never as another flag.
+    let sql = "-- pick one\nSELECT 1 AS n";
+    let fake = FakeRunner::answering("n\n1\n");
+    run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), sql).await.unwrap();
+    let calls = fake.calls();
+    assert_eq!(value_after(&calls[0].1, "-Q"), sql);
+    assert_eq!(calls[0].1.iter().filter(|a| a.as_str() == "-Q").count(), 1);
 }
 
 #[tokio::test]
@@ -242,7 +252,43 @@ async fn a_huge_answer_is_cut_at_the_character_cap() {
 
     assert!(text.contains("... output capped at 60000 characters"), "no cap line");
     assert!(text.chars().count() <= CHAR_CAP + 64, "{} characters", text.chars().count());
+    // One row wider than the whole cap is cut where it is cut: the only
+    // alternative would be handing back the header and nothing else.
     assert!(text.starts_with("blob\nxxx"));
+}
+
+#[tokio::test]
+async fn when_both_caps_fire_both_are_reported_and_no_row_is_left_half_written() {
+    let wide = "y".repeat(400);
+    let mut stdout = String::from("id\tblob\n");
+    for i in 0..500 {
+        stdout.push_str(&format!("{i}\t{wide}\n"));
+    }
+    let fake = FakeRunner::answering(&stdout);
+    let text =
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, blob FROM t")
+            .await
+            .unwrap();
+
+    assert!(text.contains("more rows (capped)"), "the row cap went unsaid");
+    assert!(text.contains("... output capped at 60000 characters"), "the char cap went unsaid");
+    // The character cut landed between rows, so every row that survived is
+    // a whole row - a half-written one would be read as data.
+    for line in text.lines().skip(1).filter(|l| !l.starts_with("... ")) {
+        assert!(line.ends_with(&wide), "a row was cut in half, {} characters", line.len());
+    }
+    assert!(text.chars().count() <= CHAR_CAP + 128, "{} characters", text.chars().count());
+}
+
+#[tokio::test]
+async fn even_a_successful_answer_is_scrubbed() {
+    // Nothing leaves this module without passing the redaction, including
+    // the rows themselves: a password can sit in a configuration table.
+    let c = read_only_preset();
+    let fake = FakeRunner::answering(&format!("note\nthe server echoed {}\n", c.password));
+    let text = run_sql(&fake, Path::new("sqlcmd.exe"), &c, "SELECT 1 AS note").await.unwrap();
+    assert!(!text.contains(&c.password), "{text}");
+    assert!(text.contains("(hidden)"), "{text}");
 }
 
 #[tokio::test]

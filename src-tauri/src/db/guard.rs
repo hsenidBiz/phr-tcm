@@ -31,12 +31,30 @@ pub enum Verdict {
     Refused(String),
 }
 
-/// Verbs that end the conversation wherever they appear - not just as the
+/// Words that end the conversation wherever they appear - not just as the
 /// leading word. A SELECT with `DROP TABLE` welded onto the end is still a
 /// DROP, and none of these has any business in a question about data.
+///
+/// The three `OPEN...` functions are here because their payload travels in
+/// a string literal, and `strip_comments_and_literals` blanks literals
+/// before anything is classified - so `OPENROWSET(..., 'EXEC xp_cmdshell
+/// ...')` would otherwise read as a plain SELECT. The function has to be
+/// refused; its contents cannot be inspected.
 const REFUSED_WORDS: &[&str] = &[
-    "DROP", "TRUNCATE", "ALTER", "CREATE", "EXECUTE", "EXEC", "GRANT", "REVOKE", "DENY", "BACKUP",
+    "DROP",
+    "TRUNCATE",
+    "ALTER",
+    "CREATE",
+    "EXECUTE",
+    "EXEC",
+    "GRANT",
+    "REVOKE",
+    "DENY",
+    "BACKUP",
     "RESTORE",
+    "OPENROWSET",
+    "OPENQUERY",
+    "OPENDATASOURCE",
 ];
 
 /// The verbs that change data. Searched as whole words anywhere in the
@@ -62,17 +80,27 @@ pub fn access_for_user(user_id: &str) -> Access {
     }
 }
 
-/// The User Id out of a connection string. The key is matched with its
-/// spaces removed and folded to lower case, so `User Id`, `UserId` and
-/// `UID` are the same key - which is how every SQL Server driver reads it.
+/// The connection-string keys that name the signing-in user.
+///
+/// This list is shared with `sqlcmd::parse_connection` on purpose. When the
+/// two disagreed, a hand-typed `User=x_devlogin` was `ReadOnly` to the
+/// guard and the dev login to sqlcmd - the door that decides and the door
+/// that enforces have to be reading the same field.
+pub(crate) const USER_ID_KEYS: &[&str] = &["userid", "uid", "user"];
+
+/// A connection-string key, folded the way a SQL Server driver folds one:
+/// spaces removed, lower-cased. `User Id`, `UserId` and `USER ID` are one key.
+pub(crate) fn normalised_key(raw: &str) -> String {
+    raw.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase()
+}
+
+/// The user id out of a connection string.
 fn user_id_of(connection_string: &str) -> Option<String> {
     for part in connection_string.split(';') {
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
-        let key: String =
-            key.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
-        if key == "userid" || key == "uid" {
+        if USER_ID_KEYS.contains(&normalised_key(key).as_str()) {
             return Some(value.trim().to_string());
         }
     }
@@ -89,15 +117,23 @@ pub fn classify(sql: &str) -> Verdict {
         ));
     }
     // GO is read off the ORIGINAL text: it is a batch separator sqlcmd acts
-    // on itself, so it would split one "statement" into several.
-    if sql.lines().any(|line| line.trim().eq_ignore_ascii_case("GO")) {
+    // on itself, so it would split one "statement" into several. Only the
+    // first word of the line is compared, because sqlcmd takes a repeat
+    // count (`GO 5`) and tolerates a trailing comment after it.
+    if sql
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .any(|word| word.eq_ignore_ascii_case("GO"))
+    {
         return refused(
             "a GO batch separator is not allowed here: send one statement on its own".to_string(),
         );
     }
 
     let stripped = strip_comments_and_literals(sql);
-    let body = stripped.trim();
+    // A leading semicolon is how `;WITH` is written, and it is pasted along
+    // with the CTE often enough to be worth not calling a second statement.
+    let body = stripped.trim().trim_start_matches(|c: char| c == ';' || c.is_whitespace());
     if body.is_empty() {
         return refused("the statement is empty".to_string());
     }
@@ -130,10 +166,17 @@ pub fn classify(sql: &str) -> Verdict {
             // Anything that mentions a write verb at all is treated as one -
             // erring towards Write only ever asks for a better connection.
             if WRITE_WORDS.iter().any(|w| has_word(&upper, w)) {
-                Verdict::Write
-            } else {
-                Verdict::Read
+                return Verdict::Write;
             }
+            // `SELECT ... INTO newtable` is the one way a SELECT creates a
+            // table, and it does not go near any of the DDL words above.
+            // The write check ran first, so `INSERT INTO` is already gone.
+            if has_word(&upper, "INTO") {
+                return refused(
+                    "SELECT INTO creates a table and cannot run here: these tools read data, they do not add to the schema".to_string(),
+                );
+            }
+            Verdict::Read
         }
         "INSERT" | "UPDATE" | "DELETE" | "MERGE" => Verdict::Write,
         "" => refused(
@@ -288,11 +331,13 @@ fn is_name_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '@' || c == '#'
 }
 
-/// The statement's verb: the first name, past any leading whitespace and
-/// the brackets of `(SELECT ...)`.
+/// The statement's verb: the first name, past any leading whitespace, the
+/// brackets of `(SELECT ...)`, and a byte order mark - which is what a file
+/// saved by Notepad puts in front of the first word, and which `trim` does
+/// not count as whitespace.
 fn leading_word(upper: &str) -> String {
     upper
-        .trim_start_matches(|c: char| c.is_whitespace() || c == '(')
+        .trim_start_matches(|c: char| c.is_whitespace() || c == '(' || c == '\u{feff}')
         .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '_')
         .collect()

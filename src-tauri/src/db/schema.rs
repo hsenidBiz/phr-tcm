@@ -40,7 +40,7 @@ pub fn lookup_sql(query: &str, schema_filter: &str, limit: usize) -> String {
     SELECT term FROM (VALUES {values}) AS v(term)
 ), tables_scored AS (
     SELECT t.TABLE_SCHEMA AS sch, t.TABLE_NAME AS tab,
-           MAX(CASE WHEN LOWER(t.TABLE_NAME) = v.term THEN 100
+           SUM(CASE WHEN LOWER(t.TABLE_NAME) = v.term THEN 100
                     WHEN LOWER(t.TABLE_NAME) LIKE N'%' + v.term + N'%' THEN 60
                     ELSE 0 END) AS tab_score
     FROM INFORMATION_SCHEMA.TABLES t CROSS JOIN terms v
@@ -48,7 +48,7 @@ pub fn lookup_sql(query: &str, schema_filter: &str, limit: usize) -> String {
     GROUP BY t.TABLE_SCHEMA, t.TABLE_NAME
 ), columns_scored AS (
     SELECT c.TABLE_SCHEMA AS sch, c.TABLE_NAME AS tab, c.COLUMN_NAME AS col, c.DATA_TYPE AS typ,
-           MAX(CASE WHEN LOWER(c.COLUMN_NAME) = v.term THEN 40
+           SUM(CASE WHEN LOWER(c.COLUMN_NAME) = v.term THEN 40
                     WHEN LOWER(c.COLUMN_NAME) LIKE N'%' + v.term + N'%' THEN 20
                     ELSE 0 END) AS col_score
     FROM INFORMATION_SCHEMA.COLUMNS c CROSS JOIN terms v
@@ -63,7 +63,10 @@ pub fn lookup_sql(query: &str, schema_filter: &str, limit: usize) -> String {
 ), matched AS (
     SELECT k.sch, k.tab,
            STRING_AGG(CAST(k.col + N' ' + k.typ AS NVARCHAR(MAX)), N' | ') AS col_text
-    FROM columns_scored k WHERE k.col_score > 0 GROUP BY k.sch, k.tab
+    FROM columns_scored k
+    WHERE k.col_score > 0
+      AND EXISTS (SELECT 1 FROM picked p WHERE p.sch = k.sch AND p.tab = k.tab)
+    GROUP BY k.sch, k.tab
 ), links AS (
     SELECT fs.name AS sch, fo.name AS tab,
            STRING_AGG(CAST(pc.name + N' -> ' + rs.name + N'.' + ro.name + N'(' + rc.name + N')' AS NVARCHAR(MAX)), N' | ') AS fk_text
@@ -75,6 +78,7 @@ pub fn lookup_sql(query: &str, schema_filter: &str, limit: usize) -> String {
     JOIN sys.objects ro ON ro.object_id = fk.referenced_object_id
     JOIN sys.schemas rs ON rs.schema_id = ro.schema_id
     JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+    WHERE EXISTS (SELECT 1 FROM picked p WHERE p.sch = fs.name AND p.tab = fo.name)
     GROUP BY fs.name, fo.name
 )
 SELECT p.sch AS sch, p.tab AS tab,
@@ -94,11 +98,15 @@ ORDER BY p.score DESC, p.tab"
 /// letter, a digit or an apostrophe. The apostrophe stays because it
 /// belongs to the word (`o'brien`), and is doubled by `escape` on the way
 /// into the literal.
+///
+/// A single character is dropped. It is a substring of half the names in
+/// the database, so it contributes the same 60 points to everything and
+/// only drags unrelated tables up the ranking.
 fn terms_of(query: &str) -> Vec<String> {
     let mut terms: Vec<String> = query
         .split(|c: char| !(c.is_alphanumeric() || c == '\''))
         .map(|w| w.trim_matches('\'').to_lowercase())
-        .filter(|w| w.chars().any(|c| c.is_alphanumeric()))
+        .filter(|w| w.chars().any(|c| c.is_alphanumeric()) && w.chars().count() > 1)
         .collect();
     terms.sort();
     terms.dedup();

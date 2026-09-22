@@ -35,9 +35,12 @@ fn the_words_are_lower_cased_split_and_escaped_as_literals() {
     assert!(!sql.contains("N'Leave'"), "{sql}");
 
     let split = lookup_sql("leave-request_2, please", "", 5);
-    for term in ["N'leave'", "N'request'", "N'2'", "N'please'"] {
+    for term in ["N'leave'", "N'request'", "N'please'"] {
         assert!(split.contains(term), "{term} missing from {split}");
     }
+    // A single character is in half the names in the database; it narrows
+    // nothing and only drags unrelated tables up the ranking.
+    assert!(!split.contains("N'2'"), "{split}");
 
     // An apostrophe belongs to the word and is doubled, not split on: that
     // is the one non-alphanumeric a name really contains.
@@ -61,10 +64,32 @@ fn an_empty_schema_filter_searches_every_schema() {
 
 #[test]
 fn a_query_with_no_words_is_still_a_read_that_can_match_nothing() {
-    for nothing in ["", "   ", "--- ,, ///"] {
+    // The last one is all single characters, which are dropped - so a query
+    // can end up with no terms even though it had words in it.
+    for nothing in ["", "   ", "--- ,, ///", "a b c"] {
         let sql = lookup_sql(nothing, "PeoplesHR", 10);
         assert_eq!(classify(&sql), Verdict::Read, "{sql}");
     }
+}
+
+#[test]
+fn a_table_matching_two_words_outranks_one_matching_only_one() {
+    let sql = lookup_sql("leave request", "PeoplesHR", 10);
+    // The per-term scores are added up. Under MAX, a table called
+    // "LeaveRequest" scored the same 60 as one called "Leave".
+    assert!(sql.contains("SUM(CASE WHEN LOWER(t.TABLE_NAME)"), "{sql}");
+    assert!(sql.contains("SUM(CASE WHEN LOWER(c.COLUMN_NAME)"), "{sql}");
+    assert!(!sql.contains("MAX(CASE"), "{sql}");
+    assert_eq!(classify(&sql), Verdict::Read);
+}
+
+#[test]
+fn the_columns_and_the_keys_are_gathered_only_for_the_tables_that_were_picked() {
+    // Without this the two aggregates run over every table in the database
+    // and are then thrown away by the join.
+    let sql = lookup_sql("leave", "PeoplesHR", 10);
+    assert_eq!(sql.matches("EXISTS (SELECT 1 FROM picked").count(), 2, "{sql}");
+    assert_eq!(classify(&sql), Verdict::Read);
 }
 
 /// The shape sqlcmd writes with `-s "\t" -W`: a header, its dashes, then a

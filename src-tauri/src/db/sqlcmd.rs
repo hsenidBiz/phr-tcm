@@ -3,8 +3,19 @@
 //! One process, spawned directly with a separate string per argument -
 //! never a shell, so the password is never a token anything could
 //! re-parse. The statement travels in `-Q`, so a multi-line SELECT stays
-//! one batch. Everything that leaves this module has been through
-//! `hide_password` first.
+//! one batch. Everything that leaves this module - a failure, and the rows
+//! themselves - has been through `hide_password` first.
+//!
+//! What that does NOT cover: `-P` is a command-line argument, so for as
+//! long as sqlcmd is running, anyone on this machine can read the password
+//! out of the process list (`tasklist /v`, Process Explorer, `wmic
+//! process`). Passing it through the environment or a prompt would close
+//! that window; neither is worth building here, because these are the
+//! shipped credentials described in `db_defaults.rs` - reachable only from
+//! the company network, behind their own sign-in, on a device-locked
+//! machine. The owner's call there covers this too. If a person ever types
+//! their OWN database password into the AI Bridge form, this note is the
+//! thing to revisit first.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -71,13 +82,17 @@ pub fn parse_connection(connection_string: &str) -> Result<Connection, String> {
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
-        let key: String =
-            key.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+        let key = guard::normalised_key(key);
         let value = value.trim();
+        // The user id is read from the list the guard reads it from, so the
+        // two can never disagree about who is signing in.
+        if guard::USER_ID_KEYS.contains(&key.as_str()) {
+            user = value.to_string();
+            continue;
+        }
         match key.as_str() {
             "server" | "datasource" | "address" | "addr" => server = value.to_string(),
             "database" | "initialcatalog" => database = value.to_string(),
-            "userid" | "uid" | "user" => user = value.to_string(),
             "password" | "pwd" => password = value.to_string(),
             "trustservercertificate" => {
                 trust_cert = matches!(value.to_ascii_lowercase().as_str(), "true" | "yes" | "1")
@@ -156,12 +171,14 @@ pub struct Output {
 
 /// The one process this app spawns for SQL. Faked in tests through this
 /// trait, so every test above can assert the arguments without a server.
+///
+/// There is no stdin: the statement goes through `-Q` so that a multi-line
+/// SELECT stays one batch, and nothing else is ever written to the process.
 pub trait Runner {
     fn run(
         &self,
         exe: &Path,
         args: &[String],
-        stdin: &str,
         timeout: Duration,
     ) -> impl std::future::Future<Output = Result<Output, String>>;
 }
@@ -170,19 +187,13 @@ pub trait Runner {
 pub struct RealRunner;
 
 impl Runner for RealRunner {
-    async fn run(
-        &self,
-        exe: &Path,
-        args: &[String],
-        stdin: &str,
-        timeout: Duration,
-    ) -> Result<Output, String> {
+    async fn run(&self, exe: &Path, args: &[String], timeout: Duration) -> Result<Output, String> {
         use std::process::Stdio;
 
         let mut command = tokio::process::Command::new(exe);
         command
             .args(args)
-            .stdin(if stdin.is_empty() { Stdio::null() } else { Stdio::piped() })
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             // The process dies with the future: a sqlcmd nobody is waiting
@@ -191,16 +202,7 @@ impl Runner for RealRunner {
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = command.spawn().map_err(|e| format!("sqlcmd could not be started: {e}"))?;
-        if !stdin.is_empty() {
-            if let Some(mut pipe) = child.stdin.take() {
-                use tokio::io::AsyncWriteExt;
-                pipe.write_all(stdin.as_bytes())
-                    .await
-                    .map_err(|e| format!("sqlcmd would not take the statement: {e}"))?;
-                let _ = pipe.shutdown().await;
-            }
-        }
+        let child = command.spawn().map_err(|e| format!("sqlcmd could not be started: {e}"))?;
 
         match tokio::time::timeout(timeout, child.wait_with_output()).await {
             Err(_) => Err(format!("sqlcmd did not answer within {} s", timeout.as_secs())),
@@ -271,7 +273,7 @@ pub async fn run_sql<R: Runner>(
 
     let args = sqlcmd_args(c, sql);
     let out = r
-        .run(exe, &args, "", Duration::from_secs(TIMEOUT_SECS))
+        .run(exe, &args, Duration::from_secs(TIMEOUT_SECS))
         .await
         .map_err(|e| hide_password(&e, &c.password))?;
 
@@ -288,27 +290,43 @@ pub async fn run_sql<R: Runner>(
         };
         return Err(hide_password(&said, &c.password));
     }
-    Ok(cap(&out.stdout))
+    Ok(hide_password(&cap(&out.stdout), &c.password))
 }
 
 /// Keeps the header line, at most `ROW_CAP` rows after it, and at most
-/// `CHAR_CAP` characters overall, saying so on a last line when it cut.
+/// `CHAR_CAP` characters of that - then says, after the body, each cut it
+/// had to make. Both notices can appear; neither ever lands inside a row.
 fn cap(stdout: &str) -> String {
     let mut lines = stdout.lines();
-    let mut out = lines.next().unwrap_or("").to_string();
+    let mut body = lines.next().unwrap_or("").to_string();
     let rows: Vec<&str> = lines.collect();
     for row in rows.iter().take(ROW_CAP) {
-        out.push('\n');
-        out.push_str(row);
+        body.push('\n');
+        body.push_str(row);
     }
+
+    let mut notices: Vec<String> = Vec::new();
     if rows.len() > ROW_CAP {
-        out.push_str(&format!("\n... {} more rows (capped)", rows.len() - ROW_CAP));
+        notices.push(format!("... {} more rows (capped)", rows.len() - ROW_CAP));
     }
-    if out.chars().count() > CHAR_CAP {
-        let kept: String = out.chars().take(CHAR_CAP).collect();
-        out = format!("{kept}\n... output capped at {CHAR_CAP} characters");
+    if body.chars().count() > CHAR_CAP {
+        let kept: String = body.chars().take(CHAR_CAP).collect();
+        // Cut between rows, so nothing is left half-written and read as
+        // data. The exception is a single row wider than the whole cap:
+        // trimming to the line boundary there would hand back the header
+        // and nothing else, so that one is cut where it falls.
+        body = match kept.rfind('\n') {
+            Some(at) if kept[..at].lines().count() > 1 => kept[..at].to_string(),
+            _ => kept,
+        };
+        notices.push(format!("... output capped at {CHAR_CAP} characters"));
     }
-    out
+
+    for notice in notices {
+        body.push('\n');
+        body.push_str(&notice);
+    }
+    body
 }
 
 /// Drops a line that only repeats the one before it.
