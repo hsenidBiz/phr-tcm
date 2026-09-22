@@ -218,8 +218,8 @@ export default function AutoRun({
   return (
     <div className="max-w-3xl space-y-4">
       <p className="rounded-md border border-accent/40 bg-accent-soft px-3 py-2 text-xs text-muted">
-        Runs happen in a real browser window on this machine and you decide every verdict.
-        Nothing is sent to Azure DevOps - results are saved here only.
+        Results are saved on this machine. Nothing goes to Azure DevOps unless you press Send to
+        Azure DevOps on a run you have reviewed.
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -416,6 +416,12 @@ export default function AutoRun({
 
       {reviewing != null && (
         <RunReview
+          // A different run id must mount a fresh instance - without this,
+          // switching from reviewing one run straight to another (Past
+          // Runs lets you) would carry the previous run's local edit state
+          // (and its `baseline`) into a screen that has not loaded the
+          // new run yet.
+          key={reviewing}
           org={org}
           project={project}
           pbiTitle={pbi.title}

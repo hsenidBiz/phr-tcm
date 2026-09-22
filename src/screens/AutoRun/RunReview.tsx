@@ -9,15 +9,20 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
-import { commands, type LocalRun_Serialize } from "../../bindings";
+import { commands, type LocalRun_Serialize, type PublishResult } from "../../bindings";
 import { Button } from "../../components/ui/button";
 import { Modal } from "../../components/ui/modal";
 import { Textarea } from "../../components/ui/input";
 import { cn } from "../../lib/cn";
-import { unwrapStr } from "../../lib/ipc";
-import { IconCancel, IconConfirm } from "../../lib/actionIcons";
+import { unwrap, unwrapStr } from "../../lib/ipc";
+import { IconCancel, IconConfirm, IconOpenInBrowser, IconSendResults } from "../../lib/actionIcons";
 import { VERDICTS, verdictTone } from "./verdicts";
+
+/** The result of a successful send - never the "refused" branch, which
+ * never has anything to show beyond its own sentence. */
+type SentResult = Extract<PublishResult, { status: "sent" }>;
 
 /** Epoch milliseconds as a string; the Rust side sends it that way because
  * specta will not carry a u64 across IPC. Same helper as PastRuns - kept
@@ -43,8 +48,8 @@ export default function RunReview(props: {
   pbiTitle: string;
   runId: string;
   /** The case's real Azure DevOps step ids, aligned with its script steps.
-   * Only Task 8's Send button reads this - accepted here so the host does
-   * not change twice. */
+   * Only the Send button reads this, to build what `auto_run_publish`
+   * sends - accepted here so the host does not change twice. */
   stepIds: Record<number, string[]>;
   onClose: () => void;
 }) {
@@ -61,9 +66,31 @@ export default function RunReview(props: {
    * a later refetch (the one Save itself triggers) must not clobber edits
    * already in progress with whatever the server happens to say. */
   const [run, setRun] = useState<LocalRun_Serialize | null>(null);
+  /** The verdict/note pair last known to be ON DISK, per case id - set
+   * alongside `run` on load and refreshed after a successful save. Send
+   * compares against this, not against `query.data` (which a save's own
+   * refetch can move out from under the edit already in progress) - an
+   * edit made after the last save is "dirty" and must not be sent, because
+   * sending it would send whatever is on disk instead of what the person
+   * just picked. */
+  const [baseline, setBaseline] = useState<Record<number, { verdict: string; note: string }> | null>(
+    null,
+  );
   useEffect(() => {
-    if (run === null && query.data) setRun(query.data);
+    if (run === null && query.data) {
+      setRun(query.data);
+      setBaseline(
+        Object.fromEntries(query.data.cases.map((c) => [c.case_id, { verdict: c.verdict, note: c.note }])),
+      );
+    }
   }, [run, query.data]);
+  const dirty =
+    run !== null &&
+    baseline !== null &&
+    run.cases.some((c) => {
+      const b = baseline[c.case_id];
+      return !b || b.verdict !== c.verdict || b.note !== c.note;
+    });
 
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const toggleExpanded = (caseId: number) =>
@@ -122,6 +149,9 @@ export default function RunReview(props: {
         toast.error(`Could not save the review: ${r.error}`);
         return;
       }
+      // What is on disk now matches this screen's own edits - Send is no
+      // longer blocked on an unsaved change.
+      setBaseline(Object.fromEntries(run.cases.map((c) => [c.case_id, { verdict: c.verdict, note: c.note }])));
       await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
       await queryClient.invalidateQueries({ queryKey: ["autorun-run", runId] });
       toast.success("Review saved.");
@@ -131,6 +161,55 @@ export default function RunReview(props: {
       toast.error(`Could not save the review: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const [confirming, setConfirming] = useState(false);
+  const [sending, setSending] = useState(false);
+  /** Set only by THIS screen's own send, this session - a run that was
+   * already sent before this dialog opened has `run.published` instead,
+   * and shows only the one-line "Sent to Azure DevOps ..." below. */
+  const [sendResult, setSendResult] = useState<SentResult | null>(null);
+  /** A refusal is an answer, not a failure - shown in place, not as a
+   * toast, and it does not go away just because the person tries again. */
+  const [sendRefusal, setSendRefusal] = useState<string | null>(null);
+
+  const doSend = async () => {
+    if (!run) return;
+    setConfirming(false);
+    setSending(true);
+    setSendRefusal(null);
+    try {
+      const confirmedCases = run.cases.filter((c) => c.verdict);
+      const r = await unwrap(
+        commands.autoRunPublish(
+          props.org,
+          props.project,
+          run.pbi_id,
+          run.id,
+          `${props.pbiTitle} - Auto Run`,
+          confirmedCases.map((c) => ({ case_id: c.case_id, step_ids: props.stepIds[c.case_id] ?? [] })),
+        ),
+      );
+      if (r.status === "refused") {
+        setSendRefusal(r.why);
+        return;
+      }
+      setSendResult(r);
+      // Marks this run read-only right away, the same as reloading it -
+      // nothing here is ever reversible from this screen, so there is
+      // nothing to gain by waiting on a refetch to say the same thing.
+      setRun((prev) =>
+        prev ? { ...prev, published: { run_id: r.run_id, web_url: r.web_url, at: String(Date.now()) } } : prev,
+      );
+      await queryClient.invalidateQueries({ queryKey: ["autorun-runs"] });
+      await queryClient.invalidateQueries({ queryKey: ["autorun-run", runId] });
+    } catch (e) {
+      // Same shape as every other Azure DevOps failure in this app - see
+      // RunnerWindow's recordResult handling.
+      toast.error(`Could not send to Azure DevOps: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -158,6 +237,9 @@ export default function RunReview(props: {
 
   const readOnly = Boolean(run.published);
   const confirmed = run.cases.filter((c) => c.verdict).length;
+  const unconfirmed = run.cases.length - confirmed;
+  const sendDisabled = dirty || confirmed === 0 || sending;
+  const sendTitle = dirty ? "Save the review first" : undefined;
 
   return (
     <Modal onClose={onClose} className="w-full max-w-3xl space-y-3 p-4">
@@ -278,23 +360,103 @@ export default function RunReview(props: {
         <p className="text-xs text-muted">Sent to Azure DevOps {when(run.published.at)}</p>
       )}
 
-      <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
-        <p className="text-xs text-muted">
-          {confirmed} of {run.cases.length} confirmed
-        </p>
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" disabled={saving} onClick={onClose}>
-            <IconCancel aria-hidden />
-            Close
-          </Button>
-          {!readOnly && (
-            <Button size="sm" disabled={saving} onClick={save}>
-              <IconConfirm aria-hidden />
-              Save review
+      <div className="border-t border-border pt-3">
+        {sendResult ? (
+          // Replaces the usual footer entirely - this run is read-only now
+          // (see `readOnly` above), so there is nothing left to do here but
+          // read what happened and leave.
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-text">
+              Sent: {sendResult.sent.length} result{sendResult.sent.length === 1 ? "" : "s"} recorded.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                openUrl(sendResult.web_url).catch(() => toast.error("Could not open the browser."))
+              }
+            >
+              <IconOpenInBrowser aria-hidden />
+              Open the run
             </Button>
-          )}
-        </div>
+            {sendResult.skipped.length > 0 && (
+              <ul className="space-y-1 text-xs text-warning">
+                {sendResult.skipped.map((s) => (
+                  <li key={s.case_id}>
+                    #{s.case_id}: {s.why}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {sendResult.problems.length > 0 && (
+              <ul className="space-y-1 text-xs text-warning">
+                {sendResult.problems.map((p, i) => (
+                  <li key={i}>{p}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex justify-end">
+              <Button variant="ghost" size="sm" onClick={onClose}>
+                <IconCancel aria-hidden />
+                Close
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted">
+              {confirmed} of {run.cases.length} confirmed
+            </p>
+            <div className="flex items-center gap-2">
+              {/* A refusal is an answer, not a toast - it stays on screen
+                  until the next attempt changes it. */}
+              {sendRefusal && <p className="text-xs text-warning">{sendRefusal}</p>}
+              <Button variant="ghost" size="sm" disabled={saving} onClick={onClose}>
+                <IconCancel aria-hidden />
+                Close
+              </Button>
+              {!readOnly && (
+                <>
+                  <Button size="sm" disabled={saving} onClick={save}>
+                    <IconConfirm aria-hidden />
+                    Save review
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={sendDisabled}
+                    title={sendTitle}
+                    onClick={() => setConfirming(true)}
+                  >
+                    <IconSendResults aria-hidden />
+                    Send to Azure DevOps
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {confirming && (
+        <Modal onClose={() => setConfirming(false)} className="w-full max-w-md space-y-3 p-4">
+          <p className="text-sm text-text">
+            This creates one test run in Azure DevOps for "{props.pbiTitle}" with {confirmed} confirmed
+            results. {unconfirmed} unconfirmed cases are left out. Nothing in Azure DevOps is deleted
+            or overwritten; the run cannot be taken back from here.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+              <IconCancel aria-hidden />
+              Cancel
+            </Button>
+            <Button size="sm" disabled={sending} onClick={doSend}>
+              <IconSendResults aria-hidden />
+              {sending ? "Sending" : "Confirm"}
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {shot && (
         <Modal onClose={() => setShot(null)} className="max-h-[90vh] max-w-5xl overflow-auto p-3">

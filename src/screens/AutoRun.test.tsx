@@ -67,16 +67,19 @@ test("lists the PBI's cases and marks which ones have a script", async () => {
   expect(screen.getByText("No script")).toBeInTheDocument();
 });
 
-/// The whole feature is local. Saying so on the screen is what stops
-/// someone assuming a green run updated Azure DevOps.
-test("says plainly that nothing reaches Azure DevOps", async () => {
+/// The whole feature is local until the person presses Send. Saying so on
+/// the screen is what stops someone assuming a green run updated Azure
+/// DevOps on its own.
+test("says plainly that nothing reaches Azure DevOps without pressing Send", async () => {
   mockIPC((cmd) => {
     if (cmd === "list_test_case_fields") return [];
     if (cmd === "pbi_test_cases_full") return cases;
     if (cmd === "auto_run_load_script") return null;
   });
   renderAutoRun();
-  expect(await screen.findByText(/nothing is sent to azure devops/i)).toBeInTheDocument();
+  expect(
+    await screen.findByText(/nothing goes to azure devops unless you press send to azure devops/i),
+  ).toBeInTheDocument();
 });
 
 test("without a PBI it asks for one instead of loading", async () => {
@@ -453,9 +456,37 @@ test("a rejected open-browser call resets busy state instead of wedging the butt
   await waitFor(() => expect(attempts).toBe(2));
 });
 
+const scriptFor202 = {
+  case_id: 202,
+  title: "Locked account",
+  steps: [{ step_number: 1, actions: [{ kind: "check_text", value: "Locked out" }] }],
+};
+
+const unattendedFromReplay = {
+  id: "run-unattended-1",
+  pbi_id: 42,
+  started_at: "1786000500000",
+  mode: "unattended",
+  cases: [
+    {
+      case_id: 202,
+      title: "Locked account",
+      verdict: "",
+      note: "",
+      proposed: "Passed",
+      reason: "every action of 1 step passed",
+      steps: [],
+    },
+  ],
+};
+
 /// Saving records the human's verdict and the evidence together, into a
-/// LOCAL run - and never calls anything that writes to Azure DevOps.
-test("saving stores the verdict locally and touches no ADO command", async () => {
+/// LOCAL run. Nothing on this screen ever sends a result to Azure DevOps
+/// on its own - not loading the screen, not ticking a selection, not a
+/// supervised run, not an unattended one landing straight in its review.
+/// The only door to Azure DevOps is the review's own Send button, and
+/// this test never presses it.
+test("no path through this screen - load, selection, a supervised run or an unattended run - ever sends to Azure DevOps", async () => {
   let saved: Record<string, unknown> | null = null;
   const calls: string[] = [];
   mockIPC((cmd, args) => {
@@ -464,7 +495,9 @@ test("saving stores the verdict locally and touches no ADO command", async () =>
     if (cmd === "pbi_test_cases_full") return cases;
     if (cmd === "auto_run_load_script") {
       const a = args as { caseId: number };
-      return a.caseId === 201 ? scriptFor201 : null;
+      if (a.caseId === 201) return scriptFor201;
+      if (a.caseId === 202) return scriptFor202;
+      return null;
     }
     if (cmd === "auto_run_new_id") return "run-1786000000000";
     if (cmd === "auto_run_open_browser") return null;
@@ -474,9 +507,14 @@ test("saving stores the verdict locally and touches no ADO command", async () =>
       return null;
     }
     if (cmd === "auto_run_close_browser") return null;
+    if (cmd === "auto_run_replay") return unattendedFromReplay;
+    if (cmd === "auto_run_load_run") return unattendedFromReplay;
   });
   renderAutoRun();
 
+  // On load: nothing but reads so far (asserted below).
+
+  // A supervised run, start to finish.
   fireEvent.click(await screen.findByRole("button", { name: "Run #201" }));
   fireEvent.click(await screen.findByRole("button", { name: "Open browser" }));
   fireEvent.click(await screen.findByRole("button", { name: "Run step 1" }));
@@ -488,14 +526,31 @@ test("saving stores the verdict locally and touches no ADO command", async () =>
   const run = (saved as unknown as { run: { cases: { verdict: string }[] } }).run;
   expect(run.cases[0].verdict).toBe("Failed");
 
+  // The supervised pane closes itself once the last case is saved - back
+  // to the case list, selection cleared.
+  await screen.findByRole("button", { name: "Run #201" });
+
+  // Selection is local state - ticking a case makes no IPC call at all.
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select #202" }));
+
+  // An unattended run, start to finish, landing straight in its review.
+  fireEvent.click(await screen.findByRole("button", { name: "Run 1 unattended" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+  expect(await screen.findByText(/proposed: passed/i)).toBeInTheDocument();
+
+  // The review opened, loaded the run, and nothing was pressed to send it.
+  expect(calls).not.toContain("auto_run_publish");
+
   // The guard that matters: nothing outside this known-safe set was ever
-  // invoked. An allowlist (rather than naming the three ADO run-recording
-  // commands we know about today) means a FOURTH write command added later
-  // - one nobody thought to add to a denylist - fails this test instead of
+  // invoked. An allowlist (rather than naming the ADO run-recording
+  // commands we know about today) means a write command added later - one
+  // nobody thought to add to a denylist - fails this test instead of
   // slipping straight through it. If this trips, check whether the new
   // command writes to Azure DevOps: if it does, this feature must not call
   // it; if it is a genuine local/read-only addition, add it to the list
-  // below deliberately.
+  // below deliberately. `auto_run_publish` (the one command that DOES
+  // write to Azure DevOps) is deliberately left off this list - see the
+  // assertion just above.
   const allowed = new Set([
     "list_test_case_fields", // read-only: field discovery for module/preconditions refs
     "pbi_test_cases_full", // read-only: the case list itself, from ADO
@@ -506,6 +561,10 @@ test("saving stores the verdict locally and touches no ADO command", async () =>
     "auto_run_save_run",
     "auto_run_close_browser",
     "auto_run_list_runs", // read-only: PastRuns' own listing, rendered alongside this screen
+    "auto_run_replay", // local: drives the browser itself, writes nothing to ADO
+    "auto_run_load_run", // read-only: the review dialog loading its own run
+    "plugin:event|listen", // Tauri's own event subscription - ReplayPane's progress feed
+    "plugin:event|unlisten", // the same subscription's cleanup on unmount
   ]);
   for (const cmd of calls) {
     expect(allowed.has(cmd), `unexpected command "${cmd}" - does it write to Azure DevOps?`).toBe(

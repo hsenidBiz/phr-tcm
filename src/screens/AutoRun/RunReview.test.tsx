@@ -64,14 +64,25 @@ const RUN = {
   ],
 };
 
-function renderReview(run: unknown, overrides: { onClose?: () => void } = {}) {
+function renderReview(
+  run: unknown,
+  overrides: {
+    onClose?: () => void;
+    pbiTitle?: string;
+    runId?: string;
+    stepIds?: Record<number, string[]>;
+    /** Extra command handling for tests that need `auto_run_save_run` or
+     * `auto_run_publish` to do something other than answer null. */
+    extra?: (cmd: string, args: unknown) => unknown;
+  } = {},
+) {
   mockIPC((cmd, args) => {
     if (cmd === "auto_run_load_run") return run;
     if (cmd === "auto_run_shot") {
       const a = args as { name: string };
       return `data:image/png;base64,${a.name}`;
     }
-    return null;
+    return overrides.extra?.(String(cmd), args) ?? null;
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onClose = overrides.onClose ?? vi.fn();
@@ -80,15 +91,30 @@ function renderReview(run: unknown, overrides: { onClose?: () => void } = {}) {
       <RunReview
         org="acme"
         project="Web"
-        pbiTitle="Login flow"
-        runId="run-1"
-        stepIds={{}}
+        pbiTitle={overrides.pbiTitle ?? "Login flow"}
+        runId={overrides.runId ?? "run-1"}
+        stepIds={overrides.stepIds ?? {}}
         onClose={onClose}
       />
     </QueryClientProvider>,
   );
   return { onClose };
 }
+
+/** A run with two confirmed cases and one still unconfirmed - the shape
+ * Task 8's Send button needs: something to send, and something left out. */
+const SEND_RUN = {
+  id: "run-9",
+  pbi_id: 42,
+  started_at: "1786000400000",
+  mode: "unattended",
+  cases: [
+    { case_id: 1, title: "Case A", verdict: "Passed", note: "", proposed: "Passed", reason: "ok", steps: [] },
+    { case_id: 2, title: "Case B", verdict: "Failed", note: "", proposed: "Failed", reason: "bad", steps: [] },
+    { case_id: 3, title: "Case C", verdict: "", note: "", proposed: "", reason: "", steps: [] },
+  ],
+};
+const SEND_STEP_IDS = { 1: ["2", "3", "4"], 2: ["2"] };
 
 function caseCard(caseId: number) {
   return screen.getByRole("listitem", { name: new RegExp(`#${caseId}`) });
@@ -238,4 +264,178 @@ test("a save the app refuses is shown and the dialog stays open", async () => {
 
   expect(await screen.findByText(/disk is full/i)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save review" })).toBeInTheDocument();
+});
+
+test("send is offered only for a saved run with a confirmed verdict that was not sent", async () => {
+  let saved: Record<string, unknown> | null = null;
+  renderReview(RUN, {
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_save_run") {
+        saved = args as Record<string, unknown>;
+        return null;
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: failed/i);
+
+  // Fresh, unconfirmed: nothing to send yet.
+  expect(screen.getByRole("button", { name: "Send to Azure DevOps" })).toBeDisabled();
+
+  // A verdict was picked but not saved - sending now would send whatever
+  // is on disk, not what was just picked.
+  fireEvent.click(within(caseCard(201)).getByRole("button", { name: "Failed" }));
+  const sendButton = screen.getByRole("button", { name: "Send to Azure DevOps" });
+  expect(sendButton).toBeDisabled();
+  expect(sendButton).toHaveAttribute("title", "Save the review first");
+
+  // Saved: no longer dirty, and there is a confirmed case to send.
+  fireEvent.click(screen.getByRole("button", { name: "Save review" }));
+  await waitFor(() => expect(saved).not.toBeNull());
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send to Azure DevOps" })).not.toBeDisabled(),
+  );
+});
+
+test("a published run offers no Send button", async () => {
+  const sent = {
+    ...RUN,
+    cases: RUN.cases.map((c) => ({ ...c, verdict: c.proposed || "Blocked" })),
+    published: {
+      run_id: 9,
+      web_url: "https://dev.azure.com/acme/_testManagement/runs/9",
+      at: "1786000300000",
+    },
+  };
+  renderReview(sent);
+  await screen.findByText(/proposed: failed/i);
+
+  expect(screen.queryByRole("button", { name: "Send to Azure DevOps" })).not.toBeInTheDocument();
+});
+
+test("sending says what it will do and sends only after the person agrees", async () => {
+  const publishCalls: unknown[] = [];
+  renderReview(SEND_RUN, {
+    pbiTitle: "Leave module",
+    runId: "run-9",
+    stepIds: SEND_STEP_IDS,
+    extra: (cmd, args) => {
+      if (cmd === "auto_run_publish") {
+        publishCalls.push(args);
+        return {
+          status: "sent",
+          run_id: 9,
+          web_url: "https://dev.azure.com/acme/_testManagement/runs/9",
+          sent: [1, 2],
+          skipped: [],
+          problems: [],
+        };
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: passed/i);
+
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+
+  expect(await screen.findByText(/Leave module/)).toBeInTheDocument();
+  expect(screen.getByText(/2 confirmed results/)).toBeInTheDocument();
+  expect(screen.getByText(/1 unconfirmed/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(publishCalls).toHaveLength(0);
+  expect(screen.queryByText(/2 confirmed results/)).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+  await waitFor(() => expect(publishCalls).toHaveLength(1));
+  expect(publishCalls[0]).toEqual({
+    organization: "acme",
+    project: "Web",
+    pbiId: 42,
+    runId: "run-9",
+    runName: "Leave module - Auto Run",
+    cases: [
+      { case_id: 1, step_ids: ["2", "3", "4"] },
+      { case_id: 2, step_ids: ["2"] },
+    ],
+  });
+});
+
+test("what was sent, skipped and went wrong is all shown", async () => {
+  renderReview(SEND_RUN, {
+    pbiTitle: "Leave module",
+    runId: "run-9",
+    stepIds: SEND_STEP_IDS,
+    extra: (cmd) => {
+      if (cmd === "auto_run_publish") {
+        return {
+          status: "sent",
+          run_id: 9,
+          web_url: "https://dev.azure.com/acme/_testManagement/runs/9",
+          sent: [1, 2],
+          skipped: [{ case_id: 3, why: "not confirmed" }],
+          problems: ["a comment was too long and was left off"],
+        };
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: passed/i);
+
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+  expect(await screen.findByText(/Sent: 2 results recorded/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open the run" })).toBeInTheDocument();
+  expect(screen.getByText(/not confirmed/)).toBeInTheDocument();
+  expect(screen.getByText(/a comment was too long/)).toBeInTheDocument();
+
+  expect(within(caseCard(1)).getByRole("button", { name: "Passed" })).toBeDisabled();
+});
+
+test("a refusal is shown in its own words and nothing changes", async () => {
+  renderReview(SEND_RUN, {
+    pbiTitle: "Leave module",
+    runId: "run-9",
+    stepIds: SEND_STEP_IDS,
+    extra: (cmd) => {
+      if (cmd === "auto_run_publish") {
+        return { status: "refused", why: "This run has already been sent once." };
+      }
+      return null;
+    },
+  });
+  await screen.findByText(/proposed: passed/i);
+
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+  expect(await screen.findByText("This run has already been sent once.")).toBeInTheDocument();
+  expect(within(caseCard(1)).getByRole("button", { name: "Passed" })).not.toBeDisabled();
+  expect(screen.getByRole("button", { name: "Send to Azure DevOps" })).not.toBeDisabled();
+});
+
+test("a failed send can be tried again", async () => {
+  renderReview(SEND_RUN, {
+    pbiTitle: "Leave module",
+    runId: "run-9",
+    stepIds: SEND_STEP_IDS,
+    extra: (cmd) => {
+      if (cmd === "auto_run_publish") {
+        throw { kind: "Http", detail: { status: 500, body: "boom" } };
+      }
+      return null;
+    },
+  });
+  render(<Toaster />);
+  await screen.findByText(/proposed: passed/i);
+
+  fireEvent.click(screen.getByRole("button", { name: "Send to Azure DevOps" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+
+  expect(await screen.findByText(/boom/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send to Azure DevOps" })).not.toBeDisabled();
+  expect(within(caseCard(1)).getByRole("button", { name: "Passed" })).not.toBeDisabled();
 });

@@ -76,6 +76,11 @@ export {
   // button pastes a URL rather than picking a file.
   Link as IconWikiLink,
 
+  // Sending a reviewed local result out to Azure DevOps. `Send` is already
+  // IconPost (posting a comment) - this is a different action, so it gets
+  // its own glyph rather than reusing that one for something else.
+  SendHorizontal as IconSendResults,
+
   // Everything else
   LogIn as IconSignIn,
   RefreshCw as IconRefresh,
