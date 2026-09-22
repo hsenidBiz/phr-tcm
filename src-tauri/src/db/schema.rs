@@ -214,9 +214,14 @@ fn is_name(word: &str) -> bool {
 /// not exist, which is what tells the caller to fall back to the ranked
 /// lookup rather than reporting "no such table" for a word that was never
 /// meant as one.
+///
+/// A bare name with no schema matches every schema that has a table of
+/// that name (`dbo.LeaveRequest` AND `hr.LeaveRequest`), so the rows are
+/// grouped by `sch`+`tab` and rendered one block per table - the same
+/// grouping `render_lookup` does, just by consecutive rows here since the
+/// query's own `ORDER BY` keeps one table's columns together.
 pub fn render_describe(tsv: &str) -> String {
-    let mut heading = String::new();
-    let mut columns: Vec<String> = Vec::new();
+    let mut tables: Vec<(String, String, Vec<String>)> = Vec::new();
     for line in tsv.lines() {
         let line = line.trim_end_matches('\r');
         if line.trim().is_empty() || is_rule(line) || is_footer(line) {
@@ -228,9 +233,6 @@ pub fn render_describe(tsv: &str) -> String {
         }
         let (sch, tab, col, typ, len, nul) =
             (cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]);
-        if heading.is_empty() {
-            heading = format!("{sch}.{tab}");
-        }
         let width = match len {
             // -1 is how SQL Server reports the (max) types; NULL is every
             // type that has no length of its own.
@@ -239,22 +241,35 @@ pub fn render_describe(tsv: &str) -> String {
             other => format!("({other})"),
         };
         let nullable = if nul.eq_ignore_ascii_case("NO") { "not null" } else { "null" };
-        columns.push(format!("{col} {typ}{width} {nullable}"));
+        let column = format!("{col} {typ}{width} {nullable}");
+        match tables.last_mut() {
+            Some((s, t, cols)) if s == sch && t == tab => cols.push(column),
+            _ => tables.push((sch.to_string(), tab.to_string(), vec![column])),
+        }
     }
-    if columns.is_empty() {
+    if tables.is_empty() {
         return String::new();
     }
-    format!("{heading} ({} columns)\n  columns: {}", columns.len(), columns.join(", "))
+    tables
+        .into_iter()
+        .map(|(sch, tab, cols)| {
+            format!("{sch}.{tab} ({} columns)\n  columns: {}", cols.len(), cols.join(", "))
+        })
+        .collect::<Vec<String>>()
+        .join("\n\n")
 }
 
 /// sqlcmd draws a rule of dashes under the header row.
-fn is_rule(line: &str) -> bool {
+///
+/// `pub(crate)` so `query::data_row_count` can tell sqlcmd's own furniture
+/// from an actual row without re-implementing this test.
+pub(crate) fn is_rule(line: &str) -> bool {
     let bare: String = line.chars().filter(|c| !c.is_whitespace()).collect();
     !bare.is_empty() && bare.chars().all(|c| c == '-')
 }
 
 /// And signs off with "(N rows affected)".
-fn is_footer(line: &str) -> bool {
+pub(crate) fn is_footer(line: &str) -> bool {
     let line = line.trim();
     line.starts_with('(') && line.ends_with("rows affected)")
 }

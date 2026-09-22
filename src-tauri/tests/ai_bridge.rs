@@ -1809,13 +1809,14 @@ mod db_tests {
     #[tokio::test]
     async fn a_write_on_a_read_only_connection_never_reaches_the_process() {
         let fake = FakeRunner::answering("");
+        let sql = "INSERT INTO dbo.Leave (marker) VALUES ('task6fix-readonly-marker')";
         let refused = run_query(
             &fake,
             &exe(),
             &read_only(),
             // Even with the switch ON: the connection decides too.
             true,
-            "INSERT INTO dbo.Leave (id) VALUES (1)",
+            sql,
         )
         .await
         .unwrap_err();
@@ -1823,20 +1824,48 @@ mod db_tests {
         assert_eq!(refused.0, 400);
         assert_eq!(refused.1, READ_ONLY_SENTENCE);
         assert!(fake.calls().is_empty(), "a refused write reached sqlcmd");
+
+        // A refusal is still worth a trail: Settings -> Logs should show the
+        // attempt, why it was refused, and never the connection's own user
+        // or password.
+        let read_only = read_only();
+        let line = v2_lib::applog::recent(400)
+            .into_iter()
+            .map(|l| l.message)
+            .find(|m| m.contains("task6fix-readonly-marker"))
+            .expect("the refusal is in the log");
+        assert!(line.contains(READ_ONLY_SENTENCE), "{line}");
+        assert!(line.contains(sql), "{line}");
+        assert!(!line.contains(&read_only.user), "the user is in the log: {line}");
+        assert!(!line.contains(&read_only.password), "the password is in the log: {line}");
     }
 
     #[tokio::test]
     async fn a_write_with_the_switch_off_never_reaches_the_process_either() {
         let fake = FakeRunner::answering("");
-        for sql in [
-            "INSERT INTO dbo.Leave (id) VALUES (1)",
-            "UPDATE dbo.Leave SET id = 2",
-            "DELETE FROM dbo.Leave",
-        ] {
-            let refused = run_query(&fake, &exe(), &dev_login(), false, sql).await.unwrap_err();
-            assert_eq!(refused.0, 400, "{sql}");
-            assert_eq!(refused.1, WRITES_OFF, "{sql}");
+        for (i, verb_sql) in [
+            "INSERT INTO dbo.Leave (marker) VALUES ('task6fix-switch-off-marker')",
+            "UPDATE dbo.Leave SET marker = 'task6fix-switch-off-marker'",
+            "DELETE FROM dbo.Leave WHERE marker = 'task6fix-switch-off-marker'",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let refused = run_query(&fake, &exe(), &dev_login(), false, verb_sql).await.unwrap_err();
+            assert_eq!(refused.0, 400, "{verb_sql}");
+            assert_eq!(refused.1, WRITES_OFF, "{verb_sql}");
             assert!(refused.1.contains("AI Bridge tab"), "{}", refused.1);
+
+            let dev = dev_login();
+            let line = v2_lib::applog::recent(400)
+                .into_iter()
+                .map(|l| l.message)
+                .filter(|m| m.contains("task6fix-switch-off-marker"))
+                .nth(i)
+                .expect("the refusal is in the log");
+            assert!(line.contains(WRITES_OFF), "{line}");
+            assert!(!line.contains(&dev.user), "the user is in the log: {line}");
+            assert!(!line.contains(&dev.password), "the password is in the log: {line}");
         }
         assert!(fake.calls().is_empty(), "a switched-off write reached sqlcmd");
     }
@@ -1885,10 +1914,26 @@ mod db_tests {
     #[tokio::test]
     async fn a_refused_statement_is_refused_on_the_dev_login_too() {
         let fake = FakeRunner::answering("");
+        let dev = dev_login();
         for sql in ["DROP TABLE dbo.Leave", "SELECT 1\nGO\nSELECT 2", "EXEC sp_who"] {
             let refused = run_query(&fake, &exe(), &dev_login(), true, sql).await.unwrap_err();
             assert_eq!(refused.0, 400, "{sql}");
             assert!(!refused.1.is_empty(), "{sql}");
+
+            // The guard's own refusal never even reaches sqlcmd's process,
+            // but it still belongs in Settings -> Logs, with the reason
+            // and never the dev login's credentials. The statement is
+            // flattened onto one line the same way an executed one is, so
+            // it is matched on the refusal reason rather than the raw
+            // (possibly multi-line) SQL text.
+            let line = v2_lib::applog::recent(400)
+                .into_iter()
+                .map(|l| l.message)
+                .filter(|m| m.starts_with("db query refused on") && m.contains(&refused.1))
+                .last()
+                .expect("the refusal is in the log");
+            assert!(!line.contains(&dev.user), "the user is in the log: {line}");
+            assert!(!line.contains(&dev.password), "the password is in the log: {line}");
         }
         assert!(fake.calls().is_empty(), "a refused statement reached sqlcmd");
     }
@@ -1931,6 +1976,49 @@ mod db_tests {
             .await
             .expect("a read runs");
         assert!(!out.contains("capped"), "an uncapped answer says nothing about caps: {out}");
+    }
+
+    /// A realistic answer - header, the dashes rule, and the footer sqlcmd
+    /// actually writes - counted exactly. Wide rows trip the CHARACTER cap
+    /// rather than the row cap, so the count is not entangled with how many
+    /// "rows" the row cap itself would have kept; it just has to prove the
+    /// rule line, the blank separator and the footer are never mistaken
+    /// for a row of data.
+    #[tokio::test]
+    async fn a_capped_answer_counts_only_its_own_data_rows() {
+        let mut stdout = String::from("id\tblob\n----\t----\n");
+        for i in 0..150 {
+            stdout.push_str(&format!("{i:03}\t{}\n", "x".repeat(600)));
+        }
+        stdout.push_str("\n(150 rows affected)\n");
+
+        let fake = FakeRunner::answering(&stdout);
+        let out = run_query(&fake, &exe(), &read_only(), false, "SELECT id, blob FROM dbo.Leave")
+            .await
+            .expect("a read runs");
+
+        let first = out.lines().next().unwrap();
+        // 99 whole rows fit under the 60,000-character cap before the cut
+        // lands mid-row; the dashes rule is not counted as one of them, and
+        // the blank line and footer never made it into the answer at all -
+        // the cut lands well before either.
+        assert_eq!(first, "rows: 99 (capped)", "{first}");
+        assert!(!out.contains("rows affected"), "the footer must not count as a row: {out}");
+    }
+
+    /// A value that happens to contain the literal text "(capped)" must not
+    /// fake a cap notice - `run_sql` now says whether it capped, rather
+    /// than `with_cap_note` searching the answer for the word.
+    #[tokio::test]
+    async fn an_uncapped_answer_with_the_word_capped_in_a_value_gets_no_note() {
+        let stdout = "id\tnote\n----\t----\n1\tstatus is (capped) apparently\n\n(1 rows affected)\n";
+        let fake = FakeRunner::answering(stdout);
+        let out = run_query(&fake, &exe(), &read_only(), false, "SELECT id, note FROM dbo.Leave")
+            .await
+            .expect("a read runs");
+
+        assert!(!out.starts_with("rows: "), "a data value faked a cap note: {out}");
+        assert!(out.contains("(capped)"), "the real value must still be there: {out}");
     }
 
     // ---------------------------------------------------------- the lookup

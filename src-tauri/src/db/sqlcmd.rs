@@ -282,7 +282,8 @@ pub fn sqlcmd_args(c: &Connection, sql: &str) -> Vec<String> {
     args
 }
 
-/// Runs one statement and returns the tab-separated text, capped.
+/// Runs one statement and returns the tab-separated text, capped, and
+/// whether either cap fired.
 ///
 /// The guard is asked here rather than trusted to have been asked: this is
 /// the only function that reaches a `Runner`, so classifying inside it is
@@ -293,7 +294,7 @@ pub async fn run_sql<R: Runner>(
     exe: &Path,
     c: &Connection,
     sql: &str,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> {
     guard::allowed(sql, guard::access_for_user(&c.user))?;
 
     let args = sqlcmd_args(c, sql);
@@ -315,13 +316,18 @@ pub async fn run_sql<R: Runner>(
         };
         return Err(hide_password(&said, &c.password));
     }
-    Ok(hide_password(&cap(&out.stdout), &c.password))
+    let (text, capped) = cap(&out.stdout);
+    Ok((hide_password(&text, &c.password), capped))
 }
 
 /// Keeps the header line, at most `ROW_CAP` rows after it, and at most
 /// `CHAR_CAP` characters of that - then says, after the body, each cut it
 /// had to make. Both notices can appear; neither ever lands inside a row.
-fn cap(stdout: &str) -> String {
+///
+/// Returns whether either cap fired, alongside the text, so a caller that
+/// wants to say "capped" does not have to guess from the text itself - a
+/// SELECT can return a value that happens to contain the same words.
+fn cap(stdout: &str) -> (String, bool) {
     let mut lines = stdout.lines();
     let mut body = lines.next().unwrap_or("").to_string();
     let rows: Vec<&str> = lines.collect();
@@ -330,9 +336,11 @@ fn cap(stdout: &str) -> String {
         body.push_str(row);
     }
 
+    let mut capped = false;
     let mut notices: Vec<String> = Vec::new();
     if rows.len() > ROW_CAP {
         notices.push(format!("... {} more rows (capped)", rows.len() - ROW_CAP));
+        capped = true;
     }
     if body.chars().count() > CHAR_CAP {
         let kept: String = body.chars().take(CHAR_CAP).collect();
@@ -345,13 +353,14 @@ fn cap(stdout: &str) -> String {
             _ => kept,
         };
         notices.push(format!("... output capped at {CHAR_CAP} characters"));
+        capped = true;
     }
 
     for notice in notices {
         body.push('\n');
         body.push_str(&notice);
     }
-    body
+    (body, capped)
 }
 
 /// Drops a line that only repeats the one before it.

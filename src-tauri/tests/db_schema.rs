@@ -205,3 +205,40 @@ fn a_table_that_does_not_exist_renders_as_nothing_so_the_lookup_can_answer() {
         ""
     );
 }
+
+/// A bare name with no schema in front of it (`describe_sql("LeaveRequest")`)
+/// matches every schema with a table of that name, so sqlcmd answers with
+/// both `dbo.LeaveRequest`'s columns and `hr.LeaveRequest`'s columns, in
+/// that order (the query's own `ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME`).
+/// Rendering them under one heading would silently hand back a table that
+/// does not exist - `dbo.LeaveRequest` with `hr`'s columns folded in.
+const TWO_SCHEMAS: &str = "sch\ttab\tcol\ttyp\tlen\tnul\n\
+----\t---\t---\t---\t---\t---\n\
+dbo\tLeaveRequest\tLeaveRequestId\tint\tNULL\tNO\n\
+dbo\tLeaveRequest\tReason\tnvarchar\t200\tYES\n\
+hr\tLeaveRequest\tId\tint\tNULL\tNO\n\
+hr\tLeaveRequest\tApprover\tnvarchar\t100\tYES\n\
+hr\tLeaveRequest\tCreatedAt\tdatetime\tNULL\tYES\n\
+\n\
+(5 rows affected)\n";
+
+#[test]
+fn a_name_in_two_schemas_renders_as_two_blocks_not_one_merged_table() {
+    let out = render_describe(TWO_SCHEMAS);
+
+    assert!(out.contains("dbo.LeaveRequest (2 columns)"), "{out}");
+    assert!(out.contains("hr.LeaveRequest (3 columns)"), "{out}");
+
+    // Each block carries only its own schema's columns - dbo's heading
+    // must not have picked up hr's, and vice versa.
+    let dbo_block = out.split("hr.LeaveRequest").next().unwrap();
+    assert!(dbo_block.contains("LeaveRequestId int not null"), "{out}");
+    assert!(dbo_block.contains("Reason nvarchar(200) null"), "{out}");
+    assert!(!dbo_block.contains("Approver"), "hr's columns leaked into dbo's block: {out}");
+    assert!(!dbo_block.contains("CreatedAt"), "hr's columns leaked into dbo's block: {out}");
+
+    let hr_block = out.split("hr.LeaveRequest").nth(1).unwrap();
+    assert!(hr_block.contains("Approver nvarchar(100) null"), "{out}");
+    assert!(hr_block.contains("CreatedAt datetime null"), "{out}");
+    assert!(!hr_block.contains("Reason"), "dbo's columns leaked into hr's block: {out}");
+}

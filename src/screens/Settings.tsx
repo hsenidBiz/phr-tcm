@@ -339,9 +339,9 @@ export default function Settings({ org, project }: { org: string; project: strin
               saveShowDb(on);
               setShowDb(on);
             }}
-            ariaLabel="Show the company database (PHR-X) section on the AI Bridge tab"
+            ariaLabel="Show the company database section on the AI Bridge tab"
           />
-          Show the company database (PHR-X) section on the AI Bridge tab
+          Show the company database section on the AI Bridge tab
         </label>
       </section>
 

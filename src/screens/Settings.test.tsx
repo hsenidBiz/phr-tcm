@@ -266,7 +266,7 @@ test("the PHR-X card switch persists its choice, on by default", async () => {
   mockIPC(() => undefined);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderSettings(qc);
-  const sw = await screen.findByLabelText("Show the company database (PHR-X) section on the AI Bridge tab");
+  const sw = await screen.findByLabelText("Show the company database section on the AI Bridge tab");
   expect(sw).toBeChecked();
   expect(localStorage.getItem("tcm-v2-ai-show-db")).toBeNull();
   fireEvent.click(sw);

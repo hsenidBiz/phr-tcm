@@ -966,13 +966,13 @@ export default function AiBridge() {
             because reading only works on a page the search found.
           </li>
           <li>
-            <span className="font-medium text-text">Company database (read)</span> — two tools under one switch: one finds the tables and columns behind a
+            <span className="font-medium text-text">Company database (read)</span>: two tools under one switch: one finds the tables and columns behind a
             topic, the other runs a single statement on the connection you chose
             under Company database. It is how an assistant checks what a screen
             actually reads, or what a value is today, instead of guessing. SELECT
             only, unless you switch creating, updating and deleting on separately
-            beside that connection. Off, an assistant never reaches your database
-            through this app.
+            beside that connection. Off, the assistant's database tools are
+            switched off.
           </li>
           {DEV_BUILD && (
             <li>

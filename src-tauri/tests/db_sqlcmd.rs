@@ -223,30 +223,34 @@ async fn a_long_answer_keeps_the_header_and_caps_the_rows() {
         stdout.push_str(&format!("{i}\trow {i}\n"));
     }
     let fake = FakeRunner::answering(&stdout);
-    let text = run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, name FROM t")
-        .await
-        .unwrap();
+    let (text, capped) =
+        run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, name FROM t")
+            .await
+            .unwrap();
 
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "id\tname");
     assert_eq!(lines.len(), 1 + ROW_CAP + 1, "header, {ROW_CAP} rows, the cap line");
     assert_eq!(lines[ROW_CAP], "199\trow 199");
     assert_eq!(*lines.last().unwrap(), "... 50 more rows (capped)");
+    assert!(capped, "the row cap fired");
 
     // Short enough to fit is left exactly as sqlcmd wrote it.
     let short = FakeRunner::answering("id\tname\n1\ta\n2\tb\n");
-    let text = run_sql(&short, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, name FROM t")
-        .await
-        .unwrap();
+    let (text, capped) =
+        run_sql(&short, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, name FROM t")
+            .await
+            .unwrap();
     assert_eq!(text, "id\tname\n1\ta\n2\tb");
     assert!(!text.contains("capped"));
+    assert!(!capped, "nothing was cut");
 }
 
 #[tokio::test]
 async fn a_huge_answer_is_cut_at_the_character_cap() {
     let stdout = format!("blob\n{}\n", "x".repeat(100_000));
     let fake = FakeRunner::answering(&stdout);
-    let text = run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT blob FROM t")
+    let (text, capped) = run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT blob FROM t")
         .await
         .unwrap();
 
@@ -255,6 +259,7 @@ async fn a_huge_answer_is_cut_at_the_character_cap() {
     // One row wider than the whole cap is cut where it is cut: the only
     // alternative would be handing back the header and nothing else.
     assert!(text.starts_with("blob\nxxx"));
+    assert!(capped, "the character cap fired");
 }
 
 #[tokio::test]
@@ -265,11 +270,12 @@ async fn when_both_caps_fire_both_are_reported_and_no_row_is_left_half_written()
         stdout.push_str(&format!("{i}\t{wide}\n"));
     }
     let fake = FakeRunner::answering(&stdout);
-    let text =
+    let (text, capped) =
         run_sql(&fake, Path::new("sqlcmd.exe"), &read_only_preset(), "SELECT id, blob FROM t")
             .await
             .unwrap();
 
+    assert!(capped, "either cap firing is still capped");
     assert!(text.contains("more rows (capped)"), "the row cap went unsaid");
     assert!(text.contains("... output capped at 60000 characters"), "the char cap went unsaid");
     // The character cut landed between rows, so every row that survived is
@@ -286,9 +292,10 @@ async fn even_a_successful_answer_is_scrubbed() {
     // the rows themselves: a password can sit in a configuration table.
     let c = read_only_preset();
     let fake = FakeRunner::answering(&format!("note\nthe server echoed {}\n", c.password));
-    let text = run_sql(&fake, Path::new("sqlcmd.exe"), &c, "SELECT 1 AS note").await.unwrap();
+    let (text, capped) = run_sql(&fake, Path::new("sqlcmd.exe"), &c, "SELECT 1 AS note").await.unwrap();
     assert!(!text.contains(&c.password), "{text}");
     assert!(text.contains("(hidden)"), "{text}");
+    assert!(!capped, "nothing here was cut");
 }
 
 #[tokio::test]

@@ -78,6 +78,19 @@ fn cut(text: &str, at: usize) -> String {
     text.chars().take(at).collect()
 }
 
+/// The line Settings -> Logs shows for a statement that never ran at all -
+/// refused by the guard, or shaped like a write and stopped at one of the
+/// two write doors. Logged for the same reason a run is: a person looking
+/// for why an assistant "did nothing" needs the attempt in the trail, not
+/// just the ones that got through.
+///
+/// Always cut at `READ_LOG_CHARS`, whatever kind of statement it was - it
+/// never reached sqlcmd, so there is no executed write to keep whole for.
+fn refusal_log_line(c: &Connection, why: &str, sql: &str) -> String {
+    let one_line = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    format!("db query refused on {}/{}: {why} - {}", c.server, c.database, cut(&one_line, READ_LOG_CHARS))
+}
+
 /// One statement from the assistant, if it may run at all.
 ///
 /// The two write doors are both checked here, and both have to be open:
@@ -93,12 +106,17 @@ pub async fn run_query<R: Runner>(
 ) -> Result<String, (u16, String)> {
     let verdict = guard::classify(sql);
     match &verdict {
-        Verdict::Refused(why) => return Err((400, why.clone())),
+        Verdict::Refused(why) => {
+            crate::applog::info(refusal_log_line(c, why, sql));
+            return Err((400, why.clone()));
+        }
         Verdict::Write => {
             if !writes_on {
+                crate::applog::info(refusal_log_line(c, WRITES_OFF, sql));
                 return Err((400, WRITES_OFF.to_string()));
             }
             if guard::access_for_user(&c.user) != guard::Access::DevWrites {
+                crate::applog::info(refusal_log_line(c, guard::READ_ONLY_SENTENCE, sql));
                 return Err((400, guard::READ_ONLY_SENTENCE.to_string()));
             }
         }
@@ -110,7 +128,7 @@ pub async fn run_query<R: Runner>(
     crate::applog::info(log_line(c, &verdict, sql));
 
     match sqlcmd::run_sql(r, exe, c, sql).await {
-        Ok(text) => Ok(with_cap_note(&text)),
+        Ok((text, capped)) => Ok(with_cap_note(&text, capped)),
         // Whatever the server said, redacted by `run_sql` on the way out.
         // 502 rather than 400: the statement was allowed and sent, and
         // something beyond this app answered.
@@ -122,17 +140,34 @@ pub async fn run_query<R: Runner>(
 /// had to cut after the rows, which is the right place for a person
 /// scrolling and the wrong one for a reader that may stop early and
 /// conclude it has the whole table.
-fn with_cap_note(text: &str) -> String {
-    if !text.contains("(capped)") && !text.contains("output capped at") {
+///
+/// `capped` comes from `sqlcmd::run_sql` itself, not from sniffing the
+/// text for the word "capped" - a SELECT that happens to return that
+/// literal in a value is not a cap, and treating it as one would fake a
+/// notice nobody's row count agrees with.
+fn with_cap_note(text: &str, capped: bool) -> String {
+    if !capped {
         return text.to_string();
     }
-    // The header is not a row, and neither is a notice.
-    let rows = text
-        .lines()
-        .skip(1)
-        .filter(|l| !l.starts_with("... "))
-        .count();
-    format!("rows: {rows} (capped)\n{text}")
+    format!("rows: {} (capped)\n{text}", data_row_count(text))
+}
+
+/// The rows a reader would call data: not the header, not the dashes rule
+/// sqlcmd draws under it, not a blank separator, not the "... " notice
+/// this module or `sqlcmd::cap` appends, and not the "(N rows affected)"
+/// footer sqlcmd signs off with - counting any of those as a row is what
+/// let the old count run past the truth.
+fn data_row_count(text: &str) -> usize {
+    text.lines()
+        .skip(1) // the header
+        .filter(|l| {
+            let trimmed = l.trim();
+            !trimmed.is_empty()
+                && !schema::is_rule(l)
+                && !schema::is_footer(l)
+                && !l.starts_with("... ")
+        })
+        .count()
 }
 
 /// The tables and columns behind some words.
@@ -149,7 +184,12 @@ pub async fn run_lookup<R: Runner>(
     limit: usize,
 ) -> Result<String, (u16, String)> {
     let query = query.trim();
-    crate::applog::info(format!("db lookup on {}/{}: {query}", c.server, c.database));
+    crate::applog::info(format!(
+        "db lookup on {}/{}: {}",
+        c.server,
+        c.database,
+        cut(query, READ_LOG_CHARS)
+    ));
 
     if let Some(sql) = schema::describe_sql(query) {
         let tsv = read(r, exe, c, &sql).await?;
@@ -173,5 +213,9 @@ async fn read<R: Runner>(
 ) -> Result<String, (u16, String)> {
     sqlcmd::run_sql(r, exe, c, sql)
         .await
+        // The lookup's own statements already cap themselves with `TOP`,
+        // so whether sqlcmd's own row/character cap fired is not something
+        // an assistant reading `render_lookup`/`render_describe` needs.
+        .map(|(text, _capped)| text)
         .map_err(|said| (502, format!("the database could not be read: {said}")))
 }

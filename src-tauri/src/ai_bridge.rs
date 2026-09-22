@@ -616,13 +616,20 @@ fn db_ready(
     Ok((connection, exe))
 }
 
-/// One named string out of a small JSON body, trimmed, or the refusal
-/// that says what the body should have carried. Separate from
+/// A body's JSON, parsed once, or the refusal that names what could not be
+/// read. Both database routes need more than one field out of the same
+/// body (`db_lookup` reads `query` and `limit`), so parsing happens here
+/// and every field after this is read from the one `Value`.
+fn db_body(body: &str, shape: &str) -> Result<serde_json::Value, (u16, String)> {
+    serde_json::from_str(body)
+        .map_err(|e| (400, format!("that is not readable JSON: {e}. Expected {shape}.")))
+}
+
+/// One named string out of an already-parsed body, trimmed, or the
+/// refusal that says what the body should have carried. Separate from
 /// `body_field` because these two routes want the empty string and the
 /// missing key to read the same way: neither is a question.
-fn db_body_text(body: &str, key: &str, shape: &str) -> Result<String, (u16, String)> {
-    let parsed: serde_json::Value = serde_json::from_str(body)
-        .map_err(|e| (400, format!("that is not readable JSON: {e}. Expected {shape}.")))?;
+fn db_body_text(parsed: &serde_json::Value, key: &str, shape: &str) -> Result<String, (u16, String)> {
     let text = parsed.get(key).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
     if text.is_empty() {
         return Err((400, format!("this call needs a \"{key}\". Expected {shape}.")));
@@ -633,15 +640,15 @@ fn db_body_text(body: &str, key: &str, shape: &str) -> Result<String, (u16, Stri
 /// The tables and columns behind some words, or one table's own columns.
 async fn db_lookup(ctx: &BridgeContext, body: &str) -> (u16, String) {
     const SHAPE: &str = "{ \"query\": \"leave request\", \"limit\": 10 }";
-    let query = match db_body_text(body, "query", SHAPE) {
+    let parsed = match db_body(body, SHAPE) {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let query = match db_body_text(&parsed, "query", SHAPE) {
         Ok(q) => q,
         Err(refused) => return refused,
     };
-    let limit = crate::db::query::lookup_limit(
-        serde_json::from_str::<serde_json::Value>(body)
-            .ok()
-            .and_then(|v| v.get("limit").and_then(|l| l.as_i64())),
-    );
+    let limit = crate::db::query::lookup_limit(parsed.get("limit").and_then(|l| l.as_i64()));
     let (connection, exe) = match db_ready(ctx) {
         Ok(ready) => ready,
         Err(refused) => return refused,
@@ -663,7 +670,11 @@ async fn db_lookup(ctx: &BridgeContext, body: &str) -> (u16, String) {
 /// One statement, if the guard and the two write doors allow it.
 async fn db_query(ctx: &BridgeContext, body: &str) -> (u16, String) {
     const SHAPE: &str = "{ \"sql\": \"SELECT TOP (10) * FROM dbo.LeaveRequest\" }";
-    let sql = match db_body_text(body, "sql", SHAPE) {
+    let parsed = match db_body(body, SHAPE) {
+        Ok(v) => v,
+        Err(refused) => return refused,
+    };
+    let sql = match db_body_text(&parsed, "sql", SHAPE) {
         Ok(s) => s,
         Err(refused) => return refused,
     };
