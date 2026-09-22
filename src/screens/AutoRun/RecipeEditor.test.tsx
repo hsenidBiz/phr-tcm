@@ -117,3 +117,35 @@ test("when the recipe save is refused, the quirks are not saved", async () => {
   expect(await screen.findByText(/step 1: a locator needs/)).toBeInTheDocument();
   expect(quirksCalls).toEqual([]);
 });
+
+test("two identical lines in the quirks box save as one", async () => {
+  const calls: unknown[] = [];
+  mount(RECIPE, () => null, [], (a) => { calls.push(a); return null; });
+  const recipeBox = (await screen.findByLabelText("Sign-in recipe JSON")) as HTMLTextAreaElement;
+  await waitFor(() => expect(JSON.parse(recipeBox.value)).toEqual(RECIPE));
+  const quirksBox = await screen.findByLabelText("Known quirks");
+  fireEvent.change(quirksBox, {
+    target: { value: "the grid paginates at 50 rows\n  THE GRID   paginates AT 50 ROWS  " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(calls.length).toBe(1));
+  const call = calls[0] as { quirks: { text: string }[] };
+  expect(call.quirks).toHaveLength(1);
+  expect(call.quirks[0].text).toBe("the grid paginates at 50 rows");
+});
+
+test("an empty recipe box still saves the quirks, and does not call auto_run_save_recipe", async () => {
+  const recipeCalls: unknown[] = [];
+  const quirksCalls: unknown[] = [];
+  mount(null, (a) => { recipeCalls.push(a); return null; }, [], (a) => { quirksCalls.push(a); return null; });
+  const quirksBox = await screen.findByLabelText("Known quirks");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save quirks" })).toBeInTheDocument());
+  fireEvent.change(quirksBox, { target: { value: "the grid paginates at 50 rows" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save quirks" }));
+  await waitFor(() => expect(quirksCalls.length).toBe(1));
+  expect(recipeCalls).toEqual([]);
+  const call = quirksCalls[0] as { organization: string; project: string; quirks: { text: string }[] };
+  expect(call.organization).toBe("acme");
+  expect(call.project).toBe("Web");
+  expect(call.quirks[0].text).toBe("the grid paginates at 50 rows");
+});

@@ -80,6 +80,35 @@ fn save_quirks_refuses_a_newline_inside_a_quirk() {
     assert!(err.contains("line"), "{err}");
 }
 
+/// The same fact twice, however capitalised or spaced, is refused rather
+/// than silently written twice - `linesToQuirks` on the frontend already
+/// collapses a repeated line to its first occurrence, but a save that
+/// bypasses that (a hand-edited call, or a future caller) must not be able
+/// to persist the duplicate either.
+#[test]
+fn save_quirks_refuses_two_quirks_with_the_same_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let list = vec![
+        quirk("the grid paginates at 50 rows", "person", "1"),
+        quirk("  THE GRID   PAGINATES AT 50 ROWS", "assistant", "2"),
+    ];
+    let err = save_quirks(dir.path(), "Acme", "Web", &list).unwrap_err();
+    assert!(err.contains("appears twice"), "{err}");
+    assert!(load_quirks(dir.path(), "Acme", "Web").unwrap().is_empty());
+}
+
+/// Mirrors `recipe::save_recipe`'s own guard and sentence: an empty
+/// organization or project is refused before anything is written, rather
+/// than quietly slugging to a file nobody picked.
+#[test]
+fn save_quirks_refuses_an_empty_organization_or_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = save_quirks(dir.path(), "  ", "Web", &[quirk("x", "person", "1")]).unwrap_err();
+    assert!(err.contains("organization"), "{err}");
+    let err = save_quirks(dir.path(), "Acme", " ", &[quirk("x", "person", "1")]).unwrap_err();
+    assert!(err.contains("project"), "{err}");
+}
+
 /// A refusal never leaves a half-written file: the earlier valid save is
 /// still what loads back.
 #[test]

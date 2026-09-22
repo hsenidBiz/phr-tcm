@@ -48,6 +48,7 @@ fn validate(quirks: &[Quirk]) -> Result<(), String> {
             "a project keeps at most {MAX_QUIRKS} quirks - remove one before adding another"
         ));
     }
+    let mut seen: Vec<String> = Vec::new();
     for q in quirks {
         if q.text.trim().is_empty() {
             return Err("a quirk needs some text".to_string());
@@ -58,6 +59,14 @@ fn validate(quirks: &[Quirk]) -> Result<(), String> {
         if q.text.contains('\n') {
             return Err("a quirk is one line - remove the line break".to_string());
         }
+        // Case- and whitespace-insensitive, the same rule `add_quirk` uses
+        // to skip a repeat - a two-line box saved straight through must not
+        // be able to write the fact twice.
+        let norm = normalized(q.text.trim());
+        if seen.contains(&norm) {
+            return Err(format!("quirk \"{}\" appears twice", q.text.trim()));
+        }
+        seen.push(norm);
     }
     Ok(())
 }
@@ -67,6 +76,12 @@ fn validate(quirks: &[Quirk]) -> Result<(), String> {
 /// refused save leaves the earlier one exactly as it was.
 pub fn save_quirks(root: &Path, org: &str, project: &str, quirks: &[Quirk]) -> Result<(), String> {
     validate(quirks)?;
+    // `slug_part` (behind `project_slug`, via `quirks_path`) never reads as
+    // empty any more, so - as with `recipe::save_recipe` - the real refusal,
+    // nothing was typed at all, has to be checked on the raw names here.
+    if org.trim().is_empty() || project.trim().is_empty() {
+        return Err("pick an organization and a project first".to_string());
+    }
     let path = quirks_path(root, org, project);
     std::fs::create_dir_all(path.parent().expect("projects folder")).map_err(|e| e.to_string())?;
     let json = serde_json::to_string_pretty(quirks).map_err(|e| e.to_string())?;

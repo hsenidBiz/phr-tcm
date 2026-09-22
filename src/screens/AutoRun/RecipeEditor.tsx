@@ -26,19 +26,30 @@ const PLACEHOLDER = `{
   "session_minutes": 480
 }`;
 
+/** Case- and whitespace-insensitive, matching the Rust side's own `normalized()`. */
+function normalized(s: string): string {
+  return s.split(/\s+/).join(" ").toLowerCase();
+}
+
 /**
  * The quirks box's current lines, matched back against what was loaded so
  * an unchanged line keeps its original author and timestamp. A line that
  * matches nothing on the loaded list is new, written by the person editing
- * this dialog right now.
+ * this dialog right now. A line that repeats one already emitted (same
+ * text, any case or spacing) collapses to its first occurrence - the box
+ * is a set of facts, not a log of how many times each was typed.
  */
 function linesToQuirks(text: string, loaded: Quirk[]): Quirk[] {
   const pool = [...loaded];
   const now = String(Date.now());
+  const seen = new Set<string>();
   const out: Quirk[] = [];
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (line === "") continue;
+    const key = normalized(line);
+    if (seen.has(key)) continue;
+    seen.add(key);
     const i = pool.findIndex((q) => q.text === line);
     if (i >= 0) {
       out.push(pool[i]);
@@ -68,20 +79,27 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
   const value = text ?? (existing.data ? JSON.stringify(existing.data, null, 2) : "");
   const quirksValue = quirksText ?? (existingQuirks.data ?? []).map((q) => q.text).join("\n");
   const blocked = existing.isLoading || existing.isError || existingQuirks.isLoading || existingQuirks.isError;
+  const recipeEmpty = value.trim() === "";
+  const quirksEmpty = quirksValue.trim() === "";
 
+  // `recipe` is `null` for a project with no recipe yet, whose box is left
+  // empty on purpose - that box saves only the quirks, never an
+  // `auto_run_save_recipe` call with nothing behind it.
   const save = useMutation({
-    mutationFn: async (recipe: SignInRecipe_Deserialize) => {
+    mutationFn: async (recipe: SignInRecipe_Deserialize | null) => {
       // The recipe is saved first; a refusal here (a bad selector, a
       // missing address) must leave the quirks box exactly as typed and
       // never write it - saving a fact about the app is not consolation
       // for a recipe that did not actually save.
-      await unwrapStr(commands.autoRunSaveRecipe(org, project, recipe));
+      if (recipe) {
+        await unwrapStr(commands.autoRunSaveRecipe(org, project, recipe));
+      }
       await unwrapStr(commands.autoRunSaveQuirks(org, project, linesToQuirks(quirksValue, existingQuirks.data ?? [])));
     },
-    onSuccess: () => {
+    onSuccess: (_data, recipe) => {
       qc.invalidateQueries({ queryKey: ["autorun-recipe", org, project] });
       qc.invalidateQueries({ queryKey: ["autorun-quirks", org, project] });
-      toast.success("Sign-in recipe saved.");
+      toast.success(recipe ? "Sign-in recipe saved." : "Quirks saved.");
       onClose();
     },
     onError: (e) => setProblem(e instanceof Error ? e.message : String(e)),
@@ -89,6 +107,12 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
 
   const submit = () => {
     setProblem("");
+    if (recipeEmpty) {
+      // Nothing typed in the recipe box: this project may simply not have
+      // one yet, and that is not a reason to block saving the quirks.
+      save.mutate(null);
+      return;
+    }
     // A cast, not a runtime validation: the Rust side is the one place
     // that has to actually validate a recipe (`SignInRecipe::validate`),
     // and the save call below is what surfaces its verdict.
@@ -133,9 +157,9 @@ export default function RecipeEditor({ org, project, onClose }: { org: string; p
           <IconCancel aria-hidden />
           Cancel
         </Button>
-        <Button size="sm" disabled={blocked || save.isPending || value.trim() === ""} onClick={submit}>
+        <Button size="sm" disabled={blocked || save.isPending || (recipeEmpty && quirksEmpty)} onClick={submit}>
           <IconConfirm aria-hidden />
-          {save.isPending ? "Saving" : "Save recipe"}
+          {save.isPending ? "Saving" : recipeEmpty ? "Save quirks" : "Save recipe"}
         </Button>
       </div>
     </Modal>
