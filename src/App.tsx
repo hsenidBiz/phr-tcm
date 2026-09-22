@@ -32,7 +32,7 @@ import {
 import { noteAssigned } from "./lib/notifications";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
-import { dbConnectionSnapshot, dbWritesSnapshot, subscribeDbSettings } from "./lib/dbServer";
+import { dbConnectionSnapshot, dbWritesSnapshot, isDevLoginConnection, subscribeDbSettings } from "./lib/dbServer";
 import {
   clearTourRepositories,
   setTourRepositories,
@@ -610,24 +610,48 @@ export default function App() {
   // assistant's next call rather than after a restart.
   const dbConnection = useSyncExternalStore(subscribeDbSettings, dbConnectionSnapshot);
   const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
+  // The write switch alone is only half the permission - the Rust side
+  // also requires the connection's own user to be the dev login, and
+  // refuses a write when either is missing. Pushing the raw switch here
+  // would tell the assistant it may write on a read-only connection, which
+  // is not true. `isDevLoginConnection` is the same rule AiBridge uses to
+  // decide whether the switch may even be moved.
+  const devLogin = isDevLoginConnection(dbConnection);
+  // Every one of the AI Bridge form's fields - including the connection
+  // string's individual pieces - writes through to `dbConnection` on every
+  // keystroke, so pushing on every change sent one `set_bridge_context` +
+  // `bridge_status` IPC pair per character typed, including into the
+  // password field. Debounced so a burst of edits becomes one push once
+  // typing pauses; the pending push is flushed on unmount rather than
+  // dropped, so App never silently skips the last edit.
+  const pushBridgeContextRef = useRef<() => void>(() => {});
+  const bridgeContextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (tourOpen) return;
     if (!signedIn || !org || !project) return;
-    commands
-      .bridgeStatus()
-      .then(() =>
-        commands.setBridgeContext(
-          org,
-          project,
-          bridgePrefs.moduleRef,
-          bridgePrefs.preconditionsRef,
-          disabledTools,
-          workingDir || null,
-          dbConnection || null,
-          dbWrites,
-        ),
-      )
-      .catch(() => {});
+    const push = () => {
+      commands
+        .bridgeStatus()
+        .then(() =>
+          commands.setBridgeContext(
+            org,
+            project,
+            bridgePrefs.moduleRef,
+            bridgePrefs.preconditionsRef,
+            disabledTools,
+            workingDir || null,
+            dbConnection || null,
+            dbWrites && devLogin,
+          ),
+        )
+        .catch(() => {});
+    };
+    pushBridgeContextRef.current = push;
+    if (bridgeContextTimerRef.current) clearTimeout(bridgeContextTimerRef.current);
+    bridgeContextTimerRef.current = setTimeout(push, 400);
+    return () => {
+      if (bridgeContextTimerRef.current) clearTimeout(bridgeContextTimerRef.current);
+    };
   }, [
     signedIn,
     org,
@@ -638,8 +662,19 @@ export default function App() {
     workingDir,
     dbConnection,
     dbWrites,
+    devLogin,
     tourOpen,
   ]);
+  // App itself effectively never unmounts, but a debounced push that IS
+  // still pending when it does must fire rather than vanish silently.
+  useEffect(() => {
+    return () => {
+      if (bridgeContextTimerRef.current) {
+        clearTimeout(bridgeContextTimerRef.current);
+        pushBridgeContextRef.current();
+      }
+    };
+  }, []);
 
   // Delete permission, asked ONCE at sign-in per org/project rather than
   // when the Update Test Cases screen opens. The screen reads this same

@@ -8,6 +8,7 @@ import { START_TOUR_EVENT } from "./tour/tourState";
 import { TOUR_ORG } from "./tour/tourData";
 import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
+import { saveDbConfig, saveDbWrites } from "./lib/dbServer";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -233,6 +234,100 @@ test("signing in starts the AI bridge and pushes org/project context", async () 
   // The bridge must come up WITHOUT visiting the AI Bridge tab - an AI
   // tool connecting right after sign-in gets a live listener.
   expect(bridgeStarted).toBeGreaterThan(0);
+});
+
+/// The write switch is only half the permission - the Rust side also
+/// requires the connection's own user to be the dev login, and refuses a
+/// write when either is missing. What reaches the assistant has to say so
+/// too: pushing the raw switch would claim writes are allowed on a
+/// read-only connection, which is not true.
+test("db_writes pushed to the bridge is the switch AND the dev login, not the raw switch", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
+  );
+  // Otherwise the first-run tour auto-starts 800ms after sign-in and takes
+  // over org/project with its own sample data, which would confound this
+  // test's later assertions with an unrelated effect.
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  saveDbConfig({
+    exe_path: "sqlcmd",
+    db_type: "mssql",
+    connection_string: "Server=s;Database=d;User Id=sgdev01db01_readonly;Password=p;",
+    schema_filter: "",
+  });
+  saveDbWrites(true); // the switch is ON, but the connection is NOT the dev login
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  expect(pushes[pushes.length - 1]).toMatchObject({ dbWrites: false });
+
+  // The switch never moved - only the connection did, to the dev login.
+  // The same switch state must now push true.
+  saveDbConfig({
+    exe_path: "sqlcmd",
+    db_type: "mssql",
+    connection_string: "Server=s;Database=d;User Id=sgdev01db01_devlogin;Password=p;",
+    schema_filter: "",
+  });
+  await vi.waitFor(() => expect(pushes[pushes.length - 1]).toMatchObject({ dbWrites: true }));
+});
+
+/// A burst of connection-string keystrokes - what the AI Bridge form's
+/// fields send through `saveDbConfig` on every character, the password
+/// field included - used to push a `set_bridge_context` + `bridge_status`
+/// IPC pair per keystroke. App now debounces that push.
+test("connection-string edits are debounced into one bridge-context push", async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
+  );
+  localStorage.setItem("tcm-v2-tour-done", "yes");
+  signedInMocks((cmd, args) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "set_bridge_context") {
+      pushes.push(args as Record<string, unknown>);
+      return null;
+    }
+    if (cmd === "bridge_status") return { port: 1, mcp_exe: "x" };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await vi.waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+  const afterSignIn = pushes.length;
+
+  vi.useFakeTimers();
+  try {
+    // Three rapid "keystrokes", each a saveDbConfig call the way editing a
+    // connection-string field makes one per character.
+    act(() => {
+      saveDbConfig({ exe_path: "", db_type: "mssql", connection_string: "Server=s", schema_filter: "" });
+      saveDbConfig({ exe_path: "", db_type: "mssql", connection_string: "Server=sg", schema_filter: "" });
+      saveDbConfig({ exe_path: "", db_type: "mssql", connection_string: "Server=sgd", schema_filter: "" });
+    });
+    // Still inside the debounce window - nothing pushed for any of the
+    // three yet.
+    expect(pushes.length).toBe(afterSignIn);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    // Exactly one push for the whole burst, carrying the LAST value.
+    expect(pushes.length).toBe(afterSignIn + 1);
+    expect(pushes[pushes.length - 1]).toMatchObject({ dbConnectionString: "Server=sgd" });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 /// The last manual step in the AI loop. `begin_test_case_writing` already
