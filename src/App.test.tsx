@@ -1053,6 +1053,51 @@ test("the tour gives the Search Suites handoff back", async () => {
   expect(await screen.findByText(handedOver)).toBeInTheDocument();
 });
 
+// Use as current PBI resolves the suite's PBI through search_pbis and hands
+// it to the app as the current PBI - the person stays on Search Suites, the
+// context bar chip is what changes.
+test("Search Suites: Use as current PBI updates the context bar without leaving the screen", async () => {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({
+      org: "acme",
+      project: "Web",
+      section: "suites",
+      pbi: null,
+      workMode: false,
+    }),
+  );
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "list_plans_with_suites")
+      return [
+        {
+          plan: { id: 9, name: "Auth - Test Plan", area_path: "Proj", root_suite_id: 90 },
+          suites: [
+            {
+              id: 91,
+              name: "PBI 42 suite",
+              suite_type: "requirementTestSuite",
+              requirement_id: 42,
+              parent_id: null,
+            },
+          ],
+        },
+      ];
+    if (cmd === "search_pbis") return [{ id: 42, title: "Real PBI title", work_item_type: "Product Backlog Item" }];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  await screen.findByText("PBI 42 suite");
+
+  fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 42 suite" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Use as current PBI" }));
+
+  expect(await screen.findByText("Real PBI title")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Search Suites" })).toBeInTheDocument();
+});
+
 test("the app is locked while the tour runs", async () => {
   signedInMocks((cmd) => {
     if (cmd === "list_plans_with_suites") return [];

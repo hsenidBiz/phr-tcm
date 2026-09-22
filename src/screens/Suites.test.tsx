@@ -1,6 +1,6 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import Suites, { pointsIndent } from "./Suites";
 
@@ -15,10 +15,17 @@ function renderSuites(
   // (qc.setQueryData) before the component ever mounts.
   qc: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   onManageSuite?: (planId: number, suiteId: number) => void,
+  onSetCurrentPbi?: (p: { id: number; title: string }) => void,
 ) {
   return render(
     <QueryClientProvider client={qc}>
-      <Suites org="acme" project="Web" onEditCases={onEditCases} onManageSuite={onManageSuite} />
+      <Suites
+        org="acme"
+        project="Web"
+        onEditCases={onEditCases}
+        onManageSuite={onManageSuite}
+        onSetCurrentPbi={onSetCurrentPbi}
+      />
     </QueryClientProvider>,
   );
 }
@@ -101,6 +108,57 @@ test("Manage hands the suite to Suite Management", async () => {
   fireEvent.click(screen.getByRole("menuitem", { name: "Manage" }));
   expect(managed).toEqual([[9, 91]]);
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});
+
+const REQUIREMENT_SUITE_PLANS = [
+  {
+    plan: PLAN,
+    suites: [{ id: 91, name: "PBI 42 suite", suite_type: "requirementTestSuite", requirement_id: 42, parent_id: null }],
+  },
+];
+
+test("Use as current PBI resolves the PBI's own title and hands it up without leaving the screen", async () => {
+  const queries: string[] = [];
+  baseMock((cmd, args) => {
+    if (cmd === "list_plans_with_suites") return REQUIREMENT_SUITE_PLANS;
+    if (cmd === "search_pbis") {
+      queries.push((args as { query: string }).query);
+      return [{ id: 42, title: "Real PBI title", work_item_type: "Product Backlog Item" }];
+    }
+  });
+  const picked: unknown[] = [];
+  renderSuites(undefined, undefined, undefined, (p) => picked.push(p));
+  await screen.findByText("PBI 42 suite");
+  fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 42 suite" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Use as current PBI" }));
+  await waitFor(() => expect(picked).toEqual([{ id: 42, title: "Real PBI title" }]));
+  expect(queries).toEqual(["42"]);
+  expect(screen.getByRole("button", { name: "More actions for PBI 42 suite" })).toBeInTheDocument(); // still here
+});
+
+test("when the lookup finds nothing the suite's own name stands in", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites") return REQUIREMENT_SUITE_PLANS;
+    if (cmd === "search_pbis") return [];
+  });
+  const picked: unknown[] = [];
+  renderSuites(undefined, undefined, undefined, (p) => picked.push(p));
+  await screen.findByText("PBI 42 suite");
+  fireEvent.click(screen.getByRole("button", { name: "More actions for PBI 42 suite" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Use as current PBI" }));
+  await waitFor(() => expect(picked).toEqual([{ id: 42, title: "PBI 42 suite" }]));
+});
+
+test("a static suite offers no Use as current PBI", async () => {
+  baseMock((cmd) => {
+    if (cmd === "list_plans_with_suites")
+      return [{ plan: PLAN, suites: [{ id: 93, name: "Sprint stories", suite_type: "staticTestSuite", requirement_id: null, parent_id: null }] }];
+  });
+  renderSuites(() => {}, undefined, () => {}, () => {});
+  const row = (await screen.findByText("Sprint stories")).closest("button")!;
+  fireEvent.mouseEnter(within(row).getByRole("button", { name: "More actions for Sprint stories" }));
+  const menu = screen.getByRole("menu", { name: "More actions for Sprint stories" });
+  expect(within(menu).getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Manage", "Run Tests", "Report"]);
 });
 
 test("a folder row carries Manage too - a static suite can hold cases as well as child suites", async () => {

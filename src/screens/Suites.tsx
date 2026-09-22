@@ -136,6 +136,7 @@ export default function Suites({
   onOpenPbi,
   onEditCases,
   onManageSuite,
+  onSetCurrentPbi,
 }: {
   org: string;
   project: string;
@@ -144,6 +145,9 @@ export default function Suites({
   /** Hand this suite to Suite Management, which opens its plan with the
    * suite unfolded. */
   onManageSuite?: (planId: number, suiteId: number) => void;
+  /** Make a requirement suite's PBI the app's current PBI, without leaving
+   * this screen. */
+  onSetCurrentPbi?: (pbi: { id: number; title: string }) => void;
 }) {
   const qc = useQueryClient();
   const [openSuite, setOpenSuite] = useState<number | null>(null);
@@ -284,7 +288,29 @@ export default function Suites({
     onError: (e) => toast.error(`Report failed: ${e.message ?? e}`),
   });
 
-  const busy = view.isPending || edit.isPending || report.isPending || runSuite.isPending;
+  /** Resolve a requirement suite's PBI to its real title (the suite's own
+   * name can drift from it) and hand it up as the app's current PBI. Falls
+   * back to the suite's own name if the search turns up nothing. */
+  const useAsPbi = useMutation({
+    mutationFn: async (s: SuiteRef) => {
+      const hits = await unwrap(commands.searchPbis(org, project, String(s.requirement_id)));
+      return (
+        hits.find((h) => h.id === s.requirement_id) ?? {
+          id: s.requirement_id!,
+          title: s.name,
+          work_item_type: "Product Backlog Item",
+        }
+      );
+    },
+    onSuccess: (p) => {
+      onSetCurrentPbi!({ id: p.id, title: p.title });
+      toast.success(`Current PBI: #${p.id} ${p.title}`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const busy =
+    view.isPending || edit.isPending || report.isPending || runSuite.isPending || useAsPbi.isPending;
 
   if (!org || !project) {
     return (
@@ -331,7 +357,11 @@ export default function Suites({
       });
 
     const pbiSuite = onOpenPbi && s.suite_type === "requirementTestSuite" && s.requirement_id ? onOpenPbi : null;
+    const isRequirementSuite = s.suite_type === "requirementTestSuite" && s.requirement_id;
     const more: MoreAction[] = [
+      ...(onSetCurrentPbi && isRequirementSuite
+        ? [{ label: "Use as current PBI", onSelect: () => useAsPbi.mutate(s) }]
+        : []),
       ...(onManageSuite ? [{ label: "Manage", onSelect: () => onManageSuite(planId, s.id) }] : []),
       {
         label: "Run Tests",
@@ -417,8 +447,9 @@ export default function Suites({
               ? chip("Edit cases", () => pbiSuite({ id: s.requirement_id!, title: s.name }, "edit"))
               : onEditCases &&
                 chip("Edit cases", () => edit.mutate({ planId, suiteIds: allIds, label: s.name }))}
-            {/* Manage, Run Tests and Report are the extra options, folded
-                into one chip so the row reads as View and Edit first. */}
+            {/* Use as current PBI, Manage, Run Tests and Report are the
+                extra options, folded into one chip so the row reads as
+                View and Edit first. */}
             <MoreActionsMenu label={`More actions for ${s.name}`} actions={more} disabled={busy} />
           </span>
         </button>

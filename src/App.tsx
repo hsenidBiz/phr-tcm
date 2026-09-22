@@ -1176,6 +1176,9 @@ export default function App() {
                       setManageFocus({ planId, suiteId });
                       goToSection("manage");
                     }}
+                    onSetCurrentPbi={(p) =>
+                      setPbiRaw({ id: p.id, title: p.title, work_item_type: "Product Backlog Item" })
+                    }
                   />
                 )}
                 {AUTO_RUN_ENABLED && section === "autorun" && (
