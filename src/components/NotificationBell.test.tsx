@@ -79,14 +79,14 @@ test("a notification with a target opens in the app and closes the panel; the br
       title: "Task #501 assigned to you",
       body: "Wire the login flow",
       href: "https://x/501",
-      target: { kind: "work-item", id: 501 },
+      target: { kind: "work-item", id: 501, project: "Web" },
     },
   ]);
   const opened: unknown[] = [];
   render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
   fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
   fireEvent.click(screen.getByRole("button", { name: "Task #501 assigned to you" }));
-  expect(opened).toEqual([{ kind: "work-item", id: 501 }]);
+  expect(opened).toEqual([{ kind: "work-item", id: 501, project: "Web" }]);
   expect(openUrl).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
 
@@ -111,6 +111,33 @@ test("a stored notification without a target still opens the browser", () => {
   fireEvent.click(screen.getByRole("button", { name: "Notifications, 2 unread" }));
   fireEvent.click(screen.getByRole("button", { name: "PR #10 has merge conflicts" }));
   expect(openUrl).toHaveBeenCalledWith("https://x/10");
+});
+
+/// A target saved by a build between the field's addition and the project
+/// guard has no project on it - it must not be treated as an in-app
+/// target (there is nowhere safe to navigate), only as the browser link.
+test("a stored target with no project falls back to the browser, not the app", () => {
+  raise("acme", [
+    {
+      id: "assigned:501",
+      kind: "assigned",
+      title: "Task #501 assigned to you",
+      body: "Wire the login flow",
+      href: "https://x/501",
+      target: { kind: "work-item", id: 501 } as unknown as { kind: "work-item"; id: number; project: string },
+    },
+  ]);
+  render(
+    <NotificationBell
+      org="acme"
+      onOpen={() => {
+        throw new Error("must not be called");
+      }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Task #501 assigned to you" }));
+  expect(openUrl).toHaveBeenCalledWith("https://x/501");
 });
 
 test("renders nothing without an organisation", () => {

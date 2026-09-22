@@ -167,8 +167,10 @@ test("sources carry a structured target beside the browser href", () => {
     target?: unknown;
   }>;
   const byId = Object.fromEntries(full.map((n) => [n.id, n.target]));
-  expect(byId["assigned:501"]).toEqual({ kind: "work-item", id: 501 });
-  expect(byId["pr-conflict:web:12"]).toEqual({ kind: "pr", repo: "web", id: 12 });
-  expect(byId["pr-review:web:13"]).toEqual({ kind: "pr", repo: "web", id: 13 });
-  expect(byId["pr-comments:web:14:2"]).toEqual({ kind: "pr", repo: "web", id: 14 });
+  // Every destination is project-scoped, so the target carries the project
+  // it came from, not just what it points at.
+  expect(byId["assigned:501"]).toEqual({ kind: "work-item", id: 501, project: "Web" });
+  expect(byId["pr-conflict:web:12"]).toEqual({ kind: "pr", repo: "web", id: 12, project: "Web" });
+  expect(byId["pr-review:web:13"]).toEqual({ kind: "pr", repo: "web", id: 13, project: "Web" });
+  expect(byId["pr-comments:web:14:2"]).toEqual({ kind: "pr", repo: "web", id: 14, project: "Web" });
 });

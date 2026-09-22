@@ -153,7 +153,11 @@ export default function NotificationBell({
                     {/* The title goes to the thing itself, in the app; the
                         small button beside it is the way out to the browser
                         for anyone who wants Azure DevOps' own page. */}
-                    {n.target && onOpen ? (
+                    {/* A target with no project is one saved by a build
+                        between the field's addition and this guard - not
+                        the pre-target fallback case, which has no target
+                        at all - and must not navigate anywhere blind. */}
+                    {n.target?.project && onOpen ? (
                       <div className="mt-0.5 flex min-w-0 items-center gap-1">
                         <button
                           className="block min-w-0 flex-1 truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"

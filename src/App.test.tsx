@@ -152,7 +152,7 @@ test("a pull request notification opens the Pull Requests panel in the app", asy
         at: new Date().toISOString(),
         read: false,
         href: "https://x/7",
-        target: { kind: "pr", repo: "web", id: 7 },
+        target: { kind: "pr", repo: "web", id: 7, project: "Web" },
       },
     ]),
   );
@@ -173,6 +173,57 @@ test("a pull request notification opens the Pull Requests panel in the app", asy
   // Work Manager's own rail is up: its sections, not the test-case tabs.
   expect(screen.getByRole("button", { name: "Pull Requests" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Run Tests" })).not.toBeInTheDocument();
+});
+
+/// A notification raised while looking at one project can point at another -
+/// the poll that found it ran against whatever project was current then.
+/// Opening it has to take the context bar there too, not just the drawer,
+/// or the screen underneath the notification would still read the old one.
+test("a notification for another project switches the project before opening", async () => {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
+  );
+  localStorage.setItem(
+    "tcm-v2-notifications:acme",
+    JSON.stringify([
+      {
+        id: "pr-review:mobile:7",
+        kind: "pr-review",
+        title: "PR #7 is waiting for your review",
+        body: "Add report (mobile)",
+        at: new Date().toISOString(),
+        read: false,
+        href: "https://x/7",
+        target: { kind: "pr", repo: "mobile", id: 7, project: "Mobile" },
+      },
+    ]),
+  );
+  resetNotifications(); // the store caches per org in memory
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects")
+      return [
+        { id: "p1", name: "Web" },
+        { id: "p2", name: "Mobile" },
+      ];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "fetch_board") return { items: [], states_by_type: {} };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+  // The themed Select is a button whose label text is the chosen option,
+  // not a native <select> - toHaveValue does not apply to it. The list of
+  // projects is fetched, so the label arrives on its own tick.
+  await waitFor(() =>
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Web"),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "PR #7 is waiting for your review" }));
+
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent("Mobile");
 });
 
 test("prefs restore section, scope and selected PBI", async () => {

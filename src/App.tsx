@@ -972,6 +972,12 @@ export default function App() {
               settingsLive={tourControlNow?.kind === "case" && tourControlNow.section === "settings"}
               onOpenNotification={(target) => {
                 logUi(`nav: notification/${target.kind}`);
+                // The target's own project, not necessarily the one on
+                // screen: a notification can arrive for a project you have
+                // since navigated away from. setProject only clears the
+                // PBI and case selection, not workFocus, so setting the
+                // focus after it survives.
+                if (target.project !== project) setProject(target.project);
                 setWorkFocus(target);
                 setWorkSection(target.kind === "pr" ? "prs" : "board");
                 setWorkMode(true);

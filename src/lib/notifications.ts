@@ -18,10 +18,12 @@ import type { AssignedItem, PullRequest } from "../bindings";
 export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments";
 
 /** What a notification is about, in the app's own terms - enough for a
- * screen to open the thing without parsing a URL back apart. */
+ * screen to open the thing without parsing a URL back apart. Every
+ * destination is project-scoped, so `project` travels with the target:
+ * opening one from a different project has to switch there first. */
 export type NotificationTarget =
-  | { kind: "work-item"; id: number }
-  | { kind: "pr"; repo: string; id: number };
+  | { kind: "work-item"; id: number; project: string }
+  | { kind: "pr"; repo: string; id: number; project: string };
 
 export type AppNotification = {
   /** Stable per event, e.g. `pr-conflict:Web:412` - the dedupe key. */
@@ -161,7 +163,7 @@ export function noteAssigned(org: string, project: string, items: AssignedItem[]
       title: `${i.work_item_type} #${i.id} assigned to you`,
       body: i.title,
       href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_workitems/edit/${i.id}`,
-      target: { kind: "work-item" as const, id: i.id },
+      target: { kind: "work-item" as const, id: i.id, project },
     })),
   );
 }
@@ -180,6 +182,7 @@ export function notePrOverview(
     kind: "pr",
     repo: pr.repo,
     id: pr.id,
+    project,
   });
   const items: Array<Omit<AppNotification, "at" | "read">> = [];
   for (const pr of overview.mine) {
@@ -221,7 +224,7 @@ export function notePrComments(org: string, project: string, pr: PullRequest, un
       title: `PR #${pr.id} has ${unresolved} comment${unresolved === 1 ? "" : "s"} to resolve`,
       body: `${pr.title} (${pr.repo})`,
       href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`,
-      target: { kind: "pr", repo: pr.repo, id: pr.id },
+      target: { kind: "pr", repo: pr.repo, id: pr.id, project },
     },
   ]);
 }
