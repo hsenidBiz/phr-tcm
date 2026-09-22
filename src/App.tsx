@@ -190,6 +190,11 @@ export default function App() {
   // The destination the current stop is waiting for the user to walk to,
   // reported by the overlay - null while it is not waiting for anything.
   const [tourAwaited, setTourAwaited] = useState<TourWhere | null>(null);
+  // ...and whether that stop is one the user is meant to ACT on (the
+  // theme). The screens below stop being inert for exactly those stops, so
+  // the real control inside the ring can be used; the overlay then
+  // swallows clicks everywhere except that ring.
+  const [tourActing, setTourActing] = useState(false);
   // Where the app is - the overlay measures "is this stop a move?" against
   // it - and, while the tour waits, the ONE control that gets the user
   // from here to there. Every other rail row, and the whole context bar,
@@ -244,6 +249,7 @@ export default function App() {
     setTourOpen(false);
     setTourRunning(false);
     setTourAwaited(null);
+    setTourActing(false);
     restoreTourBackend();
     clearTourRepositories();
     clearTourExpanded();
@@ -856,7 +862,13 @@ export default function App() {
         title={(workMode ? "Work Manager" : "Test Case Manager") + (DEV_TOOLS ? " — DEV" : "")}
       />
       {tourOpen && signedIn && (
-        <UiTour at={tourAt} onNavigate={tourNavigate} onAwait={setTourAwaited} onClose={endTour} />
+        <UiTour
+          at={tourAt}
+          onNavigate={tourNavigate}
+          onAwait={setTourAwaited}
+          onAct={setTourActing}
+          onClose={endTour}
+        />
       )}
 
       <QueryClientProvider client={tourQc ?? qc}>
@@ -907,7 +919,11 @@ export default function App() {
               settingsLive={tourControlNow?.kind === "case" && tourControlNow.section === "settings"}
             />
           )}
-          <div className="flex min-h-0 flex-1 flex-col" inert={tourOpen}>
+          {/* Inert for the whole tour, EXCEPT at a stop the user is meant
+              to act on: there the ringed control has to answer a click,
+              and inert is inherited, so nothing inside it could. The
+              overlay covers everything but the ring for those stops. */}
+          <div className="flex min-h-0 flex-1 flex-col" inert={tourOpen && !tourActing}>
 
           {!online && (
             <div className="border-b border-warning/40 bg-warning/10 px-6 py-2 text-sm text-warning">

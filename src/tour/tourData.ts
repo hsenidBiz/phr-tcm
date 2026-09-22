@@ -17,6 +17,7 @@ import type {
   PrOverview,
   Project,
   Step,
+  SuiteEntry,
   TestCase,
   TestCaseFull,
   TestCaseSummary,
@@ -168,6 +169,15 @@ export const TOUR_POINTS: TestPoint[] = TOUR_CASES.map((c, i) => ({
   last_outcome: ["Passed", "Failed", "Passed", "None"][i],
   last_run_id: null,
   last_result_id: null,
+}));
+
+/** A suite's contents, for Suite Management: the sample cases in the order
+ * Azure DevOps would hand them back. Sequence numbers start at 1 the way a
+ * real suite's do. */
+export const TOUR_SUITE_ENTRIES: SuiteEntry[] = TOUR_CASES.map((c, i) => ({
+  id: c.id,
+  sequence_number: i + 1,
+  entry_type: "testCase",
 }));
 
 export const TOUR_PLANS: PlanWithSuites[] = [

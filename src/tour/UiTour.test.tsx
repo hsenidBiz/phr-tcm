@@ -538,6 +538,85 @@ test("Back out of a Settings stop navigates like Back anywhere else", async () =
   expect(onNavigate).toHaveBeenLastCalledWith(IMPORT_WHERE);
 });
 
+/// An `act` stop is the one place the app behind the overlay has to answer
+/// a click, so the single click-swallowing sheet becomes four rectangles
+/// with a hole over the ring. jsdom does no hit testing, so what is held
+/// here is the STRUCTURE the geometry rests on - four pieces at an act
+/// stop, one everywhere else - and the host being told to lift its inert
+/// shell for exactly those stops. The geometry itself is a hand check.
+const swallows = () => screen.queryAllByTestId("tour-swallow");
+
+test("an act stop swallows clicks in four pieces; every other stop in one", async () => {
+  addAnchor("theme");
+  addAnchor("import-drop");
+  render(
+    <UiTour
+      steps={THEME_STEPS}
+      at={SETTINGS_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  // The ring has to have been measured before the hole can be cut around
+  // it; until then the sheet stays whole.
+  await waitFor(() => expect(swallows()).toHaveLength(4));
+
+  // The stop after it is an ordinary one: back to a single sheet.
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await waitFor(() => expect(swallows()).toHaveLength(1));
+});
+
+test("while waiting for a click nothing is swallowed at all", () => {
+  addAnchor("settings");
+  render(
+    <UiTour
+      steps={THEME_STEPS}
+      at={MANUAL_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(waiting()).toBe(true);
+  expect(swallows()).toHaveLength(0);
+});
+
+test("the host is told to lift its inert shell only once the act stop is reached", async () => {
+  addAnchor("settings");
+  addAnchor("theme");
+  const onAct = vi.fn();
+  const { rerender } = render(
+    <UiTour
+      steps={THEME_STEPS}
+      at={MANUAL_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onAct={onAct}
+      onClose={vi.fn()}
+    />,
+  );
+  // Still walking there: the screen carrying the control is not up yet.
+  expect(onAct).toHaveBeenLastCalledWith(false);
+
+  rerender(
+    <UiTour
+      steps={THEME_STEPS}
+      at={SETTINGS_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onAct={onAct}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(onAct).toHaveBeenLastCalledWith(true);
+
+  // ...and the shell goes back on at the next stop, and on the way out.
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByText("That is the tour");
+  expect(onAct).toHaveBeenLastCalledWith(false);
+});
+
 test("the card never carries theme swatches of its own any more", () => {
   addAnchor("theme");
   render(

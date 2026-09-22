@@ -5,6 +5,8 @@ import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
 import { TOUR_STEPS } from "./tour/tourScript";
 import { START_TOUR_EVENT } from "./tour/tourState";
+import { TOUR_ORG } from "./tour/tourData";
+import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
@@ -531,7 +533,12 @@ async function walkToStop(n: number) {
 // content - an anchor wrapping a component that returned null renders
 // empty, which is exactly the shape of the bug this catches.
 test("every stop rings an area that is there, with something in it", async () => {
-  signedInMocks((cmd) => {
+  // Every call that got past the tour's stand-ins and reached the real
+  // IPC layer, for the "nothing about the sample org leaves the app"
+  // assertion at the end.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  signedInMocks((cmd, args) => {
+    calls.push({ cmd, args });
     if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
     if (cmd === "list_plans_with_suites") return [];
     if (cmd === "pr_overview") return { awaiting: [], mine: [] };
@@ -561,10 +568,78 @@ test("every stop rings an area that is there, with something in it", async () =>
     }
   }
 
+  // Every screen the tour opens must run on `tourBackend`'s stand-ins. A
+  // command it does not stand in for reaches the real one with the SAMPLE
+  // organisation in its arguments - a request to an organisation that does
+  // not exist, made on the user's behalf. Suite Management's per-plan
+  // "may I create suites here?" was exactly that, and nothing else in the
+  // route would have noticed.
+  const leaked = calls.filter((c) => JSON.stringify(c.args ?? {}).includes(TOUR_ORG));
+  expect(
+    [...new Set(leaked.map((c) => c.cmd))],
+    "these commands were called with the tour's sample organisation - stand them in",
+  ).toEqual([]);
+
   fireEvent.click(screen.getByText("Skip tour"));
   // Twenty-two stops, each waiting for a screen to mount: comfortably
   // under the 5s default on its own, but not while the whole suite is
   // running.
+}, 45_000);
+
+/// The theme stop is the one the person is meant to ACT on, and the whole
+/// point of moving it out of the card is that they use the real swatches.
+/// That cannot work while the shell below is inert - inert is inherited,
+/// so every control under it is dead. It lifts for that stop only.
+///
+/// jsdom implements no hit testing and does not enforce `inert` either, so
+/// this holds the attribute and the wiring; that the four swallow pieces
+/// really leave a hole exactly over the ring is a hand check.
+test("the theme stop hands the real swatches back, and the shell locks again after it", async () => {
+  const was = getThemeChoice();
+  try {
+    signedInMocks((cmd) => {
+      if (cmd === "list_projects") return [{ id: "p1", name: "Payments" }];
+      if (cmd === "list_plans_with_suites") return [];
+      if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    });
+    renderApp();
+    await screen.findByText("a@b.com");
+
+    // Open Settings the ordinary way FIRST, so there is a real answer to
+    // "where does closing Settings take me back to" for the tour's own
+    // click on the gear to leave alone.
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await screen.findByText("Appearance");
+
+    await startTour();
+    const themeStop = TOUR_STEPS.findIndex((s) => s.act) + 1;
+    expect(themeStop, "no stop is marked act - the theme stop has moved").toBeGreaterThan(0);
+    await walkToStop(themeStop);
+
+    // The shell around the screens is live again, just for this stop.
+    const shell = () => screen.getByRole("main").parentElement as HTMLElement;
+    expect(shell().hasAttribute("inert")).toBe(false);
+
+    // ...and the swatches on the REAL Settings screen answer a click.
+    fireEvent.click(await screen.findByRole("button", { name: "Theme Light" }));
+    expect(getThemeChoice()).toBe("light");
+
+    // The next stop is an ordinary one: the shell locks again.
+    next();
+    await waitFor(() => expect(shell().hasAttribute("inert")).toBe(true));
+
+    fireEvent.click(screen.getByText("Skip tour"));
+    await screen.findByText("Appearance");
+
+    // The tour clicked the gear itself on its way to that stop. That must
+    // not have overwritten where closing Settings takes the user back to -
+    // which is where they were before the tour, not the sample tab the
+    // tour happened to be on.
+    fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
+    expect(await screen.findByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
+  } finally {
+    setThemeChoice(was);
+  }
 }, 45_000);
 
 // The queue is served from a draft in storage, not from a command, so the

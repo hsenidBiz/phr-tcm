@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../components/ui/button";
 import { CASE_ITEMS, WORK_ITEMS } from "../components/Sidebar";
@@ -78,11 +78,18 @@ export function tourWaitingCard(control: TourControl): { title: string; body: st
  * Nothing behind it can be clicked: App makes the screens inert while this
  * is up and disables every rail row except the one the current stop is
  * waiting for, and this layer sits above it in a portal.
+ *
+ * The exception is a stop marked `act`, where the point is to use the real
+ * control behind the ring (the theme). There App lifts the inert shell and
+ * this layer swallows clicks in four rectangles around the ringed area
+ * instead of one over everything - so the ringed block is the only live
+ * part of the screen.
  */
 export default function UiTour({
   at,
   onNavigate,
   onAwait,
+  onAct,
   onClose,
   steps = TOUR_STEPS,
 }: {
@@ -95,6 +102,11 @@ export default function UiTour({
    * not, so the host can leave exactly that one control live. MUST be
    * stable (useCallback in the host) - it is an effect dep. */
   onAwait?: (where: TourWhere | null) => void;
+  /** True while the current stop asks the user to work the real control
+   * behind the ring, so the host can stop making the screens inert. MUST
+   * be stable (useCallback or a setState in the host) - it is an effect
+   * dep. */
+  onAct?: (acting: boolean) => void;
   onClose: () => void;
   steps?: TourStep[];
 }) {
@@ -112,6 +124,17 @@ export default function UiTour({
   // While waiting, the ring belongs on the control being asked for: this
   // stop's own area is on a screen that is not up yet.
   const anchor = control ? controlAnchor(control) : step?.anchor;
+
+  // A stop the user is meant to act on, and the app is already there to do
+  // it. Not while waiting: the screen that carries the control is not even
+  // up yet, and that card is asking for one specific click somewhere else.
+  const acting = Boolean(step?.act) && !waiting;
+
+  // Let the host lift the inert shell for exactly those stops.
+  useEffect(() => {
+    onAct?.(acting);
+    return () => onAct?.(false);
+  }, [onAct, acting]);
 
   // Let the host leave that one control live, and nothing else.
   useEffect(() => {
@@ -211,6 +234,42 @@ export default function UiTour({
     ? Math.min(Math.max(12, rect.left), Math.max(12, window.innerWidth - CARD_W - 12))
     : Math.max(12, window.innerWidth / 2 - CARD_W / 2);
 
+  /**
+   * The rectangles that swallow clicks meant for the app behind.
+   *
+   * Normally one sheet over everything. On an `act` stop it becomes four -
+   * above, below, left and right of the ringed box - leaving a hole
+   * exactly the size of the ring, because the whole point of that stop is
+   * to use the real control inside it. The pieces are measured off the
+   * same `rect` the ring is, so a resize or a scroll moves them with it.
+   *
+   * This stops the MOUSE, and only the mouse. A Tab press can still walk
+   * focus onto other controls on the screen behind, which are no longer
+   * inert - accepted: reaching them takes deliberate keyboard work, and an
+   * inert shell is what makes the real theme swatches unclickable in the
+   * first place.
+   *
+   * Nothing at all while waiting: that card is asking for one specific
+   * click, and the host has already disabled everything except it.
+   */
+  const swallow: CSSProperties[] = waiting
+    ? []
+    : rect && step.act
+      ? (() => {
+          const top = Math.max(0, rect.top - pad);
+          const bottom = Math.max(0, rect.bottom + pad);
+          const left = Math.max(0, rect.left - pad);
+          const right = Math.max(0, rect.right + pad);
+          const height = Math.max(0, bottom - top);
+          return [
+            { top: 0, left: 0, right: 0, height: top },
+            { top: bottom, left: 0, right: 0, bottom: 0 },
+            { top, left: 0, width: left, height },
+            { top, left: right, right: 0, height },
+          ];
+        })()
+      : [{ top: 0, left: 0, right: 0, bottom: 0 }];
+
   return createPortal(
     <div
       // pointer-events-none is load-bearing, not tidiness: this container
@@ -225,8 +284,17 @@ export default function UiTour({
       data-waiting={waiting ? "true" : undefined}
     >
       {/* Swallows every click that is not on the card - except while the
-          tour is waiting for one, which has to get through. */}
-      {waiting ? null : <div className="pointer-events-auto fixed inset-0" onClick={() => {}} />}
+          tour is waiting for one, which has to get through, and except the
+          hole an `act` stop leaves over the control it is asking about. */}
+      {swallow.map((style, n) => (
+        <div
+          key={n}
+          data-testid="tour-swallow"
+          className="pointer-events-auto fixed"
+          style={style}
+          onClick={() => {}}
+        />
+      ))}
       {rect ? (
         <div
           className="pointer-events-none fixed rounded-lg border-2 border-accent transition-all duration-300"

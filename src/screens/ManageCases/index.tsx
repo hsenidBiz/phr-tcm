@@ -161,28 +161,28 @@ export default function ManageCases({
           screen IS. The empty-state sentence lives inside it too: a ring
           around an empty box says nothing. */}
       <div data-tour="manage-plans" className="space-y-3">
-      {plans.data && plans.data.length === 0 && (
-        <p className="text-sm text-muted">No test plans with test suites in this project yet.</p>
-      )}
-      {visible.map(({ plan, suites }) => (
-        <PlanTable
-          key={plan.id}
-          org={org}
-          project={project}
-          plan={plan}
-          suites={suites}
-          initiallyExpanded={
-            focusPlan && focusPlan.plan.id === plan.id
-              ? focusExpanded
-              : pbiPlan && pbiPlan.plan.plan.id === plan.id
-                ? pbiExpanded
-                : NONE_EXPANDED
-          }
-          selection={selection}
-          onToggle={onToggle}
-          onClearSelection={() => setSelection(null)}
-        />
-      ))}
+        {plans.data && plans.data.length === 0 && (
+          <p className="text-sm text-muted">No test plans with test suites in this project yet.</p>
+        )}
+        {visible.map(({ plan, suites }) => (
+          <PlanTable
+            key={plan.id}
+            org={org}
+            project={project}
+            plan={plan}
+            suites={suites}
+            initiallyExpanded={
+              focusPlan && focusPlan.plan.id === plan.id
+                ? focusExpanded
+                : pbiPlan && pbiPlan.plan.plan.id === plan.id
+                  ? pbiExpanded
+                  : NONE_EXPANDED
+            }
+            selection={selection}
+            onToggle={onToggle}
+            onClearSelection={() => setSelection(null)}
+          />
+        ))}
       </div>
     </div>
   );

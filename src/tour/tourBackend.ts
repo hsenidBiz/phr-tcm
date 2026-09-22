@@ -24,6 +24,7 @@ import {
   TOUR_PROJECTS,
   TOUR_PR_OVERVIEW,
   TOUR_SUITE,
+  TOUR_SUITE_ENTRIES,
   TOUR_TOOLS,
 } from "./tourData";
 
@@ -62,8 +63,16 @@ function standIns(): Partial<Commands> {
     ensurePbiSuite: () => ok(TOUR_SUITE),
     findPbiSuite: () => ok(null),
     listPlansWithSuites: () => ok(TOUR_PLANS),
+    listSuiteEntries: () => ok(TOUR_SUITE_ENTRIES),
     listTestPoints: () => ok(TOUR_POINTS),
     runHistory: () => ok(TOUR_HISTORY),
+    // Suite Management asks this per plan the moment a plan table renders,
+    // so it fires on its own during the tour. Yes: the sample user is
+    // allowed to create suites, which is what the screen is for. The
+    // create itself is a write and is deliberately NOT stood in for - the
+    // screen is unclickable while the tour is up, and a write that somehow
+    // got through must find the real call and refuse.
+    canCreateTestSuites: () => ok(true),
 
     // Work Manager.
     fetchBoard: () => ok(TOUR_BOARD),
