@@ -99,7 +99,13 @@ test("Escape clears the text but keeps the field", () => {
 });
 
 test("a page without the select searches every field", () => {
-  document.getElementById("tc-field")!.remove();
+  // Rebuild the DOM without the select before re-wiring, rather than
+  // removing it from the already-wired page: #tc-search is the same node
+  // either way (dataset.wired stays set), so re-wiring alone would leave
+  // the old `apply` - the one still closing over the detached select -
+  // running, and this test would pass even if the missing-select guard
+  // in cases-page.js's `apply()` were broken.
+  document.body.innerHTML = page().replace(/<select[\s\S]*?<\/select>/, "");
   (window as unknown as { __tcmWireSearch: () => void }).__tcmWireSearch();
   const input = document.getElementById("tc-search") as HTMLInputElement;
   input.value = "login";
