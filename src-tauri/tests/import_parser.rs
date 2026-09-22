@@ -1149,6 +1149,164 @@ fn the_review_page_folds_its_controls_into_one_menu() {
     assert!(draft_html.contains("<body data-scope='draft-"), "{draft_html}");
 }
 
+/// Pulls the `data-scope` attribute's value out of a rendered page, for
+/// the two scope tests below that need to compare it across renders.
+fn scope_of(html: &str) -> String {
+    let start = html.find("data-scope='").expect("data-scope attribute") + "data-scope='".len();
+    let rest = &html[start..];
+    rest[..rest.find('\'').expect("closing quote")].to_string()
+}
+
+/// A subtitle that is not exactly `PBI #<digits>` - an export's own label,
+/// or a suite name - has no id in it to key the reader's bookmark by, so
+/// the scope falls back to hashing the subtitle itself instead. That hash
+/// still has to be stable for the same title and distinct for a different
+/// one, or the fallback would be worse than no scope at all.
+#[test]
+fn pbi_scope_hashes_a_subtitle_that_is_not_a_pbi_number() {
+    use v2_lib::import_parser::{export_queue_page, CommentCtx, NoteCtx};
+    let queue = vec![TestCase {
+        title: "Login".into(),
+        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        update_id: Some(1),
+        ..Default::default()
+    }];
+    let ctx = NoteCtx { port: 4711, token: "secret".into(), org: "acme".into(), notes: HashMap::new() };
+
+    let path_a = tmp_path("scope-pbi-fallback-a.html");
+    export_queue_page(
+        &queue,
+        &path_a,
+        "Team Suite Export",
+        Some(CommentCtx::Ado(&ctx)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let scope_a = scope_of(&std::fs::read_to_string(&path_a).unwrap());
+
+    let path_b = tmp_path("scope-pbi-fallback-b.html");
+    export_queue_page(
+        &queue,
+        &path_b,
+        "Team Suite Export",
+        Some(CommentCtx::Ado(&ctx)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let scope_b = scope_of(&std::fs::read_to_string(&path_b).unwrap());
+
+    let path_c = tmp_path("scope-pbi-fallback-c.html");
+    export_queue_page(
+        &queue,
+        &path_c,
+        "A Different Title",
+        Some(CommentCtx::Ado(&ctx)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let scope_c = scope_of(&std::fs::read_to_string(&path_c).unwrap());
+
+    assert!(
+        scope_a.starts_with("pbi-") && scope_a.len() == "pbi-".len() + 8,
+        "still `pbi-` prefixed, with an 8-hex-digit hash: {scope_a}"
+    );
+    assert_eq!(scope_a, scope_b, "the same non-numeric subtitle must hash the same way every render");
+    assert_ne!(scope_a, scope_c, "a different subtitle must not collide");
+}
+
+/// A draft imported from files is keyed by the file(s) behind it, not by
+/// the page's own path - so re-exporting the same import keeps its
+/// bookmark, and a different import's page gets one of its own.
+#[test]
+fn draft_scope_from_files_is_stable_and_distinct() {
+    use v2_lib::import_parser::{export_queue_page, CommentCtx, DraftFile, DraftNoteCtx};
+    let queue = vec![TestCase {
+        title: "Login".into(),
+        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        ..Default::default()
+    }];
+    let file = |path: &str, comment: &str| DraftFile {
+        path: path.into(),
+        label: path.into(),
+        comment: comment.into(),
+        specs: vec![],
+    };
+
+    let draft_1 = DraftNoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        owners: vec![String::new()],
+        files: vec![file("C:/work/cases-1.json", "")],
+    };
+    let path_a = tmp_path("scope-draft-files-a.html");
+    export_queue_page(
+        &queue,
+        &path_a,
+        "PBI #42",
+        Some(CommentCtx::Draft(&draft_1)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let scope_a = scope_of(&std::fs::read_to_string(&path_a).unwrap());
+
+    // The same file behind the draft, but with an unrelated field (the
+    // whole-set comment) changed - the scope must not move, or the
+    // bookmark would be lost on every re-export.
+    let draft_1_again = DraftNoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        owners: vec![String::new()],
+        files: vec![file("C:/work/cases-1.json", "a comment added after the fact")],
+    };
+    let path_b = tmp_path("scope-draft-files-b.html");
+    export_queue_page(
+        &queue,
+        &path_b,
+        "PBI #42",
+        Some(CommentCtx::Draft(&draft_1_again)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let scope_b = scope_of(&std::fs::read_to_string(&path_b).unwrap());
+
+    // A different file behind the draft must land on a different scope.
+    let draft_2 = DraftNoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        owners: vec![String::new()],
+        files: vec![file("C:/work/cases-2.json", "")],
+    };
+    let path_c = tmp_path("scope-draft-files-c.html");
+    export_queue_page(
+        &queue,
+        &path_c,
+        "PBI #42",
+        Some(CommentCtx::Draft(&draft_2)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let scope_c = scope_of(&std::fs::read_to_string(&path_c).unwrap());
+
+    assert!(
+        scope_a.starts_with("draft-") && scope_a.len() == "draft-".len() + 8,
+        "still `draft-` prefixed, with an 8-hex-digit hash: {scope_a}"
+    );
+    assert_eq!(scope_a, scope_b, "the same file(s) behind the draft must keep the same scope across renders");
+    assert_ne!(scope_a, scope_c, "a different file behind the draft must not collide");
+}
+
 /// The bookmark points at a case, so every case needs an identity that
 /// survives a re-render: the work item id where there is one, and otherwise
 /// the slot the case's own comment box is addressed by.
