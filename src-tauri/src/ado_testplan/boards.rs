@@ -195,7 +195,23 @@ impl AdoClient {
         if let Some(hit) = cache::session_fresh::<String>(&key, keys::BOARDS_IDS_TTL) {
             return Ok(hit);
         }
-        let teams = self.list_teams(org, project_id).await?;
+        // A refused team LIST is the same day as a refused team scope
+        // below, one level up: the fallback only runs after this account
+        // was already told no, so 403 and 404 here are answers, not
+        // faults, and the project's default team is what Boards itself
+        // falls back to. Anything else - no network, a rate limit, a 500 -
+        // is not an answer about permission and must not be dressed up as
+        // one, so it still aborts.
+        let teams = match self.list_teams(org, project_id).await {
+            Ok(teams) => teams,
+            Err(e) if matches!(e, AdoError::Forbidden | AdoError::NotFound) => {
+                crate::applog::warn(format!(
+                    "boards suite route: could not list the project's teams ({e}) - falling back to the project's default team"
+                ));
+                vec![]
+            }
+            Err(e) => return Err(e),
+        };
         let mut best: Option<(usize, String)> = None;
         for team in &teams {
             let values = match self.get_team_scope(org, project_id, &team.id).await {
@@ -222,6 +238,19 @@ impl AdoClient {
             Some((_, id)) => id,
             None => {
                 let default = self.project_ids(org, project).await?.default_team_id;
+                // Checked HERE and not where it is read, because a project
+                // with no readable default team is only a problem for a PBI
+                // no team's area covers. An empty id would go into the
+                // route's URL as `?teamId=` and come back something that
+                // explains none of this.
+                if default.is_empty() {
+                    return Err(AdoError::Http {
+                        status: 0,
+                        body:
+                            "the project could not be read - Azure DevOps answered without a default team"
+                                .to_string(),
+                    });
+                }
                 crate::applog::info(format!(
                     "boards suite route: no team's area covers {area_path} - using the project's default team {default}"
                 ));

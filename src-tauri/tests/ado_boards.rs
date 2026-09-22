@@ -13,6 +13,7 @@ use v2_lib::ado::{AdoClient, AdoError};
 use v2_lib::ado_testplan::boards::{
     boards_body, probe_report, BoardsOutcome, BOARDS_ROUTE_VERSION,
 };
+use v2_lib::commands::misc::probe_allowed;
 use v2_lib::ado_testplan::EnsuredSuite;
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -620,4 +621,138 @@ fn probe_report_reads_the_four_answers() {
     // Anything else is repeated as it is - there is nothing to read into
     // a token that expired or a host that never answered.
     assert_eq!(probe_report(&Err(AdoError::Unauthorized)), "unauthorized");
+}
+
+/// The probe reaches an undocumented endpoint on purpose, so a shipped
+/// build refuses it. The gate takes the flag rather than reading
+/// `cfg!(debug_assertions)`, which is the only way both answers can be
+/// tested from one build.
+#[test]
+fn the_probe_runs_in_a_development_build_only() {
+    assert_eq!(probe_allowed(true), Ok(()));
+    let refused = probe_allowed(false).unwrap_err();
+    assert!(refused.contains("only in a development build"), "{refused}");
+}
+
+/// The projects call answered, but without the default team - the field
+/// the fallback uses when no team's area covers the PBI.
+fn project_reply_without_a_default_team() -> serde_json::Value {
+    serde_json::json!({"id": PROJECT_ID, "name": PROJECT})
+}
+
+/// An unreadable default team only matters to a PBI that needs it. A PBI
+/// whose area a team does cover never looks at the field, and failing
+/// that upload over it would be failing over something it never used.
+#[tokio::test]
+async fn an_unreadable_default_team_is_an_error_only_where_it_is_needed() {
+    // Nothing covers the PBI's area, so the default team is the answer -
+    // and there isn't one.
+    let needed = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(project_reply_without_a_default_team()),
+        )
+        .mount(&needed)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(teams_reply(&[(ALPHA_ID, "Alpha")])))
+        .mount(&needed)
+        .await;
+    mount_team_scope(&needed, ALPHA_ID, "HRM\\Alpha", true).await;
+
+    let client = AdoClient::with_base_urls("tok".into(), needed.uri(), needed.uri());
+    let err = client
+        .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians")
+        .await
+        .unwrap_err();
+    match err {
+        AdoError::Http { status, body } => {
+            assert_eq!(status, 0);
+            assert!(body.contains("without a default team"), "{body}");
+        }
+        other => panic!("expected the missing-default-team error, got {other:?}"),
+    }
+
+    // Same project reply, but a team owns the area: the missing field is
+    // never read, so it is never a problem.
+    let covered = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(project_reply_without_a_default_team()),
+        )
+        .mount(&covered)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(teams_reply(&[(GAMMA_ID, "Gamma Guardians")])),
+        )
+        .mount(&covered)
+        .await;
+    mount_team_scope(&covered, GAMMA_ID, "HRM\\Gamma Guardians", true).await;
+
+    let client = AdoClient::with_base_urls("tok".into(), covered.uri(), covered.uri());
+    assert_eq!(
+        client
+            .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians")
+            .await
+            .unwrap(),
+        GAMMA_ID
+    );
+}
+
+/// The whole team list refused. The fallback only runs after this account
+/// was already refused something, so that is an answer about permission,
+/// not a fault - and Boards itself falls back to the default team. A
+/// refusal is logged and the upload carries on; a 500 is not an answer
+/// about permission and still stops it.
+#[tokio::test]
+async fn a_team_list_the_account_cannot_read_falls_back_to_the_default_team() {
+    let refused = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
+        .mount(&refused)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(ResponseTemplate::new(403).set_body_string(
+            r#"{"message":"You are not authorized to access this API"}"#,
+        ))
+        .mount(&refused)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), refused.uri(), refused.uri());
+    assert_eq!(
+        client
+            .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians")
+            .await
+            .unwrap(),
+        DEFAULT_TEAM_ID
+    );
+
+    let broken = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
+        .mount(&broken)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(ResponseTemplate::new(500).set_body_string("it broke"))
+        .mount(&broken)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), broken.uri(), broken.uri());
+    match client
+        .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians")
+        .await
+        .unwrap_err()
+    {
+        AdoError::Http { status, .. } => assert_eq!(status, 500),
+        other => panic!("expected the 500 to stop it, got {other:?}"),
+    }
 }

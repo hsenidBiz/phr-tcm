@@ -228,6 +228,19 @@ pub fn prepare_bug_report(
     })
 }
 
+/// Whether the Boards route probe may run, and the refusal when it may
+/// not. Takes `dev` rather than reading `cfg!(debug_assertions)` itself,
+/// the way `ai_tools` does: the one reader of that flag is
+/// `ai_tools::dev_build()`, and a gate that takes a bool can be tested
+/// for both answers without a release build.
+pub fn probe_allowed(dev: bool) -> Result<(), String> {
+    if dev {
+        Ok(())
+    } else {
+        Err("The Boards suite route probe runs only in a development build.".into())
+    }
+}
+
 /// Take the Boards fallback route once, by hand, and say what it
 /// answered. Development builds only.
 ///
@@ -251,9 +264,7 @@ pub async fn dev_probe_boards_suite(
     // A shipped build has no business calling an undocumented endpoint on
     // purpose, and the dev panel that calls this is compiled out of one
     // anyway - this is the second lock on the same door.
-    if !crate::ai_tools::dev_build() {
-        return Err("The Boards suite route probe runs only in a development build.".into());
-    }
+    probe_allowed(crate::ai_tools::dev_build())?;
     let token = crate::state::get_fresh_token(&app)
         .await
         .map_err(|e| e.to_string())?;

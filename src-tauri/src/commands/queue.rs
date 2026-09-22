@@ -928,6 +928,9 @@ pub async fn submit_queue(
             // before this fallback existed.
             let _ = crate::events::SuiteNotCreated { reason: sentence }.emit(&app);
         } else {
+            // The log line is decided here, where what actually happened is
+            // still known: a route that answered and a route that was never
+            // reached send the next reader to different places.
             let attempt = match get_fresh_token(&app).await {
                 Ok(token) => {
                     let client = ado::AdoClient::new(token);
@@ -935,8 +938,13 @@ pub async fn submit_queue(
                         .boards_fallback(&organization, &project, pbi_id, &pbi_area, &ids)
                         .await
                         .map(|out| (client.base_url.clone(), out))
+                        .map_err(|e| {
+                            format!("the Boards route did not create a suite for #{pbi_id} either: {e}")
+                        })
                 }
-                Err(e) => Err(e),
+                Err(e) => Err(format!(
+                    "the Boards route was not tried for #{pbi_id}: the access token could not be refreshed ({e})"
+                )),
             };
             match attempt {
                 // `boards_fallback` has already logged the plan and the
@@ -954,11 +962,11 @@ pub async fn submit_queue(
                 // Tried once and never again: a fallback that retries is a
                 // fallback nobody can diagnose. The first sentence stands
                 // word for word - it is still the true reason - with one
-                // line saying the second route did not work either.
-                Err(e) => {
-                    crate::applog::warn(format!(
-                        "the Boards route did not create a suite for #{pbi_id} either: {e}"
-                    ));
+                // line saying the second route did not work either. What
+                // exactly went wrong is a job for the log, not for someone
+                // who only wanted their cases in a suite.
+                Err(why) => {
+                    crate::applog::warn(why);
                     let _ = crate::events::SuiteNotCreated {
                         reason: format!(
                             "{sentence} The Boards route did not work either - Settings, Logs has what it said."

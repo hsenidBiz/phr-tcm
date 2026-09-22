@@ -281,9 +281,10 @@ export default function DevPanel({
             <p className="text-muted">
               Takes the internal Boards route once, for a PBI that has no
               test suite yet and one test case id that is already linked to
-              it. Nothing is uploaded. The answer says whether the upload's
-              fallback is live; Settings, Logs has the request and the
-              reply in full.
+              it. No test case is created, but this DOES create a test plan
+              and a requirement suite in Azure DevOps, and pulls every case
+              already linked to the PBI into it. Press it once, on purpose.
+              Settings, Logs has the request and the reply in full.
             </p>
             <div className="flex flex-wrap items-center gap-1.5">
               <Input
