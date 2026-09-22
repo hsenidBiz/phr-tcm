@@ -1,19 +1,28 @@
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
+import type { ComponentProps } from "react";
+import { toast } from "sonner";
 import PrPanel from "./PrPanel";
+
+// The panel's "that pull request is not here" notices are toasts; assert on
+// the mock the way every other screen's tests do.
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}));
 
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  vi.clearAllMocks();
 });
 
-function renderPanel() {
+function renderPanel(props: Partial<ComponentProps<typeof PrPanel>> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <PrPanel org="acme" project="Web" />
+      <PrPanel org="acme" project="Web" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -749,3 +758,40 @@ test("threads are not fetched eagerly for a completed PR", async () => {
   expect(asked).not.toContain(2);
 });
 
+
+/// The bell's handoff: the row the notification named expands itself,
+/// scrolls into view and hands the focus back.
+test("a focused pull request expands, scrolls into view and reports handled", async () => {
+  const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [pr(7)], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+    if (cmd === "pr_threads") return [];
+    if (cmd === "pr_work_items") return [];
+    if (cmd === "pr_pipeline") return [];
+  });
+  const handled = vi.fn();
+  renderPanel({ focus: { repo: "web", id: 7 }, onFocusHandled: handled });
+  const row = await screen.findByRole("button", { name: /PR 7/, expanded: true });
+  expect(row).toBeInTheDocument();
+  expect(spy).toHaveBeenCalled();
+  expect(handled).toHaveBeenCalledTimes(1);
+  spy.mockRestore();
+});
+
+/// ...and when no group on the page could ever hold it, the panel says so
+/// instead of leaving the user staring at an unchanged list.
+test("a focused pull request that no listed group can hold says so", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [{ id: "r1", name: "web" }];
+  });
+  const handled = vi.fn();
+  renderPanel({ focus: { repo: "billing", id: 99 }, onFocusHandled: handled });
+  await vi.waitFor(() =>
+    expect(toast.info).toHaveBeenCalledWith(
+      "Pull request !99 is not listed here. Track the billing repository to see it.",
+    ),
+  );
+  expect(handled).toHaveBeenCalledTimes(1);
+});

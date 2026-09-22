@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "../lib/cn";
+import { IconOpenInBrowser } from "../lib/actionIcons";
 import {
   clearAll,
   dismiss,
@@ -18,6 +19,7 @@ import {
   unreadCount,
   useNotifications,
   type AppNotification,
+  type NotificationTarget,
 } from "../lib/notifications";
 
 const KIND_LABEL: Record<AppNotification["kind"], string> = {
@@ -47,7 +49,15 @@ function ago(iso: string): string {
   return d.toLocaleDateString();
 }
 
-export default function NotificationBell({ org }: { org: string }) {
+export default function NotificationBell({
+  org,
+  onOpen,
+}: {
+  org: string;
+  /** Take the user to the thing itself, inside the app. Absent - or a
+   * notification saved before targets existed - falls back to the browser. */
+  onOpen?: (target: NotificationTarget) => void;
+}) {
   const items = useNotifications(org);
   const unread = unreadCount(items);
   const [open, setOpen] = useState(false);
@@ -140,7 +150,37 @@ export default function NotificationBell({ org }: { org: string }) {
                       </span>
                       <span className="text-[11px] text-faint">{ago(n.at)}</span>
                     </div>
-                    {n.href ? (
+                    {/* The title goes to the thing itself, in the app; the
+                        small button beside it is the way out to the browser
+                        for anyone who wants Azure DevOps' own page. */}
+                    {n.target && onOpen ? (
+                      <div className="mt-0.5 flex min-w-0 items-center gap-1">
+                        <button
+                          className="block min-w-0 flex-1 truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"
+                          title="Open in the app"
+                          onClick={() => {
+                            setOpen(false);
+                            onOpen(n.target!);
+                          }}
+                        >
+                          {n.title}
+                        </button>
+                        {n.href && (
+                          <button
+                            aria-label={`Open in Azure DevOps: ${n.title}`}
+                            title="Open in Azure DevOps"
+                            className="shrink-0 rounded p-0.5 text-faint hover:text-accent"
+                            onClick={() =>
+                              openUrl(n.href!).catch(() =>
+                                toast.error("Could not open the browser."),
+                              )
+                            }
+                          >
+                            <IconOpenInBrowser aria-hidden className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ) : n.href ? (
                       <button
                         className="mt-0.5 block max-w-full truncate text-left text-sm font-medium text-text hover:text-accent hover:underline"
                         title="Open in Azure DevOps"

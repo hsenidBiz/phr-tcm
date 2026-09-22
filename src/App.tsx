@@ -29,7 +29,7 @@ import {
   subscribeWorkAlerts,
   workAlertsSnapshot,
 } from "./lib/workAlerts";
-import { noteAssigned } from "./lib/notifications";
+import { noteAssigned, type NotificationTarget } from "./lib/notifications";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
 import { dbConnectionSnapshot, dbWritesSnapshot, isDevLoginConnection, subscribeDbSettings } from "./lib/dbServer";
@@ -178,6 +178,10 @@ export default function App() {
   // Suite Management has it, so going back to the tab later shows the
   // ordinary PBI-driven view rather than reopening an old click.
   const [manageFocus, setManageFocus] = useState<{ planId: number; suiteId: number } | null>(null);
+  // The same one-shot handoff for the bell: a notification names a work
+  // item or a pull request, and the Work Manager screen that can show it
+  // clears this the moment it has.
+  const [workFocus, setWorkFocus] = useState<NotificationTarget | null>(null);
 
   // First-run walkthrough: opens once after the first sign-in, and again
   // whenever Settings asks for it. While it is up the app runs on sample
@@ -390,6 +394,9 @@ export default function App() {
     setProjectRaw("");
     setPbiRaw(null);
     setCaseSelection(null);
+    // A pending notification handoff belongs to the organisation it was
+    // raised in; carrying it across would open someone else's item id.
+    setWorkFocus(null);
   };
   const setProject = (p: string) => {
     setProjectRaw(p);
@@ -963,6 +970,12 @@ export default function App() {
               // Settings has no rail row, so the gear is the one control
               // left live while a Settings stop waits.
               settingsLive={tourControlNow?.kind === "case" && tourControlNow.section === "settings"}
+              onOpenNotification={(target) => {
+                logUi(`nav: notification/${target.kind}`);
+                setWorkFocus(target);
+                setWorkSection(target.kind === "pr" ? "prs" : "board");
+                setWorkMode(true);
+              }}
             />
           )}
           {/* Inert for the whole tour, EXCEPT at a stop the user is meant
@@ -1081,7 +1094,12 @@ export default function App() {
                   <>
                     <h1 className="mb-4 text-lg font-semibold">Board</h1>
                     <div className="min-h-0 flex-1">
-                      <WorkBoard org={org} project={project} />
+                      <WorkBoard
+                        org={org}
+                        project={project}
+                        focusItem={workFocus?.kind === "work-item" ? workFocus.id : null}
+                        onFocusHandled={() => setWorkFocus(null)}
+                      />
                     </div>
                   </>
                 ) : workSection === "create" ? (
@@ -1095,7 +1113,12 @@ export default function App() {
                   <>
                     <h1 className="mb-4 text-lg font-semibold">Pull Requests</h1>
                     <div className="min-h-0 flex-1 overflow-y-auto">
-                      <PrPanel org={org} project={project} />
+                      <PrPanel
+                        org={org}
+                        project={project}
+                        focus={workFocus?.kind === "pr" ? workFocus : null}
+                        onFocusHandled={() => setWorkFocus(null)}
+                      />
                     </div>
                   </>
                 )}

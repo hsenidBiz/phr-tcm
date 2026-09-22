@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, GitPullRequest, RefreshCw } from "lucide-react";
-import { useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { commands, type BoardData, type BoardItem, type PbiHit, type PrLink } from "../bindings";
 import PbiPicker from "../components/PbiPicker";
@@ -128,7 +128,19 @@ function Card({
   );
 }
 
-export default function WorkBoard({ org, project }: { org: string; project: string }) {
+export default function WorkBoard({
+  org,
+  project,
+  focusItem = null,
+  onFocusHandled,
+}: {
+  org: string;
+  project: string;
+  /** One work item to open as soon as the board is up - a notification's
+   * handoff. Reported back through onFocusHandled so it fires once. */
+  focusItem?: number | null;
+  onFocusHandled?: () => void;
+}) {
   const qc = useQueryClient();
   const [dragging, setDragging] = useState<BoardItem | null>(null);
   const [scope, setScope] = useState(""); // "" = my work, else an area path
@@ -283,6 +295,16 @@ export default function WorkBoard({ org, project }: { org: string; project: stri
     // bypass this and always hit the network.
     staleTime: 60_000,
   });
+
+  // A notification handed us an item: open its drawer. It waits for the
+  // board's own load because the drawer reads the item's states from it -
+  // an item outside the loaded board still opens, just without the state
+  // dropdown. Handled once: the handoff is cleared by the caller.
+  useEffect(() => {
+    if (focusItem == null || !board.data) return;
+    setOpenItem(focusItem);
+    onFocusHandled?.();
+  }, [focusItem, board.data, onFocusHandled]);
 
   // Work-item -> PR chips, resolved PR-side (one list + one small call per
   // PR). Best-effort decoration: failures just mean no chips.

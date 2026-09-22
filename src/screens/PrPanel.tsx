@@ -39,6 +39,11 @@ import { Markdown } from "@astryxdesign/core/Markdown";
 /** Mirrors AdoClient::PR_PAGE_SIZE - a full page implies a next page. */
 const PR_PAGE = 25;
 
+/** The one pull request a notification asked this panel to show. Structural
+ * rather than the notification's own union: the panel only needs to know
+ * which row to claim. */
+type PrFocus = { repo: string; id: number };
+
 /** ADO reviewer votes: 10 approved, 5 approved w/ suggestions, 0 waiting,
  * -5 waiting for author, -10 rejected. */
 function voteDot(vote: number): { cls: string; label: string } {
@@ -382,14 +387,42 @@ function PrRow({
   org,
   project,
   buildState,
+  focused = false,
+  onFocused,
 }: {
   pr: PullRequest;
   org: string;
   project: string;
   buildState?: string;
+  /** This is the pull request a notification asked for. */
+  focused?: boolean;
+  onFocused?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [showPipeline, setShowPipeline] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // The ring that says "this is the one you clicked": long enough to find
+  // the row on a long page, short enough not to become part of the design.
+  const [flash, setFlash] = useState(false);
+  const flashTimer = useRef<number | null>(null);
+  // Read through a ref so a new callback identity from the parent cannot
+  // re-run the one-shot effect below.
+  const onFocusedRef = useRef(onFocused);
+  onFocusedRef.current = onFocused;
+  useEffect(() => () => {
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+  }, []);
+  useEffect(() => {
+    if (!focused) return;
+    setOpen(true);
+    rootRef.current?.scrollIntoView({ block: "center" });
+    setFlash(true);
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    // Not cleared when the focus is handed back - the ring outlives the
+    // handoff on purpose, so the user still sees where they landed.
+    flashTimer.current = window.setTimeout(() => setFlash(false), 2500);
+    onFocusedRef.current?.();
+  }, [focused]);
   // Unresolved review threads, surfaced on the COLLAPSED row - the whole
   // point is knowing without opening anything. Same queryKey (and the same
   // staleTime) as PrThreads uses inside the expanded detail, so this is
@@ -461,7 +494,13 @@ function PrRow({
     retry: false,
   });
   return (
-    <div className="rounded-md border border-border bg-surface transition-colors hover:border-border-strong">
+    <div
+      ref={rootRef}
+      className={cn(
+        "rounded-md border border-border bg-surface transition-colors hover:border-border-strong",
+        flash && "ring-2 ring-accent",
+      )}
+    >
       {/* Clicking the row expands the detail; the external-link button is
           the way out to Azure DevOps. */}
       <button
@@ -646,6 +685,8 @@ function PrGroup({
   empty,
   org,
   project,
+  focus = null,
+  onFocusHandled,
 }: {
   title: string;
   prs: PullRequest[];
@@ -653,6 +694,8 @@ function PrGroup({
   empty: string;
   org: string;
   project: string;
+  focus?: PrFocus | null;
+  onFocusHandled?: () => void;
 }) {
   const buildStates = usePrBuildStates(org, project, prs);
   return (
@@ -679,6 +722,8 @@ function PrGroup({
               org={org}
               project={project}
               buildState={buildStates.get(pr.id)}
+              focused={focus != null && focus.repo === pr.repo && focus.id === pr.id}
+              onFocused={onFocusHandled}
             />
           ))}
         </div>
@@ -709,7 +754,18 @@ function readRepoIds(org: string, project: string): string[] {
  * needing both is not a case worth complicating the picker's shape for. */
 const YOURS = "Your Pull Requests";
 
-export default function PrPanel({ org, project }: { org: string; project: string }) {
+export default function PrPanel({
+  org,
+  project,
+  focus = null,
+  onFocusHandled,
+}: {
+  org: string;
+  project: string;
+  /** A notification's handoff: the pull request to expand and ring. */
+  focus?: PrFocus | null;
+  onFocusHandled?: () => void;
+}) {
   const qc = useQueryClient();
   const repoKey = `tcm-v2-pr-repos:${org}/${project}`;
   // "Your Pull Requests" is ON unless the user deselected it - the panel's
@@ -788,7 +844,42 @@ export default function PrPanel({ org, project }: { org: string; project: string
   // sections keep a stable arrangement however the selection was built.
   // Ids the project no longer has (a repo deleted, a stale import) simply
   // don't render; they stay in storage, harmless.
-  const trackedRepos = (repos.data ?? []).filter((r) => repoIds.includes(r.id));
+  // Memoised so the focus effect below is not restarted by every render
+  // producing a fresh array.
+  const trackedRepos = useMemo(
+    () => (repos.data ?? []).filter((r) => repoIds.includes(r.id)),
+    [repos.data, repoIds],
+  );
+
+  // A notification named a pull request. A row claims it (expands, scrolls,
+  // rings) - but only if a group on this page can hold it at all, and only
+  // if that group's page is the one it is on. Both dead ends say so rather
+  // than leaving the user looking at an unchanged list.
+  const handledRef = useRef(onFocusHandled);
+  handledRef.current = onFocusHandled;
+  useEffect(() => {
+    if (focus == null || !overview.isSuccess) return;
+    const holds = (list: PullRequest[]) =>
+      list.some((p) => p.repo === focus.repo && p.id === focus.id);
+    const couldHold =
+      holds(overview.data.awaiting) ||
+      (showYours && holds(overview.data.mine)) ||
+      trackedRepos.some((r) => r.name === focus.repo);
+    if (!couldHold) {
+      toast.info(
+        `Pull request !${focus.id} is not listed here. Track the ${focus.repo} repository to see it.`,
+      );
+      handledRef.current?.();
+      return;
+    }
+    // A tracked repo could hold it, but its pages are fetched a page at a
+    // time: if no row has claimed the focus by now, it is behind "Load more".
+    const timer = window.setTimeout(() => {
+      toast.info(`Pull request !${focus.id} is not on this page.`);
+      handledRef.current?.();
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [focus, overview.isSuccess, overview.data, showYours, trackedRepos]);
 
   // Repo NAMES face the MultiSelect (they are what a person recognises,
   // and ADO keeps them unique within a project); ids face storage and the
@@ -864,6 +955,8 @@ export default function PrPanel({ org, project }: { org: string; project: string
             empty="Nothing waiting on you."
             org={org}
             project={project}
+            focus={focus}
+            onFocusHandled={onFocusHandled}
           />
           {showYours && (
             <PrGroup
@@ -872,6 +965,8 @@ export default function PrPanel({ org, project }: { org: string; project: string
               empty="You have no active pull requests."
               org={org}
               project={project}
+              focus={focus}
+              onFocusHandled={onFocusHandled}
             />
           )}
         </>
@@ -886,6 +981,8 @@ export default function PrPanel({ org, project }: { org: string; project: string
           repoName={r.name}
           prStatus={prStatus}
           shownAbove={shownAbove}
+          focus={focus}
+          onFocusHandled={onFocusHandled}
         />
       ))}
     </div>
@@ -903,6 +1000,8 @@ function RepoPrSection({
   repoName,
   prStatus,
   shownAbove,
+  focus = null,
+  onFocusHandled,
 }: {
   org: string;
   project: string;
@@ -910,6 +1009,8 @@ function RepoPrSection({
   repoName: string;
   prStatus: "active" | "completed";
   shownAbove: Set<number>;
+  focus?: PrFocus | null;
+  onFocusHandled?: () => void;
 }) {
   // One page at a time (PAGE mirrors Rust's PR_PAGE_SIZE); a full page
   // means there may be another behind it.
@@ -949,6 +1050,8 @@ function RepoPrSection({
         }
         org={org}
         project={project}
+        focus={focus}
+        onFocusHandled={onFocusHandled}
       />
       {active.hasNextPage && (
         <div className="flex justify-center">

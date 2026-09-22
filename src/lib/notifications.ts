@@ -17,6 +17,12 @@ import type { AssignedItem, PullRequest } from "../bindings";
 
 export type NotificationKind = "assigned" | "pr-conflict" | "pr-review" | "pr-comments";
 
+/** What a notification is about, in the app's own terms - enough for a
+ * screen to open the thing without parsing a URL back apart. */
+export type NotificationTarget =
+  | { kind: "work-item"; id: number }
+  | { kind: "pr"; repo: string; id: number };
+
 export type AppNotification = {
   /** Stable per event, e.g. `pr-conflict:Web:412` - the dedupe key. */
   id: string;
@@ -28,6 +34,9 @@ export type AppNotification = {
   read: boolean;
   /** Where "Open" goes, when there is somewhere to go. */
   href?: string;
+  /** Where a click goes inside the app; absent on entries saved before this
+   * field existed, which fall back to href. */
+  target?: NotificationTarget;
 };
 
 /** Newest `LIST_CAP` kept in the list; `KNOWN_CAP` ids remembered as seen. */
@@ -152,6 +161,7 @@ export function noteAssigned(org: string, project: string, items: AssignedItem[]
       title: `${i.work_item_type} #${i.id} assigned to you`,
       body: i.title,
       href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_workitems/edit/${i.id}`,
+      target: { kind: "work-item" as const, id: i.id },
     })),
   );
 }
@@ -166,6 +176,11 @@ export function notePrOverview(
 ): void {
   const prUrl = (pr: PullRequest) =>
     `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`;
+  const prTarget = (pr: PullRequest): NotificationTarget => ({
+    kind: "pr",
+    repo: pr.repo,
+    id: pr.id,
+  });
   const items: Array<Omit<AppNotification, "at" | "read">> = [];
   for (const pr of overview.mine) {
     if (pr.has_conflicts && pr.status === "active") {
@@ -175,6 +190,7 @@ export function notePrOverview(
         title: `PR #${pr.id} has merge conflicts`,
         body: `${pr.title} (${pr.repo})`,
         href: prUrl(pr),
+        target: prTarget(pr),
       });
     }
   }
@@ -186,6 +202,7 @@ export function notePrOverview(
         title: `PR #${pr.id} is waiting for your review`,
         body: `${pr.title} (${pr.repo}) - by ${pr.author}`,
         href: prUrl(pr),
+        target: prTarget(pr),
       });
     }
   }
@@ -204,6 +221,7 @@ export function notePrComments(org: string, project: string, pr: PullRequest, un
       title: `PR #${pr.id} has ${unresolved} comment${unresolved === 1 ? "" : "s"} to resolve`,
       body: `${pr.title} (${pr.repo})`,
       href: `https://dev.azure.com/${encodeURIComponent(org)}/${encodeURIComponent(project)}/_git/${encodeURIComponent(pr.repo)}/pullrequest/${pr.id}`,
+      target: { kind: "pr", repo: pr.repo, id: pr.id },
     },
   ]);
 }

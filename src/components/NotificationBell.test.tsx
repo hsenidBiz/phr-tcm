@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { raise, resetForTests } from "../lib/notifications";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import NotificationBell from "./NotificationBell";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
@@ -8,6 +9,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resol
 beforeEach(() => {
   localStorage.clear();
   resetForTests();
+  vi.mocked(openUrl).mockClear();
 });
 afterEach(() => {
   localStorage.clear();
@@ -65,6 +67,50 @@ test("a notification raised later lights the badge again", async () => {
   // the bell repaints on the next flush.
   raise("acme", [{ id: "pr-review:Web:20", kind: "pr-review", title: "PR #20 is waiting for your review", body: "" }]);
   expect(await screen.findByRole("button", { name: "Notifications, 1 unread" })).toBeInTheDocument();
+});
+
+/// The title is the way IN - the app opens the thing itself - and the
+/// browser is still there, one small button along.
+test("a notification with a target opens in the app and closes the panel; the browser stays one click away", () => {
+  raise("acme", [
+    {
+      id: "assigned:501",
+      kind: "assigned",
+      title: "Task #501 assigned to you",
+      body: "Wire the login flow",
+      href: "https://x/501",
+      target: { kind: "work-item", id: 501 },
+    },
+  ]);
+  const opened: unknown[] = [];
+  render(<NotificationBell org="acme" onOpen={(t) => opened.push(t)} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 1 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Task #501 assigned to you" }));
+  expect(opened).toEqual([{ kind: "work-item", id: 501 }]);
+  expect(openUrl).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open in Azure DevOps: Task #501 assigned to you" }),
+  );
+  expect(openUrl).toHaveBeenCalledWith("https://x/501");
+});
+
+/// Entries saved before targets existed keep working exactly as they did.
+test("a stored notification without a target still opens the browser", () => {
+  seed(); // pr-conflict:Web:10 has href only
+  render(
+    <NotificationBell
+      org="acme"
+      onOpen={() => {
+        throw new Error("must not be called");
+      }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Notifications, 2 unread" }));
+  fireEvent.click(screen.getByRole("button", { name: "PR #10 has merge conflicts" }));
+  expect(openUrl).toHaveBeenCalledWith("https://x/10");
 });
 
 test("renders nothing without an organisation", () => {

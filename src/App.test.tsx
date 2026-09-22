@@ -9,6 +9,7 @@ import { TOUR_ORG } from "./tour/tourData";
 import { getThemeChoice, setThemeChoice } from "./lib/theme";
 import { commands } from "./bindings";
 import { saveDbConfig, saveDbWrites } from "./lib/dbServer";
+import { resetForTests as resetNotifications } from "./lib/notifications";
 
 // Every test here mounts the WHOLE app - sidebar, context bar, screens,
 // queries - and several walk the tour across most of its stops. Idle, they
@@ -37,6 +38,9 @@ configure({ asyncUtilTimeout: 5_000 });
 afterEach(() => {
   clearMocks();
   localStorage.clear();
+  // The notification store keeps an in-memory copy per org; clearing
+  // storage alone would leave one test's bell items in the next one.
+  resetNotifications();
 });
 
 function renderApp() {
@@ -127,6 +131,48 @@ test("work pill toggles the board and a tab click returns", async () => {
   fireEvent.click(screen.getByRole("button", { name: /Test Case Manager/ }));
   expect(screen.getByRole("heading", { name: "Manual Entry" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Run Tests" })).toBeInTheDocument();
+});
+
+/// The bell is a deep link: clicking a pull request notification crosses
+/// into the Work Manager and lands on its Pull Requests section, rather
+/// than handing the user to the browser.
+test("a pull request notification opens the Pull Requests panel in the app", async () => {
+  localStorage.setItem(
+    "tcm-v2-prefs",
+    JSON.stringify({ org: "acme", project: "Web", section: "manual", pbi: null, workMode: false }),
+  );
+  localStorage.setItem(
+    "tcm-v2-notifications:acme",
+    JSON.stringify([
+      {
+        id: "pr-review:web:7",
+        kind: "pr-review",
+        title: "PR #7 is waiting for your review",
+        body: "Add report (web)",
+        at: new Date().toISOString(),
+        read: false,
+        href: "https://x/7",
+        target: { kind: "pr", repo: "web", id: 7 },
+      },
+    ]),
+  );
+  resetNotifications(); // the store caches per org in memory
+  signedInMocks((cmd) => {
+    if (cmd === "list_projects") return [{ id: "p1", name: "Web" }];
+    if (cmd === "pr_overview") return { awaiting: [], mine: [] };
+    if (cmd === "list_repos") return [];
+    if (cmd === "fetch_board") return { items: [], states_by_type: {} };
+  });
+  renderApp();
+  await screen.findByText("a@b.com");
+
+  fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
+  fireEvent.click(screen.getByRole("button", { name: "PR #7 is waiting for your review" }));
+
+  expect(await screen.findByRole("heading", { name: "Pull Requests" })).toBeInTheDocument();
+  // Work Manager's own rail is up: its sections, not the test-case tabs.
+  expect(screen.getByRole("button", { name: "Pull Requests" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Run Tests" })).not.toBeInTheDocument();
 });
 
 test("prefs restore section, scope and selected PBI", async () => {

@@ -6,6 +6,7 @@ import { commands, type PbiHit } from "../bindings";
 import ElectricBorder from "./ElectricBorder";
 import { usePrAttention } from "../hooks/usePrAttention";
 import NotificationBell from "./NotificationBell";
+import type { NotificationTarget } from "../lib/notifications";
 import { unwrap } from "../lib/ipc";
 import { cssLengthPx } from "../lib/cssLength";
 import { CACHE, cacheKeys, persistentQuery } from "../lib/cache";
@@ -31,6 +32,7 @@ export default function ContextBar({
   locked = false,
   workLive = false,
   settingsLive = false,
+  onOpenNotification,
 }: {
   org: string;
   setOrg: (v: string) => void;
@@ -53,6 +55,8 @@ export default function ContextBar({
   /** Same for the gear: Settings has no rail row, so the tour's stops
    * there ask for this button and nothing else. */
   settingsLive?: boolean;
+  /** A bell notification was clicked: take the app to what it is about. */
+  onOpenNotification?: (target: NotificationTarget) => void;
 }) {
   // The review gate's final confirmation spotlights the PBI chip so the
   // user verifies the target before an irreversible create.
@@ -153,7 +157,7 @@ export default function ContextBar({
       {orgs.isError && <span className="text-xs text-danger">{orgs.error.message}</span>}
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
-        <NotificationBell org={org} />
+        <NotificationBell org={org} onOpen={onOpenNotification} />
         <Button
           data-tour="work"
           variant="pill"

@@ -149,3 +149,26 @@ test("noteAssigned raises one item per work item, linked to it", () => {
   expect(full[0].body).toBe("Wire the login flow");
   expect(full[0].href).toBe("https://dev.azure.com/acme/Web/_workitems/edit/501");
 });
+
+/// The href is the browser's way in; the target is the app's own. Both are
+/// stored, so a click can stay inside the app and the browser stays one
+/// click away.
+test("sources carry a structured target beside the browser href", () => {
+  noteAssigned(ORG, "Web", [
+    { id: 501, title: "Wire login", work_item_type: "Task", state: "New" },
+  ]);
+  notePrOverview(ORG, "Web", {
+    mine: [pr({ id: 12, repo: "web", has_conflicts: true })],
+    awaiting: [pr({ id: 13, repo: "web" })],
+  });
+  notePrComments(ORG, "Web", pr({ id: 14, repo: "web" }), 2);
+  const full = JSON.parse(localStorage.getItem(`tcm-v2-notifications:${ORG}`) ?? "[]") as Array<{
+    id: string;
+    target?: unknown;
+  }>;
+  const byId = Object.fromEntries(full.map((n) => [n.id, n.target]));
+  expect(byId["assigned:501"]).toEqual({ kind: "work-item", id: 501 });
+  expect(byId["pr-conflict:web:12"]).toEqual({ kind: "pr", repo: "web", id: 12 });
+  expect(byId["pr-review:web:13"]).toEqual({ kind: "pr", repo: "web", id: 13 });
+  expect(byId["pr-comments:web:14:2"]).toEqual({ kind: "pr", repo: "web", id: 14 });
+});

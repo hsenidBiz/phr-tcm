@@ -2,6 +2,7 @@ import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
+import type { ComponentProps } from "react";
 import WorkBoard from "./WorkBoard";
 
 afterEach(() => {
@@ -11,11 +12,11 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function renderBoard() {
+function renderBoard(props: Partial<ComponentProps<typeof WorkBoard>> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <WorkBoard org="acme" project="Web" />
+      <WorkBoard org="acme" project="Web" {...props} />
     </QueryClientProvider>,
   );
 }
@@ -544,4 +545,30 @@ test("a move blocked by required fields opens the item with those fields named",
     await screen.findByText(/requires these fields before the state can change/),
   ).toBeInTheDocument();
   expect(screen.getByText("Remaining Work")).toBeInTheDocument();
+});
+
+/// The bell's handoff: an item arrives as a prop and its drawer opens as
+/// soon as the board is there to open it against.
+test("a focused item opens its drawer once the board has loaded, then reports handled", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "fetch_board") return boardData;
+    if (cmd === "classification_paths") return [];
+    if (cmd === "work_item_detail")
+      return {
+        id: 12, title: "Fix bug", work_item_type: "Bug", state: "Done",
+        assigned_to: "Avin", assigned_to_unique: "a@x.com", activity: "", tags: "",
+        area_path: "P", iteration_path: "P\S1",
+        remaining_work: null, completed_work: null, original_estimate: null,
+        start_date: "", target_date: "",
+        description_text: "", description_html: "", description_field: "System.Description",
+        extra_pages: [], extra_pages_error: null, inline_images: [],
+      };
+    if (cmd === "list_team_members") return [];
+    if (cmd === "activity_values") return [];
+    if (cmd === "work_item_comments") return [];
+  });
+  const handled = vi.fn();
+  renderBoard({ focusItem: 12, onFocusHandled: handled });
+  expect(await screen.findByRole("dialog", { name: "Work item 12" })).toBeInTheDocument();
+  expect(handled).toHaveBeenCalledTimes(1);
 });
