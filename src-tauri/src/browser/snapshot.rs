@@ -94,6 +94,15 @@ pub fn parse_nodes(v: &Value) -> Vec<AxNode> {
         .collect()
 }
 
+/// Every control character (`\n`, `\r`, `\t`, and anything else in that
+/// category) becomes a space. Run before truncation, on every piece of
+/// text this module prints - a stray newline or tab in an accessible name
+/// or a probe's read-back text would otherwise break the one-line format
+/// this whole module promises.
+fn sanitize(s: &str) -> String {
+    s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+}
+
 /// 80 characters, with `...` (three ASCII dots, never the single `…`
 /// character) standing in for whatever was cut.
 fn truncate_name(name: &str) -> String {
@@ -108,26 +117,28 @@ fn truncate_name(name: &str) -> String {
 }
 
 /// The locator that reaches this line, in the same shape a script's
-/// `target` takes: role alone when there is no name to narrow with.
+/// `target` takes: role alone when there is no name to narrow with. Built
+/// through `serde_json` rather than hand-formatted, so a name carrying a
+/// `"` or a `\` still comes out as valid JSON a `Target` can be read back
+/// from.
 fn locator_suffix(role: &str, name: &str) -> String {
-    if name.is_empty() {
-        format!(" -> {{ \"role\": \"{role}\" }}")
-    } else {
-        format!(" -> {{ \"role\": \"{role}\", \"name\": \"{name}\" }}")
-    }
+    let obj = if name.is_empty() { json!({ "role": role }) } else { json!({ "role": role, "name": name }) };
+    format!(" -> {obj}")
 }
 
 fn format_line(node: &AxNode, depth: usize) -> String {
     let indent = " ".repeat(depth.min(12));
-    let name = truncate_name(&node.name);
+    let name = truncate_name(&sanitize(&node.name));
     let mut line = format!("{indent}{} \"{name}\"", node.role);
     // A password never leaves this module: the name check runs here too,
     // not only in `parse_nodes`, so a hand-built node reaches the same
-    // outcome as one this module actually read off a real page.
-    if VALUE_ROLES.contains(&node.role.as_str()) {
+    // outcome as one this module actually read off a real page. A blank
+    // name is refused outright - a value with nothing to label it is not
+    // something a locator could ever ask for by name.
+    if VALUE_ROLES.contains(&node.role.as_str()) && !name.is_empty() {
         if let Some(value) = &node.value {
-            if !node.name.to_lowercase().contains("password") {
-                line.push_str(&format!(" = \"{value}\""));
+            if !name.to_lowercase().contains("password") {
+                line.push_str(&format!(" = \"{}\"", sanitize(value)));
             }
         }
     }
@@ -140,19 +151,25 @@ fn format_line(node: &AxNode, depth: usize) -> String {
 
 /// Depth-first, skipping folded nodes but still visiting their children -
 /// at the folded node's own depth, since it never printed a line to
-/// indent under.
-fn walk(id: &str, depth: usize, by_id: &HashMap<&str, &AxNode>, out: &mut Vec<String>) {
+/// indent under. `seen` guards against a `childIds` cycle (or the same id
+/// reachable two ways): a node already visited anywhere in this walk is
+/// skipped rather than recursed into again, which would otherwise recurse
+/// forever on a malformed tree.
+fn walk(id: &str, depth: usize, by_id: &HashMap<&str, &AxNode>, out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
+    if !seen.insert(id.to_string()) {
+        return;
+    }
     let Some(node) = by_id.get(id) else { return };
     let folded = node.ignored || FOLDED_ROLES.contains(&node.role.as_str());
     if folded {
         for child in &node.children {
-            walk(child, depth, by_id, out);
+            walk(child, depth, by_id, out, seen);
         }
         return;
     }
     out.push(format_line(node, depth));
     for child in &node.children {
-        walk(child, depth + 1, by_id, out);
+        walk(child, depth + 1, by_id, out, seen);
     }
 }
 
@@ -166,7 +183,8 @@ pub fn render(nodes: &[AxNode], limit: usize) -> String {
     };
     let by_id: HashMap<&str, &AxNode> = nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     let mut lines = Vec::new();
-    walk(&root.id, 0, &by_id, &mut lines);
+    let mut seen = std::collections::HashSet::new();
+    walk(&root.id, 0, &by_id, &mut lines, &mut seen);
     if lines.is_empty() {
         return "the page has nothing a locator could name".to_string();
     }
@@ -198,10 +216,13 @@ pub async fn snapshot<D: Driver>(d: &mut D, limit: usize) -> Result<String, CdpE
 
 /// `this` is the element. One call for everything `probe` prints besides
 /// visibility, which reuses `VISIBLE_JS` - the same check every other
-/// action already trusts, rather than a second copy of it here.
+/// action already trusts, rather than a second copy of it here. A
+/// password input's `.value` is never read: printing what someone typed
+/// into a password field is exactly the leak this whole module exists to
+/// avoid, so `[password]` stands in for it instead.
 pub const PROBE_SUMMARY_JS: &str = r#"function() {
   const r = this.getBoundingClientRect();
-  const text = (this.innerText || this.value || '').trim();
+  const text = this.type === 'password' ? '[password]' : (this.innerText || this.value || '').trim();
   return { tag: this.tagName.toLowerCase(), text, rect: [r.x, r.y, r.width, r.height] };
 }"#;
 
@@ -222,7 +243,7 @@ pub async fn probe<D: Driver>(d: &mut D, target: &Target) -> Result<String, CdpE
         let visible = page::call_value(d, handle, VISIBLE_JS, &[]).await?.as_bool().unwrap_or(false);
         let summary = page::call_value(d, handle, PROBE_SUMMARY_JS, &[]).await?;
         let tag = summary["tag"].as_str().unwrap_or("");
-        let text = trim_chars(summary["text"].as_str().unwrap_or(""), 60);
+        let text = trim_chars(&sanitize(summary["text"].as_str().unwrap_or("")), 60);
         let rect = |i: usize| summary["rect"][i].as_f64().unwrap_or(0.0).round() as i64;
         lines.push(format!(
             "{tag} \"{text}\" {} at {},{} {}x{}",
