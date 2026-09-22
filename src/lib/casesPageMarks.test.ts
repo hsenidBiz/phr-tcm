@@ -44,6 +44,14 @@ function rewire(): void {
   (window as unknown as { __tcmWireMarks: () => void }).__tcmWireMarks();
 }
 
+/** The script is loaded once in `beforeAll` and reused for every test in
+ * this file, so its in-memory write-through cache (`sessionMark`) has to be
+ * reset by hand between tests - on a real page it lasts only as long as
+ * the page itself, which is exactly one test here. */
+function forgetSessionMark(): void {
+  (window as unknown as { __tcmForgetMark: () => void }).__tcmForgetMark();
+}
+
 beforeAll(() => {
   // import.meta.url, not `__dirname`: this file is ESM under vitest.
   const here = dirname(fileURLToPath(import.meta.url));
@@ -58,6 +66,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   localStorage.clear();
+  forgetSessionMark();
   document.body.innerHTML = page();
   rewire();
 });
@@ -108,6 +117,25 @@ describe("the bookmark", () => {
     // call, so a stub is what proves it reached the right card.
     const scrolled = vi.fn();
     cases()[2].scrollIntoView = scrolled;
+    go.click();
+    expect(scrolled).toHaveBeenCalled();
+  });
+
+  test("a write that silently fails (quota, Safari private mode) still gets a mark for the session", () => {
+    // Reads keep working; only the write is refused - unlike the "origin
+    // refuses storage outright" case above, where both throw. `getItem`
+    // has to genuinely run and come back with null (nothing was ever
+    // written) rather than throwing, or this reproduces the wrong bug.
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    mark(0);
+    expect(localStorage.getItem(STORE)).toBeNull(); // the write really did fail
+    expect(cases()[0].classList.contains("marked")).toBe(true);
+    const go = document.getElementById("tc-goto")!;
+    expect(go.classList.contains("hidden")).toBe(false);
+    const scrolled = vi.fn();
+    cases()[0].scrollIntoView = scrolled;
     go.click();
     expect(scrolled).toHaveBeenCalled();
   });

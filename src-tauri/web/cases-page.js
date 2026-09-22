@@ -137,11 +137,14 @@
   function recallMark() {
     try {
       var stored = localStorage.getItem(markStore());
-      // Storage answered, so storage decides: the value held here is the
-      // fallback for an origin that refuses storage outright, and keeping
-      // it alive beside a working store is how the two drift apart.
-      sessionMark = null;
-      return stored;
+      // A real answer means storage is working, so it takes over as the
+      // write-through cache's value. A null answer is ambiguous - it means
+      // either "never marked" or "the write silently failed" (quota,
+      // Safari private mode) - so it must NOT clobber an in-memory mark
+      // that a failed setItem left behind; that is what let a click appear
+      // to do nothing on a page whose reads work but whose writes do not.
+      if (stored !== null) sessionMark = stored;
+      return sessionMark;
     } catch (e) {}
     return sessionMark;
   }
@@ -181,6 +184,14 @@
     });
   }
   window.__tcmWireMarks = wireMarks;
+  // Test-only: the in-memory write-through cache now genuinely outlives a
+  // storage read that comes back null (that is the fix), which on a real
+  // page is exactly right - it lasts for the page's own lifetime. A test
+  // file that loads this script once and reuses it across many tests has
+  // no such natural reset between them, so it needs one to ask for.
+  window.__tcmForgetMark = function () {
+    sessionMark = null;
+  };
 
   // Delegated, like the blocks' own x, so it survives every swap untouched.
   document.addEventListener('click', function (e) {
