@@ -271,6 +271,145 @@ async fn no_covering_team_means_the_default_team() {
     );
 }
 
+/// One team the account cannot read must not sink the lookup. The
+/// fallback only runs at all after Azure DevOps has already refused
+/// something, so a 403 on one team's settings is the expected shape of
+/// this account's day - and the team that DOES cover the area is still
+/// sitting there in the list.
+#[tokio::test]
+async fn a_team_the_account_cannot_read_is_skipped_not_fatal() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(teams_reply(&[(ALPHA_ID, "Alpha"), (GAMMA_ID, "Gamma Guardians")])),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/{ORG}/{PROJECT_ID}/{ALPHA_ID}/_apis/work/teamsettings/teamfieldvalues"
+        )))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+            "message": "You are not authorized to access this API.",
+        })))
+        .mount(&server)
+        .await;
+    mount_team_scope(&server, GAMMA_ID, "HRM\\Gamma Guardians", true).await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    assert_eq!(
+        client
+            .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians\\Sub")
+            .await
+            .unwrap(),
+        GAMMA_ID
+    );
+}
+
+/// Every team unreadable is the same answer as no team covering: the
+/// project's default team, not an error that strands the upload.
+#[tokio::test]
+async fn every_team_unreadable_still_lands_on_the_default_team() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(project_reply()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(teams_reply(&[(ALPHA_ID, "Alpha"), (GAMMA_ID, "Gamma Guardians")])),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/{ORG}/{PROJECT_ID}/{ALPHA_ID}/_apis/work/teamsettings/teamfieldvalues"
+        )))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/{ORG}/{PROJECT_ID}/{GAMMA_ID}/_apis/work/teamsettings/teamfieldvalues"
+        )))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    assert_eq!(
+        client
+            .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians")
+            .await
+            .unwrap(),
+        DEFAULT_TEAM_ID
+    );
+}
+
+/// An empty project id would go into the route's URL as nothing at all
+/// (`{base}/{org}//_api/...`) and come back a 404 nobody can read. Say
+/// what went wrong instead of sending a URL with a hole in it.
+#[tokio::test]
+async fn an_unreadable_project_id_is_said_not_sent() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT}")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"name": PROJECT})),
+        )
+        .mount(&server)
+        .await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let err = client.project_id(ORG, PROJECT).await.unwrap_err();
+    match err {
+        AdoError::Http { status, body } => {
+            assert_eq!(status, 0);
+            assert!(body.contains("without an id"), "{body}");
+        }
+        other => panic!("expected the unreadable-project error, got {other:?}"),
+    }
+}
+
+/// `HRM\Gamma Guardians` and `HRM/Gamma Guardians` are one area, so they
+/// are one cache entry - otherwise the spelling a caller happened to use
+/// decides whether the team lookup is paid for again.
+#[tokio::test]
+async fn the_two_spellings_of_an_area_share_one_cached_team() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{ORG}/_apis/projects/{PROJECT_ID}/teams")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(teams_reply(&[(GAMMA_ID, "Gamma Guardians")])),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    mount_team_scope(&server, GAMMA_ID, "HRM\\Gamma Guardians", true).await;
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    assert_eq!(
+        client
+            .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM\\Gamma Guardians")
+            .await
+            .unwrap(),
+        GAMMA_ID
+    );
+    assert_eq!(
+        client
+            .team_for_area(ORG, PROJECT, PROJECT_ID, "HRM/Gamma Guardians")
+            .await
+            .unwrap(),
+        GAMMA_ID
+    );
+    server.verify().await;
+}
+
 /// The whole fallback, end to end: the two ids, the route, and then the
 /// suite the named plan holds - because the reply carries the plan id and
 /// not the suite id.

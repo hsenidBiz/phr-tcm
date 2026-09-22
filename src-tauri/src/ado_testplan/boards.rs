@@ -116,8 +116,19 @@ impl AdoClient {
             percent_encode_segment(project)
         );
         let data = self.get_json(url).await?;
+        let id = data["id"].as_str().unwrap_or_default().to_string();
+        // An empty id would go into the route's URL as nothing at all -
+        // `{base}/{org}//_api/...` - and come back a 404 that describes
+        // none of this. Say what could not be read instead.
+        if id.is_empty() {
+            return Err(AdoError::Http {
+                status: 0,
+                body: "the project could not be read - Azure DevOps answered without an id"
+                    .to_string(),
+            });
+        }
         let ids = ProjectIds {
-            id: data["id"].as_str().unwrap_or_default().to_string(),
+            id,
             default_team_id: data["defaultTeam"]["id"].as_str().unwrap_or_default().to_string(),
         };
         cache::session_put(&key, ids.clone());
@@ -132,6 +143,14 @@ impl AdoClient {
     /// answer would always be whichever team happened to come back first.
     /// Nothing covering means the project's default team, which is what
     /// Boards itself falls back to.
+    ///
+    /// A team whose settings this account cannot read is SKIPPED, not
+    /// fatal: the fallback only runs at all after Azure DevOps has
+    /// already refused something for this account's access level, so a
+    /// 403 on one team's settings is the expected shape of its day - and
+    /// the team that does own the area is still in the list. Every skip
+    /// is logged by name, because a wrong team is a suite on the wrong
+    /// board and the log is where that gets explained.
     pub async fn team_for_area(
         &self,
         org: &str,
@@ -139,14 +158,25 @@ impl AdoClient {
         project_id: &str,
         area_path: &str,
     ) -> Result<String, AdoError> {
-        let key = keys::area_team(&self.base_url, org, project, area_path);
+        // Keyed by the NORMALISED area: `HRM\Gamma Guardians` and
+        // `HRM/Gamma Guardians` are one area, so they are one entry.
+        let key = keys::area_team(&self.base_url, org, project, &normalize_area(area_path));
         if let Some(hit) = cache::session_fresh::<String>(&key, keys::BOARDS_IDS_TTL) {
             return Ok(hit);
         }
         let teams = self.list_teams(org, project_id).await?;
         let mut best: Option<(usize, String)> = None;
         for team in &teams {
-            let (_field, values) = self.get_team_scope(org, project_id, &team.id).await?;
+            let values = match self.get_team_scope(org, project_id, &team.id).await {
+                Ok((_field, values)) => values,
+                Err(e) => {
+                    crate::applog::warn(format!(
+                        "boards suite route: could not read the area scope of team {} ({}): {e} - skipping it",
+                        team.name, team.id
+                    ));
+                    continue;
+                }
+            };
             for (value, include_children) in values {
                 if !covers(&value, include_children, area_path) {
                     continue;
@@ -207,7 +237,7 @@ impl AdoClient {
         data["testPlanId"]
             .as_i64()
             .map(|plan| plan as i32)
-            .ok_or(AdoError::Http {
+            .ok_or_else(|| AdoError::Http {
                 status: 0,
                 body: format!("the Boards route answered without a testPlanId: {raw}"),
             })
@@ -239,7 +269,7 @@ impl AdoClient {
         let suite = self
             .find_requirement_suite(org, project, plan_id, pbi_id)
             .await?
-            .ok_or(AdoError::Http {
+            .ok_or_else(|| AdoError::Http {
                 status: 0,
                 body: format!(
                     "the Boards route named plan {plan_id} but that plan has no requirement suite for #{pbi_id}"
