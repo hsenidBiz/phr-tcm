@@ -8,6 +8,7 @@
 //! again itself, so there is no path to the process that skips the gate.
 
 pub mod guard;
+pub mod query;
 pub mod schema;
 pub mod sqlcmd;
 
@@ -15,8 +16,8 @@ pub use guard::{
     access_for, access_for_user, allowed, classify, Access, Verdict, MAX_SQL_CHARS,
     READ_ONLY_SENTENCE,
 };
-pub use schema::{lookup_sql, render_lookup};
+pub use schema::{describe_sql, lookup_sql, render_describe, render_lookup};
 pub use sqlcmd::{
-    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, Connection, Output, RealRunner, Runner,
-    CHAR_CAP, NOT_INSTALLED, ROW_CAP, TIMEOUT_SECS,
+    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_path, Connection, Output,
+    RealRunner, Runner, CHAR_CAP, NOT_INSTALLED, ROW_CAP, SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };

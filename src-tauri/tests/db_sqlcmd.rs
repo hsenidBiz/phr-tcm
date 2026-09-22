@@ -7,8 +7,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use v2_lib::db::{
-    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, Connection, Output, Runner, CHAR_CAP,
-    NOT_INSTALLED, ROW_CAP, TIMEOUT_SECS,
+    find_sqlcmd, parse_connection, run_sql, sqlcmd_args, sqlcmd_path, Connection, Output, Runner,
+    CHAR_CAP, NOT_INSTALLED, ROW_CAP, SQLCMD_OVERRIDE, TIMEOUT_SECS,
 };
 use v2_lib::db_defaults::DB_PRESETS;
 
@@ -379,4 +379,37 @@ async fn the_guard_is_the_only_door_to_the_runner() {
     // A read runs on either.
     run_sql(&fake, Path::new("sqlcmd.exe"), &read_only, "SELECT 1 AS n").await.unwrap();
     assert_eq!(fake.calls().len(), 1);
+}
+
+/// The env override exists so a test can say "sqlcmd is not on this
+/// machine" without uninstalling it, and so a person who keeps sqlcmd
+/// somewhere none of the candidates look can point at it. It is
+/// AUTHORITATIVE, not a first candidate: a path that does not exist reads
+/// as "not installed" rather than quietly falling through to a real
+/// install, which is exactly what a test needs it to do.
+///
+/// `sqlcmd_path` is the one impure finder (it reads the environment), so
+/// this test owns the variable and puts it back.
+#[test]
+fn the_env_override_decides_where_sqlcmd_is_or_that_it_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("sqlcmd.exe");
+    std::fs::write(&exe, b"").unwrap();
+
+    let before = std::env::var(SQLCMD_OVERRIDE).ok();
+
+    std::env::set_var(SQLCMD_OVERRIDE, &exe);
+    assert_eq!(sqlcmd_path(), Some(exe.clone()));
+
+    std::env::set_var(SQLCMD_OVERRIDE, dir.path().join("nowhere.exe"));
+    assert_eq!(sqlcmd_path(), None, "an override that is not a file means not installed");
+
+    // An empty variable is not a choice; it reads as unset.
+    std::env::set_var(SQLCMD_OVERRIDE, "");
+    let _ = sqlcmd_path();
+
+    match before {
+        Some(v) => std::env::set_var(SQLCMD_OVERRIDE, v),
+        None => std::env::remove_var(SQLCMD_OVERRIDE),
+    }
 }

@@ -153,6 +153,100 @@ pub fn render_lookup(tsv: &str) -> String {
     blocks.join("\n\n")
 }
 
+/// The whole column list of ONE table, when the words are a table's name
+/// rather than a topic - `dbo.LeaveRequest`, or `LeaveRequest` on its own.
+/// `None` for anything else, which is the signal to rank instead.
+///
+/// The ranked lookup above answers "which tables are about this" and shows
+/// only the columns that matched the words. Asked for a table by name, an
+/// assistant wants the other question - "what is in this table" - and the
+/// matching-columns filter is then exactly the wrong answer. Same tool,
+/// because an assistant should not have to know which shape it is asking
+/// for; the name it typed is what decides.
+pub fn describe_sql(query: &str) -> Option<String> {
+    let (schema_name, table) = split_name(query)?;
+    // `escape` is still applied although `is_name` has already ruled out a
+    // quote: the guard's rule is that nothing reaches a literal unescaped,
+    // and an exception argued from a caller's behaviour is how that rule
+    // stops holding later.
+    let where_schema = match schema_name {
+        Some(s) => format!(" AND LOWER(c.TABLE_SCHEMA) = N'{}'", escape(&s)),
+        None => String::new(),
+    };
+    Some(format!(
+        "SELECT TOP (500) c.TABLE_SCHEMA AS sch, c.TABLE_NAME AS tab, c.COLUMN_NAME AS col,
+       c.DATA_TYPE AS typ, c.CHARACTER_MAXIMUM_LENGTH AS len, c.IS_NULLABLE AS nul
+FROM INFORMATION_SCHEMA.COLUMNS c
+WHERE LOWER(c.TABLE_NAME) = N'{}'{where_schema}
+ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION",
+        escape(&table)
+    ))
+}
+
+/// `schema.table` or `table`, lower-cased, or `None` when the words are
+/// not a name: anything with a space, a punctuation mark other than the
+/// one dot, two dots, or an empty half.
+fn split_name(query: &str) -> Option<(Option<String>, String)> {
+    let query = query.trim();
+    match query.split_once('.') {
+        Some((schema_name, table)) => {
+            (is_name(schema_name) && is_name(table))
+                .then(|| (Some(schema_name.to_lowercase()), table.to_lowercase()))
+        }
+        None => is_name(query).then(|| (None, query.to_lowercase())),
+    }
+}
+
+/// A SQL Server identifier as a person types one: a letter or underscore,
+/// then letters, digits and underscores. Deliberately narrower than what
+/// the server allows - a name needing brackets is a name this shortcut
+/// declines, and the ranked lookup still finds it.
+fn is_name(word: &str) -> bool {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Renders sqlcmd's answer to `describe_sql`. Empty when the table does
+/// not exist, which is what tells the caller to fall back to the ranked
+/// lookup rather than reporting "no such table" for a word that was never
+/// meant as one.
+pub fn render_describe(tsv: &str) -> String {
+    let mut heading = String::new();
+    let mut columns: Vec<String> = Vec::new();
+    for line in tsv.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.trim().is_empty() || is_rule(line) || is_footer(line) {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('\t').map(|c| c.trim()).collect();
+        if cells.len() < 6 || (cells[0] == "sch" && cells[1] == "tab") {
+            continue;
+        }
+        let (sch, tab, col, typ, len, nul) =
+            (cells[0], cells[1], cells[2], cells[3], cells[4], cells[5]);
+        if heading.is_empty() {
+            heading = format!("{sch}.{tab}");
+        }
+        let width = match len {
+            // -1 is how SQL Server reports the (max) types; NULL is every
+            // type that has no length of its own.
+            "-1" => "(max)".to_string(),
+            "NULL" | "" => String::new(),
+            other => format!("({other})"),
+        };
+        let nullable = if nul.eq_ignore_ascii_case("NO") { "not null" } else { "null" };
+        columns.push(format!("{col} {typ}{width} {nullable}"));
+    }
+    if columns.is_empty() {
+        return String::new();
+    }
+    format!("{heading} ({} columns)\n  columns: {}", columns.len(), columns.join(", "))
+}
+
 /// sqlcmd draws a rule of dashes under the header row.
 fn is_rule(line: &str) -> bool {
     let bare: String = line.chars().filter(|c| !c.is_whitespace()).collect();

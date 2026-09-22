@@ -59,6 +59,16 @@ export const MCP_TOOLS: McpToolInfo[] = [
     label: "Record a quirk",
     summary: "One line about how this application behaves, kept for the next script.",
   },
+  {
+    name: "db_lookup",
+    label: "Find a table",
+    summary: "The tables and columns behind a topic, or one table's whole column list.",
+  },
+  {
+    name: "db_query",
+    label: "Run a statement",
+    summary: "Run one SQL statement on the chosen connection and read the result.",
+  },
   { name: "validate_cases", label: "Check a draft", summary: "Check a draft with the app's real importer." },
   { name: "get_tags", label: "Project tags", summary: "Tag names this project already uses." },
   { name: "optimize_cases", label: "Build the run sheet", summary: "Reorganise a draft into a tester-ready run sheet." },
@@ -130,6 +140,12 @@ export const TOOL_PAIRS: readonly (readonly string[])[] = [
     "get_autorun_failures",
     "record_autorun_quirk",
   ],
+  // Reading the company database is one choice: finding the table and
+  // reading it are two halves of the same question, and a lookup whose
+  // answer nothing can query is a map with no road. Creating, updating
+  // and deleting is a SEPARATE switch, on the Company database card - it
+  // is a different decision, and it is off until someone makes it.
+  ["db_lookup", "db_query"],
 ];
 
 /** The one human name and summary a pair shows, keyed by its first member. */
@@ -143,6 +159,10 @@ const PAIR_ROWS: Record<string, { label: string; summary: string }> = {
     label: "Auto Run scripts",
     summary:
       "Read the script guide, see the page in the open browser, try a locator or an action, read a run's failures, save and repair scripts. Development builds only.",
+  },
+  db_lookup: {
+    label: "Company database (read)",
+    summary: "Look up tables and run SELECT on the connection chosen below.",
   },
 };
 

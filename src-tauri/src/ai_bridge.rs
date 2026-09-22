@@ -15,7 +15,7 @@ static INTAKE_SINK: std::sync::OnceLock<IntakeSink> = std::sync::OnceLock::new()
 /// short enough not to drown the guide.
 const GUIDE_TAG_LIMIT: usize = 60;
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct BridgeContext {
     pub org: String,
     pub project: String,
@@ -29,6 +29,37 @@ pub struct BridgeContext {
     /// none is set - in which case a writing job cannot start, because
     /// there is nowhere agreed for its file to go.
     pub working_dir: Option<String>,
+    /// The database connection chosen under Company database, or None when
+    /// none is - in which case both database tools refuse.
+    ///
+    /// It carries a password, so it is never serialised out of here and
+    /// never printed: the `Serialize` below skips it and `Debug` is
+    /// hand-written, the same as `db::sqlcmd::Connection`. Nothing reads
+    /// this field except the two database routes.
+    #[serde(skip)]
+    pub db_connection_string: Option<String>,
+    /// Whether the person has switched create, update and delete on. It is
+    /// half the permission: `/db-query` also needs the connection's own
+    /// user to be one that may write.
+    pub db_writes: bool,
+}
+
+/// Hand-written so the connection string - and therefore the password -
+/// cannot reach a log line, a panic message or a bug report through a
+/// stray `{:?}` on the context.
+impl std::fmt::Debug for BridgeContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BridgeContext")
+            .field("org", &self.org)
+            .field("project", &self.project)
+            .field("module_ref", &self.module_ref)
+            .field("preconditions_ref", &self.preconditions_ref)
+            .field("disabled_tools", &self.disabled_tools)
+            .field("working_dir", &self.working_dir)
+            .field("db_connection_string", &self.db_connection_string.as_ref().map(|_| "(hidden)"))
+            .field("db_writes", &self.db_writes)
+            .finish()
+    }
 }
 
 /// Where `/begin` announces the path the assistant is about to write to.
@@ -180,6 +211,12 @@ pub async fn route(
         ("POST", "/autorun-try") => autorun_try(ctx, body).await,
         ("GET", "/autorun-failures") => autorun_failures(target),
         ("POST", "/autorun-quirk") => autorun_quirk(ctx, body),
+        // The database routes. Not Auto Run and not dev-only: they are
+        // switchable like any ordinary tool, and what they may do is
+        // decided by the connection the person chose and the write switch
+        // beside it - never by the build kind.
+        ("POST", "/db-lookup") => db_lookup(ctx, body).await,
+        ("POST", "/db-query") => db_query(ctx, body).await,
         // The proxy asks for this before listing tools, so a toggle in the
         // app takes effect on the assistant's next tools/list.
         ("GET", "/tools") => (
@@ -552,6 +589,99 @@ fn autorun_quirk(ctx: &BridgeContext, body: &str) -> (u16, String) {
         Ok(true) => (200, "recorded".to_string()),
         Ok(false) => (200, "already known".to_string()),
         Err(why) => (400, why),
+    }
+}
+
+// ------------------------------------------------------- the company database
+
+/// The two things both database routes need before they can do anything:
+/// a connection the person chose, and a sqlcmd to run it with. Neither is
+/// a failure of the call - both are 409, "the app is not set up for this
+/// yet" - and each says which of the two is missing.
+fn db_ready(
+    ctx: &BridgeContext,
+) -> Result<(crate::db::Connection, std::path::PathBuf), (u16, String)> {
+    let chosen = ctx
+        .db_connection_string
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| (409, crate::db::query::NO_CONNECTION.to_string()))?;
+    // The error names the missing key and nothing else - the rest of that
+    // string is a credential, and this sentence is shown to a person.
+    let connection = crate::db::parse_connection(chosen)
+        .map_err(|why| (409, format!("{why} - choose a connection under Company database on the AI Bridge tab")))?;
+    let exe = crate::db::sqlcmd_path()
+        .ok_or_else(|| (409, crate::db::NOT_INSTALLED.to_string()))?;
+    Ok((connection, exe))
+}
+
+/// One named string out of a small JSON body, trimmed, or the refusal
+/// that says what the body should have carried. Separate from
+/// `body_field` because these two routes want the empty string and the
+/// missing key to read the same way: neither is a question.
+fn db_body_text(body: &str, key: &str, shape: &str) -> Result<String, (u16, String)> {
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| (400, format!("that is not readable JSON: {e}. Expected {shape}.")))?;
+    let text = parsed.get(key).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+    if text.is_empty() {
+        return Err((400, format!("this call needs a \"{key}\". Expected {shape}.")));
+    }
+    Ok(text)
+}
+
+/// The tables and columns behind some words, or one table's own columns.
+async fn db_lookup(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str = "{ \"query\": \"leave request\", \"limit\": 10 }";
+    let query = match db_body_text(body, "query", SHAPE) {
+        Ok(q) => q,
+        Err(refused) => return refused,
+    };
+    let limit = crate::db::query::lookup_limit(
+        serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v.get("limit").and_then(|l| l.as_i64())),
+    );
+    let (connection, exe) = match db_ready(ctx) {
+        Ok(ready) => ready,
+        Err(refused) => return refused,
+    };
+    match crate::db::query::run_lookup(
+        &crate::db::RealRunner,
+        &exe,
+        &connection,
+        &query,
+        limit,
+    )
+    .await
+    {
+        Ok(text) => (200, text),
+        Err(refused) => refused,
+    }
+}
+
+/// One statement, if the guard and the two write doors allow it.
+async fn db_query(ctx: &BridgeContext, body: &str) -> (u16, String) {
+    const SHAPE: &str = "{ \"sql\": \"SELECT TOP (10) * FROM dbo.LeaveRequest\" }";
+    let sql = match db_body_text(body, "sql", SHAPE) {
+        Ok(s) => s,
+        Err(refused) => return refused,
+    };
+    let (connection, exe) = match db_ready(ctx) {
+        Ok(ready) => ready,
+        Err(refused) => return refused,
+    };
+    match crate::db::query::run_query(
+        &crate::db::RealRunner,
+        &exe,
+        &connection,
+        ctx.db_writes,
+        &sql,
+    )
+    .await
+    {
+        Ok(text) => (200, text),
+        Err(refused) => refused,
     }
 }
 
@@ -2049,6 +2179,10 @@ async fn guide(ctx: &BridgeContext, client: &crate::ado::AdoClient) -> String {
         developer whether a tool should be added for it. That is a decision for\n\
         them, and a missing capability they hear about gets fixed for everyone.\n\
         Routing around it silently fixes it for nobody and hides the gap.\n\n\
+        - `db_lookup` and `db_query` check real data: which table a screen reads\n\
+        from, and what a value is today. The expected result still comes from the\n\
+        specification. The database only tells you the current state, never what\n\
+        it should be.\n\n\
         ## Format\n\
         Each case: `title` (required, <=255 chars), `steps` (required, each\n\
         `{{\"action\", \"expected\"}}`), `tags` (semicolon-separated, never commas),\n\

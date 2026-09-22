@@ -67,6 +67,8 @@ fn tools_list_names_every_tool() {
             "try_autorun_action",
             "get_autorun_failures",
             "record_autorun_quirk",
+            "db_lookup",
+            "db_query",
             "optimize_cases",
             "transform_cases",
             "validate_cases",
@@ -280,6 +282,75 @@ fn disabled_tools_are_hidden_from_the_list() {
     assert!(names.contains(&"optimize_cases"), "the rest are untouched");
 }
 
+/// The two database tools are ordinary switchable tools - neither core
+/// nor development-only - so the read switch on the AI Bridge tab takes
+/// them both out of the list, and a call made from a list cached before
+/// the switch moved is refused the ordinary way.
+#[test]
+fn the_database_tools_are_switchable_and_refused_the_ordinary_way() {
+    let call = |_m: &str, path: &str, _b: &str| -> Result<(u16, String), String> {
+        if path == "/tools" {
+            return Ok((200, r#"{"disabled":["db_lookup","db_query"]}"#.into()));
+        }
+        panic!("a disabled tool must never reach the bridge");
+    };
+    let resp =
+        handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "1.0.0", &call).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    let names: Vec<&str> = v["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&"db_lookup"), "{names:?}");
+    assert!(!names.contains(&"db_query"), "{names:?}");
+    assert!(names.contains(&"get_tags"), "the rest are untouched");
+
+    for name in ["db_lookup", "db_query"] {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"{name}","arguments":{{}}}}}}"#
+        );
+        let resp = handle_message(&req, "1.0.0", &call).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
+        assert_eq!(v["result"]["isError"], true, "{name}");
+        let text = v["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("switched off in Test Case Manager"), "{name}: {text}");
+    }
+}
+
+/// Both forward the whole arguments object as the body, so a field can
+/// never be dropped between the tool and the route.
+#[test]
+fn the_database_tools_forward_their_arguments_as_the_body() {
+    let calls = std::cell::RefCell::new(vec![]);
+    let call = |method: &str, path: &str, body: &str| {
+        calls.borrow_mut().push((method.to_string(), path.to_string(), body.to_string()));
+        Ok((200, "dbo.LeaveRequest (1240 rows est.)".to_string()))
+    };
+    handle_message(
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"db_lookup","arguments":{"query":"leave request","limit":5}}}"#,
+        "1.0.0",
+        &call,
+    )
+    .unwrap();
+    handle_message(
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"db_query","arguments":{"sql":"SELECT 1 AS n"}}}"#,
+        "1.0.0",
+        &call,
+    )
+    .unwrap();
+
+    let recorded = calls.borrow();
+    let lookup = recorded.iter().find(|c| c.1 == "/db-lookup").expect("the lookup was proxied");
+    assert_eq!(lookup.0, "POST");
+    assert!(lookup.2.contains("\"query\":\"leave request\""), "{}", lookup.2);
+    assert!(lookup.2.contains("\"limit\":5"), "{}", lookup.2);
+    let query = recorded.iter().find(|c| c.1 == "/db-query").expect("the statement was proxied");
+    assert_eq!(query.0, "POST");
+    assert!(query.2.contains("SELECT 1 AS n"), "{}", query.2);
+}
+
 /// And calling it anyway - from a cached list - is refused rather than
 /// quietly proxied.
 #[test]
@@ -309,10 +380,10 @@ fn an_unreachable_bridge_disables_nothing() {
     let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
     let resp = handle_message(req, "1.0.0", &call).unwrap();
     let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    // 22 in this development build: nothing is disabled by an unreachable
+    // 24 in this development build: nothing is disabled by an unreachable
     // bridge, including the seven dev-only tools, which default to ON here
     // exactly as they would if the bridge had answered with an empty list.
-    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 22, "an unreachable bridge must not disable anything, dev-only tools included");
+    assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 24, "an unreachable bridge must not disable anything, dev-only tools included");
 }
 
 /// The description is the only thing an assistant reads. It used to name

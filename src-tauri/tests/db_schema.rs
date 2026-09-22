@@ -1,7 +1,7 @@
 //! The ranked schema lookup: one SELECT over the database's own catalogue,
 //! and the text an assistant reads back from it.
 
-use v2_lib::db::{classify, lookup_sql, render_lookup, Verdict};
+use v2_lib::db::{classify, describe_sql, lookup_sql, render_describe, render_lookup, Verdict};
 
 #[test]
 fn the_lookup_is_one_statement_its_own_guard_calls_a_read() {
@@ -130,4 +130,78 @@ fn nothing_found_says_so_in_a_sentence() {
         "no table or column matches those words"
     );
     assert_eq!(render_lookup("   \n\n"), "no table or column matches those words");
+}
+
+// --------------------------------------------------------- describe a table
+//
+// The ranked lookup lists only the columns that MATCHED the words, which is
+// the right answer to "what is leave request about" and the wrong one to
+// "what is in dbo.LeaveRequest". A bare name asks the second question, and
+// gets every column of that table instead.
+
+#[test]
+fn a_bare_table_name_asks_for_the_whole_column_list() {
+    let sql = describe_sql("dbo.LeaveRequest").expect("schema.table is a name");
+    assert!(sql.contains("INFORMATION_SCHEMA.COLUMNS"), "{sql}");
+    assert!(sql.contains("N'leaverequest'"), "lower-cased for the comparison: {sql}");
+    assert!(sql.contains("N'dbo'"), "{sql}");
+    assert!(sql.contains("ORDINAL_POSITION"), "the table's own column order: {sql}");
+    // The same gate as every other statement, and one statement only.
+    assert_eq!(classify(&sql), Verdict::Read);
+    assert_eq!(sql.matches(';').count(), 0, "a semicolon would read as a second statement");
+
+    // Without a schema the name alone is matched, across schemas.
+    let bare = describe_sql("LeaveRequest").expect("a bare table is a name too");
+    assert!(bare.contains("N'leaverequest'"), "{bare}");
+    assert!(!bare.contains("TABLE_SCHEMA) = N'"), "no schema was given: {bare}");
+    assert_eq!(classify(&bare), Verdict::Read);
+}
+
+#[test]
+fn a_topic_is_not_a_name_and_gets_the_ranked_lookup_instead() {
+    for topic in [
+        "leave request",
+        "",
+        "   ",
+        "dbo.leave.request",
+        "leave-request",
+        "select * from t",
+        "dbo.",
+        "o'brien",
+    ] {
+        assert!(describe_sql(topic).is_none(), "{topic:?} is a topic, not a table name");
+    }
+}
+
+/// What sqlcmd writes for the describe statement: header, rule, a row per
+/// column, then its footer.
+const COLUMNS: &str = "sch\ttab\tcol\ttyp\tlen\tnul\n\
+----\t---\t---\t---\t---\t---\n\
+dbo\tLeaveRequest\tLeaveRequestId\tint\tNULL\tNO\n\
+dbo\tLeaveRequest\tReason\tnvarchar\t200\tYES\n\
+dbo\tLeaveRequest\tNotes\tnvarchar\t-1\tYES\n\
+\n\
+(3 rows affected)\n";
+
+#[test]
+fn the_column_list_renders_with_its_types_and_nullability() {
+    let out = render_describe(COLUMNS);
+
+    assert!(out.starts_with("dbo.LeaveRequest"), "{out}");
+    assert!(out.contains("LeaveRequestId int not null"), "{out}");
+    assert!(out.contains("Reason nvarchar(200) null"), "{out}");
+    // -1 is how SQL Server reports nvarchar(max).
+    assert!(out.contains("Notes nvarchar(max) null"), "{out}");
+    // sqlcmd's own furniture is not part of the answer.
+    assert!(!out.contains("rows affected"), "{out}");
+    assert!(!out.contains("----"), "{out}");
+}
+
+#[test]
+fn a_table_that_does_not_exist_renders_as_nothing_so_the_lookup_can_answer() {
+    assert_eq!(render_describe(""), "");
+    assert_eq!(
+        render_describe("sch\ttab\tcol\ttyp\tlen\tnul\n---\t---\t---\t---\t---\t---\n\n(0 rows affected)\n"),
+        ""
+    );
 }

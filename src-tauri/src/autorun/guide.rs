@@ -259,8 +259,9 @@ This is the important part, and the one that goes wrong quietly.
   spec outranks both the case and the code. Use `search_wiki` and
   `get_wiki_page`.
 - **The database: verifying effects.** Useful precisely because it does
-  not go through the UI you just read. Out of scope for the script
-  itself, but worth checking by hand when a case is about data.
+  not go through the UI you just read. `db_lookup` finds the table behind
+  a screen and `db_query` reads it. Out of scope for the script itself,
+  but worth checking by hand when a case is about data.
 
 If you find yourself writing an assertion because "that is what the code
 does", stop. You are about to automate the bug.

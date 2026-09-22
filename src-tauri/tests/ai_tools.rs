@@ -675,6 +675,24 @@ fn the_effective_disabled_set_is_build_dependent_and_protects_the_core() {
         ),
         vec!["search_wiki"]
     );
+
+    // The two database tools are neither: they can be switched off, and a
+    // release build offers them exactly as a development build does. What
+    // they may DO is decided by the chosen connection and the write
+    // switch beside it, never by the build kind.
+    for name in ["db_lookup", "db_query"] {
+        assert!(!CORE_TOOLS.contains(&name), "{name} must be switchable");
+        assert!(!DEV_ONLY_TOOLS.contains(&name), "{name} must ship in a release build");
+        assert_eq!(
+            effective_disabled_for(&[name.to_string()], true),
+            vec![name],
+            "{name} switches off like any other tool"
+        );
+        assert!(
+            effective_disabled_for(&[name.to_string()], false).contains(&name.to_string()),
+            "{name} switches off in a release build too"
+        );
+    }
 }
 
 /// A command renamed or dropped from `COMMANDS` (this branch trimmed 17

@@ -114,6 +114,31 @@ pub fn parse_connection(connection_string: &str) -> Result<Connection, String> {
     Ok(Connection { server, database, user, password, trust_cert })
 }
 
+/// The environment variable that decides where sqlcmd is, overriding the
+/// search below.
+///
+/// It is AUTHORITATIVE rather than a first candidate: set to a path that
+/// is not a file, the answer is "not installed", not "keep looking". That
+/// is what lets a test on a machine which HAS sqlcmd (this one does) see
+/// the answer a machine without it gets, and it is the honest reading
+/// anyway - a person who names a path meant that path.
+pub const SQLCMD_OVERRIDE: &str = "TCM_SQLCMD";
+
+/// Where sqlcmd is on THIS machine: the override if one is set, otherwise
+/// the search below over the real environment. The one impure finder;
+/// `find_sqlcmd` takes its environment as arguments and stays testable.
+pub fn sqlcmd_path() -> Option<PathBuf> {
+    // An empty variable is not a choice - it is how a shell passes "unset"
+    // by accident, and reading it as "sqlcmd is missing" would break the
+    // feature for a reason nobody could see.
+    if let Some(raw) = std::env::var(SQLCMD_OVERRIDE).ok().filter(|v| !v.trim().is_empty()) {
+        let picked = PathBuf::from(raw.trim());
+        return picked.is_file().then_some(picked);
+    }
+    let var = |name: &str| std::env::var(name).unwrap_or_default();
+    find_sqlcmd(&var("PATH"), &var("ProgramFiles"), &var("ProgramFiles(x86)"))
+}
+
 /// Where sqlcmd is: PATH first, then the folders the Microsoft installers
 /// and go-sqlcmd use. PATH leads because a person who installed it
 /// deliberately put it there.

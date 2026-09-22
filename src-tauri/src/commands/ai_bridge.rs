@@ -80,6 +80,8 @@ pub fn set_bridge_context(
     preconditions_ref: Option<String>,
     disabled_tools: Vec<String>,
     working_dir: Option<String>,
+    db_connection_string: Option<String>,
+    db_writes: bool,
 ) {
     use tauri::Manager;
     let handle = app.state::<BridgeHandle>();
@@ -92,6 +94,11 @@ pub fn set_bridge_context(
             preconditions_ref,
             disabled_tools: disabled_tools.clone(),
             working_dir: working_dir.clone(),
+            // The chosen connection travels in, never out: it is held in
+            // memory for the two database routes and is skipped by the
+            // context's own Serialize. See `BridgeContext`.
+            db_connection_string,
+            db_writes,
         };
     }
     // A tool switched off in the AI Bridge tab loses its slash command too.

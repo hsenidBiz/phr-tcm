@@ -595,7 +595,7 @@ export const commands = {
 	 *  The frontend pushes its current org/project + detected field refs so
 	 *  bridge routes have defaults the AI never has to guess.
 	 */
-	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir }),
+	setBridgeContext: (organization: string, project: string, moduleRef: string | null, preconditionsRef: string | null, disabledTools: string[], workingDir: string | null, dbConnectionString: string | null, dbWrites: boolean) => __TAURI_INVOKE<void>("set_bridge_context", { organization, project, moduleRef, preconditionsRef, disabledTools, workingDir, dbConnectionString, dbWrites }),
 	detectAiTools: (workingDir: string | null) => __TAURI_INVOKE<DetectedTool[]>("detect_ai_tools", { workingDir }),
 	/**
 	 *  `disabled_tools` is the AI Bridge tab's current on/off set: registering

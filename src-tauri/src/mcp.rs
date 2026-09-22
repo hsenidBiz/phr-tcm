@@ -280,6 +280,21 @@ fn tools_list(disabled: Vec<String>) -> serde_json::Value {
             }), &["text"]),
         },
         {
+            "name": "db_lookup",
+            "description": "Find the tables and columns behind a topic in the company database: table and column names, types, foreign keys, ranked by how well they match the words. Use it before writing a query, and to check which table a screen reads from. A bare table name (`dbo.LeaveRequest`, or `LeaveRequest`) comes back as that table's whole column list instead of the ranked match.",
+            "inputSchema": schema(serde_json::json!({
+                "query": { "type": "string", "description": "The words behind the tables you are looking for, e.g. \"leave request\" - or one table's name for its full column list" },
+                "limit": { "type": "number", "description": "How many tables to return (default 10, cap 30)" },
+            }), &["query"]),
+        },
+        {
+            "name": "db_query",
+            "description": "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT on every connection; INSERT, UPDATE and DELETE only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one; never DROP, ALTER, CREATE or EXEC. Use it to verify what a test case expects against real data, or to set up test data on the dev database.",
+            "inputSchema": schema(serde_json::json!({
+                "sql": { "type": "string", "description": "ONE statement, with no GO separator and no second statement after a semicolon" },
+            }), &["sql"]),
+        },
+        {
             "name": "optimize_cases",
             "description": "Run with dry_run: true FIRST and read expected_rewritten before committing - it lists every expected result this would shorten, before and after. Reorganise a draft into a run sheet the tester can work straight through: navigation spelled out as explicit steps (not hidden in preconditions), expected results reduced to the outcome alone, and cases ordered so the tester changes environment/options as few times as possible. Every case comes back stamped with BOTH orders - spec_order (the order you wrote, following the document) and tester_order (the grouped run sequence) - so keep those fields as returned; the app flips between the two readings. Returns the new JSON plus a report. Call this once on your finished draft instead of hand-tuning it. For large drafts pass `path` (a local file) instead of inlining the JSON, and `in_place: true` to write the result back to that file and get only the report - NEVER shard a draft to fit it inline: tester_order is one sequence across the whole set, and per-shard orderings cannot be stitched together. An in-place write keeps the file's other fields (`specs`, `comments`); without in_place the response carries the file's `specs` for you to write back.",
             "inputSchema": schema(serde_json::json!({
@@ -553,6 +568,11 @@ fn tools_call(params: &serde_json::Value, call: BridgeCall) -> serde_json::Value
             call("GET", &target, "")
         }
         "record_autorun_quirk" => call("POST", "/autorun-quirk", &args.to_string()),
+        // Both bridge routes read their fields out of the body, so
+        // forwarding the raw arguments object is structurally unable to
+        // drop one - the same pattern as `check_spec_coverage`.
+        "db_lookup" => call("POST", "/db-lookup", &args.to_string()),
+        "db_query" => call("POST", "/db-query", &args.to_string()),
         "optimize_cases" => {
             let entry = args["entry"].as_str().unwrap_or("");
             let mut params: Vec<String> = vec![];

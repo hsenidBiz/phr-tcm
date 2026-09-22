@@ -143,12 +143,13 @@ test("validate, optimise and merge are always on and not listed", () => {
 /// Auto Run pair is one of the rows here too. The suite pair takes one
 /// switch, like the wiki pair: a reader that can never be handed a suite
 /// id is no choice at all.
-test("only the switchable tools are left, as six rows in a development build", () => {
+test("only the switchable tools are left, as seven rows in a development build", () => {
   expect(DEV_BUILD, "this file's default env").toBe(true);
   expect(visibleRows().map((r) => r.key)).toEqual([
     "search_test_suites+get_suite_test_cases",
     "get_run_failures",
     "get_autorun_guide+save_autorun_script+get_autorun_page+probe_autorun_locator+try_autorun_action+get_autorun_failures+record_autorun_quirk",
+    "db_lookup+db_query",
     "get_tags",
     "search_pbis",
     "search_wiki+get_wiki_page",
@@ -157,6 +158,32 @@ test("only the switchable tools are left, as six rows in a development build", (
   expect(suites?.label).toBe("Test Suites");
   const autorun = visibleRows().find((r) => r.key.startsWith("get_autorun_guide"));
   expect(autorun?.label).toBe("Auto Run scripts");
+});
+
+/// Reading the database is one choice - find the table, read it - so it is
+/// one row and one switch, and neither tool is core or development-only:
+/// a release build offers the row exactly as this one does.
+test("the two database tools are one switchable row in either build kind", async () => {
+  const row = visibleRows().find((r) => r.names.includes("db_lookup"));
+  expect(row, "the database row exists").toBeTruthy();
+  expect(row!.names).toEqual(["db_lookup", "db_query"]);
+  expect(row!.label).toBe("Company database (read)");
+
+  const off = toggleRow([], row!.names);
+  expect([...off].sort()).toEqual(["db_lookup", "db_query"]);
+  expect(toggleRow(off, row!.names)).toEqual([]);
+
+  // A list saved before the pairing naming one half completes toward OFF.
+  localStorage.setItem("tcm-v2-mcp-disabled", JSON.stringify(["db_query"]));
+  expect([...loadDisabledTools()].sort()).toEqual(["db_lookup", "db_query"]);
+  localStorage.clear();
+
+  vi.stubEnv("DEV", false);
+  vi.resetModules();
+  const mod = await import("./mcpTools");
+  expect(mod.visibleRows().some((r) => r.label === "Company database (read)")).toBe(true);
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 /// With DEV stubbed true, the Auto Run group is offered as one row and its

@@ -17,8 +17,11 @@ import {
   forgetDbConfig,
   hasStoredDbConfig,
   isDbConfigComplete,
+  isDevLoginConnection,
   loadDbConfig,
+  loadDbWrites,
   saveDbConfig,
+  saveDbWrites,
 } from "../lib/dbServer";
 import { DEV_BUILD, loadDisabledTools, saveDisabledTools, toggleRow, visibleRows } from "../lib/mcpTools";
 import { unwrapStr } from "../lib/ipc";
@@ -151,6 +154,15 @@ export default function AiBridge() {
     setDb(next);
     saveDbConfig(next);
   };
+  // Whether the assistant may create, update and delete. Half the
+  // permission: the Rust side also requires the connection's own user to
+  // be the dev login, and refuses the write when either is missing.
+  const [dbWrites, setWrites] = useState<boolean>(loadDbWrites);
+  const setDbWrites = (on: boolean) => {
+    setWrites(on);
+    saveDbWrites(on);
+  };
+  const devLogin = isDevLoginConnection(db.connection_string);
 
   // Shipped defaults fill a form NOTHING was ever saved into - a machine
   // that configured (or deliberately cleared) its own values never has
@@ -603,51 +615,17 @@ export default function AiBridge() {
       <section data-tour="ai-db" className="space-y-3 rounded-md border border-border bg-surface p-4">
         <div className="flex items-center gap-2">
           <Database size={14} className="shrink-0 text-muted" />
-          <h2 className="text-sm font-semibold text-text">Company database (PHR-X)</h2>
+          <h2 className="text-sm font-semibold text-text">Company database</h2>
         </div>
         <p className="text-xs text-muted">
-          Register your company's database MCP server beside this one, so an assistant
-          can read the schema and your test cases in the same session. Point it at the
-          built <span className="id-mono">PeoplesHR.DBMCPServer.exe</span> and give it
-          the connection settings from its README.
+          The connection you choose here is the one this app&apos;s own database tools
+          use. Switch them on with{" "}
+          <span className="font-medium text-text">Company database (read)</span> in the
+          tool list, and an assistant can find the table behind a screen and read it
+          while it writes cases.
         </p>
 
         <div className="space-y-2">
-          <div className="flex items-end gap-2">
-            <label className="min-w-0 flex-1 text-xs text-muted">
-              Server path (file or folder)
-              <Input
-                aria-label="Database server path"
-                className="mt-1 w-full py-1.5 text-xs"
-                placeholder="…\PeoplesHR.DBMCPServer.exe or its folder"
-                value={db.exe_path}
-                onChange={(e) => editDb({ exe_path: e.target.value })}
-              />
-            </label>
-            <Button size="sm" variant="outline" onClick={pickExe}>
-              <IconBrowse aria-hidden />
-              File
-            </Button>
-            <Button size="sm" variant="outline" onClick={pickFolder}>
-              <IconBrowse aria-hidden />
-              Folder
-            </Button>
-          </div>
-
-          <label className="block text-xs text-muted">
-            DB_TYPE
-            <Select
-              aria-label="Database type"
-              className="mt-1 w-full"
-              triggerClassName="py-1.5 text-xs"
-              value={db.db_type}
-              onChange={(e) => editDb({ db_type: e.target.value })}
-            >
-              <option value="mssql">mssql</option>
-              <option value="sqlserver">sqlserver</option>
-            </Select>
-          </label>
-
           {/* CONNECTION_STRING, built from fields rather than typed whole.
               The stored value is still the single string the MCP server
               receives - these inputs are a view over it, parsed out on
@@ -785,6 +763,83 @@ export default function AiBridge() {
             )}
           </div>
 
+          {/* The second switch. Reading is the "Company database (read)"
+              row in the tool list; writing is its own decision and lives
+              here, beside the connection it applies to, because that is
+              what decides whether it may be made at all.
+
+              Shown OFF on a connection that cannot write, whatever is
+              stored: the app refuses such a write anyway (both doors -
+              this switch AND the connection's user), and a switch reading
+              "on" while every write comes back refused is a lie. The
+              stored choice is kept, so going back to the dev login
+              restores it. */}
+          <div className="space-y-1 rounded-md border border-border/60 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted">
+                Create, update and delete
+              </span>
+              <Switch
+                ariaLabel="Create, update and delete"
+                checked={dbWrites && devLogin}
+                disabled={!devLogin}
+                onCheckedChange={setDbWrites}
+              />
+            </div>
+            <p className="text-[11px] text-faint">
+              Only on the Dev - dev login connection, and every statement is written to
+              the log.
+            </p>
+          </div>
+        </div>
+
+        {/* Everything below registers the company's SEPARATE database MCP
+            server. It predates the tools above and is no longer how a
+            lookup happens, so it is secondary now rather than the point
+            of the card. */}
+        <div className="space-y-2 border-t border-border/60 pt-3">
+          <p className="text-xs text-muted">
+            Optional: register the company&apos;s own database MCP server beside this
+            one. It is no longer needed for lookups. Point it at the built{" "}
+            <span className="id-mono">PeoplesHR.DBMCPServer.exe</span> and it receives
+            the connection above.
+          </p>
+
+          <div className="flex items-end gap-2">
+            <label className="min-w-0 flex-1 text-xs text-muted">
+              Server path (file or folder)
+              <Input
+                aria-label="Database server path"
+                className="mt-1 w-full py-1.5 text-xs"
+                placeholder="…\PeoplesHR.DBMCPServer.exe or its folder"
+                value={db.exe_path}
+                onChange={(e) => editDb({ exe_path: e.target.value })}
+              />
+            </label>
+            <Button size="sm" variant="outline" onClick={pickExe}>
+              <IconBrowse aria-hidden />
+              File
+            </Button>
+            <Button size="sm" variant="outline" onClick={pickFolder}>
+              <IconBrowse aria-hidden />
+              Folder
+            </Button>
+          </div>
+
+          <label className="block text-xs text-muted">
+            DB_TYPE
+            <Select
+              aria-label="Database type"
+              className="mt-1 w-full"
+              triggerClassName="py-1.5 text-xs"
+              value={db.db_type}
+              onChange={(e) => editDb({ db_type: e.target.value })}
+            >
+              <option value="mssql">mssql</option>
+              <option value="sqlserver">sqlserver</option>
+            </Select>
+          </label>
+
           <label className="block text-xs text-muted">
             SCHEMA_FILTER <span className="text-faint">(optional)</span>
             <Input
@@ -855,6 +910,11 @@ export default function AiBridge() {
             onClick={() => {
               forgetDbConfig();
               setDb(loadDbConfig());
+              // Writing goes with them. Forgetting the connection and
+              // leaving permission to write on it standing would mean the
+              // next connection chosen here inherits a decision nobody
+              // made about it.
+              setDbWrites(false);
               toast.success("Database settings forgotten.");
             }}
           >
@@ -904,6 +964,15 @@ export default function AiBridge() {
             behind a requirement. A page opens from a search result, from its path, or
             from the address in your browser. Searching and reading are one switch
             because reading only works on a page the search found.
+          </li>
+          <li>
+            <span className="font-medium text-text">Company database (read)</span> — two tools under one switch: one finds the tables and columns behind a
+            topic, the other runs a single statement on the connection you chose
+            under Company database. It is how an assistant checks what a screen
+            actually reads, or what a value is today, instead of guessing. SELECT
+            only, unless you switch creating, updating and deleting on separately
+            beside that connection. Off, an assistant never reaches your database
+            through this app.
           </li>
           {DEV_BUILD && (
             <li>

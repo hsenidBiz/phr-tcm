@@ -32,6 +32,7 @@ import {
 import { noteAssigned } from "./lib/notifications";
 import { appIsInView, osNotify, summarize } from "./lib/assignedAlerts";
 import { disabledToolsSnapshot, subscribeDisabledTools } from "./lib/mcpTools";
+import { dbConnectionSnapshot, dbWritesSnapshot, subscribeDbSettings } from "./lib/dbServer";
 import {
   clearTourRepositories,
   setTourRepositories,
@@ -603,6 +604,12 @@ export default function App() {
   // The working repository decides where a writing job's file goes, so the
   // bridge learns of a change the moment the AI Bridge tab makes it.
   const workingDir = useSyncExternalStore(subscribeWorkingDir, workingDirSnapshot);
+  // The database connection the two database tools run on, and whether
+  // they may write. Both live on the AI Bridge tab and both are pushed
+  // here, so choosing a different environment takes effect on the
+  // assistant's next call rather than after a restart.
+  const dbConnection = useSyncExternalStore(subscribeDbSettings, dbConnectionSnapshot);
+  const dbWrites = useSyncExternalStore(subscribeDbSettings, dbWritesSnapshot);
   useEffect(() => {
     if (tourOpen) return;
     if (!signedIn || !org || !project) return;
@@ -616,6 +623,8 @@ export default function App() {
           bridgePrefs.preconditionsRef,
           disabledTools,
           workingDir || null,
+          dbConnection || null,
+          dbWrites,
         ),
       )
       .catch(() => {});
@@ -627,6 +636,8 @@ export default function App() {
     bridgePrefs.preconditionsRef,
     disabledTools,
     workingDir,
+    dbConnection,
+    dbWrites,
     tourOpen,
   ]);
 

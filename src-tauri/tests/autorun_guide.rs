@@ -88,6 +88,25 @@ fn the_guide_says_where_assertions_may_come_from() {
     );
 }
 
+/// The sources section lists the database as a way to verify an effect
+/// the UI does not show. It now has tools of its own, so the bullet names
+/// them - an assistant told a source exists and not how to reach it
+/// either guesses at a server it does not have or skips the check.
+#[test]
+fn the_database_bullet_names_the_tools_that_reach_it() {
+    let g = autorun_guide();
+    let bullet = g
+        .split("**The database")
+        .nth(1)
+        .and_then(|rest| rest.split("\n- ").next())
+        .expect("the guide still lists the database as a source");
+    assert!(bullet.contains("`db_lookup`"), "{bullet}");
+    assert!(bullet.contains("`db_query`"), "{bullet}");
+    // And it stays out of the script itself: a script that reads the
+    // database is a script the runner cannot execute.
+    assert!(bullet.contains("Out of scope for the script"), "{bullet}");
+}
+
 /// Extracts the first balanced `open`/`close` run starting at `from`,
 /// tracking depth rather than jumping to the string's last matching
 /// character - the guide carries more than one JSON example, and `find`

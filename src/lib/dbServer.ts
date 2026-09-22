@@ -14,6 +14,28 @@ import type { DbServerConfig } from "../bindings";
 
 const KEY = "tcm-v2-db-mcp";
 
+/** The create/update/delete switch. "1" only when it is on, and absent
+ * otherwise - so a fresh profile and a cleared one both read off, which is
+ * the only default a switch like this may have. */
+const WRITES_KEY = "tcm-v2-db-writes";
+
+const listeners = new Set<() => void>();
+
+function notify(): void {
+  for (const l of listeners) l();
+}
+
+/** Subscription so App can re-push the bridge context the moment the
+ * connection or the write switch changes, instead of the change waiting
+ * for the next org/project change. The same pattern the disabled tool set
+ * uses. */
+export function subscribeDbSettings(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
 export const EMPTY_DB_CONFIG: DbServerConfig = {
   exe_path: "",
   db_type: "mssql",
@@ -55,6 +77,7 @@ export function saveDbConfig(config: DbServerConfig): void {
   } catch {
     // storage unavailable -> the settings last for this session only
   }
+  notify();
 }
 
 export function forgetDbConfig(): void {
@@ -63,6 +86,56 @@ export function forgetDbConfig(): void {
   } catch {
     // nothing to do
   }
+  notify();
+}
+
+/** Whether the assistant may create, update and delete on the chosen
+ * connection. Off unless it was explicitly switched on. */
+export function loadDbWrites(): boolean {
+  try {
+    return localStorage.getItem(WRITES_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveDbWrites(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(WRITES_KEY, "1");
+    else localStorage.removeItem(WRITES_KEY);
+  } catch {
+    // storage unavailable -> the choice lasts for this session only
+  }
+  notify();
+}
+
+/** The connection the database tools use, or "" when none is chosen.
+ * A primitive, so `useSyncExternalStore` is happy to re-read it. */
+export function dbConnectionSnapshot(): string {
+  return loadDbConfig().connection_string.trim();
+}
+
+export function dbWritesSnapshot(): boolean {
+  return loadDbWrites();
+}
+
+/** Whether a connection string signs in as the dev login - the only user
+ * the app lets an assistant write as.
+ *
+ * A mirror of `db::guard::access_for` in Rust, which is the door that
+ * actually enforces it. This copy decides only whether the write SWITCH
+ * can be moved: a screen that offered it on a read-only connection would
+ * be promising something the backend refuses. */
+export function isDevLoginConnection(connectionString: string): boolean {
+  for (const part of connectionString.split(";")) {
+    const at = part.indexOf("=");
+    if (at < 0) continue;
+    const key = part.slice(0, at).replace(/\s+/g, "").toLowerCase();
+    if (key === "userid" || key === "uid" || key === "user") {
+      return part.slice(at + 1).trim().toLowerCase().endsWith("_devlogin");
+    }
+  }
+  return false;
 }
 
 /** Everything the server needs before it can be registered. */

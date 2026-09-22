@@ -461,6 +461,8 @@ fn ctx() -> BridgeContext {
         preconditions_ref: None,
         disabled_tools: vec![],
         working_dir: None,
+        db_connection_string: None,
+        db_writes: false,
     }
 }
 

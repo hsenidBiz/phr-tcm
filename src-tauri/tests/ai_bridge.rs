@@ -12,6 +12,8 @@ fn ctx() -> BridgeContext {
         preconditions_ref: Some("Custom.Preconditions".into()),
         disabled_tools: vec![],
         working_dir: None,
+        db_connection_string: None,
+        db_writes: false,
     }
 }
 
@@ -431,6 +433,17 @@ async fn guide_carries_format_rules_and_live_modules() {
     assert!(
         rebuild.contains("ask the") && rebuild.contains("developer"),
         "a blocked assistant has to ask, not improvise: {rebuild}"
+    );
+    // The database tools belong in the same section - they are a source to
+    // check against, and the one thing to say about them is what they are
+    // NOT: the expected result still comes from the specification.
+    assert!(
+        rebuild.contains("`db_lookup`") && rebuild.contains("`db_query`"),
+        "the guide names the database tools: {rebuild}"
+    );
+    assert!(
+        rebuild.contains("current state"),
+        "and says the database reports the present, not the requirement: {rebuild}"
     );
 }
 
@@ -1510,6 +1523,8 @@ async fn a_query_less_get_tags_is_capped_and_a_query_still_searches_everything()
         preconditions_ref: None,
         disabled_tools: vec![],
         working_dir: None,
+        db_connection_string: None,
+        db_writes: false,
     };
     let key = v2_lib::cache::keys::tags("cap-org", "CapProj");
     let values: Vec<String> = (0..350).map(|i| format!("tag-{i:03}")).collect();
@@ -1648,4 +1663,338 @@ async fn transform_from_a_file_echoes_its_specs() {
     let (_, out) = route(&ctx(), None, "POST", "/transform", &inline, "1.0.0").await;
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert!(v.get("specs").is_none(), "{out}");
+}
+
+// ============================================================ the database
+//
+// Two routes, one guard. The route itself can only be tested as far as its
+// refusals here - past them it spawns sqlcmd - so the work happens in
+// `db::query`, which takes the process as a `Runner` and is exercised with
+// a fake one below. The company database is not reachable from this
+// machine at all, which is precisely why none of this may depend on it.
+
+mod db_tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use v2_lib::ai_bridge::{route, BridgeContext};
+    use v2_lib::db::query::{run_lookup, run_query, NO_CONNECTION, WRITES_OFF};
+    use v2_lib::db::{
+        classify, parse_connection, Connection, Output, Runner, Verdict, NOT_INSTALLED,
+        READ_ONLY_SENTENCE, SQLCMD_OVERRIDE,
+    };
+    use v2_lib::db_defaults::DB_PRESETS;
+
+    /// A stand-in for sqlcmd: answers with what it was built with, and
+    /// keeps every call so a test can assert it was never reached.
+    #[derive(Default)]
+    struct FakeRunner {
+        status: i32,
+        stdout: String,
+        stderr: String,
+        calls: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl FakeRunner {
+        fn answering(stdout: &str) -> FakeRunner {
+            FakeRunner { stdout: stdout.to_string(), ..Default::default() }
+        }
+        fn failing(stderr: &str) -> FakeRunner {
+            FakeRunner { status: 1, stderr: stderr.to_string(), ..Default::default() }
+        }
+        fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl Runner for FakeRunner {
+        async fn run(
+            &self,
+            _exe: &Path,
+            args: &[String],
+            _timeout: Duration,
+        ) -> Result<Output, String> {
+            self.calls.lock().unwrap().push(args.to_vec());
+            Ok(Output {
+                status: self.status,
+                stdout: self.stdout.clone(),
+                stderr: self.stderr.clone(),
+            })
+        }
+    }
+
+    fn preset(label: &str) -> Connection {
+        let p = DB_PRESETS.iter().find(|p| p.label == label).expect("the preset");
+        parse_connection(p.connection_string).expect("the preset parses")
+    }
+
+    fn read_only() -> Connection {
+        preset("Dev \u{2014} read only")
+    }
+
+    fn dev_login() -> Connection {
+        preset("Dev \u{2014} dev login")
+    }
+
+    fn exe() -> PathBuf {
+        PathBuf::from("sqlcmd.exe")
+    }
+
+    fn with_connection(label: &str, writes: bool) -> BridgeContext {
+        let p = DB_PRESETS.iter().find(|p| p.label == label).expect("the preset");
+        BridgeContext {
+            db_connection_string: Some(p.connection_string.to_string()),
+            db_writes: writes,
+            ..BridgeContext::default()
+        }
+    }
+
+    // ---------------------------------------------------------- the routes
+
+    #[tokio::test]
+    async fn both_routes_need_a_connection_to_have_been_chosen() {
+        let c = BridgeContext::default();
+        for (path, body) in [
+            ("/db-lookup", r#"{"query":"leave"}"#),
+            ("/db-query", r#"{"sql":"SELECT 1"}"#),
+        ] {
+            let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 409, "{path}: {said}");
+            assert_eq!(said, NO_CONNECTION, "{path}");
+            // The sentence has to name where the choice is made.
+            assert!(said.contains("AI Bridge tab"), "{said}");
+        }
+    }
+
+    /// The override is authoritative, so pointing it at a path that does
+    /// not exist is how a machine WITH sqlcmd installed (this one) tests
+    /// the answer a machine without it gets.
+    #[tokio::test]
+    async fn both_routes_say_so_when_sqlcmd_is_not_installed() {
+        let before = std::env::var(SQLCMD_OVERRIDE).ok();
+        std::env::set_var(SQLCMD_OVERRIDE, "Z:\\no\\such\\sqlcmd.exe");
+
+        let c = with_connection("Dev \u{2014} read only", false);
+        for (path, body) in [
+            ("/db-lookup", r#"{"query":"leave"}"#),
+            ("/db-query", r#"{"sql":"SELECT 1"}"#),
+        ] {
+            let (status, said) = route(&c, None, "POST", path, body, "1.0.0").await;
+            assert_eq!(status, 409, "{path}: {said}");
+            assert_eq!(said, NOT_INSTALLED, "{path}");
+        }
+
+        match before {
+            Some(v) => std::env::set_var(SQLCMD_OVERRIDE, v),
+            None => std::env::remove_var(SQLCMD_OVERRIDE),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lookup_with_no_words_is_refused_before_anything_runs() {
+        let c = with_connection("Dev \u{2014} read only", false);
+        for body in [r#"{"query":""}"#, r#"{"query":"   "}"#, "{}"] {
+            let (status, said) = route(&c, None, "POST", "/db-lookup", body, "1.0.0").await;
+            assert_eq!(status, 400, "{body}: {said}");
+            assert!(said.contains("query"), "{said}");
+        }
+        let (status, said) = route(&c, None, "POST", "/db-query", "{}", "1.0.0").await;
+        assert_eq!(status, 400, "{said}");
+        assert!(said.contains("sql"), "{said}");
+    }
+
+    // ------------------------------------------------------- the statement
+
+    #[tokio::test]
+    async fn a_write_on_a_read_only_connection_never_reaches_the_process() {
+        let fake = FakeRunner::answering("");
+        let refused = run_query(
+            &fake,
+            &exe(),
+            &read_only(),
+            // Even with the switch ON: the connection decides too.
+            true,
+            "INSERT INTO dbo.Leave (id) VALUES (1)",
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(refused.0, 400);
+        assert_eq!(refused.1, READ_ONLY_SENTENCE);
+        assert!(fake.calls().is_empty(), "a refused write reached sqlcmd");
+    }
+
+    #[tokio::test]
+    async fn a_write_with_the_switch_off_never_reaches_the_process_either() {
+        let fake = FakeRunner::answering("");
+        for sql in [
+            "INSERT INTO dbo.Leave (id) VALUES (1)",
+            "UPDATE dbo.Leave SET id = 2",
+            "DELETE FROM dbo.Leave",
+        ] {
+            let refused = run_query(&fake, &exe(), &dev_login(), false, sql).await.unwrap_err();
+            assert_eq!(refused.0, 400, "{sql}");
+            assert_eq!(refused.1, WRITES_OFF, "{sql}");
+            assert!(refused.1.contains("AI Bridge tab"), "{}", refused.1);
+        }
+        assert!(fake.calls().is_empty(), "a switched-off write reached sqlcmd");
+    }
+
+    #[tokio::test]
+    async fn a_write_needs_both_the_switch_and_the_dev_login_and_is_logged_whole() {
+        let fake = FakeRunner::answering("");
+        // A marker no other test writes, so the log line is findable in a
+        // shared in-memory tail.
+        let sql = "INSERT INTO dbo.Leave (marker) VALUES ('task6-write-marker')";
+        let out = run_query(&fake, &exe(), &dev_login(), true, sql).await.expect("it runs");
+        assert_eq!(out, "");
+        assert_eq!(fake.calls().len(), 1, "the write reached sqlcmd exactly once");
+        assert!(fake.calls()[0].contains(&sql.to_string()), "{:?}", fake.calls()[0]);
+
+        let line = v2_lib::applog::recent(400)
+            .into_iter()
+            .map(|l| l.message)
+            .find(|m| m.contains("task6-write-marker"))
+            .expect("the write is in the log");
+        assert!(line.starts_with("db query (Write) on "), "{line}");
+        assert!(line.contains("sgdev01db02.cloud/hrmmain_philippinesdev"), "{line}");
+        // The whole statement, and never the credentials.
+        assert!(line.ends_with(sql), "{line}");
+        assert!(!line.contains("abc123"), "the password is in the log: {line}");
+        assert!(!line.contains("devlogin"), "the user is in the log: {line}");
+    }
+
+    #[tokio::test]
+    async fn a_read_is_logged_short_and_without_the_credentials() {
+        let fake = FakeRunner::answering("n\n1\n");
+        let long = format!("SELECT 'task6-read-marker' AS a, '{}' AS b", "x".repeat(400));
+        run_query(&fake, &exe(), &read_only(), false, &long).await.expect("a read runs");
+
+        let line = v2_lib::applog::recent(400)
+            .into_iter()
+            .map(|l| l.message)
+            .find(|m| m.contains("task6-read-marker"))
+            .expect("the read is in the log");
+        assert!(line.starts_with("db query (Read) on "), "{line}");
+        assert!(line.contains("sgdev01db02.cloud/hrmmain_philippines"), "{line}");
+        assert!(!line.contains(&"x".repeat(400)), "a read is cut short: {line}");
+        assert!(!line.contains("M5kjapL2H3bE"), "the password is in the log: {line}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_statement_is_refused_on_the_dev_login_too() {
+        let fake = FakeRunner::answering("");
+        for sql in ["DROP TABLE dbo.Leave", "SELECT 1\nGO\nSELECT 2", "EXEC sp_who"] {
+            let refused = run_query(&fake, &exe(), &dev_login(), true, sql).await.unwrap_err();
+            assert_eq!(refused.0, 400, "{sql}");
+            assert!(!refused.1.is_empty(), "{sql}");
+        }
+        assert!(fake.calls().is_empty(), "a refused statement reached sqlcmd");
+    }
+
+    /// What sqlcmd says when it cannot reach the server - the one failure
+    /// this machine CAN produce for real. It echoes the command line,
+    /// password and all, which is why nothing leaves `run_sql` unredacted.
+    #[tokio::test]
+    async fn a_connection_failure_comes_back_as_502_without_the_password() {
+        let password = "abc123@@@###";
+        let fake = FakeRunner::failing(&format!(
+            "Sqlcmd: Error: Microsoft ODBC Driver 17: Login failed (-P {password})"
+        ));
+        let refused =
+            run_query(&fake, &exe(), &dev_login(), false, "SELECT 1 AS n").await.unwrap_err();
+
+        assert_eq!(refused.0, 502);
+        assert!(refused.1.starts_with("the database refused the statement: "), "{}", refused.1);
+        assert!(refused.1.contains("Login failed"), "{}", refused.1);
+        assert!(!refused.1.contains(password), "the password came back: {}", refused.1);
+        assert!(refused.1.contains("(hidden)"), "{}", refused.1);
+    }
+
+    #[tokio::test]
+    async fn a_capped_answer_says_so_on_its_first_line() {
+        let mut rows = String::from("id\n");
+        for i in 0..250 {
+            rows.push_str(&format!("{i}\n"));
+        }
+        let fake = FakeRunner::answering(&rows);
+        let out = run_query(&fake, &exe(), &read_only(), false, "SELECT id FROM dbo.Leave")
+            .await
+            .expect("a read runs");
+        let first = out.lines().next().unwrap();
+        assert!(first.starts_with("rows: "), "{first}");
+        assert!(first.contains("(capped)"), "{first}");
+
+        let small = FakeRunner::answering("id\n1\n2\n");
+        let out = run_query(&small, &exe(), &read_only(), false, "SELECT id FROM dbo.Leave")
+            .await
+            .expect("a read runs");
+        assert!(!out.contains("capped"), "an uncapped answer says nothing about caps: {out}");
+    }
+
+    // ---------------------------------------------------------- the lookup
+
+    const TWO_TABLES: &str = "sch\ttab\trows_est\tcols\tfks\n\
+----\t---\t--------\t----\t---\n\
+dbo\tLeaveRequest\t1240\tLeaveRequestId int | LeaveTypeId int\tLeaveTypeId -> dbo.LeaveType(LeaveTypeId)\n\
+\n\
+(1 rows affected)\n";
+
+    #[tokio::test]
+    async fn a_lookup_runs_one_read_and_renders_it() {
+        let fake = FakeRunner::answering(TWO_TABLES);
+        let out = run_lookup(&fake, &exe(), &read_only(), "leave request", 10)
+            .await
+            .expect("a lookup runs");
+
+        assert!(out.contains("dbo.LeaveRequest (1240 rows est.)"), "{out}");
+        assert!(out.contains("foreign key: LeaveTypeId -> dbo.LeaveType(LeaveTypeId)"), "{out}");
+        assert_eq!(fake.calls().len(), 1, "one statement, not a round trip per table");
+        // Whatever else the statement is, it is a read.
+        let sent = fake.calls()[0].last().unwrap().clone();
+        assert_eq!(classify(&sent), Verdict::Read, "{sent}");
+    }
+
+    /// A bare name is a different question from a topic: "what is in this
+    /// table", not "which tables are about this". The ranked lookup lists
+    /// only the columns that matched the words, so a name gets the whole
+    /// column list instead - inside the same tool, since an assistant
+    /// should not have to know which shape it is asking for.
+    #[tokio::test]
+    async fn a_bare_table_name_comes_back_as_that_tables_columns() {
+        let columns = "sch\ttab\tcol\ttyp\tlen\tnul\n\
+----\t---\t---\t---\t---\t---\n\
+dbo\tLeaveRequest\tLeaveRequestId\tint\tNULL\tNO\n\
+dbo\tLeaveRequest\tReason\tnvarchar\t200\tYES\n\
+\n\
+(2 rows affected)\n";
+        let fake = FakeRunner::answering(columns);
+        let out = run_lookup(&fake, &exe(), &read_only(), "dbo.LeaveRequest", 10)
+            .await
+            .expect("a describe runs");
+
+        assert!(out.contains("LeaveRequestId int not null"), "{out}");
+        assert!(out.contains("Reason nvarchar(200) null"), "{out}");
+        assert_eq!(fake.calls().len(), 1, "one statement for a name that exists");
+    }
+
+    #[tokio::test]
+    async fn a_name_that_is_not_a_table_falls_back_to_the_ranked_lookup() {
+        // Nothing comes back for the describe, so the words are treated as
+        // a topic and the ranked lookup answers.
+        let fake = FakeRunner::answering("");
+        let out = run_lookup(&fake, &exe(), &read_only(), "Leave", 10).await.expect("it runs");
+        assert_eq!(out, "no table or column matches those words", "{out}");
+        assert_eq!(fake.calls().len(), 2, "the describe, then the lookup");
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_cannot_reach_the_server_says_so_without_the_password() {
+        let fake = FakeRunner::failing("Login failed (-P M5kjapL2H3bEIuZZ4YA4)");
+        let refused =
+            run_lookup(&fake, &exe(), &read_only(), "leave request", 10).await.unwrap_err();
+        assert_eq!(refused.0, 502);
+        assert!(!refused.1.contains("M5kjapL2H3bEIuZZ4YA4"), "{}", refused.1);
+    }
 }

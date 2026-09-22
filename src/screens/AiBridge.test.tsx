@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Toaster } from "sonner";
 import AiBridge from "./AiBridge";
 import { setTourRunning } from "../tour/tourState";
+import { dbConnectionSnapshot, subscribeDbSettings } from "../lib/dbServer";
 
 afterEach(() => {
   clearMocks();
@@ -128,7 +129,7 @@ test("the how-it-works card names every MCP tool", async () => {
   // getting rid of.
   // "Find a PBI", not "Find a work item": the query filters on work item
   // type = Product Backlog Item, so it never returns a bug or a task.
-  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts"]) {
+  for (const label of ["Test Suites", "Run failures", "Project tags", "Find a PBI", "Project wiki", "Auto Run scripts", "Company database (read)"]) {
     expect(within(card).getByText(label)).toBeInTheDocument();
   }
   for (const label of [
@@ -762,7 +763,7 @@ test("the tool list offers only the switchable tools, by their human names", asy
   expect(screen.getByLabelText("Project wiki")).toBeInTheDocument();
   expect(screen.getByLabelText("Test Suites")).toBeInTheDocument();
   expect(screen.getByLabelText("Auto Run scripts")).toBeInTheDocument();
-  expect(within(toolSection).getByText("6 of 6 on")).toBeInTheDocument();
+  expect(within(toolSection).getByText("7 of 7 on")).toBeInTheDocument();
 });
 
 test("switching the Auto Run scripts row off sends every tool name in the disabled list", async () => {
@@ -802,7 +803,7 @@ test("switching the Auto Run scripts row off sends every tool name in the disabl
   ]);
 });
 
-test("the PHR-X card hides when switched off in Settings, except during the tour", async () => {
+test("the database card hides when switched off in Settings, except during the tour", async () => {
   localStorage.setItem("tcm-v2-ai-show-db", "off");
   mockIPC((cmd) => {
     if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
@@ -818,7 +819,140 @@ test("the PHR-X card hides when switched off in Settings, except during the tour
 
   setTourRunning(true);
   renderBridge(qc);
-  expect(await screen.findByText("Company database (PHR-X)")).toBeInTheDocument();
+  expect(await screen.findByText("Company database")).toBeInTheDocument();
   setTourRunning(false);
   localStorage.clear();
+});
+
+// --------------------------------------------- the database tools' switches
+
+/// The card is about the connection the app's OWN tools use now. The
+/// PHR-X server it used to be about is still registerable, below and
+/// optional, and the heading no longer claims the card for it.
+test("the Company database card leads with the connection, not the PHR-X server", async () => {
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  expect(await screen.findByText("Company database")).toBeInTheDocument();
+  expect(screen.queryByText("Company database (PHR-X)")).not.toBeInTheDocument();
+  expect(screen.getByText(/no longer needed for lookups/)).toBeInTheDocument();
+});
+
+/// Off by default, and unmovable on a connection the backend would refuse
+/// the write on anyway.
+test("creating, updating and deleting is off, and disabled on a read-only connection", async () => {
+  localStorage.setItem(
+    "tcm-v2-db-mcp",
+    JSON.stringify({
+      exe_path: "",
+      db_type: "mssql",
+      connection_string: "Server=dev;Database=a;User Id=sgdev01db02_readonly;Password=p;",
+      schema_filter: "",
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const writes = await screen.findByRole("switch", { name: "Create, update and delete" });
+  expect(writes).toHaveAttribute("aria-checked", "false");
+  expect(writes).toBeDisabled();
+  // And the reason it cannot be moved is on screen, not implied.
+  expect(
+    screen.getByText(/Only on the Dev - dev login connection/),
+  ).toBeInTheDocument();
+
+  fireEvent.click(writes);
+  expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();
+});
+
+/// On the dev login it moves, and the stored flag is what App pushes to
+/// the bridge beside the connection string.
+test("on the dev login the write switch turns on and is stored", async () => {
+  localStorage.setItem(
+    "tcm-v2-db-mcp",
+    JSON.stringify({
+      exe_path: "",
+      db_type: "mssql",
+      connection_string: "Server=dev;Database=a;User Id=sgdev01db01_devlogin;Password=p;",
+      schema_filter: "",
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  const writes = await screen.findByRole("switch", { name: "Create, update and delete" });
+  expect(writes).not.toBeDisabled();
+  expect(writes).toHaveAttribute("aria-checked", "false");
+
+  fireEvent.click(writes);
+  expect(localStorage.getItem("tcm-v2-db-writes")).toBe("1");
+  expect(
+    await screen.findByRole("switch", { name: "Create, update and delete" }),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
+/// Choosing an environment is what decides which database the tools run
+/// on, so it has to reach the store App pushes from - the connection is
+/// persisted and the subscribers are told, in one act.
+test("picking a preset stores the connection and tells the bridge subscribers", async () => {
+  const told = vi.fn();
+  const stop = subscribeDbSettings(told);
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return [];
+    if (cmd === "db_server_presets")
+      return [
+        {
+          label: "Dev — dev login",
+          connection_string: "Server=dev;Database=b;User Id=sgdev01db01_devlogin;Password=p;",
+        },
+      ];
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByLabelText("Default connections"));
+  fireEvent.click(await screen.findByText("Dev — dev login"));
+
+  expect(dbConnectionSnapshot()).toBe(
+    "Server=dev;Database=b;User Id=sgdev01db01_devlogin;Password=p;",
+  );
+  expect(told).toHaveBeenCalled();
+  // And the write switch is now movable, because that connection may write.
+  expect(
+    await screen.findByRole("switch", { name: "Create, update and delete" }),
+  ).not.toBeDisabled();
+  stop();
+});
+
+/// Forgetting the settings takes permission to write with them. Leaving it
+/// standing would hand the next connection a decision nobody made about it.
+test("forgetting the database settings switches writes off too", async () => {
+  localStorage.setItem("tcm-v2-db-writes", "1");
+  localStorage.setItem(
+    "tcm-v2-db-mcp",
+    JSON.stringify({
+      exe_path: "",
+      db_type: "mssql",
+      connection_string: "Server=dev;Database=a;User Id=sgdev01db01_devlogin;Password=p;",
+      schema_filter: "",
+    }),
+  );
+  mockIPC((cmd) => {
+    if (cmd === "bridge_status") return { port: 51234, mcp_exe: "C:\\apps\\tcm\\v2.exe" };
+    if (cmd === "detect_ai_tools") return DB_TOOLS;
+  });
+  renderBridge(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+  fireEvent.click(await screen.findByText("Forget them"));
+  expect(localStorage.getItem("tcm-v2-db-writes")).toBeNull();
+  expect(localStorage.getItem("tcm-v2-db-mcp")).toBeNull();
 });
