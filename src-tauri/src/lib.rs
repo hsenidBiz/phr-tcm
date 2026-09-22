@@ -219,11 +219,10 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
 
 /// Bring the running app's window forward.
 ///
-/// Order matters: a minimized window cannot take focus, and this window is
-/// created hidden (`visible: false` in tauri.conf.json) and shown by the
-/// frontend, so it has to be restored and shown before `set_focus` has
-/// anything to focus. Each step is best-effort - a window the user closed
-/// out from under us is not worth failing over.
+/// Order matters: a minimized or hidden window cannot take focus, so it is
+/// restored and shown before `set_focus` has anything to focus. Each step
+/// is best-effort - a window the user closed out from under us is not
+/// worth failing over.
 #[cfg(desktop)]
 fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
@@ -255,8 +254,18 @@ pub fn leave_install_dir() {
     let _ = std::env::set_current_dir(std::env::temp_dir());
 }
 
+/// When `run()` began, for the startup timings in the log. A slow launch
+/// is reported as "the window took ages", and these lines are what tell
+/// WebView2's start-up apart from the page's own loading.
+static LAUNCHED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+fn ms_since_launch() -> u128 {
+    LAUNCHED.get().map_or(0, |t| t.elapsed().as_millis())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    LAUNCHED.get_or_init(std::time::Instant::now);
     leave_install_dir();
     let builder = specta_builder();
     #[allow(unused_mut)]
@@ -295,6 +304,18 @@ pub fn run() {
         .manage(commands::ai_bridge::BridgeHandle::default())
         .manage(filewatch::FileWatchState::default())
         .invoke_handler(builder.invoke_handler())
+        // Once, for the main window's first load: the gap between the
+        // set-up line and this one is WebView2 starting and fetching the
+        // page; the frontend logs when its first screen is drawn.
+        .on_page_load(|webview, payload| {
+            static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+                && !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                applog::info(format!("startup: page loaded {} ms after launch", ms_since_launch()));
+            }
+        })
         .setup(move |app| {
             // Registers the typed-event registry in Tauri state; without
             // this every specta Event::emit panics with "EventRegistry not
@@ -326,8 +347,9 @@ pub fn run() {
                 autorun::store::set_root(dir.join("autorun"));
             }
             applog::info(format!(
-                "Test Case Manager {} started",
-                app.package_info().version
+                "Test Case Manager {} started (set up {} ms after launch)",
+                app.package_info().version,
+                ms_since_launch()
             ));
             // A panic would otherwise vanish in a windowed release build.
             let previous = std::panic::take_hook();

@@ -5,7 +5,7 @@ import App from "./App";
 import RunnerWindow from "./screens/RunnerWindow";
 import { TooltipLayer } from "./components/ui/tooltip";
 import { initTheme } from "./lib/theme";
-import { initUiClickLog } from "./lib/uiLog";
+import { initUiClickLog, logUi } from "./lib/uiLog";
 import { initExternalLinks } from "./lib/externalLinks";
 import "./index.css";
 import ErrorBoundary, { installGlobalErrorLog } from "./components/ErrorBoundary";
@@ -68,8 +68,9 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 
-// React has mounted: fade the splash out and reveal the (hidden-at-start)
-// window - together these kill the white startup flash.
+// React has mounted: fade the splash out. The window itself has been on
+// screen since launch, painted the splash colour (tauri.conf.json), so the
+// splash covers the load instead of an invisible window hiding it.
 requestAnimationFrame(() => {
   const splash = document.getElementById("splash");
   if (splash) {
@@ -77,7 +78,8 @@ requestAnimationFrame(() => {
     splash.style.opacity = "0";
     setTimeout(() => splash.remove(), 300);
   }
-  import("@tauri-apps/api/window")
-    .then(({ getCurrentWindow }) => getCurrentWindow().show())
-    .catch(() => {}); // vitest/browser: no tauri window to show
+  // Pairs with the Rust side's "set up" and "page loaded" lines: together
+  // they say where a slow launch spent its time. performance.now() counts
+  // from when this page started loading.
+  if (Root === App) logUi(`startup: first screen drawn ${Math.round(performance.now())} ms after the page began loading`);
 });

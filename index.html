@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Test Case Manager</title>
     <style>
-      /* Painted before any JS: no white flash, splash until React mounts. */
+      /* Painted before any JS, into a window that is already on screen with
+         this same colour (backgroundColor in tauri.conf.json): no white
+         flash, and the splash is what a slow launch shows until React mounts. */
       /* Deep violet-tinted near-black to match the violet flask mark. */
       html, body { margin: 0; height: 100%; background: #0e0c1c; }
       #splash {
