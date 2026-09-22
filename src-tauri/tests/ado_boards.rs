@@ -618,6 +618,18 @@ fn probe_report_reads_the_four_answers() {
         "403: the route refused a bearer token - the design stops here (§4.1 assumption)"
     );
 
+    // The controller answered 500 to the first real call; whatever it
+    // says is the only clue, so every other HTTP status shows its body too.
+    assert_eq!(
+        probe_report(&Err(AdoError::Http { status: 500, body: "Object reference not set".into() })),
+        "500: Azure DevOps said: Object reference not set"
+    );
+    // A status of 0 is this app's own sentence, shown as written.
+    assert_eq!(
+        probe_report(&Err(AdoError::Http { status: 0, body: "the Boards route needs at least one test case id".into() })),
+        "the Boards route needs at least one test case id"
+    );
+
     // Anything else is repeated as it is - there is nothing to read into
     // a token that expired or a host that never answered.
     assert_eq!(probe_report(&Err(AdoError::Unauthorized)), "unauthorized");

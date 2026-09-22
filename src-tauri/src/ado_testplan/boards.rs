@@ -83,6 +83,16 @@ pub fn probe_report(out: &Result<BoardsOutcome, AdoError>) -> String {
             let said: String = body.chars().take(600).collect();
             format!("400: the body's field names are wrong - Azure DevOps said: {said}")
         }
+        // The first real call answered 500, not 400, to the guessed body: an
+        // internal controller does not validate politely. Its body is still
+        // the only clue, so it is shown the same way.
+        Err(AdoError::Http { status, body }) if *status != 0 => {
+            let said: String = body.chars().take(600).collect();
+            format!("{status}: Azure DevOps said: {said}")
+        }
+        // Status 0 is this app's own sentence (no plan id in the reply, no
+        // suite in the named plan); it reads better than "http 0".
+        Err(AdoError::Http { status: 0, body }) => body.clone(),
         Err(AdoError::Forbidden) => {
             "403: the route refused a bearer token - the design stops here (§4.1 assumption)"
                 .to_string()
@@ -289,9 +299,18 @@ impl AdoClient {
         let body = boards_body(pbi_id, case_ids);
         crate::applog::info(format!("boards suite route: POST {} body {}", tidy(&url), body));
         // A 401/403/404 body is already logged by the transport's
-        // `refused()`, and a 400 keeps its body in `AdoError::Http` - which
-        // is what names a field this body got wrong.
-        let data = self.post_json(url, &body).await?;
+        // `refused()`. Every other status keeps its body in `AdoError::Http`
+        // and its Display drops it - so it is written here, whole: the first
+        // real call answered 500 with nothing in the log to say why.
+        let data = match self.post_json(url, &body).await {
+            Ok(d) => d,
+            Err(AdoError::Http { status, body: said }) => {
+                let said: String = said.chars().take(2000).collect();
+                crate::applog::warn(format!("boards suite route answered {status}: {said}"));
+                return Err(AdoError::Http { status, body: said });
+            }
+            Err(e) => return Err(e),
+        };
         let raw: String = data.to_string().chars().take(2000).collect();
         crate::applog::info(format!("boards suite route answered: {raw}"));
         data["testPlanId"]
