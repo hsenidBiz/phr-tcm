@@ -17,15 +17,18 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use v2_lib::autorun::accounts::Account;
-use v2_lib::autorun::recipe::SignInRecipe;
+use v2_lib::autorun::accounts::{save_accounts, Account};
+use v2_lib::autorun::recipe::{save_recipe, SignInRecipe};
+use v2_lib::autorun::replay::{run_selection, Browsers, SIGN_IN_STEP};
 use v2_lib::autorun::signin::sign_in;
+use v2_lib::autorun::{sessions, store, CaseScript, LocalRun};
 use v2_lib::browser::actions::{execute_in, execute_with, Action, ActionOutcome, HIGHLIGHT_JS, Policy};
 use v2_lib::browser::cdp::Cdp;
-use v2_lib::browser::launch::{launch_with, Browser, LaunchedBrowser};
+use v2_lib::browser::launch::{background_args, launch_with, Browser, LaunchedBrowser};
 use v2_lib::browser::locator::{resolve, Target};
 use v2_lib::browser::page;
 use v2_lib::browser::timing::Timing;
+use v2_lib::events::ReplayProgress;
 
 struct Live {
     browser: LaunchedBrowser,
@@ -508,6 +511,16 @@ const LOGIN_PAGE: &str = r#"<!doctype html><title>Login</title>
   <button>Login</button>
 </form>"#;
 
+/// A tiny page behind the sign-in: a button that reveals a form, and a
+/// paragraph an onclick handler writes into - so a script can prove it
+/// really drove the page rather than a fake that agrees with whatever it
+/// is told.
+const LEAVE_PAGE: &str = r#"<h1>Leave</h1><button id="new" onclick="document.getElementById('form').hidden=false">New request</button><div id="form" hidden><input aria-label="Reason"><button onclick="document.getElementById('msg').textContent='Saved'">Save</button></div><p id="msg"></p>"#;
+
+/// The same page with no Save button, so a script that clicks one fails
+/// for a real, page-shaped reason.
+const BROKEN_PAGE: &str = r#"<h1>Leave</h1><button id="new" onclick="document.getElementById('form').hidden=false">New request</button><div id="form" hidden><input aria-label="Reason"></div><p id="msg"></p>"#;
+
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -621,6 +634,16 @@ impl App {
                             "",
                             &format!("<!doctype html><title>Home</title><h1 id=\"home\">Home</h1><p id=\"who\"></p><script>document.getElementById('who').textContent = '{u} / ' + localStorage.getItem('token');</script>"),
                         ),
+                        None => respond(&mut stream, "", LOGIN_PAGE),
+                    }
+                } else if first.starts_with("GET /leave") {
+                    match user {
+                        Some(_) => respond(&mut stream, "", LEAVE_PAGE),
+                        None => respond(&mut stream, "", LOGIN_PAGE),
+                    }
+                } else if first.starts_with("GET /broken") {
+                    match user {
+                        Some(_) => respond(&mut stream, "", BROKEN_PAGE),
                         None => respond(&mut stream, "", LOGIN_PAGE),
                     }
                 } else {
@@ -792,4 +815,315 @@ async fn a_navigate_outside_the_projects_origins_is_refused_before_it_happens() 
     // A relative address resolves first and is judged after.
     let relative = execute_in(&mut live.cdp, &action_of(json!({ "kind": "navigate", "url": "/" })), &timing(), &policy).await;
     assert!(relative.ok, "{}", relative.detail);
+}
+
+// ---------------------------------------------------------------------
+// The unattended replay engine, against the same server and a real
+// browser per case - the `Browsers` the command builds, not a fake.
+// ---------------------------------------------------------------------
+
+/// One real background browser per `open`, with the same patience as
+/// `open()` above, counting how many were started.
+struct LiveBrowsers {
+    started: usize,
+    current: Option<LaunchedBrowser>,
+}
+
+impl Browsers for LiveBrowsers {
+    type D = Cdp;
+    async fn open(&mut self) -> Result<Cdp, String> {
+        let extra = background_args();
+        let browser = launch_with(Browser::Edge, &extra)?;
+        self.started += 1;
+        let mut last = String::new();
+        for _ in 0..60 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            match Cdp::connect(browser.port).await {
+                Ok(c) => {
+                    self.current = Some(browser);
+                    return Ok(c);
+                }
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+    async fn close(&mut self, d: Cdp) {
+        drop(d);
+        if let Some(mut b) = self.current.take() {
+            let _ = b.child.kill();
+            let _ = b.child.wait();
+            for _ in 0..20 {
+                if std::fs::remove_dir_all(&b.profile_dir).is_ok() || !b.profile_dir.exists() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
+}
+
+impl Drop for LiveBrowsers {
+    /// A failing assertion between `open` and `close` (and every early
+    /// return `?` makes possible) must never leave an Edge process, or its
+    /// throwaway profile, still on the machine.
+    fn drop(&mut self) {
+        if let Some(mut b) = self.current.take() {
+            let _ = b.child.kill();
+            let _ = b.child.wait();
+            let _ = std::fs::remove_dir_all(&b.profile_dir);
+        }
+    }
+}
+
+/// Build one case's script from JSON, the same shape the unit tests use.
+fn case_script(case_id: i32, account: Option<&str>, steps: serde_json::Value) -> CaseScript {
+    serde_json::from_value(json!({
+        "case_id": case_id,
+        "title": format!("case {case_id}"),
+        "account": account,
+        "steps": steps
+    }))
+    .expect("the test wrote an invalid case script")
+}
+
+fn new_run(pbi_id: i32) -> LocalRun {
+    LocalRun {
+        id: store::new_run_id(),
+        pbi_id,
+        started_at: "1700000000000".into(),
+        cases: vec![],
+        mode: "unattended".into(),
+        published: None,
+    }
+}
+
+#[tokio::test]
+#[ignore = "starts real headless Edge processes"]
+async fn an_unattended_selection_runs_each_case_in_its_own_browser_and_proposes_honestly() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
+    save_accounts(root.path(), &[kim()]).unwrap();
+
+    // Case 1: signs in, opens the request form and saves it - every action
+    // is expected to pass.
+    let case1 = case_script(
+        1,
+        Some("kim"),
+        json!([
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": format!("{}/leave", app.base()) },
+                { "kind": "click", "selector": { "role": "button", "name": "New request" } }
+            ]},
+            { "step_number": 2, "actions": [
+                { "kind": "fill", "selector": { "role": "textbox", "name": "Reason" }, "value": "Need a new chair" }
+            ]},
+            { "step_number": 3, "actions": [
+                { "kind": "click", "selector": { "role": "button", "name": "Save" } }
+            ]},
+            { "step_number": 4, "actions": [
+                { "kind": "expect_contains_text", "selector": { "css": "#msg" }, "value": "Saved" }
+            ]}
+        ]),
+    );
+    // Case 2: the page that is missing its Save button - step 2 fails and
+    // step 3 (the check) never runs.
+    let case2 = case_script(
+        2,
+        Some("kim"),
+        json!([
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": format!("{}/broken", app.base()) },
+                { "kind": "click", "selector": { "role": "button", "name": "New request" } }
+            ]},
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": { "role": "button", "name": "Save" } }
+            ]},
+            { "step_number": 3, "actions": [
+                { "kind": "expect_contains_text", "selector": { "css": "#msg" }, "value": "Saved" }
+            ]}
+        ]),
+    );
+    // Case 3: nobody signed in, and nothing checked - there is nothing to
+    // propose either way.
+    let case3 = case_script(
+        3,
+        None,
+        json!([
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": format!("{}/", app.base()) }
+            ]}
+        ]),
+    );
+    store::save_scripts_atomically(root.path(), &[case1, case2, case3]).unwrap();
+
+    let mut browsers = LiveBrowsers { started: 0, current: None };
+    let mut run = new_run(42);
+    let cases = vec![
+        (1, "leaves a request".to_string()),
+        (2, "hits a page missing its Save button".to_string()),
+        (3, "just looks".to_string()),
+    ];
+    let cancel = AtomicBool::new(false);
+    let mut events: Vec<ReplayProgress> = vec![];
+    let res = run_selection(&mut browsers, root.path(), "acme", "Web", &mut run, &cases, &timing(), &cancel, &mut |p| {
+        events.push(p);
+    })
+    .await;
+    assert!(res.is_ok(), "{res:?}");
+    assert_eq!(browsers.started, 3);
+    assert_eq!(run.cases.len(), 3);
+
+    let rec1 = &run.cases[0];
+    assert_eq!(rec1.proposed, "Passed", "{} / {:?}", rec1.reason, rec1.steps);
+    assert_eq!(rec1.verdict, "");
+    assert_eq!(rec1.steps[0].step_number, SIGN_IN_STEP);
+    assert_eq!(rec1.account.as_deref(), Some("kim"));
+    for s in rec1.steps.iter().filter(|s| s.step_number != SIGN_IN_STEP) {
+        let name = s.screenshot.as_ref().unwrap_or_else(|| panic!("step {} has no screenshot", s.step_number));
+        let bytes = store::load_shot(root.path(), name).expect("the screenshot file should exist");
+        assert!(
+            bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xD8,
+            "step {} screenshot does not start with the JPEG magic bytes",
+            s.step_number
+        );
+    }
+
+    let rec2 = &run.cases[1];
+    assert_eq!(rec2.proposed, "Failed", "{}", rec2.reason);
+    assert!(rec2.reason.starts_with("step 2:"), "{}", rec2.reason);
+    let step3 = rec2.steps.iter().find(|s| s.step_number == 3).expect("case 2 should still record step 3");
+    for o in &step3.outcomes {
+        assert_eq!(o.detail, "not run: an earlier step of this case failed");
+    }
+    let step2 = rec2.steps.iter().find(|s| s.step_number == 2).expect("case 2 should still record step 2");
+    assert!(
+        step2.outcomes.iter().any(|o| o.screenshot.is_some()),
+        "the failed step should carry its own screenshot: {:?}",
+        step2.outcomes
+    );
+
+    // The second case did not inherit the first one's browser - it got a
+    // fresh one, but restored kim's session rather than touching the form.
+    assert_eq!(app.logins.load(Ordering::SeqCst), 1, "case 2 should not have posted the login form again");
+    let case2_signin = rec2.steps.iter().find(|s| s.step_number == SIGN_IN_STEP).expect("case 2 should have signed in");
+    assert!(
+        case2_signin.outcomes.last().expect("a sign-in outcome").detail.contains("from a saved session"),
+        "{:?}",
+        case2_signin.outcomes
+    );
+
+    let rec3 = &run.cases[2];
+    assert_eq!(rec3.proposed, "");
+    assert!(rec3.reason.contains("checks nothing"), "{}", rec3.reason);
+
+    let saved = store::load_run(root.path(), &run.id).unwrap().expect("the run should be on disk");
+    assert_eq!(saved, run);
+    assert_eq!(saved.mode, "unattended");
+    assert!(saved.published.is_none());
+
+    for e in &events {
+        assert_eq!(e.run_id, run.id);
+    }
+    let case1_phases: Vec<&str> = events.iter().filter(|e| e.case_id == 1).map(|e| e.phase.as_str()).collect();
+    assert_eq!(case1_phases.first(), Some(&"opening"), "{case1_phases:?}");
+    assert_eq!(case1_phases.get(1), Some(&"signing_in"), "{case1_phases:?}");
+    assert_eq!(case1_phases.last(), Some(&"done"), "{case1_phases:?}");
+    assert!(
+        case1_phases[2..case1_phases.len() - 1].iter().all(|p| *p == "step"),
+        "{case1_phases:?}"
+    );
+
+    // With the saved session forgotten, case 2 has nothing to restore, so
+    // signing it in the ordinary way costs a second real login - but only
+    // one, because case 1 (running again first) re-saves the session case
+    // 2 then restores exactly as it did above.
+    sessions::forget_session(root.path(), "kim");
+    let logins_before = app.logins.load(Ordering::SeqCst);
+    let mut run2 = new_run(42);
+    run_selection(&mut browsers, root.path(), "acme", "Web", &mut run2, &cases[..2], &timing(), &cancel, &mut |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        app.logins.load(Ordering::SeqCst),
+        logins_before + 1,
+        "forgetting kim's session should force exactly one more form sign-in"
+    );
+}
+
+#[tokio::test]
+#[ignore = "starts real headless Edge processes"]
+async fn stopping_an_unattended_run_keeps_what_was_done_and_starts_nothing_more() {
+    let app = App::start();
+    let root = tempfile::tempdir().unwrap();
+    save_recipe(root.path(), "acme", "Web", &recipe_for(&app)).unwrap();
+
+    // No account: the point of this test is stopping BETWEEN cases, not
+    // signing in - a script that checks one thing is enough to see a
+    // "Passed" for the case that gets to run.
+    let base = case_script(
+        11,
+        None,
+        json!([
+            { "step_number": 1, "actions": [
+                { "kind": "navigate", "url": format!("{}/", app.base()) },
+                { "kind": "check_text", "value": "Login" }
+            ]}
+        ]),
+    );
+    let mut scripts = Vec::new();
+    for id in [11, 12, 13] {
+        let mut s = base.clone();
+        s.case_id = id;
+        scripts.push(s);
+    }
+    store::save_scripts_atomically(root.path(), &scripts).unwrap();
+
+    let mut browsers = LiveBrowsers { started: 0, current: None };
+    let mut run = new_run(7);
+    let cases = vec![(11, "first".to_string()), (12, "second".to_string()), (13, "third".to_string())];
+    let cancel = AtomicBool::new(false);
+    run_selection(&mut browsers, root.path(), "acme", "Web", &mut run, &cases, &timing(), &cancel, &mut |p| {
+        if p.case_id == 12 && p.phase == "opening" {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(run.cases.len(), 2, "case 13 never started, so it is left out entirely: {:?}", run.cases.iter().map(|c| c.case_id).collect::<Vec<_>>());
+    assert_eq!(run.cases[0].proposed, "Passed", "{}", run.cases[0].reason);
+    assert!(run.cases[1].proposed.is_empty(), "{}", run.cases[1].proposed);
+    assert!(
+        run.cases[1].steps.iter().all(|s| s.outcomes.iter().all(|o| o.detail == "not run: the run was stopped")),
+        "{:?}",
+        run.cases[1].steps
+    );
+    assert_eq!(browsers.started, 2);
+
+    let saved = store::load_run(root.path(), &run.id).unwrap().expect("the run should be on disk");
+    assert_eq!(saved.cases.len(), 2);
+}
+
+#[tokio::test]
+#[ignore = "starts a real headless Edge"]
+async fn a_background_browser_really_is_a_desktop_sized_window() {
+    let mut browsers = LiveBrowsers { started: 0, current: None };
+    let mut cdp = browsers.open().await.expect("Edge did not start");
+    let nav = execute_with(&mut cdp, &action_of(json!({ "kind": "navigate", "url": fixture_url() })), &timing()).await;
+    assert!(nav.ok, "{}", nav.detail);
+    let size = page::eval_value(&mut cdp, "[window.innerWidth, window.innerHeight]")
+        .await
+        .expect("could not read the window size");
+    let dims = size.as_array().expect("window size should read as an array");
+    let width = dims[0].as_f64().unwrap_or(0.0);
+    let height = dims[1].as_f64().unwrap_or(0.0);
+    browsers.close(cdp).await;
+    // A headless default of 800x600 would lay the application out as a
+    // tablet - `background_args`'s --window-size must actually take
+    // effect. >= rather than == because a scrollbar can shave a little off
+    // the reported inner width.
+    assert!(width >= 1300.0, "width was {width}, expected close to 1366");
+    assert!(height >= 700.0, "height was {height}, expected close to 900");
 }
