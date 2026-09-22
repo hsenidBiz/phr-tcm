@@ -142,6 +142,21 @@ pub enum AdoError {
     Network(String),
 }
 
+impl AdoError {
+    /// What to show a person for this error. `Display` of `Http` is the
+    /// bare "http 400" - this app's own name for the status - while the
+    /// sentence Azure DevOps sent explaining itself sits in `body`. A
+    /// failure list built from `to_string()` showed 69 cases refused with
+    /// "http 0" and not a word of why (2026-09-22); this is what it should
+    /// have shown.
+    pub fn user_text(&self) -> String {
+        match self {
+            AdoError::Http { body, .. } if !body.trim().is_empty() => body.trim().to_string(),
+            other => other.to_string(),
+        }
+    }
+}
+
 pub(crate) fn tc_ids_i32(ids: &[i64]) -> Vec<i32> {
     ids.iter().map(|i| *i as i32).collect()
 }

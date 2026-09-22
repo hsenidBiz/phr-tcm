@@ -87,3 +87,73 @@ async fn a_short_answer_is_an_error_not_a_guess() {
         other => panic!("expected an error, got {other:?}"),
     }
 }
+
+/// When the answer is short, ADO usually said WHY in the one item it did
+/// send (a whole-batch refusal comes back as a 200 carrying a single
+/// error item). That sentence must reach the log and the failure list -
+/// 69 creates once failed with nothing but "http 0" on either (2026-09-22).
+#[tokio::test]
+async fn a_short_answer_carries_what_ado_said() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/o/_apis/wit/$batch"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "count": 1,
+            "value": [{"code": 400, "headers": {}, "body": "{\"message\": \"VS403474: The batch was refused as a whole.\"}"}]
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let reqs = vec![
+        BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) },
+        BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) },
+    ];
+    match client.wit_batch("o", &reqs).await {
+        Err(AdoError::Http { body, .. }) => {
+            assert!(body.contains("1 of the 2"), "{body}");
+            assert!(body.contains("VS403474: The batch was refused as a whole."), "{body}");
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
+}
+
+/// A 200 that is not the batch envelope at all - a top-level error object -
+/// is reported with that object's message, not as "0 of the 2" alone.
+#[tokio::test]
+async fn a_non_envelope_answer_carries_its_message() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/o/_apis/wit/$batch"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "$id": "1", "message": "TF400898: An Internal Error Occurred.", "typeKey": "Exception"
+        })))
+        .mount(&server)
+        .await;
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let reqs = vec![BatchRequest { method: "PATCH", uri: create_uri("p"), body: serde_json::json!([]) }];
+    match client.wit_batch("o", &reqs).await {
+        Err(AdoError::Http { body, .. }) => {
+            assert!(body.contains("0 of the 1"), "{body}");
+            assert!(body.contains("TF400898"), "{body}");
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
+}
+
+/// The text a person sees for a failed call. `Display` of `Http` is the
+/// bare "http 400" - the app's own name for the status - and the sentence
+/// ADO sent explaining itself lives in `body`. The failure list showed the
+/// former, so 69 cases failed with "http 0" and no reason.
+#[test]
+fn the_failure_text_prefers_what_ado_said() {
+    let e = AdoError::Http { status: 0, body: "Azure DevOps answered 1 of the 69 requests".into() };
+    assert_eq!(e.user_text(), "Azure DevOps answered 1 of the 69 requests");
+    let e = AdoError::Http { status: 400, body: "TF401320: Rule Error for field Title".into() };
+    assert_eq!(e.user_text(), "TF401320: Rule Error for field Title");
+    // No body: the status is still better than nothing.
+    let e = AdoError::Http { status: 502, body: "   ".into() };
+    assert_eq!(e.user_text(), "http 502");
+    // Every other variant reads as it always did.
+    assert_eq!(AdoError::Unauthorized.user_text(), "unauthorized");
+    assert_eq!(AdoError::Network("x".into()).user_text(), "network: x");
+}

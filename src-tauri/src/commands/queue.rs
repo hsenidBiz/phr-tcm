@@ -843,7 +843,7 @@ pub async fn submit_queue(
                         // The whole call failed (network, 401, 429 past its
                         // back-off): every case in it failed, with the reason.
                         Err(e) => {
-                            let msg = e.to_string();
+                            let msg = e.user_text();
                             for &i in &sent_idx {
                                 chunk[i - chunk_start] = Some(failed_item(i, &queue[i], msg.clone()));
                             }

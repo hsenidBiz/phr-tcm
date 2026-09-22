@@ -87,6 +87,17 @@ pub fn temp_id_op(n: usize) -> serde_json::Value {
     serde_json::json!({"op": "add", "path": "/id", "value": -(n as i64)})
 }
 
+/// An item's body as JSON. The envelope wraps each body in a STRING;
+/// one that is not JSON stays a string.
+fn parse_body(body: &serde_json::Value) -> serde_json::Value {
+    match body {
+        serde_json::Value::String(s) => {
+            serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.clone()))
+        }
+        other => other.clone(),
+    }
+}
+
 impl AdoClient {
     /// Send up to `MAX_PER_BATCH` requests as one call. The answer has
     /// exactly one item per request, in order; a mismatch is an error
@@ -111,13 +122,38 @@ impl AdoClient {
         let data = self.post_json(url, &serde_json::Value::Array(body)).await?;
         let items = data["value"].as_array().cloned().unwrap_or_default();
         if items.len() != reqs.len() {
+            // A whole-batch refusal is a 200 carrying ONE error item, and
+            // an answer that is not the envelope at all carries a top-level
+            // `message`. Either way the reason is in the response and
+            // nowhere else - so it goes to the log whole, and the sentence
+            // ADO chose goes into the error the failure list will show.
+            let raw: String = data.to_string().chars().take(2000).collect();
+            crate::applog::warn(format!(
+                "batch of {} answered with {} item(s): {raw}",
+                reqs.len(),
+                items.len()
+            ));
+            let said = items
+                .first()
+                .map(|it| BatchItem { code: it["code"].as_u64().unwrap_or(0) as u16, body: parse_body(&it["body"]) })
+                .filter(|it| !it.ok())
+                .map(|it| it.message())
+                .or_else(|| data["message"].as_str().map(str::to_string))
+                .filter(|m| !m.trim().is_empty());
             return Err(AdoError::Http {
                 status: 0,
-                body: format!(
-                    "Azure DevOps answered {} of the {} requests in a batch, so the results cannot be matched to the cases",
-                    items.len(),
-                    reqs.len()
-                ),
+                body: match said {
+                    Some(m) => format!(
+                        "Azure DevOps answered {} of the {} requests in a batch, so the results cannot be matched to the cases. It said: {m}",
+                        items.len(),
+                        reqs.len()
+                    ),
+                    None => format!(
+                        "Azure DevOps answered {} of the {} requests in a batch, so the results cannot be matched to the cases",
+                        items.len(),
+                        reqs.len()
+                    ),
+                },
             });
         }
         Ok(items
@@ -125,13 +161,7 @@ impl AdoClient {
             .enumerate()
             .map(|(k, it)| {
                 let code = it["code"].as_u64().unwrap_or(0) as u16;
-                let body = match &it["body"] {
-                    serde_json::Value::String(s) => {
-                        serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.clone()))
-                    }
-                    other => other.clone(),
-                };
-                let item = BatchItem { code, body };
+                let item = BatchItem { code, body: parse_body(&it["body"]) };
                 // A refused item goes to the log with what the server sent,
                 // because the message shown to the user is only as good as
                 // the `message` field, and "HTTP 400" on its own explained
