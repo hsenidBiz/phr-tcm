@@ -313,6 +313,32 @@ fn no_declaration_at_all_for_a_changed_case_is_refused_with_the_case_id() {
 }
 
 #[test]
+fn reordering_the_steps_is_refused() {
+    // Same three steps, same content, only the order in the file changed -
+    // rule 1's signature comparison alone would see nothing different.
+    let step = |n: i32| {
+        serde_json::json!({ "step_number": n, "actions": [{ "kind": "click", "selector": format!("#s{n}") }] })
+    };
+    let old = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [step(1), step(2), step(3)]
+    }));
+    let new = script(json!({
+        "case_id": 1, "title": "t",
+        "steps": [step(3), step(1), step(2)]
+    }));
+
+    let err = check_edits(&old, &new, None).unwrap_err();
+    assert_eq!(err, "the steps are in a different order - a repair does not reorder a script");
+
+    // A declaration naming every step does not excuse it either - a
+    // reorder is refused outright, not something `edits` can sign off on.
+    let declared = edit(&[1, 2, 3], "reordered for readability");
+    let err = check_edits(&old, &new, Some(&declared)).unwrap_err();
+    assert_eq!(err, "the steps are in a different order - a repair does not reorder a script");
+}
+
+#[test]
 fn a_script_with_nothing_changed_needs_no_declaration() {
     // Rule 10 (a brand-new script needs no declaration) cannot be
     // represented as a call into this function at all: `check_edits` takes

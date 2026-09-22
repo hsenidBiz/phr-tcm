@@ -129,6 +129,21 @@ pub fn check_edits(old: &CaseScript, new: &CaseScript, declared: Option<&Edit>) 
     let new_map: BTreeMap<i32, &StepScript> = new.steps.iter().map(|s| (s.step_number, s)).collect();
     let all_numbers: BTreeSet<i32> = old_map.keys().chain(new_map.keys()).copied().collect();
 
+    // `replay::run_case` runs `script.steps` in Vec order, so the ORDER of
+    // the steps is behaviour, not just their content. Compared here as the
+    // sequence of step numbers common to both sides, taken in each side's
+    // own file order (not the maps' sorted order) - a step added or removed
+    // is not a reorder, so only numbers present on both sides count. This
+    // runs before rule 1 so a script whose steps were merely shuffled -
+    // same signatures, different order - is caught here rather than
+    // silently passing rule 1's signature comparison.
+    let common: BTreeSet<i32> = old_map.keys().copied().filter(|n| new_map.contains_key(n)).collect();
+    let old_order: Vec<i32> = old.steps.iter().map(|s| s.step_number).filter(|n| common.contains(n)).collect();
+    let new_order: Vec<i32> = new.steps.iter().map(|s| s.step_number).filter(|n| common.contains(n)).collect();
+    if old_order != new_order {
+        return Err("the steps are in a different order - a repair does not reorder a script".to_string());
+    }
+
     // Rule 1's basis: a step present in only one side, or whose signature
     // (actions plus unchecked reason) differs between the two.
     let mut changed: BTreeSet<i32> = BTreeSet::new();

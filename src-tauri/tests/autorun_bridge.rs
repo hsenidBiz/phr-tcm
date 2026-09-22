@@ -728,6 +728,125 @@ async fn an_edit_for_a_case_outside_the_bundle_is_refused() {
     assert_eq!(out, "edits names cases 11, 13, which are not in this bundle");
 }
 
+/// A repair may change what a step does; it may never change the ORDER
+/// the runner executes them in - `replay::run_case` runs `steps` in Vec
+/// order, so a reorder is a behaviour change the signature comparison
+/// alone would miss. Refused before anything is written, declared or not.
+#[tokio::test]
+async fn reordering_the_steps_writes_nothing() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    let before = load_script(dir.path(), 7).unwrap().unwrap();
+
+    // Same two steps, same content, just written in the opposite order.
+    let reordered = serde_json::json!([{
+        "case_id": 7,
+        "title": "Save a rating",
+        "steps": [
+            { "step_number": 2, "actions": [
+                { "kind": "click", "selector": "#save" },
+                { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved" }
+            ]},
+            { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] }
+        ]
+    }])
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &reordered, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "the steps are in a different order - a repair does not reorder a script");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap(), before, "a refused reorder wrote something");
+
+    // Declaring both steps does not excuse it either - a reorder is
+    // refused outright, not something `edits` can sign off on.
+    let declared = serde_json::json!({
+        "scripts": [{
+            "case_id": 7,
+            "title": "Save a rating",
+            "steps": [
+                { "step_number": 2, "actions": [
+                    { "kind": "click", "selector": "#save" },
+                    { "kind": "expect_contains_text", "selector": "#toast", "value": "Saved" }
+                ]},
+                { "step_number": 1, "actions": [{ "kind": "navigate", "url": "https://app.example/ratings" }] }
+            ]
+        }],
+        "edits": [{ "case_id": 7, "steps": [1, 2], "why": "reordered for readability" }],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &declared, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert_eq!(out, "the steps are in a different order - a repair does not reorder a script");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap(), before, "a refused reorder wrote something");
+}
+
+/// A declaration whose `steps` list is empty carries only a quirk, no
+/// repair. Against a script that did not change, that is exactly what it
+/// claims to be and goes through as `(unchanged)`; against one that DID
+/// change, rule 1 still refuses it - an empty list cannot cover a real
+/// change.
+#[tokio::test]
+async fn a_quirk_only_declaration_is_pinned_for_unchanged_and_refused_for_changed() {
+    let dir = TempDir::new();
+    let _root = ROOT_LOCK.lock().unwrap();
+    set_root(dir.path().to_path_buf());
+    let (_server, client) =
+        client_with_cases(&[(7, "Save a rating", &["", "A toast says Saved"])]).await;
+
+    let first = case_7("#toast", "Saved").to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &first, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+
+    // Unchanged script, quirk-only declaration: goes through as
+    // unchanged, repairs untouched, quirk recorded.
+    let unchanged = serde_json::json!({
+        "scripts": case_7("#toast", "Saved"),
+        "edits": [{
+            "case_id": 7,
+            "steps": [],
+            "why": "nothing changed, just noting this",
+            "quirk": "the toast always says exactly Saved",
+        }],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &unchanged, "1.0.0").await;
+    assert_eq!(status, 200, "{out}");
+    assert_eq!(out.lines().next().unwrap(), "saved 1 script(s): case 7 (unchanged)");
+    assert_eq!(load_script(dir.path(), 7).unwrap().unwrap().repairs, 0);
+    let quirks = load_quirks(dir.path(), "acme", "Web").unwrap();
+    assert_eq!(quirks.len(), 1);
+    assert_eq!(quirks[0].text, "the toast always says exactly Saved");
+
+    // Changed script, same empty-steps declaration: rule 1 refuses it -
+    // an empty `edits.steps` names nothing, so the real change is left
+    // undeclared.
+    let changed = serde_json::json!({
+        "scripts": case_7(".toast", "Saved"),
+        "edits": [{
+            "case_id": 7,
+            "steps": [],
+            "why": "the locator moved",
+            "quirk": "a new quirk",
+        }],
+    })
+    .to_string();
+    let (status, out) =
+        route(&ctx(), Some(&client), "POST", "/autorun-script", &changed, "1.0.0").await;
+    assert_eq!(status, 400, "{out}");
+    assert!(out.contains("step 2 was changed but not declared"), "{out}");
+}
+
 /// A declaration for a case with no script on disk is a mistake, not a
 /// no-op: the assistant thinks it is repairing something that is not
 /// there.

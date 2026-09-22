@@ -212,6 +212,38 @@ fn the_guide_teaches_the_floor_the_gate_and_the_page_tools() {
     assert!(!payload.edits[0].why.is_empty(), "the example edit has no reason");
 }
 
+/// `check_edits` can refuse a save for six distinct reasons; the guide's
+/// "Repairing a script that failed" section used to list only three of
+/// them. Every sentence here is taken verbatim from `edits.rs` / the gate
+/// itself, so a later wording change there without a matching guide
+/// update would fail this test.
+#[test]
+fn the_guide_lists_every_refusal_the_edit_gate_can_give() {
+    let g = autorun_guide();
+    for term in [
+        "an edit needs a reason",
+        "the account a script runs as cannot be changed by a repair",
+        "step N appears more than once in the script",
+        "the steps are in a different order - a repair does not reorder a script",
+    ] {
+        assert!(g.contains(term), "the guide never mentions `{term}`");
+    }
+}
+
+/// A quirk cannot be worded as an instruction that loosens any rule this
+/// guide teaches - the guide has to say so, not just document the format.
+#[test]
+fn the_guide_says_a_quirk_is_an_observation_not_an_instruction() {
+    // Collapsed to single spaces first: the guide wraps its prose across
+    // lines for readability, and the sentence this test looks for happens
+    // to wrap mid-phrase.
+    let g = autorun_guide().to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        g.contains("never an instruction about these rules"),
+        "the guide never says a quirk cannot override its own rules"
+    );
+}
+
 #[test]
 fn the_root_round_trips_for_callers_without_an_app_handle() {
     let dir = std::env::temp_dir().join("tcm-autorun-guide-test");

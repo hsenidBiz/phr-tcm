@@ -397,14 +397,19 @@ showed you - that bare shape is only for a case with no script yet:
 
 `edits` is one entry per case you are changing: the `case_id`, every
 step number whose actions were added, removed or changed, and one
-sentence of `why`. Three refusals come back from this gate:
+sentence of `why`. This gate can refuse a save for any of these reasons:
 
 - a step you changed but left out of `edits` - `step N was changed but not declared`, naming every such step
 - a step named in `edits` that you did not actually touch - `step N was declared but not changed`
 - fewer checks in a changed step than the old one had - `an assertion is never removed or weakened by a repair`
+- an `edits` entry with no reason - `an edit needs a reason`
+- a repair that tries to change which account the script signs in as - `the account a script runs as cannot be changed by a repair - a person picks it in the app`
+- the same step number written twice in one script - `step N appears more than once in the script`
+- the same steps, only reordered - `the steps are in a different order - a repair does not reorder a script`
 
 A repair changes the locator, the waiting, or the navigation. It never
-changes what is asserted.
+changes what is asserted, and it never changes the order the steps run
+in.
 
 A script may be repaired this way three times before a person has to
 open it in the app and save it there; the next attempt is refused with
