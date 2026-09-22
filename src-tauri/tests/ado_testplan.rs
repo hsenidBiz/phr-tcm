@@ -609,8 +609,9 @@ async fn ensure_picks_the_newest_iteration_matching_plan_among_equal_areas() {
     assert!(!ensured.created_plan);
 }
 
-/// A 403 on one plan says nothing about the next: plans have owners. The
-/// suite lands in the next candidate instead of nowhere.
+/// A 403 on a plan says nothing about a plan for ANOTHER area: "Manage
+/// test suites" is granted per area path. The suite lands in the next
+/// area's plan instead of nowhere.
 #[tokio::test]
 async fn ensure_falls_back_to_the_next_plan_when_the_first_forbids_suites() {
     let server = MockServer::start().await;
@@ -619,7 +620,7 @@ async fn ensure_falls_back_to_the_next_plan_when_the_first_forbids_suites() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
             {"id": 100, "name": "Old plan", "areaPath": "Proj\\Auth", "iteration": "Proj\\2024",
              "state": "Active", "rootSuite": {"id": 1000}},
-            {"id": 200, "name": "New plan", "areaPath": "Proj\\Auth", "iteration": "Proj\\2026\\S3",
+            {"id": 200, "name": "New plan", "areaPath": "Proj\\Auth\\Web", "iteration": "Proj\\2026\\S3",
              "state": "Active", "rootSuite": {"id": 2000}}
         ]})))
         .mount(&server)
@@ -644,15 +645,16 @@ async fn ensure_falls_back_to_the_next_plan_when_the_first_forbids_suites() {
 
     let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
     let ensured = client
-        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth", "Proj\\2026\\S3")
+        .ensure_requirement_suite("org", "proj", 42, "Proj\\Auth\\Web", "Proj\\2026\\S3")
         .await
         .unwrap();
     assert_eq!(ensured.plan_id, 100, "the plan that allowed it");
     assert_eq!(ensured.suite_id, 1001);
 }
 
-/// When every candidate forbids it, the error names the plans - whose
-/// door to knock on - instead of a bare "no permission".
+/// When the candidate forbids it, the error names the plan and its area -
+/// what to ask for - instead of a bare "no permission". The second plan
+/// shares the area, so it is reported as skipped rather than asked.
 #[tokio::test]
 async fn ensure_names_the_plans_when_every_candidate_forbids_suites() {
     let server = MockServer::start().await;
@@ -687,8 +689,9 @@ async fn ensure_names_the_plans_when_every_candidate_forbids_suites() {
     match err {
         AdoError::Http { status, body } => {
             assert_eq!(status, 403);
-            assert!(body.contains("New plan"), "{body}");
-            assert!(body.contains("Old plan"), "{body}");
+            assert!(body.contains("New plan"), "the newest plan is the one asked: {body}");
+            assert!(!body.contains("Old plan"), "same area - skipped, not listed: {body}");
+            assert!(body.contains("1 other plan"), "{body}");
             assert!(body.contains("permission"), "{body}");
             assert!(body.contains("#42"), "{body}");
         }
@@ -765,4 +768,66 @@ async fn ensure_scans_only_area_matched_plans_but_find_scans_all() {
 
     let found = client.find_pbi_requirement_suite("org", "proj", 42, "Proj\\Auth").await.unwrap();
     assert_eq!(found.map(|s| s.suite_id), Some(81), "the read-only lookup still finds it anywhere");
+}
+
+/// Plans that share an area path share the answer, so a 403 in one is a
+/// 403 in all of them: the rest are skipped, not tried. On 2026-09-22 the
+/// walk tried 48 plans under the project root one after another - every
+/// sprint plan back to 2025, Marketplace, payroll plans - for 70 s of
+/// 403s that all meant the same thing. One attempt per area, best plan
+/// first, and the error says which AREA needs the permission.
+#[tokio::test]
+async fn ensure_tries_one_plan_per_area_and_names_the_area() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/org/proj/_apis/testplan/plans"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [
+            {"id": 100, "name": "Marketplace", "areaPath": "Proj", "iteration": "",
+             "state": "Active", "rootSuite": {"id": 1000}},
+            {"id": 200, "name": "Sprint 1", "areaPath": "Proj", "iteration": "Proj\\2025\\S1",
+             "state": "Inactive", "rootSuite": {"id": 2000}},
+            {"id": 300, "name": "Sprint 9", "areaPath": "Proj", "iteration": "Proj\\2026\\S9",
+             "state": "Active", "rootSuite": {"id": 3000}}
+        ]})))
+        .mount(&server)
+        .await;
+    for id in [100, 200, 300] {
+        Mock::given(method("GET"))
+            .and(path(format!("/org/proj/_apis/testplan/Plans/{id}/suites")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+    }
+    // The best-ranked plan (iteration match, active) is the ONE asked.
+    Mock::given(method("POST"))
+        .and(path("/org/proj/_apis/testplan/Plans/300/suites"))
+        .respond_with(ResponseTemplate::new(403))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for id in [100, 200] {
+        Mock::given(method("POST"))
+            .and(path(format!("/org/proj/_apis/testplan/Plans/{id}/suites")))
+            .respond_with(ResponseTemplate::new(403))
+            .expect(0)
+            .mount(&server)
+            .await;
+    }
+
+    let client = AdoClient::with_base_urls("tok".into(), server.uri(), server.uri());
+    let err = client
+        .ensure_requirement_suite("org", "proj", 42, "Proj\\PMS", "Proj\\2026\\S9")
+        .await
+        .unwrap_err();
+    match err {
+        AdoError::Http { status, body } => {
+            assert_eq!(status, 403);
+            assert!(body.contains("Sprint 9"), "{body}");
+            assert!(!body.contains("Marketplace"), "skipped plans are not listed: {body}");
+            assert!(body.contains("area 'Proj'"), "the area the permission lives on: {body}");
+            assert!(body.contains("2 other plan"), "says what was skipped and why: {body}");
+        }
+        other => panic!("expected a named 403, got {other:?}"),
+    }
+    server.verify().await;
 }

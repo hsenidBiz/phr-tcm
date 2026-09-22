@@ -433,12 +433,19 @@ impl AdoClient {
                 .await?;
             return self.suite_under(org, project, &plan, pbi_id, true).await;
         }
-        // Try each candidate in turn. A 403 on one plan says nothing about
-        // the next - plans have owners and their own permissions - so it
-        // moves on; anything else propagates unchanged, so the caller keeps
-        // telling 401 and 429 apart from the rest.
-        let mut forbidden: Vec<String> = vec![];
+        // Try each candidate in turn - but only ONE per area path. "Manage
+        // test suites" is an area-path permission, so a 403 in one plan is a
+        // 403 in every plan that shares its area; asking each of them was 48
+        // requests and 70 s of identical refusals (2026-09-22). A plan for a
+        // DIFFERENT area is still worth asking. Anything but a 403 propagates
+        // unchanged, so the caller keeps telling 401 and 429 apart from the rest.
+        let mut forbidden: Vec<(String, String, String, usize)> = vec![]; // (plan label, area key, area as named, skipped)
         for p in candidates {
+            let area = p.area_path.trim().to_lowercase().replace('/', "\\");
+            if let Some(f) = forbidden.iter_mut().find(|(_, a, _, _)| *a == area) {
+                f.3 += 1;
+                continue;
+            }
             let plan = if p.root_suite_id.is_some() {
                 p.clone()
             } else {
@@ -448,26 +455,31 @@ impl AdoClient {
                 Ok(ensured) => return Ok(ensured),
                 Err(AdoError::Forbidden) => {
                     crate::applog::warn(format!(
-                        "no permission to create a suite in test plan '{}' (id {}) - trying the next plan for this area",
-                        plan.name, plan.id
+                        "no permission to create a suite in test plan '{}' (id {}) for area '{}' - skipping the other plans for that area",
+                        plan.name, plan.id, plan.area_path
                     ));
-                    forbidden.push(format!("'{}' (id {})", plan.name, plan.id));
+                    forbidden.push((format!("'{}' (id {})", plan.name, plan.id), area, plan.area_path.trim().to_string(), 0));
                 }
                 Err(e) => return Err(e),
             }
         }
-        // The one case a 403 is the whole answer: name the plans, so the
-        // person knows whose door to knock on. Http rather than Forbidden
-        // so the sentence reaches the screen - `describeAdoError` prints a
-        // Forbidden as a bare "no permission" with nothing to act on.
+        // The one case a 403 is the whole answer: name the plan and the AREA
+        // the permission lives on, so the person knows what to ask for.
+        // Http rather than Forbidden so the sentence reaches the screen -
+        // `describeAdoError` prints a Forbidden as a bare "no permission".
+        let tried: Vec<String> = forbidden
+            .iter()
+            .map(|(label, _, area, skipped)| match skipped {
+                0 => format!("{label} for area '{area}'"),
+                1 => format!("{label} for area '{area}' (1 other plan for that area was not tried: the permission is per area)"),
+                n => format!("{label} for area '{area}' ({n} other plans for that area were not tried: the permission is per area)"),
+            })
+            .collect();
         Err(AdoError::Http {
             status: 403,
             body: format!(
-                "You don't have permission to create a test suite in {} - the test plan{} for this area. \
-                 The test cases are linked to #{pbi_id}, but they will not appear in Run Tests until a \
-                 requirement suite exists: ask the plan owner for access, or create the suite in Azure DevOps.",
-                forbidden.join(", "),
-                if forbidden.len() == 1 { "" } else { "s" }
+                "You don't have permission to create a test suite in {}. The test cases are linked to #{pbi_id}, but they will not appear in Run Tests until a requirement suite exists: ask for 'Manage test suites' on that area, or create the suite in Azure DevOps.",
+                tried.join("; ")
             ),
         })
     }
