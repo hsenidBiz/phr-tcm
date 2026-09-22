@@ -30,6 +30,7 @@ export default function ContextBar({
   settingsOpen = false,
   locked = false,
   workLive = false,
+  settingsLive = false,
 }: {
   org: string;
   setOrg: (v: string) => void;
@@ -49,6 +50,9 @@ export default function ContextBar({
   /** ...and the pill is live only when the current stop is waiting for
    * the user to cross between the two halves of the app. */
   workLive?: boolean;
+  /** Same for the gear: Settings has no rail row, so the tour's stops
+   * there ask for this button and nothing else. */
+  settingsLive?: boolean;
 }) {
   // The review gate's final confirmation spotlights the PBI chip so the
   // user verifies the target before an irreversible create.
@@ -192,9 +196,13 @@ export default function ContextBar({
               ? "rounded-md bg-accent-soft p-2 text-accent transition-colors disabled:pointer-events-none"
               : "rounded-md p-2 text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none"
           }
-          // The tour spotlights the gear; it never opens it.
-          disabled={locked}
-          onClick={() => !locked && onOpenSettings()}
+          // The tour spotlights the gear and, on its Settings stops, asks
+          // the user to click it - it never opens Settings for them.
+          disabled={locked && !settingsLive}
+          onClick={() => {
+            if (locked && !settingsLive) return;
+            onOpenSettings();
+          }}
         >
           <SettingsIcon size={16} />
         </button>

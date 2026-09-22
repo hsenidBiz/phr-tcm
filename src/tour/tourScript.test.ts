@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { CASE_ITEMS, WORK_ITEMS } from "../components/Sidebar";
+import { CASE_ITEMS, WORK_ITEMS, type Section } from "../components/Sidebar";
 import { TOUR_ANCHORS, TOUR_CHROME_ANCHORS, TOUR_STEPS, tourAwaitedWhere, tourControl, tourDestination, type TourControl, type TourWhere } from "./tourScript";
 import { tourWaitingCard } from "./UiTour";
 
@@ -27,7 +27,7 @@ test("every stop is short, plain and finished", () => {
   }
 });
 
-test("no tab gets more than two stops - except AI Bridge, which gets four", () => {
+test("no tab gets more than two stops - except AI Bridge (four) and Settings (three)", () => {
   // A stop with no `where` stays wherever the last one left the app, so
   // the destination has to be carried forward - counting only the stops
   // that declare one would measure nothing.
@@ -41,8 +41,10 @@ test("no tab gets more than two stops - except AI Bridge, which gets four", () =
     counts.set(at, (counts.get(at) ?? 0) + 1);
   }
   expect(counts.get("manual"), "Manual Entry").toBe(2); // the cap, exercised
+  expect(counts.get("settings"), "Settings").toBe(3); // its own cap, exercised
+  const cap = (key: string) => (key === "ai" ? 4 : key === "settings" ? 3 : 2);
   for (const [key, n] of counts) {
-    expect(n, `${key} has ${n} stops`).toBeLessThanOrEqual(key === "ai" ? 4 : 2);
+    expect(n, `${key} has ${n} stops`).toBeLessThanOrEqual(cap(key));
   }
 });
 
@@ -50,13 +52,58 @@ test("the route covers both areas and every tab a user gets", () => {
   const keys = TOUR_STEPS.filter((s) => s.where).map((s) =>
     s.where!.area === "cases" ? s.where!.section : `work/${s.where!.workSection}`,
   );
-  for (const expected of ["manual", "import", "edit", "view", "run", "suites", "ai", "work/board"]) {
+  for (const expected of [
+    "manual",
+    "import",
+    "edit",
+    "view",
+    "run",
+    "suites",
+    "manage",
+    "ai",
+    "work/board",
+    // The tour now walks the user into Settings and lets them pick a
+    // theme on the real screen, so this IS a destination like any other.
+    "settings",
+  ]) {
     expect(keys, `missing ${expected}`).toContain(expected);
   }
-  // Auto Run never ships to users, and Settings is spotlighted from the
-  // context bar rather than opened.
+  // Auto Run never ships to users.
   expect(keys).not.toContain("autorun");
-  expect(keys).not.toContain("settings");
+});
+
+test("the script visits Suite Management, the review controls and the three Settings stops", () => {
+  const at = (i: number) => {
+    const w = tourDestination(i, TOUR_STEPS);
+    return w?.area === "cases" ? w.section : w ? `work/${w.workSection}` : "";
+  };
+  // Anchored stops only: the closing card rings nothing and inherits
+  // whatever destination the tour left it on.
+  const stops = TOUR_STEPS.map((s, i) => ({ where: at(i), anchor: s.anchor })).filter(
+    (s) => s.anchor,
+  );
+
+  expect(stops).toContainEqual({ where: "manage", anchor: "manage-plans" });
+  // Import File gets a second stop, on the controls that review and send.
+  expect(stops.filter((s) => s.where === "import").map((s) => s.anchor)).toEqual([
+    "import-drop",
+    "queue-review",
+  ]);
+  expect(stops.filter((s) => s.where === "settings").map((s) => s.anchor)).toEqual([
+    "theme",
+    "settings-backup",
+    "settings-updates",
+  ]);
+  // The theme is picked on the real screen now, not on a control the card
+  // carries of its own.
+  for (const s of TOUR_STEPS) {
+    expect(s, s.title).not.toHaveProperty("picker");
+  }
+});
+
+test("the Manual Entry queue stop no longer speaks for the Import File tab", () => {
+  const queue = TOUR_STEPS.find((s) => s.anchor === "queue")!;
+  expect(queue.body).not.toMatch(/Import File/);
 });
 
 test("every anchor a stop names is a declared anchor", () => {
@@ -98,8 +145,12 @@ const AFTER_MANUAL = [
   "Read without changing",
   "Run your tests",
   "Find any set of tests",
+  "Arrange a PBI's suite",
+  // Back to Import File for the review controls, so this is a move again.
+  "Review before you upload",
   "Working repositories",
   "The other half of the app",
+  "Make it yours",
 ];
 
 test("a tour started from Settings waits for Manual Entry first", () => {
@@ -180,26 +231,34 @@ test("crossing into Work Manager can take two clicks when the user's last sectio
 // script copy.
 //
 // Scoped to sections a stop's `where` can actually name - the same reason
-// "the route covers both areas..." above excludes Auto Run and Settings:
-// `tourControl` can only ever be asked for a destination that appears as a
-// `where`, so a label that is never one (Auto Run, Settings, New Work Item)
-// can never reach this card. Derived from TOUR_STEPS, not a hand-kept
-// exclude list, so a future stop that starts targeting one of them pulls it
-// into this test automatically.
+// "the route covers both areas..." above excludes Auto Run: `tourControl`
+// can only ever be asked for a destination that appears as a `where`, so a
+// label that is never one (Auto Run, New Work Item) can never reach this
+// card. Derived from TOUR_STEPS, not a hand-kept exclude list, so a future
+// stop that starts targeting one of them pulls it into this test
+// automatically - which is how Settings arrived here: it is not a rail row
+// at all, so it is taken from the script rather than from CASE_ITEMS.
 
-test("the waiting card's copy, for every rail label the tour can actually show, obeys the script's own gates", () => {
+test("the waiting card's copy, for every control the tour can actually ask for, obeys the script's own gates", () => {
   const reachableSections = new Set(
-    TOUR_STEPS.filter((s) => s.where?.area === "cases").map((s) => (s.where as { section: string }).section),
+    TOUR_STEPS.filter((s) => s.where?.area === "cases").map((s) => (s.where as { section: Section }).section),
   );
   const reachableWorkSections = new Set(
     TOUR_STEPS.filter((s) => s.where?.area === "work").map((s) => (s.where as { workSection: string }).workSection),
   );
   const controls: TourControl[] = [
-    ...CASE_ITEMS.filter((c) => reachableSections.has(c.id)).map((c): TourControl => ({ kind: "case", section: c.id })),
+    ...[...reachableSections].map((section): TourControl => ({ kind: "case", section })),
     ...WORK_ITEMS.filter((w) => reachableWorkSections.has(w.id)).map((w): TourControl => ({ kind: "work", workSection: w.id })),
     { kind: "switch", to: "work" },
     { kind: "switch", to: "cases" },
   ];
+  // Every rail row the script names still has a label to show: a section
+  // with no row of its own (Settings) must be spelled out by hand in
+  // `tourWaitingCard`, and an empty one there would read "Go to ".
+  for (const c of controls) {
+    if (c.kind !== "case" || CASE_ITEMS.some((i) => i.id === c.section)) continue;
+    expect(tourWaitingCard(c).title, `no label for ${c.section}`).not.toBe("Go to ");
+  }
   // Sanity check on the scoping itself: it should still cover a real spread
   // of rail rows, not have quietly emptied out.
   expect(controls.length).toBeGreaterThanOrEqual(7);
@@ -209,4 +268,13 @@ test("the waiting card's copy, for every rail label the tour can actually show, 
     expect(body.length, title).toBeLessThanOrEqual(160);
     expect(JARGON.test(`${title} ${body}`), `jargon in "${title}"`).toBe(false);
   }
+});
+
+test("the Settings stop asks for the gear, which is not on the rail", () => {
+  const { title, body } = tourWaitingCard({ kind: "case", section: "settings" });
+  expect(title).toBe("Go to Settings");
+  expect(body).toBe("Click the Settings gear at the top right to carry on.");
+  // ...and it must never say "in the menu on the left", where there is no
+  // Settings row to click.
+  expect(body).not.toMatch(/menu on the left/);
 });

@@ -184,7 +184,9 @@ export default function Settings({ org, project }: { org: string; project: strin
     // first and squeeze the panel narrower than the old even split.
     <div className="grid max-w-lg gap-8 lg:max-w-none lg:grid-cols-[minmax(0,28rem)_minmax(24rem,1fr)] lg:items-start">
       <div className="space-y-8">
-      <section className="space-y-3">
+      {/* The tour walks the user here and rings this block so the theme is
+          picked on the real screen, not on a copy in a card. */}
+      <section data-tour="theme" className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Appearance</h2>
         <div>
           <p className="mb-2 text-xs text-muted">Theme - changes the entire UI palette</p>
@@ -472,7 +474,7 @@ export default function Settings({ org, project }: { org: string; project: strin
         )}
       </section>
 
-      <section className="space-y-3">
+      <section data-tour="settings-backup" className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Backup &amp; transfer</h2>
         <p className="text-sm text-muted">
           Moving to a new computer? Export your settings and local data -
@@ -518,7 +520,7 @@ export default function Settings({ org, project }: { org: string; project: strin
         )}
       </section>
 
-      <section className="space-y-3">
+      <section data-tour="settings-updates" className="space-y-3">
         <h2 className="text-sm font-semibold text-text">Updates</h2>
         <p className="text-sm text-muted">
           Version {version.data ?? "-"} - updates install automatically from

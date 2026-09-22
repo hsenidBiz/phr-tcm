@@ -486,8 +486,10 @@ const next = () =>
 const tourWaiting = () =>
   screen.getByRole("dialog", { name: "Interface tour" }).getAttribute("data-waiting") === "true";
 
-/** The ONE control the tour has left live - a rail row, or the pill that
- * crosses into the Work Manager. Throws if the lock has leaked. */
+/** The ONE control the tour has left live - a rail row, or, for the two
+ * destinations the rail cannot reach, a button in the context bar: the
+ * pill that crosses into the Work Manager, or the Settings gear. Throws if
+ * the lock has leaked. */
 function liveControl(): HTMLElement {
   const nav = screen.getByRole("navigation");
   const rows = within(nav)
@@ -495,7 +497,13 @@ function liveControl(): HTMLElement {
     .filter((b) => !(b as HTMLButtonElement).disabled);
   if (rows.length > 1) throw new Error(`${rows.length} rail controls are live, expected one`);
   if (rows.length === 1) return rows[0];
-  return screen.getByRole("button", { name: /^(Work Manager|Test Case Manager)$/ });
+  const chrome = [
+    ...screen.getAllByRole("button", { name: /^(Work Manager|Test Case Manager)$/ }),
+    ...screen.getAllByRole("button", { name: /^(Settings|Close settings)$/ }),
+  ].filter((b) => !(b as HTMLButtonElement).disabled);
+  if (chrome.length !== 1)
+    throw new Error(`${chrome.length} context bar controls are live, expected one`);
+  return chrome[0];
 }
 
 /** Next when the tour offers it, otherwise the click it is waiting for. */
@@ -554,9 +562,10 @@ test("every stop rings an area that is there, with something in it", async () =>
   }
 
   fireEvent.click(screen.getByText("Skip tour"));
-  // Eighteen stops, each waiting for a screen to mount: comfortably under
-  // the 5s default on its own, but not while the whole suite is running.
-}, 30_000);
+  // Twenty-two stops, each waiting for a screen to mount: comfortably
+  // under the 5s default on its own, but not while the whole suite is
+  // running.
+}, 45_000);
 
 // The queue is served from a draft in storage, not from a command, so the
 // tour has to hand it sample cases itself - and it must do that WITHOUT

@@ -407,7 +407,12 @@ export default function App() {
       setCaseSelection(null);
       return;
     }
-    beforeSettings.current = { section, workMode };
+    // Not while the tour is up: its Settings stops ask for this same
+    // click, and recording the sample tab it happened to be on would
+    // overwrite where the user's OWN visit to Settings goes back to. The
+    // tour puts the app back where it found it when it ends, so the
+    // earlier answer is still the right one.
+    if (!tourOpen) beforeSettings.current = { section, workMode };
     goToSection("settings");
   };
 
@@ -897,6 +902,9 @@ export default function App() {
               settingsOpen={section === "settings" && !workMode}
               locked={tourOpen}
               workLive={tourControlNow?.kind === "switch"}
+              // Settings has no rail row, so the gear is the one control
+              // left live while a Settings stop waits.
+              settingsLive={tourControlNow?.kind === "case" && tourControlNow.section === "settings"}
             />
           )}
           <div className="flex min-h-0 flex-1 flex-col" inert={tourOpen}>

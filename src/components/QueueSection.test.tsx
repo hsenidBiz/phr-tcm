@@ -120,6 +120,25 @@ test("opening review scrolls the action row into view", async () => {
   }
 });
 
+/// The tour rings the review and upload controls, and that stop has to
+/// make sense whether or not review is already open - so the anchor goes
+/// on the action row, which holds Review before and the confirm/upload
+/// button during. An anchor on the Review button alone would vanish the
+/// moment it was clicked.
+test("the tour's anchor holds the review controls before and during review", async () => {
+  baseMocks();
+  const { container } = renderQueue([makeCase()]);
+  const box = () => container.querySelector('[data-tour="queue-review"]') as HTMLElement;
+
+  expect(box(), 'no [data-tour="queue-review"] in the queue').not.toBeNull();
+  expect(box().textContent).toMatch(/Review 1 test case/);
+
+  fireEvent.click(screen.getByRole("button", { name: /Review 1 test case/ }));
+  await screen.findByRole("button", { name: /Yes — create 1/ });
+  expect(box(), "the anchor disappeared when review opened").not.toBeNull();
+  expect(box().textContent).toMatch(/Yes — create 1/);
+});
+
 /// The app turns its animations off under prefers-reduced-motion in seven
 /// other places. A scroll that animated anyway would be the one that got
 /// away, and for someone who set that preference motion is not a nicety.

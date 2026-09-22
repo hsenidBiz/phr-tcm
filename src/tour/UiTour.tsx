@@ -13,77 +13,27 @@ import {
   type TourWhere,
 } from "./tourScript";
 import { markTourDone } from "./tourState";
-import { THEMES, getThemeChoice, setThemeChoice, type ThemeChoice } from "../lib/theme";
 
 const CARD_W = 340;
 const CARD_H = 190; // estimate, for deciding whether the card fits below
-
-/** The theme swatches, inside the tour card.
- *
- * A small copy of the row in Settings rather than the row itself: the tour
- * covers the app with a click-swallowing layer, and reaching the real
- * control would mean opening Settings, unlocking exactly that row, and
- * putting the user back afterwards. In the card it works from wherever the
- * tour has got to.
- *
- * The pick applies immediately and persists - it is the user's own choice,
- * and the only thing this tour leaves behind.
- */
-function TourThemePicker() {
-  const [choice, setChoice] = useState<ThemeChoice>(getThemeChoice);
-  const pick = (c: ThemeChoice) => {
-    setChoice(c);
-    setThemeChoice(c);
-  };
-  const frame = (on: boolean) =>
-    `w-[52px] rounded-md border-2 p-0.5 transition-transform hover:scale-105 ${
-      on ? "border-accent" : "border-border"
-    }`;
-  return (
-    <div className="flex flex-wrap gap-1.5 pt-1">
-      {THEMES.map((t) => (
-        <button
-          key={t.id}
-          aria-label={`Theme ${t.label}`}
-          className={frame(choice === t.id)}
-          onClick={() => pick(t.id)}
-        >
-          <span
-            className="block h-6 w-full overflow-hidden rounded"
-            style={{ backgroundColor: t.preview.bg }}
-          >
-            <span
-              className="mx-1 mt-1 block h-1.5 rounded-sm"
-              style={{ backgroundColor: t.preview.surface }}
-            />
-            <span
-              className="mx-1 mt-0.5 block h-1 w-4 rounded-sm"
-              style={{ backgroundColor: t.preview.accent }}
-            />
-          </span>
-          <span className="mt-0.5 block text-center text-[10px] text-muted">{t.label}</span>
-        </button>
-      ))}
-      <button
-        aria-label="Theme System"
-        className={frame(choice === "system")}
-        onClick={() => pick("system")}
-      >
-        <span className="block h-6 w-full rounded bg-surface-2" />
-        <span className="mt-0.5 block text-center text-[10px] text-muted">System</span>
-      </button>
-    </div>
-  );
-}
 
 /** How long to keep looking for a stop's area before showing the card on
  * its own. The screen has to mount and fade in first (120ms), and a slow
  * machine is allowed several times that. */
 const ANCHOR_WAIT_MS = 1500;
 
+/** Settings is the one destination the tour asks for that the rail cannot
+ * reach: it has no row of its own, only the gear in the context bar. So
+ * its label, its ring and its wording are all spelled out by hand below,
+ * where every other destination reads them off the rail's own lists. */
+function isSettings(control: TourControl): boolean {
+  return control.kind === "case" && control.section === "settings";
+}
+
 /** The name the rail actually shows for the control a waiting stop asks
  * for - read off the rail's own lists, never invented here. */
 function controlLabel(control: TourControl): string {
+  if (isSettings(control)) return "Settings";
   if (control.kind === "case") return CASE_ITEMS.find((c) => c.id === control.section)?.label ?? "";
   if (control.kind === "work")
     return WORK_ITEMS.find((w) => w.id === control.workSection)?.label ?? "";
@@ -94,6 +44,9 @@ function controlLabel(control: TourControl): string {
 /** That control's `data-tour`, so the ring lands on the very thing the
  * card is asking the user to click. */
 function controlAnchor(control: TourControl): string {
+  // The gear carries the context bar's own `settings` anchor; there is no
+  // `nav-settings` row for the template below to name.
+  if (isSettings(control)) return "settings";
   if (control.kind === "case") return `nav-${control.section}`;
   if (control.kind === "work") return `nav-${control.workSection}`;
   return "work";
@@ -107,8 +60,9 @@ export function tourWaitingCard(control: TourControl): { title: string; body: st
   const label = controlLabel(control);
   return {
     title: `Go to ${label}`,
-    body:
-      control.kind === "switch"
+    body: isSettings(control)
+      ? "Click the Settings gear at the top right to carry on."
+      : control.kind === "switch"
         ? `Click ${label} at the top of the screen to carry on.`
         : `Click ${label} in the menu on the left to carry on.`,
   };
@@ -302,10 +256,6 @@ export default function UiTour({
           </span>
         </div>
         <p className="text-sm text-muted">{control ? tourWaitingCard(control).body : step.body}</p>
-        {/* Hidden while the tour is waiting to be walked somewhere: that
-            card is asking for one specific click, and a row of swatches
-            beside the ask is a second thing to do. */}
-        {step.picker === "theme" && !control && <TourThemePicker />}
         <div className="flex items-center gap-2 pt-1">
           <button className="text-xs text-faint hover:text-text" onClick={finish}>
             Skip tour
@@ -324,7 +274,7 @@ export default function UiTour({
                 <IconNext aria-hidden />
                 {/* A stop you can act on says carry on, not "next thing" -
                     the reader has just been given something to do. */}
-                {step.picker ? "Continue" : "Next"}
+                {step.act ? "Continue" : "Next"}
               </Button>
             ) : (
               <Button size="sm" onClick={finish}>

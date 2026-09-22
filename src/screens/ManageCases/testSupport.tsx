@@ -76,7 +76,7 @@ export function mountScreen(
     return undefined;
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const { rerender: rtlRerender } = render(
+  const { rerender: rtlRerender, container } = render(
     <QueryClientProvider client={qc}>
       <ManageCases org="acme" project="Web" pbi={pbi} focus={focus} onFocusHandled={onFocusHandled} />
     </QueryClientProvider>,
@@ -88,7 +88,7 @@ export function mountScreen(
         <ManageCases org="acme" project="Web" pbi={nextPbi} focus={focus} onFocusHandled={onFocusHandled} />
       </QueryClientProvider>,
     );
-  return { calls, rerender };
+  return { calls, rerender, container };
 }
 
 /** Expand a suite block by name and resolve to its case list. */

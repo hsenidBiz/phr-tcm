@@ -100,6 +100,18 @@ test("no plans yet", async () => {
   expect(await screen.findByText("No test plans with test suites in this project yet.")).toBeInTheDocument();
 });
 
+/// The tour rings this screen's plan tables. A ring around an empty box
+/// says nothing, so the anchor has to hold the tables themselves - and,
+/// when there are none, the sentence that explains why.
+test("the tour's anchor wraps the plan tables, and never rings an empty box", async () => {
+  const { container } = mountScreen();
+  await screen.findByRole("region", { name: "Auth - Test Plan" });
+  const box = container.querySelector('[data-tour="manage-plans"]') as HTMLElement;
+  expect(box, 'no [data-tour="manage-plans"] on Suite Management').not.toBeNull();
+  expect(within(box).getByRole("region", { name: "Auth - Test Plan" })).toBeInTheDocument();
+  expect(within(box).getByRole("region", { name: "Billing - Test Plan" })).toBeInTheDocument();
+});
+
 test("narrowing back to the PBI's plan while another plan holds a selection shows a notice; Clear selection there drops it", async () => {
   mountScreen(undefined, { id: 42, title: "Login", work_item_type: "Product Backlog Item" });
   fireEvent.click(await screen.findByRole("button", { name: "Show all plans" }));

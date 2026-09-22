@@ -4,7 +4,10 @@
  *
  * House rules, enforced by tourScript.test.ts:
  * - two stops per tab at most (AI Bridge is allowed four - it is the one
- *   tab a new user never sees past its first card);
+ *   tab a new user never sees past its first card - and Settings three:
+ *   it is the one tab the tour asks the person to ACT in rather than
+ *   read, so the stop that hands them the theme cannot also carry the two
+ *   things they would otherwise never find);
  * - one or two short sentences, in the words a tester uses;
  * - nothing about how the app works inside.
  */
@@ -19,16 +22,21 @@ export const TOUR_ANCHORS = [
   "nav-prs",
   "case-form",
   "queue",
+  "queue-review",
   "import-drop",
   "case-list",
   "view-list",
   "run-list",
   "plans-tree",
+  "manage-plans",
   "ai-repos",
   "ai-tools",
   "ai-toolset",
   "ai-db",
   "board-columns",
+  "theme",
+  "settings-backup",
+  "settings-updates",
 ] as const;
 
 export type TourAnchor = (typeof TOUR_ANCHORS)[number];
@@ -50,19 +58,19 @@ export type TourStep = {
   anchor?: TourAnchor;
   title: string;
   body: string;
-  /** A control the CARD itself carries, so a stop can be acted on rather
-   * than only read.
+  /** This stop hands the reader something to DO on the screen behind it
+   * (the theme), rather than something to read. The way on then says
+   * "Continue" instead of "Next".
    *
-   * Only "theme" so far. This stop used to ring the Settings button and
-   * say colours lived behind it, which is a thing to go and do later, and
-   * later never comes. The swatches live in the card rather than on the
-   * real screen: nothing behind the overlay has to be unlocked, and the
-   * stop works from wherever the tour has got to.
-   *
-   * It is also the one thing the tour deliberately leaves behind. Every
-   * other part is made-up data that disappears on close; a theme is the
-   * user's own choice and is meant to outlast it. */
-  picker?: "theme";
+   * The theme stop used to ring the Settings gear and say colours lived
+   * behind it - a thing to go and do later, and later never comes - and
+   * then carried a copy of the swatches in the card, which taught nobody
+   * where the real ones are. The tour now walks the reader into Settings
+   * and rings the real block, so the pick is made on the screen they will
+   * come back to. It is also the one thing the tour deliberately leaves
+   * behind: every other part is made-up data that disappears on close, and
+   * a theme is the user's own choice. */
+  act?: boolean;
 };
 
 const cases = (section: Section): TourWhere => ({ area: "cases", section });
@@ -92,7 +100,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     anchor: "queue",
     title: "Build up a batch",
-    body: "Your finished test cases queue up here, ready to upload to Azure DevOps in one go. The same panel appears on the Import File tab.",
+    // The Import File tab has its own stop on this panel's controls now,
+    // so this one no longer has to speak for it.
+    body: "Your finished test cases queue up here, ready to upload to Azure DevOps in one go.",
   },
   {
     where: cases("import"),
@@ -125,6 +135,20 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Browse the folders your team keeps tests in, then jump straight to editing or running them.",
   },
   {
+    where: cases("manage"),
+    anchor: "manage-plans",
+    title: "Arrange a PBI's suite",
+    body: "Every plan that holds the PBI's cases, with the suites and cases underneath. Tick cases to copy them into another suite, and drag to set the order testers see.",
+  },
+  {
+    // Back to Import File, for the half of that panel the first stop there
+    // did not cover: nothing leaves this app without going through here.
+    where: cases("import"),
+    anchor: "queue-review",
+    title: "Review before you upload",
+    body: "Nothing reaches Azure DevOps until you look. Review shows what will be created and what updated, warns about duplicates, and Upload is the button that sends.",
+  },
+  {
     where: cases("ai"),
     anchor: "ai-repos",
     title: "Working repositories",
@@ -143,7 +167,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     anchor: "ai-db",
     title: "Company database",
-    body: "Choose a database and your assistant can check real data while it writes.",
+    body: "Your assistant can look up tables and check real data while it writes, using the connection you choose here.",
   },
   {
     where: work("board"),
@@ -157,10 +181,21 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Pull requests you raised or were asked to look at, with a badge when one needs you.",
   },
   {
-    anchor: "settings",
+    where: cases("settings"),
+    anchor: "theme",
     title: "Make it yours",
-    body: "Pick a theme now and the rest of the app follows. These live in Settings, along with the accent colour, update checks, and this tour if you ever want it again.",
-    picker: "theme",
+    body: "Pick a theme and an accent colour. The whole app follows, and this choice stays after the tour.",
+    act: true,
+  },
+  {
+    anchor: "settings-backup",
+    title: "Take it with you",
+    body: "Backup and transfer packs your settings and queue into one file for another machine.",
+  },
+  {
+    anchor: "settings-updates",
+    title: "Kept up to date",
+    body: "The app checks for updates on its own; this is where you see the version and check by hand.",
   },
   {
     title: "That is the tour",

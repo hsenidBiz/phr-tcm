@@ -276,6 +276,35 @@ test("the PHR-X card switch persists its choice, on by default", async () => {
   localStorage.clear();
 });
 
+/// The tour's last three stops are rung on this screen, so the sections it
+/// names have to keep their `data-tour` attributes. `tourAnchors.test.ts`
+/// only proves the names exist SOMEWHERE in src/; this proves they are on
+/// the right sections here, with something in them to ring.
+test("the tour's three Settings anchors sit on the sections it names", async () => {
+  mockIPC(() => undefined);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { container } = renderSettings(qc);
+  await screen.findByRole("button", { name: "Changelog", pressed: true });
+
+  const anchor = (name: string) => {
+    const el = container.querySelector(`[data-tour="${name}"]`);
+    expect(el, `no [data-tour="${name}"] on the Settings screen`).not.toBeNull();
+    return el as HTMLElement;
+  };
+
+  // Appearance: the theme swatches AND the accent row, which is what the
+  // stop's words promise.
+  const theme = anchor("theme");
+  expect(theme.textContent).toContain("Appearance");
+  expect(within(theme).getByRole("button", { name: "Theme System" })).toBeInTheDocument();
+  expect(within(theme).getAllByRole("button", { name: /^Accent / }).length).toBeGreaterThan(1);
+
+  expect(anchor("settings-backup").textContent).toContain("Backup & transfer");
+  const updates = anchor("settings-updates");
+  expect(updates.textContent).toContain("Updates");
+  expect(within(updates).getByRole("button", { name: "Check for updates" })).toBeInTheDocument();
+});
+
 /// Field request: colour the log the way VS Code's Log mode does.
 test("the app log colours the level tag and the values in each line", async () => {
   mockIPC((cmd) => {

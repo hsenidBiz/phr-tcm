@@ -1390,6 +1390,10 @@ export default function QueueSection({
       )}
 
       <div
+        // The tour rings this row, not the Review button inside it: the
+        // row is what holds Review before review and the confirm/upload
+        // button during it, so the stop makes sense either way.
+        data-tour="queue-review"
         ref={(el) => {
           actionRowEl.current = el;
           actionRow(el);

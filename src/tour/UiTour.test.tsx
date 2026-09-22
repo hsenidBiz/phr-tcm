@@ -456,64 +456,103 @@ test("moving between stops that share an effective destination waits for nothing
 });
 
 /// The tour named themes and then showed nobody where they were: it rang
-/// the Settings BUTTON and said colours live behind it. A stop can now
-/// carry the picker itself, so the one thing on the tour a person actually
-/// wants to change is changed on the spot rather than remembered for later.
+/// the Settings BUTTON and said colours live behind it. Then it carried a
+/// copy of the swatches in the card, which taught nobody where the real
+/// ones are. Now it walks the user into Settings and rings the real block:
+/// the pick is made on the screen they will come back to.
+const SETTINGS_WHERE = { area: "cases", section: "settings" } as const;
+
 const THEME_STEPS: TourStep[] = [
   {
-    anchor: "settings",
+    where: SETTINGS_WHERE,
+    anchor: "theme",
     title: "Make it yours",
-    body: "Pick a look.",
-    picker: "theme",
+    body: "Pick a theme and an accent colour.",
+    act: true,
   },
   // A stop after it, so the way on reads "Continue" rather than "Done".
   { title: "That is the tour", body: "Close it." },
 ];
 
-test("a stop carrying the theme picker offers the themes and applies the pick", () => {
+test("a Settings stop asks for the gear, not a rail row", async () => {
   addAnchor("settings");
+  const onAwait = vi.fn();
+  const spy = vi.spyOn(Element.prototype, "scrollIntoView");
   render(
     <UiTour
       steps={THEME_STEPS}
       at={MANUAL_WHERE}
       onNavigate={vi.fn()}
-      onAwait={vi.fn()}
+      onAwait={onAwait}
       onClose={vi.fn()}
     />,
   );
 
-  // The swatches are in the CARD, so no screen behind has to be unlocked
-  // and the stop works from wherever the tour happens to be.
-  const light = screen.getByRole("button", { name: "Theme Light" });
-  expect(light).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Theme System" })).toBeInTheDocument();
-
-  fireEvent.click(light);
-  // Applied for real - this is the user's own choice, not tour make-believe,
-  // and it is the one thing the tour deliberately leaves behind. Read back
-  // through the theme module's own accessor rather than a DOM attribute:
-  // the two base palettes apply by REMOVING data-theme, so the attribute
-  // would say nothing for exactly the theme picked here.
-  expect(getThemeChoice()).toBe("light");
-
-  // A second pick replaces the first rather than stacking.
-  fireEvent.click(screen.getByRole("button", { name: "Theme System" }));
-  expect(getThemeChoice()).toBe("system");
-
-  // And the way on says so.
-  expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+  expect(waiting()).toBe(true);
+  expect(screen.getByText("Go to Settings")).toBeInTheDocument();
+  expect(screen.getByText(/Click the Settings gear at the top right/)).toBeInTheDocument();
+  expect(onAwait).toHaveBeenLastCalledWith(SETTINGS_WHERE);
+  // The ring lands on the gear itself, which is the context bar's own
+  // `settings` anchor - there is no `nav-settings` row to ring.
+  await waitFor(() =>
+    expect(spy.mock.instances).toContain(document.querySelector('[data-tour="settings"]')),
+  );
+  spy.mockRestore();
 });
 
-test("a stop without a picker offers no themes", () => {
-  addAnchor("import-drop");
+test("once the app is in Settings the stop shows its own words and a Continue", async () => {
+  addAnchor("theme");
   render(
     <UiTour
-      steps={STEPS}
-      at={AT_IMPORT}
+      steps={THEME_STEPS}
+      at={SETTINGS_WHERE}
       onNavigate={vi.fn()}
       onAwait={vi.fn()}
       onClose={vi.fn()}
     />,
   );
+  expect(waiting()).toBe(false);
+  expect(await screen.findByText("Make it yours")).toBeInTheDocument();
+  // A stop you can act on says carry on, not "next thing".
+  expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+});
+
+test("Back out of a Settings stop navigates like Back anywhere else", async () => {
+  addAnchor("import-drop");
+  addAnchor("theme");
+  const steps: TourStep[] = [
+    { where: IMPORT_WHERE, anchor: "import-drop", title: "Bring cases in", body: "Drop a file in." },
+    ...THEME_STEPS,
+  ];
+  const onNavigate = vi.fn();
+  render(
+    <Walker steps={steps} start={IMPORT_WHERE} onNavigate={onNavigate} />,
+  );
+  advance(); // -> the Settings ask
+  advance(); // ...the user clicks the gear
+  expect(await screen.findByText("Make it yours")).toBeInTheDocument();
+
+  onNavigate.mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(await screen.findByText("Bring cases in")).toBeInTheDocument();
+  expect(onNavigate).toHaveBeenLastCalledWith(IMPORT_WHERE);
+});
+
+test("the card never carries theme swatches of its own any more", () => {
+  addAnchor("theme");
+  render(
+    <UiTour
+      steps={THEME_STEPS}
+      at={SETTINGS_WHERE}
+      onNavigate={vi.fn()}
+      onAwait={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  // The real block behind the ring is the only picker now, so the tour
+  // cannot apply a theme by itself either.
+  const before = getThemeChoice();
   expect(screen.queryByRole("button", { name: "Theme Light" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Theme System" })).not.toBeInTheDocument();
+  expect(getThemeChoice()).toBe(before);
 });

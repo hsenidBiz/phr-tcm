@@ -157,6 +157,10 @@ export default function ManageCases({
       )}
       {plans.isFetching && !plans.data && <ScanProgress label="Loading test plans" />}
       {plans.isError && <p className="text-sm text-danger">{plans.error.message}</p>}
+      {/* One box around the plan tables so the tour can ring what this
+          screen IS. The empty-state sentence lives inside it too: a ring
+          around an empty box says nothing. */}
+      <div data-tour="manage-plans" className="space-y-3">
       {plans.data && plans.data.length === 0 && (
         <p className="text-sm text-muted">No test plans with test suites in this project yet.</p>
       )}
@@ -179,6 +183,7 @@ export default function ManageCases({
           onClearSelection={() => setSelection(null)}
         />
       ))}
+      </div>
     </div>
   );
 }
