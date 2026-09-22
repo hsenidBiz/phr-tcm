@@ -64,6 +64,41 @@ pub(crate) fn esc_attr(text: &str) -> String {
     esc(text).replace('\'', "&#39;")
 }
 
+/// The bookmark on a case heading: where the review stopped. Browser-only -
+/// the mark is kept by the page and never reaches the app - so the button
+/// carries no value of its own; the case's `data-key` beside it is the
+/// identity, and the same markup serves every case.
+const MARK_BUTTON: &str = "<button type='button' class='tc-mark' aria-pressed='false' \
+     title='Bookmark: where the review stopped' aria-label='Bookmark this case'>\
+     <svg viewBox='0 0 24 24' aria-hidden='true'>\
+     <path d='M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z'/></svg></button>";
+
+/// Which review a page is, for that bookmark. These pages are all written
+/// into the same temp directory and opened over `file://`, where every
+/// document shares one storage area - so what keeps one review's bookmark
+/// apart from another's is this scope, not the URL.
+///
+/// Cases that already live in Azure DevOps are keyed by the PBI the app
+/// labelled them with. A page of a test suite's cases, or a saved export,
+/// has no id in its label to key by, so the label itself is hashed - the
+/// scope has only to be stable and distinct, never readable.
+fn pbi_scope(subtitle: &str) -> String {
+    let id = subtitle.trim().strip_prefix("PBI #").map(str::trim).unwrap_or_default();
+    if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
+        format!("pbi-{id}")
+    } else {
+        format!("pbi-{:08x}", crate::autorun::recipe::fnv1a(subtitle))
+    }
+}
+
+/// A draft has no work item id at all, so its bookmark is keyed by what the
+/// draft is: the file(s) it was imported from, and - for cases typed by
+/// hand, which have no file - the page's own path, which stays the same for
+/// as long as the app is running.
+fn draft_scope(key: &str) -> String {
+    format!("draft-{:08x}", crate::autorun::recipe::fnv1a(key))
+}
+
 /// Context for comment boxes on a page of EXISTING Azure DevOps cases.
 /// Their comments are a personal scratchpad held by the app, keyed by work
 /// item id - nothing is written to Azure DevOps and there is no file.
@@ -198,33 +233,24 @@ pub fn export_queue_page(
     // Identity of each draft box, resolved by the app when the note lands.
     let mut draft_cases: Vec<serde_json::Value> = vec![];
 
-    let mut parts: Vec<String> = vec![
-        "<!DOCTYPE html>".into(),
-        format!(
-            "<html lang=\"en\" data-scheme=\"{}\"><head><meta charset=\"utf-8\">",
-            palette.initial_scheme()
-        ),
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">".into(),
-        format!("<title>Test Cases ({})</title>", queue.len()),
-        format!(
-            "<style>{vars}{HTML_CSS}</style></head><body>{switch}{shell_open}<div class='page'>",
-            vars = palette.css(),
-            switch = crate::webtheme::SWITCH_HTML,
-        ),
-        "<h1>Test Cases</h1>".into(),
-        format!(
-            "<p class='subtitle'>{}</p>",
-            if subtitle.is_empty() {
-                format!("{} test case(s)", queue.len())
-            } else {
-                esc(subtitle)
-            }
-        ),
-        // Above the search bar and sticky in its own right, so it is seen
-        // whether the reviewer is at the top of the page or the bottom.
-        "<div id='tc-stale' role='status'><span>The test cases have changed since this page was opened.</span><button type='button' id='tc-stale-go'>Refresh</button></div>".into(),
-        "<div class='searchbar'>".into(),
-        "<input id='tc-search' type='search' placeholder='Search title, ID, tags, steps, prerequisites...' aria-label='Search test cases'>".into(),
+    // What the reader's bookmark is filed under. Derived here rather than
+    // passed in: the two callers know no more about which review this is
+    // than the subtitle and the path they already hand over.
+    let from_files =
+        files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>().join("|");
+    let scope = if !draft_page {
+        pbi_scope(subtitle)
+    } else if from_files.is_empty() {
+        draft_scope(path)
+    } else {
+        draft_scope(&from_files)
+    };
+
+    // The four controls in one menu. Four chips beside the search box
+    // crowded it, and only one of them is ever used at a time; each keeps
+    // its id and its label, because the page's script finds them by id and
+    // reads those labels back out.
+    let menu_items: Vec<String> = [
         // Only when at least one case HAS notes - a button that hides
         // nothing is just another thing to read.
         if queue.iter().any(|tc| !tc.reviewer_notes.trim().is_empty()) {
@@ -254,11 +280,66 @@ pub fn export_queue_page(
         } else {
             "<button id='tc-spec' type='button' aria-pressed='false'>Hide spec</button>".to_string()
         },
+    ]
+    .into_iter()
+    .filter(|item| !item.is_empty())
+    .collect();
+
+    let mut parts: Vec<String> = vec![
+        "<!DOCTYPE html>".into(),
+        format!(
+            "<html lang=\"en\" data-scheme=\"{}\"><head><meta charset=\"utf-8\">",
+            palette.initial_scheme()
+        ),
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">".into(),
+        format!("<title>Test Cases ({})</title>", queue.len()),
+        format!(
+            "<style>{vars}{HTML_CSS}</style></head><body data-scope='{scope}'>{switch}{shell_open}<div class='page'>",
+            vars = palette.css(),
+            switch = crate::webtheme::SWITCH_HTML,
+        ),
+        "<h1>Test Cases</h1>".into(),
+        format!(
+            "<p class='subtitle'>{}</p>",
+            if subtitle.is_empty() {
+                format!("{} test case(s)", queue.len())
+            } else {
+                esc(subtitle)
+            }
+        ),
+        // Above the search bar and sticky in its own right, so it is seen
+        // whether the reviewer is at the top of the page or the bottom.
+        "<div id='tc-stale' role='status'><span>The test cases have changed since this page was opened.</span><button type='button' id='tc-stale-go'>Refresh</button></div>".into(),
+        "<div class='searchbar'>".into(),
+        "<input id='tc-search' type='search' placeholder='Search title, ID, tags, steps, prerequisites...' aria-label='Search test cases'>".into(),
+        // Back to where the review stopped. Outside the menu, because it is
+        // the one control a reviewer reaches for repeatedly - and hidden
+        // until a case is marked, since a button that scrolls nowhere is
+        // just another thing to read.
+        "<button id='tc-goto' type='button' class='hidden' title='Scroll to the bookmarked case'>Go to bookmark</button>".into(),
+        // A native disclosure: the menu opens with no script at all, and
+        // the page's script only adds what a disclosure does not do on its
+        // own - close on Escape and on a click outside.
+        if menu_items.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "<details class='tc-menu'><summary>Options</summary><div class='tc-menu-items'>{}</div></details>",
+                menu_items.join("")
+            )
+        },
         "<span id='tc-count'></span></div>".into(),
         "<p id='tc-no-match' class='no-match hidden'>No test cases match your search.</p>".into(),
     ];
     for (idx, tc) in queue.iter().enumerate() {
-        parts.push("<div class='case'>".into());
+        // What the bookmark points at, and it has to survive a re-render: a
+        // work item is its own identity, and a case that has none is keyed
+        // by the slot its comment box is addressed by.
+        let key = tc
+            .update_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| format!("d{idx}"));
+        parts.push(format!("<div class='case' data-key='{key}'>"));
         let wid = tc
             .update_id
             .map(|id| format!("<span class='wid'>#{id}</span>"))
@@ -281,7 +362,7 @@ pub fn export_queue_page(
         // search filter hides some: "case 7" has to mean the same thing
         // before and after someone types in the box.
         parts.push(format!(
-            "<h2><span class='seq'>{}</span>{op}{wid}{}</h2>",
+            "<h2><span class='seq'>{}</span>{op}{wid}{}{MARK_BUTTON}</h2>",
             idx + 1,
             esc(&tc.title)
         ));

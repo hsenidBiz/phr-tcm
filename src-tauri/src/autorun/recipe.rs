@@ -318,7 +318,10 @@ fn slug_part(s: &str) -> String {
 /// 32-bit FNV-1a, written inline rather than pulling in a crate or using
 /// `std::hash::DefaultHasher` (not stable across Rust releases, so a slug
 /// computed by one toolchain could stop matching one computed by another).
-fn fnv1a(s: &str) -> u32 {
+///
+/// Shared with the review page, which keys a reader's bookmark the same
+/// way - one short hash that is the same on every run, not two.
+pub(crate) fn fnv1a(s: &str) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for b in s.bytes() {
         h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);

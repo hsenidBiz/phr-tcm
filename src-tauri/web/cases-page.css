@@ -5,10 +5,29 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 32px 
 .page { max-width: 900px; margin: 0 auto; }
 h1 { font-size: 22px; margin: 0 0 4px; }
 .subtitle { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+/* Positioned so the bookmark can sit in the card's own corner without the
+   heading having to become a flex row around it. */
 .case { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
         padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(20,30,50,.05);
-        page-break-inside: avoid; }
-.case h2 { font-size: 16px; margin: 0 0 8px; }
+        position: relative; page-break-inside: avoid; }
+.case h2 { font-size: 16px; margin: 0 0 8px; padding-right: 26px; }
+/* Where the review stopped: one mark per page, on the case's own heading.
+   Quiet until the card is hovered, like the notes' and findings' own x's,
+   so a page of twenty cases is not a page of twenty buttons - and always
+   visible on the marked one, which is the whole point of it. */
+.tc-mark { position: absolute; top: 14px; right: 14px; line-height: 0; padding: 4px;
+           cursor: pointer; border: 0; border-radius: 6px; background: none;
+           color: var(--faint); opacity: 0; transition: opacity .15s ease; }
+.case:hover .tc-mark, .tc-mark:focus-visible, .case.marked .tc-mark { opacity: 1; }
+.tc-mark svg { width: 13px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.tc-mark:hover { color: var(--accent);
+                 background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.case.marked .tc-mark { color: var(--accent); }
+.case.marked .tc-mark svg { fill: currentColor; }
+/* The left border is what finds the marked case while scrolling past it;
+   the mark alone is too small to be seen from the other end of the page. */
+.case.marked { border-left: 3px solid var(--accent); }
+@media print { .tc-mark { display: none; } }
 .case .wid { color: var(--accent); font-weight: 600; margin-right: 6px; }
 /* Position in the set, so a reviewer can say "case 7" out loud. Tabular
    figures keep the titles aligned once the count passes nine. Counted in
@@ -65,6 +84,36 @@ td.num { width: 34px; text-align: center; color: var(--faint); }
 .no-match { color: var(--muted); font-size: 14px; text-align: center;
             padding: 28px 0; border: 1px dashed var(--border); border-radius: 10px; }
 .hidden { display: none !important; }
+/* Back to where the review stopped. Outside the menu, because it is the one
+   control a reviewer reaches for repeatedly; hidden until a case is marked. */
+#tc-goto { font: inherit; font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+           border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+           border-radius: 8px; white-space: nowrap; color: var(--accent);
+           background: color-mix(in srgb, var(--accent) 8%, transparent); }
+#tc-goto:hover { border-color: var(--accent); }
+/* The controls below fold into one Options menu: four chips beside the
+   search box crowded it, and only one of them is used at a time. A native
+   <details>, so it opens with no script at all; the script adds only what a
+   disclosure does not do on its own - close on Escape and on a click
+   outside. The summary wears the same chip as the items it holds. */
+.tc-menu { position: relative; }
+.tc-menu > summary { font: inherit; font-size: 12.5px; padding: 7px 12px; cursor: pointer;
+                     border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+                     border-radius: 8px; white-space: nowrap; color: var(--accent);
+                     list-style: none;
+                     background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.tc-menu > summary:hover { border-color: var(--accent); }
+.tc-menu > summary::-webkit-details-marker { display: none; }
+.tc-menu > summary::after { content: ' \25be'; }
+.tc-menu[open] > summary::after { content: ' \25b4'; }
+/* Over the cases rather than in the flow: the bar is sticky, and a menu
+   that pushed the page down would move whatever is being read. */
+.tc-menu-items { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6;
+                 display: flex; flex-direction: column; gap: 6px; padding: 8px;
+                 min-width: 190px; background: var(--surface);
+                 border: 1px solid var(--border); border-radius: 10px;
+                 box-shadow: 0 6px 18px rgba(20,30,50,.18); }
+.tc-menu-items > * { text-align: left; }
 /* Reviewer-notes toggle. It lives in the sticky search bar rather than
    beside a case, so it is reachable from anywhere in a long page - the
    reviewer who wants the notes gone is usually halfway down when they

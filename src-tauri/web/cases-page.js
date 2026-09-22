@@ -98,9 +98,107 @@
     });
   }
 
+  // --- The Options menu. A native disclosure, so it opens on its own; what
+  // is added here is what one does not do by itself. Both listeners sit on
+  // the document and look the menu up when they fire, so they survive every
+  // content swap untouched.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var open = document.querySelector('.tc-menu[open]');
+    if (!open) return;
+    open.removeAttribute('open');
+    var summary = open.querySelector('summary');
+    if (summary && summary.focus) summary.focus();
+  });
+  document.addEventListener('click', function (e) {
+    var open = document.querySelector('.tc-menu[open]');
+    if (!open) return;
+    var within = e.target && e.target.closest ? e.target.closest('.tc-menu') : null;
+    if (within !== open) open.removeAttribute('open');
+  });
+
+  // --- The bookmark: where the review stopped. One per page, and it never
+  // leaves the browser - neither the app nor the file is told about it.
+  //
+  // Which review this is comes from the renderer as data-scope on <body>:
+  // these pages are all opened over file://, where every document shares
+  // one storage area, so the scope is what keeps two reviews apart.
+  var sessionMark = null;
+  function markStore() {
+    return 'tcm-report-mark:' + (document.body.getAttribute('data-scope') || '');
+  }
+  function rememberMark(key) {
+    sessionMark = key;
+    try {
+      if (key) localStorage.setItem(markStore(), key);
+      else localStorage.removeItem(markStore());
+    } catch (e) {}
+  }
+  function recallMark() {
+    try {
+      var stored = localStorage.getItem(markStore());
+      // Storage answered, so storage decides: the value held here is the
+      // fallback for an origin that refuses storage outright, and keeping
+      // it alive beside a working store is how the two drift apart.
+      sessionMark = null;
+      return stored;
+    } catch (e) {}
+    return sessionMark;
+  }
+  function markedCase() {
+    var key = recallMark();
+    if (!key) return null;
+    var cards = document.querySelectorAll('.case');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-key') === key) return cards[i];
+    }
+    return null;
+  }
+
+  // Re-runnable for the same reason wireSearch is: after a live swap the
+  // cards and the bar are new nodes that know nothing of the mark.
+  function wireMarks() {
+    var key = recallMark();
+    var cards = document.querySelectorAll('.case');
+    var found = false;
+    for (var i = 0; i < cards.length; i++) {
+      var on = !!key && cards[i].getAttribute('data-key') === key;
+      if (on) found = true;
+      cards[i].classList.toggle('marked', on);
+      var mark = cards[i].querySelector('.tc-mark');
+      if (mark) mark.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    var go = document.getElementById('tc-goto');
+    if (!go) return;
+    // Nothing marked, nowhere to go: a button that scrolls to nothing is
+    // just another thing to read.
+    go.classList.toggle('hidden', !found);
+    if (go.dataset.wired) return;
+    go.dataset.wired = '1';
+    go.addEventListener('click', function () {
+      var card = markedCase();
+      if (card && card.scrollIntoView) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }
+  window.__tcmWireMarks = wireMarks;
+
+  // Delegated, like the blocks' own x, so it survives every swap untouched.
+  document.addEventListener('click', function (e) {
+    var mark = e.target && e.target.closest ? e.target.closest('.tc-mark') : null;
+    if (!mark) return;
+    var card = mark.closest('.case');
+    if (!card) return;
+    var key = card.getAttribute('data-key');
+    // There is only ever one mark: marking another case moves it, and
+    // clicking the marked case again clears it.
+    rememberMark(recallMark() === key ? null : key);
+    wireMarks();
+  });
+
   var applyFilter = wireSearch();
   wireNotesToggle();
   wireFindingsToggle();
+  wireMarks();
 
   // Each note's/finding's own x: collapses just that case's block, with the
   // same motion as the global toggle. Session-only on purpose - which single
@@ -166,6 +264,7 @@
       });
       applyFilter = wireSearch();
       wireNotesToggle();
+      wireMarks();
       if (window.__tcmWireNotes) window.__tcmWireNotes();
       if (window.__tcmWireSpecs) window.__tcmWireSpecs();
       window.scrollTo(0, y);

@@ -1050,3 +1050,179 @@ fn the_shell_carries_has_files_when_a_draft_file_sits_beside_the_spec_pane() {
     let html = std::fs::read_to_string(&path).unwrap();
     assert!(html.contains("<div class='shell with-specs has-files'>"), "{html}");
 }
+
+/// A page with everything on it carried four chips beside the search box,
+/// and only one of them is used at a time. They fold into one Options menu -
+/// a native disclosure, so it opens with no script - and each keeps the id
+/// and the label it had, because the page's own script addresses them by id.
+#[test]
+fn the_review_page_folds_its_controls_into_one_menu() {
+    use v2_lib::import_parser::{export_queue_page, CommentCtx, DraftNoteCtx, NoteCtx};
+    use v2_lib::model::CaseFinding;
+    use v2_lib::spec_pane::SpecDoc;
+    let queue = vec![TestCase {
+        title: "Login".into(),
+        steps: vec![Step { action: "a".into(), expected: "b".into() }],
+        area: "Reports".into(),
+        reviewer_notes: "Spec: Rules.md 1.1".into(),
+        findings: vec![CaseFinding {
+            kind: "spec".into(),
+            title: "The spec does not say".into(),
+            ..Default::default()
+        }],
+        update_id: Some(157_957),
+        ..Default::default()
+    }];
+    let docs = vec![SpecDoc {
+        title: "Rules".into(),
+        kind: "file".into(),
+        source: "C:/work/Rules.md".into(),
+        html: "<p>Body.</p>".into(),
+        error: None,
+    }];
+    let ctx = NoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        org: "acme".into(),
+        notes: HashMap::new(),
+    };
+    let path = tmp_path("options-menu.html");
+    export_queue_page(
+        &queue,
+        &path,
+        "PBI #42",
+        Some(CommentCtx::Ado(&ctx)),
+        &Default::default(),
+        Some("test-map-1.html"),
+        &docs,
+    )
+    .unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    let bar = html.split("<div class='searchbar'>").nth(1).expect("search bar");
+    assert!(
+        bar.contains("<details class='tc-menu'><summary>Options</summary>"),
+        "one menu in the sticky bar: {bar}"
+    );
+    // INSIDE it - a control left behind in the bar is the crowding this
+    // change exists to undo.
+    let menu = bar
+        .split("<details class='tc-menu'>")
+        .nth(1)
+        .unwrap()
+        .split("</details>")
+        .next()
+        .unwrap();
+    for id in ["tc-notes", "tc-findings", "tc-tree", "tc-spec"] {
+        assert!(menu.contains(&format!("id='{id}'")), "{id} belongs in the menu: {menu}");
+    }
+    // Each one unchanged, because the page's script finds them by id and
+    // reads their labels back out.
+    assert!(menu.contains("<button id='tc-notes' type='button' aria-pressed='false'>Hide reviewer notes</button>"), "{menu}");
+    assert!(menu.contains("<a id='tc-tree' href='test-map-1.html'>View as Tree</a>"), "{menu}");
+
+    // Which review this is, for the reader's bookmark. These pages all sit
+    // in one temp directory and open over file://, where every document
+    // shares one storage area - the scope is what keeps two reviews apart.
+    assert!(html.contains("<body data-scope='pbi-42'>"), "{html}");
+
+    // A draft has no work item id to key by, so it is keyed by the file
+    // behind it instead.
+    let draft = DraftNoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        owners: vec![String::new()],
+        files: vec![],
+    };
+    let path2 = tmp_path("options-menu-draft.html");
+    export_queue_page(
+        &queue,
+        &path2,
+        "PBI #42",
+        Some(CommentCtx::Draft(&draft)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let draft_html = std::fs::read_to_string(&path2).unwrap();
+    assert!(draft_html.contains("<body data-scope='draft-"), "{draft_html}");
+}
+
+/// The bookmark points at a case, so every case needs an identity that
+/// survives a re-render: the work item id where there is one, and otherwise
+/// the slot the case's own comment box is addressed by.
+#[test]
+fn every_case_carries_its_key() {
+    use v2_lib::import_parser::{export_queue_page, CommentCtx, DraftNoteCtx};
+    let queue = vec![
+        TestCase {
+            title: "Draft, no id yet".into(),
+            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            ..Default::default()
+        },
+        TestCase {
+            title: "An existing work item".into(),
+            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            update_id: Some(157_957),
+            ..Default::default()
+        },
+    ];
+    let ctx = DraftNoteCtx {
+        port: 4711,
+        token: "secret".into(),
+        owners: vec![String::new(), String::new()],
+        files: vec![],
+    };
+    let path = tmp_path("case-keys.html");
+    export_queue_page(
+        &queue,
+        &path,
+        "PBI #42",
+        Some(CommentCtx::Draft(&ctx)),
+        &Default::default(),
+        None,
+        &[],
+    )
+    .unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("<div class='case' data-key='d0'>"), "{html}");
+    assert!(html.contains("<div class='case' data-key='157957'>"), "{html}");
+    // The same identity the comment box uses, so the two cannot drift.
+    assert!(html.contains("data-case='0'"), "{html}");
+}
+
+/// Where the review stopped: a mark on each case heading and one Go to
+/// bookmark in the sticky bar. The bar's button starts hidden - a button
+/// that scrolls nowhere is just another thing to read.
+#[test]
+fn each_case_has_a_bookmark_button_and_the_bar_a_go_to() {
+    let queue = vec![
+        TestCase {
+            title: "One".into(),
+            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            ..Default::default()
+        },
+        TestCase {
+            title: "Two".into(),
+            steps: vec![Step { action: "a".into(), expected: "b".into() }],
+            ..Default::default()
+        },
+    ];
+    let path = tmp_path("bookmarks.html");
+    export_queue_to_html(&queue, &path, "PBI #42", None, &Default::default()).unwrap();
+    let html = std::fs::read_to_string(&path).unwrap();
+
+    assert_eq!(html.matches("class='tc-mark'").count(), 2, "one mark per case: {html}");
+    assert_eq!(html.matches("id='tc-goto'").count(), 1, "one Go to bookmark: {html}");
+    let bar = html.split("<div class='searchbar'>").nth(1).expect("search bar");
+    assert!(bar.contains("id='tc-goto'"), "it belongs in the sticky bar: {bar}");
+    assert!(
+        html.contains("title='Bookmark: where the review stopped'"),
+        "the mark says what it is: {html}"
+    );
+    assert!(html.contains("class='tc-mark' aria-pressed='false'"), "{html}");
+    // The marked case is readable at a glance from the left border, not
+    // only from the mark itself.
+    assert!(html.contains(".case.marked"), "the stylesheet paints the marked case: {html}");
+}
