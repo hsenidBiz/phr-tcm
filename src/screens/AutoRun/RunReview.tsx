@@ -403,11 +403,12 @@ export default function RunReview(props: {
                           )}
                         </p>
                       ))}
-                      {unchecked(c.case_id, s.step_number) && (
-                        <p className="mt-1 text-muted">
-                          not checked: {unchecked(c.case_id, s.step_number)}
-                        </p>
-                      )}
+                      {(() => {
+                        const reason = unchecked(c.case_id, s.step_number);
+                        return (
+                          reason && <p className="mt-1 text-muted">not checked: {reason}</p>
+                        );
+                      })()}
                     </li>
                   ))}
                 </ul>
