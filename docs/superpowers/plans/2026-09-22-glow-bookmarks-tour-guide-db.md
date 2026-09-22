@@ -32,6 +32,7 @@
 4. The writing guide: edge cases and quoted names
 5. Database tools: the guard, sqlcmd, the schema search
 6. Database tools: bridge routes, MCP tools, settings and the guides
+7. Auto Run: clear the scripts, clear the results (development build)
 
 ---
 
@@ -360,13 +361,17 @@ Every `/db-query` call logs `db query (<Read|Write>) on <server>/<database>: <fi
 
 **Tools** (after `save_autorun_script`'s Auto Run block in `tools_list`, before `optimize_cases`; not dev-only; switchable as one row):
 - `db_lookup` (`query: string`, `limit?: number`): "Find the tables and columns behind a topic in the company database: table and column names, types, foreign keys, ranked by how well they match the words. Use it before writing a query, and to check which table a screen reads from."
-- `db_query` (`sql: string`): "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT on every connection; INSERT, UPDATE and DELETE only on the Dev - dev login connection, and never DROP, ALTER, CREATE or EXEC. Use it to verify what a test case expects against real data, or to set up test data on the dev database."
+- `db_query` (`sql: string`): "Run one SQL statement on the chosen company database through sqlcmd and read the result (200 rows at most). SELECT on every connection; INSERT, UPDATE and DELETE only when the person has switched writes on in the AI Bridge tab and the connection is the Dev - dev login one; never DROP, ALTER, CREATE or EXEC. Use it to verify what a test case expects against real data, or to set up test data on the dev database."
 
-**TS mirror and settings.** `MCP_TOOLS` gains the two; `TOOL_PAIRS` gains `["db_lookup", "db_query"]` with `PAIR_ROWS.db_lookup = { label: "Company database", summary: "Look up tables and run SQL on the connection chosen below. Writes only on the dev login." }`. The AI Bridge tab's Company database card: the connection preset/string fields stay and are what the tools use (the heading loses "(PHR-X)"; a one-line note says the PHR-X server registration is optional and no longer needed for lookups); `App.tsx` reads the stored `connection_string` (from `loadDbConfig()`; blank means none) and passes it to `setBridgeContext` alongside the disabled tools, re-pushing when it changes (the `useSyncExternalStore` the disabled set already uses, or a storage listener the AI Bridge tab triggers on save).
+**TS mirror and settings (amended 2026-09-22, owner):** two switches, both on the AI Bridge tab's Company database card, one for reading and one for writing.
+- *Reading* is the tools' row: `MCP_TOOLS` gains `db_lookup` and `db_query`; `TOOL_PAIRS` gains `["db_lookup", "db_query"]` with `PAIR_ROWS.db_lookup = { label: "Company database (read)", summary: "Look up tables and run SELECT on the connection chosen below." }`. Off means both tools are refused the ordinary way ("switched off in Test Case Manager").
+- *Create, update, delete* is a second switch, OFF by default, stored as `tcm-v2-db-writes` ("1" only when on; absent means off, so a fresh profile and a cleared one both read off) in `src/lib/dbServer.ts`, and pushed to the bridge as `BridgeContext.db_writes: bool` through `set_bridge_context` alongside the connection string. `/db-query` allows INSERT/UPDATE/DELETE/MERGE only when BOTH hold: the switch is on AND the connection's user is the dev login (the guard's `Access::DevWrites`); with the switch off the refusal reads `create, update and delete are switched off - turn them on under Company database on the AI Bridge tab`; with the switch on but a read-only connection, the guard's own read-only sentence. The card shows the write switch under the read one with one line of copy: `Only on the Dev - dev login connection, and every statement is written to the log.` and the switch is disabled with that explanation when the chosen connection is not the dev login.
+- `App.tsx` reads both the stored `connection_string` (blank means none) and the writes flag and passes them to `setBridgeContext`, re-pushing when either changes (the `useSyncExternalStore` pattern the disabled set uses; `saveDbConfig`/the new `saveDbWrites` notify it).
+- The Company database card's heading loses "(PHR-X)"; a one-line note says the PHR-X server registration is optional and no longer needed for lookups.
 
 **Guides.** Writing guide `## Use these tools`: one bullet: `db_lookup` and `db_query` check real data (which table a screen reads, what a value is today); the expected result still comes from the spec, the database only tells you the current state. Auto Run guide: the "verifying effects" bullet names the two tools. Add one drift assertion each.
 
-- [ ] **Step 1: Write the failing tests.** `tests/ai_bridge.rs`: the two routes with a `FakeRunner` (the route needs a way to be given one: make the runner a `BridgeContext`-independent injectable, for example a `pub static SQL_RUNNER: OnceLock<Box<dyn Runner>>`-free design is hard with async traits; simplest: the routes call `db::query::run_lookup(ctx, runner, ...)`/`run_query(...)` pure-ish functions in a new `db/query.rs` that take `&impl Runner` and the found exe path, and the tests call THOSE with the fake, while the route's own test only covers the 409 branches (no connection; sqlcmd missing via an env override `TCM_SQLCMD` that the finder honours first, pointing at a nonexistent path)). Cover: read-only preset + INSERT -> 400 with the read-only sentence and no runner call; dev-login + INSERT -> runner called, log line contains the statement; DROP on dev-login -> 400, no call; lookup renders; sqlcmd failure -> 502 without the password. `tests/tcm_mcp.rs`: order assertion extended; both tools switchable and refused the ordinary way. `mcpTools.test.ts`: the new row. `AiBridge.test.tsx`: the heading no longer says PHR-X; saving a preset calls `set_bridge_context` with the connection string (or whatever mechanism you chose; assert the effect).
+- [ ] **Step 1: Write the failing tests.** `tests/ai_bridge.rs`: the two routes with a `FakeRunner` (the route needs a way to be given one: make the runner a `BridgeContext`-independent injectable, for example a `pub static SQL_RUNNER: OnceLock<Box<dyn Runner>>`-free design is hard with async traits; simplest: the routes call `db::query::run_lookup(ctx, runner, ...)`/`run_query(...)` pure-ish functions in a new `db/query.rs` that take `&impl Runner` and the found exe path, and the tests call THOSE with the fake, while the route's own test only covers the 409 branches (no connection; sqlcmd missing via an env override `TCM_SQLCMD` that the finder honours first, pointing at a nonexistent path)). Cover: read-only preset + INSERT -> 400 with the read-only sentence and no runner call; dev-login + INSERT with `db_writes: false` -> 400 with the switched-off sentence and no runner call; dev-login + INSERT with `db_writes: true` -> runner called, log line contains the statement; DROP on dev-login -> 400, no call; lookup renders; sqlcmd failure -> 502 without the password. `tests/tcm_mcp.rs`: order assertion extended; both tools switchable and refused the ordinary way. `mcpTools.test.ts`: the new row. `AiBridge.test.tsx`: the heading no longer says PHR-X; saving a preset calls `set_bridge_context` with the connection string; the write switch is off by default, disabled with its explanation on a read-only connection, and turning it on (dev login chosen) pushes `db_writes: true`; `src/lib/dbServer.test.ts` (or the file that tests it): the writes flag round-trips and defaults to off.
 - [ ] **Step 2: Run to verify failure.**
 - [ ] **Step 3: Implement.** Bindings regenerated (the `set_bridge_context` signature changes).
 - [ ] **Step 4: Run:** `cargo test --tests`, `cargo test --test bindings` + line-ending check, `npx tsc --noEmit`, `npx vitest run --exclude "**/.claude/**"`, `npm run build`. Then, by hand in a dev build with `sqlcmd` installed (`winget install sqlcmd`): choose "Dev — read only" on the AI Bridge tab, ask the connected assistant to `db_lookup` "leave request" and to `db_query` a SELECT; confirm the read-only refusal of an INSERT; switch to the dev login and confirm the INSERT runs and is in Settings, Logs whole. Record the results in the report.
@@ -376,6 +381,39 @@ Every `/db-query` call logs `db query (<Read|Write>) on <server>/<database>: <fi
 git add src-tauri/src src-tauri/tests src src/bindings.ts
 git commit -q -F - <<'EOF'
 feat(v2): the assistant can look up tables and run SQL on the chosen company database, writes only on the dev login
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+EOF
+```
+
+---
+
+### Task 7: Auto Run: clear the scripts, clear the results (development build)
+
+**Files:**
+- Modify: `src-tauri/src/autorun/store.rs` (`clear_scripts`, `clear_runs`), `src-tauri/src/commands/autorun.rs` (two commands), `src-tauri/src/lib.rs` (register)
+- Modify: `src/screens/AutoRun/index.tsx` (two toolbar buttons with a confirm), `src/lib/actionIcons.ts`
+- Test: `src-tauri/tests/autorun_store.rs`, `src-tauri/tests/autorun_commands.rs`, `src/screens/AutoRun/index.test.tsx` (or `src/screens/AutoRun.test.tsx`)
+- Generated: `src/bindings.ts`
+
+**Owner request (2026-09-22):** in the dev version of Auto Run, a button to clear the scripts and one to clear the results that have already been executed.
+
+**Interfaces:**
+- `store::clear_scripts(root, case_ids: &[i32]) -> Result<usize, String>`: removes `scripts/case-<id>.json` for each id that exists; returns how many were removed; a missing file is not an error; any other I/O error is returned (the message names the first failure).
+- `store::clear_runs(root) -> Result<usize, String>`: removes every `runs/*.json` and every file under `shots/`; returns the number of runs removed. Runs that were sent to Azure DevOps are removed too (the record in Azure DevOps is the durable one; the confirm says so).
+- Commands: `auto_run_clear_scripts(case_ids: Vec<i32>) -> Result<usize, String>` and `auto_run_clear_runs() -> Result<usize, String>`; both refuse while `replay_is_running()` or while a supervised browser is open, with the sentences `auto_run_open_browser` and `auto_run_replay` already use (a run in progress reads scripts and writes runs).
+- UI: two `Button size="sm" variant="outline"` in the toolbar after "Sign-in recipe": `<IconClearScripts aria-hidden /> Clear scripts` (disabled when the PBI's listed cases have no scripts) and `<IconClearResults aria-hidden /> Clear results` (disabled when there are no runs). Each opens the shared `Modal` confirm: `This removes the scripts of the N cases listed for this PBI from this machine. Nothing in Azure DevOps changes.` / `This removes every Auto Run result and picture on this machine, including runs already sent to Azure DevOps (those stay there). Nothing in Azure DevOps changes.` with Cancel and a danger-toned confirm button. On success: toast `N scripts removed` / `N runs removed`, invalidate the case list's script queries and `["autorun-runs"]`. Icons: two unused lucide glyphs in `src/lib/actionIcons.ts` that mean the ACTION (for example `FileX2 as IconClearScripts`, `Eraser as IconClearResults`); check they are not already aliased.
+
+- [ ] **Step 1: Write the failing tests.** Rust: `clear_scripts` removes only the named ids and leaves others; a missing id is fine; the count is right; `clear_runs` removes runs and shots and returns the run count, a run with `published` set included; both on an empty root return 0. Frontend: the two buttons appear; each opens its confirm with the exact sentence; Cancel calls nothing; confirm calls the command and toasts the count; the buttons are disabled when there is nothing to clear.
+- [ ] **Step 2: Run to verify failure.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run:** `cargo test --test autorun_store`, `cargo test --test autorun_commands`, `cargo test --test bindings` + line-ending check, `npx tsc --noEmit`, `npx vitest run src/screens/AutoRun src/screens/AutoRun.test.tsx src/ui-consistency.test.ts --exclude "**/.claude/**"`.
+- [ ] **Step 5: Commit**
+
+```bash
+git add src-tauri/src src-tauri/tests src/bindings.ts src/screens/AutoRun src/lib/actionIcons.ts
+git commit -q -F - <<'EOF'
+feat(v2): Auto Run can clear a PBI's scripts and every result on this machine
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 EOF
