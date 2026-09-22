@@ -6,7 +6,8 @@
 use v2_lib::ado::AdoClient;
 use v2_lib::ado_testplan::EnsuredSuite;
 use v2_lib::autorun::publish::{
-    comment_for, pictures_for, publish_run, step_marks, PublishCase, PublishResult, SkippedCase,
+    comment_for, pictures_for, publish_run, refuse_locally, step_marks, PublishCase, PublishResult,
+    SkippedCase,
 };
 use v2_lib::autorun::{store, LocalRun};
 use wiremock::matchers::{method, path};
@@ -21,6 +22,10 @@ fn suite() -> EnsuredSuite {
 /// confirmed.
 fn reviewed_run(root: &std::path::Path) -> LocalRun {
     let shot = store::save_shot(root, b"\xFF\xD8\xFF\xD9").unwrap();
+    // A distinct picture on the not-run step 3, so a test can confirm it is
+    // never picked up as failure evidence - a "not run:" outcome is not a
+    // failed action, even though it carries `ok: false`.
+    let not_run_shot = store::save_shot(root, b"\xFF\xD8\xFF\xDB").unwrap();
     let run: LocalRun = serde_json::from_value(serde_json::json!({
         "id": "run-5", "pbi_id": 42, "started_at": "1700000000000", "mode": "unattended",
         "cases": [
@@ -30,7 +35,7 @@ fn reviewed_run(root: &std::path::Path) -> LocalRun {
               { "step_number": 0, "outcomes": [{ "ok": true, "detail": "signed in as HR Admin" }] },
               { "step_number": 1, "outcomes": [{ "ok": true, "detail": "loaded" }], "screenshot": shot },
               { "step_number": 2, "outcomes": [{ "ok": false, "detail": "button \"Save\" not found", "screenshot": shot }], "screenshot": shot },
-              { "step_number": 3, "outcomes": [{ "ok": false, "detail": "not run: an earlier step of this case failed" }] }
+              { "step_number": 3, "outcomes": [{ "ok": false, "detail": "not run: an earlier step of this case failed", "screenshot": not_run_shot }] }
             ] },
           { "case_id": 8, "title": "Cancel request", "verdict": "Passed", "note": "", "proposed": "Passed",
             "reason": "every action of 1 steps passed",
@@ -91,7 +96,50 @@ fn pictures_are_the_failures_then_the_last_step_without_repeats_and_capped() {
     let p = pictures_for(&run.cases[0]);
     assert_eq!(p.len(), 1, "one file stands for the failure and the step picture: {p:?}");
     assert_eq!(p[0].0, 2);
+    // Step 3's outcome carries `ok: false` (it is `not run:`, not a real
+    // failure) and a screenshot of its own - it must never show up here,
+    // the same way `mark_for_step` never marks it.
+    let not_run_shot = run.cases[0].steps[3].outcomes[0].screenshot.clone().unwrap();
+    assert!(
+        !p.iter().any(|(_, name)| name == &not_run_shot),
+        "a not-run outcome's screenshot must never be picked up as failure evidence: {p:?}"
+    );
     assert!(pictures_for(&run.cases[1]).is_empty());
+}
+
+#[test]
+fn refuse_locally_covers_the_three_answers_and_lets_a_sendable_run_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = reviewed_run(dir.path());
+
+    assert_eq!(
+        refuse_locally(None),
+        Some("this run is no longer on this machine".to_string())
+    );
+
+    let mut published_run = run.clone();
+    published_run.published = Some(v2_lib::autorun::PublishedRun {
+        run_id: 900,
+        web_url: "https://x/run/900".into(),
+        at: "1700000000000".into(),
+    });
+    assert_eq!(
+        refuse_locally(Some(&published_run)),
+        Some("this run was already sent to Azure DevOps: https://x/run/900".to_string())
+    );
+
+    let mut blank_run = run.clone();
+    for c in &mut blank_run.cases {
+        c.verdict = String::new();
+    }
+    assert_eq!(
+        refuse_locally(Some(&blank_run)),
+        Some("confirm at least one verdict before sending".to_string())
+    );
+
+    // A run with at least one confirmed verdict and not yet sent is worth
+    // going on with - `refuse_locally` has nothing to say about it.
+    assert_eq!(refuse_locally(Some(&run)), None);
 }
 
 // ---------------------------------------------------------------------

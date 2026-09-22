@@ -4,7 +4,7 @@
 //! GET, POST and PATCH only - no DELETE, and no plan or suite is ever
 //! created here (that already happened, in Run Tests, before this runs).
 
-use super::{store, CaseRecord, PublishedRun};
+use super::{store, CaseRecord, LocalRun, PublishedRun};
 use crate::ado::{AdoClient, AdoError};
 use crate::ado_testplan::EnsuredSuite;
 use crate::commands::runs::{record_point_outcome, PointOutcome, RunAttachment};
@@ -127,7 +127,11 @@ pub fn pictures_for(case: &CaseRecord) -> Vec<(i32, String)> {
 
     for step in &case.steps {
         for oc in &step.outcomes {
-            if !oc.ok {
+            // A "not run:" outcome is not a failed action - it is one an
+            // earlier failure skipped, the same exclusion `mark_for_step`
+            // applies - so its screenshot (if it even carries one) is
+            // never treated as failure evidence.
+            if !oc.ok && !oc.detail.starts_with("not run:") {
                 if let Some(name) = &oc.screenshot {
                     if seen.insert(name.clone()) {
                         out.push((step.step_number, name.clone()));
@@ -154,6 +158,34 @@ pub fn pictures_for(case: &CaseRecord) -> Vec<(i32, String)> {
     out
 }
 
+/// The three refusals a send can give without asking Azure DevOps
+/// anything: no run file (or one that cannot be read), already sent, or
+/// nothing confirmed to send. `None` for a run that has at least one
+/// confirmed verdict and has not been sent - i.e. worth going on to ask
+/// Azure DevOps about.
+///
+/// Pulled out as its own pure function so BOTH the command (which must
+/// refuse before it even asks for a fresh token - Rule 1 says a refusal
+/// makes no request at all) and `publish_run` (which stays the authority:
+/// it re-checks with its own freshly-loaded run rather than trusting the
+/// command's earlier read) can give the identical wording.
+pub fn refuse_locally(run: Option<&LocalRun>) -> Option<String> {
+    let Some(run) = run else {
+        return Some("this run is no longer on this machine".to_string());
+    };
+    if let Some(p) = &run.published {
+        return Some(format!("this run was already sent to Azure DevOps: {}", p.web_url));
+    }
+    let confirmed = run
+        .cases
+        .iter()
+        .any(|c| matches!(c.verdict.as_str(), "Passed" | "Failed" | "Blocked"));
+    if !confirmed {
+        return Some("confirm at least one verdict before sending".to_string());
+    }
+    None
+}
+
 /// Send a reviewed run to Azure DevOps as one test run. Only cases with a
 /// confirmed `verdict` (`Passed`, `Failed` or `Blocked`) are sent - a
 /// proposal alone is never enough. See the rules in the task brief for the
@@ -171,13 +203,14 @@ pub async fn publish_run(
     run_id: &str,
     cases: &[PublishCase],
 ) -> Result<PublishResult, AdoError> {
-    let refused = |why: String| Ok(PublishResult::Refused { why });
-    let Ok(Some(mut run)) = store::load_run(root, run_id) else {
-        return refused("this run is no longer on this machine".into());
-    };
-    if let Some(p) = &run.published {
-        return refused(format!("this run was already sent to Azure DevOps: {}", p.web_url));
+    let loaded: Option<LocalRun> = store::load_run(root, run_id).ok().flatten();
+    if let Some(why) = refuse_locally(loaded.as_ref()) {
+        return Ok(PublishResult::Refused { why });
     }
+    // refuse_locally returned None, which only happens for a run that was
+    // actually loaded - the expect documents that, it can never fire.
+    let mut run = loaded.expect("refuse_locally returned None only for a run that was loaded");
+
     let confirmed: Vec<&CaseRecord> = run
         .cases
         .iter()
@@ -186,13 +219,11 @@ pub async fn publish_run(
     let mut skipped: Vec<SkippedCase> = run
         .cases
         .iter()
-        .filter(|c| !confirmed.iter().any(|k| k.case_id == c.case_id))
+        .filter(|c| !matches!(c.verdict.as_str(), "Passed" | "Failed" | "Blocked"))
         .map(|c| SkippedCase { case_id: c.case_id, why: "no verdict was confirmed".into() })
         .collect();
-    if confirmed.is_empty() {
-        return refused("confirm at least one verdict before sending".into());
-    }
 
+    let refused = |why: String| Ok(PublishResult::Refused { why });
     let ids: Vec<i32> = confirmed.iter().map(|c| c.case_id).collect();
     let points = client.get_test_points(organization, project, suite.plan_id, suite.suite_id, &ids).await?;
     let points_of = |case_id: i32| -> Vec<i32> {
@@ -211,6 +242,10 @@ pub async fn publish_run(
 
     // From here on a run exists in Azure DevOps. Nothing below may return Err.
     let created = client.create_test_run(organization, project, suite.plan_id, run_name, &point_ids).await?;
+    crate::applog::info(format!(
+        "auto-run publish: created run {} ({}) - if this process dies before it saves, that run is orphaned",
+        created.run_id, created.web_url
+    ));
     let mut problems: Vec<String> = Vec::new();
     let mut sent: Vec<i32> = Vec::new();
     let results = match client.get_run_results(organization, project, created.run_id).await {
@@ -263,7 +298,7 @@ pub async fn publish_run(
                 bug_ids: None,
             };
             match record_point_outcome(client, organization, project, created.run_id, result_id, &outcome).await {
-                Ok(extras) => problems.extend(extras.into_iter().map(|x| format!("case {id}: {x} was not saved"))),
+                Ok(extras) => problems.extend(extras.into_iter().map(|x| format!("case {id}: {x} did not save"))),
                 Err(e) => {
                     crate::applog::warn(format!("auto-run publish: run {} case {id} was not recorded: {e}", created.run_id));
                     every_point_recorded = false;

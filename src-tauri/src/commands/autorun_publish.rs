@@ -12,11 +12,23 @@ pub async fn auto_run_publish(
     run_name: String,
     cases: Vec<crate::autorun::publish::PublishCase>,
 ) -> Result<crate::autorun::publish::PublishResult, crate::ado::AdoError> {
-    use crate::autorun::publish::PublishResult;
+    use crate::autorun::publish::{refuse_locally, PublishResult};
     let root = match super::autorun::root(&app) {
         Ok(r) => r,
         Err(why) => return Ok(PublishResult::Refused { why }),
     };
+
+    // The same three refusals `publish_run` itself checks, but BEFORE any
+    // token or Azure DevOps request: a refusal is an answer, not a partial
+    // attempt, and reading a token or scanning plans is already a request.
+    // `publish_run` re-checks this itself once the send actually proceeds -
+    // that check, on its own freshly-loaded copy of the run, stays the
+    // authority; this is only what lets the command answer "no" for free.
+    let loaded = crate::autorun::store::load_run(&root, &run_id).ok().flatten();
+    if let Some(why) = refuse_locally(loaded.as_ref()) {
+        return Ok(PublishResult::Refused { why });
+    }
+
     let token = crate::state::get_fresh_token(&app).await?;
     let client = crate::ado::AdoClient::new(token);
     // Read-only: a send never creates a plan or a suite - that already
@@ -30,6 +42,7 @@ pub async fn auto_run_publish(
     // since it was resolved (a 404 on its points), in which case it is
     // forgotten and looked up once more.
     let mut retried = false;
+    let mut logged = false;
     loop {
         let cached = crate::ado_testplan::cached_suite(&client.base_url, &organization, &project, pbi_id);
         let (suite, from_cache) = match cached {
@@ -46,10 +59,15 @@ pub async fn auto_run_publish(
                 }
             },
         };
-        crate::applog::warn(format!(
-            "auto-run publish: sending run {run_id} for PBI #{pbi_id} to plan #{}",
-            suite.plan_id
-        ));
+        // Once, not once per retry pass - a retry re-resolves the suite,
+        // it does not mean a second send was asked for.
+        if !logged {
+            crate::applog::info(format!(
+                "auto-run publish: sending run {run_id} for PBI #{pbi_id} to plan #{}",
+                suite.plan_id
+            ));
+            logged = true;
+        }
         match crate::autorun::publish::publish_run(&client, &root, &organization, &project, &suite, &run_name, &run_id, &cases).await {
             Err(crate::ado::AdoError::NotFound) if from_cache && !retried => {
                 crate::ado_testplan::forget_suite(&client.base_url, &organization, &project, pbi_id);
