@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 
 type Doc = { title: string; kind: string; source: string };
 type Helpers = {
@@ -15,6 +15,7 @@ type Helpers = {
   matchHeading: (headings: string[], section: string) => number;
   slug: (text: string) => string;
   citationStart: (text: string) => number;
+  scrollWithin: (container: Element, target: Element, margin: number) => void;
 };
 let H: Helpers;
 
@@ -102,4 +103,63 @@ describe("matchHeading", () => {
 test("slug is stable, lowercase, and safe for an id", () => {
   expect(H.slug("5.8 Display Rules")).toBe("5-8-display-rules");
   expect(H.slug("  Ünïcode & symbols!  ")).toBe("ünïcode-symbols");
+});
+
+describe("scrollWithin", () => {
+  test("moves only the container, by the target's offset inside it less the margin", () => {
+    const container = document.createElement("div");
+    const target = document.createElement("h2");
+    container.appendChild(target);
+    let top = 100;
+    Object.defineProperty(container, "scrollTop", { get: () => top, set: (v: number) => { top = v; }, configurable: true });
+    container.getBoundingClientRect = () => ({ top: 40 } as DOMRect);
+    target.getBoundingClientRect = () => ({ top: 400 } as DOMRect);
+    const scrolled = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const into = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    (H as unknown as { scrollWithin: (c: Element, t: Element, m: number) => void }).scrollWithin(container, target, 12);
+    expect(top).toBe(100 + 400 - 40 - 12);
+    expect(scrolled).not.toHaveBeenCalled();
+    expect(into).not.toHaveBeenCalled();
+    scrolled.mockRestore();
+    into.mockRestore();
+  });
+});
+
+describe("a spec citation link on the review page", () => {
+  test("clicking it scrolls the spec article only, never the window via scrollIntoView", () => {
+    document.body.innerHTML = `
+      <div class="shell with-specs">
+        <div class="rev">Spec: Rules.md 2 Login</div>
+        <section id="tc-specs">
+          <button type="button" class="spec-tab" data-spec="0">Rules.md</button>
+          <article class="spec-doc" data-spec="0"><h2>2 Login</h2></article>
+        </section>
+      </div>
+      <script type="application/json" id="tc-specs-data">[{"title":"Rules.md","kind":"file","source":"x"}]</script>
+    `;
+
+    const article = document.querySelector(".spec-doc") as HTMLElement;
+    let top = 0;
+    Object.defineProperty(article, "scrollTop", {
+      get: () => top,
+      set: (v: number) => { top = v; },
+      configurable: true,
+    });
+    article.getBoundingClientRect = () => ({ top: 0 } as DOMRect);
+    const heading = article.querySelector("h2") as HTMLElement;
+    heading.getBoundingClientRect = () => ({ top: 200 } as DOMRect);
+
+    const into = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+
+    (window as unknown as { __tcmWireSpecs: () => void }).__tcmWireSpecs();
+
+    const link = document.querySelector("a.spec-link") as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    link.click();
+
+    expect(into).not.toHaveBeenCalled();
+    expect(top).not.toBe(0);
+
+    into.mockRestore();
+  });
 });

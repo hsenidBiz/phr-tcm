@@ -997,6 +997,7 @@ fn the_review_page_shows_a_spec_pane_only_when_given_documents() {
     assert!(html.contains("<button type='button' class='spec-tab' data-spec='1'>Engine <span class='spec-kind'>wiki</span></button>"), "{html}");
     assert!(html.contains("<article class='spec-doc' data-spec='0'"), "{html}");
     assert!(html.contains("<h2>5.8 Display Rules</h2>"), "the rendered document is inside: {html}");
+    assert!(html.contains("overscroll-behavior: contain"), "{html}");
     assert!(html.contains("<p class='spec-error'>Could not fetch this wiki page: not signed in.</p>"), "{html}");
     assert!(html.contains("<a class='spec-open' href='https://dev.azure.com/o/p/_wiki/wikis/p.wiki/12/Engine' target='_blank' rel='noopener noreferrer'>Open in Azure DevOps</a>"), "{html}");
     // A source with a single quote must not break out of the attribute.

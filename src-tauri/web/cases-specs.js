@@ -118,7 +118,14 @@
     return String(text || '').toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
   }
 
-  root.tcmSpecs = { splitCitation: splitCitation, findSpecTab: findSpecTab, matchHeading: matchHeading, slug: slug, citationStart: citationStart };
+  // Scroll one container to a child, leaving every other scroll container
+  // (the window above all) where it is. scrollIntoView would move them
+  // all, and on this page that drags the test cases up under the spec.
+  function scrollWithin(container, target, margin) {
+    container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top - (margin || 0);
+  }
+
+  root.tcmSpecs = { splitCitation: splitCitation, findSpecTab: findSpecTab, matchHeading: matchHeading, slug: slug, citationStart: citationStart, scrollWithin: scrollWithin };
 
   // ---- The page -------------------------------------------------------
   if (typeof document === 'undefined' || !document.getElementById) return;
@@ -217,7 +224,7 @@
     var at = matchHeading(headingTexts(article), section);
     if (at < 0) { article.scrollTop = 0; return; }
     var h = hs[at];
-    h.scrollIntoView({ block: 'start' });
+    scrollWithin(article, h, 12);
     h.classList.remove('spec-flash');
     void h.offsetWidth; // restart the animation
     h.classList.add('spec-flash');
