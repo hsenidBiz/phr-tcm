@@ -478,7 +478,7 @@ impl AdoClient {
         Err(AdoError::Http {
             status: 403,
             body: format!(
-                "You don't have permission to create a test suite in {}. The test cases are linked to #{pbi_id}, but they will not appear in Run Tests until a requirement suite exists: ask for 'Manage test suites' on that area, or create the suite in Azure DevOps.",
+                "You don't have permission to create a test suite in {}. The test cases are linked to #{pbi_id}, but they will not appear in Run Tests until a requirement suite exists. Creating suites needs the Basic + Test Plans access level (Organization settings, Users) and 'Manage test suites' on that area; or add a test to #{pbi_id} from Boards once, which creates the suite.",
                 tried.join("; ")
             ),
         })
