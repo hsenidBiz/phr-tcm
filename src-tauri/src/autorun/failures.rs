@@ -87,9 +87,21 @@ fn action_json(action: &Action) -> String {
     compact_json(&v)
 }
 
+/// What to print in place of an action's JSON, when the script on disk
+/// cannot supply one: no script at all for this case, or - a script IS
+/// there, but a person edited it after this run happened, and it no
+/// longer has an action at this index. The two are told apart because
+/// they call for different next steps (find the script vs. rerun first).
+fn missing_action_text(script: Option<&CaseScript>, index: usize) -> String {
+    match script {
+        None => "script: not on this machine".to_string(),
+        Some(_) => format!("script: no action {} on this machine (the script changed since the run)", index + 1),
+    }
+}
+
 /// The script action at this step and action index, or `None` when there
-/// is no script for this case (or, defensively, when the script on disk
-/// no longer matches the run's own record of the step).
+/// is no such action - either no script matches this case, or one does
+/// but no longer has an action here.
 fn scripted_action<'a>(script: Option<&'a CaseScript>, step_number: i32, index: usize) -> Option<&'a Action> {
     script
         .and_then(|s| s.steps.iter().find(|st| st.step_number == step_number))
@@ -97,8 +109,9 @@ fn scripted_action<'a>(script: Option<&'a CaseScript>, step_number: i32, index: 
 }
 
 /// One step's lines: `sign-in: <detail>` for step 0 when it failed, one
-/// line for a step that never ran, or one block of lines per failed
-/// action otherwise.
+/// line for a step that never ran, or - for an ordinary step - one block
+/// per failed action and one `  action K: not run (...)` line per action
+/// skipped because an earlier action in the SAME step already failed.
 fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<String>) {
     if step.step_number == SIGN_IN_STEP {
         if let Some(o) = step.outcomes.last() {
@@ -118,12 +131,20 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<S
     }
 
     for (i, outcome) in step.outcomes.iter().enumerate() {
-        if outcome.ok || outcome.detail.starts_with("not run:") {
+        if outcome.ok {
+            continue;
+        }
+        if let Some(why) = outcome.detail.strip_prefix("not run: ") {
+            // A mixed step: this one action was skipped because another
+            // action in the same step already failed. Shown, not dropped -
+            // an assistant deciding what to fix needs to know the step had
+            // MORE than the one failure it can see JSON for.
+            out.push(format!("  action {}: not run ({why})", i + 1));
             continue;
         }
         let action_text = match scripted_action(script, step.step_number, i) {
             Some(action) => action_json(action),
-            None => "script: not on this machine".to_string(),
+            None => missing_action_text(script, i),
         };
         out.push(format!("step {}, action {}: {action_text}", step.step_number, i + 1));
         out.push(format!("  page said: {}", outcome.detail));
@@ -139,12 +160,18 @@ fn describe_step(step: &StepRecord, script: Option<&CaseScript>, out: &mut Vec<S
 fn describe_case(run_id: &str, case: &CaseRecord, script: Option<&CaseScript>) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    let verdict_part =
-        if case.verdict.is_empty() { String::new() } else { format!(", verdict {}", case.verdict) };
-    lines.push(format!(
-        "## Case {} \"{}\" (run {run_id}, proposed {}{verdict_part})",
-        case.case_id, case.title, case.proposed
-    ));
+    // A supervised run never fills in `proposed` - only a person's own
+    // verdict does - so an empty `proposed` is ordinary, not a gap to fill
+    // with a blank; it is left out of the header rather than printed as
+    // "proposed " with nothing after it.
+    let mut header_parts = vec![format!("run {run_id}")];
+    if !case.proposed.is_empty() {
+        header_parts.push(format!("proposed {}", case.proposed));
+    }
+    if !case.verdict.is_empty() {
+        header_parts.push(format!("verdict {}", case.verdict));
+    }
+    lines.push(format!("## Case {} \"{}\" ({})", case.case_id, case.title, header_parts.join(", ")));
 
     if let Some(account) = &case.account {
         lines.push(format!("account: {account}"));

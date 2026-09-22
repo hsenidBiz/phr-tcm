@@ -313,6 +313,87 @@ fn describe_failures_masks_a_fill_value_but_never_the_other_fields() {
 }
 
 #[test]
+fn describe_failures_omits_proposed_when_proposed_is_empty() {
+    // A supervised run never fills in `proposed` - only a person's own
+    // verdict. The header must not print an empty "proposed " for it.
+    let run = LocalRun {
+        id: "run-1".to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![CaseRecord { verdict: "Failed".to_string(), proposed: String::new(), ..empty_case() }],
+        mode: String::new(),
+        published: None,
+    };
+    let out = describe_failures(&run, &[]);
+    assert!(out.starts_with("## Case 1 \"A case\" (run run-1, verdict Failed)"));
+    assert!(!out.contains("proposed"));
+}
+
+#[test]
+fn describe_failures_prints_not_run_outcomes_in_a_mixed_step() {
+    // A step can carry a real failure alongside a "not run:" outcome (an
+    // action skipped because an earlier action in the SAME step already
+    // failed) - that is not the whole-step "not run" case, so the not-run
+    // outcome must still be shown, not silently dropped.
+    let run = LocalRun {
+        id: "run-1".to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![CaseRecord {
+            proposed: "Failed".to_string(),
+            steps: vec![StepRecord {
+                step_number: 1,
+                outcomes: vec![
+                    ActionOutcome::failed("button \"Save\" not found"),
+                    ActionOutcome::failed("not run: an earlier action in this step failed"),
+                ],
+                screenshot: None,
+            }],
+            ..empty_case()
+        }],
+        mode: String::new(),
+        published: None,
+    };
+    let out = describe_failures(&run, &[]);
+    assert!(out.contains("step 1, action 1: script: not on this machine"));
+    assert!(out.contains("  page said: button \"Save\" not found"));
+    assert!(out.contains("  action 2: not run (an earlier action in this step failed)"));
+}
+
+#[test]
+fn describe_failures_says_the_script_changed_when_the_action_index_is_gone() {
+    // The script for this case IS on disk, but it no longer has an action
+    // at this index (a person edited it after this run happened) - that is
+    // a different situation from no script at all, and must say so.
+    let run = LocalRun {
+        id: "run-1".to_string(),
+        pbi_id: 1,
+        started_at: "1".to_string(),
+        cases: vec![CaseRecord {
+            proposed: "Failed".to_string(),
+            steps: vec![StepRecord {
+                step_number: 1,
+                outcomes: vec![ActionOutcome::failed("button \"Save\" not found")],
+                screenshot: None,
+            }],
+            ..empty_case()
+        }],
+        mode: String::new(),
+        published: None,
+    };
+    let scripts = vec![CaseScript {
+        case_id: 1,
+        title: "A case".to_string(),
+        account: None,
+        steps: vec![StepScript { step_number: 1, actions: vec![], unchecked: None }],
+        repairs: 0,
+    }];
+    let out = describe_failures(&run, &scripts);
+    assert!(out
+        .contains("step 1, action 1: script: no action 1 on this machine (the script changed since the run)"));
+}
+
+#[test]
 fn latest_run_picks_by_case_id_and_falls_back_to_the_newest_run_overall() {
     let dir = TempDir::new();
     let older = LocalRun {
