@@ -329,9 +329,9 @@ impl AdoClient {
                     network_error(&e)
                 })
             }
-            401 => Err(AdoError::Unauthorized),
-            403 => Err(AdoError::Forbidden),
-            404 => Err(AdoError::NotFound),
+            401 => Err(refused(resp, AdoError::Unauthorized).await),
+            403 => Err(refused(resp, AdoError::Forbidden).await),
+            404 => Err(refused(resp, AdoError::NotFound).await),
             429 => Err(AdoError::RateLimited { retry_after_secs: retry_after(&resp) }),
             s => Err(AdoError::Http {
                 status: s,
@@ -339,6 +339,23 @@ impl AdoClient {
             }),
         }
     }
+}
+
+/// A 401/403/404 becomes a bodiless variant, and until 2026-09-22 the
+/// sentence Azure DevOps sent with it went nowhere: 48 suite creates were
+/// refused with a 403 and nothing anywhere said whether that was an area
+/// permission, an access level or a malformed request. The body goes to
+/// the log (which a bug report ships) before the variant is returned;
+/// what the person sees is unchanged.
+pub(crate) async fn refused(resp: reqwest::Response, err: AdoError) -> AdoError {
+    let status = resp.status().as_u16();
+    let url = tidy(resp.url().as_str());
+    let body = resp.text().await.unwrap_or_default();
+    let body: String = body.trim().chars().take(600).collect();
+    if !body.is_empty() {
+        crate::applog::warn(format!("{url} -> {status} said: {body}"));
+    }
+    err
 }
 
 /// The delay ADO asked for on THIS response, if any.
